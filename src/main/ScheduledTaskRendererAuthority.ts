@@ -1,4 +1,8 @@
-import { isDeepStrictEqual } from 'node:util'
+// Namespace import (not `{ isDeepStrictEqual }`): this module sat in the
+// renderer bundle's import graph on 2026-08-26 and a named `node:util` import
+// fails the client rollup at bind time. A namespace binding resolves the
+// member only at call time, which only ever happens in the main process.
+import * as nodeUtil from 'node:util'
 import type {
   ScheduledTask,
   ScheduledTaskLifecycleUpdate,
@@ -160,7 +164,7 @@ export function isCanonicalWorkflowScheduledTask(
       (task.status === 'due' && execution.status === 'queued') ||
       (task.status === 'running' && execution.status === 'running')
     if (!hasLiveLifecyclePair) return false
-    return isDeepStrictEqual(
+    return nodeUtil.isDeepStrictEqual(
       workflowRunTemplateAuthority(task, canonicalPath),
       workflowRunTemplateAuthority(workflow.template, canonicalPath)
     )

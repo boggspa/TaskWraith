@@ -30,6 +30,10 @@ export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
 export interface GrokAcpRunOptions {
   prompt: string
+  /** Main-authorized images; Grok ACP accepts inline blocks despite its stale image flag. */
+  imagePaths?: readonly string[]
+  /** Injected only for tests or an equivalent main-owned image reader. */
+  readImageFile?: (imagePath: string) => Buffer
   cwd: string
   /** Spawns `grok --no-auto-update agent stdio` (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -43,6 +47,8 @@ export interface GrokAcpRunOptions {
   taskWraithShellToolAvailable?: boolean
   /** Normalized run events: content / thinking / init(sessionId) / result / warning. */
   onEvent: (event: NormalizedGrokRunEvent) => void
+  /** Exact notification after every tool in one parallel ACP batch settles. */
+  onToolBatchBoundary?: () => void
   /** Called once with the spawned child (for the cancellation registry). */
   onProcess?: (child: AcpChildProcess) => void
   /**
@@ -116,8 +122,10 @@ export const GROK_FAILED_TOOL_CONTINUITY_PROMPT =
 
 export const GROK_PERMISSION_BOUNDARY_CONTINUITY_PROMPT =
   'TaskWraith returned a typed permission boundary, not a user refusal. If the tool result ' +
-  'advertises a permissionRetry instruction, execute that exact advertised tool and arguments ' +
-  'once; it resolves request_tool_permission so the user can inspect the exact command and cwd. If the user then ' +
+  'advertises a permissionOpportunity or legacy permissionRetry instruction, execute that exact ' +
+  'advertised tool and arguments once, whether it names redeem_permission_opportunity or ' +
+  'request_tool_permission. Never reconstruct or alter its retained target. This lets ' +
+  'the user inspect the exact command and cwd. If the user then ' +
   'declines, do not retry or substitute another side effect; continue from available evidence ' +
   'and finish the participant turn.'
 
@@ -133,7 +141,7 @@ export function grokToolRecoveryPrompt(
   if (nativeShellRequest) return grokDeniedToolRecoveryPrompt(taskWraithShellToolAvailable)
   if (
     context.reason === 'failed-tool-terminal' &&
-    /"permissionRetry"\s*:|request_tool_permission|one auditable host execution|caller-declared paths cannot prove/i.test(
+    /"permission(?:Opportunity|Retry)"\s*:|redeem_permission_opportunity|request_tool_permission|one auditable host execution|caller-declared paths cannot prove/i.test(
       context.lastFailedToolOutput || ''
     )
   ) {
@@ -190,6 +198,14 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   })
   const handle = runAcpTurn({
     prompt: options.prompt,
+    imagePaths: options.imagePaths,
+    readImageFile: options.readImageFile,
+    // Grok ACP builds accept inline image content even though their
+    // initialize response currently reports promptCapabilities.image=false.
+    // Keep the compatibility exception at the Grok adapter boundary; other
+    // ACP providers remain fail-closed on an unadvertised image capability.
+    allowUnadvertisedPromptImages: true,
+    cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: {
@@ -199,6 +215,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     },
     mcpServers: options.mcpServers,
     onEvent: options.onEvent,
+    onToolBatchBoundary: options.onToolBatchBoundary,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest,
     deniedToolRecovery: {

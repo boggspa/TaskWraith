@@ -73,7 +73,6 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     const second = buildMultiviewEnsembleComposerProjection(secondChat)
     const firstActiveSpeaker = buildMultiviewEnsembleComposerProjection(
       firstChat,
-      [],
       'shared-reviewer'
     )
 
@@ -104,18 +103,11 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     expect(firstActiveSpeaker.selectedParticipant?.id).toBe('shared-reviewer')
     expect(first.liveRound?.roundId).toBe('first-round')
     expect(second.liveRound?.roundId).toBe('second-round')
-    expect(first.currentOrchestrationMode).toBe('continuous')
-    expect(first.activeOrchestrationMode).toBe('turn_bound')
-    expect(second.currentOrchestrationMode).toBe('turn_bound')
-    expect(second.activeOrchestrationMode).toBe('continuous')
     expect(first.currentFanoutPolicy).toBe('all')
     expect(first.activeFanoutPolicy).toBe('off')
     expect(second.currentFanoutPolicy).toBe('off')
-    expect(second.activeFanoutPolicy).toBe('locked_writers_with_boss')
-    expect(first.currentConcurrentMode).toBe(true)
-    expect(first.activeConcurrentMode).toBe(false)
-    expect(second.currentConcurrentMode).toBe(false)
-    expect(second.activeConcurrentMode).toBe(true)
+    // On/Off collapse: the round's stored locked_writers level projects as 'all'.
+    expect(second.activeFanoutPolicy).toBe('all')
     expect(first.continuationHops).toBe(2)
     expect(first.maxContinuationHops).toBe(12)
     expect(second.continuationHops).toBe(7)
@@ -181,7 +173,7 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
       permissionPresetId: 'workspace_write'
     }
 
-    const projection = buildMultiviewEnsembleComposerProjection(chat, [], 'active-seat', {
+    const projection = buildMultiviewEnsembleComposerProjection(chat, 'active-seat', {
       'active-seat': pendingParticipant
     })
 
@@ -231,8 +223,7 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     const projection = buildMultiviewEnsembleComposerProjection(chat)
 
     expect(projection.liveRound).toBeUndefined()
-    expect(projection.activeOrchestrationMode).toBe('turn_bound')
-    expect(projection.activeFanoutPolicy).toBe('read_only')
+    expect(projection.activeFanoutPolicy).toBe('all')
     expect(projection.continuationHops).toBe(0)
     expect(projection.maxContinuationHops).toBe(4)
     expect(projection.isRoundRunning).toBe(false)
@@ -601,7 +592,18 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
 
 describe('buildEnsembleProviderBlendStyle', () => {
   it('uses every Pi upstream hue and preserves Ollama spoofing', () => {
+    expect(
+      buildEnsembleProviderBlendStyle([
+        { provider: 'pi', model: 'openrouter/unclaimed-lab/some-model' }
+      ])
+    ).toEqual({ '--ensemble-provider-1': 'var(--provider-openrouter-color)' })
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(

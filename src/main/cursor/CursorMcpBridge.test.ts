@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -16,6 +16,7 @@ import {
   CURSOR_READONLY_MCP_ALLOW_RULES,
   CURSOR_SCOPED_MCP_SERVER_NAME,
   CURSOR_WEB_FETCH_MCP_SERVER_SOURCE,
+  buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   buildCursorBrokerMcpServerEntry,
   buildCursorMcpServerEntry,
   buildCursorReadOnlyMcpServerEntry,
@@ -147,6 +148,40 @@ describe('canonical global broker allow rules', () => {
       `Mcp(${CURSOR_MCP_SERVER_NAME}:delegate_to_subthread)`
     )
   })
+
+  it.each([false, true])(
+    'builds profile-aware solo rules for planSeat=%s without pre-approving delegation',
+    (planSeat) => {
+      const rules = buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+        profileId: 'taskwraith-gateway-solo-v1',
+        planSeat
+      })
+
+      for (const tool of [
+        'ensemble_await',
+        'ensemble_lane_result',
+        'image_view',
+        'capability_search',
+        'capability_invoke'
+      ]) {
+        expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
+        expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+      }
+      for (const tool of [
+        'write_file',
+        'apply_patch',
+        'delegate_wave',
+        'ultra_task',
+        'delegate_to_subthread'
+      ]) {
+        expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`)
+        expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+      }
+      expect(rules).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:run_shell_command)`)
+      expect(rules).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+      expect(Object.isFrozen(rules)).toBe(true)
+    }
+  )
 })
 
 describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () => {
@@ -163,7 +198,7 @@ describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () =>
   })
 
   it('SAFETY: never allows a mutating tool (only the read-only advertise subset)', () => {
-    for (const mutating of ['write_file', 'replace', 'apply_patch', 'run_shell_command']) {
+    for (const mutating of ['write_file', 'replace', 'apply_patch']) {
       expect(CURSOR_READONLY_MCP_ALLOW_RULES).not.toContain(
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:${mutating})`
       )
@@ -171,6 +206,9 @@ describe('CURSOR_READONLY_MCP_ALLOW_RULES (read-only safe-subset broker)', () =>
         `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}-${mutating})`
       )
     }
+    expect(CURSOR_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_SCOPED_MCP_SERVER_NAME}:run_shell_command)`
+    )
     // Exactly one exact-rule per gateway/read-only tool (plus the wildcard +
     // hyphen forms). Safe capabilities outside the compact direct set are
     // available through capability_invoke instead of individual rules.
@@ -512,4 +550,186 @@ describe('CURSOR_WEB_FETCH_MCP_SERVER_SOURCE', () => {
       rmSync(dir, { force: true, recursive: true })
     }
   })
+
+  it('declares run_shell_command + write_file', () => {
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'run_shell_command'")
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'write_file'")
+  })
+
+  it('declares read_file + list_directory', () => {
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'read_file'")
+    expect(CURSOR_WEB_FETCH_MCP_SERVER_SOURCE).toContain("name: 'list_directory'")
+  })
+
+  // @portability-ok run_shell_command in the embedded server spawns /bin/sh; there is no
+  // Windows shell route, so the executed-tool assertions cannot hold on win32.
+  it.skipIf(process.platform === 'win32')(
+    'lists and executes workspace shell + write tools over stdio JSON-RPC',
+    async () => {
+    const listed = await callCursorWebFetchMcp({ method: 'tools/list' })
+    const listedResult = listed.result as { tools?: Array<{ name?: string }> } | undefined
+    const names = (listedResult?.tools ?? []).map((tool) => tool.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'web_fetch',
+        'web_search',
+        'run_shell_command',
+        'write_file',
+        'read_file',
+        'list_directory'
+      ])
+    )
+
+    const ws = mkdtempSync(join(tmpdir(), 'taskwraith-mcp-ws-'))
+    try {
+      const shell = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'run_shell_command',
+          arguments: { command: 'printf hello-mcp-shell' }
+        },
+        cwd: ws
+      })
+      const shellText = mcpText(shell)
+      expect(shellText).toContain('hello-mcp-shell')
+      expect(shellText).toContain('exit 0')
+      expect(shell.isError).not.toBe(true)
+
+      const wrote = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'write_file',
+          arguments: { path: 'note.txt', content: 'from-web-mcp' }
+        },
+        cwd: ws
+      })
+      expect(mcpText(wrote)).toContain('note.txt')
+      expect(wrote.isError).not.toBe(true)
+      expect(readFileSync(join(ws, 'note.txt'), 'utf8')).toBe('from-web-mcp')
+
+      const escaped = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: {
+          name: 'write_file',
+          arguments: { path: '../outside.txt', content: 'nope' }
+        },
+        cwd: ws
+      })
+      expect(mcpText(escaped)).toMatch(/workspace|inside/i)
+      expect(escaped.result && (escaped.result as { isError?: boolean }).isError).toBe(true)
+
+      const listedDir = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'list_directory', arguments: { path: '.' } },
+        cwd: ws
+      })
+      expect(mcpText(listedDir)).toContain('note.txt')
+      expect(listedDir.isError).not.toBe(true)
+
+      const readBack = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: 'note.txt' } },
+        cwd: ws
+      })
+      expect(mcpText(readBack)).toBe('from-web-mcp')
+      expect(readBack.isError).not.toBe(true)
+
+      const readEscaped = await callCursorWebFetchMcp({
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: '../secret.txt' } },
+        cwd: ws
+      })
+      expect(mcpText(readEscaped)).toMatch(/workspace|inside/i)
+      expect(readEscaped.result && (readEscaped.result as { isError?: boolean }).isError).toBe(
+        true
+      )
+    } finally {
+      rmSync(ws, { force: true, recursive: true })
+    }
+  })
 })
+
+function mcpText(msg: Record<string, unknown>): string {
+  const result = msg.result as
+    | { content?: Array<{ text?: string }>; isError?: boolean }
+    | undefined
+  return result?.content?.[0]?.text ?? JSON.stringify(msg)
+}
+
+async function callCursorWebFetchMcp(input: {
+  method: string
+  params?: Record<string, unknown>
+  cwd?: string
+}): Promise<Record<string, unknown>> {
+  const dir = mkdtempSync(join(tmpdir(), 'taskwraith-mcp-rpc-'))
+  const file = join(dir, 'server.cjs')
+  writeFileSync(file, CURSOR_WEB_FETCH_MCP_SERVER_SOURCE)
+  const cwd = input.cwd ?? dir
+  let child: ChildProcess | undefined
+  try {
+    return await new Promise((resolve, reject) => {
+      const proc = spawn(process.execPath, [file], {
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      child = proc
+      let stdout = ''
+      let stderr = ''
+      const timer = setTimeout(() => {
+        proc.kill('SIGKILL')
+        reject(new Error('MCP rpc timeout. stderr=' + stderr))
+      }, 8000)
+      const finish = (value: Record<string, unknown>): void => {
+        clearTimeout(timer)
+        proc.kill('SIGKILL')
+        resolve(value)
+      }
+      proc.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8')
+        const lines = stdout.split('\n')
+        stdout = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          let msg: Record<string, unknown>
+          try {
+            msg = JSON.parse(line) as Record<string, unknown>
+          } catch {
+            continue
+          }
+          if (msg.id !== 1) continue
+          finish(msg)
+        }
+      })
+      proc.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+      })
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+      proc.stdin.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: input.method,
+          params: input.params ?? {}
+        }) + '\n'
+      )
+    })
+  } finally {
+    // @portability-ok On Windows a freshly-killed child still holds handles on
+    // its cwd, so rmdir races it with EBUSY; wait for exit, then retry removal.
+    const spawned = child
+    if (spawned && spawned.exitCode === null) {
+      await new Promise<void>((resolveExit) => {
+        const timer = setTimeout(resolveExit, 2000)
+        spawned.once('close', () => {
+          clearTimeout(timer)
+          resolveExit()
+        })
+        spawned.kill('SIGKILL')
+      })
+    }
+    rmSync(dir, { force: true, recursive: true, maxRetries: 5, retryDelay: 50 })
+  }
+}

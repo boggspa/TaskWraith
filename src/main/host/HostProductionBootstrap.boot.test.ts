@@ -26,7 +26,7 @@
  * teardown assertions delete Host artifacts.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -39,6 +39,8 @@ import {
 } from '../../shared/taskWraithHostPaths.node'
 import {
   HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
   type HostActorIdentity,
   type HostCommand,
   type HostCommandName
@@ -46,13 +48,15 @@ import {
 
 import type { BridgeQuestionReplyAction } from '../BridgeActionPayload'
 import { RemoteQuestionRegistry } from '../RemoteQuestionRegistry'
+import type { ProviderId } from '../store/types'
 import { HostProjectionClient } from './HostProjectionClient'
 import {
   createHostProductionBootstrap,
   type HostProductionBootstrapOptions
 } from './HostProductionBootstrap'
 import { createHostProductionQuestionShadow } from './HostProductionQuestionShadow'
-import type { HostSupervisor } from './HostSupervisor'
+import type { HostSupervisor } from '../../host-runtime/HostSupervisor'
+import { publishHostThreadRecordTransfer } from '../../host-runtime/HostThreadRecordTransfer'
 
 const HOST_ID = 'boot-proof-host-0001'
 const HOST_VERSION = '0.0.0-boot-proof'
@@ -140,6 +144,20 @@ function mutationClient(): HostProjectionClient {
   })
 }
 
+function desktopRecordMutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+      clientClass: TASKWRAITH_DESKTOP_HOST_ACTOR.clientClass,
+      clientVersion: HOST_VERSION
+    },
+    capabilities: ['bootstrap', 'snapshot', 'commands', 'receipts', 'health'],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
 function questionMutationClient(): HostProjectionClient {
   return new HostProjectionClient({
     client: {
@@ -162,6 +180,141 @@ function questionMutationClient(): HostProjectionClient {
   })
 }
 
+function setupMutationClient(): HostProjectionClient {
+  return new HostProjectionClient({
+    client: {
+      clientId: MUTATION_CLIENT_ID,
+      clientClass: 'desktop',
+      clientVersion: HOST_VERSION
+    },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ],
+    userDataPath,
+    connectTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000
+  })
+}
+
+function productionSetupOptions(): HostProductionBootstrapOptions {
+  const workspaces: Array<{ id: string; path: string; realPath?: string }> = []
+  const chats = new Map<
+    string,
+    {
+      appChatId: string
+      workspaceId: string
+      workspacePath: string
+      provider?: ProviderId
+      title: string
+      archived: boolean
+      updatedAt: number
+      messages: Array<{
+        id: string
+        role: 'assistant'
+        content: string
+        timestamp: string
+      }>
+    }
+  >()
+  const getChat = (threadId: string) => chats.get(threadId) ?? null
+  return {
+    ...productionOptions(),
+    chatList: {
+      getChatList: () =>
+        [...chats.values()].map((chat) => ({
+          ...chat,
+          scope: 'workspace' as const,
+          chatKind: 'single' as const,
+          pinned: false,
+          messageCount: chat.messages.length
+        }))
+    },
+    contextSources: {
+      getChat,
+      getApproval: () => null,
+      getQuestion: () => null
+    },
+    setup: {
+      workspace: {
+        registerWorkspace: ({ selectedPath }) => {
+          const existing = workspaces.find((workspace) => workspace.path === selectedPath)
+          if (existing) return existing
+          const workspace = { id: 'workspace-setup', path: selectedPath, realPath: selectedPath }
+          workspaces.push(workspace)
+          return workspace
+        },
+        getWorkspaces: () => workspaces
+      },
+      chat: {
+        createSingleThread: (input) => {
+          if (input.scope !== 'workspace') throw new Error('workspace setup expected')
+          const chat = {
+            appChatId: 'thread-setup',
+            workspaceId: input.workspaceId,
+            workspacePath: input.workspacePath,
+            title: 'Setup thread',
+            archived: false,
+            updatedAt: 1,
+            messages: [
+              {
+                id: 'history-setup',
+                role: 'assistant' as const,
+                content: 'Host setup history is available.',
+                timestamp: '2026-08-24T00:00:00.000Z'
+              }
+            ]
+          }
+          chats.set(chat.appChatId, chat)
+          return chat
+        },
+        configureThread: (input) => {
+          const chat = chats.get(input.chatId)
+          if (!chat) throw new Error('thread unavailable')
+          chat.provider = input.provider
+          chat.title = input.title ?? chat.title
+          chat.updatedAt += 1
+          return chat
+        },
+        archiveThread: ({ chatId, archived }) => {
+          const chat = chats.get(chatId)
+          if (!chat) throw new Error('thread unavailable')
+          chat.archived = archived
+          chat.updatedAt += 1
+          return chat
+        }
+      },
+      terminal: {
+        begin: ({ provider, operationId }) => ({ provider, operationId }),
+        cancel: () => ({ outcome: 'not_cancellable' as const })
+      },
+      providers: () => [
+        {
+          providerId: 'codex' as const,
+          label: 'Codex',
+          status: 'ready' as const,
+          models: [
+            {
+              modelId: 'gpt-5.6',
+              label: 'GPT-5.6',
+              default: true,
+              reasoning: [{ reasoningId: 'high', label: 'High' }]
+            }
+          ]
+        }
+      ]
+    },
+    history: { getChat }
+  }
+}
+
 function mutationCommand(input: {
   commandId: string
   idempotencyKey: string
@@ -179,6 +332,30 @@ function mutationCommand(input: {
     target: input.target,
     arguments: input.arguments ?? {},
     issuedAt: '2026-08-09T00:00:00.000Z'
+  }
+}
+
+function desktopRecordMutationCommand(input: {
+  commandId: string
+  transferId: string
+  sha256: string
+  byteLength: number
+}): HostCommand {
+  return {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: input.commandId,
+    idempotencyKey: `desktop:thread-record:${input.commandId}`,
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+    name: 'thread.record.persist',
+    target: { threadId: 'thread-ensemble-start' },
+    arguments: {
+      transferId: input.transferId,
+      sha256: input.sha256,
+      byteLength: input.byteLength,
+      expectedRevision: 0
+    },
+    issuedAt: '2026-08-28T10:00:00.000Z'
   }
 }
 
@@ -328,7 +505,7 @@ function productionQuestionMutationOptions(): {
 }
 
 beforeEach(() => {
-  userDataPath = mkdtempSync(join(tmpdir(), 'tw-host-boot-proof-'))
+  userDataPath = realpathSync(mkdtempSync(join(tmpdir(), 'tw-host-boot-proof-')))
   supervisor = null
   client = null
 })
@@ -453,6 +630,148 @@ describe('Wave 4.4 serve — a real client completes a real authenticated round 
     // come back holding command/receipt authority it never asked for.
     expect(welcome.capabilities).not.toContain('commands')
     expect(welcome.capabilities).not.toContain('receipts')
+  }, 20_000)
+
+  it('serves setup, durable result refs, provider offers, and history over the real Host', async () => {
+    supervisor = createHostProductionBootstrap(productionSetupOptions())
+    await supervisor.start()
+
+    client = setupMutationClient()
+    const welcome = await client.connect()
+    expect(welcome.capabilities).toEqual(
+      expect.arrayContaining([
+        'provider-catalog',
+        'provider-auth',
+        'history',
+        'setup',
+        'commands',
+        'receipts'
+      ])
+    )
+    await expect(client.getProviderStatuses()).resolves.toEqual([
+      { providerId: 'codex', status: 'ready', label: 'Codex' }
+    ])
+    const offers = await client.getProviderOffers('codex')
+    expect(offers.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ modelId: 'gpt-5.6', available: true })])
+    )
+
+    const workspaceReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000001',
+        idempotencyKey: 'desktop:setup:workspace',
+        name: 'workspace.register',
+        target: {},
+        arguments: { path: join(userDataPath, 'workspace') }
+      })
+    )
+    expect(workspaceReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'workspace', workspaceId: 'workspace-setup' }
+    })
+
+    const threadReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000002',
+        idempotencyKey: 'desktop:setup:thread',
+        name: 'thread.create',
+        target: {},
+        arguments: { scope: 'workspace', workspaceId: 'workspace-setup' }
+      })
+    )
+    expect(threadReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-setup' }
+    })
+
+    const configureReceipt = await client.submitCommand(
+      mutationCommand({
+        commandId: '10000000-0000-4000-8000-000000000003',
+        idempotencyKey: 'desktop:setup:configure',
+        name: 'thread.configure',
+        target: { threadId: 'thread-setup' },
+        arguments: {
+          providerId: 'codex',
+          modelId: 'gpt-5.6',
+          reasoningId: 'high',
+          postureId: 'default',
+          offerRevision: offers.offerRevision,
+          title: 'Configured through Host'
+        }
+      })
+    )
+    expect(configureReceipt).toMatchObject({
+      status: 'succeeded',
+      resultRef: { kind: 'thread', threadId: 'thread-setup' }
+    })
+
+    await expect(
+      client.getThreadHistory({ threadId: 'thread-setup', limit: 10 })
+    ).resolves.toMatchObject({
+      threadId: 'thread-setup',
+      entries: [
+        {
+          entryId: 'history-setup',
+          role: 'assistant',
+          text: 'Host setup history is available.'
+        }
+      ]
+    })
+  }, 20_000)
+
+  it('persists Ensemble round-start state through the real in-process Host fallback', async () => {
+    const assertProfileAuthority = vi.fn()
+    supervisor = createHostProductionBootstrap({
+      ...productionOptions(),
+      profileAuthority: { assertProfileAuthority }
+    })
+    await supervisor.start()
+
+    client = desktopRecordMutationClient()
+    await client.connect()
+    const record = {
+      appChatId: 'thread-ensemble-start',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: userDataPath,
+      title: 'Ensemble start',
+      archived: false,
+      messages: [],
+      updatedAt: Date.parse('2026-08-28T10:00:00.000Z'),
+      ensemble: {
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Begin',
+          startedAt: '2026-08-28T10:00:00.000Z',
+          participants: []
+        },
+        participants: []
+      }
+    }
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: userDataPath,
+      transferId: 'ensemble-start-transfer',
+      record
+    })
+    const commandId = '77777777-7777-4777-8777-777777777777'
+    const receipt = await client.submitCommand(
+      desktopRecordMutationCommand({ commandId, ...descriptor })
+    )
+
+    expect(receipt).toMatchObject({
+      commandId,
+      status: 'succeeded',
+      resultSummary: 'thread_record_persisted'
+    })
+    expect(
+      JSON.parse(readFileSync(join(userDataPath, 'chats', 'thread-ensemble-start.json'), 'utf8'))
+    ).toMatchObject({
+      appChatId: 'thread-ensemble-start',
+      persistenceRevision: 0,
+      ensemble: record.ensemble
+    })
+    expect(assertProfileAuthority).toHaveBeenCalled()
   }, 20_000)
 
   it('executes a governed mutation through challenge, allow, Bridge, and receipt', async () => {

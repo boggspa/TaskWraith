@@ -99,6 +99,11 @@ describe('ProviderRunManagementMatrix', () => {
       brokerObservability: 'route-dependent',
       binaryRuntimeProvenance: 'route-dependent-api-or-advisory-cli-publisher'
     })
+    expect(matrix.muse).toMatchObject({
+      toolMediationMode: 'hybrid-taskwraith-broker-and-provider-native',
+      brokerObservability: 'broker-and-observable-native-events',
+      binaryRuntimeProvenance: 'observed-cli-path-and-version'
+    })
   })
 
   it('keeps Claude run-management truth aligned with its catalog-only launch surface', () => {

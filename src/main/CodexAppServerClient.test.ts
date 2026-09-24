@@ -14,6 +14,8 @@ import {
   codexInitializeAdvertisesNativeGoalControl,
   codexRuntimeProfileKey,
   CodexAppServerClient,
+  CodexAppServerJsonRpcError,
+  CodexAppServerNotRunningError,
   compareCodexVersions,
   isCodexAppServerThreadId,
   isCodexConfigParseError,
@@ -148,6 +150,61 @@ describe('CodexAppServerClient runtime profile tracking', () => {
   })
 })
 
+describe('CodexAppServerClient request errors', () => {
+  it('preserves JSON-RPC code and structured data from the response parser', async () => {
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
+    const write = vi.fn()
+    ;(client as any).proc = {
+      killed: false,
+      stdin: { writable: true, write }
+    }
+
+    const result = client.request('turn/steer', { expectedTurnId: 'turn-1' })
+    const request = JSON.parse(String(write.mock.calls[0]?.[0]))
+    ;(client as any).handleLine(
+      JSON.stringify({
+        id: request.id,
+        error: {
+          code: -32042,
+          message: 'provider failed after dispatch',
+          data: {
+            codexErrorInfo: {
+              kind: 'serverFailure',
+              retryable: false
+            }
+          }
+        }
+      })
+    )
+
+    const error = await result.catch((caught) => caught)
+    expect(error).toBeInstanceOf(CodexAppServerJsonRpcError)
+    expect(error).toMatchObject({
+      name: 'CodexAppServerJsonRpcError',
+      message: 'provider failed after dispatch',
+      code: -32042,
+      data: {
+        codexErrorInfo: {
+          kind: 'serverFailure',
+          retryable: false
+        }
+      }
+    })
+  })
+
+  it('uses a typed rejection when a request is fenced before write', async () => {
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
+
+    const error = await client.request('turn/steer', {}).catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(CodexAppServerNotRunningError)
+    expect(error).toMatchObject({
+      method: 'turn/steer',
+      message: expect.stringContaining('was not sent')
+    })
+  })
+})
+
 // Phase I2: the Codex CLI gets the TaskWraith MCP server registered
 // at spawn time via `-c mcp_servers.TaskWraith.*` config overrides.
 // Pin the exact `-c` arg list (order + TOML escaping) so we don't
@@ -176,9 +233,9 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     expect(buildCodexTaskWraithMcpArgs({ ...makeConfig(), enabled: false })).toEqual([])
   })
 
-  it('emits three -c flag pairs in command/args/env order when enabled', () => {
+  it('emits four -c flag pairs in command/args/env/approval order when enabled', () => {
     const args = buildCodexTaskWraithMcpArgs(makeConfig())
-    expect(args).toHaveLength(6)
+    expect(args).toHaveLength(8)
     expect(args[0]).toBe('-c')
     expect(args[1]).toBe(
       'mcp_servers.TaskWraith.command="/Applications/TaskWraith.app/Contents/MacOS/TaskWraith"'
@@ -189,6 +246,47 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     )
     expect(args[4]).toBe('-c')
     expect(args[5]).toBe('mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "codex" }')
+  })
+
+  it('marks the TaskWraith server always-approved so approval_policy=never cannot strand it', () => {
+    // Codex 0.148 rejects any MCP tool call that needs approval when
+    // `approval_policy` is `never` — "MCP tool call requires approval, but
+    // approval policy is never" (core/src/mcp_tool_call.rs), with no retry.
+    // A Full WS Access / Full Access codex seat resolves to exactly that
+    // policy (codexApprovalPolicyForMode), which stranded a live ensemble
+    // worker: TaskWraith__run_shell_command refused even `git status --short`
+    // and TaskWraith__apply_patch refused an in-workspace patch.
+    //
+    // The app-server transport exposes only applyPatchApproval and
+    // execCommandApproval, so TaskWraith cannot answer a codex-side MCP
+    // approval at all. `auto` still treats non-read-only MCP tools such as
+    // delegate_wave as approval-required; `approve` is the exact Always
+    // Auto-Allow mode. The brokered tools are already mediated by TaskWraith's
+    // own permission gate and recorded in the Approval Ledger, so Codex must
+    // not double-gate them. Native Codex tools keep the sandbox and are
+    // unaffected.
+    const args = buildCodexTaskWraithMcpArgs(makeConfig())
+    expect(args).toContain('mcp_servers.TaskWraith.default_tools_approval_mode="approve"')
+  })
+
+  it('never auto-approves user-supplied MCP servers', () => {
+    // Only the TaskWraith broker earns the auto stamp — its calls route back
+    // through requestAgenticServiceApproval. A user's own server has no such
+    // mediation, so it keeps codex's default approval behaviour.
+    const args = buildCodexTaskWraithMcpArgs(
+      makeConfig({
+        userMcpServers: [
+          { serverName: 'usertool', transport: 'stdio', command: '/bin/true', args: [] }
+        ]
+      })
+    )
+    // Guard against the assertion going vacuous: the user server must really
+    // be in the argv, just without the auto-approval stamp.
+    expect(args).toContain('mcp_servers.usertool.command="/bin/true"')
+    expect(args).not.toContain('mcp_servers.usertool.default_tools_approval_mode="approve"')
+    expect(args.filter((arg) => arg.includes('default_tools_approval_mode'))).toEqual([
+      'mcp_servers.TaskWraith.default_tools_approval_mode="approve"'
+    ])
   })
 
   it('TOML-escapes embedded backslashes and double quotes', () => {

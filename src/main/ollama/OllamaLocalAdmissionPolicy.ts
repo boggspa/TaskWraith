@@ -17,9 +17,8 @@
  * nothing narrows one — measured residency may only ever widen a declaration.
  *
  * **Why a leaked slot is worse than the oversubscription it prevents.** This is
- * a counter that dispatch increments and completion decrements, the exact shape
- * `EnsembleFanoutConcurrency` refuses for the wave cap. If a slot is taken and
- * never handed back, the round does not merely run slowly — it wedges shut, for
+ * a counter that dispatch increments and completion decrements. If a slot is
+ * taken and never handed back, the round does not merely run slowly — it wedges shut, for
  * good, with no user-visible cause. So all three of the coordinator's
  * mitigations are used together and none is optional:
  *

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildAgentWorkContract } from '../../host-shared/AgentWorkContract'
 import {
   ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS,
   buildAntigravityOfficialAgyPromptCapsule,
@@ -79,6 +80,36 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(prompt).not.toContain('has no TaskWraith MCP bridge')
     expect(prompt).toContain('when the registration is live')
     expect(prompt).toContain('only if your runtime actually lists them')
+  })
+
+  it('recombines split work and dynamic state without changing a no-checkpoint prompt', () => {
+    const workContract = 'NEW_USER_GOAL: preserve the accepted request.'
+    const dynamicState = 'Optional dynamic snapshot.'
+    const base = {
+      participantLabel: 'AntiGravity / Work3 #p8',
+      roundId: 'round-split-state',
+      roleInstructions: 'Seal the borders.',
+      currentPrompt: 'Stitch the eastern gate.',
+      roster: '1. AntiGravity / Work3',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Serial.',
+      transcript: '[Codex / Worker] prior context',
+      permissionRule: 'Use only the tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded result.'
+    }
+    const legacy = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...base,
+      dynamicState: `${workContract}\n\n${dynamicState}`
+    })
+    const split = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...base,
+      workContract,
+      dynamicState
+    })
+
+    expect(split).toEqual(legacy)
   })
 
   it('preserves row identity through keep-tail and outer capsule bounds', () => {
@@ -185,5 +216,237 @@ describe('AntiGravity official-agy ensemble prompt profile', () => {
     expect(projection.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
     expect(projection.suppliedMessageIds).toContain('current-retained')
     expect(projection.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
+  })
+
+  it('accepts a complete hint-free checkpoint after the current assignment', () => {
+    const continuityCheckpoint = [
+      '<taskwraith_private_continuity_checkpoint>',
+      'OFFICIAL_AGY_CHECKPOINT '.repeat(70),
+      '</taskwraith_private_continuity_checkpoint>'
+    ].join('\n')
+    const projection = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      participantLabel: 'AntiGravity / Reviewer #p7',
+      roundId: 'round-continuity',
+      stageRole: 'reviewer',
+      roleInstructions: 'Review the current implementation.',
+      currentPrompt: 'CURRENT_ASSIGNMENT remains ahead of recovery context.',
+      roster: '1. AntiGravity / Reviewer\n2. Codex / Worker',
+      authorityLines: [],
+      roleBoundaryLines: [],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Use normal panel rotation.',
+      dynamicState: 'Active goal: verify continuity delivery.',
+      continuityCheckpoint,
+      transcript: '[Codex / Worker]\nImplementation landed.',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded review.'
+    })
+
+    expect(projection.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(projection.continuityCheckpointIncluded).toBe(true)
+    expect(projection.prompt).toContain(continuityCheckpoint)
+    expect(projection.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('Permission and native-tool boundary:')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt.indexOf('Return a bounded review.')).toBeLessThan(
+      projection.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(projection.prompt).not.toMatch(/tw_checkpoint|tw_history_(?:search|read)/)
+  })
+
+  it('funds a complete checkpoint in a saturated capsule by displacing transcript evidence', () => {
+    const row = '[User]\nLATEST STEER AT TRANSCRIPT TAIL'
+    const transcript = `${'T'.repeat(3_000 - row.length)}${row}`
+    const rowStart = transcript.length - row.length
+    const workContract = buildAgentWorkContract({
+      activeGoal: {
+        id: 'current-goal',
+        objective: 'NEW_USER_GOAL',
+        status: 'active',
+        mode: 'taskwraith_steered',
+        specification: {
+          kind: 'approved_plan',
+          acceptanceCriteria: [`Keep the current goal binding. ${'A'.repeat(1_300)}`]
+        }
+      },
+      assignment: {
+        id: 'current-assignment',
+        objective: 'CURRENT_ASSIGNMENT',
+        status: 'in_progress'
+      },
+      completionAuthority: 'assignment'
+    })
+    expect(workContract.length).toBeGreaterThan(1_800)
+    const crowded = {
+      participantLabel: 'P',
+      roundId: 'r',
+      stageRole: 'Z'.repeat(4_400),
+      roleInstructions: 'R'.repeat(400),
+      currentPrompt: `CURRENT_ASSIGNMENT ${'C'.repeat(1_000)}`,
+      roster: 'O'.repeat(500),
+      authorityLines: ['A'.repeat(300)],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'P'.repeat(400),
+      parallelPolicy: 'L'.repeat(300),
+      workContract,
+      dynamicState: 'OPTIONAL_DYNAMIC_SNAPSHOT '.repeat(90),
+      workspaceStanza: 'W'.repeat(300),
+      workspaceChurnStanza: 'H'.repeat(900),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'B'.repeat(2_200),
+      seatSummary: 'E'.repeat(800),
+      transcript,
+      permissionRule: 'M'.repeat(400),
+      yieldExecutionCheck: 'Y'.repeat(300)
+    }
+    const evidence = {
+      currentPromptMessageId: 'current-retained',
+      transcriptRows: [
+        { messageId: 'tail-cut-by-outer-cap', start: rowStart, end: transcript.length }
+      ]
+    }
+    const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded, evidence)
+    // This fixture still overflows the budget — the shed transcript proves it.
+    // It used to land on exactly MAX_CHARS because an over-budget capsule with
+    // no continuity checkpoint skipped shedding entirely and took the outer
+    // TAIL cut, which silently ate the required permission boundary and yield
+    // check. Shedding is no longer gated on a checkpoint, so the same fixture
+    // now reclaims optional context and keeps every required section.
+    expect(baseline.prompt).not.toContain('LATEST STEER AT TRANSCRIPT TAIL')
+    expect(baseline.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(baseline.prompt).not.toContain('[Capsule truncated to the official agy safety budget.]')
+    expect(baseline.prompt).toContain('Permission and native-tool boundary:')
+    expect(baseline.prompt).toContain('Y'.repeat(300))
+    expect(baseline.prompt).toContain('Respond now as [P].')
+    const continuityCheckpoint = `<checkpoint>OLDER_CHECKPOINT_GOAL ${'X'.repeat(1_537)}</checkpoint>`
+    const recovered = buildAntigravityOfficialAgyPromptCapsuleProjection(
+      {
+        ...crowded,
+        continuityCheckpoint
+      },
+      evidence
+    )
+
+    expect(recovered.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(recovered.continuityCheckpointIncluded).toBe(true)
+    expect(recovered).not.toHaveProperty('continuityCheckpointOmitted')
+    expect(recovered.prompt).toContain(continuityCheckpoint)
+    expect(recovered.prompt).toContain(workContract)
+    expect(recovered.prompt).toContain('NEW_USER_GOAL')
+    expect(recovered.prompt).toContain('OLDER_CHECKPOINT_GOAL')
+    expect(recovered.prompt.indexOf('CURRENT_ASSIGNMENT')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.prompt.indexOf('Permission and native-tool boundary:')).toBeLessThan(
+      recovered.prompt.indexOf(continuityCheckpoint)
+    )
+    expect(recovered.suppliedMessageIds).toContain('current-retained')
+    expect(recovered.suppliedMessageIds).not.toContain('tail-cut-by-outer-cap')
+  })
+
+  it('keeps the reader-lane boundary above the assignment and out of every shed group', () => {
+    // A runtime read-clamped lane must be TOLD it is read-clamped, above the
+    // assignment, in a capsule that is already over budget. The part carries no
+    // continuitySheddingGroup and no checkpoint flag on purpose, so neither the
+    // shedding pass nor the outer tail cut can take it.
+    const laneIntentBoundary =
+      'TaskWraith lane intent: inspection, recon, or review only. Do not modify workspace files or external state. This auxiliary lane is runtime read-clamped.'
+    const crowded = {
+      participantLabel: 'AntiGravity / Reader #p3',
+      roundId: 'round-read-clamped',
+      stageRole: 'background',
+      roleInstructions: 'R'.repeat(1_000),
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roster: 'O'.repeat(1_200),
+      authorityLines: ['A'.repeat(600)],
+      roleBoundaryLines: ['B'.repeat(600)],
+      laneIntentBoundary,
+      roundPolicy: 'P'.repeat(900),
+      parallelPolicy: 'L'.repeat(700),
+      dynamicState: 'D'.repeat(1_800),
+      workspaceStanza: 'W'.repeat(600),
+      workspaceChurnStanza: 'H'.repeat(900),
+      scoutBriefs: 'S'.repeat(1_200),
+      blackboardSnapshot: 'B'.repeat(2_200),
+      seatSummary: 'E'.repeat(800),
+      transcript: 'T'.repeat(3_000),
+      permissionRule: 'M'.repeat(900),
+      yieldExecutionCheck: 'Y'.repeat(700)
+    }
+    const spacious = buildAntigravityOfficialAgyPromptCapsuleProjection(crowded)
+    expect(spacious.prompt).toContain(laneIntentBoundary)
+    expect(spacious.prompt.indexOf(laneIntentBoundary)).toBeLessThan(
+      spacious.prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+
+    // Now push it past the budget. Optional context is reclaimed; the boundary
+    // and the assignment are not.
+    const saturated = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...crowded,
+      stageRole: 'Z'.repeat(14_000)
+    })
+    expect(saturated.prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(saturated.prompt).not.toContain('T'.repeat(3_000))
+    expect(saturated.prompt).toContain(laneIntentBoundary)
+    expect(saturated.prompt.indexOf(laneIntentBoundary)).toBeLessThan(
+      saturated.prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('omits the boundary block entirely for a lane that is not reader-intent', () => {
+    const base = {
+      participantLabel: 'AntiGravity / Worker #p3',
+      roundId: 'round-writer',
+      roleInstructions: 'Implement the assigned slice.',
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER land the assigned slice.',
+      roster: '1. AntiGravity / Worker',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Implement once.',
+      parallelPolicy: 'Serial.',
+      dynamicState: '',
+      transcript: '',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded result.'
+    }
+    expect(buildAntigravityOfficialAgyPromptCapsule(base)).not.toContain('TaskWraith lane intent:')
+    expect(buildAntigravityOfficialAgyPromptCapsule({ ...base, laneIntentBoundary: '' })).toBe(
+      buildAntigravityOfficialAgyPromptCapsule(base)
+    )
+  })
+
+  it('reports why a checkpoint cannot fit beside the required contract', () => {
+    const requiredHeavy = {
+      participantLabel: 'AntiGravity / Reviewer #p7',
+      roundId: 'round-required-overflow',
+      stageRole: 'Z'.repeat(18_000),
+      roleInstructions: 'Review the current implementation.',
+      currentPrompt: 'CURRENT_ASSIGNMENT remains first.',
+      roster: '1. AntiGravity / Reviewer',
+      authorityLines: [] as string[],
+      roleBoundaryLines: [] as string[],
+      roundPolicy: 'Review once.',
+      parallelPolicy: 'Serial.',
+      dynamicState: '',
+      transcript: '',
+      permissionRule: 'Use only tools listed by this run.',
+      yieldExecutionCheck: 'Return a bounded review.'
+    }
+    const baseline = buildAntigravityOfficialAgyPromptCapsuleProjection(requiredHeavy)
+    const attempted = buildAntigravityOfficialAgyPromptCapsuleProjection({
+      ...requiredHeavy,
+      continuityCheckpoint: `<checkpoint>${'X'.repeat(1_560)}</checkpoint>`
+    })
+
+    expect(attempted.prompt).toBe(baseline.prompt)
+    expect(attempted.suppliedMessageIds).toEqual(baseline.suppliedMessageIds)
+    expect(attempted).not.toHaveProperty('continuityCheckpointIncluded')
+    expect(attempted.continuityCheckpointOmitted).toBe(
+      'required-contract-and-checkpoint-exceed-budget'
+    )
+    expect(attempted.prompt).not.toContain('<checkpoint>')
   })
 })

@@ -1,0 +1,881 @@
+/**
+ * Node-owned Ollama provider adapter — real run path.
+ *
+ * Extracted from src/main/ollama/OllamaProvider.ts (run loop at 3716-4674,
+ * model discovery at 1108-1300, context budget, tool tiers, run memory).
+ * Desktop reuse is a named follow-up.
+ *
+ * This adapter implements the generic HostNodeProvider contract for Ollama:
+ * daemon-reachability status, catalog-backed selection validation, streaming
+ * chat completion with tool calls, exact cancellation, and model unload on
+ * cleanup. It carries no Electron/AppStore/WebContents dependencies.
+ */
+
+import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
+import {
+  isOllamaReasoningToken,
+  isOllamaThinkingLevel,
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../shared/ollamaReasoning'
+import {
+  fetchOllamaModelCatalog,
+  OLLAMA_CLOUD_API_BASE_URL,
+  unloadOllamaModel,
+  type OllamaChatMessage,
+  type OllamaModelInfo
+} from '../host-shared/ollama/OllamaDaemonClient'
+import type { OllamaCliSignInRecord } from '../host-shared/ollama/OllamaCliSignInMemory'
+import { isOllamaCloudModelId, ollamaCloudBaseModelId } from '../shared/ollamaModelAvailability'
+import { ollamaToolLoopRetryCeilingEnabled } from '../shared/ollamaLoopProtectionPolicy'
+import {
+  compressOllamaMessagesWithWorkingMemory,
+  createEmptyOllamaSessionMemory,
+  resolveOllamaRuntimeContextLimit,
+  resolveOllamaToolResultLimits,
+  shouldCompressOllamaMessagesForPressure,
+  upsertOllamaSessionMemory,
+  type OllamaSessionMemory
+} from '../host-shared/ollama/OllamaContextBudget'
+import { runOllamaChatLoop, type OllamaToolCall } from '../host-shared/ollama/OllamaChatLoop'
+import {
+  createOllamaHostToolExecutor,
+  ollamaHostToolDefinitions,
+  type OllamaHostToolDefinition
+} from '../host-shared/ollama/OllamaHostTools'
+import {
+  closeOllamaHostToolTurn,
+  createOllamaHostToolTurnState,
+  foldOllamaHostToolOutcome,
+  HOST_OLLAMA_MAX_TOOL_TURNS,
+  ollamaHostToolCeilingContent,
+  ollamaHostToolCeilingReached
+} from '../host-shared/ollama/OllamaHostToolTurns'
+import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
+import {
+  HOST_PROVIDER_RUN_MAX_TEXT_CHARS,
+  HOST_PROVIDER_RUN_MAX_WARNING_CHARS,
+  normalizeHostProviderRunPresentationText,
+  normalizeHostProviderRunThread,
+  type HostProviderRunPort,
+  type HostProviderRunThread,
+  type HostProviderRunFinish,
+  type HostProviderRunUsage
+} from '../host-runtime/HostProviderRunPort'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderRunRequest,
+  HostNodeProviderRunResult
+} from './HostNodeProvider'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
+
+const OLLAMA_PROVIDER_ID = 'ollama'
+const OLLAMA_CATALOG_CACHE_MS = 1_000
+const SAFE_IDENTIFIER_MAX_CHARS = 512
+const CONTROL_MAX_CODE_POINT = 0x1f
+const DELETE_CODE_POINT = 0x7f
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0
+    if (codePoint <= CONTROL_MAX_CODE_POINT || codePoint === DELETE_CODE_POINT) return true
+  }
+  return false
+}
+
+function isCanonicalIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= SAFE_IDENTIFIER_MAX_CHARS &&
+    value.trim() === value &&
+    !hasControlCharacter(value)
+  )
+}
+
+/**
+ * Seats that may read but not edit. Same predicate the Mistral and Devin Host
+ * adapters apply, kept verbatim so one posture reads identically across
+ * providers; it decides which half of the tool tier is even advertised.
+ */
+function ollamaHostReadOnlySeat(posture: HostProviderRunThread['posture']): boolean {
+  return (
+    posture.postureId === 'plan' ||
+    posture.postureId === 'read_only' ||
+    posture.approvalMode === 'read' ||
+    posture.approvalMode === 'plan'
+  )
+}
+
+/** Assistant prose across tool turns reads as one answer, not N stapled ones. */
+function joinOllamaAssistantSegments(segments: readonly string[]): string {
+  return segments.filter((segment) => segment.trim()).join('\n\n')
+}
+
+interface OllamaCloudAccountView {
+  readonly cloud: {
+    readonly authenticated: boolean | null
+    readonly authenticatedFromMemory?: true
+  }
+  readonly localReachable: boolean
+}
+
+/**
+ * Ready detail that says where the Cloud account answer came from: the
+ * daemon just now, or the remembered `ollama signin` standing in for an
+ * account probe that went unanswered. A remembered answer is never presented
+ * as a fresh verification.
+ */
+function ollamaReadyDetail({ cloud, localReachable }: OllamaCloudAccountView): string {
+  if (cloud.authenticated !== true) return 'Local Ollama models are available.'
+  if (cloud.authenticatedFromMemory === true) {
+    return localReachable
+      ? 'Local Ollama models are available, and Cloud models from your last Ollama sign-in.'
+      : 'Ollama Cloud models are available from your last Ollama sign-in.'
+  }
+  return localReachable
+    ? 'Local Ollama and authenticated Cloud models are available.'
+    : 'Authenticated Ollama Cloud models are available.'
+}
+
+export class HostNodeOllamaValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HostNodeOllamaValidationError'
+  }
+}
+
+export class HostNodeOllamaDaemonUnavailableError extends Error {
+  constructor() {
+    super('Ollama daemon is not reachable. Start the Ollama service and refresh models.')
+    this.name = 'HostNodeOllamaDaemonUnavailableError'
+  }
+}
+
+export class HostNodeOllamaModelNotInstalledError extends Error {
+  constructor(modelId: string) {
+    super(
+      `Ollama model is not installed: ${modelId}. Pull it with \`ollama pull ${modelId}\` first.`
+    )
+    this.name = 'HostNodeOllamaModelNotInstalledError'
+  }
+}
+
+export interface HostNodeOllamaProviderOptions {
+  readonly runPort: HostProviderRunPort
+  readonly offers: HostProviderOffersProjection
+  readonly resources?: HostNodeProviderResourcePort
+  readonly baseUrl?: string
+  readonly cloudApiKey?: string | null
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  /**
+   * The remembered `ollama signin` main persisted, read afresh per catalog
+   * fetch so a sign-in or sign-out reaches the Host without a restart.
+   */
+  readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
+}
+
+interface ActiveOllamaRun {
+  cancelled: boolean
+  abortController: AbortController
+  modelId: string
+  baseUrl: string
+  directCloud: boolean
+}
+
+export class HostNodeOllamaProvider implements HostNodeProviderInstance {
+  readonly providerId = OLLAMA_PROVIDER_ID
+  private readonly baseUrl: string
+  private readonly cloudApiKey: string | null
+  private readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  private readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
+  /**
+   * What `validateThread` judges a selection against: the offers of the last
+   * refresh that read the catalog. A refresh whose read failed publishes the
+   * honest empty offers but leaves this set alone, because a failed read says
+   * nothing about which models exist; this is the same last-known-good rule
+   * the Domain send gate applies. Until a read succeeds it is the composition
+   * catalog, empty in production, so a Host that never read one fails closed.
+   */
+  private lastReadOffers: HostProviderOffersProjection
+  private readonly executeTool?: (
+    toolCall: OllamaToolCall
+  ) => Promise<{ ok: boolean; result: string }>
+  private readonly activeRuns = new Map<string, ActiveOllamaRun>()
+  private readonly sessionMemoryByThreadModel = new Map<string, OllamaSessionMemory>()
+  private catalogCache:
+    | {
+        readonly value: Awaited<ReturnType<typeof fetchOllamaModelCatalog>>
+        readonly expiresAt: number
+      }
+    | undefined
+  private catalogInFlight: Promise<Awaited<ReturnType<typeof fetchOllamaModelCatalog>>> | null =
+    null
+
+  constructor(private readonly options: HostNodeOllamaProviderOptions) {
+    this.baseUrl = options.baseUrl ?? 'http://127.0.0.1:11434'
+    this.cloudApiKey = options.cloudApiKey ?? null
+    this.terminalLauncher = options.terminalLauncher
+    this.rememberedCliSignIn = options.rememberedCliSignIn
+    this.lastReadOffers = options.offers
+    this.executeTool = options.executeTool
+  }
+
+  private async catalog(defaultModel?: string) {
+    if (!defaultModel && this.catalogCache && this.catalogCache.expiresAt > Date.now()) {
+      return this.catalogCache.value
+    }
+    if (!defaultModel && this.catalogInFlight) return this.catalogInFlight
+    const pending = fetchOllamaModelCatalog(this.baseUrl, {
+      timeoutMs: 2_000,
+      cloudApiKey: this.cloudApiKey,
+      rememberedCliSignIn: this.rememberedCliSignIn?.() ?? null,
+      ...(defaultModel ? { defaultModel } : {})
+    })
+    if (defaultModel) return pending
+    this.catalogInFlight = pending
+    try {
+      const value = await pending
+      this.catalogCache = { value, expiresAt: Date.now() + OLLAMA_CATALOG_CACHE_MS }
+      return value
+    } finally {
+      this.catalogInFlight = null
+    }
+  }
+
+  private async runtimeStatus() {
+    try {
+      const catalog = await this.catalog()
+      const runnable = catalog.models.some((model) => !model.disabled)
+      return { catalog, runnable }
+    } catch {
+      return { catalog: null, runnable: false }
+    }
+  }
+
+  async getOffers(): Promise<HostProviderOffersProjection> {
+    const status = await this.runtimeStatus()
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: status.catalog?.models ?? []
+    })
+    if (status.catalog) this.lastReadOffers = offers
+    return offers
+  }
+
+  /** A missing daemon is a present `unavailable` row, never an omission. */
+  async getStatus(): Promise<HostProviderStatusProjection> {
+    const status = await this.runtimeStatus()
+    if (!status.catalog || !status.runnable) {
+      return {
+        providerId: OLLAMA_PROVIDER_ID,
+        status: 'unavailable',
+        label: 'Ollama',
+        detail: status.catalog
+          ? 'No installed local model or authenticated Ollama Cloud model is available.'
+          : 'Ollama daemon and direct Cloud API are not reachable.'
+      }
+    }
+    return {
+      providerId: OLLAMA_PROVIDER_ID,
+      status: 'ready',
+      label: 'Ollama',
+      detail: ollamaReadyDetail(status.catalog)
+    }
+  }
+
+  async getAuthStatus(): Promise<HostProviderAuthStatusProjection> {
+    const status = await this.runtimeStatus()
+    const authenticated = status.catalog?.cloud.authenticated
+    return {
+      providerId: OLLAMA_PROVIDER_ID,
+      state:
+        authenticated === true
+          ? 'authenticated'
+          : authenticated === false
+            ? 'unauthenticated'
+            : status.catalog
+              ? 'unknown'
+              : 'unavailable',
+      detail:
+        authenticated !== true
+          ? 'Local models do not require an account; Cloud models require `ollama signin` or OLLAMA_API_KEY.'
+          : status.catalog?.cloud.authenticatedFromMemory === true
+            ? 'Ollama Cloud account remembered from your last Ollama sign-in.'
+            : 'Ollama Cloud account verified.'
+    }
+  }
+
+  async getAuthFlows(): Promise<readonly HostProviderAuthFlowProjection[]> {
+    if (!this.terminalLauncher || !this.options.resources) return []
+    const status = await this.runtimeStatus()
+    if (status.catalog?.cloud.authenticated === true) return []
+    const binary = await this.options.resources.resolveBinary()
+    if (!binary.binaryPath) return []
+    return [
+      {
+        flowId: 'ollama:signin',
+        kind: 'manual',
+        label: 'Sign in to Ollama Cloud',
+        available: true,
+        detail:
+          'Runs `ollama signin`; Cloud offers appear only after the daemon proves the account.'
+      }
+    ]
+  }
+
+  async beginAuth(operationId: string): Promise<void> {
+    if (!isCanonicalIdentifier(operationId)) {
+      throw new HostNodeOllamaValidationError('Ollama auth operation id is not canonical.')
+    }
+    if (!this.terminalLauncher || !this.options.resources) {
+      throw new HostNodeOllamaValidationError('Ollama Cloud sign-in handoff is unavailable.')
+    }
+    const binary = await this.options.resources.resolveBinary()
+    if (!binary.binaryPath) throw new HostNodeOllamaValidationError('Ollama CLI is unavailable.')
+    await this.terminalLauncher.launchForProvider(OLLAMA_PROVIDER_ID, {
+      argv: [binary.binaryPath, 'signin']
+    })
+  }
+
+  async cancelAuth(): Promise<boolean> {
+    return false
+  }
+
+  /**
+   * Validate a thread's Ollama selection against the offers of the last
+   * refresh that read the catalog. One failed read (a daemon blip, a slow
+   * `/api/tags`) must not refuse every model the Host already knows; the
+   * run's own catalog check in `ensureModelAvailable` still decides whether
+   * the model can run now.
+   */
+  validateThread(thread: HostProviderRunThread): HostProviderRunThread {
+    const normalized = normalizeHostProviderRunThread(thread)
+    if (!normalized) {
+      throw new HostNodeOllamaValidationError('Ollama thread configuration is invalid.')
+    }
+    if (normalized.providerId !== OLLAMA_PROVIDER_ID) {
+      throw new HostNodeOllamaValidationError('Thread is not configured for Ollama.')
+    }
+    const model = this.lastReadOffers.models.find((entry) => entry.modelId === normalized.modelId)
+    if (!model) {
+      throw new HostNodeOllamaValidationError('Ollama model is not offered by the Host catalog.')
+    }
+    // An unproven Cloud row is offered as present but unavailable. Refuse it
+    // here, before the run records a prompt, as when such rows were left out
+    // of the offers; its own detail says why. A row the remembered sign-in
+    // made available is offered as available and passes.
+    if (!model.available) {
+      throw new HostNodeOllamaValidationError(
+        model.detail ?? `Ollama model ${normalized.modelId} is not available.`
+      )
+    }
+    if (
+      normalized.reasoningId !== undefined &&
+      !model.reasoning.some((entry) => entry.reasoningId === normalized.reasoningId)
+    ) {
+      // A persisted effort is a HISTORICAL selection, not a fresh claim: the
+      // ladder it was chosen from can narrow under it when this model's real
+      // capabilities are corrected. Refusing the run turns every such chat into
+      // a permanent `run_not_started`, so fold the stored intent onto a stop
+      // this model actually offers — the same clamp the desktop seat applies.
+      // Only a RECOGNISED token folds; junk still fails closed, because the
+      // normalizer answers for any string and would otherwise launder it.
+      if (!isOllamaReasoningToken(normalized.reasoningId)) {
+        throw new HostNodeOllamaValidationError('Ollama reasoning is not offered for this model.')
+      }
+      const folded = normalizeOllamaReasoningEffort(
+        normalized.reasoningId,
+        resolveOllamaReasoningSupport({ modelId: normalized.modelId })
+      )
+      const offered =
+        folded !== null && model.reasoning.some((entry) => entry.reasoningId === folded)
+      const { reasoningId: _stale, ...rest } = normalized
+      return offered ? { ...rest, reasoningId: folded } : rest
+    }
+    return normalized
+  }
+
+  private async ensureModelAvailable(modelId: string): Promise<OllamaModelInfo> {
+    let catalog
+    try {
+      catalog = await fetchOllamaModelCatalog(this.baseUrl, {
+        cloudApiKey: this.cloudApiKey,
+        rememberedCliSignIn: this.rememberedCliSignIn?.() ?? null,
+        defaultModel: modelId
+      })
+    } catch {
+      throw new HostNodeOllamaDaemonUnavailableError()
+    }
+    const model = catalog.models.find(
+      (entry) => entry.id === modelId || entry.id.toLowerCase() === modelId.toLowerCase()
+    )
+    if (!model) {
+      throw new HostNodeOllamaModelNotInstalledError(modelId)
+    }
+    if (model.disabled) {
+      throw new HostNodeOllamaValidationError(
+        model.disabledReason ?? `Ollama model ${modelId} is not available.`
+      )
+    }
+    if (model.source === 'local' && !catalog.localReachable) {
+      throw new HostNodeOllamaDaemonUnavailableError()
+    }
+    if (model.source === 'cloud' && !this.cloudApiKey && !catalog.localReachable) {
+      throw new HostNodeOllamaDaemonUnavailableError()
+    }
+    return model
+  }
+
+  private buildMessages(prompt: string, sessionMemory: OllamaSessionMemory): OllamaChatMessage[] {
+    const messages: OllamaChatMessage[] = [
+      {
+        role: 'system',
+        content:
+          'Use the offered workspace file tools to carry out file requests in this turn. After an edit, read the file back to verify the requested content. Report completion only after successful tool results; an intention, example command, or claimed result does not perform an operation. If the offered tools cannot perform an operation, state that limitation.' +
+          (sessionMemory.workingMemory
+            ? `\n\n[Working memory from previous turns]\n${sessionMemory.workingMemory}`
+            : '')
+      }
+    ]
+    messages.push({ role: 'user', content: prompt })
+    return messages
+  }
+
+  /**
+   * The Host-owned file tool tier for one thread. The write half is advertised
+   * only when the seat's posture permits edits, and the executor is handed the
+   * same allow list, so a hallucinated write on a read-only seat fails legibly
+   * instead of mutating.
+   */
+  private hostToolTierFor(thread: HostProviderRunThread): {
+    readonly definitions: OllamaHostToolDefinition[]
+    readonly execute: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  } {
+    const write = !ollamaHostReadOnlySeat(thread.posture)
+    return {
+      definitions: ollamaHostToolDefinitions({ write }),
+      execute: createOllamaHostToolExecutor({
+        workspaceRoot: thread.workspace.canonicalPath,
+        write
+      })
+    }
+  }
+
+  /** Fold the transcript onto working memory when it outgrows the window. */
+  private compressForPressure(input: {
+    readonly messages: OllamaChatMessage[]
+    readonly memory: OllamaSessionMemory
+    readonly contextLimit: number
+  }): OllamaChatMessage[] {
+    return shouldCompressOllamaMessagesForPressure({
+      measuredRuntimeContextTokens: input.contextLimit,
+      currentPromptTokens: input.messages.reduce((sum, message) => sum + message.content.length, 0),
+      toolTurnCount: input.memory.toolTurnCount
+    })
+      ? compressOllamaMessagesWithWorkingMemory({ messages: input.messages, memory: input.memory })
+      : [...input.messages]
+  }
+
+  private usageFromResult(result: {
+    promptTokens?: number
+    completionTokens?: number
+  }): HostProviderRunUsage | undefined {
+    if (result.promptTokens === undefined && result.completionTokens === undefined) return undefined
+    return {
+      ...(result.promptTokens !== undefined ? { inputTokens: result.promptTokens } : {}),
+      ...(result.completionTokens !== undefined ? { outputTokens: result.completionTokens } : {})
+    }
+  }
+
+  /** Run an Ollama chat completion with streaming and tool-call support. */
+  async run(request: HostNodeProviderRunRequest): Promise<HostNodeProviderRunResult> {
+    if (!isCanonicalIdentifier(request.runId) || !isCanonicalIdentifier(request.threadId)) {
+      throw new HostNodeOllamaValidationError('Ollama run and thread ids must be canonical.')
+    }
+    const thread = this.validateThread(
+      this.options.runPort.getThread(request.threadId) as HostProviderRunThread
+    )
+    const abortController = new AbortController()
+    const active: ActiveOllamaRun = {
+      cancelled: false,
+      abortController,
+      modelId: thread.modelId,
+      baseUrl: this.baseUrl,
+      directCloud: false
+    }
+    this.activeRuns.set(request.runId, active)
+
+    const startedAt = new Date().toISOString()
+    const begin = this.options.runPort.beginRun({
+      runId: request.runId,
+      threadId: request.threadId,
+      providerId: OLLAMA_PROVIDER_ID,
+      modelId: thread.modelId,
+      startedAt
+    })
+    if (begin.kind === 'duplicate') {
+      this.activeRuns.delete(request.runId)
+      throw new HostNodeOllamaValidationError(`Ollama run already exists: ${request.runId}`)
+    }
+
+    this.options.runPort.appendTranscript({
+      threadId: request.threadId,
+      runId: request.runId,
+      role: 'user',
+      text: request.prompt,
+      createdAt: startedAt
+    })
+    this.options.runPort.updateRun({
+      runId: request.runId,
+      phase: 'starting',
+      updatedAt: startedAt
+    })
+    this.options.runPort.publishRunEvent(request.target, {
+      type: 'run.started',
+      runId: request.runId,
+      threadId: request.threadId,
+      providerId: OLLAMA_PROVIDER_ID,
+      sessionId: request.runId,
+      at: startedAt
+    })
+    this.options.runPort.publishRunEvent(request.target, {
+      type: 'run.status',
+      runId: request.runId,
+      threadId: request.threadId,
+      status: 'running',
+      at: startedAt
+    })
+
+    const registration = this.options.runPort.registerCancel(request.runId, () => {
+      active.cancelled = true
+      active.abortController.abort()
+    })
+    if (registration.kind !== 'registered') {
+      this.activeRuns.delete(request.runId)
+      throw new HostNodeOllamaValidationError('Ollama cancel registration failed.')
+    }
+
+    let status: 'completed' | 'failed' | 'cancelled' = 'completed'
+    let errorCode:
+      | 'provider_setup_unavailable'
+      | 'provider_launch_failed'
+      | 'provider_failed'
+      | undefined
+    let assistantText = ''
+    let usage: HostProviderRunUsage | undefined
+
+    try {
+      const model = await this.ensureModelAvailable(thread.modelId)
+      const directCloud = model.transport === 'cloud-direct'
+      active.directCloud = directCloud
+      const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : this.baseUrl
+      const transportModelId = directCloud ? ollamaCloudBaseModelId(thread.modelId) : thread.modelId
+      const think =
+        thread.reasoningId === 'off'
+          ? false
+          : thread.reasoningId === 'on'
+            ? true
+            : isOllamaThinkingLevel(thread.reasoningId)
+              ? thread.reasoningId
+              : undefined
+      const memoryKey = `${request.threadId}:${thread.modelId}`
+      let sessionMemory =
+        this.sessionMemoryByThreadModel.get(memoryKey) ??
+        createEmptyOllamaSessionMemory(thread.modelId)
+      this.sessionMemoryByThreadModel.set(memoryKey, sessionMemory)
+      const messages = this.buildMessages(request.prompt, sessionMemory)
+      const contextLimit = resolveOllamaRuntimeContextLimit({
+        modelInfo: model.contextLength ? { contextLength: model.contextLength } : undefined,
+        contextCapTokens: 8_192
+      })
+      const toolLimits = resolveOllamaToolResultLimits({
+        measuredContextTokens: model.contextLength,
+        contextCapTokens: contextLimit
+      })
+      const hostTools = this.executeTool ? undefined : this.hostToolTierFor(thread)
+      const runTool = this.executeTool ?? hostTools?.execute
+      const conversation = this.compressForPressure({
+        messages,
+        memory: sessionMemory,
+        contextLimit
+      })
+
+      // A tool call is only useful if the model then SEES its result, so each
+      // turn's assistant message and tool results are appended and the loop
+      // re-runs until the model answers without calling a tool. The breakers in
+      // OllamaHostToolTurns are what stop a model that keeps calling tools
+      // forever, or keeps hitting the same failure.
+      const assistantSegments: string[] = []
+      let pendingContentDelta = ''
+      let pendingThinkingDelta = ''
+      let turnState = createOllamaHostToolTurnState()
+      let ceilingFired = false
+      let promptTokens: number | undefined
+      let completionTokens: number | undefined
+
+      for (let turnIndex = 0; turnIndex < HOST_OLLAMA_MAX_TOOL_TURNS; turnIndex += 1) {
+        if (active.cancelled) break
+        let productiveThisTurn = false
+        let thinkingStreamed = false
+        const result = await runOllamaChatLoop({
+          baseUrl: transportBaseUrl,
+          ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
+          signal: abortController.signal,
+          model: transportModelId,
+          ...(think !== undefined ? { think } : {}),
+          messages: conversation,
+          tools: hostTools?.definitions ?? [],
+          executeTool: runTool
+            ? async (toolCall) => {
+                const outcome = await runTool(toolCall)
+                const folded = foldOllamaHostToolOutcome(turnState, {
+                  toolName: toolCall.name,
+                  ok: outcome.ok,
+                  result: outcome.result,
+                  args: toolCall.arguments
+                })
+                turnState = folded.state
+                productiveThisTurn = productiveThisTurn || folded.productive
+                sessionMemory = upsertOllamaSessionMemory(sessionMemory, {
+                  toolName: toolCall.name,
+                  argsSummary: JSON.stringify(toolCall.arguments).slice(0, 120),
+                  ok: outcome.ok,
+                  resultSummary: outcome.result.slice(0, toolLimits.toolResultMaxChars)
+                })
+                this.sessionMemoryByThreadModel.set(memoryKey, sessionMemory)
+                return outcome
+              }
+            : undefined,
+          onContentDelta: (delta, full) => {
+            assistantText = joinOllamaAssistantSegments([...assistantSegments, full])
+            this.options.runPort.updateRun({
+              runId: request.runId,
+              phase: 'streaming',
+              updatedAt: new Date().toISOString()
+            })
+            pendingContentDelta += delta
+            const text = normalizeHostProviderRunPresentationText(pendingContentDelta)
+            if (!text) {
+              // A newline can arrive as its own chunk. Keep it for the next
+              // text chunk instead of sending an invalid blank Host event.
+              pendingContentDelta = pendingContentDelta.slice(-HOST_PROVIDER_RUN_MAX_TEXT_CHARS)
+              return
+            }
+            pendingContentDelta = ''
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.content',
+              runId: request.runId,
+              threadId: request.threadId,
+              text,
+              at: new Date().toISOString()
+            })
+          },
+          onThinkingDelta: (delta) => {
+            thinkingStreamed = true
+            pendingThinkingDelta += delta
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.reasoning',
+              runId: request.runId,
+              threadId: request.threadId,
+              text: pendingThinkingDelta,
+              at: new Date().toISOString()
+            })
+            pendingThinkingDelta = ''
+          }
+        })
+
+        if (result.content.trim()) assistantSegments.push(result.content)
+        if (result.thinking?.trim()) {
+          // Surface thinking as a reasoning event if not already streamed
+          if (!thinkingStreamed) {
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.reasoning',
+              runId: request.runId,
+              threadId: request.threadId,
+              text: result.thinking,
+              at: new Date().toISOString()
+            })
+          }
+        }
+        if (result.usage?.promptTokens !== undefined) {
+          promptTokens = (promptTokens ?? 0) + result.usage.promptTokens
+        }
+        if (result.usage?.completionTokens !== undefined) {
+          completionTokens = (completionTokens ?? 0) + result.usage.completionTokens
+        }
+        if (active.cancelled || result.toolCalls.length === 0) break
+
+        turnState = closeOllamaHostToolTurn(turnState, { productive: productiveThisTurn })
+        if (
+          ollamaToolLoopRetryCeilingEnabled(thread.modelId) &&
+          ollamaHostToolCeilingReached(turnState)
+        ) {
+          ceilingFired = true
+          break
+        }
+
+        conversation.push({
+          role: 'assistant',
+          content: result.content,
+          thinking: result.thinking,
+          tool_calls: result.toolCalls.map((toolCall) => ({
+            function: { name: toolCall.name, arguments: toolCall.arguments }
+          }))
+        })
+        conversation.push(...result.toolResults)
+        // Re-measure context pressure against the GROWN conversation: one
+        // read_file result can be larger than the whole window on a small local
+        // model, and this is the same budget the first turn was built under.
+        conversation.splice(
+          0,
+          conversation.length,
+          ...this.compressForPressure({
+            messages: conversation,
+            memory: sessionMemory,
+            contextLimit
+          })
+        )
+      }
+
+      if (ceilingFired) assistantSegments.push(ollamaHostToolCeilingContent())
+      if (active.cancelled) {
+        status = 'cancelled'
+      } else {
+        assistantText = joinOllamaAssistantSegments(assistantSegments)
+        usage = this.usageFromResult({
+          ...(promptTokens !== undefined ? { promptTokens } : {}),
+          ...(completionTokens !== undefined ? { completionTokens } : {})
+        })
+      }
+    } catch (error) {
+      if (active.cancelled) {
+        status = 'cancelled'
+      } else {
+        status = 'failed'
+        errorCode = 'provider_failed'
+        assistantText = error instanceof Error ? error.message : String(error)
+      }
+    } finally {
+      this.options.runPort.clearCancel(request.runId)
+      this.activeRuns.delete(request.runId)
+      if (status === 'cancelled' && !active.directCloud) {
+        await unloadOllamaModel(this.baseUrl, active.modelId).catch(() => undefined)
+      }
+    }
+
+    const finishedAt = new Date().toISOString()
+    const failureReason =
+      status === 'failed'
+        ? normalizeHostProviderRunPresentationText(
+            assistantText,
+            HOST_PROVIDER_RUN_MAX_WARNING_CHARS
+          )
+        : null
+    const finish: HostProviderRunFinish = {
+      runId: request.runId,
+      status,
+      finishedAt,
+      ...(usage ? { usage } : {}),
+      warningSummaries: failureReason ? [failureReason] : [],
+      ...(errorCode ? { errorCode } : {})
+    }
+    this.options.runPort.finishRun(finish)
+    this.options.runPort.publishRunEvent(request.target, {
+      type: 'run.status',
+      runId: request.runId,
+      threadId: request.threadId,
+      status,
+      at: finishedAt
+    })
+    if (assistantText.trim()) {
+      this.options.runPort.appendTranscript({
+        threadId: request.threadId,
+        runId: request.runId,
+        role: 'assistant',
+        text: assistantText,
+        createdAt: finishedAt
+      })
+    }
+
+    return {
+      runId: request.runId,
+      status,
+      ...(thread.providerSessionId ? { sessionId: thread.providerSessionId } : {})
+    }
+  }
+
+  cancel(runId: string): boolean {
+    const active = this.activeRuns.get(runId)
+    if (!active || active.cancelled) return false
+    active.cancelled = true
+    active.abortController.abort()
+    return true
+  }
+
+  async shutdown(): Promise<void> {
+    for (const active of this.activeRuns.values()) {
+      active.cancelled = true
+      active.abortController.abort()
+    }
+    this.activeRuns.clear()
+    this.catalogCache = undefined
+    this.catalogInFlight = null
+    // Best-effort unload of the most recent model per thread.
+    for (const memory of this.sessionMemoryByThreadModel.values()) {
+      if (memory.modelId && !isOllamaCloudModelId(memory.modelId)) {
+        await unloadOllamaModel(this.baseUrl, memory.modelId).catch(() => undefined)
+      }
+    }
+    this.sessionMemoryByThreadModel.clear()
+  }
+}
+
+export interface HostNodeOllamaProviderFactoryOptions {
+  readonly offers?: HostProviderOffersProjection
+  readonly resources?: HostNodeProviderResourcePort
+  readonly baseUrl?: string
+  readonly cloudApiKey?: string | null
+  readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
+}
+
+/** Static Ollama factory implementing the generic HostNodeProvider contract. */
+export function createHostNodeOllamaProviderFactory(
+  options: HostNodeOllamaProviderFactoryOptions = {}
+): HostNodeProvider {
+  const offers = options.offers ?? hostProviderOffers(OLLAMA_PROVIDER_ID, true)
+  if (!offers || offers.providerId !== OLLAMA_PROVIDER_ID) {
+    throw new Error('Ollama provider factory requires Ollama offers')
+  }
+  return {
+    providerId: OLLAMA_PROVIDER_ID,
+    displayProvider: 'Ollama',
+    shortCode: 'OL',
+    offers,
+    supportsApprovals: false,
+    supportsQuestions: false,
+    create({ runPort, interactions }) {
+      void interactions
+      return new HostNodeOllamaProvider({
+        runPort,
+        offers,
+        ...(options.resources ? { resources: options.resources } : {}),
+        ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+        ...(options.cloudApiKey !== undefined ? { cloudApiKey: options.cloudApiKey } : {}),
+        ...(options.terminalLauncher ? { terminalLauncher: options.terminalLauncher } : {}),
+        ...(options.executeTool ? { executeTool: options.executeTool } : {}),
+        ...(options.rememberedCliSignIn ? { rememberedCliSignIn: options.rememberedCliSignIn } : {})
+      })
+    }
+  }
+}

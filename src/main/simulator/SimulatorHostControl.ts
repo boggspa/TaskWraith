@@ -151,7 +151,7 @@ export class SimulatorHostControl {
     if (denied) return denied
     const result = await this.host.launch(udid, bundleId)
     if (result.ok && result.udid) {
-      this.sessionStore.upsert(control.chatId, { udid: result.udid })
+      this.sessionStore.upsert(control.chatId, { udid: result.udid, bundleId })
     }
     return result
   }
@@ -165,7 +165,10 @@ export class SimulatorHostControl {
     if (denied) return denied
     const result = await this.host.terminate(udid, bundleId)
     if (result.ok && result.udid) {
-      this.sessionStore.upsert(control.chatId, { udid: result.udid })
+      this.sessionStore.upsert(control.chatId, {
+        udid: result.udid,
+        bundleId: undefined
+      })
     }
     return result
   }

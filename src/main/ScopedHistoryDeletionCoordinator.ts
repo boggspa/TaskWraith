@@ -31,8 +31,19 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
     quiescenceTargets: HistoryDeletionQuiescenceTarget[]
   }) => HistoryDeletionPreparation
   recordQuiesced: (operationId: string, targetIds: string[]) => void
-  commitDelete: (rootChatId: string) => void
-  commitTruncate: (rootChatId: string) => ChatRecord | null
+  /**
+   * Commits the durable chat-file deletion. May return a Promise when the
+   * commit is a Host-routed async round trip; the coordinator awaits any
+   * thenable and surfaces its rejection to the caller. Typed `unknown` so
+   * order-tracking test doubles returning any value stay assignable.
+   */
+  commitDelete: (rootChatId: string) => unknown
+  /**
+   * Commits the scrubbed complete record and returns it for the broadcast.
+   * May return a Promise thereof (Host-routed); the coordinator awaits any
+   * thenable and surfaces its rejection to the caller.
+   */
+  commitTruncate: (rootChatId: string) => ChatRecord | null | Promise<ChatRecord | null>
   /** Raises the transcript-media admission hold synchronously through completion. */
   beginTranscriptMediaMutation: (
     kind: ScopedHistoryDeletionKind,
@@ -700,8 +711,16 @@ export class ScopedHistoryDeletionCoordinator {
     if (attempt.deadlineExceeded) throw new ScopedHistoryDeletionLateCompletionError()
 
     let truncated: ChatRecord | null = null
-    if (kind === 'truncate') truncated = this.deps.commitTruncate(rootChatId)
-    else this.deps.commitDelete(rootChatId)
+    // The commit may be a Host-routed async round trip; retained holds release
+    // only after it succeeds, and a rejection surfaces to the caller.
+    if (kind === 'truncate') {
+      truncated = await this.deps.commitTruncate(rootChatId)
+    } else {
+      const committed: unknown = this.deps.commitDelete(rootChatId)
+      if (committed && typeof (committed as Promise<void>).then === 'function') {
+        await committed
+      }
+    }
 
     const releaseErrors = this.releaseRetainedHolds(retained)
     this.retainedByOperation.delete(preparation.operationId)

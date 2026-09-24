@@ -74,9 +74,9 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // deliberate exception to "no auto-deny": there is no attended capture flow
   // for a human to meaningfully approve yet.
   mediaRecording: 'deny',
-  // canvas_eval is RCE; it remains non-grantable (isNonGrantableService), so
-  // this ASK can never be promoted to an automatic allow — every call prompts
-  // with the script shown on the desktop approval.
+  // canvas_eval keeps its dedicated gate. Broad preset/workspace grants cannot
+  // open an unrelated surface; the gate may auto-resolve through the exact-live-
+  // Canvas 12h window after the first desktop accept.
   canvasEval: 'ask',
   webBrowsing: 'ask'
 }
@@ -183,7 +183,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     //   - global agenticServices deny remains absolute (preserveExplicitDeny)
     //   - tool executors reject outside-workspace paths
     //   - external-path detection force-prompts (never auto-allows escapes)
-    //   - canvasEval / mediaRecording stay non-grantable ask/deny
+    //   - canvasEval keeps its exact-surface window; mediaRecording stays closed
     //   - isFullShellAccessGranted still requires presetId === 'full_access',
     //     so Full WS Access never drops provider sandboxing to danger-full-access
     //   - preview-risk models clamp these services back to 'ask'
@@ -352,6 +352,34 @@ export function isPlanInstrumentGrantHold(
   return false
 }
 
+/**
+ * Interactive Ask/Plan bash waits for the user. Settings approval timers must
+ * not system-decline those cards. Unattended/scheduled Plan still fail-closed.
+ *
+ * Two independent "nobody will answer this" facts suppress the hold, and they
+ * are deliberately kept apart rather than merged into one flag:
+ *   - `unattended` — nobody SCHEDULED this run to be watched (a scheduled-task
+ *     occurrence). Derived from `scheduledTaskId`.
+ *   - `backgroundFanoutLane` — nobody is WATCHING this lane. An Ensemble
+ *     fan-out lane is dispatched by the Boss, not by a person sitting on a
+ *     modal, and it carries no `scheduledTaskId`, so the first fact never sees
+ *     it. Without this the lane holds the card and then hangs on the transport
+ *     backstop instead of failing closed on the approval timer.
+ * Either fact alone re-arms the timer; only a genuinely attended interactive
+ * Ask/Plan run keeps the hold.
+ */
+export function shouldHoldShellApprovalWithoutTimeoutDeny(args: {
+  presetId?: string | null
+  service?: AgenticServiceId | null
+  unattended?: boolean
+  backgroundFanoutLane?: boolean
+}): boolean {
+  if (args.service !== 'shellCommands') return false
+  if (args.unattended) return false
+  if (args.backgroundFanoutLane) return false
+  return args.presetId === 'read_only' || args.presetId === 'plan'
+}
+
 export function isPostureApprovalOnlyService(
   presetId: string | null | undefined,
   service: AgenticServiceId | null | undefined
@@ -498,10 +526,9 @@ function servicesFromSettings(
     // so a settings value / import can't promote capture above prompt — exactly like
     // canvasEval. (Capture tools don't exist yet, but the posture is enforced now.)
     mediaRecording: clampNonGrantablePolicy(normalizePolicy(settings?.mediaRecording, 'deny')),
-    // canvasEval (RCE) is non-grantable / never-auto-allowed. Clamp the stored
-    // policy so it can only ever be 'ask' or 'deny' — a settings value (or import)
-    // of 'allow'/'workspace' must not be able to contradict that guarantee at the
-    // policy layer, even though both approval gates would also override it.
+    // A broad settings value must not cover every current/future Canvas. Clamp
+    // canvasEval to ask/deny here; the approval gate separately honors the exact
+    // live-surface 12h window after its first desktop accept.
     canvasEval: clampNonGrantablePolicy(normalizePolicy(settings?.canvasEval, 'ask')),
     // Browser navigation defaults to 'ask' (grantable, like crossThreadRead).
     webBrowsing: normalizePolicy(settings?.webBrowsing, 'ask')
@@ -546,9 +573,9 @@ function workspaceGrantServiceIdsFor(
       const expiresAt = Date.parse(grant.expiresAt)
       if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
     }
-    // Non-grantable services: stale/forged workspace grants must never promote
-    // these above a per-action prompt. PermissionService enforces the same for
-    // session grants.
+    // Broad workspace grants cannot cover canvasEval: it uses its own exact-live-
+    // surface window. Media recording remains non-grantable. PermissionService
+    // enforces the same separation for session grants.
     //
     // canvasInteraction is here for a different reason: it IS grantable, but
     // only ever bound to one surface. There is no workspace tier for it —

@@ -37,13 +37,18 @@ enum ProviderModelPickerPreviewData {
                 // Labels omit the "Claude " prefix; Legacy cluster below the
                 // current models (mirrors CLAUDE_STATIC_MODELS).
                 .init(
+                    id: "claude-opus-5-5",
+                    label: "Opus 5.5",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "medium"),
+                .init(
                     id: "claude-opus-5",
                     label: "Opus 5",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "medium"),
                 .init(
-                    id: "claude-fable-5",
-                    label: "Fable 5",
+                    id: "claude-fable-5-1",
+                    label: "Fable 5.1",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "high"),
                 .init(
@@ -56,6 +61,11 @@ enum ProviderModelPickerPreviewData {
                         .init(reasoningEffort: "xhigh"),
                     ],
                     defaultReasoningEffort: "medium"),
+                .init(
+                    id: "claude-fable-5",
+                    label: "Fable 5 Legacy",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "high"),
                 .init(
                     id: "claude-sonnet-4-6",
                     label: "Sonnet 4.6 Legacy",
@@ -107,9 +117,29 @@ enum ProviderModelPickerPreviewData {
             provider: "grok",
             models: [
                 .init(
+                    id: "grok-4.7",
+                    label: "Grok 4.7",
+                    isDefault: true,
+                    supportedReasoningEfforts: [
+                        .init(reasoningEffort: "low"),
+                        .init(reasoningEffort: "medium"),
+                        .init(reasoningEffort: "high"),
+                        .init(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                .init(
+                    id: "grok-4.7-fast",
+                    label: "Grok 4.7 Fast",
+                    supportedReasoningEfforts: [
+                        .init(reasoningEffort: "low"),
+                        .init(reasoningEffort: "medium"),
+                        .init(reasoningEffort: "high"),
+                        .init(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                .init(
                     id: "grok-4.6",
                     label: "Grok 4.6 Fast",
-                    isDefault: true,
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),
@@ -266,7 +296,7 @@ private struct RosterEditorGapPreviewHost: View {
     @State private var entry = RemoteSessionModel.RosterDraftEntry(
         id: "preview-seat",
         provider: "claude",
-        model: "claude-opus-5",
+        model: "claude-opus-5-5",
         role: "Reviewer",
         brief: "",
         enabled: true,

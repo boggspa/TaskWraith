@@ -103,9 +103,11 @@ async function openInstallCommandTerminal(
         `echo "> ${command}"`,
         'echo ""',
         command,
-        'status=$?',
+        // zsh treats `status` as a read-only alias of `$?`; assigning to it
+        // aborts the script, so the POSIX branch captures into `exit_code`.
+        'exit_code=$?',
         'echo ""',
-        `echo "${postscript}"`
+        `echo "${postscript.replace('$status', '$exit_code')}"`
       ].join('\n') + '\n'
     const file = join(dir, `${fileStem}.command`)
     deps.writeFileSync(file, script, { mode: 0o755 })

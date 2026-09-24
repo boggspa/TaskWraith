@@ -14,16 +14,31 @@
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
-import {
-  isMistralThinkingCapableModel,
-  isPiMistralThinkingCapableModel
-} from '../../../shared/mistralModels'
+import { isMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   cursorGrokBaseModelId,
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
+  kimiModelSupportsReasoningEfforts
+} from '../../../shared/kimiModels'
 import { humaniseModelId } from './modelDisplayName'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_LABELS,
+  DEVIN_REASONING_EFFORT_LABELS,
+  devinReasoningEfforts,
+  normalizeDevinReasoningEffort
+} from '../../../shared/devinModelCatalog'
 
 export interface ComposerChipContext {
   provider: ProviderId
@@ -44,10 +59,20 @@ export interface ComposerChipContext {
   kimiThinkingEnabled?: boolean
   /** K3 thinking effort token (low/high/max). */
   kimiReasoningEffort?: string
-  /** Muse Spark reasoning effort (minimal→ultra; never none). */
+  /** Muse Spark reasoning effort (minimal→max→ultra; never none). */
   museReasoningEffort?: string
   /** Mistral thinking effort token (off/low/medium/high/max). */
   mistralReasoningEffort?: string
+  /** Devin family reasoning level (none/low/medium/high/xhigh/max). */
+  devinReasoningEffort?: string
+  /** Pi thinking level token (off/minimal/low/medium/high/xhigh/max). */
+  piReasoningEffort?: string
+  /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
+  ollamaReasoningEffort?: string
+  /** Antigravity presentation-level reasoning (e.g. "high" | "ultraTask").
+   * Antigravity encodes real effort in the wire id; UltraTask is a
+   * presentation-only selection persisted in chat metadata. */
+  antigravityReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -58,8 +83,10 @@ export interface ComposerChipContext {
  *
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
+ * Kimi (`kimi-k2.8-preview`)              → `K2.8 Preview`
+ * Kimi (`kimi-k2.7-code-highspeed`)       → `K2.7 Code Highspeed`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
- * Kimi (`kimi-k3`)                         → `K3`
+ * Kimi (`kimi-k3`, `kimi-k3-256k`)        → `K3 (1M)`, `K3 (256K)`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`grok-4.6`)                      → `Grok 4.6`
  * Grok (`grok-4.6`)                        → `Grok 4.6 Fast` (permanently Fast-mode)
@@ -76,12 +103,15 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   if (id === 'cli-default') {
     if (provider === 'codex') return '5.5'
     if (provider === 'claude') return 'Sonnet 4.6'
-    if (provider === 'kimi') return 'K2.7 Coding'
+    if (provider === 'kimi') return KIMI_K28_MODEL_LABEL
     if (provider === 'grok') return 'Grok 4.6 Fast'
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
     if (provider === 'gemini') return 'Flash Lite'
     if (provider === 'muse') return 'Spark 1.2'
+    // A legacy Devin 'cli-default' selection now dispatches the catalogue
+    // default, so the badge names that model.
+    if (provider === 'devin') return DEVIN_MODEL_LABELS[DEVIN_DEFAULT_MODEL_ID]
     return label
   }
 
@@ -116,10 +146,18 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'kimi') {
+    if (id === KIMI_K28_MODEL_ID) return KIMI_K28_MODEL_LABEL
+    // Checked BEFORE the `kimi-k2.7-code` prefix below, which would otherwise
+    // swallow the Highspeed row and label it as the retired combined one.
+    if (id === KIMI_K27_HIGHSPEED_MODEL_ID) return KIMI_K27_HIGHSPEED_MODEL_LABEL
     // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Coding. The explicit branch
-    // exists because the generic version matcher below would drop " Coding";
-    // plain version ids (kimi-k3 → K3, kimi-k2.6 → K2.6) fall through to it.
+    // exists because the generic version matcher below would drop " Coding".
     if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Coding'
+    if (id === KIMI_K3_256K_MODEL_ID) return KIMI_K3_256K_MODEL_LABEL
+    if (id === KIMI_K3_MODEL_ID) {
+      if (label.toLowerCase().includes('plan-capped')) return 'K3 256K cap'
+      return label.toLowerCase().includes('1m') ? KIMI_K3_MODEL_LABEL : 'K3'
+    }
     const match = id.match(/^kimi-(k[\d.]+)/)
     if (match) {
       return match[1].toUpperCase()
@@ -149,15 +187,15 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     // composer-2.5-fast (Cursor's default = Fast mode) / composer-2.5 → human label.
     if (id === 'composer-2.5-fast') return 'Composer 2.5 Fast'
     if (id === 'composer-2.5') return 'Composer 2.5'
-    const grokBase = cursorGrokBaseModelId(id)
-    if (grokBase && isCursorGrokModelId(id)) {
-      return grokBase === 'grok-4.6' ? 'Grok 4.6' : 'Grok 4.5'
-    }
+    // Cursor's only Grok family is 4.6 — it retired the 4.5 resale rows.
+    if (cursorGrokBaseModelId(id) && isCursorGrokModelId(id)) return 'Grok 4.6'
   }
 
   if (provider === 'grok') {
     // Grok's CLI models are permanently Fast-mode, so "Fast" is part of the name.
     if (id === 'grok-composer-2.5-fast') return 'Grok Composer 2.5 Fast'
+    if (id === 'grok-4.7-fast') return 'Grok 4.7 Fast'
+    if (id === 'grok-4.7') return 'Grok 4.7'
     if (isGrokReasoningModelId(id)) {
       return id === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
     }
@@ -180,6 +218,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'qwen3.8:27b-mlx' || id.startsWith('qwen3.8:27b-mlx-')) {
       return 'Qwen 3.8 (27B-MLX)'
     }
+    if (id === 'qwen3.8-flash-next:125b-mlx' || id.startsWith('qwen3.8-flash-next:125b-mlx-')) {
+      return 'Qwen 3.8 Flash Next (125B-MLX)'
+    }
     if (id === 'gemma3:4b' || id.startsWith('gemma3:4b-')) {
       return 'Gemma 3 (4B Param)'
     }
@@ -199,6 +240,12 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     }
     if (id === 'ornith:35b' || id.startsWith('ornith:35b-')) {
       return 'Ornith 1.0 (35B Param)'
+    }
+    if (id === 'ornith-1.5:9b' || id.startsWith('ornith-1.5:9b-')) {
+      return 'Ornith 1.5 (9B Param)'
+    }
+    if (id === 'ornith-1.5:35b' || id.startsWith('ornith-1.5:35b-')) {
+      return 'Ornith 1.5 (35B Param)'
     }
     if (id === 'laguna-xs-2.1:q8_0') {
       return 'Laguna XS 2.1 (33B-A3B Q8)'
@@ -234,6 +281,20 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'granite4.1:30b' || id.startsWith('granite4.1:30b-')) {
       return 'Granite 4.1 (30B Param)'
     }
+    if (id === 'granite4.2:3b' || id.startsWith('granite4.2:3b-')) {
+      return 'Granite 4.2 (3B Param)'
+    }
+    if (
+      id === 'granite4.2' ||
+      id === 'granite4.2:latest' ||
+      id === 'granite4.2:8b' ||
+      id.startsWith('granite4.2:8b-')
+    ) {
+      return 'Granite 4.2 (8B Param)'
+    }
+    if (id === 'granite4.2:30b' || id.startsWith('granite4.2:30b-')) {
+      return 'Granite 4.2 (30B Param)'
+    }
     if (id === 'nemotron-3-nano:4b' || id.startsWith('nemotron-3-nano:4b-')) {
       return 'Nemotron 3 Nano (4B Param)'
     }
@@ -249,6 +310,14 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'devstral-small-2:24b' || id.startsWith('devstral-small-2:24b-')) {
       return 'Devstral Small 2 (24B Param)'
     }
+    if (
+      id === 'mistral-medium-3.5' ||
+      id === 'mistral-medium-3.5:latest' ||
+      id === 'mistral-medium-3.5:128b' ||
+      id.startsWith('mistral-medium-3.5:128b-')
+    ) {
+      return 'Mistral Medium 3.5 (128B Param)'
+    }
     if (id === 'ministral-3:3b' || id.startsWith('ministral-3:3b-')) {
       return 'Ministral 3 (3B Param)'
     }
@@ -262,10 +331,10 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
       return 'Llama 3.1 (8B Param)'
     }
     if (id === 'deepseek-r1:1.5b' || id.startsWith('deepseek-r1:1.5b-')) {
-      return 'DeepSeek R1 (1.5B Param)'
+      return 'R1 (1.5B Param)'
     }
     if (id === 'deepseek-r1:8b' || id.startsWith('deepseek-r1:8b-')) {
-      return 'DeepSeek R1 (8B Param)'
+      return 'R1 (8B Param)'
     }
     if (id === 'rnj-1' || id === 'rnj-1:latest' || id === 'rnj-1:8b') {
       return 'Rnj-1 (8B Param)'
@@ -283,6 +352,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
 
   if (provider === 'muse') {
     // Provider label already says Muse; badge is the spark family only.
+    if (id === 'muse-spark-1.3-contributor') return 'Contributor Spark 1.3'
+    if (id === 'muse-spark-1.3' || id.includes('spark-1.3')) return 'Spark 1.3'
+    if (id === 'muse-spark-1.2-contributor') return 'Contributor Spark 1.2'
     if (id === 'muse-spark-1.2' || id.includes('spark-1.2')) return 'Spark 1.2'
     if (id.startsWith('muse-')) {
       return id
@@ -326,7 +398,14 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   if (provider === 'kimi') {
-    if (ctx.modelId.trim().toLowerCase() === 'kimi-k3') {
+    if (
+      String(ctx.kimiReasoningEffort || '')
+        .trim()
+        .toLowerCase() === 'ultratask'
+    ) {
+      return 'UltraTask'
+    }
+    if (kimiModelSupportsReasoningEfforts(ctx.modelId)) {
       return kimiReasoningDisplayLabel(ctx.kimiReasoningEffort)
     }
     return ctx.kimiThinkingEnabled ? 'Thinking' : ''
@@ -347,10 +426,42 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   if (provider === 'antigravity') {
     // The reasoning level is encoded in the concrete wire id
     // (gemini-3.6-flash-high); the picker groups families and the slider
-    // swaps variants, so the chip suffix reads straight off the id.
+    // swaps variants, so the chip suffix reads straight off the id —
+    // except UltraTask, which is a presentation-only selection persisted
+    // in chat metadata and passed via antigravityReasoningEffort.
+    if (
+      String(ctx.antigravityReasoningEffort || '')
+        .trim()
+        .toLowerCase() === 'ultratask'
+    ) {
+      return 'UltraTask'
+    }
     const effort = antigravityEffortForModelId(ctx.modelId)
     if (effort === 'on') return 'Thinking On'
     return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
+  }
+
+  if (provider === 'ollama') {
+    const value = String(ctx.ollamaReasoningEffort || '')
+      .trim()
+      .toLowerCase()
+    if (!value || value === 'off') return ''
+    if (value === 'on') return 'Thinking'
+    if (value === 'low') return 'Low'
+    if (value === 'medium') return 'Medium'
+    if (value === 'high') return 'High'
+    // The top stop of the GLM 5.3 / DeepSeek V4 ladders, and the composer's
+    // fallback when a persisted effort is not on the model's ladder — so a
+    // missing case here blanked the suffix on the models most likely to use it.
+    if (value === 'max') return 'Max'
+    if (value === 'ultratask') return 'UltraTask'
+    return ''
+  }
+
+  // Devin families fold the level into the dispatched variant; single-variant
+  // families (Adaptive, SWE-1.6 Fast / Slow) carry no suffix.
+  if (provider === 'devin') {
+    return devinReasoningDisplayLabel(ctx.devinReasoningEffort, ctx.modelId)
   }
 
   // Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
@@ -359,8 +470,21 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   if (provider === 'mistral' && isMistralThinkingCapableModel(modelId)) {
     return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
   }
-  if (provider === 'pi' && isPiMistralThinkingCapableModel(modelId)) {
-    return mistralReasoningDisplayLabel(ctx.mistralReasoningEffort)
+  // General Pi API-key models: configurable thinking level (off, minimal,
+  // low, medium, high, xhigh, max) surfaced from piReasoningEffort.
+  if (provider === 'pi') {
+    const value = String(ctx.piReasoningEffort || '')
+      .trim()
+      .toLowerCase()
+    if (!value || value === 'off') return ''
+    if (value === 'minimal') return 'Minimal'
+    if (value === 'low') return 'Low'
+    if (value === 'medium') return 'Medium'
+    if (value === 'high') return 'High'
+    if (value === 'xhigh') return 'Extra High'
+    if (value === 'max') return 'Max'
+    if (value === 'ultratask') return 'UltraTask'
+    return value.charAt(0).toUpperCase() + value.slice(1)
   }
 
   if (provider === 'muse') {
@@ -375,10 +499,15 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     if (value === 'medium') return 'Medium'
     if (value === 'high') return 'High'
     if (value === 'xhigh' || value === 'extra') return 'Extra High'
+    if (value === 'max') return 'Max'
     if (value === 'ultra' || value === 'ultracode') return 'Ultra'
+    if (value === 'ultratask') return 'UltraTask'
     return value.charAt(0).toUpperCase() + value.slice(1)
   }
 
+  // Do not OR leftover sibling-provider effort fields. CombinedModelPicker
+  // historically passed every provider's live state at once, so a prior
+  // Kimi/Codex UltraTask selection stuck on Gemini / Composer 2.5 chips.
   return ''
 }
 
@@ -387,6 +516,7 @@ export function kimiReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'low') return 'Low'
   if (effort === 'high') return 'High'
   if (effort === 'max') return 'Max'
+  if (effort === 'ultratask') return 'UltraTask'
   return ''
 }
 
@@ -403,6 +533,7 @@ export function codexReasoningDisplayLabel(effortValue?: string | null): string 
   // "ultracode" ladder stop on the iOS reasoning slider.
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultra'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -415,6 +546,7 @@ export function claudeReasoningDisplayLabel(effortValue?: string | null): string
   if (effort === 'xhigh' || effort === 'extra') return 'Extra'
   if (effort === 'max') return 'Max'
   if (effort === 'ultracode') return 'Ultracode'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -425,6 +557,7 @@ export function grokReasoningDisplayLabel(effortValue?: string | null): string {
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
   if (effort === 'xhigh' || effort === 'extra') return 'Extra High'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
@@ -435,7 +568,19 @@ export function mistralReasoningDisplayLabel(effortValue?: string | null): strin
   if (effort === 'medium') return 'Medium'
   if (effort === 'high') return 'High'
   if (effort === 'max') return 'Max'
+  if (effort === 'ultratask') return 'UltraTask'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
+export function devinReasoningDisplayLabel(
+  effortValue?: string | null,
+  modelId?: string | null
+): string {
+  if (typeof modelId === 'string' && devinReasoningEfforts(modelId).length === 0) return ''
+  const effort = normalizeDevinReasoningEffort(effortValue)
+  if (!effort) return ''
+  if (effort === 'none') return 'No Thinking'
+  return DEVIN_REASONING_EFFORT_LABELS[effort]
 }
 
 /** Model label for the Claude composer shell chip — strips a trailing "Fast"

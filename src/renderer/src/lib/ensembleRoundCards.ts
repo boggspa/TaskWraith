@@ -1,6 +1,5 @@
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
-import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import {
   MAX_CHAT_POPOUT_ROUND_EXPANSION_ENTRIES,
   normalizeChatPopoutRoundExpansion,
@@ -375,15 +374,6 @@ export function buildEnsembleRoundCardRowsWithRanges(
     activeRoundId && isEnsembleRoundDispatchLive(activeRound) ? activeRoundId : null
   const liveFallbackRoundId = hasLiveRunEvidence ? lastRoundId : null
   const hasActiveRound = liveActiveRoundId !== null || liveFallbackRoundId !== null
-  const closeoutRoundIds = new Set(
-    displayMessages
-      .map((message) =>
-        message.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
-          ? message.metadata.closeoutRoundId
-          : null
-      )
-      .filter((roundId): roundId is string => typeof roundId === 'string' && roundId.length > 0)
-  )
 
   // Derived ONCE for the whole pass. Deriving it inside the per-round call made
   // the sweep O(rounds x runs) — runs grow with rounds, which is the measured
@@ -423,8 +413,10 @@ export function buildEnsembleRoundCardRowsWithRanges(
       continue
     }
 
-    const defaultExpanded =
-      !closeoutRoundIds.has(roundId) && !hasActiveRound && roundId === lastRoundId
+    // A round stays expanded until it is no longer the most recent round.
+    // This prevents collapsing immediately when a closeout appears; instead it
+    // collapses when the user starts a new turn (creating a new last round).
+    const defaultExpanded = !hasActiveRound && roundId === lastRoundId
     const override = manualRoundExpansion.get(roundId)
     const expanded = override === undefined ? defaultExpanded : override
 

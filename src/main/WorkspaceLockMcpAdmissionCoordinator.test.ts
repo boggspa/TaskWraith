@@ -522,6 +522,130 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(validateLaneWriteScope).not.toHaveBeenCalled()
   })
 
+  it('admits an HMAC-verified exact command rule through its distinct no-claim authority', async () => {
+    const getRuntime = vi.fn(() => null)
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(dependencies({ getRuntime }))
+
+    await expect(
+      coordinator.admit(
+        input({
+          toolName: 'run_shell_command',
+          args: { command: 'npm test' },
+          resourcePath: undefined,
+          exactCommandRuleAuthority: true
+        })
+      )
+    ).resolves.toEqual({
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
+    })
+    expect(getRuntime).not.toHaveBeenCalled()
+  })
+
+  it('does not let a standing exact command rule widen an Ensemble lane', async () => {
+    const acquire = vi.fn()
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({ getRuntime: () => ({ acquire }) })
+    )
+
+    const result = await coordinator.admit(
+      input({
+        context: ensembleContext(),
+        toolName: 'run_shell_command',
+        args: { command: 'npm test' },
+        resourcePath: undefined,
+        exactCommandRuleAuthority: true
+      })
+    )
+    expect(result).toMatchObject({ ok: false, code: 'invalid-call' })
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
+  it('admits an audited async background process without acquiring a broad lock', async () => {
+    // A managed background process is opaque in exactly the way a shell command
+    // is, so a seat whose resolved policy already authorizes shell gets the same
+    // claim-free admission instead of an unrecoverable invalid-call.
+    const getRuntime = vi.fn(() => null)
+    const validateLaneWriteScope = vi.fn()
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({ getRuntime, validateLaneWriteScope })
+    )
+
+    await expect(
+      coordinator.admit(
+        input({
+          toolName: 'start_background_process',
+          args: { command: 'python3 -m http.server 4173', cwd: '/worktree/website' },
+          resourcePath: undefined,
+          allowApprovedUnscopedShell: true,
+          unscopedProcessAuthority: 'resolved-policy'
+        })
+      )
+    ).resolves.toEqual({
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
+    })
+    expect(getRuntime).not.toHaveBeenCalled()
+    expect(validateLaneWriteScope).not.toHaveBeenCalled()
+  })
+
+  it('refuses tier-only async access inside a writer lane so lane FILE scopes hold', async () => {
+    // An opaque process can write anywhere. A broad tier is NOT enough to start
+    // one from inside a path-scoped writer lane — that seat must take the
+    // explicit one-shot instead, or the lane's FILE scope becomes advisory.
+    const acquire = vi.fn(async (runtimeInput: WorkspaceLockRuntimeAcquireInput) =>
+      successfulAcquisition(runtimeInput)
+    )
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({ getRuntime: () => ({ acquire }) })
+    )
+
+    const admission = await coordinator.admit(
+      input({
+        context: ensembleContext(),
+        toolName: 'start_background_process',
+        args: { command: 'python3 -m http.server 4173', cwd: '/worktree/website' },
+        resourcePath: undefined,
+        allowApprovedUnscopedShell: true,
+        unscopedProcessAuthority: 'resolved-policy'
+      })
+    )
+
+    expect(admission).toMatchObject({ ok: false, code: 'invalid-call' })
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
+  it('admits async access inside a lane only on an explicit one-shot approval', async () => {
+    const getRuntime = vi.fn(() => null)
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(dependencies({ getRuntime }))
+
+    await expect(
+      coordinator.admit(
+        input({
+          context: ensembleContext(),
+          toolName: 'start_background_process',
+          args: { command: 'python3 -m http.server 4173', cwd: '/worktree/website' },
+          resourcePath: undefined,
+          allowApprovedUnscopedShell: true,
+          unscopedProcessAuthority: 'explicit-one-shot'
+        })
+      )
+    ).resolves.toEqual({
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
+    })
+    expect(getRuntime).not.toHaveBeenCalled()
+  })
+
   it('uses ensemble role and exact lane coordinates in the owner', async () => {
     const acquire = vi.fn(async (runtimeInput: WorkspaceLockRuntimeAcquireInput) =>
       successfulAcquisition(runtimeInput)

@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE } from '../PromptComposition'
 import {
   buildCursorPathBLaunchPlan,
   resolveCursorPathBBrokerPolicy,
   type CursorPathBLaunchPlanInput
 } from './CursorPathBLaunchPlan'
+import { TASKWRAITH_FILE_ROUTING_PROMPT_OPEN } from '../ProviderFileRoutingPrompt'
+import {
+  buildCursorMcpBridgeUnavailableWarning,
+  clearCursorMcpBridgeLastFailure,
+  peekCursorMcpBridgeLastFailure
+} from './CursorMcpBridgeWarning'
+import type { EffectiveRunPermissions } from '../store/types'
 
 const WORKSPACE = '/Users/test/repo'
 const PROMPT = 'Review the workspace.'
@@ -27,6 +34,9 @@ function input(overrides: Partial<CursorPathBLaunchPlanInput> = {}): CursorPathB
 }
 
 describe('CursorPathBLaunchPlan', () => {
+  beforeEach(() => {
+    clearCursorMcpBridgeLastFailure()
+  })
   it('builds the exact native-only read-only plan and defuses stale MCP claims', () => {
     const plan = buildCursorPathBLaunchPlan(
       input({
@@ -56,9 +66,8 @@ describe('CursorPathBLaunchPlan', () => {
       '--model',
       'composer-1',
       '--workspace',
-      WORKSPACE,
-      '--',
-      PROMPT
+      WORKSPACE
+      // No `--` guard and no positional: the prompt goes to stdin.
     ])
   })
 
@@ -118,6 +127,79 @@ describe('CursorPathBLaunchPlan', () => {
       safeSubset: false,
       planSubset: false
     })
+    expect(readOnlyPlan.allowRules.some((rule) => rule.includes('delegate_wave'))).toBe(false)
+  })
+
+  it.each([false, true])(
+    'uses the solo birth profile for scoped broker rules with planSeat=%s',
+    (planSeat) => {
+      const policy = resolveCursorPathBBrokerPolicy({
+        writeCapable: false,
+        planSeat,
+        taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1'
+      })
+
+      for (const toolName of [
+        'ensemble_await',
+        'ensemble_lane_result',
+        'image_view',
+        'capability_search',
+        'capability_invoke'
+      ]) {
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
+      }
+      for (const toolName of [
+        'write_file',
+        'delegate_wave',
+        'ultra_task',
+        'delegate_to_subthread'
+      ]) {
+        expect(policy.allowRules).not.toContain(`Mcp(taskwraith-broker:${toolName})`)
+      }
+      expect(policy.denyRules).toEqual(['Shell(**)', 'Write(**)'])
+    }
+  )
+
+  it('adds exact delegation allow rules for signed UltraTask on every permission mode', () => {
+    const effectivePermissions = {
+      subThreadDelegationAutoAllowSource: 'ultratask'
+    } as EffectiveRunPermissions
+    for (const planSeat of [false, true]) {
+      const policy = resolveCursorPathBBrokerPolicy({
+        writeCapable: false,
+        planSeat,
+        taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1',
+        effectivePermissions
+      })
+      expect(policy.bridgeMode).toBe(planSeat ? 'plan-subset' : 'safe-subset')
+      for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
+        expect(policy.allowRules).toContain(`Mcp(taskwraith-broker-${toolName})`)
+      }
+      expect(policy.allowRules).not.toContain('Mcp(taskwraith-broker:*)')
+      expect(policy.denyRules).toEqual(['Shell(**)', 'Write(**)'])
+    }
+
+    const ordinary = resolveCursorPathBBrokerPolicy({
+      writeCapable: false,
+      planSeat: true,
+      taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1'
+    })
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(ordinary.allowRules.some((rule) => rule.includes(toolName))).toBe(false)
+    }
+
+    const writeUltra = resolveCursorPathBBrokerPolicy({
+      writeCapable: true,
+      planSeat: false,
+      taskWraithMcpProfileId: 'taskwraith-full-v1',
+      effectivePermissions
+    })
+    expect(writeUltra.bridgeMode).toBe('full')
+    expect(writeUltra.allowRules).toContain('Mcp(taskwraith-broker:*)')
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(writeUltra.allowRules).toContain(`Mcp(taskwraith-broker:${toolName})`)
+    }
   })
 
   it('selects a visible native-only degradation before argv construction', () => {
@@ -173,7 +255,10 @@ describe('CursorPathBLaunchPlan', () => {
     )
   })
 
-  it('resolves Cursor Grok reasoning and fast controls into the wire model', () => {
+  it('migrates a retired Grok 4.5 seat onto 4.6 rather than emitting a dead wire id', () => {
+    // Cursor dropped the 4.5 family; a seat still pinned to it would otherwise
+    // dispatch an id its CLI rejects outright. The plan migrates to 4.6, whose
+    // ladder is a superset, so the seat keeps both its Grok intent and effort.
     const plan = buildCursorPathBLaunchPlan(
       input({
         model: 'grok-4.5',
@@ -182,10 +267,13 @@ describe('CursorPathBLaunchPlan', () => {
       })
     )
 
-    expect(plan.wireModel).toBe('grok-4.5-fast-xhigh')
+    // The seat asked for high + Fast; migrating must not quietly drop either,
+    // so it lands on the concrete 4.6 wire id carrying both.
+    expect(plan.wireModel).toBe('cursor-grok-4.6-high-fast')
     expect(plan.reasoningEffort).toBe('high')
     expect(plan.fastMode).toBe(true)
-    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'grok-4.5-fast-xhigh']))
+    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'cursor-grok-4.6-high-fast']))
+    expect(plan.argv.join(' ')).not.toContain('grok-4.5')
   })
 
   it('resolves Cursor Grok 4.6 Extra High Fast to its exact wire model', () => {
@@ -227,5 +315,162 @@ describe('CursorPathBLaunchPlan', () => {
     expect(Object.isFrozen(plan.controls)).toBe(true)
     expect(Object.isFrozen(plan.broker)).toBe(true)
     expect(Object.isFrozen(plan.broker.allowRules)).toBe(true)
+  })
+})
+
+// The prompt reaches cursor-agent over stdin, never argv (see the ceiling note
+// in CursorCliArgs). The plan still carries the exact provider-visible prompt —
+// runCursorProvider writes plan.prompt to the child's stdin — but argv must stay
+// a bounded, closed set of TaskWraith-authored flags no matter how big it gets.
+describe('Cursor Path-B launch plan keeps the prompt out of argv', () => {
+  it('exposes the exact prompt while argv carries none of it', () => {
+    const plan = buildCursorPathBLaunchPlan(input({}))
+    expect(plan.prompt).toContain(PROMPT)
+    expect(plan.argv).not.toContain(plan.prompt)
+    expect(plan.argv).not.toContain('--')
+    expect(Math.max(...plan.argv.map((token) => token.length))).toBeLessThan(512)
+  })
+
+  it('keeps argv bounded for a prompt far past the cursor-agent argv ceiling', () => {
+    // 600KB — comfortably past the 465,459-byte total-argv ceiling at which
+    // cursor-agent exits 0 with no output at all.
+    const plan = buildCursorPathBLaunchPlan(input({ prompt: 'y'.repeat(600_000) }))
+    expect(plan.prompt.length).toBeGreaterThan(465_459)
+    expect(Math.max(...plan.argv.map((token) => token.length))).toBeLessThan(512)
+  })
+})
+
+describe('Cursor Path-B broker receipt names the live listed tools', () => {
+  it('tells an active broker seat to use GetMcpTools on taskwraith-broker, not IDE discovery', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-gateway-v1'
+      })
+    )
+
+    expect(plan.prompt).toContain('GetMcpTools')
+    expect(plan.prompt).toContain('taskwraith-broker')
+    expect(plan.prompt).toContain('Do not use GetDynamicTools')
+    expect(plan.prompt).toContain('CallDynamicTool')
+    expect(plan.prompt).toContain('TaskWraith ids retired in earlier builds')
+    expect(plan.prompt).toContain('capability_search')
+    expect(plan.prompt).toContain('ask_user_question')
+    expect(plan.prompt).not.toContain('ensemble_fanout')
+  })
+
+  it('lists write-capable orchestration tools only when the full broker is active', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-gateway-v20'
+      })
+    )
+
+    expect(plan.prompt).toContain('ensemble_fanout')
+    expect(plan.prompt).toContain('delegate_wave')
+    expect(plan.prompt).toContain('apply_patch')
+    expect(plan.prompt).toContain('ordinary tool-call rows')
+  })
+
+  it('does not list capability_search on a write-capable taskwraith-full-v1 seat', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+
+    expect(plan.prompt).toContain('ensemble_fanout')
+    expect(plan.prompt).toContain('ask_user_question')
+    expect(plan.prompt).not.toContain('capability_search')
+  })
+
+  it('strips discovery instructions when the broker degrades to native-only', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'native-only-degraded',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+
+    expect(plan.prompt).not.toContain('GetMcpTools')
+    expect(plan.prompt).not.toContain('GetDynamicTools')
+    expect(plan.prompt).not.toContain('capability_search')
+    expect(plan.prompt).not.toContain('ensemble_fanout')
+  })
+
+  it('injects file-routing for a solo write-capable active broker when the Ensemble envelope is absent', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt).toContain(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
+    expect(plan.prompt).toContain('Use `taskwraith__write_file` only to create a new file')
+    expect(plan.prompt).toContain('exact Cursor MCP server id `taskwraith-broker`')
+  })
+
+  it('does not duplicate file-routing when the Ensemble envelope is already present', () => {
+    const envelope = `${TASKWRAITH_FILE_ROUTING_PROMPT_OPEN}\nexisting envelope\n</taskwraith-file-routing-v1>\n\n`
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        prompt: `${envelope}${PROMPT}`,
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt.split(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)).toHaveLength(2)
+    expect(plan.prompt).toContain('existing envelope')
+  })
+
+  it('clears a recorded MCP setup failure when the broker is active', () => {
+    buildCursorMcpBridgeUnavailableWarning({
+      writeCapable: true,
+      error: new Error('cursor-agent mcp enable taskwraith-broker failed: exit 1')
+    })
+    expect(peekCursorMcpBridgeLastFailure()).not.toBeNull()
+    buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+    expect(peekCursorMcpBridgeLastFailure()).toBeNull()
+  })
+
+  it('does not inject file-routing when the broker is native-only degraded', () => {
+    const plan = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'native-only-degraded',
+        taskWraithMcpProfileId: 'taskwraith-full-v1',
+        effectivePermissions: {
+          agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
+        } as EffectiveRunPermissions
+      })
+    )
+    expect(plan.prompt).not.toContain(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
   })
 })

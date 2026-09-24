@@ -86,7 +86,8 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
             id: 'local-scout',
             provider: 'ollama',
             role: 'Scout',
-            model: 'qwen3.5:9b'
+            model: 'qwen3.5:9b',
+            reasoningEffort: 'on'
           })
         ])
       )
@@ -99,7 +100,7 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'ollama',
       providerClass: 'alibaba',
       roleLabel: 'Scout',
-      modelBadge: 'Qwen 3.5 (9B Param)',
+      modelBadge: 'Qwen 3.5 (9B Param) Thinking',
       activity: 'working'
     })
   })
@@ -121,13 +122,22 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       provider: 'pi',
       providerClass: 'deepseek',
       roleLabel: 'Scout',
-      modelBadge: 'DeepSeek V4 Flash',
+      modelBadge: 'V4 Flash',
       activity: 'working'
     })
   })
 
   it('uses every Pi upstream brand and model label in the shared working-indicator presentation', () => {
+    expect(
+      resolveWorkingIndicatorProviderPresentation('pi', 'openrouter/unclaimed-lab/some-model')
+    ).toMatchObject({ providerLabel: 'OpenRouter', providerClass: 'openrouter' })
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(resolveWorkingIndicatorProviderPresentation('pi', model)).toMatchObject({
@@ -764,5 +774,51 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
         runs: []
       })
     ).toBeNull()
+  })
+})
+
+describe('thread-catalogue summary rows', () => {
+  // `ThreadCatalogueChrome` projects `ensemble` (and its `activeRound`) down to
+  // a bounded field whitelist, and `copy()` OMITS any field it cannot fit or
+  // does not whitelist — the round's `participants`/`lanes` always, and any
+  // other field once the 40KB budget is spent. `catalogueChatListItem` spreads
+  // that chrome onto a `ChatListItem`, which `extends ChatRecord`, so tsc sees
+  // a complete record while the roster arrays are undefined at runtime.
+  const projectedChat = (): ChatRecord =>
+    ({
+      appChatId: 'ensemble-chat',
+      title: 'Ensemble chat',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: [],
+      runs: [],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          startedAt: '2026-07-01T00:00:00.000Z',
+          activeParticipantId: 'codex-builder'
+        }
+      }
+    }) as unknown as ChatRecord
+
+  it('derives no presentation instead of throwing on a projected round', () => {
+    expect(() => deriveActiveEnsembleWorkingPresentation(projectedChat())).not.toThrow()
+    expect(deriveActiveEnsembleWorkingPresentation(projectedChat())).toBeNull()
+  })
+
+  it('derives an empty list instead of throwing on a projected round mid-compaction', () => {
+    const compaction = [
+      { chatId: 'ensemble-chat', participantId: 'codex-builder', status: 'started' as const }
+    ]
+    expect(() =>
+      deriveActiveEnsembleWorkingPresentations(projectedChat(), compaction)
+    ).not.toThrow()
+    expect(deriveActiveEnsembleWorkingPresentations(projectedChat(), compaction)).toEqual([])
   })
 })

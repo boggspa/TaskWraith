@@ -39,9 +39,13 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   thread's Plan / Ask / Accept Edits / Full WS Access / Full Access
   posture stays a separate per-thread choice.
 
-## Current state (iOS 0.1.0 build 82; desktop 1.8.8 baseline)
+## Current state (iOS 0.1.0 build 98; desktop v1.9.7 source-ahead checkout)
 
-- App icon: current variants are regular, WWDC26, monoline, and glass, backed by
+The public desktop baseline is v1.9.7. The current checkout is source-ahead of
+that tag; the companion build number below is the latest source-tree value, not
+a claim that build 98 has been uploaded or released.
+
+- App icon: current variants are regular, lightMonoline, monoline, and glass, backed by
   the checked-in `AppIcon-*` asset sets.
 - Pairing: QR/paste pairing, confirm-code verification, persisted paired Mac,
   trusted reconnect, local-network preflight, and Tailscale-oriented off-LAN
@@ -54,7 +58,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   "still working" anchor during tool calls, proposal/question/approval cards,
   file editor, Diff Studio, usage tab, notes, side chats, and provider-skinned
   composer shells.
-- Settings: full-screen settings for General, Appearance, Approvals, Providers,
+- Settings: full-screen settings for Appearance, Composer & Transcript, Approvals, Providers,
   Roster, MCP, Workspaces, pinned messages, Model usage, Local servers, and
   Devices. Provider setup and deep MCP configuration remain Mac-owned.
 - First launch: the iOS first-launch sheet orients users around Mac-owned setup,
@@ -375,7 +379,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   persists to UserDefaults; TWTheme tokens became @MainActor computed
   statics; RootView keys on store.revision so a change rebuilds the
   tree. Light themes deferred (the app is a dark-surface design).
-- **Full identicon catalog on-device**: all 54 named characters baked
+- **Full identicon catalog bundled in the app**: all 54 named characters baked
   from design-assets SVGs via qlmanage (WebKit renders the CSS-classed
   SVGs perfectly; Xcode's native SVG importer can't) → 512px PNGs in
   the package Resources (~3MB) loaded via Bundle.module.
@@ -798,7 +802,7 @@ Part 2 (landed once the Diff Studio agent cleared the bridge files):
 
 All nine findings closed. Remaining for TestFlight: archive
 validation + the independent crypto review (dossier ready), visual
-check of the flattened primary icon, on-device APNs field test.
+check of the flattened primary icon, and APNs field testing on physical hardware.
 
 ## v0.35 — Diff Studio
 
@@ -858,7 +862,7 @@ CRITICAL). All CRITICAL + HIGH fixed and verified:
   reject, registerApnsToken replay-guarded, Swift epoch parity, phone QR
   expiresAt + un-importable-key rejection.
 
-Full findings (fixed + residual) in docs/security/e2ee-review-findings.md
+Full findings (fixed + residual) are kept in the private E2EE review record.
 (local-only; docs/ is gitignored). Residual MED — silent identity
 regeneration on safeStorage-unavailable / Keychain-write-failure — is the
 one item flagged before submission; needs a surfaced-error UX pass.
@@ -1166,7 +1170,107 @@ every time.
   Full Access remains a separate process-lifetime, exact-lane receipt with
   its own acknowledgement and confirmation; a workspace grant never mints it.
 
+## v0.48 — workspace pane headers: de-pilled and width-budgeted (2026-08-29)
+
+The File Editor and Diff Studio detail panes share one chrome bar — back
+affordance, file identity, action run — and it had two faults on iPad.
+
+**Pills.** Every control was `.buttonStyle(.bordered)`, so the bar was a row of
+filled capsules that read louder than the source or the diff underneath it. The
+controls are now borderless: tint and weight only, no container. The bar is
+deliberately monochrome apart from its two ends — the back control and the
+pane's primary action (Save in the editor, Stage in the viewer) carry the
+accent, Delete carries `statusFailed`, and everything between is `textPrimary`.
+The chrome bar already supplies the plane these sit on; a container per control
+just restated it six times.
+
+**Wrapping — the same size-class trap as v0.13, one layer down.** An HStack of
+Labels has no compression policy, so when the six action buttons did not fit,
+SwiftUI shrank each toward its minimum and wrapped the TEXT: "Back to app"
+became "Back / to app" and "Stage" became a pill six lines tall, one character
+per line. The pane could not see this coming because it branches on a `compact`
+flag that is `false` for every iPad width — a split view's detail column reports
+a COMPACT size class, which is exactly why v0.13 made the flag explicit, and
+`false` then meant "spell everything out" at 570pt just as it did at 1016pt.
+
+`TWWorkspaceHeaderPolicy` (`WorkspaceHeaderChrome.swift`) budgets the bar
+against the MEASURED pane instead, read inline from a `GeometryReader` and never
+written back to state — the same shape as `ThreadInspectorColumnPolicy`. Two
+rules hold it up:
+
+- **Nothing in the bar wraps.** Every control is `.lineLimit(1)` and
+  `.fixedSize(horizontal:)`, so it holds its intrinsic width or drops to a
+  glyph; it never compresses into a character column. The TITLE is the single
+  flexible element and it truncates instead — the path in the MIDDLE, because a
+  path's tail is its filename and that is the half a reader needs when the head
+  is `src/renderer/src/components/...`.
+- **Order of sacrifice, cheapest first:** action wording, then the title's
+  comfortable width, then — last, because it is the pane's only escape — the
+  back control's wording. Collapsing never costs VoiceOver a name; the wording
+  survives as the accessibility label at every tier.
+
+Measured tiers for the editor's six actions: labels above ~801pt (13-inch
+landscape), glyphs with the way out still named from ~435pt (the reported
+570pt window, and 11-inch portrait), chevron-only below that. The Diff Studio
+bar is capability-GATED rather than fixed — a read-only workspace loses Stage
+and Unstage outright — so the same 570pt pane that cannot label six actions
+comfortably labels the one that remains.
+
+The phone loses no wording it had: `FilesModeCompactView` says "Files" rather
+than "Back to app", which is short enough that a 393pt iPhone still seats it
+beside all six glyphs.
+
+`WorkspaceHeaderPolicyTests` sweeps the budget rather than sampling it: every
+chosen layout fits, every refusal was genuinely unaffordable (without that
+second half the suite passes by always returning the narrowest bar), and the
+back control's wording outlives the action wording at every width.
+
+## v0.49 — side-chat and transcript follow-state hardening (2026-08-31)
+
+A cluster of small, user-visible breaks appeared once side chats and transcript
+follow-state ran on real devices and fast Mac projections. They share one theme:
+iOS state must survive view remounts, shell rebuilds, and stale projections
+without re-deriving it from the latest frame.
+
+**Side-chat selection and follow state.** The inspector's selected side chat was
+kept in view-local state, so a remount or shell rebuild closed the panel and
+lost the user's place. The selection now lives on `RemoteSessionModel`, and the
+panel's follow-state store (`TranscriptFollowStateStore`) is preserved across
+remounts so an active side chat stays open and scrolled to the same position.
+A lightweight mini-transcript surface lets the follow store observe its own
+thread without coupling to the full `ThreadDetailViews` lifecycle.
+
+**Transcript pointer-scroll tracking.** Scroll-driven "unfollow" detection was
+attached to a scroll view that did not always exist at construction time,
+making pointer scrolls ignore follow state or attach to the wrong coordinate
+space. `TranscriptIndirectScrollTracker` now resolves the live scroll view and
+converts pointer events correctly; explicit pointer scrolls unfollow the
+transcript, while programmatic scrolls do not.
+
+**Live projection resync.** A Mac projection could go stale on the wire while
+the iOS cached copy kept presenting it as current. `PairedHostProjection` now
+recognizes stale snapshots and resyncs before the user acts on them, with tests
+in `PairedHostSessionControllerTests` covering the boundary.
+
+**Composer pill and git sheet.** A layout pass swallowed the composer workspace
+pill's tap target, and the git workspace sheet lost its content inset on
+compact widths. Both are restored; the pill opens the branch/worktree/PR
+surface and the git sheet keeps its header and action rows anchored.
+
+**Bundled image caching.** Provider logos and identicons were rebuilt from
+bundle data on every render pass. Fixed marks load once via their own static
+caches; logos and identicons now memoize by resolved asset name or slug via
+`BundledImageCache`, backed by `BundledImageCacheTests` for hit/miss, key,
+and fixture behavior.
+
 ## Current follow-ups
+
+**P0 distribution gate (established 2026-08-27):** Chris Izatt owns the
+release-candidate cryptographic review, targeted for 2026-09-07 (past due). No new external
+TestFlight or App Store candidate ships before the exact commit and exported
+artifact pass an implementation-independent review and the findings have a
+recorded disposition. This gate outranks every feature follow-up below; the
+operational closure evidence is defined in `TaskWraithApp/README.md`.
 
 1. Define the confirmation and elevation contract for `workflowDelete` before
    adding any destructive workflow control on iOS.

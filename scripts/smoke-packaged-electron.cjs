@@ -44,6 +44,8 @@ async function main() {
   assertDir(resourcesDir, 'Electron resources directory')
   assertFile(appAsarPath, 'packaged app.asar')
   assertMaxFileSize(appAsarPath, 'packaged app.asar', maxAsarBytes)
+  const distributionMetadata = readPackagedDistributionMetadata(appAsarPath)
+  validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetadata)
   validatePackagedNotices(resourcesDir)
   console.log('packaged third-party notice coverage ok')
 
@@ -70,7 +72,7 @@ async function main() {
   if (packageTarget.platform === 'darwin') {
     validateMacPackageBinaries(packageRoot, resourcesDir, expectedMacArchs)
     validateMacElectronFrameworkSignature(packageRoot, resourcesDir)
-    validateMacAppPermissionMetadata(packageRoot)
+    validateMacAppPermissionMetadata(packageRoot, distributionMetadata)
     validateMacAppSignature(packageRoot)
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
@@ -91,6 +93,15 @@ async function main() {
   console.log(`node-pty native binding: ${path.relative(repoRoot, nativeBindings[0])}`)
   await runLaunchSmoke(packageRoot)
   runPackagedTuiSmoke(packageRoot)
+  runPackagedProductionHostSmoke(packageRoot)
+  runPackagedEmulatorRuntimeSmoke(packageRoot)
+  // Every check has passed and been reported. A straggling handle (see
+  // stopSmokeChild) must not keep the CI step alive after the verdict is in:
+  // flush the final line, then exit on its callback so nothing printed is lost.
+  await new Promise((resolve) =>
+    process.stdout.write('packaged Electron smoke complete\n', resolve)
+  )
+  process.exit(0)
 }
 
 /**
@@ -128,6 +139,74 @@ function runPackagedTuiSmoke(packageRoot) {
   if (result.status !== 0) {
     fail(
       `packaged TUI smoke failed with exit ${result.status ?? 'null'}${
+        result.error ? `: ${result.error.message}` : ''
+      }`
+    )
+  }
+}
+
+/**
+ * Production Node Host sidecar. Host payload and launcher resources are
+ * mandatory for every packaged Electron artifact.
+ */
+function runPackagedProductionHostSmoke(packageRoot) {
+  const resourcesDir = resolveResourcesDir(packageRoot)
+  const hostRoot = path.join(resourcesDir, 'host')
+  const hostBinRoot = path.join(resourcesDir, 'host-bin')
+  const hasHostPayload = fs.existsSync(hostRoot)
+  const hasHostLaunchers = fs.existsSync(hostBinRoot)
+  if (!hasHostPayload || !hasHostLaunchers) {
+    fail('packaged production Host resources are incomplete (host and host-bin must ship together)')
+  }
+  const smokeScript = path.join(repoRoot, 'scripts/smoke-packaged-host.cjs')
+  if (!fs.existsSync(smokeScript)) {
+    fail(`Missing packaged production Host smoke script: ${smokeScript}`)
+  }
+  const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TASKWRAITH_HOST_REQUIRE_PACKAGE: '1'
+    }
+  })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) {
+    fail(
+      `packaged production Host smoke failed with exit ${result.status ?? 'null'}${
+        result.error ? `: ${result.error.message}` : ''
+      }`
+    )
+  }
+}
+
+/**
+ * Opt-in real production emulator runtime proof. It launches a fresh private
+ * package-smoke profile and executes the fixed factory/bridge/WASM receipt;
+ * ordinary packaging checks retain their existing no-second-GUI default.
+ */
+function runPackagedEmulatorRuntimeSmoke(packageRoot) {
+  if (process.env.TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE !== '1') {
+    console.log(
+      'packaged emulator runtime smoke skipped (set TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE=1 to run)'
+    )
+    return
+  }
+  const smokeScript = path.join(repoRoot, 'scripts/smoke-packaged-emulator.cjs')
+  if (!fs.existsSync(smokeScript)) {
+    fail(`Missing packaged emulator runtime smoke script: ${smokeScript}`)
+  }
+  const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE: '1' }
+  })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) {
+    fail(
+      `packaged emulator runtime smoke failed with exit ${result.status ?? 'null'}${
         result.error ? `: ${result.error.message}` : ''
       }`
     )
@@ -385,16 +464,50 @@ async function runLinuxLaunchSmoke(packageRoot) {
   console.log(`packaged app launch smoke ok: ${path.basename(executablePath)}`)
 }
 
-async function stopSmokeChild(child, label) {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
+async function stopSmokeChild(
+  child,
+  label,
+  platform = process.platform,
+  killTree = killProcessTree
+) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    releaseSmokeChild(child)
+    return
+  }
+  // Windows: by the time the launch smoke stops the app, TaskWraith.exe has
+  // already spawned its Node Host sidecar with inherited stdio. Terminating
+  // only the root process orphans that Host, and the orphan's inherited pipe
+  // handles keep THIS script's stdout/stderr streams open forever — main()
+  // resolves but the process never exits, so the CI checks step hangs (1.9.7,
+  // run 33625607309: 18 minutes on a 12-second step until cancelled, runner
+  // cleanup "Terminate orphan process: (node)"). Kill the whole tree while the
+  // root pid still anchors it; the signal path stays for every other platform.
+  if (platform === 'win32' && typeof child.pid === 'number') killTree(child.pid)
+  else child.kill('SIGTERM')
   let exitResult = await waitForChildExit(child, 3000)
-  if (exitResult.exited) return
-  child.kill('SIGKILL')
-  exitResult = await waitForChildExit(child, 2000)
+  if (!exitResult.exited) {
+    child.kill('SIGKILL')
+    exitResult = await waitForChildExit(child, 2000)
+  }
+  releaseSmokeChild(child)
   if (!exitResult.exited) {
     fail(`${label} did not exit after bounded SIGTERM/SIGKILL cleanup`)
   }
+}
+
+function killProcessTree(pid) {
+  spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+}
+
+/**
+ * Release our read ends of a stopped child's stdio pipes and drop the handle
+ * reference. Whatever a surviving descendant still holds on the write ends can
+ * then no longer keep this process's event loop alive.
+ */
+function releaseSmokeChild(child) {
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+  if (typeof child.unref === 'function') child.unref()
 }
 
 // Whether the current host CPU can natively execute a Windows binary of the
@@ -598,10 +711,16 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
   assertFile(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
   const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
-  if (bridgeInfo.CFBundleIdentifier !== 'com.chrisizatt.taskwraith') {
-    fail(
-      `TaskWraith Bridge CFBundleIdentifier must share com.chrisizatt.taskwraith, got ${String(bridgeInfo.CFBundleIdentifier)}.`
-    )
+  // The helper shares the packaged app's consent identity and version, whatever
+  // distribution identity (beta or debut) the app carries. The parent plist is
+  // separately bound to the embedded distribution appId by
+  // validateMacAppPermissionMetadata, so this is one chain with no literal.
+  const parentInfoPath = path.join(contentsDir, 'Info.plist')
+  assertFile(parentInfoPath, 'packaged app Info.plist')
+  const parentInfo = readPlistAsJson(parentInfoPath, 'packaged app Info.plist')
+  const bridgeIdentityFailures = collectMacBridgeIdentityFailures(bridgeInfo, parentInfo)
+  if (bridgeIdentityFailures.length > 0) {
+    fail(bridgeIdentityFailures.join(' '))
   }
   if (bridgeInfo.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
     fail(
@@ -662,11 +781,42 @@ function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
   console.log('validated Electron Framework code signature')
 }
 
-function validateMacAppPermissionMetadata(packageRoot) {
+const MAC_BRIDGE_IDENTITY_KEYS = Object.freeze([
+  'CFBundleIdentifier',
+  'CFBundleShortVersionString',
+  'CFBundleVersion'
+])
+
+function collectMacBridgeIdentityFailures(bridgeInfo, parentInfo) {
+  const failures = []
+  for (const key of MAC_BRIDGE_IDENTITY_KEYS) {
+    const parentValue = parentInfo && parentInfo[key]
+    if (typeof parentValue !== 'string' || parentValue.trim().length === 0) {
+      failures.push(
+        `Packaged app Info.plist is missing a non-empty ${key}; TaskWraith Bridge identity cannot be verified.`
+      )
+      continue
+    }
+    const bridgeValue = bridgeInfo && bridgeInfo[key]
+    if (bridgeValue !== parentValue) {
+      failures.push(
+        `TaskWraith Bridge ${key} must match the packaged app ${key} ${parentValue}, got ${String(bridgeValue)}.`
+      )
+    }
+  }
+  return failures
+}
+
+function validateMacAppPermissionMetadata(packageRoot, distributionMetadata) {
   if (process.platform !== 'darwin') return
   const infoPlistPath = path.join(packageRoot, 'Contents', 'Info.plist')
   assertFile(infoPlistPath, 'packaged app Info.plist')
   const info = readPlistAsJson(infoPlistPath, 'packaged app Info.plist')
+  if (info.CFBundleIdentifier !== distributionMetadata.appId) {
+    fail(
+      `Packaged app CFBundleIdentifier ${String(info.CFBundleIdentifier)} does not match embedded ${distributionMetadata.series} identity ${distributionMetadata.appId}.`
+    )
+  }
   for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
     if (info[key] !== 'TaskWraith') {
       fail(`Packaged app Info.plist ${key} must be exactly TaskWraith.`)
@@ -687,6 +837,61 @@ function validateMacAppPermissionMetadata(packageRoot) {
     fail('Packaged app Info.plist must carry the TaskWraith local-network usage identity.')
   }
   console.log('validated packaged macOS permission metadata')
+}
+
+function readPackagedDistributionMetadata(appAsarPath, asarApi = require('@electron/asar')) {
+  let metadata
+  try {
+    metadata = JSON.parse(
+      Buffer.from(asarApi.extractFile(appAsarPath, 'package.json')).toString('utf8')
+    )
+  } catch (error) {
+    fail(
+      `Packaged distribution metadata is unreadable: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  const series = String(metadata.taskwraithDistributionIdentity || '').trim()
+  const appId = String(metadata.taskwraithAppId || '').trim()
+  const feed = String(metadata.taskwraithUpdateFeedChannel || '').trim()
+  const version = String(metadata.version || '').trim()
+  const validBeta = series === 'beta' && appId === 'com.chrisizatt.taskwraith' && feed === 'latest'
+  const validRelease =
+    series === 'release' && appId === 'com.taskwraith.desktop' && feed === 'release'
+  if (!validBeta && !validRelease) {
+    fail('Packaged app contains an unknown or mixed distribution identity/appId/update feed.')
+  }
+  if (!version) fail('Packaged app distribution metadata is missing its version.')
+  console.log(`validated packaged ${series} distribution identity (${appId}, ${feed} feed)`)
+  return { series, appId, stableUpdateChannel: feed, version }
+}
+
+function validatePackagedIdentityHandoffPayload(resourcesDir, distributionMetadata) {
+  const payloadPath = path.join(resourcesDir, 'identity-handoff.json')
+  const required =
+    distributionMetadata.series === 'beta' && distributionMetadata.version === '1.9.9'
+  if (!required) {
+    if (fs.existsSync(payloadPath)) {
+      fail(
+        `Identity handoff payload must not ship in ${distributionMetadata.series} ${distributionMetadata.version}.`
+      )
+    }
+    return
+  }
+  assertFile(payloadPath, 'final-beta identity handoff payload')
+  let manifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(payloadPath, 'utf8'))
+  } catch (error) {
+    fail(
+      `Final-beta identity handoff payload is unreadable: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  const { validateManifest } = require('./identity-handoff-manifest.cjs')
+  const errors = validateManifest(manifest, { requirePrepared: true })
+  if (errors.length > 0) {
+    fail(`Final-beta identity handoff payload is invalid:\n${errors.join('\n')}`)
+  }
+  console.log('validated packaged final-beta identity handoff payload')
 }
 
 function validateMacAppSignature(packageRoot) {
@@ -1277,8 +1482,12 @@ function fail(message) {
 // codesign report, so the posture rules are exercised without a packaged app
 // and without invoking codesign.
 module.exports = {
+  stopSmokeChild,
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
+  collectMacBridgeIdentityFailures,
   describeMacSigningPosture,
-  readMacSigningIdentity
+  readMacSigningIdentity,
+  readPackagedDistributionMetadata,
+  validatePackagedIdentityHandoffPayload
 }

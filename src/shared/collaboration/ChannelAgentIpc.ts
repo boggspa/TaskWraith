@@ -23,6 +23,7 @@ export type ChannelAgentIpcProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 
 export type ChannelAgentIpcPermissionPresetId =
   | 'read_only'

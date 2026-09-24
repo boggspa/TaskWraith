@@ -23,18 +23,20 @@
 // In NO mode is `--always-approve` ever emitted.
 
 import type { ActiveGoal } from '../store/types'
-import {
-  isGrok45ReasoningModelId,
-  isGrokReasoningModelId
-} from '../../shared/grok45Models'
+import { isGrok45ReasoningModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { GROK_BROKER_MCP_TOOL_NAMESPACE } from '../index.constants'
+import { noToolsOverrideClause } from '../providers/NoToolsOverrideClause'
 
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh'])
+// TaskWraith's top-of-ladder tiers (Ultra/Ultracode/UltraTask/Max) all clamp to
+// Grok's ceiling instead of being silently dropped to the model default.
+const GROK_TOP_TIER_EFFORTS = new Set(['ultra', 'ultracode', 'ultratask', 'max'])
 
 export function normalizeGrokEffortFlag(value: string | null | undefined): string | null {
   if (!value) return null
   const trimmed = String(value).trim().toLowerCase()
   if (!trimmed || trimmed === 'off') return null
+  if (GROK_TOP_TIER_EFFORTS.has(trimmed)) return 'xhigh'
   return GROK_EFFORT_LEVELS.has(trimmed) ? trimmed : null
 }
 
@@ -74,23 +76,65 @@ export const GROK_READ_ONLY_DENY_RULES = [
 export const GROK_WRITE_MODE_DENY_RULES = GROK_READ_ONLY_DENY_RULES
 
 /**
- * ACP sessions have a client-mediated `session/request_permission` hook, so
- * native file tools can reach TaskWraith's canonical workspace preflight
- * instead of being blanket-disabled at argv construction. Read-only seats
- * still deny the native mutation primitives as a prevention backstop.
+ * READ-ONLY ACP seats deny the native mutation primitives outright AND ship
+ * `--tools ''`, so the seat carries no built-in tool at all and every action
+ * has to arrive through the TaskWraith broker.
  *
- * Native shell remains denied in both modes: the permission hook can validate
- * cwd, but Grok does not yet provide a hard workspace-rooted shell sandbox to
- * contain absolute paths or network egress.
+ * WRITE-CAPABLE ACP seats no longer inherit that list. A write seat gets the
+ * native file and shell primitives (`GROK_ACP_WRITE_MODE_NATIVE_TOOLS`), and
+ * every one of them is mediated rather than trusted: Grok raises
+ * `session/request_permission`, `preflightNativeWorkspaceTool` resolves the
+ * call against the closed `grok` adapter in providerActionTaxonomy and
+ * path-scopes it to the workspace, and shell additionally lands on the shared
+ * approval chokepoint where DestructiveShellAsk raises a permission card for
+ * the destructive set. An action the adapter does not declare is still denied,
+ * which is exactly why the allowlist below is the declared set and no wider.
  */
-export const GROK_ACP_READ_ONLY_DENY_RULES = [
-  'Bash(*)',
-  'Shell(*)',
-  'Edit(*)',
-  'Write(*)'
-] as const
+export const GROK_ACP_READ_ONLY_DENY_RULES = ['Bash(*)', 'Shell(*)', 'Edit(*)', 'Write(*)'] as const
 
-export const GROK_ACP_WRITE_MODE_DENY_RULES = GROK_ACP_READ_ONLY_DENY_RULES
+/**
+ * Write-capable seats deny nothing at argv. The host gate is the floor, and a
+ * `--deny` here would only re-create the hard-cancel dead-end that the
+ * read-only preamble exists to avoid.
+ */
+export const GROK_ACP_WRITE_MODE_DENY_RULES = [] as const
+
+/**
+ * `--tools` is an ALLOWLIST of built-in tools, and grok 1.0.34 silently ignores
+ * a name it does not recognise (verified against the shipped binary: no parse
+ * error, no diagnostic), so an unrecognised spelling costs nothing and both
+ * spellings of a tool can be listed safely.
+ *
+ * Every entry compacts (lowercase, non-alphanumerics stripped -- see
+ * compactProviderActionIdentifier) onto an action the `grok` adapter declares,
+ * so no entry can reach the model only to have each of its calls refused.
+ * The invariant is stronger than "declared": every entry must have a route to
+ * an ALLOW, because a tool the host refuses on every call hard-cancels the turn
+ * and burns the user's quota for no deliverable. So the list is reads (the
+ * policy allows `access === 'read'` outright) plus shell (routed to the
+ * approval chokepoint) and nothing else.
+ *
+ * Deliberately ABSENT, in two groups:
+ *  - MultiEdit, TodoWrite, BashOutput, KillShell, Agent, Skill, the web tools:
+ *    the `grok` adapter does not declare them at all.
+ *  - Write, Edit, search_replace, ApplyPatch: the adapter DOES declare these,
+ *    but the seat policy still denies `access === 'write'` because a native
+ *    mutation cannot join a TaskWraith exact-edit transaction, so it would lose
+ *    Undo/Recover. Native writes stay broker-only until contribution capture
+ *    covers them; adding them here before that lands would offer Grok four
+ *    tools that are refused every time.
+ */
+export const GROK_ACP_WRITE_MODE_NATIVE_TOOLS = [
+  'Bash',
+  'Shell',
+  'run_terminal_command',
+  'Read',
+  'read_file',
+  'Grep',
+  'Glob',
+  'LS',
+  'list_directory'
+] as const
 
 /** True when the approval mode permits writes (anything other than read-only plan). */
 export function grokWriteCapable(approvalMode: string | null | undefined): boolean {
@@ -115,12 +159,10 @@ export function grokWriteCapable(approvalMode: string | null | undefined): boole
 export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
   'inspect through the native read/file tools that are actually listed. Native Bash/Shell ' +
-  'and TaskWraith shell tools are unavailable in this seat, so do not attempt or search ' +
-  'for a shell route. An explicit no-tools instruction ' +
-  'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, goal, or any other tool. File writes and edits, and ' +
-  'MUTATING shell commands (anything that changes files or git state, installs ' +
-  'packages, or has other side effects) are refused by the host — do not ' +
+  'are unavailable in this seat — do not attempt them. If a TaskWraith MCP shell tool is ' +
+  'listed, that is the shell route and the host will prompt the user before it runs. ' +
+  `${noToolsOverrideClause('read, shell, file, goal, or any other tool')} ` +
+  'File writes and edits are refused by the host — do not ' +
   'attempt them; if the task would need one, describe what you would change ' +
   'instead. If a tool call is refused, do NOT end your turn — summarise what ' +
   'you found from the reads you did and answer the user directly. Do not substitute ' +
@@ -148,9 +190,9 @@ export const GROK_MCP_SHELL_PROMPT_NOTE =
 export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
   'When the task requests file changes, use the TaskWraith MCP file tools; native Write/Edit ' +
   'cannot participate in exact edit transactions. For supported shell work, use the TaskWraith ' +
-  'MCP run_shell_command tool — native Bash/Shell are unavailable. An explicit no-tools instruction in the user ' +
-  'request or role brief overrides that allowance: do not call shell, file, goal, ' +
-  'or any other tool. If a tool call is refused or fails, do not end your turn; ' +
+  'MCP run_shell_command tool — native Bash/Shell are unavailable. ' +
+  `${noToolsOverrideClause('shell, file, goal, or any other tool')} ` +
+  'If a tool call is refused or fails, do not end your turn; ' +
   'retry only the same requested operation with an equivalent allowed tool. Never ' +
   'substitute unrelated shell, file, or goal calls for a failed coordination call; ' +
   'otherwise report the failure and answer in prose.'
@@ -163,8 +205,8 @@ export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
 export const GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE =
   'The TaskWraith mutation broker is not verified for this turn, so this run can inspect and explain but cannot change files. ' +
   'Native Write/Edit/Bash/Shell are unavailable. ' +
-  'Do not call, search for, or retry a TaskWraith shell tool. An explicit no-tools instruction in the user ' +
-  'request or role brief overrides that allowance: do not call file, goal, or any other tool. ' +
+  'Do not call, search for, or retry a TaskWraith shell tool. ' +
+  `${noToolsOverrideClause('file, goal, or any other tool')} ` +
   'If shell work is required, report that exact blocker and answer from the evidence already available; ' +
   'do not substitute unrelated side effects.'
 
@@ -228,15 +270,12 @@ export function buildGrokProviderPrompt(
   }
 ): string {
   let brokerAwarePrompt = prompt
-  if (
-    options?.taskWraithShellToolAvailable &&
-    grokWriteCapable(approvalMode) &&
-    !prompt.includes(GROK_MCP_SHELL_TOOL_NAME)
-  ) {
+  if (options?.taskWraithShellToolAvailable && !prompt.includes(GROK_MCP_SHELL_TOOL_NAME)) {
     brokerAwarePrompt = `${GROK_MCP_SHELL_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
   }
   const questionAwarePrompt =
-    options?.taskWraithQuestionToolAvailable && !brokerAwarePrompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
+    options?.taskWraithQuestionToolAvailable &&
+    !brokerAwarePrompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
       ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
       : brokerAwarePrompt
   return applyGrokNativeGoalPrompt(
@@ -334,8 +373,11 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
 }
 
 export function buildGrokAcpCliArgs(input: BuildGrokAcpCliArgsInput): string[] {
-  const args = ['--no-auto-update', '--tools', '']
-  const denyRules = input.readOnlySeat
+  const args = ['--no-auto-update']
+  // Seat-conditional: the read-only seat keeps the empty allowlist (no built-in
+  // tool at all); the write seat gets exactly the adapter-declared primitives.
+  args.push('--tools', input.readOnlySeat ? '' : GROK_ACP_WRITE_MODE_NATIVE_TOOLS.join(','))
+  const denyRules: readonly string[] = input.readOnlySeat
     ? GROK_ACP_READ_ONLY_DENY_RULES
     : GROK_ACP_WRITE_MODE_DENY_RULES
   for (const rule of denyRules) args.push('--deny', rule)

@@ -332,4 +332,173 @@ describe('ActivityInlineStats', () => {
       expect(result.deletions).toBe(2)
     })
   })
+
+  /**
+   * The odometer only estimates for edit-like rows. Providers whose
+   * tool_result compat lines duplicate the whole output into a string
+   * `content` field (Muse `exec --json` does this on every call) pollute the
+   * merged parameters, and the un-gated estimator painted `+656 -0` on file
+   * READS and `+1 -0` on MCP calls. Provided summaries still render — except
+   * estimator-sourced ones persisted by the old bug — so measured
+   * (`git_numstat`) attributions keep their pill on any row.
+   */
+  describe('edit-like gating of the odometer', () => {
+    it('stays silent for a read row whose parameters gained result content (Muse shape)', () => {
+      const result = computeInlineStats({
+        toolName: 'read_file',
+        status: 'success',
+        category: 'read',
+        parameters: { path: 'src/App.tsx', content: 'a\nb\nc' },
+        resultText: 'a\nb\nc'
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('stays silent for an unknown/MCP tool carrying a string content parameter', () => {
+      const result = computeInlineStats({
+        toolName: 'mcp__taskwraith__ensemble_control',
+        status: 'success',
+        parameters: { content: 'ok' }
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('ignores a persisted content-estimated summary on a non-edit row', () => {
+      // Activities saved while the estimator was un-gated carry the bogus
+      // summary in chat history; the odometer must not resurrect it.
+      const result = computeInlineStats({
+        toolName: 'read_file',
+        status: 'success',
+        category: 'read',
+        parameters: { path: 'src/App.tsx' },
+        diffSummary: { additions: 656, deletions: 0, source: 'content', confidence: 'exact' }
+      })
+      expect(result.visible).toBe(false)
+    })
+
+    it('keeps a measured git_numstat summary visible wherever it was attributed', () => {
+      const result = computeInlineStats({
+        toolName: 'run_shell_command',
+        status: 'success',
+        category: 'shell',
+        parameters: { command: 'scripts/apply.sh' },
+        diffSummary: { additions: 3, deletions: 1, source: 'git_numstat', confidence: 'exact' }
+      })
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(3)
+      expect(result.deletions).toBe(1)
+    })
+
+    it('keeps a freeform-titled write lighting via its category evidence', () => {
+      const result = computeInlineStats({
+        toolName: 'Overwrite settings',
+        status: 'success',
+        category: 'write',
+        parameters: { filePath: 'settings.json', content: 'a\nb' }
+      })
+      expect(result.visible).toBe(true)
+      expect(result.additions).toBe(2)
+    })
+
+    it('totals only the edit rows when a stack mixes reads and edits', () => {
+      const totals = sumActivityDiffTotals([
+        {
+          id: 'r1',
+          toolName: 'read_file',
+          displayName: 'Read src/a.ts',
+          category: 'read',
+          status: 'success',
+          parameters: { path: 'src/a.ts', content: 'x\ny\nz' }
+        },
+        {
+          id: 'e1',
+          toolName: 'edit_file',
+          displayName: 'Edited src/a.ts',
+          category: 'write',
+          status: 'success',
+          parameters: { file_path: 'src/a.ts', old_string: 'x', new_string: 'x\nq' }
+        }
+      ])
+      expect(totals).toEqual({ additions: 2, deletions: 1, estimated: true })
+    })
+  })
+})
+
+describe('shell-command edit rows (pi-hosted shell-only wire shape)', () => {
+  const heredocWrite = "cat > src/app.py << 'HEREDOC'\nline1\nline2\nline3\nHEREDOC"
+
+  it('lights the odometer for a broker heredoc write', () => {
+    const result = inlineStatsForActivity({
+      id: 'shell-1',
+      toolName: 'run_shell_command',
+      displayName: 'Shell command',
+      category: 'shell',
+      status: 'success',
+      parameters: { command: heredocWrite, cwd: '/repo' }
+    })
+    expect(result.visible).toBe(true)
+    expect(result.additions).toBe(3)
+    expect(result.deletions).toBe(0)
+    expect(result.confidence).toBe('estimated')
+  })
+
+  it('keeps read-only shell rows silent', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'git diff HEAD~1' }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('suppresses a phantom result_diff summary on a shell row', () => {
+    // A shell result that merely CONTAINED diff markers (`git diff` output)
+    // must not paint a chip — the command itself carries no write evidence.
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'git diff' },
+      diffSummary: { additions: 5, deletions: 2, source: 'result_diff', confidence: 'estimated' }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('keeps declared codex_changes summaries visible on shell rows', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'success',
+      category: 'shell',
+      parameters: { command: 'scripts/apply.sh' },
+      diffSummary: { additions: 4, deletions: 1, source: 'codex_changes', confidence: 'exact' }
+    })
+    expect(result.visible).toBe(true)
+    expect(result.additions).toBe(4)
+    expect(result.deletions).toBe(1)
+  })
+
+  it('suppresses chips for denied or errored shell writes', () => {
+    const result = computeInlineStats({
+      toolName: 'run_shell_command',
+      status: 'error',
+      category: 'shell',
+      parameters: { command: heredocWrite }
+    })
+    expect(result.visible).toBe(false)
+  })
+
+  it('sums shell heredoc rows into group totals', () => {
+    const totals = sumActivityDiffTotals([
+      {
+        id: 'shell-2',
+        toolName: 'run_shell_command',
+        displayName: 'Shell command',
+        category: 'shell',
+        status: 'success',
+        parameters: { command: heredocWrite }
+      }
+    ])
+    expect(totals).toEqual({ additions: 3, deletions: 0, estimated: true })
+  })
 })

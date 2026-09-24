@@ -10,7 +10,7 @@ import {
 } from './keys'
 
 /*
- * Tier-2 push gateway protocol (docs/ios-push-gateway-design.md P3): the
+ * Tier-2 push gateway protocol (the APNs gateway design P3): the
  * phone-signed APNs register/deregister requests and the Mac-signed push
  * trigger, modeled byte-for-byte on resolve.ts. Everything here is
  * keyless — this module sits inside relay/src/server.ts's import graph via

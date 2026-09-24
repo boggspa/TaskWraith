@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { ExecutionStepDefinition } from '../../../main/executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionArtifactRef,
+  ExecutionStepDefinition,
+  StepAttempt
+} from '../../../main/executionGraph/ExecutionGraphModel'
 import type {
   ExecutionGraphProjection,
+  ExecutionProjectionTone,
   ExecutionStepProjection
 } from '../lib/executionGraphProjection'
 
@@ -12,6 +17,11 @@ export interface ExecutionMapViewProps {
   onBack?: () => void
   onOpenThread?: (threadRef: string) => void
   onSaveGraph?: (runId: string) => void
+  /** Stop the whole execution. Absent when the caller has no cancel authority. */
+  onCancelRun?: (runId: string) => void
+  /** Offered only for a PAUSED graph: resume is meaningless while work is
+   * already in flight, and refusing on click would teach the reader nothing. */
+  onResumeRun?: (runId: string) => void
 }
 
 function executionStepKindLabel(kind: ExecutionStepDefinition['kind']): string {
@@ -37,6 +47,113 @@ function effectLabel(effect: ExecutionStepDefinition['effect']): string {
   return 'External side effect'
 }
 
+function attemptStateLabel(state: StepAttempt['state']): string {
+  switch (state) {
+    case 'created':
+      return 'Created'
+    case 'claimed':
+      return 'Claimed'
+    case 'queued':
+      return 'Queued'
+    case 'running':
+      return 'Running'
+    case 'waiting_input':
+      return 'Needs input'
+    case 'waiting_approval':
+      return 'Needs approval'
+    case 'succeeded':
+      return 'Succeeded'
+    case 'failed':
+      return 'Failed'
+    case 'cancelled':
+      return 'Cancelled'
+    case 'interrupted':
+      return 'Interrupted'
+  }
+}
+
+function artifactKindLabel(kind: ExecutionArtifactRef['kind']): string {
+  switch (kind) {
+    case 'file':
+      return 'File'
+    case 'diff':
+      return 'Diff'
+    case 'commit':
+      return 'Commit'
+    case 'report':
+      return 'Report'
+    case 'blob':
+      return 'Data'
+    case 'run':
+      return 'Run'
+    case 'project_reference':
+      return 'Project reference'
+    case 'other':
+      return 'Other'
+  }
+}
+
+/* Monoline step-kind marks, drawn in the card's tone colour inside the glyph
+ * slot — the same header anatomy (glyph, name, status pill) as the delegated
+ * wave / workflow orchestration cards, so one reading skill covers both. */
+function StepKindGlyph({ kind }: { kind: ExecutionStepDefinition['kind'] }): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      width={13}
+      height={13}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {kind === 'solo_agent' && (
+        <>
+          <circle cx="6" cy="4" r="2.1" />
+          <path d="M2.6 10c0-1.9 1.5-2.9 3.4-2.9s3.4 1 3.4 2.9" />
+        </>
+      )}
+      {kind === 'deterministic_check' && <polyline points="2.6,6.4 5,8.8 9.4,3.4" />}
+      {kind === 'human_gate' && (
+        <>
+          <path d="M4.4 3.4v5.2" />
+          <path d="M7.6 3.4v5.2" />
+        </>
+      )}
+      {kind === 'join' && <path d="M2.6 2.8 6 6.3m3.4-3.5L6 6.3M6 6.3v3.4" />}
+      {kind === 'ensemble_round' && (
+        <>
+          <circle cx="3.1" cy="3.9" r="1.25" />
+          <circle cx="8.9" cy="3.9" r="1.25" />
+          <circle cx="6" cy="8.7" r="1.25" />
+        </>
+      )}
+      {kind === 'output' && <path d="M3.6 10V2.6h4.8L6.9 4.9l1.5 2.3H3.6" />}
+    </svg>
+  )
+}
+
+/* Roll a stage's steps up to one tone + label for the stage header. Dormant
+ * steps carry the muted tone, so they are checked by activation state — a
+ * stage that has not started yet must read "Planned", never "Ended". */
+function stageRollup(steps: readonly ExecutionStepProjection[]): {
+  tone: ExecutionProjectionTone
+  label: string
+} {
+  const tones = new Set(steps.map((step) => step.statusTone))
+  if (tones.has('failure')) return { tone: 'failure', label: 'Failed' }
+  if (tones.has('attention')) return { tone: 'attention', label: 'Needs attention' }
+  if (tones.has('waiting')) return { tone: 'waiting', label: 'Waiting' }
+  if (tones.has('active')) return { tone: 'active', label: 'Running' }
+  const dormant = steps.some((step) => step.activationState === 'dormant')
+  if (tones.has('pending') || dormant) return { tone: 'pending', label: 'Planned' }
+  if (tones.has('success')) return { tone: 'success', label: 'Complete' }
+  return { tone: 'muted', label: 'Ended' }
+}
+
 function StepNode({
   step,
   selected,
@@ -58,13 +175,28 @@ function StepNode({
         data-step-id={step.stepId}
         data-step-activation-id={step.activationId ?? undefined}
       >
-        <span className="execution-map-node-topline">
-          <span className="execution-map-node-kind">{executionStepKindLabel(step.step.kind)}</span>
-          {step.isRuntimeAppended && (
-            <span className="execution-runtime-badge">Added during run</span>
-          )}
+        <span className="execution-map-node-header">
+          <span className="execution-map-node-glyph" aria-hidden="true">
+            <StepKindGlyph kind={step.step.kind} />
+          </span>
+          <span className="execution-map-node-heading">
+            <span className="execution-map-node-kind">
+              {executionStepKindLabel(step.step.kind)}
+              {step.isRuntimeAppended && (
+                <span className="execution-runtime-badge">Added during run</span>
+              )}
+            </span>
+            <span className="execution-map-node-title">{step.step.title}</span>
+          </span>
+          <span className={`execution-status-token tone-${step.statusTone}`}>
+            {step.statusLabel}
+          </span>
         </span>
-        <span className="execution-map-node-title">{step.step.title}</span>
+        {step.statusTone === 'active' && (
+          <span className="execution-map-node-meter" aria-hidden="true">
+            <span />
+          </span>
+        )}
         <span className="execution-map-node-objective">{step.step.objective}</span>
         {step.dependencies.length > 0 && (
           <span className="execution-map-node-dependencies">
@@ -73,11 +205,10 @@ function StepNode({
             ))}
           </span>
         )}
-        {step.blocker && <span className="execution-map-node-blocker">{step.blocker}</span>}
+        {step.blocker && (
+          <span className={`execution-map-node-note tone-${step.statusTone}`}>{step.blocker}</span>
+        )}
         <span className="execution-map-node-footer">
-          <span className={`execution-status-token tone-${step.statusTone}`}>
-            {step.statusLabel}
-          </span>
           <span>{effectLabel(step.step.effect)}</span>
           {step.attempts.length > 0 && (
             <span>
@@ -131,8 +262,8 @@ function StepInspector({
 
       <p className="execution-map-inspector-objective">{step.step.objective}</p>
       {step.blocker && (
-        <div className="execution-map-inspector-blocker" role="note">
-          <strong>Blocker</strong>
+        <div className={`execution-map-inspector-note tone-${step.statusTone}`} role="note">
+          <strong>{step.statusTone === 'muted' ? 'Why this ended' : 'Blocker'}</strong>
           <span>{step.blocker}</span>
         </div>
       )}
@@ -183,7 +314,7 @@ function StepInspector({
             {step.attempts.map((attempt) => (
               <li key={attempt.id}>
                 <span>Attempt {attempt.ordinal}</span>
-                <span>{attempt.state.replaceAll('_', ' ')}</span>
+                <span>{attemptStateLabel(attempt.state)}</span>
                 {attempt.error && (
                   <span className="execution-map-attempt-error">{attempt.error}</span>
                 )}
@@ -199,7 +330,7 @@ function StepInspector({
           <ul className="execution-map-inspector-list">
             {step.artifactRefs.map((artifact) => (
               <li key={artifact.id}>
-                <span>{artifact.kind.replaceAll('_', ' ')}</span>
+                <span>{artifactKindLabel(artifact.kind)}</span>
                 <code title={artifact.uri}>{artifact.uri ?? artifact.id}</code>
               </li>
             ))}
@@ -226,7 +357,9 @@ export function ExecutionMapView({
   onSelectStep,
   onBack,
   onOpenThread,
-  onSaveGraph
+  onSaveGraph,
+  onCancelRun,
+  onResumeRun
 }: ExecutionMapViewProps): JSX.Element {
   const [internalSelectedStepId, setInternalSelectedStepId] = useState<string | null>(null)
   const mapRef = useRef<HTMLElement>(null)
@@ -307,6 +440,27 @@ export function ExecutionMapView({
               Save graph
             </button>
           )}
+          {onResumeRun && projection.runState === 'requires_action' && (
+            <button
+              type="button"
+              className="execution-map-resume-run"
+              onClick={() => onResumeRun(projection.runId)}
+            >
+              Resume execution
+            </button>
+          )}
+          {onCancelRun &&
+            projection.runState !== 'succeeded' &&
+            projection.runState !== 'failed' &&
+            projection.runState !== 'cancelled' && (
+              <button
+                type="button"
+                className="execution-map-cancel-run"
+                onClick={() => onCancelRun(projection.runId)}
+              >
+                Cancel execution
+              </button>
+            )}
         </span>
       </header>
 
@@ -338,23 +492,41 @@ export function ExecutionMapView({
 
       <div className="execution-map-body">
         <ol className="execution-map-stages" aria-label="Topological execution stages">
-          {projection.stages.map((stage) => (
-            <li key={stage.index} className="execution-map-stage">
-              <section aria-labelledby={`execution-map-${projection.runId}-stage-${stage.index}`}>
-                <h2 id={`execution-map-${projection.runId}-stage-${stage.index}`}>{stage.label}</h2>
-                <ol className="execution-map-stage-steps">
-                  {stage.steps.map((step) => (
-                    <StepNode
-                      key={step.stepId}
-                      step={step}
-                      selected={selectedStep?.stepId === step.stepId}
-                      onSelect={() => handleSelect(step.stepId)}
-                    />
-                  ))}
-                </ol>
-              </section>
-            </li>
-          ))}
+          {projection.stages.map((stage) => {
+            const rollup = stageRollup(stage.steps)
+            const doneCount = stage.steps.filter((step) => step.statusTone === 'success').length
+            return (
+              <li key={stage.index} className={`execution-map-stage tone-${rollup.tone}`}>
+                <section aria-labelledby={`execution-map-${projection.runId}-stage-${stage.index}`}>
+                  <header className="execution-map-stage-header">
+                    <h2 id={`execution-map-${projection.runId}-stage-${stage.index}`}>
+                      {stage.label}
+                    </h2>
+                    {stage.steps.length > 1 && (
+                      <span className="execution-map-stage-count">
+                        {doneCount} of {stage.steps.length} done
+                      </span>
+                    )}
+                    <span
+                      className={`execution-status-token tone-${rollup.tone} execution-map-stage-status`}
+                    >
+                      {rollup.label}
+                    </span>
+                  </header>
+                  <ol className="execution-map-stage-steps">
+                    {stage.steps.map((step) => (
+                      <StepNode
+                        key={step.stepId}
+                        step={step}
+                        selected={selectedStep?.stepId === step.stepId}
+                        onSelect={() => handleSelect(step.stepId)}
+                      />
+                    ))}
+                  </ol>
+                </section>
+              </li>
+            )
+          })}
         </ol>
 
         {selectedStep && <StepInspector step={selectedStep} onOpenThread={onOpenThread} />}

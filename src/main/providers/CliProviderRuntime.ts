@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { delimiter, extname, join } from 'path'
 import { cliBinaryNameCandidates, getCliSearchDirs } from './CliSearchDirs'
+import { CapturedOutputBuffer } from './CapturedOutputBuffer'
 import { promises as fs } from 'fs'
 import os from 'os'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
@@ -8,7 +9,13 @@ import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
-import { MISTRAL_BINARY_NAME } from '../mistral/MistralCliArgs'
+import { MISTRAL_BINARY_NAME, scrubMistralCredentialEnv } from '../mistral/MistralCliArgs'
+import {
+  probeMistralVibeAuthStatus,
+  type MistralVibeAuthProbeResult
+} from '../mistral/MistralAuthStatusProbe'
+import { probeDevinCredentialState } from '../devin/DevinAuthProbe'
+import { devinAmbientApiKeyEnabled } from '../devin/devinGate'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
@@ -61,6 +68,8 @@ export interface CliProviderRuntimeDependencies {
   getCodexStatusSnapshot?: () => Promise<unknown>
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
   getKimiStatusSnapshot?: () => Promise<Record<string, unknown>>
+  probeMistralAuthStatus?: typeof probeMistralVibeAuthStatus
+  probeDevinCredentialState?: typeof probeDevinCredentialState
   resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
 }
 
@@ -581,8 +590,8 @@ export function captureProcessOutput(
   extraEnv: Record<string, string> = {}
 ): Promise<CapturedProcessOutput> {
   return new Promise((resolveCapture) => {
-    let stdout = ''
-    let stderr = ''
+    const stdout = new CapturedOutputBuffer()
+    const stderr = new CapturedOutputBuffer()
     let settled = false
     const plan = createCliSpawnPlan(command, args)
     const child = spawn(plan.command, plan.args, {
@@ -594,27 +603,37 @@ export function captureProcessOutput(
       if (settled) return
       settled = true
       child.kill()
-      resolveCapture({ stdout, stderr, code: null, timedOut: true, error: 'Timed out.' })
+      resolveCapture({
+        stdout: stdout.value(),
+        stderr: stderr.value(),
+        code: null,
+        timedOut: true,
+        error: 'Timed out.'
+      })
     }, timeoutMs)
     child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-      if (stdout.length > 80_000) stdout = stdout.slice(-80_000)
+      stdout.push(chunk.toString())
     })
     child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-      if (stderr.length > 80_000) stderr = stderr.slice(-80_000)
+      stderr.push(chunk.toString())
     })
     child.on('error', (error) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      resolveCapture({ stdout, stderr, code: null, timedOut: false, error: error.message })
+      resolveCapture({
+        stdout: stdout.value(),
+        stderr: stderr.value(),
+        code: null,
+        timedOut: false,
+        error: error.message
+      })
     })
     child.on('close', (code) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      resolveCapture({ stdout, stderr, code, timedOut: false })
+      resolveCapture({ stdout: stdout.value(), stderr: stderr.value(), code, timedOut: false })
     })
   })
 }
@@ -718,16 +737,68 @@ export async function getCliProviderStatus(
     provider === 'gemini' && deps?.getGeminiAuthStatusSnapshot
       ? await deps.getGeminiAuthStatusSnapshot().catch(() => null)
       : null
+  let version: string
+  let authState: string
+  let mistralAuthMetadata: {
+    credentialPresent?: boolean | null
+    authSource?: string | null
+    probeStatus?: MistralVibeAuthProbeResult['probeStatus']
+  } = {}
+  let devinAuthMetadata: { credentialPresent?: boolean | null; authSource?: string | null } = {}
+  if (provider === 'mistral') {
+    const probeEnv = scrubMistralCredentialEnv(
+      createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps)
+    )
+    const authProbe = await (deps?.probeMistralAuthStatus || probeMistralVibeAuthStatus)({
+      binaryPath: resolved.binaryPath,
+      env: probeEnv
+    }).catch(
+      (): MistralVibeAuthProbeResult => ({
+        authState: 'unknown',
+        credentialPresent: null,
+        authSource: null,
+        version: null,
+        probeStatus: 'failed'
+      })
+    )
+    version = authProbe.version || (await readResolvedCliVersion(resolved, deps))
+    authState = authProbe.authState
+    mistralAuthMetadata = {
+      credentialPresent: authProbe.credentialPresent,
+      authSource: authProbe.authSource,
+      probeStatus: authProbe.probeStatus
+    }
+  } else if (provider === 'devin') {
+    // Devin's credential lanes — the ambient WINDSURF_API_KEY / DEVIN_API_KEY
+    // (behind devinAmbientApiKeyEnabled) or the CLI's own credentials.toml —
+    // are observable without spawning the binary, so the card reports exactly
+    // the lane a launch would use; no `devin auth status` round-trip.
+    version = await readResolvedCliVersion(resolved, deps)
+    const devinProbe = (deps?.probeDevinCredentialState || probeDevinCredentialState)({
+      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps),
+      ambientApiKeyAllowed: devinAmbientApiKeyEnabled()
+    })
+    authState = devinProbe.authState
+    devinAuthMetadata = {
+      credentialPresent: devinProbe.credentialPresent,
+      authSource: devinProbe.authSource
+    }
+  } else {
+    version = await readResolvedCliVersion(resolved, deps)
+    authState =
+      provider === 'claude'
+        ? await readClaudeAuthState(resolved, deps)
+        : geminiAuth?.authState || 'unknown'
+  }
   return {
     provider,
     label: providerDisplayName(provider),
     available: true,
-    version: await readResolvedCliVersion(resolved, deps),
+    version,
     appServer: 'sdk-or-cli',
-    authState:
-      provider === 'claude'
-        ? await readClaudeAuthState(resolved, deps)
-        : geminiAuth?.authState || 'unknown',
+    authState,
+    ...mistralAuthMetadata,
+    ...devinAuthMetadata,
     setupRequired: false,
     binaryPath: resolved.binaryPath,
     binarySource: resolved.source,
@@ -801,7 +872,8 @@ export async function getAgentStatusSnapshotDirect(
     provider === 'grok' ||
     provider === 'pi' ||
     provider === 'mistral' ||
-    provider === 'muse'
+    provider === 'muse' ||
+    provider === 'devin'
   ) {
     // Route live local CLIs to generic status instead of the Gemini-shaped
     // snapshot below. Muse must be named here: the final else-branch would

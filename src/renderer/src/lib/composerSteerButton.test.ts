@@ -7,11 +7,11 @@ import { describe, expect, it } from 'vitest'
  * `steering:inject`. The button was removed (so the destructive Stop control
  * keeps its edge slot) but the live-steering lane itself must stay reachable
  * from the keyboard: pressing Return while a round runs now dispatches
- * `handleSteer` from the Enter handler. The queued-row Steer action is still
- * boundary-only by design (promote → wait for the run to idle → dispatch), so
- * if either gesture disappears, live injection for every provider (pi frame,
- * ACP interrupt, Cursor/Ollama broker-injection) goes dark UI-side while all
- * its main-process machinery keeps passing tests — exactly the regression
+ * `handleSteer` from the Enter handler. The queued-row Steer action also joins
+ * the same injection seam after promoting its durable job. If either gesture
+ * disappears, Pi frames, ACP interrupts, Codex native steering, Claude's
+ * PostToolBatch bridge, and the broker providers all go dark UI-side while
+ * their main-process machinery keeps passing tests — exactly the regression
  * this file pins.
  *
  * Composer has no DOM test environment, so these are source-structure
@@ -55,14 +55,24 @@ describe('composer steer gesture (solo live steering lane)', () => {
     expect(steerBranch).toContain('isCurrentChatRunning')
     expect(steerBranch).toContain("typeof handleSteer === 'function'")
     expect(steerBranch).toContain('isCurrentChatBusyForSteer')
-    expect(steerBranch).toContain('prompt.trim()')
+    expect(steerBranch).toContain('hasSendablePromptContent')
+    expect(composerSource).toContain('hasAttachmentPromptContent(prompt, imageAttachments)')
+    expect(composerSource).toContain('hasProjectReferenceContext')
+    expect(composerSource).toContain('Boolean(currentDiscordContextSelection)')
     expect(steerBranch).toContain('isSteerBusyForCurrentChat')
     expect(steerBranch).toContain('void handleSteer()')
   })
 
-  it('detached side-chat surfaces omit the handler instead of wiring a dead button', () => {
+  it('linked side-chat surfaces replace the detached default with a real steer handler', () => {
     const sideSource = readFileSync(new URL('./sideChatComposer.ts', import.meta.url), 'utf8')
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const layoutSource = readFileSync(
+      new URL('../app/views/MainAppLayout.tsx', import.meta.url),
+      'utf8'
+    )
     expect(sideSource).toContain('handleSteer: undefined')
     expect(sideSource).not.toContain('handleSteer: NOOP_SIDE_CHAT_COMPOSER_ACTION')
+    expect(layoutSource).toContain('handleSteer: handleSideSteer')
+    expect(appSource).toContain("sessionTrust: sideSelectedPermission === 'full_access'")
   })
 })

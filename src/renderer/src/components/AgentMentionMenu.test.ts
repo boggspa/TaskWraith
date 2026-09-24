@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   composerEnsembleGroupMentionCandidates,
@@ -135,18 +137,40 @@ describe('composerEnsembleGroupMentionCandidates', () => {
     expect(groups.every((candidate) => candidate.kind === 'group')).toBe(true)
   })
 
-  it('uses the neutral accent and keeps the visible token as insertion text', () => {
+  it('uses the OS-following accent and keeps the visible token as insertion text', () => {
     const [all] = composerEnsembleGroupMentionCandidates([seat('any', 1, undefined)])
 
     expect(all).toMatchObject({
       id: 'group:all',
       kind: 'group',
       name: '@All',
-      color: 'var(--user-bubble-base, var(--accent))'
+      color: 'var(--accent)'
     })
     expect(all).not.toHaveProperty('participantId')
     expect(all).not.toHaveProperty('provider')
     expect(all).not.toHaveProperty('path')
+  })
+
+  it('lists configured authority groups with enabled member counts', () => {
+    const boss = seat('boss', 1, 'worker')
+    const captain = seat('captain', 2, 'reviewer')
+    const disabledCaptain = seat('captain-disabled', 3, 'scout', false)
+    const groups = composerEnsembleGroupMentionCandidates([boss, captain, disabledCaptain], {
+      bossmanParticipantId: boss.id,
+      captainParticipantIds: [captain.id, disabledCaptain.id]
+    })
+
+    expect(groups.map((candidate) => candidate.name)).toEqual([
+      '@All',
+      '@Captains',
+      '@Management',
+      '@Workers',
+      '@Reviewers'
+    ])
+    expect(groups.find((candidate) => candidate.name === '@Captains')?.detail).toContain('1 seat')
+    expect(groups.find((candidate) => candidate.name === '@Management')?.detail).toContain(
+      '2 seats'
+    )
   })
 
   it('returns no dead group rows when every participant is disabled', () => {
@@ -171,5 +195,29 @@ describe('composerMentionParticipantColor', () => {
     expect(composerMentionParticipantColor({ provider: 'codex', model: 'gpt-5.5' })).toBe(
       'var(--provider-codex-color, var(--accent))'
     )
+  })
+})
+
+describe('AgentMentionMenu idle cost', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('./AgentMentionMenu.tsx', import.meta.url)),
+    'utf8'
+  )
+
+  it('derives candidates and resets the highlight only while the popover is open', () => {
+    // A closed menu must not walk the transcript or schedule a state update
+    // on every parent render (it was the first setState after each commit in
+    // an idle 3-pane multiview, 2026-09-05).
+    expect(source).toContain('if (!open || !chat || !provider) return EMPTY_CHILD_THREADS')
+    expect(source).toContain('if (!open) return EMPTY_MENTION_CANDIDATES')
+    expect(source).toContain(
+      '() => (open ? filterComposerMentionCandidates(candidates, query) : EMPTY_MENTION_CANDIDATES)'
+    )
+    const highlightEffect = source.indexOf('if (!cancelled) setHighlight(0)')
+    expect(highlightEffect).toBeGreaterThan(-1)
+    const guard = source.lastIndexOf('if (!open) return', highlightEffect)
+    expect(guard).toBeGreaterThan(-1)
+    expect(highlightEffect - guard).toBeLessThan(200)
+    expect(source).toContain('}, [filtered, open])')
   })
 })

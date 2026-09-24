@@ -18,6 +18,7 @@ const {
   assertStudioAcceptanceCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
   measurePackagedStudioExecution,
   assertCleanWatchdogTerminal,
@@ -89,6 +90,9 @@ const {
     options: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  measureStudioAcceptanceSource: (
+    repoRoot: string
+  ) => Promise<{ digest: string; fileCount: number }>
   measureStudioAcceptanceArtifacts: (repoRoot: string) => Promise<Record<string, any>>
   measurePackagedStudioExecution: (
     repoRoot: string,
@@ -363,6 +367,15 @@ function validWorkspaceObservation(
       )
     ]
   }
+}
+
+// Hosted runners are the slow class: the loaded macOS-Intel runner needed more
+// than 5 s just to fork and boot the detached coordinator on run 35022956246
+// (its import phase alone took 608 s). Every wait on a forked child — and the
+// per-test budgets of the cases that fork one — gets 6x there; local runs keep
+// the tight budgets so a genuine hang still fails fast.
+function CHILD_WAIT_MS(ms: number): number {
+  return process.env.CI ? ms * 6 : ms
 }
 
 const roots: string[] = []
@@ -975,7 +988,7 @@ describe('Studio acceptance harness', () => {
         const readyPromise = new Promise<Record<string, any>>((resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error('coordinator did not announce ready')),
-            5_000
+            CHILD_WAIT_MS(5_000)
           )
           coordinator.on('message', (message) => {
             if (
@@ -1020,7 +1033,10 @@ describe('Studio acceptance harness', () => {
         const exited = await Promise.race([
           exitPromise,
           new Promise<never>((_resolve, reject) =>
-            setTimeout(() => reject(new Error('unacknowledged coordinator kept running')), 2_000)
+            setTimeout(
+              () => reject(new Error('unacknowledged coordinator kept running')),
+              CHILD_WAIT_MS(2_000)
+            )
           )
         ])
         expect(exited).toEqual({ code: 1, signal: null })
@@ -1054,7 +1070,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    8_000
+    CHILD_WAIT_MS(8_000)
   )
 
   it.runIf(process.platform !== 'win32')('refuses arbitrary coordinator commands, scripts, tokens, and path overrides', () => {
@@ -1706,7 +1722,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    15_000
+    CHILD_WAIT_MS(15_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -1772,7 +1788,10 @@ describe('Studio acceptance harness', () => {
         launcherKilled = launcher.kill('SIGKILL')
         expect(launcherKilled).toBe(true)
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('launcher did not exit')), 5_000)
+          const timer = setTimeout(
+            () => reject(new Error('launcher did not exit')),
+            CHILD_WAIT_MS(5_000)
+          )
           launcher.once('exit', (_code, signal) => {
             clearTimeout(timer)
             expect(signal).toBe('SIGKILL')
@@ -1832,7 +1851,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    15_000
+    CHILD_WAIT_MS(15_000)
   )
 
   it.runIf(process.platform !== 'win32')('is plan-only by default and uses the sanctioned isolated profile posture', () => {
@@ -2506,7 +2525,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    12_000
+    CHILD_WAIT_MS(12_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -2617,7 +2636,7 @@ describe('Studio acceptance harness', () => {
         }, 'lost-ownership fixture cleanup')
       }
     },
-    12_000
+    CHILD_WAIT_MS(12_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -2659,7 +2678,7 @@ describe('Studio acceptance harness', () => {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error('owner did not exit after SIGKILL')),
-            5_000
+            CHILD_WAIT_MS(5_000)
           )
           owner.once('exit', (_code, signal) => {
             clearTimeout(timer)
@@ -5616,6 +5635,54 @@ describe('Studio acceptance harness', () => {
     })
   })
 
+  it('measures deterministic included source bytes while excluding test source', async () => {
+    const root = await temporaryRoot('studio-acceptance-source-measurement-')
+    const includedFiles: Record<string, string> = {
+      'src/main/product.ts': 'export const product = 1\n',
+      'swift/TaskWraithBridge/Sources/Studio/Studio.swift': 'struct Studio {}\n',
+      'design-assets/suite-app-icons/studio/app-icon.icns': 'fixture icon',
+      'electron.vite.config.ts': 'fixture electron config',
+      'package-lock.json': '{}\n',
+      'package.json': '{}\n',
+      'scripts/build-bridge-daemon.cjs': 'fixture bridge build',
+      'scripts/build-studio-companion.cjs': 'fixture companion build',
+      'swift/TaskWraithBridge/Package.swift': 'fixture swift package',
+      'tsconfig.json': '{}\n',
+      'tsconfig.node.json': '{}\n',
+      'tsconfig.web.json': '{}\n'
+    }
+    const excludedTestPath = 'src/main/product.test.ts'
+    const allFiles = { ...includedFiles, [excludedTestPath]: 'test source is excluded\n' }
+    await Promise.all(
+      Object.entries(allFiles).map(async ([relativePath, contents]) => {
+        const absolutePath = path.join(root, relativePath)
+        await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true })
+        await fsPromises.writeFile(absolutePath, contents)
+      })
+    )
+    const expectedEntries = Object.entries(includedFiles)
+      .map(([entryPath, contents]) => ({
+        path: entryPath,
+        sha256: crypto.createHash('sha256').update(contents).digest('hex')
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+    const expectedDigest = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(expectedEntries))
+      .digest('hex')
+
+    const baseline = await measureStudioAcceptanceSource(root)
+    expect(baseline).toEqual({ fileCount: 12, digest: expectedDigest })
+
+    await fsPromises.writeFile(path.join(root, excludedTestPath), 'changed test source\n')
+    expect(await measureStudioAcceptanceSource(root)).toEqual(baseline)
+
+    await fsPromises.writeFile(path.join(root, 'src/main/product.ts'), 'export const product = 2\n')
+    const changed = await measureStudioAcceptanceSource(root)
+    expect(changed.fileCount).toBe(baseline.fileCount)
+    expect(changed.digest).not.toBe(baseline.digest)
+  })
+
   it.runIf(process.platform !== 'win32')('builds the exact resolver-preferred debug products before selecting them', async () => {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = []
     const result = await runStudioAcceptanceBuild({
@@ -5743,7 +5810,9 @@ describe('Studio acceptance harness', () => {
           ? ''
           : args.includes('CFBundleIdentifier')
             ? 'com.chrisizatt.taskwraith\n'
-            : 'TaskWraith transcribes selected media entirely on-device.\n',
+            : args.includes('CFBundleShortVersionString') || args.includes('CFBundleVersion')
+              ? '1.9.8\n'
+              : 'TaskWraith transcribes selected media entirely on-device.\n',
       stderr: ''
     }))
 
@@ -5755,6 +5824,9 @@ describe('Studio acceptance harness', () => {
       bridgeDaemonPath:
         'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon',
       bridgeBundleIdentifier: 'com.chrisizatt.taskwraith',
+      bundleIdentifier: 'com.chrisizatt.taskwraith',
+      bundleShortVersion: '1.9.8',
+      bundleVersion: '1.9.8',
       codeSignatureVerified: true
     })
     expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
@@ -5769,7 +5841,75 @@ describe('Studio acceptance harness', () => {
     expect(after.bundleIdentityDigest).not.toBe(before.bundleIdentityDigest)
   })
 
-  it('measures the pinned live-build source and support custody from the workspace', async () => {
+  it('binds the bridge helper identity to the packaged app for the debut identity', async () => {
+    const root = await temporaryRoot('studio-packaged-bridge-identity-')
+    const appRoot = path.join(root, 'dist/mac-arm64/TaskWraith.app')
+    const executablePath = path.join(appRoot, 'Contents/MacOS/TaskWraith')
+    const bridgeInfoPlist = path.join(
+      appRoot,
+      'Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist'
+    )
+    for (const filePath of [
+      executablePath,
+      path.join(appRoot, 'Contents/Info.plist'),
+      path.join(appRoot, 'Contents/Resources/app.asar'),
+      path.join(
+        appRoot,
+        'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+      ),
+      path.join(
+        appRoot,
+        'Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      ),
+      bridgeInfoPlist
+    ]) {
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
+      await fsPromises.writeFile(filePath, path.basename(filePath))
+    }
+    const plutil = (app: Record<string, string>, bridge: Record<string, string>) =>
+      vi.fn(async (command: string, args: string[]) => {
+        if (command !== '/usr/bin/plutil') return { stdout: '', stderr: '' }
+        const source = args.includes(bridgeInfoPlist) ? bridge : app
+        return { stdout: `${source[args[1]] ?? 'usage description'}\n`, stderr: '' }
+      })
+    const debut = {
+      CFBundleIdentifier: 'com.taskwraith.desktop',
+      CFBundleShortVersionString: '0.1.0',
+      CFBundleVersion: '0.1.0'
+    }
+
+    const aligned = await measurePackagedStudioExecution(root, executablePath, {
+      execFile: plutil(debut, debut)
+    })
+    expect(aligned).toMatchObject({
+      bundleIdentifier: 'com.taskwraith.desktop',
+      bundleShortVersion: '0.1.0',
+      bundleVersion: '0.1.0',
+      bridgeBundleIdentifier: 'com.taskwraith.desktop'
+    })
+
+    // A helper still carrying the pre-pack beta default must be rejected once
+    // the parent app has been debuted.
+    const staleBridge = {
+      CFBundleIdentifier: 'com.chrisizatt.taskwraith',
+      CFBundleShortVersionString: '1.9.8',
+      CFBundleVersion: '1.9.8'
+    }
+    await expect(
+      measurePackagedStudioExecution(root, executablePath, {
+        execFile: plutil(debut, staleBridge)
+      })
+    ).rejects.toThrow(
+      /bridge CFBundleIdentifier com\.chrisizatt\.taskwraith does not share the app bundle CFBundleIdentifier com\.taskwraith\.desktop/
+    )
+    await expect(
+      measurePackagedStudioExecution(root, executablePath, {
+        execFile: plutil(debut, { ...debut, CFBundleVersion: '0.1.0.1' })
+      })
+    ).rejects.toThrow(/bridge CFBundleVersion 0\.1\.0\.1 does not share the app bundle CFBundleVersion 0\.1\.0/)
+  })
+
+  it('measures current source shape and separately pinned support custody from the workspace', async () => {
     const receipt = await measureStudioAcceptanceCustody({
       repoRoot: path.resolve(__dirname, '..'),
       env: {},
@@ -5779,8 +5919,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '2debc73cbb715e8b1c6d5d65458eb4fb6f4fcffcc537248bceaf8cffb73c39cb',
-      sourceCount: 2284,
+      sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      sourceCount: expect.any(Number),
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,
@@ -5791,6 +5931,8 @@ describe('Studio acceptance harness', () => {
       companionSha256: null,
       bridgeDaemonSha256: null
     })
+    expect(Number.isSafeInteger(receipt.sourceCount)).toBe(true)
+    expect(receipt.sourceCount).toBeGreaterThan(0)
     expect(receipt.supportHashes).toEqual(receipt.expectedSupportHashes)
     expect(receipt.runnerSha256).toMatch(/^[a-f0-9]{64}$/)
     expect(receipt.protectedPathScope.buildInputExactPaths).toContain(
@@ -5861,6 +6003,14 @@ describe('Studio acceptance harness', () => {
     expect(assertStudioAcceptanceCustody(sourceCustody, { phase: 'source', expected })).toBe(
       sourceCustody
     )
+    expect(() =>
+      assertStudioAcceptanceCustody(sourceCustody, {
+        phase: 'before-run',
+        sourceCustody,
+        fixture,
+        expected
+      })
+    ).toThrow(/built artifact custody is invalid/)
     expect(
       assertStudioAcceptanceCustody(custodyBefore, {
         phase: 'before-run',

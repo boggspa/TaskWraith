@@ -42,6 +42,27 @@ describe('CompactToolTrace', () => {
     expect(html).toContain('wrote 1 line')
   })
 
+  it('keeps the same per-call diff odometer as a full-density ActivityRow', () => {
+    const html = renderToStaticMarkup(
+      <CompactToolTrace
+        activity={makeActivity({
+          toolName: 'replace',
+          parameters: {
+            file_path: '/repo/src/foo.ts',
+            old_string: 'before',
+            new_string: 'after\nand another line'
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('compact-tool-trace-diff-stats')
+    expect(html).toContain('activity-line-stat activity-line-stat-add')
+    expect(html).toContain('activity-line-stat activity-line-stat-delete')
+    expect(html).toMatch(/aria-label="\+2"|sr-only">\+2</)
+    expect(html).toMatch(/aria-label="-1"|sr-only">-1</)
+  })
+
   it('starts collapsed with no foldout markup in the DOM', () => {
     const html = renderToStaticMarkup(<CompactToolTrace activity={makeActivity()} />)
     expect(html).not.toContain('compact-tool-trace-foldout')

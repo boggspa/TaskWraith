@@ -17,10 +17,18 @@ export interface BuildRendererDiagnosticClientSampleInput {
   performance: RendererDiagnosticPerformance
   activeChatId?: string | null
   activeChatMessageCount?: number
+  /** Live DOM element count; callers read it from the document they sample. */
+  domNodeCount?: number | null
   chatUpdates: RendererChatUpdateClientCounters
 }
 
 function finiteBytes(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined
+}
+
+function finiteCount(value: number | null | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : undefined
@@ -34,6 +42,7 @@ export function buildRendererDiagnosticClientSample(
   const v8HeapUsedBytes = finiteBytes(memory?.usedJSHeapSize)
   const v8HeapTotalBytes = finiteBytes(memory?.totalJSHeapSize)
   const v8HeapLimitBytes = finiteBytes(memory?.jsHeapSizeLimit)
+  const domNodeCount = finiteCount(input.domNodeCount)
   return {
     ...(typeof input.activeChatId === 'string' && input.activeChatId
       ? { activeChatId: input.activeChatId }
@@ -42,6 +51,7 @@ export function buildRendererDiagnosticClientSample(
     ...(v8HeapUsedBytes !== undefined ? { v8HeapUsedBytes } : {}),
     ...(v8HeapTotalBytes !== undefined ? { v8HeapTotalBytes } : {}),
     ...(v8HeapLimitBytes !== undefined ? { v8HeapLimitBytes } : {}),
+    ...(domNodeCount !== undefined ? { domNodeCount } : {}),
     chatUpdates: { ...input.chatUpdates }
   }
 }

@@ -45,6 +45,35 @@ function visibleText(html: string): string {
 }
 
 describe('CollapsedActivityStackRow diff totals', () => {
+  it('does not render a zero-step disclosure for all-hidden infrastructure activity', () => {
+    const html = renderToStaticMarkup(
+      <CollapsedActivityStackRow
+        header={null}
+        activities={[
+          {
+            id: 'init-1',
+            toolName: 'antigravity_init',
+            displayName: 'Used AntiGravity Init',
+            category: 'unknown',
+            status: 'success'
+          },
+          {
+            id: 'generic-1',
+            toolName: 'generic',
+            displayName: 'Used Generic',
+            category: 'unknown',
+            status: 'success'
+          }
+        ]}
+        expanded={false}
+        onToggle={() => {}}
+      />
+    )
+
+    expect(html).toBe('')
+    expect(html).not.toContain('0 activity steps')
+  })
+
   it('scopes the summary and expanded children to the resolved provider brand hue', () => {
     const html = renderToStaticMarkup(
       <CollapsedActivityStackRow
@@ -216,5 +245,135 @@ describe('CollapsedTranscriptRow metaLabel verb accent', () => {
     )
     expect(fanout).toContain('class="collapsed-activity-stack-meta">Fan-Out</span>')
     expect(fanout).not.toContain('activity-summary-verb">Fan-Out')
+  })
+})
+
+describe('the inert one-liner (Minimal)', () => {
+  const row = (canExpand: boolean, expanded = true) =>
+    renderToStaticMarkup(
+      <CollapsedTranscriptRow
+        header={null}
+        label="Ran 2 commands"
+        ariaTargetLabel="2 activity steps"
+        diffStats={{ additions: 42, deletions: 18, estimated: false }}
+        expanded={expanded}
+        onToggle={() => {}}
+        canExpand={canExpand}
+      >
+        <div>EXPANDED-BODY</div>
+      </CollapsedTranscriptRow>
+    )
+
+  it('renders no button and no aria-expanded', () => {
+    // A node announced as expandable that does nothing is worse for a screen
+    // reader than no control at all.
+    const inert = row(false)
+    expect(inert).not.toContain('<button')
+    expect(inert).not.toContain('aria-expanded')
+    // Positive control: the expandable form really does emit both, so the
+    // assertions above are filtering rather than passing over absent markup.
+    const expandable = row(true)
+    expect(expandable).toContain('<button')
+    expect(expandable).toContain('aria-expanded')
+  })
+
+  it('keeps children closed even when expanded is true', () => {
+    // The headline behaviour. `expanded` can be stale from a previous view or
+    // set by a caller that has not been taught about Minimal; the row must not
+    // open regardless.
+    expect(row(false, true)).not.toContain('EXPANDED-BODY')
+    expect(row(true, true)).toContain('EXPANDED-BODY')
+  })
+
+  it('does not claim to be expanded on the wrapper either', () => {
+    // `.is-expanded` drives the chevron rotation and a margin; firing it on a
+    // row with nothing open leaves a rotated arrow pointing at no content.
+    expect(row(false, true)).toContain('is-collapsed')
+    expect(row(false, true)).not.toContain('is-expanded')
+    expect(row(true, true)).toContain('is-expanded')
+  })
+
+  it('drops the disclosure affordances: chevron, title, aria-label', () => {
+    const inert = row(false)
+    expect(inert).not.toContain('collapsed-activity-stack-chevron')
+    expect(inert).not.toContain('title=')
+    expect(inert).not.toContain('aria-label')
+    const expandable = row(true)
+    expect(expandable).toContain('collapsed-activity-stack-chevron')
+    expect(expandable).toContain('title=')
+    expect(expandable).toContain('aria-label')
+  })
+
+  it('is not a tab stop', () => {
+    // Under Minimal the transcript is a WALL of these rows. Making each one
+    // focusable with no operation behind it would leave the keyboard path
+    // strictly worse than Standard (WCAG 2.4.3).
+    //
+    // The load-bearing assertion is the ELEMENT, not the attributes. An
+    // expandable row is a native `<button>`, which is a tab stop without
+    // carrying either `tabindex` or `role` — so asserting the inert row lacks
+    // those two proves nothing on its own, because the expandable row lacks
+    // them too. `<button` is the only thing that actually differs.
+    expect(row(false)).not.toContain('<button')
+    expect(row(true)).toContain('<button')
+
+    // Kept as forward guards, deliberately without a positive control: they
+    // catch someone making the inert DIV focusable by hand, which is the only
+    // other way this row becomes a tab stop. Neither can be positively
+    // controlled against the expandable row, for the reason above.
+    expect(row(false)).not.toContain('tabindex')
+    expect(row(false)).not.toContain('role=')
+  })
+
+  it('keeps the diff counters in the accessibility tree', () => {
+    // CollapsedDiffStats is aria-hidden and the counters normally ride the
+    // button's accessible name. With no button there is no name to ride, so
+    // without an sr-only span `+42 −18` would vanish for a screen reader
+    // while staying visible on screen.
+    const inert = row(false)
+    expect(inert).toContain('sr-only')
+    expect(inert).toContain('42 lines added')
+    expect(inert).toContain('18 lines removed')
+    // Positive control: the expandable form carries the same text, on the
+    // button's aria-label instead.
+    expect(row(true)).toContain('42 lines added')
+  })
+
+  it('marks the wrapper so the CSS can drop the pointer affordances', () => {
+    expect(row(false)).toContain('is-inert')
+    expect(row(true)).not.toContain('is-inert')
+    // The base block is written for a <button>; `cursor: pointer` is the one
+    // declaration that actively lies on a div.
+    expect(css).toContain('.collapsed-activity-stack-summary {')
+    expect(css).toContain('cursor: pointer;')
+    // `css.slice(css.indexOf(missing))` is `css.slice(-1)` — the LAST
+    // CHARACTER, never ''. The old `not.toBe('')` precondition could not fail,
+    // so a renamed selector would have sailed through. Assert the index first.
+    const inertStart = css.indexOf(
+      '.collapsed-activity-stack.is-inert .collapsed-activity-stack-summary {'
+    )
+    expect(inertStart).toBeGreaterThan(-1)
+    const inertBlock = css.slice(inertStart, css.indexOf('}', inertStart))
+    expect(inertBlock).toContain('cursor: default;')
+  })
+
+  it('stays expandable by default, so every untaught caller is unchanged', () => {
+    // System notices, super-group leads, the child-agent spawn block and the
+    // fan-out headers all deliberately keep today's behaviour under Minimal —
+    // they never pass the prop.
+    const untaught = renderToStaticMarkup(
+      <CollapsedTranscriptRow
+        header={null}
+        label="System · workspace changed"
+        ariaTargetLabel="system notice"
+        expanded
+        onToggle={() => {}}
+      >
+        <div>NOTICE-BODY</div>
+      </CollapsedTranscriptRow>
+    )
+    expect(untaught).toContain('<button')
+    expect(untaught).toContain('NOTICE-BODY')
+    expect(untaught).not.toContain('is-inert')
   })
 })

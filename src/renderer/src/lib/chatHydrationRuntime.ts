@@ -96,6 +96,23 @@ export function createChatHydrationRuntime(options?: {
   }
 }
 
+/**
+ * Resolve one renderer-lifetime runtime from a React-style ref.
+ *
+ * `useRef(createChatHydrationRuntime())` still evaluates the factory on every
+ * render. That is especially dangerous for the transcript store because a
+ * discarded runtime can accidentally become the active hook binding. Keeping
+ * the lazy initialization in this helper makes the one-allocation invariant
+ * explicit and independently testable.
+ */
+export function getOrCreateChatHydrationRuntime(
+  ref: { current: ChatHydrationRuntime | null },
+  createRuntime: () => ChatHydrationRuntime = createChatHydrationRuntime
+): ChatHydrationRuntime {
+  if (ref.current === null) ref.current = createRuntime()
+  return ref.current
+}
+
 /** Fields to spread into `reconcileChatRefMap` (budget active by default). */
 export function reconcileHydrationOptions(runtime: ChatHydrationRuntime): {
   maxHydratedMessageBytes: number

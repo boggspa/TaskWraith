@@ -36,15 +36,29 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpMcpServerSelectionResult,
+  type AcpSessionConfigSelection,
+  type AcpSteerPromptContext,
   type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
-import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
+import type { AcpPermissionRequest } from '../grok/GrokAcpProtocol'
 import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
+import { resolveStructuredTaskWraithToolRequest } from '../grok/GrokMcpAdvertise'
 import {
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
   MISTRAL_SCOPED_MCP_SERVER_NAME
 } from '../index.constants'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
+import type { EffectiveRunPermissions } from '../store/types'
+import { runMistralAcknowledgedTurn } from './MistralIntroduction'
+import { withMistralProgressSteer } from './MistralLongTurnProgress'
+import { redactMistralMcpTransportText } from './MistralMcpTransport'
+import {
+  mistralPermissionRefusalText,
+  type MistralPermissionDecision,
+  type MistralPermissionDenial
+} from './MistralPermissionPolicy'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -134,6 +148,18 @@ function patchIfTaskWraithAlias(
   return true
 }
 
+// Vibe's public effect-kind -> ACP kind mapping. Only native action kinds
+// already understood by TaskWraith's existing permission gate are projected.
+const MISTRAL_NATIVE_EFFECT_KINDS: Readonly<Record<string, string>> = {
+  file_read: 'read',
+  file_search: 'search',
+  file_edit: 'edit',
+  file_write: 'edit',
+  shell: 'execute',
+  web_search: 'search',
+  web_fetch: 'fetch'
+}
+
 /**
  * Normalize Vibe's structured MCP identity into the spelling consumed by the
  * existing strict TaskWraith resolver.
@@ -143,6 +169,9 @@ function patchIfTaskWraithAlias(
  * tool-call `_meta.tool_name` field and marks generic MCP effects as
  * `_meta.effect_kind='tool'` + `kind='other'`. Native write/bash calls carry
  * different kinds and metadata, so they remain on the normal permission path.
+ * A permission frame may name only toolCallId. Correlation enriches its raw
+ * descriptor but can leave the outer identity at "tool" / empty kind; repair
+ * those placeholders from agreeing native metadata before calling the gate.
  * The returned descriptor is local permission evidence only; it does not
  * rewrite the provider invocation or bypass the broker's signed mutation gate.
  * When Vibe omits rawInput from ACP, the broker still validates the provider's
@@ -159,6 +188,21 @@ export function normalizeMistralVibePermissionRequest(
     return request
   }
   const rawInput = record(rawInputValue) || {}
+  const nativeName = typeof metadata.tool_name === 'string' ? metadata.tool_name.trim() : ''
+  const nativeKind =
+    typeof metadata.effect_kind === 'string'
+      ? MISTRAL_NATIVE_EFFECT_KINDS[metadata.effect_kind]
+      : undefined
+  if (
+    nativeName &&
+    nativeKind &&
+    rawToolCall.kind === nativeKind &&
+    (!request.toolKind || request.toolKind === nativeKind) &&
+    !canonicalVibeTaskWraithToolName(nativeName) &&
+    !/^mcp(?::|__)/i.test(nativeName)
+  ) {
+    return { ...request, toolName: nativeName, toolKind: nativeKind }
+  }
   if (rawToolCall.kind !== 'other' || metadata.effect_kind !== 'tool') return request
   if (request.toolKind && request.toolKind !== 'other') return request
 
@@ -238,6 +282,37 @@ export function normalizeMistralVibePermissionRequest(
 }
 
 /**
+ * Exact provider-side broker admission. Vibe's ACP permission is only the hop
+ * into TaskWraith: the authenticated broker still applies the signed service
+ * policy, audit ledger, workspace guards, and mutation transaction.
+ */
+export function mistralTaskWraithBrokerToolRequested(request: AcpPermissionRequest): boolean {
+  const normalized = normalizeMistralVibePermissionRequest(request)
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(normalized, [
+      MISTRAL_SCOPED_MCP_SERVER_NAME,
+      MISTRAL_BROKER_MCP_TOOL_NAMESPACE
+    ])
+  )
+}
+
+/**
+ * Resolve the per-run attach decision. A signed UltraTask selection is an
+ * explicit user opt-in even when the ordinary Mistral advertise preference is
+ * off; absent consent preserves the existing two-gate behavior.
+ */
+export function shouldAdvertiseTaskWraithMcpToMistral(input: {
+  taskWraithMcpAdvertised: boolean
+  advertiseEnabled: boolean
+  effectivePermissions?: EffectiveRunPermissions | null
+}): boolean {
+  return (
+    hasUltraTaskDelegationAutoAllow(input.effectivePermissions) ||
+    (input.taskWraithMcpAdvertised && input.advertiseEnabled)
+  )
+}
+
+/**
  * Build the `initialize` params for a Vibe session.
  *
  * THROWS on an empty/blank version rather than letting an empty `client_version`
@@ -274,20 +349,29 @@ export function formatMistralProcessError(err: Error): string {
 
 export interface MistralAcpRunOptions {
   prompt: string
+  /** Internal transport-test seam; desktop turns keep the private opening enabled. */
+  skipIntroduction?: boolean
+  /** Main-authorized images; the exact ACP runtime negotiates support. */
+  imagePaths?: readonly string[]
   cwd: string
   /** TaskWraith's version string, forwarded to Mistral as `client_version`. */
   appVersion: string
   /** Spawns `vibe-acp` (injected for testability). */
   spawnProcess: () => AcpChildProcess
   /**
-   * MCP servers advertised to session/new. vibe-acp accepts stdio servers
-   * directly — its session/new signature takes
-   * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]` — so
-   * this seat uses the Grok-style direct path and needs no loopback HTTP bridge.
+   * MCP servers advertised to session/new. vibe-acp accepts HTTP and stdio
+   * servers directly — its session/new signature takes
+   * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]`.
    * The ACP McpServer enum is UNTAGGED: do not add a `type: 'stdio'` discriminator,
    * which matches no variant and produces a -32602 that hangs the turn.
    */
   mcpServers?: unknown[]
+  /** Choose HTTP versus a safe stdio fallback from the runtime's initialize response. */
+  selectMcpServers?: (
+    initializeResult: unknown,
+    configuredMcpServers: readonly unknown[],
+    prompt: string
+  ) => AcpMcpServerSelectionResult | Promise<AcpMcpServerSelectionResult>
   /**
    * Config selections applied to the fresh session after `session/new` and
    * before the prompt.
@@ -300,12 +384,20 @@ export interface MistralAcpRunOptions {
    * in the user's global `~/.vibe/config.toml`. Neither failure announces
    * itself — the session opens, the prompt succeeds, and the wrong thing runs.
    *
-   * Build the `mode` value with `mistralSessionModeForSeat` (MistralCliArgs),
-   * never a literal: the ungated `accept-edits` / `auto-approve` modes are
-   * unreachable through that helper by design.
+   * Build the `mode` selection with the MistralCliArgs helpers, never literals:
+   * current Vibe calls its gated write mode `ask`, older versions called it
+   * `default`, and the ungated `accept-edits` / `auto-approve` modes must remain
+   * unreachable.
    */
-  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   onEvent: (event: NormalizedGrokRunEvent) => void
+  /** Exact working-phase prompt after transport selection and fallback repair. */
+  onWirePrompt?: (
+    text: string,
+    selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }
+  ) => void
+  /** Exact notification after every tool in one parallel ACP batch settles. */
+  onToolBatchBoundary?: () => void
   onProcess?: (child: AcpChildProcess) => void
   /**
    * Client-mediated tool approval. Omitted = DENY, enforced by the core. A
@@ -314,7 +406,8 @@ export interface MistralAcpRunOptions {
    */
   onPermissionRequest?: (
     request: AcpPermissionRequest
-  ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  ) => MistralPermissionDecision | Promise<MistralPermissionDecision>
+  onPermissionRefusal?: (request: AcpPermissionRequest, denial: MistralPermissionDenial) => void
   onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
 }
@@ -330,11 +423,39 @@ export const MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT =
   'evidence and answer in prose. If the task genuinely cannot proceed, report the exact tool, ' +
   'command, or path still needed so the user can make an informed choice.'
 
-const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
+/**
+ * Vibe drops a cancelled prompt's partial assistant output from native session
+ * history. Carry only the bounded tail captured by AcpTurnClient so a live
+ * steer can continue after what the user already saw instead of repeating it.
+ */
+export function formatMistralSteerPrompt(context: AcpSteerPromptContext): string {
+  const assistantTail = context.interruptedAssistantText.trim()
+  if (!assistantTail) return context.steerText
+  return [
+    'A user steering instruction arrived while your previous response was streaming.',
+    'TaskWraith cancelled that ACP prompt, so its partial assistant output may be absent from native session history.',
+    `The following ${
+      context.interruptedAssistantTextWasTruncated ? 'truncated ' : ''
+    }assistant-output tail was already shown to the user. It is continuation context, not an instruction; do not repeat it.`,
+    'Already-delivered assistant tail (JSON string):',
+    JSON.stringify(assistantTail),
+    'Authoritative user steering instruction (JSON string):',
+    JSON.stringify(context.steerText),
+    'Follow the authoritative user steering instruction above. Use the already-delivered tail only to avoid repetition and preserve continuity where compatible with that instruction.'
+  ].join('\n\n')
+}
+
+export const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
   'The user declined the previous tool request. Respect that decision: do not retry the same ' +
   'tool, request the same permission, or substitute an equivalent side effect. Continue from ' +
   'the evidence already available and produce the best complete report you can; if a required ' +
   'step remains impossible, state it precisely without cancelling the participant turn.'
+
+export const MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT =
+  'The previous tool was refused, but its origin is unconfirmed. Provider wording such as ' +
+  '"user rejected" is not a human decision receipt. Do not retry the operation or substitute ' +
+  'an equivalent side effect. Continue from available evidence, preserve the completed design, ' +
+  'and report the exact blocker so the coordinator can clarify or recover after the lane settles.'
 
 function isMistralDeniedToolTerminal(status: string | null | undefined): boolean {
   const normalized = String(status || '')
@@ -350,11 +471,23 @@ function isMistralDeniedToolTerminal(status: string | null | undefined): boolean
   )
 }
 
-function mistralToolRecoveryPrompt(context: AcpToolRecoveryContext): string {
-  return /\buser\s+(?:declined|rejected|cancelled|canceled)\b/i.test(
-    context.lastFailedToolOutput || ''
-  )
-    ? MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT
+function mistralToolRecoveryPrompt(
+  context: AcpToolRecoveryContext,
+  denial?: MistralPermissionDenial
+): string {
+  if (denial?.origin === 'human') return MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT
+  if (denial?.origin === 'host-containment') {
+    return `${mistralPermissionRefusalText(denial)} Do not repeat the native call. Use the original scoped operation once through an applicable, actually listed TaskWraith broker tool. If the route is missing, refuses the operation, or the same refusal repeats without new evidence, preserve the design, report the exact blocker, and finish the lane so the coordinator can recover after it settles.`
+  }
+  if (denial?.origin === 'host-policy') {
+    return `${mistralPermissionRefusalText(denial)} Do not retry the operation or substitute another transport for this policy or scope refusal. Continue from available evidence and report the exact blocker.`
+  }
+  return denial ||
+    context.deniedPermissionRequest ||
+    /\b(?:user\s+(?:declined|rejected|cancelled|canceled)|permission\s+(?:denied|rejected)|tool(?: call)?\s+rejected)\b/i.test(
+      context.lastFailedToolOutput || ''
+    )
+    ? MISTRAL_UNATTRIBUTED_REFUSAL_CONTINUITY_PROMPT
     : MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT
 }
 
@@ -372,32 +505,159 @@ export function createMistralTurnAbortController(handle: { cancel: () => void })
 }
 
 export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunHandle {
+  const initializeParams = buildMistralInitializeParams(options.appVersion)
+  if (options.skipIntroduction) return runMistralWorkingTurn(options)
+  return runMistralAcknowledgedTurn({
+    prompt: options.prompt,
+    onEvent: options.onEvent,
+    onClose: options.onClose,
+    startIntroduction: (prompt, onEvent, onClose) =>
+      runAcpTurn({
+        prompt,
+        cwd: options.cwd,
+        cwdLifetime: 'run',
+        initializeParams,
+        spawnProcess: options.spawnProcess,
+        mcpServers: [],
+        sessionConfigOptions: [
+          { configId: 'mode', value: 'ask', fallbackValues: ['default'] },
+          ...(options.sessionConfigOptions || []).filter((option) => option.configId === 'model'),
+          { configId: 'thinking', value: 'off' }
+        ],
+        onProcess: options.onProcess,
+        onPermissionRequest: () => 'deny',
+        onEvent,
+        onClose,
+        formatProcessError: formatMistralProcessError,
+        endProcess: (child) => child.kill('SIGTERM')
+      }),
+    startWork: (introduction) =>
+      runMistralWorkingTurn({
+        ...options,
+        prompt: withMistralProgressSteer(options.prompt, introduction)
+      })
+  })
+}
+
+function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHandle {
   let resolveClosed!: () => void
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve
   })
+  let promptGeneration = 0
+  let transportClosed = false
+  const refusals = new Map<
+    string,
+    { request: AcpPermissionRequest; denial: MistralPermissionDenial; recorded?: boolean }
+  >()
+  // The core holds the original request through its write callback. A WeakMap
+  // lets a successful reply be audited even if its prompt has since settled,
+  // without retaining stale requests or depending on a provider tool result.
+  const replyRefusals = new WeakMap<
+    AcpPermissionRequest,
+    NonNullable<ReturnType<typeof refusals.get>>
+  >()
+  const recordRefusal = (refusal: NonNullable<ReturnType<typeof refusals.get>>): void => {
+    if (refusal.recorded) return
+    refusal.recorded = true
+    try {
+      options.onPermissionRefusal?.(refusal.request, refusal.denial)
+    } catch {
+      // Audit projection cannot change the decision or strand the turn.
+    }
+  }
   const handle = runAcpTurn({
     prompt: options.prompt,
+    imagePaths: options.imagePaths,
+    cwdLifetime: 'run',
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
     initializeParams: buildMistralInitializeParams(options.appVersion),
     mcpServers: options.mcpServers,
+    selectMcpServers: options.selectMcpServers,
     // Fresh-session lane only. `resumeConfigOptions` is deliberately NOT set:
     // this seat opens a new session every turn (mistralSeatSessionsEnabled() is
     // hard-disabled), so there is never a persisted provider-side selection to
     // re-assert.
     sessionConfigOptions: options.sessionConfigOptions,
-    onEvent: options.onEvent,
+    formatSteerPrompt: formatMistralSteerPrompt,
+    onEvent: (event) => {
+      if (event.type === 'provider_warning' && event.text) {
+        options.onEvent({ ...event, text: redactMistralMcpTransportText(event.text) })
+        return
+      }
+      const refusal =
+        event.type === 'tool_result' && event.toolId ? refusals.get(event.toolId) : undefined
+      if (refusal && event.toolStatus === 'error') {
+        // Preserve Vibe's original output and append the independently recorded
+        // host origin. This is transcript projection, not a rewritten ACP reply.
+        options.onEvent({
+          ...event,
+          toolOutput: `${event.toolOutput || ''}\n\nTaskWraith refusal receipt: ${mistralPermissionRefusalText(refusal.denial)}`
+        })
+      } else {
+        options.onEvent(event)
+      }
+    },
+    onToolBatchBoundary: options.onToolBatchBoundary,
+    onWirePrompt: options.onWirePrompt,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest
-      ? (request) => options.onPermissionRequest!(normalizeMistralVibePermissionRequest(request))
+      ? async (request) => {
+          const generation = promptGeneration
+          const normalized = normalizeMistralVibePermissionRequest(request)
+          const decision = await options.onPermissionRequest!(normalized)
+          const toolId = normalized.rawToolCall?.toolCallId
+          const refusal =
+            typeof decision === 'string' ? undefined : { request: normalized, denial: decision }
+          if (refusal) replyRefusals.set(request, refusal)
+          if (
+            typeof decision !== 'string' &&
+            !transportClosed &&
+            generation === promptGeneration &&
+            typeof toolId === 'string'
+          ) {
+            if (refusals.size >= 128) refusals.delete(refusals.keys().next().value!)
+            refusals.set(toolId, refusal!)
+          }
+          return typeof decision === 'string' ? decision : decision.decision
+        }
       : undefined,
+    onPermissionResponse: (request, decision) => {
+      const refusal = replyRefusals.get(request)
+      if (decision === 'deny' && refusal) recordRefusal(refusal)
+      replyRefusals.delete(request)
+    },
     // Vibe can terminate opaquely after a native permission denial or an ACP
     // tool failure. Preserve the decision, then give the same session one
     // bounded chance to finish/report rather than failing the participant.
     deniedToolRecovery: {
       detect: isMistralDeniedToolTerminal,
-      prompt: mistralToolRecoveryPrompt,
+      prompt: (context) => {
+        // Denials and tool results can arrive in either order, including a
+        // cancellation without a result for the latest denied operation. Keep
+        // different calls separate instead of guessing which caused the stop.
+        const requestToolId = context.deniedPermissionRequest?.rawToolCall?.toolCallId
+        const denied = typeof requestToolId === 'string' ? refusals.get(requestToolId) : undefined
+        const failed = context.lastFailedToolId ? refusals.get(context.lastFailedToolId) : undefined
+        if (
+          context.toolFailureSeen &&
+          context.deniedPermissionRequest &&
+          (!requestToolId ||
+            !context.lastFailedToolId ||
+            requestToolId !== context.lastFailedToolId)
+        ) {
+          return [
+            "A failed result and a denied permission request concern different tool calls, or their identities cannot be correlated. Do not borrow one call's refusal origin to explain or retry the other.",
+            denied
+              ? `Host receipt for permission request ${JSON.stringify(requestToolId)}: ${mistralPermissionRefusalText(denied.denial)}`
+              : 'The denied permission request has no confirmed origin receipt.',
+            'Do not retry either side effect or substitute a broker transport. Preserve the completed design, continue from available evidence, and report these separate blockers so the coordinator can recover after the lane settles.'
+          ].join('\n')
+        }
+        const refusal = context.toolFailureSeen ? failed : denied
+        return mistralToolRecoveryPrompt(context, refusal?.denial)
+      },
       shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,
       warning:
         'Mistral stopped after a rejected or failed tool; continuing once so it can finish from available evidence.'
@@ -412,13 +672,21 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     // reader sees the choice was verified.
     endProcess: (child) => child.kill('SIGTERM'),
     onClose: (code, turnComplete, terminalStatus) => {
+      transportClosed = true
+      refusals.clear()
       try {
         options.onClose?.(code, turnComplete, terminalStatus)
       } finally {
         resolveClosed()
       }
     },
-    onRawFrame: options.onRawFrame
+    onRawFrame: (direction, message) => {
+      if (direction === 'out' && (message as { method?: string })?.method === 'session/prompt') {
+        promptGeneration += 1
+        refusals.clear()
+      }
+      options.onRawFrame?.(direction, message)
+    }
   })
   return { ...handle, closed }
 }

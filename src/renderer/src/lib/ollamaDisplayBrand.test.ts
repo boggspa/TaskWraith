@@ -18,9 +18,19 @@ describe('resolveOllamaDisplayBrand', () => {
       providerClass: 'alibaba',
       modelLabel: 'Qwen 3.8 (27B-MLX)'
     })
+    expect(resolveOllamaDisplayBrand('qwen3.8-flash-next:125b-mlx')).toMatchObject({
+      providerLabel: 'Alibaba',
+      providerClass: 'alibaba',
+      modelLabel: 'Qwen 3.8 Flash Next (125B-MLX)'
+    })
     expect(resolveOllamaDisplayBrand('ornith:35b', 'Ornith 1.0 (35B Param)')).toMatchObject({
       providerLabel: 'Deep Reinforce',
       providerClass: 'deep-reinforce'
+    })
+    expect(resolveOllamaDisplayBrand('ornith-1.5:35b')).toMatchObject({
+      providerLabel: 'Deep Reinforce',
+      providerClass: 'deep-reinforce',
+      modelLabel: 'Ornith 1.5 (35B Param)'
     })
     expect(resolveOllamaDisplayBrand('gemma4:12b', 'Gemma 4 (12B Param)')).toMatchObject({
       providerLabel: 'Google',
@@ -33,6 +43,11 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('granite4.1:30b', 'Granite 4.1 (30B Param)')).toMatchObject({
       providerLabel: 'IBM',
       providerClass: 'ibm'
+    })
+    expect(resolveOllamaDisplayBrand('granite4.2:8b')).toMatchObject({
+      providerLabel: 'IBM',
+      providerClass: 'ibm',
+      modelLabel: 'Granite 4.2 (8B Param)'
     })
     expect(resolveOllamaDisplayBrand('lfm2.5:8b', 'LFM 2.5 (8B-A1B)')).toMatchObject({
       providerLabel: 'Liquid',
@@ -67,6 +82,11 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Mistral',
       providerClass: 'mistral'
     })
+    expect(resolveOllamaDisplayBrand('mistral-medium-3.5:128b')).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral',
+      modelLabel: 'Mistral Medium 3.5 (128B Param)'
+    })
     expect(resolveOllamaDisplayBrand('ministral-3:14b', 'Ministral 3 (14B Param)')).toMatchObject({
       providerLabel: 'Mistral',
       providerClass: 'mistral'
@@ -85,6 +105,11 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('rnj-1')?.providerLabel).toBe('Essential AI')
     expect(resolveOllamaDisplayBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
     expect(resolveOllamaDisplayBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
+    expect(resolveOllamaDisplayBrand('glm-5.3-flash:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai',
+      modelLabel: 'GLM 5.3 Flash'
+    })
     expect(resolveOllamaDisplayBrand('glm-5.2:cloud')).toMatchObject({
       providerLabel: 'Z.ai',
       providerClass: 'zai',
@@ -93,12 +118,27 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('minimax-m3:cloud')).toMatchObject({
       providerLabel: 'MiniMax',
       providerClass: 'minimax',
-      modelLabel: 'MiniMax M3'
+      modelLabel: 'M3'
     })
     expect(resolveOllamaDisplayBrand('kimi-k2.7-code:cloud')).toMatchObject({
       providerLabel: 'Kimi',
       providerClass: 'kimi',
-      modelLabel: 'Kimi K2.7 Code'
+      modelLabel: 'K2.7 Code'
+    })
+    expect(resolveOllamaDisplayBrand('deepseek-v4-pro:cloud')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelLabel: 'V4 Pro'
+    })
+    expect(resolveOllamaDisplayBrand('deepseek-v4-flash:cloud')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelLabel: 'V4 Flash'
+    })
+    expect(resolveOllamaDisplayBrand('gemma4:cloud')).toMatchObject({
+      providerLabel: 'Google',
+      providerClass: 'google',
+      modelLabel: 'Gemma 4'
     })
   })
 
@@ -162,6 +202,7 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe('nvidia')
     expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
     expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
+    expect(resolveProviderHueClass('ollama', 'glm-5.3-flash:cloud')).toBe('zai')
     expect(resolveProviderHueClass('ollama', 'glm-5.2:cloud')).toBe('zai')
     expect(resolveProviderHueClass('ollama', 'minimax-m3:cloud')).toBe('minimax')
     expect(resolveProviderHueClass('ollama', 'kimi-k3:cloud')).toBe('kimi')
@@ -201,6 +242,17 @@ describe('resolveProviderHueClass — Pi BYOK upstreams', () => {
     expect(resolveProviderHueClass('pi', 'groq/openai/gpt-oss-120b')).toBe('groq')
   })
 
+  it('uses the original provider hue for nested OpenRouter free models', () => {
+    expect(resolveProviderHueClass('pi', 'openrouter/cohere/north-mini-code:free')).toBe('cohere')
+    expect(resolveProviderHueClass('pi', 'openrouter/minimax/minimax-m3:free')).toBe('minimax')
+    expect(resolveProviderHueClass('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      'thinkingmachines'
+    )
+    expect(resolveProviderHueClass('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'thinkingmachines'
+    )
+  })
+
   it('reuses the existing qwen hue for qwen-token-plan', () => {
     expect(resolveProviderHueClass('pi', 'qwen-token-plan/qwen3.7-max')).toBe('qwen')
     // Same class the Ollama lane resolves Qwen to — one brand, one colour.
@@ -238,6 +290,17 @@ describe('resolveProviderBrandLabel', () => {
     expect(resolveProviderBrandLabel('pi', 'deepseek/deepseek-v4-flash')).toBe('DeepSeek')
     expect(resolveProviderBrandLabel('pi', 'groq/openai/gpt-oss-120b')).toBe('Groq')
     expect(resolveProviderBrandLabel('pi', 'qwen-token-plan/qwen3.7-max')).toBe('Qwen')
+  })
+
+  it('returns the original provider brand for nested OpenRouter free models', () => {
+    expect(resolveProviderBrandLabel('pi', 'openrouter/cohere/north-mini-code:free')).toBe('Cohere')
+    expect(resolveProviderBrandLabel('pi', 'openrouter/minimax/minimax-m3:free')).toBe('MiniMax')
+    expect(resolveProviderBrandLabel('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      'Thinking Machines'
+    )
+    expect(resolveProviderBrandLabel('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'Thinking Machines'
+    )
   })
 
   it('returns null for non-branded providers and unresolvable models', () => {

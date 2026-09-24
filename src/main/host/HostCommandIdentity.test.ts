@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { HOST_PROTOCOL_MAX_ID, type HostClientClass } from '../../shared/hostProtocol'
 import {
+  HOST_COMMAND_ACTION_ID_PREFIX,
   HOST_APPROVAL_ID_LEGACY_ALIAS,
   HOST_APPROVAL_ID_MIGRATION_ALIAS,
   HOST_QUESTION_ID_LEGACY_ALIAS,
@@ -14,6 +15,7 @@ import {
   mintHostIdempotencyKey,
   parseHostIdempotencyKey,
   resolveHostApprovalId,
+  resolveHostCommandActionId,
   resolveHostQuestionId,
   type HostTransportVerifiedClientContext
 } from './HostCommandIdentity'
@@ -53,6 +55,14 @@ function iosContext(
     actorId: 'ios-pair-subject-9',
     subjectId: 'pair-9',
     ...overrides
+  }
+}
+
+function hostCliContext(): HostTransportVerifiedClientContext {
+  return {
+    clientClass: 'host-cli',
+    clientId: 'taskwraith-host-cli',
+    actorId: 'taskwraith-host-cli'
   }
 }
 
@@ -134,8 +144,30 @@ describe('isSafeHostIdentifier', () => {
   })
 })
 
+describe('resolveHostCommandActionId', () => {
+  it('accepts only the canonical Host command action form', () => {
+    const actionId = `${HOST_COMMAND_ACTION_ID_PREFIX}${FIXED_UUID_A}`
+    expect(resolveHostCommandActionId(actionId)).toBe(actionId)
+  })
+
+  it.each([
+    undefined,
+    null,
+    '',
+    FIXED_UUID_A,
+    `phone:command:${FIXED_UUID_A}`,
+    'host:command:AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+    `host:command:${FIXED_UUID_A}:extra`,
+    ` host:command:${FIXED_UUID_A}`,
+    'host:command:not-a-uuid',
+    'host:command:' + 'a'.repeat(HOST_PROTOCOL_MAX_ID)
+  ])('rejects non-Host, noncanonical, or unsafe correlation %#', (value) => {
+    expect(resolveHostCommandActionId(value)).toBeUndefined()
+  })
+})
+
 describe('hostActorIdentityFromVerifiedContext', () => {
-  it('builds actor identity for Desktop-local, authenticated TUI, and paired iOS', () => {
+  it('builds actor identity for Desktop, TUI, paired iOS, and the local Host CLI', () => {
     const classes: Array<{
       label: string
       context: HostTransportVerifiedClientContext
@@ -143,7 +175,8 @@ describe('hostActorIdentityFromVerifiedContext', () => {
     }> = [
       { label: 'desktop-local', context: desktopContext(), clientClass: 'desktop' },
       { label: 'authenticated-tui', context: tuiContext(), clientClass: 'tui' },
-      { label: 'paired-ios', context: iosContext(), clientClass: 'ios' }
+      { label: 'paired-ios', context: iosContext(), clientClass: 'ios' },
+      { label: 'host-cli', context: hostCliContext(), clientClass: 'host-cli' }
     ]
 
     for (const row of classes) {
@@ -221,7 +254,7 @@ describe('mintHostCommandId / mintHostIdempotencyKey', () => {
   })
 
   it('mints bounded clientClass:clientId:uuid idempotency keys', () => {
-    for (const context of [desktopContext(), tuiContext(), iosContext()]) {
+    for (const context of [desktopContext(), tuiContext(), iosContext(), hostCliContext()]) {
       const minted = mintHostIdempotencyKey(context, () => FIXED_UUID_B)
       expect(minted.ok, context.clientClass).toBe(true)
       if (!minted.ok) continue

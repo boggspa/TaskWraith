@@ -111,101 +111,12 @@
   text-overflow: ellipsis;
   font-size: calc(var(--font-size-xs) - 1px);
 }
-
-/* ----- Live invocation panel (Inspector tab) ----- */
-.background-tasks-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  font-size: var(--font-size-sm);
-}
-.background-tasks-panel-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.background-tasks-panel-title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-.background-tasks-panel-count {
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-.background-tasks-panel-empty {
-  color: var(--text-tertiary);
-  font-size: var(--font-size-xs);
-  padding: 12px 0;
-  text-align: center;
-  border: 1px dashed color-mix(in srgb, var(--panel-border) 60%, transparent);
-  border-radius: var(--radius-md);
-}
-.background-tasks-panel-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.background-task-row-button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  background: transparent;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
-  border-radius: 8px;
-  font: inherit;
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  text-align: left;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.background-task-row-button:hover {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  border-color: color-mix(in srgb, var(--panel-border) 80%, transparent);
-}
-.background-task-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-}
 .background-task-row.state-running .background-task-avatar {
   animation: background-task-pulse 1.6s ease-in-out infinite;
 }
 @keyframes background-task-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.65; transform: scale(0.92); }
-}
-.background-task-name {
-  font-weight: 600;
-}
-.background-task-role {
-  color: var(--text-tertiary);
-  font-size: calc(var(--font-size-xs) - 1px);
-}
-.background-task-elapsed {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-  font-size: calc(var(--font-size-xs) - 1px);
-}
-.background-task-state {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 /* ----- Inline @-mention chip ----- */
@@ -1294,6 +1205,19 @@
 }
 .approval-grant-revoke {
   flex: 0 0 auto;
+}
+
+.command-rule-admin {
+  margin-top: 14px;
+}
+.command-rule-command {
+  color: var(--text-primary);
+  font: 600 12px/1.45 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.command-rule-risk {
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 .approval-ledger-controls {
   display: grid;
@@ -2539,13 +2463,13 @@
   .first-launch-sheet-provider-card-label {
   color: color-mix(in srgb, var(--provider-claude-color) 78%, var(--text-primary));
 }
-.first-launch-sheet-provider-card[data-provider="gemini"] {
-  border-color: color-mix(in srgb, var(--provider-gemini-color) 38%, var(--surface-border));
-  background: color-mix(in srgb, var(--provider-gemini-color) 6%, transparent);
+.first-launch-sheet-provider-card[data-provider="muse"] {
+  border-color: color-mix(in srgb, var(--provider-muse-color) 38%, var(--surface-border));
+  background: color-mix(in srgb, var(--provider-muse-color) 6%, transparent);
 }
-.first-launch-sheet-provider-card[data-provider="gemini"]
+.first-launch-sheet-provider-card[data-provider="muse"]
   .first-launch-sheet-provider-card-label {
-  color: color-mix(in srgb, var(--provider-gemini-color) 78%, var(--text-primary));
+  color: color-mix(in srgb, var(--provider-muse-color) 78%, var(--text-primary));
 }
 .first-launch-sheet-provider-card[data-provider="kimi"] {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 38%, var(--surface-border));
@@ -2617,8 +2541,8 @@
 .first-launch-sheet-provider-card[data-provider="claude"] {
   --card-accent: var(--provider-claude-color);
 }
-.first-launch-sheet-provider-card[data-provider="gemini"] {
-  --card-accent: var(--provider-gemini-color);
+.first-launch-sheet-provider-card[data-provider="muse"] {
+  --card-accent: var(--provider-muse-color);
 }
 .first-launch-sheet-provider-card[data-provider="kimi"] {
   --card-accent: var(--provider-kimi-color);
@@ -2647,15 +2571,6 @@
     0 0 0 1px color-mix(in srgb, var(--card-accent, rgba(255, 255, 255, 0.5)) 30%, transparent),
     0 6px 22px color-mix(in srgb, var(--card-accent, rgba(255, 255, 255, 0.5)) 16%, transparent);
   transform: translateY(-1px);
-}
-.first-launch-sheet-provider-card-optional-badge {
-  font-size: 0.7em;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-tertiary);
 }
 .first-launch-sheet-provider-card-status {
   display: flex;
@@ -3162,10 +3077,6 @@
 :root[data-theme='light'] .first-launch-sheet-helper-kbd,
 .theme-light .first-launch-sheet-helper-kbd {
   background: rgba(0, 0, 0, 0.08);
-}
-:root[data-theme='light'] .first-launch-sheet-provider-card-optional-badge,
-.theme-light .first-launch-sheet-provider-card-optional-badge {
-  background: rgba(0, 0, 0, 0.06);
 }
 :root[data-theme='light'] .first-launch-sheet-preference-card,
 .theme-light .first-launch-sheet-preference-card,
@@ -4047,249 +3958,10 @@
   box-shadow: none;
 }
 
-/* ─── Phase K1B: RunInspector ─────────────────────────────────────────── */
-/* Dense, professional, keyboard-navigable timeline view of a single run.
-   All styling is scoped under `.run-inspector` to avoid collisions with
-   Codex's parallel Slice 1A work on RunCard / ActiveRunsSection. */
-
-.run-inspector {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  outline: none;
-  font-size: 13px;
-  color: var(--sidebar-text, #1a1a1a);
-}
-
-.run-inspector__header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--sidebar-border, #d0d0d0) 50%, transparent);
-  flex-wrap: wrap;
-}
-
-.run-inspector__header-titles {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.run-inspector__title {
-  font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.7;
-}
-
-.run-inspector__run-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  background: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 6%, transparent);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.run-inspector__duration {
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-.run-inspector__header-stats {
-  display: flex;
-  gap: 6px;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-}
-
-.run-inspector__header-actions {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.run-inspector__pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1.4;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-.run-inspector__pill--ok {
-  background: color-mix(in srgb, #2da44e 14%, transparent);
-  color: #2da44e;
-  border-color: color-mix(in srgb, #2da44e 30%, transparent);
-}
-.run-inspector__pill--warn {
-  background: color-mix(in srgb, #d29922 14%, transparent);
-  color: #b8860b;
-  border-color: color-mix(in srgb, #d29922 30%, transparent);
-}
-.run-inspector__pill--idle {
-  background: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 6%, transparent);
-  color: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 70%, transparent);
-  border-color: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 12%, transparent);
-}
-.run-inspector__pill--info {
-  background: color-mix(in srgb, #0969da 14%, transparent);
-  color: #0969da;
-  border-color: color-mix(in srgb, #0969da 30%, transparent);
-}
-
-.run-inspector__error,
-.run-inspector__empty {
-  margin: 12px 14px;
-}
-
-.run-inspector__rows {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-
-.run-inspector__row {
-  display: grid;
-  grid-template-columns: 22px 64px 90px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 14px;
-  cursor: pointer;
-  line-height: 1.35;
-}
-
-.run-inspector__row:hover {
-  background: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 4%, transparent);
-}
-
 .run-inspector__row.is-selected {
   background: color-mix(in srgb, #0969da 10%, transparent);
   /* Full-perimeter rim (not a left-edge sliver) for the selected run row. */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #0969da 55%, transparent);
-}
-
-.run-inspector__row-glyph {
-  text-align: center;
-  font-size: 12px;
-  opacity: 0.75;
-}
-
-.run-inspector__row-time {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-  opacity: 0.55;
-  white-space: nowrap;
-}
-
-.run-inspector__row-kind {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  opacity: 0.6;
-  white-space: nowrap;
-}
-
-.run-inspector__row-summary {
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.run-inspector__row-chips {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-}
-
-.run-inspector__chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  background: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--sidebar-text, #1a1a1a) 14%, transparent);
-  color: inherit;
-  font-family: inherit;
-  cursor: default;
-  line-height: 1.3;
-}
-
-.run-inspector__chip--link {
-  cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-.run-inspector__chip--link:hover {
-  background: color-mix(in srgb, #0969da 14%, transparent);
-  border-color: color-mix(in srgb, #0969da 30%, transparent);
-  color: #0969da;
-}
-
-.run-inspector__chip--more {
-  opacity: 0.6;
-}
-
-/* Per-kind row accent tints — subtle left-of-glyph hue so the eye can
-   scan the timeline for clusters of approvals, sub-threads, errors. */
-.run-inspector__row--approval_request .run-inspector__row-glyph,
-.run-inspector__row--approval_response .run-inspector__row-glyph {
-  color: #0969da;
-}
-.run-inspector__row--subthread_spawn .run-inspector__row-glyph,
-.run-inspector__row--subthread_return .run-inspector__row-glyph {
-  color: #6f42c1;
-}
-.run-inspector__row--provider_error .run-inspector__row-glyph,
-.run-inspector__row--subthread_dispatch_failed .run-inspector__row-glyph {
-  color: #cf222e;
-}
-.run-inspector__row--reply .run-inspector__row-glyph {
-  color: #2da44e;
-}
-
-/* Bottom-pinned shortcut hints — appears only when there are rows to
-   navigate. Density matches the rest of the inspector. */
-.run-inspector__keyboard-hints {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--sidebar-border, #d0d0d0) 38%, transparent);
-  font-size: 11px;
-  opacity: 0.7;
-  flex-wrap: wrap;
-}
-
-.run-inspector__keyboard-hints kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  padding: 0 4px;
-  border: 1px solid color-mix(in srgb, var(--sidebar-text, #1a1a1a) 18%, transparent);
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--sidebar-text, #1a1a1a) 5%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.run-inspector__keyboard-hints span:not(.run-inspector__keyboard-hints-sep) {
-  margin-right: 4px;
-}
-
-.run-inspector__keyboard-hints-sep {
-  opacity: 0.5;
-  margin: 0 2px;
 }
 
 /* ── PairingSheet ─────────────────────────────────────────────────────
@@ -7804,10 +7476,6 @@
     0 0 24px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-[data-theme="alabaster"] .app-transcript .welcome-hero p {
-  color: rgba(18, 21, 27, 0.58);
-}
-
 [data-theme="alabaster"] .welcome-workspace-picker-label {
   color: rgba(18, 21, 27, 0.52);
 }
@@ -7904,10 +7572,6 @@
     0 1px 0 rgba(255, 255, 255, 0.82),
     0 0 12px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 22%, transparent),
     0 0 24px color-mix(in srgb, var(--workspace-name-glow-color, var(--accent)) 12%, transparent);
-}
-
-[data-theme="obsidian"] .app-transcript .welcome-hero p {
-  color: rgba(250, 247, 243, 0.64);
 }
 
 [data-theme="obsidian"] .welcome-workspace-picker-label {
@@ -8583,86 +8247,16 @@
  *      indicator hue.
  * ============================================================ */
 
-/* 1) Textarea rect — lighter fill + more pronounced rim.
- *    Beats the earlier `!important` rules at lines 14943 + 15045
- *    by also using `!important`. */
-[data-composer-style="claude"] .composer-textarea {
-  background: #1e1e1e !important;
-  border-color: rgba(255, 255, 255, 0.18) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-textarea {
-  background: #f0f0f3 !important;
-  border-color: rgba(0, 0, 0, 0.14) !important;
-}
-
-/* Focus-within glow tunes up with the brighter rim. */
-[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
-  border-color: rgba(255, 255, 255, 0.30) !important;
-  box-shadow:
-    0 4px 22px rgba(0, 0, 0, 0.36),
-    0 0 0 1px rgba(255, 255, 255, 0.18) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
-  border-color: rgba(0, 0, 0, 0.26) !important;
-  box-shadow:
-    0 4px 22px rgba(0, 0, 0, 0.12),
-    0 0 0 1px rgba(0, 0, 0, 0.10) !important;
-}
-
-/* 2) Send / stop / queue / steer buttons → bottom-right of the
- *    textarea rect instead of top-right. The earlier rule (line
- *    14147-14152) anchored to top:12px; we override to land at
- *    the bottom edge of the textarea rect by offsetting from
- *    surface bottom enough to clear the control-footer. */
-[data-composer-style="claude"] .composer-action-btn.run-btn,
-[data-composer-style="claude"] .composer-action-btn.stop-btn,
-[data-composer-style="claude"] .composer-action-btn.steer-btn {
-  top: auto !important;
-  bottom: calc(82px + var(--claude-send-button-lift, 0px)) !important;
-  right: 14px !important;
-}
-
-/* Claude positions the send affordance inside the textarea while the rest
- * of its controls sit in the footer. Keep the cluster as the positioned
- * object and reset the child button to normal flow so the hover/focus box,
- * pointer target, and glyph share the same coordinate system. */
-[data-composer-style="claude"]
-  .composer-surface:not(.side-chat-composer)
-  .composer-send-cluster {
-  --claude-send-cluster-lift: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  position: absolute;
-  right: 14px;
-  bottom: calc(82px + var(--claude-send-cluster-lift));
-  z-index: 4;
-}
-
-[data-composer-style="claude"]
-  .composer-surface:not(.side-chat-composer)
-  .composer-send-cluster
-  > .composer-action-btn {
-  position: static !important;
-  inset: auto !important;
-  top: auto !important;
-  right: auto !important;
-  bottom: auto !important;
-  transform: none;
-  width: 35px;
-  height: 35px;
-  min-width: 35px;
-  border-radius: 10px;
-}
+/* 1) Textarea rect + 2) send/stop placement now live in the "Claude Desktop
+ *    composer parity" section at the end of shard 10. */
 
 /* Claude, Obsidian, and Alabaster place the send/stop affordance inside
  * the textarea rectangle. Reserve text-flow space on the right edge so
  * long lines wrap before they pass under the overlaid glyph. Other composer
  * shells keep their normal full-width textarea. */
 [data-composer-style="claude"] .composer-surface:not(.side-chat-composer) {
-  --composer-inline-send-affordance-inset: 62px;
+  /* Claude Desktop: 32px send button 8px inside the box = a 40px text notch. */
+  --composer-inline-send-affordance-inset: 40px;
 }
 
 [data-composer-style="obsidian"] .composer-surface:not(.side-chat-composer),
@@ -8769,39 +8363,13 @@
   color: #d1242f;
 }
 
-/* 4) Permissions picker as a contained "Auto"-style button.
- *    Replaces the earlier transparent-pill treatment (line 13540)
- *    with a soft rounded-rect button matching real Claude's
- *    permission-mode pill. */
-[data-composer-style="claude"] [data-composer-control="permission"] {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: var(--radius-md, 8px);
-  padding: 3px 10px;
-  color: rgba(255, 255, 255, 0.92);
-}
+/* 4) Permissions picker: 24px ghost text button — parity section, shard 10. */
 
-[data-composer-style="claude"] [data-composer-control="permission"]:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] [data-composer-control="permission"] {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.10);
-  color: rgba(29, 29, 31, 0.92);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] [data-composer-control="permission"]:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.16);
-}
-
-/* 5) Context donut → Claude's blue indicator hue.
- *    Was `color: #e6a960` (amber, line 14096) — real Claude
- *    renders the context spinner in a soft cyan-blue. */
+/* 5) Context donut → Claude Desktop's context-ring blue (#2a78d6). Kept at
+ *    (0,2,0) so the shared warn/critical severity tints in shard 07 still
+ *    win; geometry lives in the parity section of shard 10. */
 [data-composer-style="claude"] .context-wheel {
-  color: #5d9eff;
+  color: #2a78d6;
 }
 
 /* ============================================================
@@ -8915,6 +8483,24 @@
   white-space: nowrap;
 }
 
+/* Composer real estate (every shell): the model trigger reads
+ * logo · model · effort — the provider NAME is hidden. It stays in the DOM
+ * for assistive tech, the popover and the tests that pin it, so this is a
+ * one-rule revert. Scoped to the composer's model trigger only: seat-change
+ * rows and transcript attribution chips reuse these classes and keep their
+ * names. Exception: an Ollama Cloud row carries its upstream brand (MiniMax,
+ * GLM, Kimi, …) only in the label, because the logo beside it is Ollama's —
+ * keep the name whenever the cloud indicator is present. */
+.composer-combined-picker-trigger[data-composer-control="model"]
+  .composer-combined-picker-trigger-provider-label {
+  display: none;
+}
+.composer-combined-picker-trigger[data-composer-control="model"]
+  .composer-combined-picker-trigger-provider:has(.composer-combined-picker-trigger-cloud-indicator)
+  .composer-combined-picker-trigger-provider-label {
+  display: inline;
+}
+
 .composer-combined-picker-trigger-cloud-indicator {
   width: 13px;
   height: 13px;
@@ -8941,6 +8527,8 @@
 .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
   .composer-combined-picker-trigger-suffix,
 .composer-combined-picker-trigger[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix,
+.composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   position: relative;
   display: inline-block;
@@ -8990,6 +8578,9 @@
   .composer-combined-picker-trigger-suffix,
 [data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix,
+[data-reduce-motion="true"]
+  .composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   animation: none;
   background-image: none;
@@ -9112,6 +8703,9 @@
   .composer-combined-picker-trigger-suffix,
 :is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
   .composer-combined-picker-trigger[data-selected-reasoning="ultra"]
+  .composer-combined-picker-trigger-suffix,
+:is([data-composer-style="obsidian"], [data-composer-style="alabaster"])
+  .composer-combined-picker-trigger[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix {
   animation: none !important;
   color: color-mix(in srgb, var(--chip-accent, #b088e8) 80%, var(--text-primary) 20%) !important;
@@ -9122,11 +8716,18 @@
   ) !important;
 }
 
-/* Light themes — bright brand hues (Cursor gold, Codex lavender) fall below
- * WCAG 4.5:1 on the near-white chip at the dark-theme mixes above, so the
- * light mixes lean much harder on theme ink: the hue reads as a cast, the
- * label stays legible. (Dark themes keep the richer mixes — bright accents
- * on dark pass comfortably.) */
+/* Light themes — this block only has to TAPER the ladder toward the top tier,
+ * not retreat into theme ink. Provider accents are minted to relative
+ * luminance 0.179, so a 100% hue is ~4.6:1 on a near-white chip and the
+ * Max/Ultra gradient below already ships at that. The earlier 14/20/26/28%
+ * mixes left every sub-Max tier sitting at 10-11:1 — measured in the running
+ * app at chroma 30/29/38 against a plain label ink of chroma 9, i.e. no
+ * visible ladder at all, while Max kept the full brand hue. These mixes climb
+ * instead, and stay ink-led at the bottom so the rise reads as a rise.
+ * Max/Ultra/Ultracode/UltraTask are deliberately not referenced here.
+ * The Extra High sweep brightens toward the accent rather than toward paper:
+ * the dark gradient highlights toward white, which on a near-white chip would
+ * erase the word instead of sweeping across it. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="low"]
   .composer-combined-picker-trigger-suffix,
@@ -9136,35 +8737,31 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="on"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(
-    in srgb,
-    var(--chip-accent, #8e6fd8) 14%,
-    color-mix(in srgb, var(--text-primary) 62%, transparent)
-  );
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 42%, var(--text-primary) 58%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 14%,
-    color-mix(in srgb, var(--text-primary) 62%, transparent)
+    var(--chip-accent, #8e6fd8) 42%,
+    var(--text-primary) 58%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="medium"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 20%, var(--text-primary) 80%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 64%, var(--text-primary) 36%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 20%,
-    var(--text-primary) 80%
+    var(--chip-accent, #8e6fd8) 64%,
+    var(--text-primary) 36%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="high"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 26%, var(--text-primary) 74%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 82%, var(--text-primary) 18%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 26%,
-    var(--text-primary) 74%
+    var(--chip-accent, #8e6fd8) 82%,
+    var(--text-primary) 18%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
@@ -9172,21 +8769,21 @@
   .composer-combined-picker-trigger-suffix {
   background-image: linear-gradient(
     100deg,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 0%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 34%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 38%, var(--text-primary) 62%) 50%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 66%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 100%
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 34%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 96%, var(--text-primary) 4%) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 66%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 100%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 28%,
-    var(--text-primary) 72%
+    var(--chip-accent, #8e6fd8) 88%,
+    var(--text-primary) 12%
   );
 }
 
@@ -9269,33 +8866,41 @@
   max-width: min(500px, calc(100vw - 16px));
 }
 
-/* iOS-parity all-provider model picker: a fixed-height, independently
- * scrollable grouped model rail on the left; the current model's reasoning /
- * Fast sidecar stays fixed on the right. */
+/* All-provider model picker, as provider tabs: an icon rail of providers on the
+ * left, the active provider's models in a fixed-height, independently
+ * scrollable list beside it, and the current model's reasoning / Fast sidecar
+ * fixed on the right. The height fits today's eleven provider tabs without the
+ * rail scrolling; more tabs scroll the rail. */
 .composer-combined-picker-popover.is-unified-provider-picker {
-  width: min(420px, calc(100vw - 16px));
-  min-width: min(420px, calc(100vw - 16px));
-  max-width: min(420px, calc(100vw - 16px));
-  height: min(322px, calc(100vh - 24px));
-  max-height: min(322px, calc(100vh - 24px));
+  --provider-tab-size: 26px;
+  --provider-tab-gap: 2px;
+  /* tab + 4px either side (room for the current-model dot) + the divider gap */
+  --provider-tab-rail-w: calc(var(--provider-tab-size) + 12px);
+  display: grid;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
+  grid-template-rows: minmax(0, 1fr);
+  width: min(452px, calc(100vw - 16px));
+  min-width: min(452px, calc(100vw - 16px));
+  max-width: min(452px, calc(100vw - 16px));
+  height: min(334px, calc(100vh - 24px));
+  max-height: min(334px, calc(100vh - 24px));
   box-sizing: border-box;
   overflow: hidden;
 }
 .composer-combined-picker-popover.is-unified-provider-picker
   .composer-combined-picker-models.is-unified-model-list {
-  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+  padding-top: 2px;
+  overflow: hidden;
 }
 .composer-combined-picker-popover.is-unified-provider-picker
   .composer-combined-picker-reasoning {
-  flex: 0 0 112px;
-  min-width: 112px;
+  min-width: 0;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -9797,59 +9402,254 @@
   color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
 }
 
-.composer-combined-picker-provider-group {
-  padding: 2px 0 6px;
-}
-.composer-combined-picker-provider-group + .composer-combined-picker-provider-group {
-  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
-  margin-top: 4px;
-  padding-top: 6px;
-}
-.composer-combined-picker-provider-header {
+/* Provider tab rail — one icon tab per provider in its own column. A click (or
+ * ↑/↓ with the rail focused) swaps the list beside it; nothing commits until a
+ * row is picked. */
+.composer-combined-picker-provider-tabs {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  padding: 3px 10px 4px;
-  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  gap: var(--provider-tab-gap);
+  min-height: 0;
+  margin-right: 4px;
+  padding: 4px 0;
+  border-right: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
-.composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header {
-  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 76%, var(--text-primary));
+.composer-combined-picker-provider-tabs::-webkit-scrollbar {
+  display: none;
 }
-.composer-combined-picker-provider-header-icon,
-.composer-combined-picker-provider-header-icon .sidebar-provider-icon {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-provider-tabs {
+  border-right-color: var(--surface-border);
+}
+/* ONE selection pill that glides between tabs and re-tints to each provider,
+ * so a switch reads as movement rather than a repaint. Positioned from the
+ * rail's own index variable — declarative, no measurement. */
+.composer-combined-picker-provider-tab-indicator {
+  --provider-tab-indicator-accent: var(--accent);
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: var(--provider-tab-size);
+  height: var(--provider-tab-size);
+  margin-left: calc(var(--provider-tab-size) / -2);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--provider-tab-indicator-accent) 17%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-tab-indicator-accent) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  transform: translateY(
+    calc(var(--provider-tab-active-index, 0) * (var(--provider-tab-size) + var(--provider-tab-gap)))
+  );
+  pointer-events: none;
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+:root[data-reduce-motion="true"] .composer-combined-picker-provider-tab-indicator {
+  transition: none;
+}
+.composer-combined-picker-provider-tab {
+  --provider-tab-accent: var(--accent);
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
+  flex: 0 0 var(--provider-tab-size);
+  width: var(--provider-tab-size);
+  height: var(--provider-tab-size);
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 120ms ease;
 }
-.composer-combined-picker-provider-header-icon
-  .sidebar-provider-icon
-  > :is(svg, .provider-brand-logo) {
-  display: block;
-  width: 13px;
-  height: 13px;
+.composer-combined-picker-provider-tab .sidebar-provider-icon,
+.composer-combined-picker-provider-tab .provider-brand-logo {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
 }
-.composer-combined-picker-provider-header-label {
+.composer-combined-picker-provider-tab .provider-brand-logo {
+  opacity: 0.8;
+  transition: opacity 120ms ease;
+}
+.composer-combined-picker-provider-tab:hover:not(.is-active):not(:disabled) {
+  background: color-mix(in srgb, var(--provider-tab-accent) 9%, transparent);
+}
+.composer-combined-picker-provider-tab:hover .provider-brand-logo,
+.composer-combined-picker-provider-tab.is-active .provider-brand-logo {
+  opacity: 1;
+}
+.composer-combined-picker-provider-tab:disabled {
+  cursor: default;
+}
+.composer-combined-picker-provider-tabs.is-focused .composer-combined-picker-provider-tab.is-active,
+.composer-combined-picker-provider-tab:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--provider-tab-accent) 64%, transparent);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+/* Dock-style dot: where the CURRENT model lives while another tab is browsed. */
+.composer-combined-picker-provider-tab.is-current::after {
+  content: "";
+  position: absolute;
+  left: -3.5px;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--provider-tab-accent) 82%, var(--text-primary));
+  box-shadow: 0 0 4px color-mix(in srgb, var(--provider-tab-accent) 55%, transparent);
+}
+.composer-combined-picker-provider-tab.is-paused .provider-brand-logo {
+  opacity: 0.42;
+  filter: grayscale(1);
+}
+.composer-combined-picker-provider-tab-paused {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-warning, #d29922);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--tw-glass-solid) 80%, transparent);
+}
+.composer-combined-picker-provider-tab-paused::before,
+.composer-combined-picker-provider-tab-paused::after {
+  content: "";
+  width: 1.5px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+/* Tab panel: the active provider's name, runtime line and any pause, said once
+ * above its independently scrolling rows. */
+.composer-combined-picker-tab-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 24px;
+  padding: 4px 10px;
+  font-family: var(--font-sans);
+}
+.composer-combined-picker-tab-panel-title {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 78%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.composer-combined-picker-tab-panel-subtitle {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  color: var(--text-tertiary);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.065em;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
-.composer-combined-picker-provider-header .composer-provider-paused-pill {
+.composer-combined-picker-tab-panel-header .composer-provider-paused-pill {
+  align-self: center;
+}
+.composer-combined-picker-tab-panel-rows {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 2px 4px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+.composer-combined-picker-tab-panel-rows > .composer-combined-picker-row {
+  flex: 0 0 auto;
+}
+/* The list arrives from the side of the tab you came from. No fill-mode: the
+ * resting state IS the `to` frame, so an unfocused window never parks it
+ * invisible (see 02-transcript-messages-fx.css). */
+.composer-combined-picker-tab-panel-rows[data-enter="down"] {
+  animation: tw-provider-tab-panel-enter-down 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.composer-combined-picker-tab-panel-rows[data-enter="up"] {
+  animation: tw-provider-tab-panel-enter-up 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tw-provider-tab-panel-enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tw-provider-tab-panel-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+:root[data-reduce-motion="true"] .composer-combined-picker-tab-panel-rows {
+  animation: none;
+}
+/* Brand sub-groups inside a tab (Ollama Cloud + local brands, Pi upstreams). */
+.composer-combined-picker-tab-panel-subhead {
+  --composer-ollama-brand-color: var(--provider-ollama-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 10px 3px;
+  color: color-mix(in srgb, var(--composer-ollama-brand-color) 62%, var(--text-secondary));
+  font-size: 10px;
+  font-weight: 650;
+}
+.composer-combined-picker-tab-panel-subhead:first-child {
+  padding-top: 2px;
+}
+.composer-combined-picker-tab-panel-subhead .composer-combined-picker-provider-cloud-icon {
+  width: 13px;
+  height: 13px;
+  flex-basis: 13px;
+}
+.composer-combined-picker-tab-panel-subhead .composer-combined-picker-provider-count {
   margin-left: auto;
 }
-.composer-combined-picker-empty-provider {
-  padding: 5px 10px 6px 31px;
+.composer-combined-picker-tab-panel-empty {
+  padding: 6px 10px;
   color: var(--text-tertiary);
   font-size: 11px;
   font-style: italic;
+  line-height: 1.45;
 }
 
 .composer-combined-picker-column-header {
@@ -10280,13 +10080,31 @@
   cursor: pointer;
   touch-action: none;
 }
-/* While dragging, the thumb + fill track the finger 1:1 (the slide animation is
- * for keyboard/click stop-to-stop moves only). */
-.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb,
-.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill,
+/* While dragging, the thumb steps between REAL stops (never between them, never
+ * 1:1 with the finger) and glides each step in 110ms. The curve never exceeds
+ * 1 — no overshoot — and the release commits the stop already on screen, so
+ * nothing moves or springs back when the finger lifts. */
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb {
+  transition: bottom 110ms cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.34),
+    0 0 0 3px color-mix(in srgb, var(--ladder-accent, var(--accent)) 16%, transparent);
+}
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill {
+  transition: height 110ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-pulse,
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-shimmer,
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-sparkles {
+  transition:
+    height 110ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.24s ease-out;
+}
+.composer-combined-picker-ladder-track[data-dragging='true'] {
+  cursor: grabbing;
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-track .composer-combined-picker-ladder-thumb,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-track .composer-combined-picker-ladder-fill {
   transition: none;
 }
 .composer-combined-picker-ladder-track[aria-disabled='true'] {
@@ -10359,6 +10177,89 @@
   border-radius: 1px;
   background: rgba(255, 255, 255, 0.65);
 }
+/* Stop marks — a fader scale. Each mark is a zero-height line at its stop; the
+ * ::before/::after pair are side ticks seated just OUTSIDE the 43px thumb
+ * (half-width 21.5px), so the current stop's pair frames the thumb. Ticks tint
+ * as the fill passes them; a level this model doesn't offer is a faint dot,
+ * which explains a jump over it without inviting a drag to it. */
+.composer-combined-picker-ladder-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.composer-combined-picker-ladder-mark {
+  --ladder-mark-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  --ladder-mark-len: 5px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+}
+.composer-combined-picker-ladder-mark::before,
+.composer-combined-picker-ladder-mark::after {
+  content: '';
+  position: absolute;
+  top: -0.5px;
+  width: var(--ladder-mark-len);
+  height: 1px;
+  border-radius: 1px;
+  background: var(--ladder-mark-color);
+  transition:
+    width 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms ease;
+}
+.composer-combined-picker-ladder-mark::before {
+  right: calc(50% + 24px);
+}
+.composer-combined-picker-ladder-mark::after {
+  left: calc(50% + 24px);
+}
+.composer-combined-picker-ladder-mark[data-reached='true'] {
+  --ladder-mark-color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 56%, transparent);
+}
+/* Where a click would land while the pointer hovers the track. */
+.composer-combined-picker-ladder-mark[data-target='true'] {
+  --ladder-mark-color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+  --ladder-mark-len: 7px;
+}
+.composer-combined-picker-ladder-mark[data-current='true'] {
+  --ladder-mark-color: color-mix(
+    in srgb,
+    var(--ladder-accent, var(--accent)) 88%,
+    var(--text-primary)
+  );
+  --ladder-mark-len: 7px;
+}
+/* A brief glow each time a stop becomes current — the detent "landing". Pure
+ * CSS: the animation starts whenever the attribute starts applying. */
+.composer-combined-picker-ladder-mark[data-current='true']::before,
+.composer-combined-picker-ladder-mark[data-current='true']::after {
+  animation: tw-ladder-mark-land 320ms ease-out;
+}
+@keyframes tw-ladder-mark-land {
+  35% {
+    box-shadow: 0 0 5px 1px color-mix(in srgb, var(--ladder-accent, var(--accent)) 70%, transparent);
+  }
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-mark::before,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-mark::after {
+  animation: none;
+  transition: none;
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::before,
+.composer-combined-picker-ladder-mark[data-enabled='false']::after {
+  top: -1px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::before {
+  right: calc(50% + 26px);
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::after {
+  left: calc(50% + 26px);
+}
 /* Active FX use the exact fill height as their upper gate. At any intermediate
  * stop the neutral rail above the thumb stays completely untouched; inside the
  * filled region the field fades DOWN toward Off. */
@@ -10375,7 +10276,13 @@
   transition:
     height 0.16s cubic-bezier(0.22, 1, 0.36, 1),
     opacity 0.24s ease-out;
-  animation: tw-ladder-emerge 0.3s ease-out both;
+  /* No fill: with `both`, the 0% opacity-0 frame applied during the BEFORE
+   * phase, and an unfocused window never produces a frame to start on — the
+   * FX rested invisible until refocus (the fan-out reveal's exact failure
+   * class; see 02-transcript-messages-fx.css). The static opacity above IS
+   * the `to` frame, so the never-started and post-animation states are
+   * already correct without any fill. */
+  animation: tw-ladder-emerge 0.3s ease-out;
 }
 
 /* A gentle provider-hued breathing glow. The wrapper supplies the effort
@@ -10634,8 +10541,11 @@
   gap: 8px;
   min-width: min(420px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
   box-sizing: border-box;
   padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .composer-multiview-popover-header {
@@ -10737,6 +10647,106 @@
   color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
   font-size: 10px;
   font-weight: 500;
+}
+
+/* Transcript view menu (per-chat verbosity). A vertical LIST rather than the
+   multiview grid: four rows of label + description, where the description is
+   the only thing distinguishing them, so it must not be truncated to a glyph.
+   "Follow default" is set apart because it selects no view — it clears the
+   per-chat override. */
+.composer-transcript-view-popover {
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  box-sizing: border-box;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.composer-transcript-view-popover-header {
+  padding: 0 2px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-transcript-view-list {
+  display: grid;
+  gap: 4px;
+}
+
+.composer-transcript-view-item {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-transcript-view-item:hover,
+.composer-transcript-view-item:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.composer-transcript-view-item.is-selected {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* Separated from the three views below it: this row clears the override
+   rather than choosing a view, and the menu reads wrong if it looks like a
+   fourth peer. */
+.composer-transcript-view-item.is-follow-default {
+  margin-bottom: 4px;
+  border-style: dashed;
+}
+
+.composer-transcript-view-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.composer-transcript-view-label {
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+/* Deliberately NOT truncated with ellipsis, unlike the multiview grid's
+   subtitle: here the description is what tells the three views apart. */
+.composer-transcript-view-sub {
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 @media (max-width: 620px) {
@@ -11910,8 +11920,24 @@
    * overlap the composer's top edge by 10px, z-index 1 so the
    * composer-surface (z-index 2) paints over the overlap and the
    * stack reads as a real "tab tucked under" the composer. */
-  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
-  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  /* Width: the old hardcoded 80px inset is now derived from
+   * `--codex-cc-strip-inset` — twice the strip's per-side margin from
+   * shard 10's "Codex Desktop composer parity" section — so this frame
+   * and the workspace/branch telemetry strip inside the composer
+   * surface below ALWAYS share one width: the wider strip width. The
+   * token defaults at the `.app-transcript` level (this rule's element
+   * renders ABOVE `.composer-surface`, where the token is canonically
+   * defined); the 14px fallback keeps the chatgpt twin and any other
+   * scope on the previous inset. Side-chat panes halve it (rule below)
+   * to track the strip's halved inset there. */
+  width: min(
+    calc(100% - (2 * var(--codex-cc-strip-inset, 14px))),
+    calc(var(--composer-content-max-width, 850px) - (2 * var(--codex-cc-strip-inset, 14px)))
+  );
+  max-width: min(
+    calc(100% - (2 * var(--codex-cc-strip-inset, 14px))),
+    calc(var(--composer-content-max-width, 850px) - (2 * var(--codex-cc-strip-inset, 14px)))
+  );
   align-self: center;
   gap: 0;
   border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
@@ -11926,6 +11952,37 @@
   z-index: 1;
   margin-bottom: -10px;
   padding-bottom: 14px;
+}
+/* Joined welcome stack: when the frame renders directly above the tucked
+ * telemetry strip (welcome mode, the strip's top corners flattened in shard
+ * 10), the tuck-under padding band below the last row no longer hides under
+ * the composer surface — it reads as a dead gap between the frame's rows
+ * and the strip. The seam is already structural (the frame's flat,
+ * borderless bottom abuts the strip's kept top border), and the strip's own
+ * fill continues the frame tone into the box, so the band adds nothing but
+ * dead space. Drop it in this configuration only; the started-thread
+ * tuck-under keeps the band, as does any frame-less surface. */
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
+  padding-bottom: 0;
+}
+/* Shared tucked-tab width — the merged frame above borrows the telemetry
+ * strip's inset token, so the defaults must live at a scope the frame can
+ * see: the frame renders in the composer area ABOVE `.composer-surface`,
+ * while the token's canonical home (shard 10, Codex Desktop composer
+ * parity) defines it on the surface for the strip. This transcript-level
+ * default gives the frame the same value; the surface-level rule stays
+ * authoritative for the strip subtree (higher specificity). The
+ * side-chat override mirrors shard 10's surface-level `6px` inset so the
+ * frame keeps tracking the strip in linked-chat panes too. The chatgpt
+ * twin is named here so its stacks follow the same pane geometry. */
+[data-composer-style="codex"] .app-transcript {
+  --codex-cc-strip-inset: 14px;
+}
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+  .side-chat-pane.app-transcript {
+  --codex-cc-strip-inset: 6px;
 }
 /* Neutral above-rows: drop the per-provider purple ::before gradient so the rows
  * show the solid #212121 stack background instead of a purple wash. */
@@ -11946,7 +12003,14 @@
   justify-content: flex-start;
   gap: 6px;
 }
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+/* `--has-ensemble-rows` carries the `:has(:is(...))` condition as a class; the
+ * `:not(:empty)` (always true when the flag is set) restores the (0,3,0)
+ * specificity the `:has()` argument contributed. Only the rules whose SUBJECT is
+ * featureless are converted — a featureless subject behind `:has()` is what made
+ * Blink invalidate the whole document. Sibling rules below keep `:has()` because
+ * their class subjects already key the invalidation set narrowly.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   > * {
   margin-left: 0;
@@ -12005,7 +12069,7 @@
   > .ensemble-roster-preset-picker.is-compact:not(:first-child) {
   border-top: 1px solid color-mix(in srgb, var(--composer-border) 60%, transparent);
 }
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > *:not(:first-child):not(.composer-above-bar-secondary):not(
     .ensemble-roster-preset-picker.is-compact
   ) {
@@ -12172,6 +12236,15 @@
   color: color-mix(in srgb, var(--text-primary) 40%, transparent);
 }
 
+/* "(Added)" — the participant-added row's trailing chrome, matching the
+ * brief-note treatment so the timestamp and the note read as one trailing
+ * group. Not a chip: it denotes an EVENT, not a seat value. */
+.seat-change-added-note {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+
 /* Character wheels: widths are measured per character, and a width
  * transition carries old→new advances in lockstep with the roll. */
 .char-odometer__slot {
@@ -12181,9 +12254,16 @@
 
 /* Coalesced replacement rows hop into their new (newest) transcript
  * position — the mock's land-and-settle. Scoped to `.is-fresh` so a
- * settled tombstone never re-animates on scroll-back remounts. */
+ * settled tombstone never re-animates on scroll-back remounts.
+ *
+ * No fill: the 100% frame (opacity 1, translateY(0)) is the row's natural
+ * resting state, so a fill adds nothing — and `both` made the opacity-0
+ * 0% frame the row's resting state in a window that never produced a frame
+ * to start the animation on (unfocused/occluded), hiding fresh rows until
+ * refocus. Same class as the fan-out reveal fix; see
+ * 02-transcript-messages-fx.css. */
 .seat-change-message.is-fresh .seat-change-row {
-  animation: seat-change-hop 460ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: seat-change-hop 460ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 @keyframes seat-change-hop {
@@ -12265,6 +12345,11 @@
   color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
 }
 
+.continuation-hops-change-actor.is-advance,
+.continuation-hops-change-actor.is-advance + .continuation-hops-change-reason {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
 .continuation-hops-change-reason {
   min-width: 0;
   overflow: hidden;
@@ -12282,6 +12367,155 @@
   color: inherit;
 }
 
+/* Thread-wide Auto Approvals uses the real roster Auto pill vocabulary. The
+ * row holds before for two seconds, then React flips `data-pressed`; these
+ * transitions are the visible neutral <-> orange state change. */
+.auto-approvals-change-row {
+  gap: 12px;
+}
+
+.auto-approvals-change-icon {
+  transition:
+    color 360ms ease,
+    filter 360ms ease;
+}
+
+.auto-approvals-change-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auto-approvals-change-icon.is-enabled {
+  color: var(--warning, #f5b14c);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--warning, #f5b14c) 38%, transparent));
+}
+
+.auto-approvals-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+.auto-approvals-change-pill {
+  width: auto;
+  min-width: 64px;
+  flex: 0 0 auto;
+  pointer-events: none;
+  transition:
+    color 360ms ease,
+    border-color 360ms ease,
+    background 360ms ease,
+    box-shadow 360ms ease;
+}
+
+.auto-approvals-change-state,
+.auto-approvals-change-actor {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  transition: color 360ms ease;
+}
+
+.auto-approvals-change-state.is-enabled {
+  color: color-mix(in srgb, var(--warning, #f5b14c) 68%, var(--text-primary));
+}
+
+.auto-approvals-change-actor {
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 52%, transparent);
+}
+
+.auto-approvals-change-was {
+  gap: 12px;
+}
+
+/* Authoritative execution-plan (set_round_plan) changes share the seat row's
+ * hop-in, click target, time and indented disclosure. The summary is prose,
+ * so unlike the numeric rows there is no odometer — the row states the new
+ * plan and clicking discloses the full details (and, for later updates only,
+ * the "was" line with the replaced plan). */
+.execution-plan-change-row {
+  gap: 12px;
+}
+
+.execution-plan-change-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.execution-plan-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+
+/* The summary takes the row's slack so the actor + timestamp read as one
+ * right-hand trailing group, mirroring the compact mock. */
+.execution-plan-change-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--font-size-xs) + 1px);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
+.execution-plan-change-actor {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 52%, transparent);
+}
+
+.execution-plan-change-actor:is(.is-boss, .is-captain) {
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
+}
+
+/* Disclosure: full plan text plus the labeled work-contract lines, indented
+ * to the seat-change "was" gutter (28px clears the 16px icon + row gap). */
+.execution-plan-change-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0 3px 28px;
+}
+
+.execution-plan-change-full {
+  font-size: calc(var(--font-size-xs) + 1px);
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.execution-plan-change-detail {
+  display: flex;
+  gap: 10px;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
+.execution-plan-change-detail-label {
+  flex: 0 0 64px;
+  font-style: italic;
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+}
+
+.execution-plan-change-was-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+
 :root[data-reduce-motion="true"] .seat-change-message.is-fresh .seat-change-row {
   animation: none !important;
 }
@@ -12290,11 +12524,22 @@
   transition: none !important;
 }
 
+:root[data-reduce-motion="true"] .auto-approvals-change-icon,
+:root[data-reduce-motion="true"] .auto-approvals-change-pill,
+:root[data-reduce-motion="true"] .auto-approvals-change-state {
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .seat-change-message.is-fresh .seat-change-row {
     animation: none !important;
   }
   .char-odometer__slot {
+    transition: none !important;
+  }
+  .auto-approvals-change-icon,
+  .auto-approvals-change-pill,
+  .auto-approvals-change-state {
     transition: none !important;
   }
 }
@@ -12322,6 +12567,9 @@
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell,
 .composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="max"]
+  .composer-combined-picker-trigger-suffix
+  .digit-odometer__cell,
+.composer-combined-picker-trigger.seat-change-chip[data-selected-reasoning="ultraTask"]
   .composer-combined-picker-trigger-suffix
   .digit-odometer__cell {
   background-image: linear-gradient(

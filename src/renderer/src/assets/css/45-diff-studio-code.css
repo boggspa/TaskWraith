@@ -1,0 +1,190 @@
+/* Codex-like editor presentation for Diff Studio source rows.
+ * Loaded after 03/09 so equal-specificity rules here win; popout
+ * selectors match the workspace utility-window overrides. */
+
+.diff-lines-root {
+  --diff-change-bar-width: 3px;
+  --diff-add-bar: var(--diff-stat-add-color, var(--success));
+  --diff-del-bar: var(--diff-stat-del-color, var(--danger));
+}
+
+.diff-line,
+.diff-line-split,
+.diff-line-code,
+.diff-line-split-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 22px;
+  font-variant-ligatures: none;
+  tab-size: 4;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: var(--diff-change-bar-width, 3px) var(--diff-gutter-width, 4ch) minmax(
+      0,
+      1fr
+    );
+  height: 22px;
+}
+
+.diff-line-marker {
+  display: block;
+  width: var(--diff-change-bar-width, 3px);
+  min-height: 100%;
+  padding: 0;
+  background: transparent;
+}
+
+.diff-line.add .diff-line-marker {
+  background: var(--diff-add-bar);
+}
+
+.diff-line.del .diff-line-marker {
+  background: var(--diff-del-bar);
+}
+
+.diff-line-gutter {
+  background: transparent;
+  border-right: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-line-code {
+  padding: 1px 12px 1px 10px;
+  color: var(--diff-code-text, var(--text-primary));
+}
+
+.diff-line.add,
+.diff-line.del {
+  color: var(--diff-code-text, var(--text-primary));
+}
+
+.diff-line.add .diff-line-code,
+.diff-line.add .diff-line-gutter {
+  background: var(--diff-add-bg);
+  color: inherit;
+}
+
+.diff-line.del .diff-line-code,
+.diff-line.del .diff-line-gutter {
+  background: var(--diff-del-bg);
+  color: inherit;
+}
+
+.diff-line.add .diff-line-gutter,
+.diff-line.del .diff-line-gutter {
+  color: var(--text-muted);
+}
+
+.diff-line-split.add .diff-line-gutter.new,
+.diff-line-split.add .diff-line-split-code.new {
+  background: var(--diff-add-bg);
+  color: inherit;
+}
+
+.diff-line-split.del .diff-line-gutter.old,
+.diff-line-split.del .diff-line-split-code.old {
+  background: var(--diff-del-bg);
+  color: inherit;
+}
+
+.diff-line-split.add .diff-line-split-code.new {
+  box-shadow: inset 3px 0 0 var(--diff-add-bar);
+}
+
+.diff-line-split.del .diff-line-split-code.old {
+  box-shadow: inset 3px 0 0 var(--diff-del-bar);
+}
+
+.diff-line-split.add .diff-line-gutter.new,
+.diff-line-split.del .diff-line-gutter.old {
+  color: var(--text-muted);
+}
+
+.diff-line + .diff-line,
+.diff-line-split + .diff-line-split,
+.diff-line + .diff-line-split,
+.diff-line-split + .diff-line {
+  border-top: 0;
+}
+
+.diff-lines-section {
+  background: transparent;
+  border-top: 0;
+}
+
+.diff-lines-section-header,
+.diff-lines-floating-header {
+  height: 22px;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+  box-shadow:
+    inset 0 10px 0 0 transparent,
+    inset 0 11px 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line,
+.popout-root[data-popout-family='workspace'] .diff-line-split {
+  color: var(--diff-code-text, var(--text-primary));
+  background: var(--diff-code-bg);
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line-gutter {
+  color: var(--diff-gutter-text, var(--text-muted));
+  background: transparent;
+  border-color: transparent;
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line-code,
+.popout-root[data-popout-family='workspace'] .diff-line-split-code {
+  color: var(--diff-code-text, var(--text-primary));
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line.add :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family='workspace']
+  .diff-line-split.add
+  :is(.diff-line-gutter.new, .diff-line-split-code.new) {
+  background-color: var(--diff-add-bg);
+  color: inherit;
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line.add .diff-line-gutter,
+.popout-root[data-popout-family='workspace'] .diff-line-split.add .diff-line-gutter.new {
+  background-color: var(--diff-add-bg);
+  color: var(--diff-gutter-text, var(--text-muted));
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line.del :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family='workspace']
+  .diff-line-split.del
+  :is(.diff-line-gutter.old, .diff-line-split-code.old) {
+  background-color: var(--diff-del-bg);
+  color: inherit;
+}
+
+.popout-root[data-popout-family='workspace'] .diff-line.del .diff-line-gutter,
+.popout-root[data-popout-family='workspace'] .diff-line-split.del .diff-line-gutter.old {
+  background-color: var(--diff-del-bg);
+  color: var(--diff-gutter-text, var(--text-muted));
+}
+
+.popout-root[data-popout-family='workspace'] .diff-lines-section-header,
+.popout-root[data-popout-family='workspace'] .diff-lines-floating-header {
+  font-size: 0;
+  color: transparent;
+  background-color: color-mix(in srgb, var(--text-primary) 5%, var(--diff-code-bg)) !important;
+}
+
+.popout-root[data-popout-family='workspace']
+  :is(
+    .diff-line + .diff-line,
+    .diff-line-split + .diff-line-split,
+    .diff-line + .diff-line-split,
+    .diff-line-split + .diff-line
+  ) {
+  border-color: transparent;
+}

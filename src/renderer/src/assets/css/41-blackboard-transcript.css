@@ -1,0 +1,191 @@
+/* Run-authored Blackboard mutations sit at the same transcript hierarchy as
+ * seat and handoff changes, but use the compact tool-call vocabulary: one
+ * provider-accented Blackboard glyph, action, target, and time. There is no
+ * assistant header or seat label; attribution stays visual (plus the row's
+ * accessible label) so the event reads as a call, not a message. */
+.blackboard-change-row {
+  gap: 9px;
+  cursor: default;
+}
+
+.blackboard-change-icon {
+  color: color-mix(
+    in srgb,
+    var(--blackboard-change-accent, var(--accent)) 88%,
+    var(--text-primary)
+  );
+  filter: drop-shadow(
+    0 0 5px color-mix(in srgb, var(--blackboard-change-accent, var(--accent)) 30%, transparent)
+  );
+}
+
+.blackboard-change-icon .blackboard-glyph {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.blackboard-change-label {
+  flex: 0 0 auto;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 560;
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.blackboard-change-category {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--blackboard-cat-color) 52%, var(--text-secondary));
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.blackboard-change-separator {
+  flex: 0 0 auto;
+  margin-inline: -3px;
+  color: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-change-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text-primary) 68%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-change-detail {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 44%, transparent);
+  font-size: var(--font-size-xs);
+}
+
+/* Blackboard writes borrow the exact +N / -N odometer tones used by edit tool
+ * calls. The inherited activity-line-stat classes resolve through the user's
+ * Appearance diff colours; only the Blackboard-specific unit belongs here. */
+.blackboard-change-entry-delta {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.blackboard-change-stat-unit {
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.blackboard-change-time {
+  margin-left: 2px;
+}
+
+.blackboard-change-message.is-scout-brief > .blackboard-change-row,
+.blackboard-change-message.is-update-stack > .blackboard-change-row {
+  cursor: pointer;
+}
+
+.blackboard-change-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 3px 0 2px 8px;
+  padding: 2px 0 2px 19px;
+  border-left: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  list-style: none;
+  /* The lead owns a provider hue, but unattributed legacy leaves must not
+   * inherit it. Structured leaves override this neutral app accent inline. */
+  --blackboard-change-accent: var(--accent);
+}
+
+.blackboard-change-stack-item {
+  min-width: 0;
+  opacity: 0.76;
+}
+
+.blackboard-change-stack-item > .blackboard-change-message {
+  margin: 0;
+}
+
+.blackboard-change-stack-item:hover > .message-footer,
+.blackboard-change-stack-item:focus-within > .message-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.blackboard-change-stack-chevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 120ms ease;
+}
+
+.blackboard-change-message.is-expanded > .blackboard-change-row > .blackboard-change-stack-chevron {
+  transform: rotate(90deg);
+}
+
+.blackboard-change-stack-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.blackboard-change-stack-item .blackboard-change-row {
+  gap: 9px;
+  padding-block: 2px;
+  cursor: default;
+  animation: none !important;
+}
+
+.blackboard-change-stack-item .is-scout-brief > .blackboard-change-row {
+  cursor: pointer;
+}
+
+.blackboard-change-stack-item .blackboard-change-key {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.blackboard-scout-brief-role {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 520;
+}
+
+.blackboard-scout-brief-provider {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-scout-brief-caveat {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f5b14c) 28%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--warning, #f5b14c) 76%, var(--text-primary));
+  font-size: var(--font-size-xs);
+}
+
+.blackboard-scout-brief-caveat.is-low {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text-primary));
+}
+
+.blackboard-scout-brief-explanation {
+  flex-wrap: wrap;
+  color: color-mix(in srgb, var(--text-primary) 56%, transparent);
+  font-size: var(--font-size-xs);
+}
+
+@media (max-width: 620px) {
+  .blackboard-change-row {
+    gap: 7px;
+  }
+
+  .blackboard-change-time {
+    display: none;
+  }
+}

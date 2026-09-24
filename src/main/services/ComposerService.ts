@@ -11,7 +11,11 @@ import {
   type ComposeRunPromptResult,
   type OpenCanvasPromptContext
 } from '../PromptComposition'
-import { resolveRunSkillHookContext } from '../skillsHooks/resolveRunSkillHookContext'
+import {
+  digestSessionStartContext,
+  digestSkillDiscoveryPrompt,
+  resolveRunSkillHookContext
+} from '../skillsHooks/resolveRunSkillHookContext'
 import type {
   PromptEnvelopeSnapshot,
   ResolvedInstructionContext
@@ -75,7 +79,7 @@ import {
 } from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import {
-  GROK_46_MODEL_ID,
+  GROK_47_MODEL_ID,
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../shared/grok45Models'
@@ -84,14 +88,21 @@ import {
   resolveTaskWraithMcpProfile,
   taskWraithCoreMcpProfileOptInEnabled
 } from '../mcp/McpSessionProfileFence'
+import { taskWraithMcpAdvertisedToolNamesForProfile } from '../mcp/McpToolProfiles'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
-import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
+import { KIMI_K28_MODEL_ID, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
+import {
+  isExplicitUltraTaskSelection,
+  withUltraTaskDelegationAutoAllow
+} from '../UltraTaskDelegationConsent'
 import {
   isDirectoryComposerAttachment,
   type ComposerAttachmentKind
 } from '../../shared/composerAttachment'
+import type { PromptDeliveryReceipts } from '../../shared/PromptDeliveryReceipts'
+import { DEVIN_DEFAULT_MODEL_ID } from '../../shared/devinModelCatalog'
 
 // Known ids for historical decode. Compose/dispatch uses the shared live
 // admission predicate through `assertLiveProviderId`.
@@ -106,7 +117,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 export interface ComposerImageAttachment {
@@ -142,6 +154,7 @@ export interface ComposerInput {
   projectReferenceContextSelection?: ProjectReferenceContextSelection
   geminiWorktree?: GeminiWorktreeLaunchOption
   codexReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   codexServiceTier?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
@@ -152,6 +165,10 @@ export interface ComposerInput {
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   museReasoningEffort?: string | null
+  mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
@@ -204,6 +221,8 @@ export interface ComposerRunMetadata {
    * this onto the ChatRun it appends, which is what persists it.
    */
   promptEnvelope?: PromptEnvelopeSnapshot
+  /** Persisted only after successful provider terminal evidence. */
+  promptDeliveryReceipts?: PromptDeliveryReceipts
 }
 
 export type ComposerRunPayload = AgentRunPayload & {
@@ -590,7 +609,24 @@ export class ComposerService {
             null
         : null
 
-    const resumeDecision = resolveResumeDecision(
+    const providerReasoningSelection = composerReasoningSelectionForProvider(
+      provider,
+      effectiveInput,
+      chat
+    )
+    const promptUltraTaskSelection = isExplicitUltraTaskSelection({
+      provider,
+      reasoningEffort: providerReasoningSelection,
+      ...(provider === 'antigravity'
+        ? {
+            antigravityUltraTaskSelected: metadataBoolean(chat, 'antigravityUltraTaskSelected')
+          }
+        : {})
+    })
+    const storedUltraTaskSelection = storedUltraTaskSelectionForProvider(provider, storedChat)
+    const explicitStoredUltraTaskSelection = isExplicitUltraTaskSelection(storedUltraTaskSelection)
+
+    let resumeDecision = resolveResumeDecision(
       provider,
       chat,
       requestedModel,
@@ -619,6 +655,47 @@ export class ComposerService {
       ? rawChatOllamaRunProfile
       : undefined
     const mcpProfileOwner = contextIsolated ? chat : storedChat || chat
+    let forceFreshUltraTaskMcpProfile = false
+    if (
+      explicitStoredUltraTaskSelection &&
+      provider !== 'muse' &&
+      provider !== 'pi' &&
+      provider !== 'ollama' &&
+      resumeDecision.sessionId
+    ) {
+      const exactReceipt = isTaskWraithMcpProfileReceiptForSession(
+        mcpProfileOwner.taskWraithMcpProfileReceipt,
+        { provider, providerSessionId: resumeDecision.sessionId }
+      )
+        ? mcpProfileOwner.taskWraithMcpProfileReceipt
+        : null
+      const resumedProfile = exactReceipt
+        ? exactReceipt.profileId
+        : provider === 'claude'
+          ? resolveTaskWraithMcpProfile({
+              provider,
+              modelId: requestedModel,
+              providerSessionId: resumeDecision.sessionId,
+              storeProviderSessionId: mcpProfileOwner.linkedProviderSessionId,
+              receipt: mcpProfileOwner.taskWraithMcpProfileReceipt,
+              coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
+              profileReceiptCanPersist: !crossProviderReroute,
+              soloThread: allowProviderNativeGoal
+            }).profileId
+          : null
+      if (
+        resumedProfile &&
+        !taskWraithMcpAdvertisedToolNamesForProfile(resumedProfile).includes('delegate_wave')
+      ) {
+        // UltraTask promises a delegated-review route. A resumable provider
+        // session pinned before gateway-v13 cannot acquire that tool
+        // mid-session, so rotate it before prompt composition and birth a
+        // current profile. Claude's unreceipted legacy sessions resolve to the
+        // equally wave-less full-v1 profile and rotate for the same reason.
+        resumeDecision = {}
+        forceFreshUltraTaskMcpProfile = true
+      }
+    }
     const claudePinnedMcpReceipt =
       provider === 'claude' &&
       isTaskWraithMcpProfileReceiptForSession(mcpProfileOwner.taskWraithMcpProfileReceipt, {
@@ -629,7 +706,7 @@ export class ComposerService {
       // Pi's optional Ensemble coordination extension is attached and
       // receipt-gated at launch. It must not inherit the generic TaskWraith MCP
       // preamble/profile from composer time.
-      provider === 'pi'
+      provider === 'pi' || provider === 'muse'
         ? false
         : provider === 'grok'
           ? shouldAdvertiseTaskWraithMcpToGrok({
@@ -645,11 +722,16 @@ export class ComposerService {
       provider,
       modelId: requestedModel,
       providerSessionId: resumeDecision.sessionId,
-      storeProviderSessionId: mcpProfileOwner.linkedProviderSessionId,
-      receipt: mcpProfileOwner.taskWraithMcpProfileReceipt,
+      storeProviderSessionId: forceFreshUltraTaskMcpProfile
+        ? null
+        : mcpProfileOwner.linkedProviderSessionId,
+      receipt: forceFreshUltraTaskMcpProfile
+        ? undefined
+        : mcpProfileOwner.taskWraithMcpProfileReceipt,
       coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
       profileReceiptCanPersist: provider !== 'claude' || !crossProviderReroute,
-      grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined
+      grokMcpAdvertised: provider === 'grok' ? taskWraithMcpAdvertised : undefined,
+      soloThread: allowProviderNativeGoal
     })
     const kimiNativeSessionResume = Boolean(
       provider === 'kimi' &&
@@ -669,7 +751,9 @@ export class ComposerService {
     let skillDiscoverySkills:
       | readonly { id: string; name: string; description: string }[]
       | undefined
+    let skillDiscoveryDigest: string | undefined
     let sessionStartContext: string | null | undefined
+    let sessionStartContextDigest: string | undefined
     if (!contextIsolated && workspacePathForSkills) {
       if (this.deps.resolveSkillDiscoverySkills || this.deps.resolveSessionStartContext) {
         skillDiscoverySkills = this.deps.resolveSkillDiscoverySkills?.(
@@ -679,6 +763,8 @@ export class ComposerService {
         sessionStartContext = this.deps.resolveSessionStartContext
           ? await this.deps.resolveSessionStartContext(workspacePathForSkills)
           : undefined
+        skillDiscoveryDigest = digestSkillDiscoveryPrompt(skillDiscoverySkills)
+        sessionStartContextDigest = digestSessionStartContext(sessionStartContext)
       } else {
         const skillHookContext = await resolveRunSkillHookContext({
           workspacePath: workspacePathForSkills,
@@ -686,7 +772,9 @@ export class ComposerService {
           allowWorkspaceHooks: settings.trustWorkspaceHooks === true
         })
         skillDiscoverySkills = skillHookContext.skillDiscoverySkills
+        skillDiscoveryDigest = skillHookContext.skillDiscoveryDigest
         sessionStartContext = skillHookContext.sessionStartContext
+        sessionStartContextDigest = skillHookContext.sessionStartContextDigest
       }
     }
     const openCanvasSessions = contextIsolated
@@ -701,8 +789,43 @@ export class ComposerService {
             scope === 'global' ? null : workspacePathForSkills || null
           )
         : null
+    const reasoningEffort =
+      provider === 'codex'
+        ? providerReasoningSelection
+        : provider === 'grok' && isGrokReasoningModelId(requestedModel)
+          ? providerReasoningSelection
+          : provider === 'cursor' && isCursorGrokModelId(requestedModel)
+            ? providerReasoningSelection
+            : provider === 'kimi'
+              ? normalizeKimiReasoningEffort(requestedModel, providerReasoningSelection)
+              : provider === 'ollama'
+                ? providerReasoningSelection
+                : provider === 'muse'
+                  ? providerReasoningSelection
+                  : provider === 'claude'
+                    ? providerReasoningSelection
+                    : provider === 'mistral' || provider === 'pi'
+                      ? providerReasoningSelection
+                      : provider === 'antigravity'
+                        ? providerReasoningSelection
+                        : null
+    // Raw (un-normalized) reasoning tier, preserved solely for UltraTask
+    // detection in prompt composition (`ultraTaskDetectionEffort`). This is
+    // presentation only: signed auto-allow authority comes from the persisted
+    // current-provider selection below, never renderer input/chatSnapshot.
+    // Several wire paths clamp or remap the token so `reasoningEffort` above
+    // cannot itself prove the synthetic selection:
+    // - AntiGravity: normalizeAgyReasoningEffort accepts only low/medium/high;
+    //   picking UltraTask swaps the wire model to the family's -high variant
+    //   and persists a separate antigravityUltraTaskSelected marker instead.
+    // - Kimi K3: normalizeKimiReasoningEffort collapses unknowns to 'max'.
+    // Only the exact UltraTask stop activates the delegation contract. Native
+    // Ultra/Ultracode are ordinary reasoning choices, not delegation consent.
+    const ultraTaskDetectionEffort = promptUltraTaskSelection ? 'ultratask' : null
     const promptInput = {
       provider,
+      continuityChat: chat,
+      continuityIsolated: contextIsolated,
       verbatimPrompt: input.verbatimPrompt === true,
       contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,
@@ -720,11 +843,26 @@ export class ComposerService {
       instructionsDigestProvider: metadataString(chat, 'taskWraithInstructionsProvider'),
       runtimePreambleVersion: metadataString(chat, 'taskWraithRuntimePreambleVersion'),
       runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
+      workInvariantsVersionApplied: metadataString(chat, 'taskWraithWorkInvariantsVersion'),
+      workInvariantsProvider: metadataString(chat, 'taskWraithWorkInvariantsProvider'),
+      skillDiscoveryDigest,
+      skillDiscoveryDigestApplied: metadataString(chat, 'taskWraithSkillDiscoveryDigest'),
+      skillDiscoveryDigestProvider: metadataString(chat, 'taskWraithSkillDiscoveryProvider'),
+      sessionStartContextDigest,
+      sessionStartContextDigestApplied: metadataString(chat, 'taskWraithSessionStartContextDigest'),
+      sessionStartContextDigestProvider: metadataString(
+        chat,
+        'taskWraithSessionStartContextProvider'
+      ),
+      workspaceDoctrineDigestApplied: metadataString(chat, 'taskWraithWorkspaceDoctrineDigest'),
+      workspaceDoctrineDigestProvider: metadataString(chat, 'taskWraithWorkspaceDoctrineProvider'),
       providerLabel: getProviderLabel(provider),
       nativeSubAgentRequests: settings.nativeSubAgentRequests,
       activeGoal,
       taskWraithMcpProfileId: taskWraithMcpProfile.profileId,
       taskWraithMcpAdvertised,
+      reasoningEffort,
+      ultraTaskDetectionEffort,
       ...(openCanvasSessions.length > 0 ? { openCanvasSessions } : {}),
       ...(skillDiscoverySkills ? { skillDiscoverySkills } : {}),
       ...(sessionStartContext ? { sessionStartContext } : {}),
@@ -763,6 +901,42 @@ export class ComposerService {
               : {})
           }).contextualPrompt
         : undefined
+
+    const promptDeliveryReceipts: PromptDeliveryReceipts = {
+      ...(composed.workInvariantsVersion
+        ? {
+            workInvariants: {
+              provider: composed.workInvariantsProvider || provider,
+              value: composed.workInvariantsVersion
+            }
+          }
+        : {}),
+      ...(composed.skillDiscoveryDigest
+        ? {
+            skillDiscovery: {
+              provider: composed.skillDiscoveryProvider || provider,
+              value: composed.skillDiscoveryDigest
+            }
+          }
+        : {}),
+      ...(composed.sessionStartContextDigest
+        ? {
+            sessionStartContext: {
+              provider: composed.sessionStartContextProvider || provider,
+              value: composed.sessionStartContextDigest
+            }
+          }
+        : {}),
+      ...(composed.workspaceDoctrineDigest
+        ? {
+            workspaceDoctrine: {
+              provider: composed.workspaceDoctrineProvider || provider,
+              value: composed.workspaceDoctrineDigest
+            }
+          }
+        : {})
+    }
+    const hasPromptDeliveryReceipts = Object.keys(promptDeliveryReceipts).length > 0
 
     const providerMetadataPatchData = {
       ...buildProviderMetadataPatch(composed, codexHandoffsApplied),
@@ -871,7 +1045,10 @@ export class ComposerService {
                       }
                     : {})
                 })
-    const effectiveRunPermissions = resolvedRunPermissions
+    const effectiveRunPermissions = withUltraTaskDelegationAutoAllow(
+      resolvedRunPermissions,
+      storedUltraTaskSelection
+    )
     const payload: ComposerRunPayload = {
       provider,
       scope,
@@ -898,32 +1075,14 @@ export class ComposerService {
       appRunId,
       appChatId: chatId,
       model: requestedModel,
-      reasoningEffort:
-        provider === 'codex'
-          ? optionalStringOrNull(effectiveInput.codexReasoningEffort) || null
-          : provider === 'grok' && isGrokReasoningModelId(requestedModel)
-            ? optionalStringOrNull(effectiveInput.grokReasoningEffort) || null
-            : provider === 'cursor' && isCursorGrokModelId(requestedModel)
-              ? optionalStringOrNull(effectiveInput.cursorReasoningEffort) || null
-              : provider === 'kimi'
-                ? normalizeKimiReasoningEffort(
-                    requestedModel,
-                    optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
-                      optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
-                  )
-                : provider === 'muse'
-                  ? optionalStringOrNull(effectiveInput.museReasoningEffort) ||
-                    optionalStringOrNull(metadataString(chat, 'museReasoningEffort')) ||
-                    null
-                  : null,
+      reasoningEffort: reasoningEffort === 'none' ? null : reasoningEffort,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
           : provider === 'kimi'
-            ? !isKimiK3Model(requestedModel) &&
-              (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
-              ? 'fast'
-              : 'standard'
+            ? // Kimi's Fast tier retired when K2.7 Code Highspeed became its own
+              // picker row; a seat still carrying kimiFastMode must not re-route.
+              'standard'
             : provider === 'cursor' && isCursorGrokModelId(requestedModel)
               ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
                 ? 'fast'
@@ -1003,6 +1162,7 @@ export class ComposerService {
           : {}),
         planModeParsed: planParsed.planMode,
         ...(selfReflectiveRequested ? { selfReflectiveRequested: true } : {}),
+        ...(hasPromptDeliveryReceipts ? { promptDeliveryReceipts } : {}),
         promptEnvelope: buildPromptEnvelopeSnapshot({
           provider,
           model: requestedModel,
@@ -1124,6 +1284,9 @@ function applyComposerReroutePlan(
       : {}),
     ...(resolution.provider === 'grok'
       ? { grokReasoningEffort: plan.grokReasoningEffort ?? null }
+      : {}),
+    ...(resolution.provider === 'ollama'
+      ? { ollamaReasoningEffort: plan.ollamaReasoningEffort ?? null }
       : {}),
     ...(resolution.provider === 'cursor'
       ? {
@@ -1252,6 +1415,82 @@ function metadataString(chat: ChatRecord, key: string): string | undefined {
 function metadataBoolean(chat: ChatRecord, key: string): boolean | undefined {
   const value = chat.providerMetadata?.[key]
   return typeof value === 'boolean' ? value : undefined
+}
+
+function reasoningMetadataKeyForProvider(provider: ProviderId): string | undefined {
+  if (provider === 'codex') return 'codexReasoningEffort'
+  if (provider === 'claude') return 'claudeReasoningEffort'
+  if (provider === 'kimi') return 'kimiReasoningEffort'
+  if (provider === 'grok') return 'grokReasoningEffort'
+  if (provider === 'cursor') return 'cursorReasoningEffort'
+  if (provider === 'ollama') return 'ollamaReasoningEffort'
+  if (provider === 'mistral') return 'mistralReasoningEffort'
+  if (provider === 'devin') return 'devinReasoningEffort'
+  if (provider === 'pi') return 'piReasoningEffort'
+  if (provider === 'muse') return 'museReasoningEffort'
+  if (provider === 'antigravity') return 'antigravityReasoningEffort'
+  return undefined
+}
+
+function composerReasoningSelectionForProvider(
+  provider: ProviderId,
+  input: ComposerInput,
+  chat: ChatRecord
+): string | null {
+  const explicit =
+    provider === 'codex'
+      ? input.codexReasoningEffort
+      : provider === 'claude'
+        ? input.claudeReasoningEffort
+        : provider === 'kimi'
+          ? input.kimiReasoningEffort
+          : provider === 'grok'
+            ? input.grokReasoningEffort
+            : provider === 'cursor'
+              ? input.cursorReasoningEffort
+              : provider === 'ollama'
+                ? input.ollamaReasoningEffort
+                : provider === 'mistral'
+                  ? input.mistralReasoningEffort
+                  : provider === 'pi'
+                    ? input.piReasoningEffort
+                    : provider === 'muse'
+                      ? input.museReasoningEffort
+                      : provider === 'antigravity'
+                        ? input.antigravityReasoningEffort
+                        : provider === 'devin'
+                          ? input.devinReasoningEffort
+                          : undefined
+  const metadataKey = reasoningMetadataKeyForProvider(provider)
+  return (
+    optionalStringOrNull(explicit) ||
+    (metadataKey ? metadataString(chat, metadataKey) : null) ||
+    null
+  )
+}
+
+function storedUltraTaskSelectionForProvider(
+  provider: ProviderId,
+  storedChat: ChatRecord | null
+): {
+  provider: ProviderId
+  reasoningEffort?: unknown
+  antigravityUltraTaskSelected?: unknown
+} {
+  // Renderer chat snapshots and provider-switch payloads are presentation
+  // input, never approval authority. Only the persisted chat's CURRENT
+  // provider-local key may mint the signed UltraTask consent bit.
+  if (!storedChat || storedChat.provider !== provider) return { provider }
+  const metadataKey = reasoningMetadataKeyForProvider(provider)
+  return {
+    provider,
+    ...(metadataKey ? { reasoningEffort: metadataString(storedChat, metadataKey) } : {}),
+    ...(provider === 'antigravity'
+      ? {
+          antigravityUltraTaskSelected: metadataBoolean(storedChat, 'antigravityUltraTaskSelected')
+        }
+      : {})
+  }
 }
 
 function resolveRequestedModel(
@@ -1466,10 +1705,13 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
       return 'gpt-5.5'
     case 'claude':
       return 'claude-sonnet-5'
+    // Read the constant, not a literal: this arm and the picker default are
+    // pinned against each other by providerFallthroughGuards, and a literal
+    // here silently kept the retired combined id when the row split.
     case 'kimi':
-      return 'kimi-k2.7-code'
+      return KIMI_K28_MODEL_ID
     case 'grok':
-      return GROK_46_MODEL_ID
+      return GROK_47_MODEL_ID
     case 'cursor':
       return 'composer-2.5-fast'
     case 'ollama':
@@ -1490,6 +1732,10 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
       return MISTRAL_DEFAULT_MODEL
     case 'muse':
       return MUSE_DEFAULT_MODEL
+    // Devin dispatches an explicit catalogue id — the shared devinModelCatalog
+    // default, byte-identical to the static catalogue's isDefault row.
+    case 'devin':
+      return DEVIN_DEFAULT_MODEL_ID
     case 'gemini':
       return 'flash-lite'
     default: {

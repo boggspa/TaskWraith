@@ -3,6 +3,7 @@ import { createTaskWraithMcpToolDefinitions } from '../McpToolCatalog'
 import { resolveGatewayInvocation, searchGatewayCapabilities } from './McpToolGateway'
 import { validateMcpToolArgumentsBeforeApproval } from './McpPreApprovalArgumentValidation'
 import { GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES } from './McpToolProfiles'
+import { PermissionOpportunityRegistry } from './PermissionOpportunityRegistry'
 import {
   buildToolPermissionRetryInstruction,
   buildToolPermissionRetryApprovalPrompt,
@@ -11,9 +12,11 @@ import {
   executeOneOffToolPermissionRetry,
   isOneOffToolPermissionRetryForTarget,
   isPermissionBoundaryFailure,
+  isToolPermissionOpportunityRequest,
   oneOffToolPermissionRetryGuardError,
   orchestrateToolPermissionRetry,
   prepareToolPermissionRetryTarget,
+  redactPermissionOpportunityIdsForDurableStorage,
   toolPermissionRetryApprovalPayloadForDurableStorage,
   validateToolPermissionRetryRequest
 } from './ToolPermissionRetry'
@@ -228,7 +231,10 @@ describe('retry guidance and preserved hard guards', () => {
     ).toBeNull()
   })
 
-  it('does not advertise an impossible mutation-scope retry for non-shell tools', () => {
+  it('offers an async-access retry for start_background_process instead of a dead end', () => {
+    // A persistent process cannot express exact file locks, exactly like a
+    // shell command. Refusing BOTH the admission and the approval mirror left
+    // the seat with no sanctioned path to a dev server at all.
     const failure =
       'start_background_process cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.'
 
@@ -236,23 +242,29 @@ describe('retry guidance and preserved hard guards', () => {
       buildToolPermissionRetryInstruction({
         available: true,
         toolName: 'start_background_process',
-        arguments: { command: "printf 'hello' > notes.txt" },
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
         failure,
         definitions,
         isAutoAllowed
       })
-    ).toBeNull()
+    ).toMatchObject({
+      available: true,
+      scope: 'one_exact_invocation',
+      arguments: {
+        arguments: { toolName: 'start_background_process' }
+      }
+    })
     expect(
       validateToolPermissionRetryRequest({
         value: {
           toolName: 'start_background_process',
-          arguments: { command: "printf 'hello' > notes.txt" },
+          arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
           failure
         },
         definitions,
         isAutoAllowed
       })
-    ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+    ).toMatchObject({ ok: true })
 
     expect(
       buildToolPermissionRetryInstruction({
@@ -269,6 +281,174 @@ describe('retry guidance and preserved hard guards', () => {
         arguments: { toolName: 'run_shell_command' }
       }
     })
+  })
+
+  it('still refuses an impossible mutation-scope retry for exact-path tools', () => {
+    // The exemption is only for tools whose effects are genuinely opaque. A
+    // tool that CAN name its target must still be told to name it.
+    for (const toolName of ['write_file', 'apply_patch'] as const) {
+      const failure = `${toolName} cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.`
+      expect(
+        buildToolPermissionRetryInstruction({
+          available: true,
+          toolName,
+          arguments: { path: 'notes.txt', content: 'hello' },
+          failure,
+          definitions,
+          isAutoAllowed
+        }),
+        `${toolName} must not gain an unprovable-scope retry`
+      ).toBeNull()
+      expect(
+        validateToolPermissionRetryRequest({
+          value: { toolName, arguments: { path: 'notes.txt' }, failure },
+          definitions,
+          isAutoAllowed
+        })
+      ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+    }
+  })
+
+  it('never lets an async-access retry widen an Ensemble lane FILE scope', () => {
+    // Only the UNPROVABLE-SCOPE failure becomes retriable for a background
+    // process. A lane FILE-scope denial must stay non-retriable, or the new
+    // async-access ladder doubles as a lane escape hatch.
+    //
+    // run_shell_command is deliberately NOT asserted here: it has always been
+    // exempt from the lane-pattern check because its retry is an explicitly
+    // user-approved host one-shot. That pre-existing behaviour is out of scope
+    // for this fix and is left exactly as it was.
+    expect(
+      validateToolPermissionRetryRequest({
+        value: {
+          toolName: 'start_background_process',
+          arguments: { command: 'npm run dev' },
+          failure:
+            'This participant lane is not approved to write src/main/index.ts; it is outside the approved lane scope.'
+        },
+        definitions,
+        isAutoAllowed
+      })
+    ).toMatchObject({ ok: false, code: 'non_retriable_failure' })
+  })
+
+  it('describes a managed cancellable process, not an unsandboxed host shell, for async access', () => {
+    const prompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: 'Claude',
+      request: {
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
+        failure: 'start_background_process cannot prove an exact file/hunk mutation scope'
+      },
+      targetPreview: {}
+    })
+
+    // A registered, listable, killable process is a materially different
+    // promise from the unsandboxed one-shot the shell ladder describes.
+    expect(prompt.preview.permissionRetry).toMatchObject({
+      kind: 'tool_permission_retry',
+      targetToolName: 'start_background_process',
+      executionBoundary: 'managed-background-process-one-shot',
+      workspaceMutationContainment: 'registry-managed-cancellable',
+      exactCommand: 'python3 -m http.server 4173',
+      exactCwd: 'website'
+    })
+    expect(prompt.body).toMatch(/cancel|stop|kill/i)
+    expect(prompt.body).not.toMatch(/outside a workspace sandbox/i)
+
+    // The shell ladder keeps its own, harsher disclosure verbatim.
+    const shellPrompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: 'Claude',
+      request: {
+        toolName: 'run_shell_command',
+        arguments: { command: 'npm test', cwd: '.' },
+        failure: 'run_shell_command cannot prove an exact file/hunk mutation scope'
+      },
+      targetPreview: {}
+    })
+    expect(shellPrompt.preview.permissionRetry).toMatchObject({
+      executionBoundary: 'host-unsandboxed-one-shot',
+      workspaceMutationContainment: 'none-explicit-user-one-shot'
+    })
+    expect(shellPrompt.body).toMatch(/outside a workspace sandbox/i)
+  })
+
+  it('treats resolved shell-service policy as authority for a background process', () => {
+    // start_background_process carries the SAME 'shellCommands' agentic service
+    // as run_shell_command, so a broad-write tier has already authorized it at
+    // the central gate. No separate tier plumbing is required.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173', cwd: 'website' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+
+    // No resolved authority => no direct path; the seat takes the one-shot.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'python3 -m http.server 4173' },
+        allowed: false,
+        automaticApproval: true
+      })
+    ).toBe(false)
+
+    // A read-only command still spawns a persistent, opaque process, so the
+    // background tool keeps its authority — and so does the one-shot shell,
+    // whose claims a read cannot express either.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'start_background_process',
+        arguments: { command: 'grep -r needle .' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: { command: 'grep -r needle .' },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+  })
+
+  it('carries claim-less shell authority for a read-only command derivation cannot admit', () => {
+    // deriveWorkspaceMutationClaims admits run_shell_command with NO claims only
+    // for the SINGLE-SEGMENT workspace-inspection forms; a provably read-only
+    // CHAIN is not inspection-eligible and its claims can never be derived. So
+    // withholding this authority from every read-only command dead-ended the
+    // chain in claim derivation, and an allowed `git status` came back to the
+    // user as a tool_permission_retry approval card.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: {
+          command: "git status --porcelain -- src/a.ts && echo '---' && wc -l src/a.ts",
+          cwd: '/repo'
+        },
+        allowed: true,
+        automaticApproval: true
+      })
+    ).toBe(true)
+
+    // The authority is still the approval, not the command shape: no resolved
+    // or direct approval means no claim-less admission.
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        toolName: 'run_shell_command',
+        arguments: {
+          command: "git status --porcelain -- src/a.ts && echo '---' && wc -l src/a.ts",
+          cwd: '/repo'
+        },
+        allowed: false,
+        automaticApproval: true
+      })
+    ).toBe(false)
   })
 
   it('uses the portable Ensemble name when the immutable profile omits the legacy name', () => {
@@ -386,6 +566,433 @@ describe('one-off permission retry execution', () => {
       targetExecuted: true
     })
     expect(outcome.targetResult).toBe(targetResult)
+    expect(executeTarget).toHaveBeenCalledOnce()
+  })
+
+  it('redeems a host-issued opportunity without exposing or reconstructing its target arguments', async () => {
+    const opportunityId = `twp_${'b'.repeat(43)}`
+    const registry = new PermissionOpportunityRegistry({ createId: () => opportunityId })
+    const secret = '__RETRY_OPPORTUNITY_TARGET_SECRET__'
+    const binding = {
+      provider: 'codex' as const,
+      runId: 'run-1',
+      chatId: 'chat-1',
+      profileId: 'taskwraith-gateway-v17' as const,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/repo',
+      workspaceRealPath: '/real/workspace/repo',
+      effectiveWorktreePath: '/worktrees/repo',
+      providerSessionId: 'provider-session-1',
+      participantId: null,
+      laneId: null,
+      postureFingerprint: 'posture-1',
+      fixedToolAllowlistFingerprint: null
+    }
+    const issueResult = registry.issue({
+      binding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'notes.txt', content: secret },
+        // This deliberately does not match legacy failure regexes: main's
+        // typed boundary classification, not provider prose, authorizes it.
+        failure: 'host-classified boundary evidence',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    if (!issueResult.ok) throw new Error('Expected host-issued opportunity.')
+    const issued = issueResult.opportunity
+    const targetResult = { text: 'created', structuredContent: { ok: true } }
+    const prepareTarget = vi.fn(() => ({
+      ok: true as const,
+      targetPreview: { toolName: 'write_file' }
+    }))
+    const requestApproval = vi.fn(
+      async (_prompt: ReturnType<typeof buildToolPermissionRetryApprovalPrompt>) => true
+    )
+    const executeTarget = vi.fn(async () => targetResult)
+    const outcome = await orchestrateToolPermissionRetry({
+      value: { permissionOpportunityId: issued.permissionOpportunityId },
+      definitions,
+      isAutoAllowed,
+      providerLabel: 'Codex',
+      surfaceToolName: 'redeem_permission_opportunity',
+      resolvePermissionOpportunity: (permissionOpportunityId) => {
+        const reservation = registry.reserve({ permissionOpportunityId, binding })
+        if (!reservation.ok) return reservation
+        return {
+          ok: true as const,
+          reservation: {
+            request: reservation.reservation.opportunity.request,
+            targetArgumentsSha256: reservation.reservation.opportunity.targetArgumentsSha256,
+            consumeWithLiveBinding: () =>
+              registry.consume({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              }),
+            release: () =>
+              registry.release({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              })
+          }
+        }
+      },
+      prepareTarget,
+      requestApproval,
+      executeTarget
+    })
+
+    expect(outcome).toMatchObject({
+      isError: false,
+      targetToolName: 'write_file',
+      targetResult,
+      targetExecuted: true
+    })
+    expect(prepareTarget).toHaveBeenCalledWith({
+      toolName: 'write_file',
+      arguments: { path: 'notes.txt', content: secret },
+      failure: 'host-classified boundary evidence'
+    })
+    expect(isToolPermissionOpportunityRequest({ permissionOpportunityId: opportunityId })).toBe(
+      true
+    )
+    expect(JSON.stringify(requestApproval.mock.calls[0]?.[0])).not.toContain(opportunityId)
+    expect(executeTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: 'write_file' }),
+      expect.objectContaining({
+        targetToolName: 'write_file',
+        permissionRequestToolName: 'redeem_permission_opportunity'
+      })
+    )
+  })
+
+  it('revalidates the live binding after approval and before consuming the opportunity', async () => {
+    const opportunityId = `twp_${'f'.repeat(43)}`
+    const registry = new PermissionOpportunityRegistry({ createId: () => opportunityId })
+    const issuedBinding = {
+      provider: 'codex' as const,
+      runId: 'run-1',
+      chatId: 'chat-1',
+      profileId: 'taskwraith-gateway-v17' as const,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/repo',
+      workspaceRealPath: '/real/workspace/repo',
+      effectiveWorktreePath: '/worktrees/repo',
+      providerSessionId: 'provider-session-1',
+      participantId: null,
+      laneId: null,
+      postureFingerprint: 'posture-1',
+      fixedToolAllowlistFingerprint: null
+    }
+    let liveBinding = issuedBinding
+    const issueResult = registry.issue({
+      binding: issuedBinding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'notes.txt', content: 'hello' },
+        failure: 'host-classified boundary evidence',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    if (!issueResult.ok) throw new Error('Expected host-issued opportunity.')
+    const executeTarget = vi.fn(async () => ({ text: 'unexpected' }))
+    const outcome = await orchestrateToolPermissionRetry({
+      value: { permissionOpportunityId: issueResult.opportunity.permissionOpportunityId },
+      definitions,
+      isAutoAllowed,
+      providerLabel: 'Codex',
+      resolvePermissionOpportunity: (permissionOpportunityId) => {
+        const reservation = registry.reserve({
+          permissionOpportunityId,
+          binding: issuedBinding
+        })
+        if (!reservation.ok) return reservation
+        return {
+          ok: true as const,
+          reservation: {
+            request: reservation.reservation.opportunity.request,
+            targetArgumentsSha256: reservation.reservation.opportunity.targetArgumentsSha256,
+            consumeWithLiveBinding: () =>
+              registry.consume({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding: liveBinding
+              }),
+            release: () =>
+              registry.release({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding: issuedBinding
+              })
+          }
+        }
+      },
+      prepareTarget: () => ({ ok: true as const, targetPreview: {} }),
+      requestApproval: async (_prompt, onDecision) => {
+        liveBinding = { ...issuedBinding, postureFingerprint: 'posture-2' }
+        onDecision({ action: 'accept', decisionSource: 'user' })
+        return true
+      },
+      executeTarget
+    })
+
+    expect(outcome).toMatchObject({ isError: true })
+    expect(outcome.text).toContain('opportunity_binding_mismatch')
+    expect(executeTarget).not.toHaveBeenCalled()
+  })
+
+  it('never executes a consumed target that differs from the invocation reviewed by the user', async () => {
+    const registry = new PermissionOpportunityRegistry({
+      createId: (() => {
+        const ids = [`twp_${'g'.repeat(43)}`, `twp_${'h'.repeat(43)}`]
+        return () => ids.shift() || `twp_${'i'.repeat(43)}`
+      })(),
+      createReservationId: (() => {
+        const ids = [`twpr_${'g'.repeat(43)}`, `twpr_${'h'.repeat(43)}`]
+        return () => ids.shift() || `twpr_${'i'.repeat(43)}`
+      })()
+    })
+    const exactBinding = {
+      provider: 'codex' as const,
+      runId: 'run-1',
+      chatId: 'chat-1',
+      profileId: 'taskwraith-gateway-v17' as const,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/repo',
+      workspaceRealPath: '/real/workspace/repo',
+      effectiveWorktreePath: '/worktrees/repo',
+      providerSessionId: 'provider-session-1',
+      participantId: null,
+      laneId: null,
+      postureFingerprint: 'posture-1',
+      fixedToolAllowlistFingerprint: null
+    }
+    const reviewed = registry.issue({
+      binding: exactBinding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'reviewed.txt', content: 'reviewed' },
+        failure: 'reviewed boundary',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    const substituted = registry.issue({
+      binding: exactBinding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'substituted.txt', content: 'substituted' },
+        failure: 'substituted boundary',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    if (!reviewed.ok || !substituted.ok) throw new Error('Expected opportunities.')
+    const reviewedReservation = registry.reserve({
+      permissionOpportunityId: reviewed.opportunity.permissionOpportunityId,
+      binding: exactBinding
+    })
+    const substitutedReservation = registry.reserve({
+      permissionOpportunityId: substituted.opportunity.permissionOpportunityId,
+      binding: exactBinding
+    })
+    if (!reviewedReservation.ok || !substitutedReservation.ok) {
+      throw new Error('Expected reservations.')
+    }
+    const executeTarget = vi.fn(async () => ({ text: 'unexpected' }))
+    const outcome = await orchestrateToolPermissionRetry({
+      value: { permissionOpportunityId: reviewed.opportunity.permissionOpportunityId },
+      definitions,
+      isAutoAllowed,
+      providerLabel: 'Codex',
+      resolvePermissionOpportunity: () => ({
+        ok: true as const,
+        reservation: {
+          request: reviewedReservation.reservation.opportunity.request,
+          targetArgumentsSha256: reviewedReservation.reservation.opportunity.targetArgumentsSha256,
+          consumeWithLiveBinding: () =>
+            registry.consume({
+              permissionOpportunityId: substitutedReservation.reservation.permissionOpportunityId,
+              reservationId: substitutedReservation.reservation.reservationId,
+              binding: exactBinding
+            }),
+          release: () =>
+            registry.release({
+              permissionOpportunityId: reviewedReservation.reservation.permissionOpportunityId,
+              reservationId: reviewedReservation.reservation.reservationId,
+              binding: exactBinding
+            })
+        }
+      }),
+      prepareTarget: () => ({ ok: true as const, targetPreview: {} }),
+      requestApproval: async (_prompt, onDecision) => {
+        onDecision({ action: 'accept', decisionSource: 'user' })
+        return true
+      },
+      executeTarget
+    })
+
+    expect(outcome).toMatchObject({ isError: true })
+    expect(outcome.text).toContain('opportunity_target_mismatch')
+    expect(executeTarget).not.toHaveBeenCalled()
+  })
+
+  it('releases a reserved host opportunity when current preflight rejects it before a card opens', async () => {
+    const opportunityId = `twp_${'e'.repeat(43)}`
+    const registry = new PermissionOpportunityRegistry({ createId: () => opportunityId })
+    const binding = {
+      provider: 'codex' as const,
+      runId: 'run-1',
+      chatId: 'chat-1',
+      profileId: 'taskwraith-gateway-v17' as const,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/repo',
+      workspaceRealPath: '/real/workspace/repo',
+      effectiveWorktreePath: '/worktrees/repo',
+      providerSessionId: 'provider-session-1',
+      participantId: null,
+      laneId: null,
+      postureFingerprint: 'posture-1',
+      fixedToolAllowlistFingerprint: null
+    }
+    const issueResult = registry.issue({
+      binding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'notes.txt', content: 'hello' },
+        failure: 'host-classified boundary evidence',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    if (!issueResult.ok) throw new Error('Expected host-issued opportunity.')
+    const outcome = await orchestrateToolPermissionRetry({
+      value: { permissionOpportunityId: issueResult.opportunity.permissionOpportunityId },
+      definitions,
+      isAutoAllowed,
+      providerLabel: 'Codex',
+      resolvePermissionOpportunity: (permissionOpportunityId) => {
+        const reservation = registry.reserve({ permissionOpportunityId, binding })
+        if (!reservation.ok) return reservation
+        return {
+          ok: true as const,
+          reservation: {
+            request: reservation.reservation.opportunity.request,
+            targetArgumentsSha256: reservation.reservation.opportunity.targetArgumentsSha256,
+            consumeWithLiveBinding: () =>
+              registry.consume({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              }),
+            release: () =>
+              registry.release({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              })
+          }
+        }
+      },
+      prepareTarget: () => ({
+        ok: false as const,
+        error: 'Current route no longer permits target.'
+      }),
+      requestApproval: vi.fn(async () => true),
+      executeTarget: vi.fn(async () => ({ text: 'unexpected' }))
+    })
+
+    expect(outcome).toMatchObject({ isError: true })
+    expect(registry.status(issueResult.opportunity.permissionOpportunityId)).toMatchObject({
+      state: 'pending'
+    })
+  })
+
+  it('rejects replayed, malformed, and mixed opportunity requests before a second approval', async () => {
+    const opportunityId = `twp_${'c'.repeat(43)}`
+    const registry = new PermissionOpportunityRegistry({ createId: () => opportunityId })
+    const binding = {
+      provider: 'codex' as const,
+      runId: 'run-1',
+      chatId: 'chat-1',
+      profileId: 'taskwraith-gateway-v17' as const,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/repo',
+      workspaceRealPath: '/real/workspace/repo',
+      effectiveWorktreePath: '/worktrees/repo',
+      providerSessionId: 'provider-session-1',
+      participantId: null,
+      laneId: null,
+      postureFingerprint: 'posture-1',
+      fixedToolAllowlistFingerprint: null
+    }
+    const issueResult = registry.issue({
+      binding,
+      request: {
+        toolName: 'write_file',
+        arguments: { path: 'notes.txt', content: 'hello' },
+        failure: 'host-classified boundary evidence',
+        boundaryCode: 'policy_denied'
+      }
+    })
+    if (!issueResult.ok) throw new Error('Expected host-issued opportunity.')
+    const issued = issueResult.opportunity
+    const requestApproval = vi.fn(async () => true)
+    const executeTarget = vi.fn(async () => ({ text: 'created' }))
+    const base = {
+      definitions,
+      isAutoAllowed,
+      providerLabel: 'Codex',
+      resolvePermissionOpportunity: (permissionOpportunityId: string) => {
+        const reservation = registry.reserve({ permissionOpportunityId, binding })
+        if (!reservation.ok) return reservation
+        return {
+          ok: true as const,
+          reservation: {
+            request: reservation.reservation.opportunity.request,
+            targetArgumentsSha256: reservation.reservation.opportunity.targetArgumentsSha256,
+            consumeWithLiveBinding: () =>
+              registry.consume({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              }),
+            release: () =>
+              registry.release({
+                permissionOpportunityId: reservation.reservation.permissionOpportunityId,
+                reservationId: reservation.reservation.reservationId,
+                binding
+              })
+          }
+        }
+      },
+      prepareTarget: () => ({ ok: true as const, targetPreview: {} }),
+      requestApproval,
+      executeTarget
+    }
+
+    await orchestrateToolPermissionRetry({
+      ...base,
+      value: { permissionOpportunityId: issued.permissionOpportunityId }
+    })
+    const replay = await orchestrateToolPermissionRetry({
+      ...base,
+      value: { permissionOpportunityId: issued.permissionOpportunityId }
+    })
+    const mixed = await orchestrateToolPermissionRetry({
+      ...base,
+      value: {
+        permissionOpportunityId: issued.permissionOpportunityId,
+        toolName: 'write_file',
+        arguments: { path: 'notes.txt', content: 'changed' },
+        failure: 'permission denied'
+      }
+    })
+
+    expect(replay).toMatchObject({ isError: true })
+    expect(replay.text).toContain('opportunity_already_redeemed')
+    expect(mixed).toMatchObject({ isError: true })
+    expect(mixed.text).toContain('invalid_opportunity_request')
+    expect(requestApproval).toHaveBeenCalledOnce()
     expect(executeTarget).toHaveBeenCalledOnce()
   })
 
@@ -546,6 +1153,9 @@ describe('one-off marker and approval receipt', () => {
         decision: { action: 'acceptForSession', decisionSource: 'system' }
       })
     ).toBe(true)
+    // A read-only command is covered by the same authority: it claims nothing,
+    // and claim derivation can only refuse it unless it is one of the
+    // single-segment workspace-inspection forms.
     expect(
       approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
@@ -553,7 +1163,7 @@ describe('one-off marker and approval receipt', () => {
         automaticApproval: true,
         decision: { action: 'accept', decisionSource: 'user' }
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
       approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
@@ -658,6 +1268,38 @@ describe('one-off marker and approval receipt', () => {
       agentNarrativeRedacted: true,
       exactArgumentKeys: ['content', 'path'],
       exactArgumentByteLength: expect.any(Number)
+    })
+  })
+
+  it('recursively redacts raw opportunity ids from durable event and approval shapes', () => {
+    const opportunityId = `twp_${'d'.repeat(43)}`
+    const rawEvent = {
+      params: {
+        permissionOpportunityId: opportunityId,
+        nested: [{ permissionOpportunityId: opportunityId }],
+        encoded: JSON.stringify({ permissionOpportunityId: opportunityId })
+      },
+      result: {
+        opportunity: { permissionOpportunityId: opportunityId },
+        output: `retry failed for ${opportunityId}`,
+        messages: [`first ${opportunityId}`, { message: `second ${opportunityId}` }]
+      }
+    }
+    const durableEvent = redactPermissionOpportunityIdsForDurableStorage(rawEvent)
+    expect(JSON.stringify(durableEvent)).not.toContain(opportunityId)
+    expect(durableEvent.params.permissionOpportunityId).toBe('[redacted]')
+    expect(durableEvent.params.nested[0]?.permissionOpportunityId).toBe('[redacted]')
+    expect(JSON.parse(String(durableEvent.params.encoded))).toMatchObject({
+      permissionOpportunityId: '[redacted]'
+    })
+    expect(durableEvent.result.output).toContain('[redacted permission opportunity]')
+    expect(JSON.stringify(durableEvent.result.messages)).not.toContain(opportunityId)
+    const durableApproval = toolPermissionRetryApprovalPayloadForDurableStorage({
+      preview: { permissionRetry: { permissionOpportunityId: opportunityId } }
+    })
+    expect(JSON.stringify(durableApproval)).not.toContain(opportunityId)
+    expect(durableApproval.preview.permissionRetry).toMatchObject({
+      permissionOpportunityIdRedacted: true
     })
   })
 })

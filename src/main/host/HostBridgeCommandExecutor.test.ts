@@ -251,8 +251,19 @@ describe('HostBridgeCommandExecutor construction', () => {
   })
 })
 
-describe('reserved read aliases and unknowns fail closed', () => {
-  it.each(['snapshot.get', 'deltas.since', 'receipt.lookup', 'ping'] as const)(
+describe('reserved read aliases, setup mutations, and unknowns fail closed', () => {
+  it.each([
+    'snapshot.get',
+    'deltas.since',
+    'receipt.lookup',
+    'ping',
+    'workspace.register',
+    'thread.create',
+    'thread.configure',
+    'thread.archive',
+    'provider.auth.begin',
+    'provider.auth.cancel'
+  ] as const)(
     '%s never calls Bridge',
     async (name) => {
       const { executor, bridge } = open()
@@ -355,6 +366,23 @@ describe('composer.send', () => {
     expect(resolveComposerSend).toHaveBeenCalledWith('thread-1', {
       model: 'gpt-custom',
       reasoningEffort: 'medium'
+    })
+  })
+
+  it('carries only the main-resolved permission preset into the signed composer action', async () => {
+    const { executor, bridge } = open({}, {
+      resolveComposerSend: () =>
+        ok({
+          mode: 'solo',
+          workspaceId: 'ws-1',
+          provider: 'codex',
+          permissionPresetId: 'workspace_write'
+        })
+    })
+    await executor.execute(command('composer.send', { threadId: 'thread-1' }, { text: 'hello' }))
+    expect(bridge.calls[0]?.action).toMatchObject({
+      kind: 'composerPrompt',
+      permissionPresetId: 'workspace_write'
     })
   })
 

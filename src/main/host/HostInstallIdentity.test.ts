@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HOST_PROTOCOL_MAX_ID } from '../../shared/hostProtocol'
 
-import { hostRuntimeDataDir } from './HostMainComposition'
+import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
 import {
   HOST_INSTALL_IDENTITY_FILE_NAME,
   HOST_INSTALL_IDENTITY_SCHEMA_VERSION,

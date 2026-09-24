@@ -16,7 +16,10 @@ import {
   verifyAgyBinaryProvenance,
   type AgyBinaryProvenance
 } from '../antigravity/AntigravityBinaryProvenance'
-import { isAntigravityGeminiApiModelCandidate } from '../antigravity/AntigravityCombinedModeDispatch'
+import {
+  isAntigravityAcpModelCandidate,
+  isAntigravityGeminiApiModelCandidate
+} from '../antigravity/AntigravityCombinedModeDispatch'
 import type { AntigravityGeminiApiSecretStore } from '../antigravity/AntigravityGeminiApiSecretStore'
 import { buildGeminiFunctionDeclarations } from '../GeminiApiToolDeclarations'
 import { buildGeminiTurnContents, type GeminiContent } from '../GeminiApiHistoryAdapter'
@@ -141,12 +144,22 @@ export type AntigravitySealEvidenceOutcome =
  * namespace to the committed wire id accepted by the live agentic runtime.
  * Image-bearing API requests stay explicitly unsealed until the upload/inline
  * file authority can be re-derived from durable attachment snapshots.
+ * Official-ACP candidates are quarantined to an explicit unsealed skip: no
+ * ACP evidence builder exists yet, and they must never be recorded as the
+ * legacy official-agy transport.
  */
 export function antigravityScheduledEvidenceRoute(input: {
   model: unknown
   imageCount?: number
 }): AntigravityScheduledEvidenceRoute {
   if (!isAntigravityGeminiApiModelCandidate(input.model)) {
+    if (isAntigravityAcpModelCandidate(input.model)) {
+      return {
+        kind: 'skipped',
+        reason:
+          'The AntiGravity model is routed to the official ACP transport, which is not seal-wired yet; dispatching under the existing signed posture without claiming exact ACP transport evidence.'
+      }
+    }
     return { kind: 'official-agy' }
   }
   const model = typeof input.model === 'string' ? input.model.trim() : ''

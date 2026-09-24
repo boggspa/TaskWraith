@@ -712,11 +712,7 @@ export function ModelContextLengthsSettingsTable() {
                   <td className="model-usage-table-model-cell" title={m.label}>{humaniseModelIdTableCell(group.provider, m.modelId)}</td>
                   <td
                     className="model-usage-table-tokens"
-                    title={
-                      m.maxContextWindow
-                        ? `${m.contextWindow.toLocaleString()}–${m.maxContextWindow.toLocaleString()} tokens (plan-dependent)`
-                        : `${m.contextWindow.toLocaleString()} tokens`
-                    }
+                    title={`${m.contextWindow.toLocaleString()} tokens`}
                   >
                     {m.formatted}
                   </td>
@@ -815,8 +811,7 @@ export function ModelUsageSettingsTable({
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.api?.getChatList !== 'function') return
     let cancelled = false
-    window.api
-      .getChatList()
+    void (window.api.getChatRunSummaries?.() ?? window.api.getChatList())
       .then((latest) => {
         if (!cancelled) setChats(Array.isArray(latest) ? latest : [])
       })

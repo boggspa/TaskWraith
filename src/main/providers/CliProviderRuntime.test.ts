@@ -1,5 +1,7 @@
-import { promises as fs } from 'fs'
-import { describe, it, expect, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, promises as fs, realpathSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { delimiter, dirname, join } from 'path'
+import { afterAll, beforeAll, describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
   createCliEnv,
@@ -623,6 +625,63 @@ describe('Pi CLI status', () => {
   })
 })
 
+describe('Mistral Vibe auth status', () => {
+  it("uses Vibe's ACP auth result and scrubs ambient metered-key credentials", async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      if (String(candidate).endsWith('vibe-acp')) {
+        return {
+          isFile: () => true,
+          isSymbolicLink: () => false
+        } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    const probeMistralAuthStatus = vi.fn(
+      async ({
+        binaryPath,
+        env
+      }: Parameters<NonNullable<CliProviderRuntimeDependencies['probeMistralAuthStatus']>>[0]) => {
+        expect(binaryPath).toMatch(/vibe-acp$/)
+        expect(env.MISTRAL_API_KEY).toBeUndefined()
+        expect(env.MISTRAL_TOKEN).toBeUndefined()
+        return {
+          authState: 'authenticated' as const,
+          credentialPresent: true,
+          authSource: 'os_keyring',
+          version: '2.24.3',
+          probeStatus: 'verified' as const
+        }
+      }
+    )
+
+    try {
+      await expect(
+        getCliProviderStatus('mistral', {
+          env: {
+            PATH: '/fake/bin',
+            MISTRAL_API_KEY: 'metered-key-must-not-qualify-the-plan-seat',
+            MISTRAL_TOKEN: 'metered-token-must-not-qualify-the-plan-seat'
+          },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeMistralAuthStatus
+        })
+      ).resolves.toMatchObject({
+        provider: 'mistral',
+        available: true,
+        version: '2.24.3',
+        authState: 'authenticated',
+        credentialPresent: true,
+        authSource: 'os_keyring',
+        probeStatus: 'verified'
+      })
+      expect(probeMistralAuthStatus).toHaveBeenCalledOnce()
+    } finally {
+      stat.mockRestore()
+    }
+  })
+})
+
 describe('Kimi status admission', () => {
   it('fails closed without the reviewed status seam and starts no generic discovery path', async () => {
     const getSettings = vi.fn(() => {
@@ -644,5 +703,154 @@ describe('Kimi status admission', () => {
     })
     expect(getSettings).not.toHaveBeenCalled()
     expect(getRuntimeProfiles).not.toHaveBeenCalled()
+  })
+})
+
+describe('Devin credential status', () => {
+  /**
+   * The status resolves the Devin CLI through this process's PATH, then
+   * common directories under HOME, and runs its `--version`. The stat mocks
+   * below answer only for a `devin` in this block's own stub directory,
+   * which goes first on PATH, so the version probe runs that failing stub and
+   * never an installed CLI: an installed devin first on PATH used to run with
+   * no HOME in its environment and fall back to the real home. HOME and the
+   * XDG roots point into the same temporary directory while these cases run.
+   */
+  const HERMETIC_VARIABLES = [
+    'PATH',
+    'HOME',
+    'USERPROFILE',
+    'XDG_CONFIG_HOME',
+    'XDG_CACHE_HOME',
+    'XDG_DATA_HOME',
+    'XDG_STATE_HOME'
+  ] as const
+  const realEnvironment = new Map<string, string | undefined>()
+  let hermeticRoot = ''
+  let devinStubs = ''
+  beforeAll(() => {
+    hermeticRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cli-runtime-devin-')))
+    devinStubs = join(hermeticRoot, 'bin')
+    mkdirSync(devinStubs)
+    // @portability-ok: a POSIX stub that only has to be found; on win32 it
+    // cannot run, which fails the version probe the same way.
+    writeFileSync(join(devinStubs, 'devin'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    const home = join(hermeticRoot, 'home')
+    const values: Record<(typeof HERMETIC_VARIABLES)[number], string> = {
+      PATH: [devinStubs, process.env.PATH].filter(Boolean).join(delimiter),
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+      XDG_STATE_HOME: join(home, '.local', 'state')
+    }
+    for (const name of HERMETIC_VARIABLES) {
+      realEnvironment.set(name, process.env[name])
+      process.env[name] = values[name]
+    }
+  })
+  afterAll(() => {
+    for (const [name, value] of realEnvironment) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    rmSync(hermeticRoot, { recursive: true, force: true })
+  })
+
+  it('reports the credential lane a launch would use, without spawning `devin auth status`', async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      // Platform-correct binary match: Windows searches PATH with backslash
+      // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
+      // the basename rather than a '/devin' suffix — and only in the stub
+      // directory, so no installed devin can ever be resolved and run.
+      const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
+      if (
+        dirname(String(candidate)) === devinStubs &&
+        /^devin(\.[a-z0-9]+)?$/i.test(candidateName)
+      ) {
+        return {
+          isFile: () => true,
+          isSymbolicLink: () => false
+        } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    const probeDevinCredentialState = vi.fn(
+      ({
+        env,
+        ambientApiKeyAllowed
+      }: Parameters<
+        NonNullable<CliProviderRuntimeDependencies['probeDevinCredentialState']>
+      >[0]) => {
+        // The probe sees the same resolved CLI environment a launch would get.
+        expect(env.WINDSURF_API_KEY).toBe('sk-ambient')
+        expect(typeof ambientApiKeyAllowed).toBe('boolean')
+        return {
+          credentialPresent: true,
+          authSource: 'env-key' as const,
+          authState: 'windsurf-api-key' as const
+        }
+      }
+    )
+
+    try {
+      await expect(
+        getCliProviderStatus('devin', {
+          env: { PATH: '/fake/bin', WINDSURF_API_KEY: 'sk-ambient' },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeDevinCredentialState
+        })
+      ).resolves.toMatchObject({
+        provider: 'devin',
+        available: true,
+        authState: 'windsurf-api-key',
+        credentialPresent: true,
+        authSource: 'env-key'
+      })
+      expect(probeDevinCredentialState).toHaveBeenCalledOnce()
+    } finally {
+      stat.mockRestore()
+    }
+  })
+
+  it('reports a missing credential honestly instead of an unobservable state', async () => {
+    const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
+      // Platform-correct binary match: Windows searches PATH with backslash
+      // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
+      // the basename rather than a '/devin' suffix — and only in the stub
+      // directory, so no installed devin can ever be resolved and run.
+      const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
+      if (
+        dirname(String(candidate)) === devinStubs &&
+        /^devin(\.[a-z0-9]+)?$/i.test(candidateName)
+      ) {
+        return { isFile: () => true, isSymbolicLink: () => false } as any
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    try {
+      await expect(
+        getCliProviderStatus('devin', {
+          env: { PATH: '/fake/bin' },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings,
+          probeDevinCredentialState: () => ({
+            credentialPresent: false,
+            authSource: null,
+            authState: 'missing'
+          })
+        })
+      ).resolves.toMatchObject({
+        provider: 'devin',
+        available: true,
+        authState: 'missing',
+        credentialPresent: false,
+        authSource: null
+      })
+    } finally {
+      stat.mockRestore()
+    }
   })
 })

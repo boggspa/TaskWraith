@@ -4,7 +4,7 @@
 // rules), empty plugins/skills (no auto-loaded MCP servers / hooks / skills),
 // and a narrowly shared OAuth credential projection that is removed on every
 // exit path. The default remains a throwaway per-run home; resumable seats
-// retain only Kimi's native session files between turns.
+// retain Kimi's native session files plus its empty synthetic cwd identity.
 //
 // Why project the credential directories: an isolated home with an empty
 // credentials/ dir fails session/new with -32000 (the B5 paradox). Kimi Code
@@ -86,7 +86,8 @@ export interface PrepareKimiHomeInput {
   /** Exact managed model alias selected for this run (for its effective window). */
   selectedModelAlias?: string
   /**
-   * Keep Kimi's `sessions/` + `session_index.jsonl` in this home after cleanup.
+   * Keep Kimi's `sessions/`, `session_index.jsonl`, and empty synthetic cwd in
+   * this home after cleanup.
    * Runtime config, credentials, oauth state, plugins, and skills are still
    * removed after every process exit and regenerated before the next turn.
    */
@@ -116,7 +117,12 @@ export type PrepareKimiHomeResult =
   | { ok: false; reason: 'not-authenticated' | 'no-config' | 'error'; message: string }
 
 /** Only provider-native continuity files proven necessary for ACP resume. */
-const KIMI_SESSION_CONTINUITY_TOP_LEVEL = new Set(['sessions', 'session_index.jsonl'])
+const KIMI_RUNTIME_CWD_CONTINUITY = 'runtime-cwd'
+const KIMI_SESSION_CONTINUITY_TOP_LEVEL = new Set([
+  'sessions',
+  'session_index.jsonl',
+  KIMI_RUNTIME_CWD_CONTINUITY
+])
 
 function pathIsWithin(parent: string, child: string): boolean {
   const rel = relative(parent, child)
@@ -271,6 +277,47 @@ export async function prepareKimiIsolatedHome(
     return true
   }
 
+  // Kimi persists the ACP cwd as the native session's workspace identity and
+  // reinstalls a project-skill watcher there on session/resume. Retain only the
+  // empty TaskWraith-created directory shapes; anything else is runtime residue
+  // and is scrubbed before another credential-bearing process can start.
+  const runtimeCwdContinuityIsSafe = async (path: string): Promise<boolean> => {
+    const stat = await fs.lstat!(path)
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (currentUid !== undefined && stat.uid !== undefined && stat.uid !== currentUid) ||
+      (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)
+    ) {
+      return false
+    }
+    for (const entry of await fs.readdir!(path)) {
+      if (entry !== 'session' && !/^run-[A-Za-z0-9]+$/.test(entry)) return false
+      const child = fs.join(path, entry)
+      const childStat = await fs.lstat!(child)
+      if (
+        !childStat.isDirectory() ||
+        childStat.isSymbolicLink() ||
+        (currentUid !== undefined && childStat.uid !== undefined && childStat.uid !== currentUid) ||
+        (process.platform !== 'win32' && (childStat.mode & 0o077) !== 0) ||
+        (await fs.readdir!(child)).length > 0
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+
+  const continuityEntryIsValid = async (entry: string, path: string): Promise<boolean> => {
+    if (entry === KIMI_RUNTIME_CWD_CONTINUITY) return runtimeCwdContinuityIsSafe(path)
+    const stat = await fs.lstat!(path)
+    return (
+      !stat.isSymbolicLink() &&
+      (entry === 'sessions' ? stat.isDirectory() : stat.isFile()) &&
+      (await continuityEntryIsSafe(path))
+    )
+  }
+
   const scrubDurableHome = async (bestEffort: boolean): Promise<void> => {
     let entries: string[] = []
     try {
@@ -283,11 +330,7 @@ export async function prepareKimiIsolatedHome(
       const path = fs.join(homeDir, entry)
       try {
         if (KIMI_SESSION_CONTINUITY_TOP_LEVEL.has(entry)) {
-          const stat = await fs.lstat!(path)
-          const valid =
-            !stat.isSymbolicLink() &&
-            (entry === 'sessions' ? stat.isDirectory() : stat.isFile()) &&
-            (await continuityEntryIsSafe(path))
+          const valid = await continuityEntryIsValid(entry, path)
           if (valid) continue
         }
         await fs.rm(path)
@@ -335,7 +378,7 @@ export async function prepareKimiIsolatedHome(
           if (!KIMI_SESSION_CONTINUITY_TOP_LEVEL.has(entry)) {
             throw new Error(`unexpected durable entry survived: ${entry}`)
           }
-          if (!(await continuityEntryIsSafe(fs.join(homeDir, entry)))) {
+          if (!(await continuityEntryIsValid(entry, fs.join(homeDir, entry)))) {
             throw new Error(`unsafe durable continuity entry survived: ${entry}`)
           }
         }
@@ -420,7 +463,7 @@ export async function prepareKimiIsolatedHome(
     await fs.mkdir(homeDir)
     await fs.chmod(homeDir, 0o700)
     // A prior process crash or provider upgrade may have left unknown top-level
-    // material. Keep only the two proven native-continuity entries.
+    // material. Keep only the three proven native-continuity entries.
     if (input.preserveSessionState) await scrubDurableHome(false)
     if (hasOAuthCredential && prepareOAuthCredentialProjection) {
       await prepareOAuthCredentialProjection({

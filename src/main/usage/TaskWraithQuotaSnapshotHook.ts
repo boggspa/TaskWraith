@@ -8,12 +8,22 @@ import {
 } from '../../shared/quotaSnapshotHook'
 import {
   hasApiUsageBillingProvider,
+  nextMonthlyResetAt,
   type ApiUsageBillingCurrency,
   type ApiUsageBillingSettings,
   type CerebrasApiUsageBilling,
   type DeepSeekApiUsageBilling,
-  type MetaApiUsageBilling
+  type MetaApiUsageBilling,
+  type OpenRouterApiUsageBilling
 } from '../../shared/apiUsageBilling'
+import type {
+  UsageWebSessionProviderId,
+  UsageWebSessionReading
+} from '../../shared/usageWebSession'
+import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
+import { loadDevinUsageSnapshot, type DevinUsageSnapshot } from '../devin/DevinUsage'
+import { defaultDevinPlanInfoRows } from '../devin/DevinPlanInfoRows'
+import { readUsageWebSessionReading } from '../providers/UsageWebSessionClient'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const DEEPSEEK_RESPONSE_LIMIT_BYTES = 1024 * 1024
@@ -33,6 +43,35 @@ export interface TaskWraithQuotaSnapshotHookDependencies {
   getApiUsageBilling: () => ApiUsageBillingSettings | null | undefined
   getMuseConfigured: () => boolean | Promise<boolean>
   getMuseMonthlySpendCapUsd: () => number | null | undefined
+  readUsageWebSession?: (
+    provider: UsageWebSessionProviderId
+  ) => Promise<UsageWebSessionReading | null>
+  /**
+   * Explicit/opt-in CLI-sourced Muse subscription reading (e.g. a cached
+   * `parseMuseSubscriptionUsagePanel` result refreshed by a user action).
+   * NEVER the live `probeMuseSubscriptionUsage` on the automatic snapshot
+   * path: the probe spawns a real `muse` TUI session, and Muse meters itself
+   * from session.jsonl — the instrument may perturb the thing it measures.
+   * The browser import stays the automatic source; this only takes
+   * precedence when a reading is supplied.
+   */
+  readMuseSubscriptionCli?: () =>
+    | MuseSubscriptionUsageReading
+    | null
+    | undefined
+    | Promise<MuseSubscriptionUsageReading | null | undefined>
+  /**
+   * Injectable Devin state-DB row reader (tests). When absent, the hook uses
+   * a read-only /usr/bin/sqlite3 query of the Devin desktop client's local
+   * state DB as its default — Devin is a read-only local file Devin already
+   * wrote, so unlike the Muse CLI probe it perturbs nothing and belongs on
+   * the automatic snapshot path. A Devin lane with no production caller
+   * would be dead code, so this default (not an unsupplied socket) is what
+   * keeps the lane live.
+   */
+  readDevinPlanInfoRows?: () => Promise<string[]>
+  /** Injectable platform for the Devin darwin gate (tests). */
+  devinPlatform?: NodeJS.Platform
   fetchImpl?: FetchLike
   now?: () => number
   deepSeekCacheTtlMs?: number
@@ -140,6 +179,16 @@ function formatMoney(amount: number, currency = 'USD'): string {
 
 function roundMoney(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 1_000_000) / 1_000_000
+}
+
+function supportedBillingCurrency(
+  imported: string | undefined,
+  fallback: ApiUsageBillingCurrency | undefined
+): ApiUsageBillingCurrency {
+  const normalized = imported?.trim().toUpperCase()
+  return normalized === 'GBP' || normalized === 'EUR' || normalized === 'USD'
+    ? normalized
+    : (fallback ?? 'USD')
 }
 
 function fetchedAt(now: number): string {
@@ -270,7 +319,7 @@ function monthBounds(now: number, local: boolean): { start: number; next: string
 function summarizeSpend(
   records: readonly UsageRecord[],
   providerRates: unknown,
-  lane: 'deepseek' | 'cerebras' | 'meta',
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter',
   now: number
 ): SpendSummary & { nextMonth: string } {
   const isMeta = lane === 'meta'
@@ -300,7 +349,7 @@ function summarizeSpend(
 
 function usageMatchesSpendLane(
   usage: UsageRecord | null | undefined,
-  lane: 'deepseek' | 'cerebras' | 'meta'
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter'
 ): usage is UsageRecord {
   if (!usage || usage.usageKind === 'reset_hint') return false
   if (lane === 'meta') return usage.provider === 'muse'
@@ -313,7 +362,7 @@ function usageMatchesSpendLane(
 function summarizeSpendSince(
   records: readonly UsageRecord[],
   providerRates: unknown,
-  lane: 'deepseek' | 'cerebras' | 'meta',
+  lane: 'deepseek' | 'cerebras' | 'meta' | 'openrouter',
   since: number | null,
   now: number
 ): number {
@@ -389,7 +438,8 @@ function deepSeekSnapshot(
         currency: observation.currency,
         subtitle: totalTopUp
           ? 'Configured top-ups minus official remaining balance'
-          : 'Configured credit budget minus official remaining balance'
+          : 'Configured credit budget minus official remaining balance',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   } else {
@@ -451,11 +501,13 @@ function deepSeekSnapshot(
 
 function cerebrasSnapshot(
   billing: CerebrasApiUsageBilling | undefined,
-  now: number
+  now: number,
+  imported: UsageWebSessionReading | null
 ): QuotaSnapshotHookSnapshot {
-  const currency = billing?.currency ?? 'USD'
+  const currency = supportedBillingCurrency(imported?.currency, billing?.currency)
   const purchased = billing?.purchasedCredits
-  const current = billing?.currentBalance
+  const current = imported?.balance ?? billing?.currentBalance
+  const importedSpend = imported?.spend
   const hasCreditAnchor = purchased !== undefined && current !== undefined
   const windows: QuotaSnapshotHookWindow[] = []
   if (hasCreditAnchor) {
@@ -466,17 +518,51 @@ function cerebrasSnapshot(
         amount: Math.max(0, Math.min(purchased, purchased - current)),
         total: purchased,
         currency,
-        subtitle: 'Manual Cerebras billing anchor'
+        subtitle:
+          imported?.balance !== undefined
+            ? 'Imported Cerebras billing session'
+            : 'Manual Cerebras billing anchor',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
+      })
+    )
+  } else if (importedSpend !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'cerebras-credit-used',
+        label: 'Credit used',
+        amount: importedSpend,
+        total: billing?.monthlyBudgetUsd,
+        currency,
+        subtitle: 'Imported Cerebras billing session',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
+      })
+    )
+  } else if (current !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'cerebras-available-balance',
+        label: 'Available balance',
+        amount: current,
+        currency,
+        subtitle: 'Imported Cerebras billing session',
+        windowKind: 'balance'
       })
     )
   }
+  const importedAt = imported ? Date.parse(imported.capturedAt) : Number.NaN
   return {
     provider: 'cerebras',
     source: 'taskwraith-native',
     configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
-    planType: hasCreditAnchor ? 'Cloud billing anchor' : 'TaskWraith estimate',
+    fetchedAt: imported ? imported.capturedAt : fetchedAt(now),
+    stale:
+      imported !== null &&
+      (!Number.isFinite(importedAt) || now - importedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS),
+    planType: imported
+      ? 'API Credits'
+      : hasCreditAnchor
+        ? 'Cloud billing anchor'
+        : 'TaskWraith estimate',
     windows,
     balances: [
       ...(current !== undefined
@@ -486,7 +572,10 @@ function cerebrasSnapshot(
               label: 'Current balance',
               amount: current,
               unit: currency,
-              subtitle: 'Manual billing anchor'
+              subtitle:
+                imported?.balance !== undefined
+                  ? 'Imported browser session'
+                  : 'Manual billing anchor'
             }
           ]
         : []),
@@ -507,16 +596,18 @@ function cerebrasSnapshot(
 
 function metaSnapshot(
   billing: MetaApiUsageBilling | undefined,
+  imported: UsageWebSessionReading | null,
   localSpendSinceAnchorUsd: number,
   fxRates: unknown,
   now: number
 ): QuotaSnapshotHookSnapshot {
-  const currency = billing?.currency ?? 'USD'
+  const currency = supportedBillingCurrency(imported?.currency, billing?.currency)
   const perUsd = fxRatePerUsd(fxRates, currency)
   const preload = billing?.preloadCredits
   const threshold = billing?.paymentThreshold
-  const remaining = billing?.remainingBalance
-  const localIncrement = billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
+  const remaining = imported?.balance ?? billing?.remainingBalance
+  const localIncrement =
+    imported?.capturedAt || billing?.anchorUpdatedAt ? localSpendSinceAnchorUsd * perUsd : 0
   const effectiveRemaining =
     remaining === undefined ? undefined : roundMoney(Math.max(0, remaining - localIncrement))
   const windows: QuotaSnapshotHookWindow[] = []
@@ -532,17 +623,37 @@ function metaSnapshot(
         subtitle:
           localIncrement > 0
             ? 'Preload minus remaining, advanced by tracked Muse spend'
-            : 'Configured preload minus remaining Meta balance'
+            : 'Configured preload minus remaining Meta balance',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
+      })
+    )
+  } else if (imported?.spend !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'meta-credit-used',
+        label: 'Credit used',
+        amount: imported.spend + localIncrement,
+        total: billing?.monthlyBudgetUsd,
+        currency,
+        subtitle:
+          localIncrement > 0
+            ? 'Imported Meta spend, advanced by tracked Muse usage'
+            : 'Imported Meta billing session',
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
       })
     )
   }
+
+  const importedAt = imported ? Date.parse(imported.capturedAt) : Number.NaN
 
   return {
     provider: 'meta',
     source: 'taskwraith-native',
     configured: true,
-    fetchedAt: fetchedAt(now),
-    stale: false,
+    fetchedAt: imported ? imported.capturedAt : fetchedAt(now),
+    stale:
+      imported !== null &&
+      (!Number.isFinite(importedAt) || now - importedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS),
     planType: billing?.planName ?? (billing ? 'API Credits' : 'Muse local estimate'),
     windows,
     balances: [
@@ -567,7 +678,9 @@ function metaSnapshot(
               subtitle:
                 localIncrement > 0
                   ? 'Manual remaining minus tracked Muse spend since anchor'
-                  : 'Manual billing anchor'
+                  : imported?.balance !== undefined
+                    ? 'Imported browser session'
+                    : 'Manual billing anchor'
             }
           ]
         : []),
@@ -583,6 +696,235 @@ function metaSnapshot(
           ]
         : [])
     ]
+  }
+}
+
+/**
+ * OpenRouter credit meter, config-anchored with NO live fetch: the spend is
+ * TaskWraith's own tracked `openrouter/*` usage since the billing anchor and
+ * the ceiling is the configured monthly budget. A live
+ * GET /api/v1/auth/key read (Limit Counter's OpenRouterProviderClient parity:
+ * total spend / remaining budget) is a deferred follow-up — new network plus
+ * secret-handling review — not this slice.
+ */
+function openrouterSnapshot(
+  billing: OpenRouterApiUsageBilling | undefined,
+  openrouterSpendSinceAnchorUsd: number,
+  now: number
+): QuotaSnapshotHookSnapshot {
+  const currency = supportedBillingCurrency(undefined, billing?.currency)
+  const budget = billing?.monthlyBudgetUsd
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (budget !== undefined) {
+    windows.push(
+      financialWindow({
+        id: 'openrouter-credit-used',
+        label: 'Credit used',
+        amount: Math.max(0, openrouterSpendSinceAnchorUsd),
+        total: budget,
+        currency,
+        subtitle: 'Tracked OpenRouter spend since billing anchor',
+        estimated: true,
+        resetAt: nextMonthlyResetAt(billing?.resetAt, new Date(now))
+      })
+    )
+  }
+  return {
+    provider: 'openrouter',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: fetchedAt(now),
+    stale: false,
+    planType: 'API Credits',
+    windows,
+    balances: []
+  }
+}
+
+/**
+ * The production plan-info query runner now lives beside the parser it feeds
+ * (`../devin/DevinPlanInfoRows`) so the Host Node bundle can share the exact
+ * reader this lane uses; re-exported here because this module's own dependency
+ * default and `src/main/index.ts` both resolve it from this path.
+ */
+export { defaultDevinPlanInfoRows }
+
+/**
+ * Project the committed Devin module's snapshot onto the hook's window
+ * contract. The module's `limitWindowSeconds` values (86400 daily, 604800
+ * weekly) are what the mapper's Devin-gated bands need for the 6/7 dashes;
+ * they pass through untouched. An unconfigured read or a read with no
+ * windows (both hide flags set) becomes an unconfigured lane — never a
+ * fabricated 0% meter.
+ */
+function devinSnapshot(snapshot: DevinUsageSnapshot): QuotaSnapshotHookSnapshot {
+  if (!snapshot.configured || snapshot.windows.length === 0) {
+    return {
+      provider: 'devin',
+      source: 'taskwraith-native',
+      configured: false,
+      fetchedAt: snapshot.fetchedAt,
+      stale: false,
+      ...(snapshot.error ? { error: snapshot.error } : {}),
+      windows: [],
+      balances: []
+    }
+  }
+  return {
+    provider: 'devin',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: snapshot.fetchedAt,
+    stale: false,
+    ...(snapshot.planType ? { planType: snapshot.planType } : {}),
+    windows: snapshot.windows.map((window) => {
+      const remainingPercent = Math.max(0, Math.min(100, 100 - window.usedPercent))
+      return {
+        id: window.id,
+        label: window.label,
+        usedPercent: window.usedPercent,
+        remainingPercent,
+        limitLabel: `${remainingPercent}% remaining · local Devin state`,
+        ...(window.resetAt ? { resetAt: window.resetAt } : {}),
+        ...(window.limitWindowSeconds !== undefined
+          ? { limitWindowSeconds: window.limitWindowSeconds }
+          : {})
+      }
+    }),
+    balances: []
+  }
+}
+
+/**
+ * The Muse Code subscription meters: the "Current usage" and "Weekly limit"
+ * percent windows, with resets and the plan name. The browser import
+ * (dev.meta.ai/usage) is the automatic source; an explicitly supplied CLI
+ * reading (first-party `/usage` capture, fresher) takes precedence per meter
+ * when present. Pay-as-you-go spend stays on the `meta` lane — the
+ * subscription is a separate pool with its own ceiling.
+ *
+ * Deliberate non-mapping: the CLI reading's session token counts
+ * (input/cached/output, turns, subagents) are a DIFFERENT quantity from
+ * these percent meters (they already live in `MuseUsage.ts` session-jsonl
+ * metering) and have no percent-window shape, so they are not projected
+ * here — reshaping the aggregate types to fit them is out of scope.
+ *
+ * Current usage carries its reset when the CLI supplies one but NEVER a
+ * window duration: no source states the window length, and a fabricated
+ * duration would paint dashes on an unproven window.
+ */
+function museSubscriptionSnapshot(
+  reading: UsageWebSessionReading | null,
+  now: number,
+  cli: MuseSubscriptionUsageReading | null = null
+): QuotaSnapshotHookSnapshot {
+  // `??` (not `||`): a 0% meter is a real value, never "absent".
+  const cliCurrentUsed = cli?.current.usedPercent ?? undefined
+  const cliWeeklyUsed = cli?.weekly.usedPercent ?? undefined
+  const currentUsedPercent = cliCurrentUsed ?? reading?.currentUsedPercent
+  const weeklyUsedPercent = cliWeeklyUsed ?? reading?.weeklyUsedPercent
+  const currentViaCli = cliCurrentUsed !== undefined
+  const weeklyViaCli = cliWeeklyUsed !== undefined
+  const cliLed = currentViaCli || weeklyViaCli
+  // The browser reading carries a single reset for the weekly window; it
+  // must never leak onto Current (byte-identical browser-only output).
+  const currentResetAt = cli?.current.resetAt ?? undefined
+  const weeklyResetAt = cli?.weekly.resetAt ?? reading?.resetAt
+  const fetchedAt = cliLed && cli?.refreshedAt ? cli.refreshedAt : reading?.capturedAt ?? cli?.refreshedAt ?? new Date(now).toISOString()
+  const capturedAt = Date.parse(fetchedAt)
+  const windows: QuotaSnapshotHookWindow[] = []
+  if (currentUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - currentUsedPercent))
+    windows.push({
+      id: 'muse-subscription-current',
+      label: 'Current usage',
+      usedPercent: currentUsedPercent,
+      remainingPercent,
+      limitLabel: `${remainingPercent}% remaining · ${currentViaCli ? 'Muse CLI /usage' : 'imported browser session'}`,
+      ...(currentResetAt ? { resetAt: currentResetAt } : {})
+    })
+  }
+  if (weeklyUsedPercent !== undefined) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - weeklyUsedPercent))
+    windows.push({
+      id: 'muse-subscription-weekly',
+      label: 'Weekly limit',
+      usedPercent: weeklyUsedPercent,
+      remainingPercent,
+      limitLabel: `${remainingPercent}% remaining · ${weeklyViaCli ? 'Muse CLI /usage' : 'imported browser session'}`,
+      ...(weeklyResetAt ? { resetAt: weeklyResetAt } : {}),
+      limitWindowSeconds: 7 * 24 * 60 * 60
+    })
+  }
+  if (windows.length === 0) {
+    return emptySnapshot(
+      'muse',
+      now,
+      true,
+      reading
+        ? 'Muse subscription session imported, but no usage meters were captured. Re-import after the usage page finishes loading.'
+        : 'Muse CLI /usage reported no subscription meters. The subscription lane appears after a successful capture.'
+    )
+  }
+  return {
+    provider: 'muse',
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt,
+    stale: !Number.isFinite(capturedAt) || now - capturedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
+    planType: cliLed && cli?.planName ? cli.planName : (reading?.planName ?? 'Muse Code subscription'),
+    windows,
+    balances: []
+  }
+}
+
+/** True when a CLI reading carries at least one projectable meter. */
+function hasMuseSubscriptionCliMeters(
+  cli: MuseSubscriptionUsageReading | null | undefined
+): cli is MuseSubscriptionUsageReading {
+  return (
+    !!cli &&
+    cli.hasSubscription === true &&
+    (cli.current.usedPercent != null || cli.weekly.usedPercent != null)
+  )
+}
+
+function tokenPlanSnapshot(
+  provider: 'qwen' | 'mimo',
+  reading: UsageWebSessionReading | null,
+  now: number
+): QuotaSnapshotHookSnapshot {
+  if (!reading) return emptySnapshot(provider, now, false)
+  const capturedAt = Date.parse(reading.capturedAt)
+  const usedPercent = reading.quotaUsedPercent
+  if (usedPercent === undefined) {
+    return emptySnapshot(
+      provider,
+      now,
+      true,
+      `${provider === 'qwen' ? 'Qwen' : 'MiMo'} session imported, but no quota meter was captured. Re-import after the plan page finishes loading.`
+    )
+  }
+  const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+  return {
+    provider,
+    source: 'taskwraith-native',
+    configured: true,
+    fetchedAt: reading.capturedAt,
+    stale: !Number.isFinite(capturedAt) || now - capturedAt > QUOTA_SNAPSHOT_HOOK_STALE_AFTER_MS,
+    planType: reading.planName ?? (provider === 'qwen' ? 'Token Plan' : 'MiMo Token Plan'),
+    windows: [
+      {
+        id: provider === 'qwen' ? 'qwen-7-day-quota' : 'mimo-plan-quota',
+        label: provider === 'qwen' ? '7-Day Quota' : 'Plan Quota',
+        usedPercent,
+        remainingPercent,
+        limitLabel: `${remainingPercent}% remaining · imported browser session`,
+        ...(reading.resetAt ? { resetAt: reading.resetAt } : {}),
+        ...(provider === 'qwen' ? { limitWindowSeconds: 7 * 24 * 60 * 60 } : {})
+      }
+    ],
+    balances: []
   }
 }
 
@@ -681,6 +1023,7 @@ export function createTaskWraithQuotaSnapshotHook(
   dependencies: TaskWraithQuotaSnapshotHookDependencies
 ): () => Promise<QuotaSnapshotHookSnapshot[]> {
   const now = () => dependencies.now?.() ?? Date.now()
+  const readWebSession = dependencies.readUsageWebSession ?? readUsageWebSessionReading
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch
   const successTtlMs = Math.max(0, dependencies.deepSeekCacheTtlMs ?? DEEPSEEK_CACHE_TTL_MS)
   const failureRetryMs = Math.max(
@@ -758,7 +1101,7 @@ export function createTaskWraithQuotaSnapshotHook(
 
   return async () => {
     const readAt = now()
-    let keys: Partial<Record<'deepseek' | 'cerebras', string>> = {}
+    let keys: Partial<Record<'deepseek' | 'cerebras' | 'openrouter', string>> = {}
     try {
       const loaded = dependencies.loadPiKeys()
       if (loaded?.status === 'ok') keys = loaded.keys
@@ -796,9 +1139,69 @@ export function createTaskWraithQuotaSnapshotHook(
     // DeepSeek needs no summary: its key alone gates it.
     const cerebrasSpend = summarizeSpend(usageRecords, providerRates, 'cerebras', readAt)
     const metaSpend = summarizeSpend(usageRecords, providerRates, 'meta', readAt)
-    const metaAnchorMs = apiUsageBilling.meta?.anchorUpdatedAt
-      ? Date.parse(apiUsageBilling.meta.anchorUpdatedAt)
-      : null
+    const openrouterSpend = summarizeSpend(usageRecords, providerRates, 'openrouter', readAt)
+    const deepSeekKey = typeof keys.deepseek === 'string' ? keys.deepseek.trim() : ''
+    const cerebrasKey = typeof keys.cerebras === 'string' ? keys.cerebras.trim() : ''
+    const openrouterKey = typeof keys.openrouter === 'string' ? keys.openrouter.trim() : ''
+    activeDeepSeekKey = deepSeekKey || null
+    if (!deepSeekKey) deepSeekCache = null
+
+    // The CLI reading is an explicitly supplied (cached) capture — never a
+    // live probe spawn: this automatic path must not start a `muse` TUI.
+    // Sync fast path: a sync supplier (or none) must not yield, because the
+    // DeepSeek join below dispatches its fetch synchronously and an existing
+    // test pins that timing. Only a genuinely async supplier awaits.
+    const maybeCli: unknown = (() => {
+      try {
+        return dependencies.readMuseSubscriptionCli?.() ?? null
+      } catch {
+        return null
+      }
+    })()
+    const museCliReading: MuseSubscriptionUsageReading | null =
+      maybeCli && typeof (maybeCli as { then?: unknown }).then === 'function'
+        ? await Promise.resolve(maybeCli as MuseSubscriptionUsageReading | null).catch(() => null)
+        : (maybeCli as MuseSubscriptionUsageReading | null)
+    // The Devin reader resolves here (property access only — no await), and
+    // `loadDevinUsageSnapshot` is invoked synchronously inside the Promise.all
+    // construction below, so the DeepSeek fetch dispatch timing pinned by the
+    // "joins concurrent balance reads" test is undisturbed.
+    const devinReader = dependencies.readDevinPlanInfoRows ?? defaultDevinPlanInfoRows
+    const devinPlatform = dependencies.devinPlatform ?? process.platform
+    const [deepSeek, museConfigured, [cerebrasWeb, metaWeb, museWeb, qwenWeb, mimoWeb], devinUsage] =
+      await Promise.all([
+        deepSeekKey
+          ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
+          : Promise.resolve(
+              emptySnapshot(
+                'deepseek',
+                readAt,
+                hasApiUsageBillingProvider(apiUsageBilling, 'deepseek'),
+                hasApiUsageBillingProvider(apiUsageBilling, 'deepseek')
+                  ? 'Store a DeepSeek key in the Pi provider card to read the official balance.'
+                  : undefined
+              )
+            ),
+        Promise.resolve()
+          .then(() => dependencies.getMuseConfigured())
+          .then(Boolean)
+          .catch(() => false),
+        Promise.all([
+          readWebSession('cerebras').catch(() => null),
+          readWebSession('meta').catch(() => null),
+          readWebSession('muse').catch(() => null),
+          readWebSession('qwen').catch(() => null),
+          readWebSession('mimo').catch(() => null)
+        ]),
+        loadDevinUsageSnapshot({
+          readPlanInfoRows: devinReader,
+          now: () => readAt,
+          platform: devinPlatform
+        }).catch(() => null)
+      ])
+
+    const metaAnchorValue = metaWeb?.capturedAt ?? apiUsageBilling.meta?.anchorUpdatedAt
+    const metaAnchorMs = metaAnchorValue ? Date.parse(metaAnchorValue) : null
     const metaSpendSinceAnchorUsd = summarizeSpendSince(
       usageRecords,
       providerRates,
@@ -806,40 +1209,57 @@ export function createTaskWraithQuotaSnapshotHook(
       metaAnchorMs !== null && Number.isFinite(metaAnchorMs) ? metaAnchorMs : null,
       readAt
     )
-    const deepSeekKey = typeof keys.deepseek === 'string' ? keys.deepseek.trim() : ''
-    const cerebrasKey = typeof keys.cerebras === 'string' ? keys.cerebras.trim() : ''
-    activeDeepSeekKey = deepSeekKey || null
-    if (!deepSeekKey) deepSeekCache = null
 
-    const [deepSeek, museConfigured] = await Promise.all([
-      deepSeekKey
-        ? readDeepSeek(deepSeekKey, apiUsageBilling.deepseek, readAt)
-        : Promise.resolve(
-            emptySnapshot(
-              'deepseek',
-              readAt,
-              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek'),
-              hasApiUsageBillingProvider(apiUsageBilling, 'deepseek')
-                ? 'Store a DeepSeek key in the Pi provider card to read the official balance.'
-                : undefined
-            )
-          ),
-      Promise.resolve()
-        .then(() => dependencies.getMuseConfigured())
-        .then(Boolean)
-        .catch(() => false)
-    ])
+    // OpenRouter has no browser import, so its anchor is the rolled monthly
+    // reset alone. Approximate the current cycle as the 30 days preceding that
+    // reset (months are 28-31 days; the amount is already a local estimate, so
+    // calendar-exactness here would be false precision). Without a reset date,
+    // fall back to the UTC calendar-month start like the other Pi lanes.
+    const openrouterResetAt = nextMonthlyResetAt(
+      apiUsageBilling.openrouter?.resetAt,
+      new Date(readAt)
+    )
+    const openrouterResetMs = openrouterResetAt ? Date.parse(openrouterResetAt) : Number.NaN
+    const openrouterAnchorMs = Number.isFinite(openrouterResetMs)
+      ? openrouterResetMs - THIRTY_DAYS_MS
+      : monthBounds(readAt, false).start
+    const openrouterSpendSinceAnchorUsd = summarizeSpendSince(
+      usageRecords,
+      providerRates,
+      'openrouter',
+      openrouterAnchorMs,
+      readAt
+    )
 
     return [
       deepSeek,
       cerebrasKey ||
       cerebrasSpend.runs > 0 ||
+      cerebrasWeb !== null ||
       hasApiUsageBillingProvider(apiUsageBilling, 'cerebras')
-        ? cerebrasSnapshot(apiUsageBilling.cerebras, readAt)
+        ? cerebrasSnapshot(apiUsageBilling.cerebras, readAt, cerebrasWeb)
         : emptySnapshot('cerebras', readAt, false),
-      museConfigured || metaSpend.runs > 0 || hasApiUsageBillingProvider(apiUsageBilling, 'meta')
-        ? metaSnapshot(apiUsageBilling.meta, metaSpendSinceAnchorUsd, fxRates, readAt)
-        : emptySnapshot('meta', readAt, false)
+      museConfigured ||
+      metaSpend.runs > 0 ||
+      metaWeb !== null ||
+      hasApiUsageBillingProvider(apiUsageBilling, 'meta')
+        ? metaSnapshot(apiUsageBilling.meta, metaWeb, metaSpendSinceAnchorUsd, fxRates, readAt)
+        : emptySnapshot('meta', readAt, false),
+      openrouterKey ||
+      openrouterSpend.runs > 0 ||
+      hasApiUsageBillingProvider(apiUsageBilling, 'openrouter')
+        ? openrouterSnapshot(
+            apiUsageBilling.openrouter,
+            openrouterSpendSinceAnchorUsd,
+            readAt
+          )
+        : emptySnapshot('openrouter', readAt, false),
+      devinUsage ? devinSnapshot(devinUsage) : emptySnapshot('devin', readAt, false),
+      ...(museWeb || hasMuseSubscriptionCliMeters(museCliReading)
+        ? [museSubscriptionSnapshot(museWeb, readAt, museCliReading)]
+        : []),
+      ...(mimoWeb ? [tokenPlanSnapshot('mimo', mimoWeb, readAt)] : []),
+      ...(qwenWeb ? [tokenPlanSnapshot('qwen', qwenWeb, readAt)] : [])
     ]
   }
 }

@@ -6,6 +6,7 @@ import {
 } from './AntigravityCombinedModelCatalog'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import { isAntigravityAcpModelCandidate } from './AntigravityCombinedModeDispatch'
 import { antigravityGeminiApiStaticModels } from './AntigravityGeminiApiStaticModels'
 import { AGY_CACHED_AUTH_EVIDENCE_TTL_MS } from './AntigravityAgyDiscoveryProvenance'
 
@@ -470,5 +471,212 @@ describe('Gemini API discovery outcome reporting', () => {
         }
       )
     ).resolves.toEqual(antigravityGeminiApiStaticModels())
+  })
+})
+
+/**
+ * The official-ACP transport switch. Everything the earlier slices built
+ * (resolver, client, install transport, dispatch arm, composition wiring) was
+ * unreachable until the catalogue emitted an `antigravity-acp:` id, because
+ * dispatch quarantines lanes by model namespace. These tests assert on
+ * CONCRETE ids: an `every()` over rows would pass vacuously on an empty array.
+ */
+describe('official-ACP transport switch (antigravityUseAcp)', () => {
+  const optedInAcp = { ...optedIn, antigravityUseAcp: true }
+  const twoAgyRows = async (): Promise<{ id: string; label: string }[]> => [
+    { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' }
+  ]
+  const oneApiRow = async (): Promise<{
+    status: 'ok'
+    models: { id: `gemini-api:${string}`; modelId: string }[]
+  }> => ({
+    status: 'ok' as const,
+    models: [{ id: 'gemini-api:gemini-one' as `gemini-api:${string}`, modelId: 'gemini-one' }]
+  })
+
+  it('emits byte-identical ids when the switch is off or absent', async () => {
+    const expected = [
+      { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
+      { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+      { id: 'gemini-api:gemini-one', label: 'One' }
+    ]
+    // Absent (the default for every existing install) and explicit false must
+    // both preserve the pre-existing catalogue exactly.
+    for (const settings of [optedIn, { ...optedIn, antigravityUseAcp: false }]) {
+      await expect(
+        discoverAuthenticatedAntigravityCombinedModels(settings, {
+          discoverAgy: twoAgyRows,
+          discoverGeminiApi: oneApiRow,
+          getSecretStore: () => store
+        })
+      ).resolves.toEqual(expected)
+    }
+  })
+
+  it('namespaces agy rows onto the ACP lane when the switch is on, leaving the Gemini API lane untouched', async () => {
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+        discoverAgy: twoAgyRows,
+        discoverGeminiApi: oneApiRow,
+        getSecretStore: () => store
+      })
+    ).resolves.toEqual([
+      { id: 'antigravity-acp:gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' },
+      { id: 'antigravity-acp:claude-opus-4-6', label: 'Claude Opus 4.6' },
+      // The separately billed API lane keeps its own namespace and its own
+      // dispatch arm in BOTH switch states.
+      { id: 'gemini-api:gemini-one', label: 'One' }
+    ])
+  })
+
+  it('offers each model exactly once — the switch re-namespaces, it never adds a second row', async () => {
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+      discoverAgy: twoAgyRows,
+      discoverGeminiApi: oneApiRow,
+      getSecretStore: () => store
+    })
+    expect(rows).toHaveLength(3)
+    expect(rows.map((row) => row.id)).not.toContain('gemini-3.8-flash-high')
+    expect(rows.map((row) => row.id)).not.toContain('claude-opus-4-6')
+  })
+
+  it('emits ids the committed dispatch predicate routes to the ACP arm', async () => {
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+      discoverAgy: twoAgyRows,
+      getSecretStore: () => null
+    })
+    expect(rows.map((row) => row.id)).toEqual([
+      'antigravity-acp:gemini-3.8-flash-high',
+      'antigravity-acp:claude-opus-4-6'
+    ])
+    for (const row of rows) {
+      expect(isAntigravityAcpModelCandidate(row.id)).toBe(true)
+    }
+  })
+
+  it('never admits a row on the switch alone — consent still governs', async () => {
+    const discoverAgy = vi.fn(twoAgyRows)
+    // Switch on, opt-in absent, no API key: nothing is offered and the agy
+    // lane is never even probed.
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(
+        { antigravityUseAcp: true },
+        { discoverAgy, getSecretStore: () => null }
+      )
+    ).resolves.toEqual([])
+    expect(discoverAgy).not.toHaveBeenCalled()
+
+    // Switch on, opt-in absent, key configured: only the API lane, and no row
+    // carries the ACP namespace.
+    const apiOnly = await discoverAuthenticatedAntigravityCombinedModels(
+      { antigravityUseAcp: true },
+      { discoverAgy, discoverGeminiApi: oneApiRow, getSecretStore: () => store }
+    )
+    expect(apiOnly).toEqual([{ id: 'gemini-api:gemini-one', label: 'One' }])
+    expect(discoverAgy).not.toHaveBeenCalled()
+  })
+
+  it('namespaces the static floor consistently on the discovery-timeout path', async () => {
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+      discoverAgy: () => new Promise(() => {}),
+      resolveAgyBinary: async () => ({
+        binaryPath: '/Users/test/.local/bin/agy',
+        source: 'path' as const
+      }),
+      getSecretStore: () => null,
+      timeoutMs: 5
+    })
+    expect(rows).toHaveLength(antigravityAgyStaticModels().length)
+    expect(rows[0]).toEqual({
+      id: 'antigravity-acp:gemini-3.8-flash-high',
+      label: 'gemini-3.8-flash-high'
+    })
+    for (const row of rows) {
+      expect(isAntigravityAcpModelCandidate(row.id)).toBe(true)
+    }
+    // And the floor is still namespace-free with the switch off.
+    const legacyFloor = await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: () => new Promise(() => {}),
+      resolveAgyBinary: async () => ({
+        binaryPath: '/Users/test/.local/bin/agy',
+        source: 'path' as const
+      }),
+      getSecretStore: () => null,
+      timeoutMs: 5
+    })
+    expect(legacyFloor).toEqual(antigravityAgyStaticModels())
+  })
+
+  // The adjacency that would otherwise launch the transport the user just
+  // switched AWAY from: the quota probe spawns the legacy ban-risk agy CLI.
+  it('closes the authenticated agy quota probe for an ACP-namespaced catalogue', async () => {
+    const READY = { ready: true, configuredProviders: new Set(['antigravity']) }
+    const acpRows = await discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+      discoverAgy: twoAgyRows,
+      getSecretStore: () => null
+    })
+    expect(acpRows.length).toBeGreaterThan(0)
+    expect(hasAuthenticatedAgyCatalogRow(acpRows)).toBe(false)
+    expect(
+      isAuthenticatedAgyRateLimitConnection(
+        READY,
+        acpRows,
+        { source: 'live', cachedAtMs: null },
+        NOW_MS
+      )
+    ).toBe(false)
+
+    // Identical rows, identical live provenance, switch OFF: the legacy meter
+    // is unchanged, so this is a targeted exclusion and not a blanket close.
+    const legacyRows = await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: twoAgyRows,
+      getSecretStore: () => null
+    })
+    expect(hasAuthenticatedAgyCatalogRow(legacyRows)).toBe(true)
+    expect(
+      isAuthenticatedAgyRateLimitConnection(
+        READY,
+        legacyRows,
+        { source: 'live', cachedAtMs: null },
+        NOW_MS
+      )
+    ).toBe(true)
+  })
+
+  it('never re-namespaces a gemini-api id even if the agy lane produced one', async () => {
+    // Defensive: that namespace owns its own dispatch arm, and wrapping it
+    // would silently send an API-billed model down the ACP binary.
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+        discoverAgy: async () => [
+          { id: 'gemini-api:gemini-stray', label: 'Stray' },
+          { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' }
+        ],
+        getSecretStore: () => null
+      })
+    ).resolves.toEqual([
+      { id: 'gemini-api:gemini-stray', label: 'Stray' },
+      { id: 'antigravity-acp:gemini-3.8-flash-high', label: 'Gemini 3.8 Flash High' }
+    ])
+  })
+
+  it('keeps the row cap and dedupe intact once ids carry the namespace', async () => {
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(optedInAcp, {
+      discoverAgy: async () => [
+        { id: 'gemini-3.8-flash-high', label: 'First' },
+        // Duplicate of the row above: it must dedupe on the EMITTED id.
+        { id: 'gemini-3.8-flash-high', label: 'Duplicate' },
+        ...Array.from({ length: 200 }, (_, index) => ({
+          id: `agy-${index}`,
+          label: `AGY ${index}`
+        }))
+      ],
+      getSecretStore: () => null
+    })
+    expect(rows).toHaveLength(128)
+    expect(rows[0]).toEqual({ id: 'antigravity-acp:gemini-3.8-flash-high', label: 'First' })
+    expect(rows.filter((row) => row.label === 'Duplicate')).toEqual([])
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length)
   })
 })

@@ -43,12 +43,12 @@ describe('Codex composer light chrome', () => {
     expect(section).toContain('background: transparent !important;')
   })
 
-  it('recolors only the exposed utility bed to the official Codex gray', () => {
+  it('keeps the outer surface invisible; the light strip is the Codex parity tab below', () => {
     const section = readCodexLightSection()
     const rules = section.replace(/\/\*[\s\S]*?\*\//g, '')
     const surfaceRule = rules.match(/\.composer-surface \{\n([\s\S]*?)\n\}/)
 
-    expect(surfaceRule?.[1].trim()).toBe('background: #f5f5f5 !important;')
+    expect(surfaceRule?.[1].trim()).toBe('background: transparent !important;')
     expect(rules).not.toContain('.composer-bottom-controls')
     expect(rules).not.toContain('.composer-telemetry-row')
   })

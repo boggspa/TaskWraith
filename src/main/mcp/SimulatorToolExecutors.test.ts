@@ -12,6 +12,7 @@ import type { SimulatorCapabilityStatus } from '../../shared/simulatorCanvas'
 import { SIMULATOR_CONTROL_DISABLED_MESSAGE } from '../../shared/simulatorControlSetup'
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import { MCP_AUTO_ALLOWED_TOOLS } from './McpAutoAllowedTools'
+import { resolveAppDriveSurfaceDescriptor } from '../../shared/appDriveSurface'
 
 const statusFixture: SimulatorCapabilityStatus = {
   platform: 'darwin',
@@ -31,6 +32,33 @@ const statusFixture: SimulatorCapabilityStatus = {
 
 const runCtx = { appChatId: 'chat-1', appRunId: 'run-1', participantId: 'seat-a' }
 const udid = '11111111-1111-1111-1111-111111111111'
+
+function approveTool(
+  lease: SimulatorControllerLease,
+  toolName: string,
+  args: Record<string, unknown>,
+  options: { provider?: string; sessionStore?: SimulatorSessionStore } = {}
+): void {
+  const session = options.sessionStore?.get('chat-1')
+  const surface = resolveAppDriveSurfaceDescriptor(toolName, args, {
+    simulatorUdid: session?.udid,
+    simulatorBundleId: session?.bundleId
+  })
+  if (!surface) throw new Error(`No simulator surface for ${toolName}`)
+  const authorized = lease.authorizeUserLease({
+    chatId: 'chat-1',
+    runId: 'run-1',
+    provider: options.provider || 'codex',
+    surfaceId: surface.surfaceId,
+    verb: surface.verb,
+    allowedVerbs: surface.allowedVerbs,
+    target: surface.target,
+    ownerParticipantId: 'seat-a',
+    approvedBy: 'user',
+    stepBudget: 20
+  })
+  if (!authorized.ok) throw new Error(authorized.error)
+}
 
 function fakeIdb(
   overrides: Partial<
@@ -146,6 +174,60 @@ describe('SimulatorToolExecutors', () => {
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('simulator_status')).toBe(true)
   })
 
+  it('returns value-free report correlation for independently verified Simulator actions', async () => {
+    const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-report' })
+    approveTool(controllerLease, 'simulator_tap', { udid, x: 0.5, y: 0.5 })
+    const { executeSimulatorTool } = createSimulatorToolExecutors({
+      hostControl: fakeHost(),
+      controllerLease,
+      idb: fakeIdb(),
+      getActuationTarget: () => ({ udid, pointWidth: 390, pointHeight: 844 })
+    })
+
+    const result = await executeSimulatorTool(
+      'simulator_tap',
+      { udid, x: 0.5, y: 0.5, requireIndependentVerifier: true },
+      runCtx,
+      'codex'
+    )
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      driveReportId: expect.any(String),
+      driveActionId: expect.any(String),
+      independentVerificationRequired: true
+    })
+    expect(JSON.stringify(result.structuredContent)).not.toContain('controllerTokenId')
+
+    const observation = await executeSimulatorTool(
+      'simulator_screenshot',
+      { udid },
+      { appChatId: 'chat-1', appRunId: 'run-review', participantId: 'seat-review' },
+      'claude'
+    )
+    expect(observation.structuredContent?.driveObservation).toMatchObject({
+      reportId: result.structuredContent?.driveReportId,
+      actionId: result.structuredContent?.driveActionId,
+      surfaceId: `simulator:${udid}:-`,
+      observer: {
+        runId: 'run-review',
+        provider: 'claude',
+        participantId: 'seat-review'
+      }
+    })
+
+    const inspection = await executeSimulatorTool(
+      'simulator_inspect',
+      { udid, driveActionId: result.structuredContent?.driveActionId },
+      { appChatId: 'chat-1', appRunId: 'run-inspect', participantId: 'seat-inspect' },
+      'claude'
+    )
+    expect(inspection.structuredContent?.driveObservation).toMatchObject({
+      reportId: result.structuredContent?.driveReportId,
+      actionId: result.structuredContent?.driveActionId,
+      observer: { runId: 'run-inspect', participantId: 'seat-inspect' }
+    })
+  })
+
   it('simulator_open / boot / install / launch / terminate require run context + lease', async () => {
     const hostControl = fakeHost()
     const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-run' })
@@ -158,6 +240,7 @@ describe('SimulatorToolExecutors', () => {
     expect((await executeSimulatorTool('simulator_open', {}, {}, 'codex')).isError).toBe(true)
     expect(hostControl.openSimulatorApp).not.toHaveBeenCalled()
 
+    approveTool(controllerLease, 'simulator_open', {})
     expect(
       (await executeSimulatorTool('simulator_open', {}, runCtx, 'codex')).isError
     ).toBeFalsy()
@@ -166,9 +249,11 @@ describe('SimulatorToolExecutors', () => {
       controllerTokenId: 'tok-run'
     })
 
+    approveTool(controllerLease, 'simulator_boot', { udid })
     expect(
       (await executeSimulatorTool('simulator_boot', { udid }, runCtx, 'codex')).structuredContent
     ).toMatchObject({ ok: true, udid })
+    approveTool(controllerLease, 'simulator_install', { udid, appPath: '/tmp/Demo.app' })
     expect(
       (
         await executeSimulatorTool(
@@ -179,6 +264,10 @@ describe('SimulatorToolExecutors', () => {
         )
       ).structuredContent
     ).toMatchObject({ ok: true, udid })
+    approveTool(controllerLease, 'simulator_launch', {
+      udid,
+      bundleId: 'com.example.Demo'
+    })
     expect(
       (
         await executeSimulatorTool(
@@ -189,6 +278,10 @@ describe('SimulatorToolExecutors', () => {
         )
       ).structuredContent
     ).toMatchObject({ ok: true, udid })
+    approveTool(controllerLease, 'simulator_terminate', {
+      udid,
+      bundleId: 'com.example.Demo'
+    })
     expect(
       (
         await executeSimulatorTool(
@@ -214,7 +307,18 @@ describe('SimulatorToolExecutors', () => {
   it('fails when another run already holds the controller', async () => {
     const hostControl = fakeHost()
     const controllerLease = new SimulatorControllerLease({ createId: () => 'tok-1' })
-    expect(controllerLease.mint({ chatId: 'chat-1', runId: 'run-holder' }).ok).toBe(true)
+    expect(
+      controllerLease.authorizeUserLease({
+        chatId: 'chat-1',
+        runId: 'run-holder',
+        provider: 'codex',
+        surfaceId: `simulator:${udid}:-`,
+        verb: 'simulator_boot',
+        allowedVerbs: ['simulator_boot'],
+        target: { udid },
+        approvedBy: 'user'
+      }).ok
+    ).toBe(true)
     const { executeSimulatorTool } = createSimulatorToolExecutors({
       hostControl,
       controllerLease,
@@ -333,6 +437,7 @@ describe('SimulatorToolExecutors', () => {
     ).toBe(true)
     expect(idb.hardwareButton).not.toHaveBeenCalled()
 
+    approveTool(controllerLease, 'simulator_button', { udid, button: 'HOME' })
     expect(
       (
         await executeSimulatorTool(
@@ -345,6 +450,10 @@ describe('SimulatorToolExecutors', () => {
     ).toMatchObject({ ok: true, button: 'HOME' })
     expect(idb.hardwareButton).toHaveBeenCalledWith(udid, 'HOME')
 
+    approveTool(controllerLease, 'simulator_rotate', {
+      udid,
+      direction: 'LANDSCAPE_RIGHT'
+    })
     expect(
       (
         await executeSimulatorTool(
@@ -358,12 +467,19 @@ describe('SimulatorToolExecutors', () => {
     expect(idb.rotate).toHaveBeenCalledWith(udid, 'LANDSCAPE_RIGHT')
 
     const sessionStore = new SimulatorSessionStore({ now: () => 't' })
+    const orientationLease = new SimulatorControllerLease({ createId: () => 'tok-orient' })
     const withSession = createSimulatorToolExecutors({
       hostControl: fakeHost(),
-      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-orient' }),
+      controllerLease: orientationLease,
       idb: fakeIdb(),
       sessionStore
     })
+    approveTool(
+      orientationLease,
+      'simulator_rotate',
+      { udid, direction: 'PORTRAIT_UPSIDE_DOWN' },
+      { sessionStore }
+    )
     expect(
       (
         await withSession.executeSimulatorTool(
@@ -385,12 +501,19 @@ describe('SimulatorToolExecutors', () => {
       }))
     })
     const failStore = new SimulatorSessionStore({ now: () => 't' })
+    const failingLease = new SimulatorControllerLease({ createId: () => 'tok-orient-fail' })
     const failing = createSimulatorToolExecutors({
       hostControl: fakeHost(),
-      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-orient-fail' }),
+      controllerLease: failingLease,
       idb: failingIdb,
       sessionStore: failStore
     })
+    approveTool(
+      failingLease,
+      'simulator_rotate',
+      { udid, direction: 'LANDSCAPE_LEFT' },
+      { sessionStore: failStore }
+    )
     expect(
       (
         await failing.executeSimulatorTool(
@@ -453,6 +576,7 @@ describe('SimulatorToolExecutors', () => {
     ).toBe(true)
     expect(idb.tap).not.toHaveBeenCalled()
 
+    approveTool(controllerLease, 'simulator_tap', { udid, x: 0.5, y: 0.25 })
     expect(
       (
         await executeSimulatorTool(
@@ -466,6 +590,7 @@ describe('SimulatorToolExecutors', () => {
     expect(idb.tap).toHaveBeenCalledWith(udid, 195, 211)
     expect(getActuationTarget).toHaveBeenCalledWith('chat-1')
 
+    approveTool(controllerLease, 'simulator_type', { udid, text: 'hello' })
     expect(
       (
         await executeSimulatorTool(
@@ -479,6 +604,13 @@ describe('SimulatorToolExecutors', () => {
     expect(idb.text).toHaveBeenCalledWith(udid, 'hello')
 
     // Agent scroll deltas are point-space (no pixel→point rescale).
+    approveTool(controllerLease, 'simulator_scroll', {
+      udid,
+      x: 0.5,
+      y: 0.5,
+      deltaX: 0,
+      deltaY: -80
+    })
     expect(
       (
         await executeSimulatorTool(
@@ -492,11 +624,19 @@ describe('SimulatorToolExecutors', () => {
     expect(idb.swipe).toHaveBeenCalledWith(udid, 195, 422, 195, 502)
 
     // Optional width/height args supply point extents when session has none.
+    const noSessionLease = new SimulatorControllerLease({ createId: () => 'tok-args' })
     const noSession = createSimulatorToolExecutors({
       hostControl: fakeHost(),
-      controllerLease: new SimulatorControllerLease({ createId: () => 'tok-args' }),
+      controllerLease: noSessionLease,
       idb: fakeIdb(),
       getActuationTarget: () => null
+    })
+    approveTool(noSessionLease, 'simulator_tap', {
+      udid,
+      x: 1,
+      y: 1,
+      width: 100,
+      height: 200
     })
     expect(
       (

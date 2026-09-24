@@ -10,6 +10,7 @@ import {
   shouldDisableReactPerformanceTracks
 } from './lib/reactPerformanceTracks'
 import { PopoutApp } from './PopoutApp'
+import { CanvasPopoutApp } from './CanvasPopoutApp'
 
 // Electron disables macOS occlusion tracking — pause ambient animations while
 // the window is unfocused/hidden so a covered window does not composite at
@@ -20,6 +21,7 @@ installWindowIdlePause()
 const params = new URLSearchParams(window.location.search)
 const popoutKind = params.get('popout')
 const isUtilityPopout = Boolean(popoutKind && popoutKind !== 'chat')
+const utilityPopout = popoutKind === 'canvas' ? <CanvasPopoutApp /> : <PopoutApp />
 
 async function startRenderer(): Promise<void> {
   const loadReactDomClient = () => import('react-dom/client')
@@ -38,7 +40,7 @@ async function startRenderer(): Promise<void> {
           window is a second app root, and wrapping only <App /> would leave
           popouts with no Host projection at all. */}
       <ErrorBoundary>
-        <HostProjectionProvider>{isUtilityPopout ? <PopoutApp /> : <App />}</HostProjectionProvider>
+        <HostProjectionProvider>{isUtilityPopout ? utilityPopout : <App />}</HostProjectionProvider>
       </ErrorBoundary>
     </StrictMode>
   )

@@ -12,10 +12,12 @@ import type {
 } from '../../../main/store/types'
 import { deriveChildAgentThreads } from '../lib/ChildAgentThreads'
 import { getProviderName } from './Sidebar'
+import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
 import type { ComposerMentionTriggerKind } from '../lib/ComposerMentionTrigger'
 import {
   ENSEMBLE_GROUP_MENTIONS,
-  ensembleGroupMentionMatchesStage
+  resolveEnsembleGroupMentionParticipantIds,
+  type EnsembleGroupMentionAuthority
 } from '../../../shared/ensembleGroupMention'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -79,6 +81,13 @@ interface AgentMentionMenuProps {
   /** Dismiss without picking. */
   onDismiss: () => void
   /**
+   * Class W escalation for paged threads: when the chat is a transcriptPaged
+   * shell, the menu asks the host surface to full-hydrate it (child-agent
+   * threads are a whole-transcript feature and must never derive from the
+   * bounded page). Optional — without it the menu shows the shell view.
+   */
+  onRequestFullChat?: (chatId: string) => void
+  /**
    * 1.0.6-EW67 — Active composer shell, mirrored onto the portal
    * root as `shell-${composerStyle}` so the theme-immune Obsidian /
    * Alabaster popover CSS reaches this body-portaled menu.
@@ -123,14 +132,17 @@ export function composerMentionParticipantColor(
  * identity.
  */
 export function composerEnsembleGroupMentionCandidates(
-  participants: EnsembleParticipant[]
+  participants: EnsembleParticipant[],
+  authority?: EnsembleGroupMentionAuthority
 ): ComposerMentionCandidate[] {
   const enabled = participants.filter((participant) => participant.enabled !== false)
   if (enabled.length === 0) return []
   return ENSEMBLE_GROUP_MENTIONS.flatMap<ComposerMentionCandidate>((definition) => {
-    const count = enabled.filter((participant) =>
-      ensembleGroupMentionMatchesStage(definition.id, participant.stageRole)
-    ).length
+    const count = resolveEnsembleGroupMentionParticipantIds({
+      group: definition.id,
+      participants,
+      authority
+    }).size
     if (count === 0) return []
     return [
       {
@@ -138,11 +150,14 @@ export function composerEnsembleGroupMentionCandidates(
         kind: 'group',
         name: definition.token,
         detail: `${definition.description} · ${count} ${count === 1 ? 'seat' : 'seats'}`,
-        color: 'var(--user-bubble-base, var(--accent))'
+        color: 'var(--accent)'
       }
     ]
   })
 }
+
+const EMPTY_MENTION_CANDIDATES: ComposerMentionCandidate[] = []
+const EMPTY_CHILD_THREADS: ChildAgentThread[] = []
 
 function nameFromPath(path: string): string {
   const trimmed = path.trim().replace(/\/+$/, '')
@@ -167,7 +182,8 @@ export function AgentMentionMenu({
   ensembleParticipants,
   onPick,
   onDismiss,
-  composerStyle
+  composerStyle,
+  onRequestFullChat
 }: AgentMentionMenuProps): React.JSX.Element | null {
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const workspaceFileCacheRef = useRef<Map<string, WorkspaceFileEntry[]>>(new Map())
@@ -175,6 +191,15 @@ export function AgentMentionMenu({
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([])
   const [highlight, setHighlight] = useState(0)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+
+  // Class W escalation: on a paged shell, child-agent threads are a
+  // whole-transcript derivation — request full hydration on open instead of
+  // reading the shell's empty arrays. The menu recomputes on the hydrated prop.
+  const chatPaged = chat ? isTranscriptPagedShell(chat) : false
+  useEffect(() => {
+    if (!open || triggerKind === 'file-mention' || !chatPaged || !chat) return
+    onRequestFullChat?.(chat.appChatId)
+  }, [open, triggerKind, chatPaged, chat, onRequestFullChat])
 
   useEffect(() => {
     let cancelled = false
@@ -230,13 +255,23 @@ export function AgentMentionMenu({
     }
   }, [open, workspacePath, triggerKind])
 
+  // Every derivation below is gated on `open`: while the popover is closed it
+  // must not walk the transcript (deriveChildAgentThreads is O(messages)) or
+  // re-filter on each chat identity change, and the highlight reset below
+  // must not schedule a state update per parent render (measured 2026-09-05:
+  // it was the first setState after every commit in an idle 3-pane multiview).
   const activeSubagents = useMemo<ChildAgentThread[]>(() => {
-    if (!chat || !provider) return []
+    if (!open || !chat || !provider) return EMPTY_CHILD_THREADS
+    // Paged shell: never derive child threads from the shell's empty arrays or
+    // the bounded page — the escalation effect above requests full hydration
+    // and this recomputes on the hydrated record.
+    if (isTranscriptPagedShell(chat)) return []
     const all = deriveChildAgentThreads(provider, chat.appChatId, chat.messages || [], chat)
     return all.filter((thread) => thread.state === 'running' || thread.state === 'queued')
-  }, [chat, provider])
+  }, [chat, open, provider])
 
   const candidates = useMemo<ComposerMentionCandidate[]>(() => {
+    if (!open) return EMPTY_MENTION_CANDIDATES
     // `-@` file trigger surfaces workspace files + external grants
     // only. Sub-agents / participants are never in scope here — they
     // need `@`.
@@ -266,7 +301,13 @@ export function AgentMentionMenu({
     // Both picker forms write plain editable text; individual seats
     // additionally keep an exact id as short-lived dispatch metadata.
     if (chat?.chatKind === 'ensemble' && ensembleParticipants) {
-      const groupItems = composerEnsembleGroupMentionCandidates(ensembleParticipants)
+      const liveAuthority =
+        chat.ensemble?.activeRound?.status === 'running' ? chat.ensemble.activeRound : chat.ensemble
+      const groupItems = composerEnsembleGroupMentionCandidates(ensembleParticipants, {
+        bossmanParticipantId: liveAuthority?.bossmanParticipantId,
+        captainParticipantIds: liveAuthority?.captainParticipantIds,
+        secondInCommandParticipantId: liveAuthority?.secondInCommandParticipantId
+      })
       const participantItems = ensembleParticipants
         .filter((participant) => participant.enabled)
         .sort((a, b) => a.order - b.order)
@@ -313,8 +354,10 @@ export function AgentMentionMenu({
     })
     return subagentCandidates
   }, [
+    open,
     triggerKind,
     chat?.chatKind,
+    chat?.ensemble,
     ensembleParticipants,
     activeSubagents,
     externalPathGrants,
@@ -323,8 +366,8 @@ export function AgentMentionMenu({
   ])
 
   const filtered = useMemo(
-    () => filterComposerMentionCandidates(candidates, query),
-    [candidates, query]
+    () => (open ? filterComposerMentionCandidates(candidates, query) : EMPTY_MENTION_CANDIDATES),
+    [candidates, open, query]
   )
 
   useEffect(() => {
@@ -346,6 +389,7 @@ export function AgentMentionMenu({
   }, [open, anchorRef, query])
 
   useEffect(() => {
+    if (!open) return
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) setHighlight(0)
@@ -353,7 +397,7 @@ export function AgentMentionMenu({
     return () => {
       cancelled = true
     }
-  }, [filtered])
+  }, [filtered, open])
 
   useEffect(() => {
     if (!open) return

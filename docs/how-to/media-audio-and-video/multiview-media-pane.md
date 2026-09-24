@@ -20,4 +20,4 @@ Click **Detach to pane** (or the pop-out icon) on an audio/video attachment — 
 - [Waveform audio player](waveform-audio-player.md) — the player used inside the pane for audio clips.
 - [Chat media dock](chat-media-dock.md) — another place you can detach an audio/video attachment from.
 - [Canvas multiview pane](../canvas-and-previews/canvas-multiview-pane.md) — the equivalent multiview cell for an embedded web preview.
-- [Plus tools menu (multiview layout)](../composer/plus-tools-menu.md) — switch between single and split multiview layouts.
+- **Multiview layout picker** — the standalone control in the composer telemetry row that switches between single and split multiview layouts.

@@ -13,12 +13,12 @@ export const RAIL_TERMINAL_CLEARANCE_PX = 10
  * `scroller`. Normally the scroller's own bottom — but when the workspace
  * terminal is open it is the terminal's top edge, less a clearance.
  *
- * Why the rails can't read this off the scroller: the terminal
+ * Why the rail can't read this off the scroller: the terminal
  * (`.workspace-terminal-split`) is `position:absolute` inside `.app-transcript`
  * and opening it only grows the scroller's `padding-bottom` (plus lifts the
  * absolutely-positioned composer via `bottom`), so `scroller`'s own rect never
- * changes. Both rails are body-portaled `position:fixed` elements painting
- * ABOVE the terminal's z-index, and both sit in the pane's flank gutters —
+ * changes. The gutter rail is a body-portaled `position:fixed` element painting
+ * ABOVE the terminal's z-index, and it sits in the pane's flank gutter —
  * which the terminal spans, since it stretches nearly the full pane width
  * rather than being capped to the composer column. So any rail geometry taken
  * from the scroller rect alone runs down over the open terminal.
@@ -55,17 +55,19 @@ export interface RailFrameRemeasureRefs {
 }
 
 /**
- * Shared re-measure lifecycle for the two body-portaled, `position: fixed`
- * transcript flank rails — the left `TranscriptUserMessageGutter` (go-to-message)
- * and the right `TranscriptParticipantFilterRail` (filter-by-participant).
+ * Re-measure lifecycle for a body-portaled, `position: fixed` transcript
+ * flank rail. Sole consumer today: the left `TranscriptUserMessageGutter`
+ * (go-to-message). The right participant-filter rail used to share it, but is
+ * now a pane-anchored bottom dock positioned purely in CSS and needs no
+ * frame measurement.
  *
- * Both rails place themselves from a JS `getBoundingClientRect()` snapshot
- * (`updateFrame`), so they MUST re-run it on every event that shifts the
- * transcript / composer geometry — otherwise the mount-time snapshot (taken
- * before the composer/roster/fonts finish growing) stays stale until an
- * incidental scroll. Previously each rail wired its own ad-hoc trigger set and
- * they drifted apart (the right rail shipped with NO ResizeObserver at all).
- * Owning the trigger set here keeps them in lockstep. The set:
+ * A frame-measured rail places itself from a JS `getBoundingClientRect()`
+ * snapshot (`updateFrame`), so it MUST re-run it on every event that shifts
+ * the transcript / composer geometry — otherwise the mount-time snapshot
+ * (taken before the composer/roster/fonts finish growing) stays stale until
+ * an incidental scroll. Previously each rail wired its own ad-hoc trigger set
+ * and they drifted apart (one shipped with NO ResizeObserver at all).
+ * Owning the trigger set here keeps any future rail in lockstep. The set:
  *
  *  - synchronous measure + a nested rAF (this frame + the next) + a 160ms settle
  *    belt — catches virtualized-row mount, async ensemble-roster mount, and the

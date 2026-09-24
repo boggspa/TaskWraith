@@ -5,6 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { load } = require('js-yaml') as { load: (source: string) => unknown }
+const { FileMatcher } = require('app-builder-lib/out/fileMatcher') as {
+  FileMatcher: new (
+    from: string,
+    to: string,
+    expand: (pattern: string) => string,
+    patterns: string[]
+  ) => { createFilter(): (file: string, stat: { isDirectory(): boolean }) => boolean }
+}
 
 const REQUIRED_NATIVE_PERMISSION_KEYS = [
   'NSScreenCaptureUsageDescription',
@@ -53,6 +61,14 @@ describe('macOS package permission metadata', () => {
   it.each([
     ['release', releaseExtendInfo],
     ['debug', debugExtendInfo]
+  ])('starts %s processes without a Dock tile until desktop promotion', (_label, extendInfo) => {
+    expect(extendInfo.LSUIElement).toBe(true)
+    expect(extendInfo.LSBackgroundOnly).not.toBe(true)
+  })
+
+  it.each([
+    ['release', releaseExtendInfo],
+    ['debug', debugExtendInfo]
   ])('keeps required native permission keys flat in the %s config', (_label, extendInfo) => {
     for (const key of REQUIRED_NATIVE_PERMISSION_KEYS) {
       expect(extendInfo).toHaveProperty(key)
@@ -94,6 +110,7 @@ describe('app.asar denylist', () => {
   // `files` is a DENYLIST: anything not excluded is bundled. A dropped entry
   // is silent — the build still succeeds and the tree just ships.
   it.each([
+    ['.taskwraith-worktrees/**'],
     ['.work-guard/**'],
     ['.tmp_vitest/**'],
     ['.WORK-IN-PROGRESS-*.md'],
@@ -102,7 +119,7 @@ describe('app.asar denylist', () => {
     ['prototypes/**'],
     ['papercuts/**'],
     ['.githooks/**'],
-    ['test_output.log']
+    ['*.log*']
   ])('keeps %s out of the package', (pattern) => {
     expect(files).toContain(`!${pattern}`)
   })
@@ -128,5 +145,22 @@ describe('app.asar denylist', () => {
   // an app with no icon set.
   it('keeps the load-bearing resources tree bundled', () => {
     expect(files).not.toContain('!resources/**')
+  })
+
+  it('excludes local documentation copies while retaining the built application', () => {
+    const root = process.cwd()
+    const matcher = new FileMatcher(root, join(root, 'dist'), (pattern) => pattern, [
+      '**/*',
+      ...files
+    ])
+    const include = matcher.createFilter()
+    const regularFile = { isDirectory: () => false }
+    expect(include(join(root, 'how-to-copy/how-to/chats-and-threads/README.md'), regularFile)).toBe(
+      false
+    )
+    expect(include(join(root, 'out/main/index.js'), regularFile)).toBe(true)
+    expect(include(join(root, 'out/preload/index.js'), regularFile)).toBe(true)
+    expect(include(join(root, 'out/renderer/index.html'), regularFile)).toBe(true)
+    expect(include(join(root, 'resources/Tools.md'), regularFile)).toBe(true)
   })
 })

@@ -2,7 +2,7 @@ export const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 export const LAST_ACTIVE_WORKSPACE_STORAGE_KEY = 'taskwraith-last-active-workspace-id'
 export const LAST_ACTIVE_WORK_PROJECT_STORAGE_KEY = 'taskwraith-last-active-work-project-id'
 
-export type SidebarActiveTab = 'chat' | 'threads' | 'projects'
+export type SidebarActiveTab = 'chat' | 'threads' | 'projects' | 'terminal'
 
 export interface StartupContextStorage {
   getItem(key: string): string | null
@@ -79,7 +79,7 @@ export function readPersistedSidebarActiveTab(
   storage: StartupContextStorage | null = browserStorage()
 ): SidebarActiveTab | null {
   const stored = readId(SIDEBAR_ACTIVE_TAB_STORAGE_KEY, storage)
-  return stored === 'chat' || stored === 'threads' || stored === 'projects' ? stored : null
+  return stored === 'chat' || stored === 'threads' || stored === 'projects' || stored === 'terminal' ? (stored as SidebarActiveTab) : null
 }
 
 export function rememberSidebarActiveTab(

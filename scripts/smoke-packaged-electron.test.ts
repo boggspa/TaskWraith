@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
@@ -19,8 +20,11 @@ interface MacSigningIdentity {
 const {
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
+  collectMacBridgeIdentityFailures,
   describeMacSigningPosture,
-  readMacSigningIdentity
+  readMacSigningIdentity,
+  readPackagedDistributionMetadata,
+  validatePackagedIdentityHandoffPayload
 }: {
   evaluateMacSigningIdentity: (output: string, exitCode: number | null) => MacSigningIdentity
   collectMacSigningPostureFailures: (options: {
@@ -28,8 +32,20 @@ const {
     label: string
     requireProduction?: boolean
   }) => string[]
+  collectMacBridgeIdentityFailures: (
+    bridgeInfo: Record<string, unknown>,
+    parentInfo: Record<string, unknown>
+  ) => string[]
   describeMacSigningPosture: (identity: MacSigningIdentity) => string
   readMacSigningIdentity: (codePath: string) => MacSigningIdentity
+  readPackagedDistributionMetadata: (
+    appAsarPath: string,
+    asarApi: { extractFile: (asarPath: string, filePath: string) => Buffer }
+  ) => { series: string; appId: string; stableUpdateChannel: string; version: string }
+  validatePackagedIdentityHandoffPayload: (
+    resourcesDir: string,
+    metadata: { series: string; version: string }
+  ) => void
 } = require('./smoke-packaged-electron.cjs')
 
 const {
@@ -48,7 +64,11 @@ const {
   }
   resolveMacBridgeDaemonPath: (resourcesPath: string) => string
   resolveMacBridgeInfoPath: (resourcesPath: string) => string
-  validateMacBridgeInfo: (info: Record<string, unknown>, infoPath: string) => void
+  validateMacBridgeInfo: (
+    info: Record<string, unknown>,
+    infoPath: string,
+    expected?: { bundleIdentifier: string; shortVersion: string; bundleVersion: string }
+  ) => void
 }
 
 // Verbatim shape of `codesign -dv --verbose=4` against an ad-hoc signed bundle,
@@ -153,18 +173,94 @@ describe('packaged Electron to TUI smoke handoff', () => {
   })
 
   it('requires the helper consent identity and Speech usage metadata after packing', () => {
+    const parent = {
+      bundleIdentifier: 'com.chrisizatt.taskwraith',
+      shortVersion: '1.9.8',
+      bundleVersion: '1.9.8'
+    }
     const valid = {
       CFBundleIdentifier: 'com.chrisizatt.taskwraith',
+      CFBundleShortVersionString: '1.9.8',
+      CFBundleVersion: '1.9.8',
       CFBundleExecutable: 'TaskWraithBridgeDaemon',
       NSSpeechRecognitionUsageDescription: 'Transcribes media selected by the user.'
     }
-    expect(() => validateMacBridgeInfo(valid, '/tmp/Info.plist')).not.toThrow()
+    expect(() => validateMacBridgeInfo(valid, '/tmp/Info.plist', parent)).not.toThrow()
+    // No literal fallback: even the beta identity is rejected without the parent.
+    expect(() => validateMacBridgeInfo(valid, '/tmp/Info.plist')).toThrow(
+      /parent app bundle identity/
+    )
     expect(() =>
       validateMacBridgeInfo(
         { ...valid, NSSpeechRecognitionUsageDescription: ' ' },
-        '/tmp/Info.plist'
+        '/tmp/Info.plist',
+        parent
       )
     ).toThrow(/NSSpeechRecognitionUsageDescription/)
+  })
+
+  it('verifies the bridge helper against the packaged app identity for beta and debut', () => {
+    for (const [appId, version] of [
+      ['com.chrisizatt.taskwraith', '1.9.8'],
+      ['com.taskwraith.desktop', '0.1.0']
+    ]) {
+      const parentInfo = {
+        CFBundleIdentifier: appId,
+        CFBundleShortVersionString: version,
+        CFBundleVersion: version
+      }
+      const bridgeInfo = { ...parentInfo, CFBundleExecutable: 'TaskWraithBridgeDaemon' }
+      expect(collectMacBridgeIdentityFailures(bridgeInfo, parentInfo)).toEqual([])
+    }
+    const debut = {
+      CFBundleIdentifier: 'com.taskwraith.desktop',
+      CFBundleShortVersionString: '0.1.0',
+      CFBundleVersion: '0.1.0'
+    }
+    expect(
+      collectMacBridgeIdentityFailures(
+        { ...debut, CFBundleIdentifier: 'com.chrisizatt.taskwraith' },
+        debut
+      )
+    ).toEqual([
+      expect.stringMatching(
+        /CFBundleIdentifier must match the packaged app CFBundleIdentifier com\.taskwraith\.desktop, got com\.chrisizatt\.taskwraith/
+      )
+    ])
+    expect(
+      collectMacBridgeIdentityFailures({ ...debut, CFBundleVersion: '0.1.0.1' }, debut)
+    ).toEqual([expect.stringMatching(/CFBundleVersion must match .* 0\.1\.0, got 0\.1\.0\.1/)])
+    expect(
+      collectMacBridgeIdentityFailures(debut, { CFBundleIdentifier: 'com.taskwraith.desktop' })
+    ).toEqual([
+      expect.stringMatching(/missing a non-empty CFBundleShortVersionString/),
+      expect.stringMatching(/missing a non-empty CFBundleVersion/)
+    ])
+  })
+
+  it('keeps the real emulator runtime launch opt-in and passes the exact package root', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('runPackagedEmulatorRuntimeSmoke(packageRoot)')
+    expect(source).toContain("TASKWRAITH_RUN_EMULATOR_PACKAGE_SMOKE !== '1'")
+    expect(source).toContain("path.join(repoRoot, 'scripts/smoke-packaged-emulator.cjs')")
+    expect(source).toContain('spawnSync(process.execPath, [smokeScript, packageRoot]')
+  })
+
+  it('requires and runs the production Host smoke for every packaged artifact', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-electron.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('runPackagedProductionHostSmoke(packageRoot)')
+    expect(source).toContain("path.join(resourcesDir, 'host')")
+    expect(source).toContain("path.join(resourcesDir, 'host-bin')")
+    expect(source).toContain('production Host resources are incomplete')
+    expect(source).toContain("TASKWRAITH_HOST_REQUIRE_PACKAGE: '1'")
   })
 
   it('passes the exact package root instead of rediscovering an architecture sibling', () => {
@@ -196,6 +292,58 @@ describe('packaged Electron to TUI smoke handoff', () => {
   it('exposes its signing helpers without executing the smoke run', () => {
     expect(typeof evaluateMacSigningIdentity).toBe('function')
     expect(typeof collectMacSigningPostureFailures).toBe('function')
+  })
+
+  it('accepts only coherent beta or Release identity metadata in app.asar', () => {
+    const extract = (metadata: Record<string, string>) => ({
+      extractFile: () => Buffer.from(JSON.stringify(metadata))
+    })
+    expect(
+      readPackagedDistributionMetadata(
+        '/tmp/app.asar',
+        extract({
+          taskwraithDistributionIdentity: 'beta',
+          taskwraithAppId: 'com.chrisizatt.taskwraith',
+          taskwraithUpdateFeedChannel: 'latest',
+          version: '1.9.8'
+        })
+      )
+    ).toEqual({
+      series: 'beta',
+      appId: 'com.chrisizatt.taskwraith',
+      stableUpdateChannel: 'latest',
+      version: '1.9.8'
+    })
+    expect(
+      readPackagedDistributionMetadata(
+        '/tmp/app.asar',
+        extract({
+          taskwraithDistributionIdentity: 'release',
+          taskwraithAppId: 'com.taskwraith.desktop',
+          taskwraithUpdateFeedChannel: 'release',
+          version: '0.1.0'
+        })
+      )
+    ).toEqual({
+      series: 'release',
+      appId: 'com.taskwraith.desktop',
+      stableUpdateChannel: 'release',
+      version: '0.1.0'
+    })
+  })
+
+  it('requires the payload only in 1.9.9 beta and excludes it from Release', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-package-handoff-'))
+    try {
+      expect(() =>
+        validatePackagedIdentityHandoffPayload(root, { series: 'release', version: '0.1.0' })
+      ).not.toThrow()
+      expect(() =>
+        validatePackagedIdentityHandoffPayload(root, { series: 'beta', version: '1.9.8' })
+      ).not.toThrow()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -443,5 +591,104 @@ describe('packaged macOS signature coverage', () => {
     const required = source.match(/const requiredEntitlementsByPath = new Map\(\[([\s\S]*?)\]\)/)
     expect(required?.[1]).toBeTruthy()
     expect(required?.[1]).toContain('studioApp')
+  })
+})
+
+const { stopSmokeChild } = require('./smoke-packaged-electron.cjs') as {
+  stopSmokeChild: (
+    child: unknown,
+    label: string,
+    platform?: string,
+    killTree?: (pid: number) => void
+  ) => Promise<void>
+}
+
+describe('packaged app launch smoke cleanup', () => {
+  interface FakeStream {
+    destroyed: boolean
+    destroy(): void
+  }
+  type FakeChild = EventEmitter & {
+    pid: number
+    exitCode: number | null
+    signalCode: string | null
+    stdout: FakeStream
+    stderr: FakeStream
+    signals: string[]
+    unrefCalls: number
+    kill(signal: string): boolean
+    unref(): void
+  }
+  function fakeStream(): FakeStream {
+    return {
+      destroyed: false,
+      destroy() {
+        this.destroyed = true
+      }
+    }
+  }
+  function exitNow(child: FakeChild): void {
+    process.nextTick(() => {
+      child.exitCode = 0
+      child.emit('exit', 0, null)
+    })
+  }
+  function fakeChild(pid = 4321): FakeChild {
+    const child = new EventEmitter() as FakeChild
+    child.pid = pid
+    child.exitCode = null
+    child.signalCode = null
+    child.stdout = fakeStream()
+    child.stderr = fakeStream()
+    child.signals = []
+    child.unrefCalls = 0
+    child.kill = (signal: string) => {
+      child.signals.push(signal)
+      exitNow(child)
+      return true
+    }
+    child.unref = () => {
+      child.unrefCalls += 1
+    }
+    return child
+  }
+
+  it('kills the whole process tree on Windows so the app Host sidecar cannot outlive the smoke', async () => {
+    const child = fakeChild(777)
+    const treeKills: number[] = []
+    await stopSmokeChild(child, 'packaged Windows app', 'win32', (pid) => {
+      treeKills.push(pid)
+      exitNow(child)
+    })
+    expect(treeKills).toEqual([777])
+    expect(child.signals).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
+  })
+
+  it('keeps the SIGTERM path on other platforms and still releases its pipe ends', async () => {
+    const child = fakeChild()
+    const treeKills: number[] = []
+    await stopSmokeChild(child, 'packaged Linux app', 'linux', (pid) => {
+      treeKills.push(pid)
+    })
+    expect(treeKills).toEqual([])
+    expect(child.signals).toEqual(['SIGTERM'])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
+  })
+
+  it('releases the pipe ends of a child that already exited without touching it', async () => {
+    const child = fakeChild()
+    child.exitCode = 0
+    await stopSmokeChild(child, 'already gone', 'win32', () => {
+      throw new Error('must not kill an exited child')
+    })
+    expect(child.signals).toEqual([])
+    expect(child.stdout.destroyed).toBe(true)
+    expect(child.stderr.destroyed).toBe(true)
+    expect(child.unrefCalls).toBe(1)
   })
 })

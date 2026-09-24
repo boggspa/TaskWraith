@@ -2,7 +2,7 @@
   "name": "taskwraith-relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Dumb, ciphertext-only WebSocket relay for taskwraith-e2ee-v1. Self-hostable (Tailscale / VPS / reverse-proxy). Holds no key material UNLESS deployed as the opt-in Tier-2 APNs gateway (cli-only; see relay/DEPLOY.md).",
+  "description": "Dumb, ciphertext-only WebSocket relay for taskwraith-e2ee-v1. Self-hostable (Tailscale / VPS / reverse-proxy). Holds no key material UNLESS deployed as the opt-in Tier-2 APNs gateway (cli-only; see the private deployment runbook).",
   "type": "commonjs",
   "main": "src/server.ts",
   "dependencies": {

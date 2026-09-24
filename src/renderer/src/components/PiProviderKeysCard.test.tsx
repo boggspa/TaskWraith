@@ -2,7 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   PI_CARD_UPSTREAMS,
+  XIAOMI_TOKEN_PLAN_REGIONS,
   PiProviderKeysCardView,
+  configuredXiaomiTokenPlanRegion,
   type PiProviderKeysCardViewProps
 } from './PiProviderKeysCard'
 
@@ -17,9 +19,13 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
     cerebrasCapDraft: '16384',
     cerebrasCapBusy: false,
     cerebrasCapError: null,
+    xiaomiRegion: '',
     onDraftChange: () => {},
     onSave: () => {},
     onClear: () => {},
+    onXiaomiRegionChange: () => {},
+    onSaveXiaomi: () => {},
+    onClearXiaomi: () => {},
     onCerebrasCapDraftChange: () => {},
     onSaveCerebrasCap: () => {},
     onClearCerebrasCap: () => {},
@@ -29,17 +35,68 @@ function render(overrides: Partial<PiProviderKeysCardViewProps> = {}): string {
 }
 
 describe('PiProviderKeysCardView', () => {
-  it('lists exactly the allowlisted upstreams and no hosted providers', () => {
+  it('lists the allowlisted upstreams, including OpenRouter’s active curated models', () => {
     const html = render()
     for (const upstream of PI_CARD_UPSTREAMS) {
       expect(html, upstream.id).toContain(upstream.label)
     }
     // The wall, restated as a UI invariant: the card must never offer a lane
-    // to a provider TaskWraith hosts first-party.
-    for (const forbidden of ['Anthropic', 'OpenAI', 'OpenRouter', 'GitHub Copilot', 'Kimi']) {
+    // to a provider TaskWraith hosts first-party. OpenRouter is the explicit
+    // curated-model exception and is asserted above through the card list.
+    for (const forbidden of ['Anthropic', 'OpenAI', 'GitHub Copilot', 'Kimi']) {
       expect(html, forbidden).not.toContain(`>${forbidden}<`)
     }
-    expect(PI_CARD_UPSTREAMS).toHaveLength(7)
+    expect(PI_CARD_UPSTREAMS).toHaveLength(9)
+    expect(html).toContain(
+      'North Mini Code, MiniMax M3, Inkling, GLM 5.2, Laguna S 2.1 &amp; Nemotron 3 Ultra'
+    )
+    expect(html).toContain(
+      'GLM 5.2, Laguna S 2.1, Nemotron 3 Ultra, North Mini Code, MiniMax M3, Inkling, and Inkling Small.'
+    )
+    expect(html).not.toContain('Ox Alpha')
+  })
+
+  it('requires the Xiaomi cluster from the Dedicated Base URL instead of guessing a region', () => {
+    const html = render()
+    expect(html).toContain('Xiaomi Token Plan')
+    expect(html).toContain('aria-label="Xiaomi Token Plan region"')
+    expect(html).toContain('Region: choose from Dedicated Base URL…')
+    expect(html).toContain('Token Plan keys are region-bound')
+    for (const region of XIAOMI_TOKEN_PLAN_REGIONS) {
+      expect(html, region.id).toContain(`value="${region.id}"`)
+      expect(html, region.baseUrlCluster).toContain(region.baseUrlCluster)
+    }
+    const placeholder = html.match(/<option value=""[^>]*>/)
+    expect(placeholder?.[0]).toContain('selected')
+    expect(html).toMatch(/aria-label="Xiaomi Token Plan API key"[^>]*\/?>/)
+    expect(configuredXiaomiTokenPlanRegion([])).toBeNull()
+    expect(configuredXiaomiTokenPlanRegion(['deepseek', 'xiaomi-token-plan-ams'])).toBe(
+      'xiaomi-token-plan-ams'
+    )
+  })
+
+  it('names the stored Xiaomi region and lights one dot while unconfigured stays dark', () => {
+    const stored = render({
+      status: {
+        encryptionAvailable: true,
+        configuredUpstreams: ['xiaomi-token-plan-ams'],
+        recordUnreadable: false
+      },
+      xiaomiRegion: 'xiaomi-token-plan-ams'
+    })
+    expect(stored).toContain('Key stored — Europe (AMS)')
+
+    const unconfigured = render({
+      status: {
+        encryptionAvailable: true,
+        configuredUpstreams: ['xiaomi-token-plan-ams', 'deepseek'],
+        recordUnreadable: false
+      },
+      drafts: {},
+      xiaomiRegion: 'xiaomi-token-plan-ams'
+    })
+    // The generic rows still count per-upstream keys.
+    expect(unconfigured).toContain('2 upstream keys configured')
   })
 
   it('reports the configured count and marks configured rows', () => {

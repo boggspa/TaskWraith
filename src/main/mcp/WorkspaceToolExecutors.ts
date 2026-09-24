@@ -1,4 +1,11 @@
 import { randomBytes } from 'node:crypto'
+import { beginSharedWorkspaceVerification } from '../sharedWorkspace/SharedWorkspaceVerification'
+import { currentSharedWorkspaceActor } from '../sharedWorkspace/SharedWorkspaceSession'
+import {
+  prepareCurrentContribution,
+  touchSharedWorkspaceIntent,
+  settleSharedWorkspaceContribution
+} from '../sharedWorkspace/SharedWorkspaceContributions'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -52,6 +59,15 @@ import type {
   ExternalPublishReceiptWriter
 } from '../ExternalPublishReceiptLedger'
 import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
+import {
+  assertCommittedPathsCovered,
+  nulSeparatedPaths,
+  parseGitCommitSliceRequest,
+  repoRelativePaths,
+  resolveGitReportedPaths,
+  type GitCommitSliceMode
+} from './GitCommitSlice'
+import { buildApplyPatchFailureHint } from './McpResultRepairHints'
 
 export interface HostCommandResult {
   stdout: string
@@ -65,6 +81,8 @@ export interface HostCommandResult {
 export interface HostCommandRunOptions {
   timeoutMs?: number
   releaseApproval?: ReleaseCommandCheckOptions
+  /** Internal-only environment additions constructed by a governed executor. */
+  environment?: Readonly<Record<string, string>>
 }
 
 export type HostCommandRunArgument = number | HostCommandRunOptions
@@ -98,6 +116,8 @@ export interface WorkspaceToolContext {
   cwd: string
   workspacePath?: string
   appChatId?: string
+  /** Host-issued mutation owner for a desktop contribution action; never read from tool args. */
+  workspaceLockOwnerId?: string
   /** Re-check exact run + lock/path authority at the final mutation boundary. */
   assertMutationAuthorized?: () => void | Promise<void>
   /** Cheap post-verification cancellation/history check between mutation phases. */
@@ -328,7 +348,11 @@ export interface WorkspaceToolExecutors {
     context: WorkspaceToolContext,
     cwd: string
   ) => Promise<unknown>
-  executeGitCommit: (args: Record<string, any>, cwd: string) => Promise<unknown>
+  executeGitCommit: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
   executeGitPush: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGitCreatePr: (args: Record<string, any>, cwd: string) => Promise<unknown>
   executeGithubCiStatus: (args: Record<string, any>, cwd: string) => Promise<unknown>
@@ -554,7 +578,7 @@ export function createWorkspaceToolExecutors(
     executeGitShow: (args, context, cwd) => executeGitShow(deps, args, context, cwd),
     executeGitBlame: (args, context, cwd) => executeGitBlame(deps, args, context, cwd),
     executeGitStage: (args, context, cwd) => executeGitStage(deps, args, context, cwd),
-    executeGitCommit: (args, cwd) => executeGitCommit(deps, args, cwd),
+    executeGitCommit: (args, context, cwd) => executeGitCommit(deps, args, cwd, context),
     executeGitPush: (args, cwd) => executeGitPush(deps, args, cwd),
     executeGitCreatePr: (args, cwd) => executeGitCreatePr(deps, args, cwd),
     executeGithubCiStatus: (args, cwd) => executeGithubCiStatus(deps, args, cwd),
@@ -881,7 +905,14 @@ export async function executeWorkspaceSearch(
   context: WorkspaceToolContext,
   cwd: string
 ) {
-  const query = requireNonEmptyString(args.query || args.pattern, 'Search query')
+  const hasQuery = args.query !== undefined
+  const hasPattern = args.pattern !== undefined
+  if (hasQuery && hasPattern && !Object.is(args.query, args.pattern)) {
+    throw new Error(
+      "workspace_search: 'query' was supplied as 'query' and 'pattern' with different values. TaskWraith will not choose between them — resend the call with one spelling."
+    )
+  }
+  const query = requireNonEmptyString(hasQuery ? args.query : args.pattern, 'Search query')
   const target = args.path || args.directory || '.'
   const targetPath = resolveMcpScopedPath(context, String(target), { allowWorkspaceRoot: true })
   const maxResults = clampInteger(args.maxResults ?? args.limit, 100, 1, 500)
@@ -973,13 +1004,20 @@ export async function executeApplyPatch(
   try {
     const check = await runCommandArgs(deps, ['git', 'apply', '--check', patchPath], cwd, 30_000)
     if (check.exitCode !== 0) {
-      return {
+      const failure = {
         ok: false,
         dryRun,
         paths: patchPaths,
         check,
         message: applyPatchFailureMessage(patch, check)
       }
+      const repair = buildApplyPatchFailureHint({
+        toolName: 'apply_patch',
+        receivedArguments: args,
+        normalizedArguments: args,
+        result: failure
+      })
+      return { ...failure, ...(repair ? { repair } : {}) }
     }
     if (dryRun) {
       return {
@@ -1333,18 +1371,249 @@ export async function executeGitCommit(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
   cwd: string,
-  context?: WorkspaceToolContext
+  context: WorkspaceToolContext
 ) {
-  const message = requireNonEmptyString(args.message, 'Commit message')
-  const gitArgs = ['git', 'commit', '-m', message]
-  await context?.assertMutationAuthorized?.()
-  const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
+  const request = parseGitCommitSliceRequest(args)
+  const declaredAbsolutePaths = request.paths.map((path) => resolveMcpScopedPath(context, path))
+  await context.assertMutationAuthorized?.()
+  const contribution = request.mode === 'contribution'
+    ? await prepareCurrentContribution(cwd, declaredAbsolutePaths)
+    : null
+  if (contribution) request.patch = contribution.patch
+
+  const baseHeadResult = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+  if (hostCommandFailed(baseHeadResult)) {
+    return failedGitCommitSlice(request.mode, 'read_head', baseHeadResult)
+  }
+  const baseHead = baseHeadResult.stdout.trim()
+  const repoRootResult = await runCommandArgs(
+    deps,
+    ['git', 'rev-parse', '--show-toplevel'],
+    cwd,
+    30_000
+  )
+  if (hostCommandFailed(repoRootResult)) {
+    return failedGitCommitSlice(request.mode, 'resolve_repository', repoRootResult)
+  }
+  const repoRoot = await canonicalizeCommitSlicePath(resolve(repoRootResult.stdout.trim()))
+  const declaredCoveragePaths = await Promise.all(
+    declaredAbsolutePaths.map((path) => canonicalizeCommitSlicePath(path))
+  )
+
+  // Both commit branches hand git the seat's exact lock-owner id: the
+  // pre-commit hook matches a runtime claim by TASKWRAITH_LOCK_OWNER_ID, and a
+  // commit that runs without it cannot prove the claim is its own, so the
+  // hook blocks the seat on its own marker. The private-index branch always
+  // carried it; the pathspec branch ran bare (QA 2026-09-15, Muse Work 2).
+  const lockOwnerId = context.workspaceLockOwnerId || currentSharedWorkspaceActor()?.lockOwnerId
+  const lockOwnerEnvironment: Readonly<Record<string, string>> = lockOwnerId
+    ? { TASKWRAITH_LOCK_OWNER_ID: lockOwnerId }
+    : {}
+
+  if (request.mode === 'pathspec') {
+    context.assertMutationStillLive?.()
+    const result = await runCommandArgs(
+      deps,
+      ['git', 'commit', '--only', '-m', request.message, '--', ...declaredAbsolutePaths],
+      cwd,
+      60_000,
+      undefined,
+      lockOwnerEnvironment
+    )
+    if (hostCommandFailed(result)) return failedGitCommitSlice(request.mode, 'commit', result)
+    return successfulGitCommitSlice(
+      deps,
+      request.mode,
+      cwd,
+      repoRoot,
+      declaredCoveragePaths,
+      result
+    )
+  }
+
+  const tempRoot = await fs.mkdtemp(join(deps.host.getTempDir(), 'taskwraith-git-commit-'))
+  const privateIndexPath = join(tempRoot, 'index')
+  const patchPath = join(tempRoot, 'slice.patch')
+  const environment = {
+    GIT_INDEX_FILE: privateIndexPath,
+    ...lockOwnerEnvironment
+  }
+  try {
+    await fs.writeFile(patchPath, request.patch!, { encoding: 'utf8', mode: 0o600 })
+    const readTree = await runCommandArgs(
+      deps,
+      ['git', 'read-tree', baseHead],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(readTree)) {
+      return failedGitCommitSlice(request.mode, 'prepare_private_index', readTree)
+    }
+    const check = await runCommandArgs(
+      deps,
+      ['git', 'apply', '--cached', '--check', '--binary', '--', patchPath],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(check)) {
+      return failedGitCommitSlice(request.mode, 'check_patch', check)
+    }
+    context.assertMutationStillLive?.()
+    const apply = await runCommandArgs(
+      deps,
+      ['git', 'apply', '--cached', '--binary', '--', patchPath],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(apply)) {
+      return failedGitCommitSlice(request.mode, 'apply_patch', apply)
+    }
+    const privateNames = await runCommandArgs(
+      deps,
+      ['git', 'diff', '--cached', '--name-only', '-z', '--'],
+      cwd,
+      30_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(privateNames)) {
+      return failedGitCommitSlice(request.mode, 'inspect_private_index', privateNames)
+    }
+    const actualAbsolutePaths = resolveGitReportedPaths(
+      repoRoot,
+      nulSeparatedPaths(privateNames.stdout)
+    )
+    assertCommittedPathsCovered(declaredCoveragePaths, actualAbsolutePaths, {
+      requireDeclaredPaths: true
+    })
+
+    const currentHead = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+    if (hostCommandFailed(currentHead)) {
+      return failedGitCommitSlice(request.mode, 'recheck_head', currentHead)
+    }
+    if (currentHead.stdout.trim() !== baseHead) {
+      throw new Error('Repository HEAD changed while the private commit slice was being prepared.')
+    }
+
+    context.assertMutationStillLive?.()
+    const commit = await runCommandArgs(
+      deps,
+      ['git', 'commit', '-m', request.message],
+      cwd,
+      60_000,
+      undefined,
+      environment
+    )
+    if (hostCommandFailed(commit)) return failedGitCommitSlice(request.mode, 'commit', commit)
+
+    if (contribution) {
+      // The commit is already real. A journal outage must not invite a duplicate commit.
+      await settleSharedWorkspaceContribution(cwd, contribution, 'committed').catch(() => {})
+    }
+
+    // Advance the shared index by our patch, preserving peer staging even in
+    // the same file. A path reset would erase those staged hunks. If the patch
+    // is already staged, leave it alone; an ambiguous overlap stays untouched.
+    const resyncCheck = await runCommandArgs(deps,
+      ['git', 'apply', '--cached', '--check', '--binary', '--', patchPath], cwd, 30_000)
+    const resync = !hostCommandFailed(resyncCheck)
+      ? await runCommandArgs(deps, ['git', 'apply', '--cached', '--binary', '--', patchPath], cwd, 30_000)
+      : await runCommandArgs(deps, ['git', 'apply', '--cached', '--reverse', '--check', '--binary', '--', patchPath], cwd, 30_000)
+    if (hostCommandFailed(resync)) {
+      return failedGitCommitSlice(request.mode, 'resync_shared_index', resync, {
+        committed: true
+      })
+    }
+    return successfulGitCommitSlice(
+      deps,
+      request.mode,
+      cwd,
+      repoRoot,
+      declaredCoveragePaths,
+      commit
+    )
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function canonicalizeCommitSlicePath(path: string): Promise<string> {
+  const missingSegments: string[] = []
+  let cursor = resolve(path)
+  while (true) {
+    try {
+      return resolve(await fs.realpath(cursor), ...missingSegments)
+    } catch (error) {
+      if (!isNodeErrnoException(error) || error.code !== 'ENOENT') throw error
+      const parent = dirname(cursor)
+      if (parent === cursor) throw error
+      missingSegments.unshift(basename(cursor))
+      cursor = parent
+    }
+  }
+}
+
+function hostCommandFailed(result: HostCommandResult): boolean {
+  return Boolean(
+    result.error || result.timedOut || result.exitCode === null || result.exitCode !== 0
+  )
+}
+
+function failedGitCommitSlice(
+  mode: GitCommitSliceMode,
+  stage: string,
+  result: HostCommandResult,
+  extra: Record<string, unknown> = {}
+) {
   return {
-    command: ['git', 'commit', '-m', '[message]'],
+    ok: false,
+    mode,
+    stage,
+    ...extra,
+    command: ['git', 'commit', '[slice]'],
     exitCode: result.exitCode,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: result.stderr || result.error || '',
     timedOut: result.timedOut
+  }
+}
+
+async function successfulGitCommitSlice(
+  deps: WorkspaceToolExecutorDependencies,
+  mode: GitCommitSliceMode,
+  cwd: string,
+  repoRoot: string,
+  declaredAbsolutePaths: readonly string[],
+  commitResult: HostCommandResult
+) {
+  const head = await runCommandArgs(deps, ['git', 'rev-parse', 'HEAD'], cwd, 30_000)
+  if (hostCommandFailed(head)) return failedGitCommitSlice(mode, 'read_committed_head', head)
+  const commit = head.stdout.trim()
+  const names = await runCommandArgs(
+    deps,
+    ['git', 'diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', commit],
+    cwd,
+    30_000
+  )
+  if (hostCommandFailed(names)) return failedGitCommitSlice(mode, 'inspect_commit', names)
+  const actualAbsolutePaths = resolveGitReportedPaths(repoRoot, nulSeparatedPaths(names.stdout))
+  assertCommittedPathsCovered(declaredAbsolutePaths, actualAbsolutePaths)
+  return {
+    ok: true,
+    mode,
+    commit,
+    paths: repoRelativePaths(repoRoot, actualAbsolutePaths),
+    command: ['git', 'commit', '[slice]'],
+    exitCode: commitResult.exitCode,
+    stdout: commitResult.stdout,
+    stderr: commitResult.stderr,
+    timedOut: commitResult.timedOut
   }
 }
 
@@ -1657,7 +1926,15 @@ export async function executeRunTask(
   command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
   await context?.assertMutationAuthorized?.()
-  const result = await runCommandArgs(deps, command, cwd, timeoutMs, effectiveApproval)
+  await touchSharedWorkspaceIntent(cwd)
+  const verificationRun = await beginSharedWorkspaceVerification(cwd, command)
+  const heartbeat = setInterval(() => { void touchSharedWorkspaceIntent(cwd) }, 5 * 60_000)
+  heartbeat.unref?.()
+  let result: HostCommandResult
+  try { result = await runCommandArgs(deps, command, cwd, timeoutMs, effectiveApproval) }
+  catch (error) { await verificationRun?.finish({exitCode: null, error: 'Task execution failed.'}); throw error }
+  finally { clearInterval(heartbeat) }
+  const verification = await verificationRun?.finish(result)
   return {
     task,
     command,
@@ -1667,7 +1944,8 @@ export async function executeRunTask(
     durationMs: result.durationMs,
     stdout: truncateText(result.stdout),
     stderr: truncateText(result.stderr),
-    summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`)
+    summary: summarizeTestOutput(`${result.stdout}\n${result.stderr}`),
+    ...(verification ? { verification } : {})
   }
 }
 
@@ -3343,12 +3621,13 @@ async function runCommandArgs(
   command: string[],
   cwd: string,
   timeoutMs = 600_000,
-  releaseApproval?: ReleaseCommandCheckOptions
+  releaseApproval?: ReleaseCommandCheckOptions,
+  environment?: Readonly<Record<string, string>>
 ): Promise<HostCommandResult> {
   return deps.host.runHostCommand(
     command,
     cwd,
-    releaseApproval ? { timeoutMs, releaseApproval } : timeoutMs
+    releaseApproval || environment ? { timeoutMs, releaseApproval, environment } : timeoutMs
   )
 }
 

@@ -89,7 +89,7 @@ describe('registerComposeRunHandlers', () => {
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('rejects a Test 1 popout using a Test 3 attachment before ComposerService', async () => {
+  it('drops a Test 3 attachment a Test 1 popout is not authorized for and still composes', async () => {
     const test1Popout = { sender: { id: 11 } }
     const deps = createDeps()
     deps.resolveSenderAttachmentPaths = vi.fn(() => {
@@ -101,13 +101,16 @@ describe('registerComposeRunHandlers', () => {
       imageAttachments: [{ path: '/Test 3/secret.pdf', name: 'secret.pdf' }]
     }
 
-    await expect(handlerFor('compose-run')(test1Popout, input)).rejects.toThrow(
-      'Renderer is not authorized to use one or more attachments.'
-    )
+    await expect(handlerFor('compose-run')(test1Popout, input)).resolves.toEqual({
+      provider: 'codex'
+    })
     expect(deps.resolveSenderAttachmentPaths).toHaveBeenCalledWith(test1Popout, [
       '/Test 3/secret.pdf'
     ])
-    expect(deps.composeRun).not.toHaveBeenCalled()
+    expect(deps.composeRun).toHaveBeenCalledWith({
+      ...input,
+      imageAttachments: []
+    })
   })
 
   it('passes canonical caller-authorized attachments to ComposerService', async () => {
@@ -246,6 +249,32 @@ describe('registerComposeRunHandlers', () => {
       ...input,
       imageAttachments: [{ path: '/main-cas/scheduled.png', name: 'scheduled.png' }]
     })
+  })
+
+  it('uses exact main-owned queued attachments without a replacement renderer receipt', async () => {
+    const deps = createDeps()
+    const input = {
+      ...inputFor('chat-test-1'),
+      appRunId: 'run-queued',
+      imageAttachments: [{ path: '/forged/secret.png' }]
+    }
+    deps.resolveSenderComposeAuthority = vi.fn((_event, raw) => ({
+      input: {
+        ...raw,
+        imageAttachments: [{ path: '/main-cas/queued.png', name: 'queued.png' }]
+      },
+      mainOwnedAttachments: true
+    }))
+    registerComposeRunHandlers(deps)
+
+    await handlerFor('compose-run')({ sender: { id: 1 } }, input)
+
+    expect(deps.resolveSenderAttachmentPaths).not.toHaveBeenCalled()
+    expect(deps.composeRun).toHaveBeenCalledWith({
+      ...input,
+      imageAttachments: [{ path: '/main-cas/queued.png', name: 'queued.png' }]
+    })
+    expect(deps.onScheduledRunComposed).toBeUndefined()
   })
 
   it('issues a dispatch receipt only after canonical scheduled composition succeeds', async () => {

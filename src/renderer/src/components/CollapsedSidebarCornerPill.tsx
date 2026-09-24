@@ -210,7 +210,7 @@ export function CollapsedSidebarCornerPill({
         <GearSymbolIcon />
       </button>
       <button
-        className={`chat-corner-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
+        className={`chat-corner-btn${hasNeedsInputAttention ? ' glow-yellow' : ''}${
           openPanel === 'approvals' ? ' active' : ''
         }`}
         type="button"

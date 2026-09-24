@@ -1,0 +1,87 @@
+.shared-workspace-contributions {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid var(--panel-border, #3a3a3a);
+  border-radius: 10px;
+  color: var(--text-primary, inherit);
+}
+.shared-workspace-heading,
+.shared-workspace-contribution,
+.shared-workspace-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.shared-workspace-heading h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.shared-workspace-coverage,
+.shared-workspace-contributions small {
+  color: var(--text-secondary, #a0a0a0);
+  font-size: 11px;
+}
+.shared-workspace-contribution {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-border, #3a3a3a);
+  font-size: 12px;
+}
+.shared-workspace-contribution > div {
+  min-width: 0;
+  flex: 1;
+}
+.shared-workspace-contributions small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.shared-workspace-contributions button {
+  border: 1px solid var(--panel-border, #555);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary, currentColor) 4%, transparent);
+  color: inherit;
+  padding: 5px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.shared-workspace-contributions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.shared-workspace-preview {
+  margin-top: 12px;
+}
+.shared-workspace-preview pre {
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px;
+  background: color-mix(in srgb, var(--text-primary, currentColor) 4%, transparent);
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: pre;
+}
+.shared-workspace-preview label {
+  display: block;
+  font-size: 12px;
+}
+.shared-workspace-preview input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 6px 0 10px;
+  border: 1px solid var(--panel-border, #555);
+  border-radius: 6px;
+  padding: 7px;
+  background: color-mix(in srgb, var(--text-primary, currentColor) 4%, transparent);
+  color: inherit;
+}
+.shared-workspace-actions {
+  justify-content: flex-start;
+}
+.shared-workspace-verification {
+  font-size: 12px;
+}
+.shared-workspace-contributions [role='status'] {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

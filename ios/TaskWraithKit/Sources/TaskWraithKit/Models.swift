@@ -476,6 +476,7 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
     public let disabledReason: String?
     public let supportedReasoningEfforts: [ReasoningEffortOption]?
     public let defaultReasoningEffort: String?
+    public let contextWindow: Int?
 
     public init(
         id: String,
@@ -484,7 +485,8 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
         disabled: Bool? = nil,
         disabledReason: String? = nil,
         supportedReasoningEfforts: [ReasoningEffortOption]? = nil,
-        defaultReasoningEffort: String? = nil
+        defaultReasoningEffort: String? = nil,
+        contextWindow: Int? = nil
     ) {
         self.id = id
         self.label = label
@@ -493,6 +495,7 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
         self.disabledReason = disabledReason
         self.supportedReasoningEfforts = supportedReasoningEfforts
         self.defaultReasoningEffort = defaultReasoningEffort
+        self.contextWindow = contextWindow
     }
 }
 
@@ -679,6 +682,7 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public var kimiFastMode: Bool? = nil
     public var kimiReasoningEffort: String? = nil
     public var kimiThinkingEnabled: Bool? = nil
+    public var piReasoningEffort: String? = nil
     public var approvalMode: String? = nil
     public var workflowMode: String? = nil
     public var permissionPresetId: String? = nil
@@ -908,6 +912,18 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileWrite: Bool?
     public let externalPublish: Bool?
     public let deleteMessage: Bool?
+    /// Host projects true only when it has injected `createSubThreadFn` AND
+    /// this workspace grants `startTurn`. Absent/false means the phone must not
+    /// offer a control that would call a `notWired` executor or send to a
+    /// workspace the router would refuse. This bit includes the workspace
+    /// allowlist grant, not just implementation liveness.
+    public let createSubThread: Bool?
+    /// Host projects true only when BOTH merge callbacks (`githubMergePrFn`
+    /// and `requestGithubMergePrApprovalFn`) are injected AND this workspace
+    /// grants `externalPublish` — the router's requirement for `githubMergePr`.
+    /// Absent/false means the phone must not offer the merge control: a button
+    /// that appears and is then refused by the Mac is the spawn defect inverted.
+    public let githubMergePr: Bool?
 }
 
 /// One remote-terminal output chunk (raw shell bytes, base64).
@@ -1035,6 +1051,36 @@ public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
     /// Range mode only: the absolute byte offset of THIS slice within the asset
     /// (echoes the requested `offset`, server-clamped).
     public let offset: Int?
+
+    public init(
+        id: String,
+        rowId: String? = nil,
+        threadId: String? = nil,
+        name: String? = nil,
+        source: String? = nil,
+        mimeType: String,
+        dataBase64: String,
+        width: Int? = nil,
+        height: Int? = nil,
+        byteLength: Int? = nil,
+        variant: String? = nil,
+        totalBytes: Int? = nil,
+        offset: Int? = nil
+    ) {
+        self.id = id
+        self.rowId = rowId
+        self.threadId = threadId
+        self.name = name
+        self.source = source
+        self.mimeType = mimeType
+        self.dataBase64 = dataBase64
+        self.width = width
+        self.height = height
+        self.byteLength = byteLength
+        self.variant = variant
+        self.totalBytes = totalBytes
+        self.offset = offset
+    }
 }
 
 /// A discoverable TaskWraith host the phone can offer to pair with — the PUBLIC
@@ -1780,6 +1826,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         /// payload shape on the Mac). Absent on older Macs — the plain
         /// sentence in `preview` keeps rendering there.
         public let seatRoster: TWSeatRosterPayload?
+        /// User-added participant mid-round (mutually exclusive with `seatChange`
+        /// and `seatRoster` by payload shape on the Mac). Absent on older Macs
+        /// — the plain sentence in `preview` keeps rendering there.
+        public let seatParticipantAdded: TWSeatParticipantAddedPayload?
         /// ask_user_question prompt anchored to this (asking) row — drives the
         /// inline question card. `promptId` === the registry questionId, so the
         /// inline card resolves the same parked tool the top banner does.
@@ -1911,6 +1961,24 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         }
         public let runFailure: RunFailure?
 
+        /// Durable TaskWraith close-out marker. It survives even when the
+        /// tombstoned epic tables are absent or stripped under wire pressure,
+        /// so mobile never folds a close-out into generic system chrome.
+        public let isCloseout: Bool?
+        /// `ensembleRound` close-outs are authoritative for a whole round;
+        /// `run` close-outs describe only one participant/run. A String keeps
+        /// newer scope values decode-safe on older phones.
+        public let closeoutScope: String?
+        /// Exact round identity stamped by the close-out author. This remains
+        /// separate from `ensembleRoundId`, which can be stale generic row
+        /// metadata on historical transcripts.
+        public let closeoutRoundId: String?
+        /// Authoritative close-out result (for example a cancelled round even
+        /// when its final participant lane succeeded).
+        public let closeoutStatus: String?
+        /// Authoritative close-out wall-clock duration in milliseconds.
+        public let closeoutDurationMs: Int?
+
         /// TaskWraith close-out Participants table for the Task-complete epic
         /// stack (desktop RunCompleteEpicStack parity). Absent on older Macs
         /// and non-close-out rows — the card falls back to the legacy Run
@@ -1953,6 +2021,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public var id: String { path ?? "file" }
         }
         public let closeoutFileChanges: [CloseoutFileChange]?
+        /// Full valid-path count when closeoutFileChanges carries a bounded
+        /// prefix rather than every changed path.
+        public let closeoutFileChangesTotal: Int?
 
         /// One close-out Sub-threads row — the last epic-stack section that
         /// was desktop-only. `status` stays a plain String so a value a newer
@@ -1997,6 +2068,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let provider: String?
         public let model: String?
         public let status: String?
+        /// Mirrors the remote summary's terminal exit evidence. In particular,
+        /// exit 130 is a deliberate user cancellation even on legacy rows that
+        /// predate a `cancelled` status stamp.
+        public let exitCode: Int?
         public let startedAt: String?
         public let endedAt: String?
         public let durationMs: Int?
@@ -2026,6 +2101,44 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
                 public let deletions: Int?
                 public var id: String { path }
             }
+        }
+
+        public init(
+            runId: String? = nil,
+            ensembleRoundId: String? = nil,
+            ensembleParticipantId: String? = nil,
+            ensembleRole: String? = nil,
+            ensembleOrder: Int? = nil,
+            provider: String? = nil,
+            model: String? = nil,
+            status: String? = nil,
+            exitCode: Int? = nil,
+            startedAt: String? = nil,
+            endedAt: String? = nil,
+            durationMs: Int? = nil,
+            totalTokens: Int? = nil,
+            tokensIn: Int? = nil,
+            tokensOut: Int? = nil,
+            costText: String? = nil,
+            fileChanges: FileChanges? = nil
+        ) {
+            self.runId = runId
+            self.ensembleRoundId = ensembleRoundId
+            self.ensembleParticipantId = ensembleParticipantId
+            self.ensembleRole = ensembleRole
+            self.ensembleOrder = ensembleOrder
+            self.provider = provider
+            self.model = model
+            self.status = status
+            self.exitCode = exitCode
+            self.startedAt = startedAt
+            self.endedAt = endedAt
+            self.durationMs = durationMs
+            self.totalTokens = totalTokens
+            self.tokensIn = tokensIn
+            self.tokensOut = tokensOut
+            self.costText = costText
+            self.fileChanges = fileChanges
         }
     }
     public struct BlackboardEntry: Codable, Sendable, Identifiable, Equatable {
@@ -3382,6 +3495,36 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Merge the current branch's GitHub PR. Destructive and irreversible
+    /// from the phone. Dual-gated, matching `terminalOpen` / the deferred
+    /// `workflowDelete` elevation contract:
+    ///
+    /// - `elevationAcknowledged` is the phone confirmation sheet's claim.
+    ///   The builder does not stamp `true` itself — a caller that skipped
+    ///   the sheet cannot mint that bit by constructing this payload with
+    ///   the workspace id alone. This bit is still not host consent: a
+    ///   paired client can pass `true` without any Mac involvement.
+    /// - The Mac independently runs `requestAgenticServiceApproval` before
+    ///   any merge callback. A forged `true` therefore cannot reach
+    ///   `githubMergePrFn`.
+    ///
+    /// The Mac derives the PR from the workspace checkout — this payload
+    /// has no PR number or URL. Both host callbacks are wired behind that
+    /// dual gate; UI calls this only when the Mac projects
+    /// `RemoteTaskCapabilities.githubMergePr == true` for the workspace (see
+    /// `GithubMergePrGate`), so an ungated surface never reaches this builder.
+    public static func githubMergePr(
+        workspaceId: String,
+        elevationAcknowledged: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "githubMergePr", "actionId": actionId,
+            "workspaceId": workspaceId,
+            "elevationAcknowledged": elevationAcknowledged,
+        ])
+    }
+
     /// First-thread workspace consent. The Mac accepts this only from the
     /// authenticated pair and resolves `workspaceId` against its own registry.
     public static func setRemoteWorkspaceAccess(
@@ -3438,10 +3581,36 @@ public enum BridgeAction {
 /// exact screenshot users send when pairing fails); this keeps the precise
 /// failure but leads with what to DO about it. Pure + unit-tested.
 public enum TransportErrorCopy {
+    /// Whether an error is Foundation reporting that it could not read a
+    /// payload, rather than a transport or application fault.
+    ///
+    /// These localize to bare, unattributed copy — and `DecodingError` is a
+    /// `LocalizedError` whose `errorDescription` is nil, so the
+    /// `?? ns.localizedDescription` fallback below used to hand the raw string
+    /// to the banner. Measured 2026-08-29: `JSONSerialization` throws 3840,
+    /// `JSONDecoder` throws 4864 (corrupt / type mismatch) and 4865 (key
+    /// missing) — all reading "The data couldn't be read because ...", which
+    /// names no actor and trips no keyword in `twBannerSeverity`, so it landed
+    /// as a calm blue notice that told the user nothing.
+    public static func isUnreadablePayload(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSCocoaErrorDomain else { return false }
+        return ns.code == 3840 || (ns.code >= 4864 && ns.code <= 4866)
+    }
+
     /// `relayUrl` gives host-aware guidance (Tailscale vs LAN front doors).
     public static func friendlyMessage(for error: Error, relayUrl: String?) -> String {
         let ns = error as NSError
         guard ns.domain == NSURLErrorDomain else {
+            // `Session.onEncrypted` parses a frame AFTER `TWCipher.open` has
+            // authenticated it, so an unreadable payload is not a corrupted
+            // wire: it is a Mac that sealed something this build cannot parse.
+            // Name the actor and the likely cause instead of echoing Foundation.
+            if isUnreadablePayload(error) {
+                return "Your Mac sent a message this device couldn't read "
+                    + "(decode error \(ns.code)). They may be running different "
+                    + "TaskWraith versions — update both, then reconnect."
+            }
             return (error as? LocalizedError)?.errorDescription ?? ns.localizedDescription
         }
         let host = relayUrl.flatMap { URL(string: $0)?.host } ?? "your Mac"

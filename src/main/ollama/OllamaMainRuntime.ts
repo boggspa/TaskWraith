@@ -1,7 +1,12 @@
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import {
+  bindSharedWorkspaceActor,
+  withSharedWorkspaceOperation
+} from '../sharedWorkspace/SharedWorkspaceSession'
 import { dirname, isAbsolute, resolve } from 'path'
 import os from 'os'
 import { MAX_EDITOR_FILE_BYTES } from '../index.constants'
+import { formatReadFileLineWindow } from '../BoundedRegularFileReader'
 import type { McpToolExecutionResult } from '../index.types'
 import { assertTextBuffer } from '../gemini/GeminiDiscovery'
 import { mcpJson, isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
@@ -11,6 +16,7 @@ import {
   type WorkspaceToolContext
 } from '../mcp/WorkspaceToolExecutors'
 import { isCapabilityGatewayToolName, type CapabilityGatewayToolName } from '../mcp/McpToolGateway'
+import { mcpToolResultImages } from '../mcp/McpToolResultImages'
 import {
   readScopedDirectory,
   readScopedRegularFile,
@@ -18,12 +24,13 @@ import {
 } from '../ScopedPathAccess'
 import { isRecord, requireNonEmptyString } from '../settings/MainSanitizers'
 import { routeWithRunId } from '../run/RunRoute'
-import { drainPendingSteerTextFromSession } from '../steering/BrokerSteerTransport'
+import { reservePendingSteerTextFromSession } from '../steering/BrokerSteerTransport'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { GeminiToolContext } from '../runStateTypes'
 import type { RunManager } from '../RunManager'
 import type { AppSettings, ChatRecord, ExternalPathGrant } from '../store/types'
 import type { TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { buildOllamaToolDocSection } from './OllamaToolsDoc'
 import {
@@ -34,7 +41,7 @@ import {
   type OllamaToolExecutionRequest,
   type OllamaToolExecutionResult
 } from './OllamaProvider'
-import { isOllamaExcludedSubthreadTool } from './OllamaToolTiers'
+import { isOllamaUltraTaskDelegationTool } from './OllamaToolTiers'
 import {
   normalizeOllamaSessionMemory,
   normalizeOllamaSessionMemoryMap,
@@ -42,6 +49,7 @@ import {
 } from './OllamaRunMemory'
 import type { OllamaModelPreflightResult } from './OllamaModelPreflight'
 import { assertOllamaMutationIntent, assertOllamaProtectedWritePaths } from './OllamaToolPolicy'
+import { applyOllamaSmallLocalModelToolArguments } from './OllamaSmallLocalModelProfile'
 
 interface OllamaWorkspaceToolExecutors {
   executeFindFiles: (
@@ -127,6 +135,7 @@ export interface OllamaMainRuntimeDependencies {
   sendAgentCompatError: OllamaProviderDeps['sendAgentCompatError']
   sendAgentCompatExit: OllamaProviderDeps['sendAgentCompatExit']
   reportWorkingTokenUsage?: OllamaProviderDeps['reportWorkingTokenUsage']
+  onToolBatchBoundary?: OllamaProviderDeps['onToolBatchBoundary']
   runManager: RunManager<any>
   emitProviderCapabilityWarnings: NonNullable<OllamaProviderDeps['emitProviderCapabilityWarnings']>
   runProvider: (
@@ -203,8 +212,19 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     const endByMax = requestedMax ? startLine + requestedMax - 1 : totalLines
     const endLine = Math.min(totalLines, requestedEnd || endByMax)
     const safeEndLine = Math.max(startLine, endLine)
+    const windowText = lines.slice(startLine - 1, safeEndLine).join('\n')
+    // A windowed read carries the same `[read_file: lines X-Y of N]` header the
+    // MCP path emits. Without it `summarizeReadFileOutput` had no window to
+    // continue from, so it restarted its count at 1 and prescribed the SAME
+    // next offset after every call — the model dutifully re-issued identical
+    // arguments and the repeat guard ended the round. Plain whole-file reads
+    // stay byte-identical, which is what the summariser's headerless path and
+    // its tests expect.
+    const windowed = requestedStart !== null || requestedEnd !== null || requestedMax !== null
     return {
-      output: lines.slice(startLine - 1, safeEndLine).join('\n'),
+      output: windowed
+        ? formatReadFileLineWindow({ windowText, startLine, endLine: safeEndLine, totalLines })
+        : windowText,
       startLine,
       endLine: safeEndLine,
       totalLines,
@@ -288,6 +308,19 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
   async function executeLocalTool(
     request: OllamaToolExecutionRequest
   ): Promise<OllamaToolExecutionResult> {
+    return withSharedWorkspaceOperation(() => {
+      const runContext = deps.getAgentToolContext('ollama', {
+        appRunId: request.appRunId,
+        appChatId: request.appChatId
+      })
+      if (runContext) bindSharedWorkspaceActor(runContext, 'ollama', request.toolName)
+      return executeLocalToolInContext(request)
+    })
+  }
+
+  async function executeLocalToolInContext(
+    request: OllamaToolExecutionRequest
+  ): Promise<OllamaToolExecutionResult> {
     const workspacePath = deps.canonicalPath(
       requireNonEmptyString(request.workspacePath, 'Workspace')
     )
@@ -305,10 +338,18 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         )
         return { ok: true, output }
       }
-      const canonicalArguments = canonicalizeOllamaToolArguments(
-        request.toolName,
-        request.arguments
-      )
+      // Pre-tool hook order: canonicalize the model's own keys FIRST (synonym
+      // promotion), then let the small-model profile fill in economical
+      // defaults and clamp runaway values. That order matters — the hook must
+      // see `maxResults` on its canonical key before deciding whether the
+      // model supplied one. The hook is additive only and cannot refuse a
+      // call, so validation below still judges the model's real intent.
+      const canonicalArguments = request.smallLocalModel
+        ? applyOllamaSmallLocalModelToolArguments(
+            request.toolName,
+            canonicalizeOllamaToolArguments(request.toolName, request.arguments)
+          )
+        : canonicalizeOllamaToolArguments(request.toolName, request.arguments)
       const argCheck = validateOllamaToolArguments(request.toolName, canonicalArguments)
       if (!argCheck.ok) {
         return { ok: false, output: argCheck.message, validationError: true }
@@ -318,21 +359,25 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
       // caller-owned request (tool_use / trajectory keep model-emitted args).
       request = { ...request, arguments: canonicalArguments }
 
-      if (isOllamaExcludedSubthreadTool(request.toolName)) {
-        return {
-          ok: false,
-          output:
-            'Ollama local mode cannot use TaskWraith sub-thread tools (delegate_to_subthread / delegate_wave / list_subthreads / read_subthread_result / cancel_subthread).'
-        }
-      }
       if (
-        request.toolName === 'capability_invoke' &&
-        isOllamaExcludedSubthreadTool(String(request.arguments.name ?? ''))
+        isOllamaUltraTaskDelegationTool(request.toolName) &&
+        request.ultraTaskDelegationAutoAllow !== true
       ) {
         return {
           ok: false,
           output:
-            'Ollama local mode cannot invoke TaskWraith sub-thread tools through capability_invoke.'
+            'Ollama sub-thread delegation is available only when this run was started from the UltraTask reasoning selection.'
+        }
+      }
+      if (
+        request.toolName === 'capability_invoke' &&
+        isOllamaUltraTaskDelegationTool(String(request.arguments.name ?? '').trim()) &&
+        request.ultraTaskDelegationAutoAllow !== true
+      ) {
+        return {
+          ok: false,
+          output:
+            'Ollama cannot invoke sub-thread delegation through capability_invoke unless this run was started from the UltraTask reasoning selection.'
         }
       }
 
@@ -346,6 +391,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }
@@ -439,7 +485,19 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
           : resolveWorkspacePathAuthority(context, rawPath)
         const { buffer, stat } = await readScopedRegularFile(authority, {
           maxBytes: MAX_EDITOR_FILE_BYTES,
-          sizeLimitErrorMessage: 'File is too large to read through the Ollama tool loop.'
+          // S4 (partial, disclosure-only): this loop has the same
+          // buffer-then-slice ordering the MCP read_file path had, so
+          // startLine/maxLines cannot rescue an oversized file here yet. Until
+          // the streaming window is wired in, name the route that DOES work in
+          // this loop rather than leaving a verdict with nowhere to go.
+          //
+          // The path leads deliberately. This refusal carries no other
+          // discriminator, so a trailing `<path>` placeholder made every
+          // oversized read — different files included — produce a byte-identical
+          // failure whose head fed the identical-failure breaker as one streak.
+          // Naming the file up front keeps the model's suggested command
+          // runnable and keeps three distinct refusals three distinct failures.
+          sizeLimitErrorMessage: `read_file could not read "${rawPath}": it is larger than the ${MAX_EDITOR_FILE_BYTES}-byte Ollama read limit. startLine/maxLines do not bypass this gate yet; read a bounded range with run_shell_command, for example: sed -n "300,320p" "${rawPath}".`
         })
         const targetPath = authority.targetPath
         assertTextBuffer(buffer)
@@ -480,6 +538,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }
@@ -528,6 +587,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }
@@ -628,6 +688,9 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     event: IpcMainInvokeEvent,
     payload: AgentRunPayload
   ): Promise<void> {
+    const ultraTaskDelegationAutoAllow = hasUltraTaskDelegationAutoAllow(
+      payload.effectivePermissions
+    )
     const graphOwnedOllamaAttempt = Boolean(
       payload.appRunId && deps.store.getRunQueueJob(payload.appRunId)?.executionGraph
     )
@@ -660,6 +723,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         externalPathGrants: payload.externalPathGrants,
         runtimeProfileId: payload.runtimeProfileId,
         taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+        ultraTaskDelegationAutoAllow,
         effectivePermissions: payload.effectivePermissions,
         effectivePermissionsSignature: payload.effectivePermissionsSignature,
         ensembleRun: payload.ensembleRun,
@@ -681,11 +745,13 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         reportWorkingTokenUsage: deps.reportWorkingTokenUsage,
         runManager: deps.runManager,
         emitProviderCapabilityWarnings: deps.emitProviderCapabilityWarnings,
-        // Mid-turn steering: the provider loop drains text the
-        // SteeringOrchestrator armed on this run's session and injects it
-        // into its next model request (see OllamaProvider).
-        drainPendingSteerText: (appRunId) =>
-          drainPendingSteerTextFromSession(deps.runManager.get(appRunId)),
+        // Mid-turn steering: reserve the exact broker batch for the next
+        // request. OllamaProvider settles delivery only after the HTTP turn
+        // succeeds, so a pre-launch refusal can be rolled back without losing
+        // the steer and an uncertain transport failure cannot be replayed.
+        reservePendingSteerText: (appRunId) =>
+          reservePendingSteerTextFromSession(deps.runManager.get(appRunId)),
+        onToolBatchBoundary: deps.onToolBatchBoundary,
         executeTool: executeLocalTool,
         createHostCommandProjection: deps.createHostCommandProjection,
         getOllamaSessionMemory: (chatId, memoryKey) => {

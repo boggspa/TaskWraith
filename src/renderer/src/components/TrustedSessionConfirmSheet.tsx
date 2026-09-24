@@ -51,9 +51,8 @@ export function TrustedSessionConfirmSheet({
           it.
         </p>
         <p className="creative-approval-modal-description approval-elevation-caution">
-          Other chats and ensemble participants are unchanged. TaskWraith still prompts or denies
-          for external publishing, Canvas eval, media recording, per-call-only prompts, and anything
-          blocked by global policy.
+          Other chats and ensemble participants are unchanged. External publishing, media recording,
+          and anything blocked by global policy keep their own approval rules.
         </p>
 
         <label className="approval-elevation-ack" htmlFor="trusted-session-ack">

@@ -362,6 +362,33 @@ public final class PairedHostSessionController: ObservableObject {
       if case .rejected(let reason) = applied {
         throw PairedHostSessionError.invalidResponse(reason)
       }
+      if case .requireSnapshot(let reason) = applied {
+        throw PairedHostSessionError.invalidResponse(reason)
+      }
+      guard frame.snapshot.freshness == .live else {
+        throw PairedHostSessionError.invalidResponse("snapshot response is not live")
+      }
+
+      // A successful authenticated `snapshot.get` is itself the recovery
+      // acknowledgement. Waiting for a separate unsolicited hostState push made
+      // cursor-gap recovery stick in `.reconnecting` forever when that one frame
+      // was missed. Reuse the replica's existing cursor/generation validation by
+      // applying the same live-state message the gateway sends after a seed.
+      let liveStateData = try JSONEncoder().encode(
+        PairedHostProjectionStateMessage(
+          phase: .live,
+          generation: frame.snapshot.generation,
+          cursor: frame.snapshot.cursor))
+      let stateApplied = apply(
+        method: PairedHostProjectionMethods.state,
+        params: liveStateData,
+        triggerResync: false)
+      if case .rejected(let reason) = stateApplied {
+        throw PairedHostSessionError.invalidResponse(reason)
+      }
+      if case .requireSnapshot(let reason) = stateApplied {
+        throw PairedHostSessionError.invalidResponse(reason)
+      }
       lastError = nil
     } catch {
       guard expectedActivation == activationId else { return }

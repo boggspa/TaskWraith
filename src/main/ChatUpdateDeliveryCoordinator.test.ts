@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord } from './store/types'
 import {
+  appliedChatUpdateBaseline,
   applyChatUpdateDelivery,
   attachChatUpdateProducerEnvelope,
+  chatUpdateProducerEnvelopeFor,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
 import { deriveChatRecordMutationWithProjection } from './store/ChatRecordMutation'
@@ -12,6 +16,13 @@ import {
   resolveEmitProtocolVersionForTest,
   type ChatUpdateDeliveryTarget
 } from './ChatUpdateDeliveryCoordinator'
+import {
+  estimateChatUpdateSnapshotBytes,
+  resolveChatUpdateAckTimeoutMs,
+  resolveSnapshotRetryDelayMs
+} from './ChatUpdateSnapshotAckPolicy'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from '../shared/transcriptPage'
+import { ackAsRenderer } from './chatUpdateRendererAck.testutil'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -75,16 +86,81 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[0].kind).toBe('snapshot')
     expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, pending: 1 })
 
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('patch')
     if (sink.deliveries[1].kind !== 'patch') throw new Error('Expected patch')
     expect(sink.deliveries[1].protocolVersion).toBe(1)
     if (sink.deliveries[1].protocolVersion !== 1) throw new Error('Expected v1 patch')
     expect(sink.deliveries[1].record.updatedAt).toBe(3)
+  })
+
+  it('patches the WINDOW, not the canonical array, after a bounded snapshot', () => {
+    // An oversized snapshot goes on the wire as one tail page, and its ACK
+    // fingerprints hash that WINDOW so the ACK matches. The retained patch
+    // baseline must therefore be the window too, and the next delivery must
+    // splice against IT: indices into the canonical array applied to a 1.5k-row
+    // window corrupt the transcript, and re-snapshotting instead re-ships the
+    // whole page on every append.
+    const big = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 200 },
+      (_, index) => `row ${index}`
+    )
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, chat(1, big))
+    const first = sink.deliveries[0]
+    expect(first.kind).toBe('snapshot')
+    if (first.kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(first.page?.hasOlder).toBe(true)
+    expect(first.page?.windowEnd).toBe(big.length)
+
+    coordinator.enqueue(sink, chat(2, [...big, 'appended']))
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, first)
+    const windowLength = seedBaseline.chat.messages.length
+    expect(windowLength).toBeLessThan(big.length)
+
+    expect(sink.deliveries).toHaveLength(2)
+    const second = sink.deliveries[1]
+    expect(second.kind).toBe('patch')
+    if (second.kind !== 'patch') throw new Error('expected patch')
+    if (second.protocolVersion !== 2) throw new Error('expected a v2 patch')
+    // The whole point: one row on the wire, addressed within the window.
+    expect(second.messages?.start).toBe(windowLength)
+    expect(second.messages?.deleteCount).toBe(0)
+    expect(second.messages?.items).toHaveLength(1)
+
+    const patched = applyChatUpdateDelivery(structuredClone(second), seedBaseline)
+    expect(patched.ok).toBe(true)
+    if (!patched.ok) throw new Error(patched.reason)
+    // The window GREW by the appended row rather than sliding, so the renderer
+    // keeps every row it already had and the splice stays a pure suffix.
+    expect(patched.baseline.chat.messages).toHaveLength(windowLength + 1)
+    expect(patched.baseline.chat.messages[0]?.id).toBe(seedBaseline.chat.messages[0]?.id)
+    expect(patched.baseline.chat.messages.at(-1)?.content).toBe('appended')
+    // The ACK the renderer will now send must fingerprint the record main
+    // retained, or the next delivery drops the baseline and snapshots again.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: second.deliveryId,
+        applied: true,
+        revision: second.revision,
+        recordHash: patched.baseline.recordHash,
+        ...(patched.baseline.transcriptHash
+          ? { transcriptHash: patched.baseline.transcriptHash }
+          : {})
+      })
+    ).toBe(true)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 1,
+      baselineDrops: 0,
+      windowedDeliveries: 2,
+      windowReanchors: 0
+    })
   })
 
   it('produces a patch that reconstructs the exact latest pending chat', () => {
@@ -97,17 +173,95 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     const latest = chat(3, ['three', 'stable', 'tail'])
     coordinator.enqueue(sink, first)
     const firstDelivery = sink.deliveries[0]
-    const firstApplied = applyChatUpdateDelivery(firstDelivery)
-    expect(firstApplied.ok).toBe(true)
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
     coordinator.enqueue(sink, latest)
-    coordinator.acknowledge(sink.id, { deliveryId: firstDelivery.deliveryId, applied: true })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, firstDelivery)
 
     const patch = sink.deliveries[1]
-    const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
-    expect(patched).toEqual({
+    const patched = applyChatUpdateDelivery(structuredClone(patch), seedBaseline)
+    expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
+    })
+  })
+
+  it('sends a snapshot instead of a splice when a saved transcript has duplicate ids', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const first = chat(1, ['one'])
+    const duplicate = chat(2, ['one', 'duplicate'])
+    duplicate.messages[1].id = duplicate.messages[0].id
+    const [projectedFirst, projectedDuplicate] = projectSequence(first, duplicate)
+
+    coordinator.enqueue(sink, projectedFirst)
+    const initial = sink.deliveries[0]
+    expect(ackAsRenderer(coordinator, sink, initial).acknowledged).toBe(true)
+
+    coordinator.enqueue(sink, projectedDuplicate)
+    const recovery = sink.deliveries[1]
+    expect(recovery.kind).toBe('snapshot')
+    expect(applyChatUpdateDelivery(recovery)).toMatchObject({
+      ok: true,
+      baseline: { chat: duplicate }
+    })
+
+    expect(ackAsRenderer(coordinator, sink, recovery).acknowledged).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
+  it('keeps an ACKed malformed snapshot fenced after its producer envelope is gone', () => {
+    const sink = target(8)
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const invalid = chat(1, ['one', 'duplicate'])
+    invalid.messages[1].id = invalid.messages[0].id
+
+    coordinator.enqueue(sink, invalid)
+    const invalidSnapshot = sink.deliveries[0]
+    expect(invalidSnapshot.kind).toBe('snapshot')
+    expect(ackAsRenderer(coordinator, sink, invalidSnapshot).acknowledged).toBe(true)
+
+    // This update has no producer envelope, so the ACKed snapshot metadata is
+    // the only signal that the retained baseline is still malformed.
+    coordinator.enqueue(sink, chat(2, ['repaired']))
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
+  it('advances an idle baseline for a renderer-authored compact mutation without an echo', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const [seed, rendererMutation, laterMainUpdate] = projectSequence(
+      chat(1, ['h']),
+      chat(2, ['hello']),
+      chat(3, ['hello', 'later'])
+    )
+    coordinator.enqueue(sink, seed)
+    const seedDelivery = sink.deliveries[0]
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, seedDelivery)
+
+    expect(coordinator.adoptRendererMutation(sink.id, rendererMutation, 1)).toBe(true)
+    expect(sink.deliveries).toHaveLength(1)
+
+    const rendererProducer = chatUpdateProducerEnvelopeFor(rendererMutation)
+    const rendererBaseline = appliedChatUpdateBaseline(
+      seedBaseline.revision,
+      rendererMutation,
+      rendererProducer?.state.transcriptHash
+    )
+    coordinator.enqueue(sink, laterMainUpdate)
+    const delivery = sink.deliveries[1]
+    expect(delivery.kind).toBe('patch')
+    const applied = applyChatUpdateDelivery(delivery, rendererBaseline)
+    expect(applied).toMatchObject({
+      ok: true,
+      baseline: { chat: laterMainUpdate }
     })
   })
 
@@ -121,6 +275,29 @@ describe('ChatUpdateDeliveryCoordinator', () => {
       applied: false
     })
     expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
+  it('reseeds a lower Host-rebased revision as an urgent snapshot', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 100,
+      emitProtocolVersion: 2
+    })
+    const [optimistic] = projectSequence(chat(10, ['optimistic']))
+    coordinator.enqueue(sink, optimistic)
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
+
+    const [rebased] = projectSequence(chat(3, ['rebased']))
+    coordinator.enqueue(sink, rebased)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.protocolCounters().staleEnqueueDrops).toBe(1)
+
+    coordinator.reseed(sink, rebased)
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[1].chat.persistenceRevision).toBe(3)
   })
 
   it('retries a rejected delivery once without creating a rejection loop', () => {
@@ -155,22 +332,95 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id).inFlight).toBe(1)
   })
 
-  it('releases an unacknowledged delivery and resyncs the latest pending chat', () => {
+  it('retains the patch baseline across a timeout and resends the latest pending as a patch', () => {
     vi.useFakeTimers()
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
       minDeliveryIntervalMs: 0,
       ackTimeoutMs: 250
     })
-    coordinator.enqueue(sink, chat(1, ['one']))
-    coordinator.enqueue(sink, chat(2, ['latest']))
+    const [seed, patch, latest] = projectSequence(
+      chat(1, ['one']),
+      chat(2, ['one', 'patch']),
+      chat(3, ['one', 'patch', 'latest'])
+    )
+    coordinator.enqueue(sink, seed)
+    const seedBaseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
+    coordinator.enqueue(sink, patch)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    coordinator.enqueue(sink, latest)
 
     vi.advanceTimersByTime(250)
 
-    expect(sink.deliveries).toHaveLength(2)
-    expect(sink.deliveries[1].kind).toBe('snapshot')
-    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
-    expect(sink.deliveries[1].chat.updatedAt).toBe(2)
+    expect(sink.deliveries).toHaveLength(3)
+    expect(sink.deliveries[2].kind).toBe('patch')
+    if (sink.deliveries[2].kind !== 'patch') throw new Error('Expected patch')
+    // Emulate a renderer that applied the timed-out patch and lost only the
+    // ACK: the resent patch must chain cleanly onto the same revision chain.
+    const firstPatchApplied = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[1]),
+      seedBaseline
+    )
+    if (!firstPatchApplied.ok) throw new Error(firstPatchApplied.reason)
+    const resentApplied = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[2]),
+      firstPatchApplied.baseline
+    )
+    expect(resentApplied.ok).toBe(true)
+    if (!resentApplied.ok) throw new Error(resentApplied.reason)
+    expect(resentApplied.baseline.chat.messages.map((row) => row.content)).toEqual([
+      'one',
+      'patch',
+      'latest'
+    ])
+    expect(coordinator.protocolCounters()).toMatchObject({
+      baselineDrops: 0,
+      patchBaselineRetentions: 1
+    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[2], firstPatchApplied.baseline)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+    vi.useRealTimers()
+  })
+
+  it('falls back to a snapshot once repeated patch timeouts exhaust the retention budget', () => {
+    vi.useFakeTimers()
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    const [seed, patch, latest] = projectSequence(
+      chat(1, ['one']),
+      chat(2, ['one', 'patch']),
+      chat(3, ['one', 'patch', 'latest'])
+    )
+    coordinator.enqueue(sink, seed)
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
+    coordinator.enqueue(sink, patch)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    coordinator.enqueue(sink, latest)
+
+    // First timeout: baseline retained, newest pending resent as a patch.
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(3)
+    expect(sink.deliveries[2].kind).toBe('patch')
+
+    // Second timeout: budget exhausted, resend once more.
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(4)
+    expect(sink.deliveries[3].kind).toBe('patch')
+
+    // Third timeout: retention budget is spent — baseline drops and the
+    // next delivery repairs with a full snapshot, exactly as before.
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(5)
+    expect(sink.deliveries[4].kind).toBe('snapshot')
+    if (sink.deliveries[4].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[4].chat.updatedAt).toBe(3)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      patchBaselineRetentions: 2,
+      baselineDrops: 1
+    })
     vi.useRealTimers()
   })
 
@@ -185,10 +435,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     })
     coordinator.enqueue(sink, chat(1, ['one']))
     coordinator.enqueue(sink, chat(2, ['two']))
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
     expect(sink.deliveries).toHaveLength(1)
 
     now += 100
@@ -214,10 +461,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     }
     projectSequence(first, latest)
     coordinator.enqueue(sink, first)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
     coordinator.enqueue(sink, latest)
 
     const patch = sink.deliveries[1]
@@ -230,10 +474,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(patch.recordDelta.title).toBe('Updated')
     expect(patch.recordMask).toEqual(expect.arrayContaining(['title', 'updatedAt']))
 
-    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(firstApplied.ok).toBe(true)
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
-    const patched = applyChatUpdateDelivery(patch, firstApplied.baseline)
+    const patched = applyChatUpdateDelivery(structuredClone(patch), seedBaseline)
     expect(patched).toMatchObject({
       ok: true,
       baseline: { revision: patch.revision, chat: latest }
@@ -254,12 +495,7 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(beforeAck.inFlight).toBe(1)
 
     const delivery = sink.deliveries[0]
-    expect(
-      coordinator.acknowledge(sink.id, {
-        deliveryId: delivery.deliveryId,
-        applied: true
-      })
-    ).toBe(true)
+    expect(ackAsRenderer(coordinator, sink, delivery).acknowledged).toBe(true)
 
     const idle = coordinator.statsForTarget(sink.id)
     expect(idle.inFlight).toBe(0)
@@ -291,6 +527,471 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     // Treated as a reject → one snapshot retry, then stop.
     expect(sink.deliveries).toHaveLength(2)
     expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
+  it('nacks when the ACK content hash does not match the sent chat', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const deliveryId = sink.deliveries[0].deliveryId
+
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId,
+        applied: true,
+        recordHash: 'deadbeef'
+      })
+    ).toBe(true)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+  })
+
+  it('accepts an ACK whose content hash matches the sent chat', () => {
+    const sink = target()
+    const first = chat(1, ['one'])
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, first)
+
+    expect(ackAsRenderer(coordinator, sink, sink.deliveries[0]).acknowledged).toBe(true)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
+  it('reports how long the in-flight delivery has been waiting for an ACK', () => {
+    let now = 5_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, inFlightAgeMs: 0 })
+    now = 5_400
+    expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(400)
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
+    expect(coordinator.statsForTarget(sink.id).inFlightAgeMs).toBe(0)
+  })
+
+  it('forces a snapshot when a new renderer document ACKs a patch from the prior epoch', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, chat(1, ['seed']))
+    const seed = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: seed.deliveryId,
+        deliveryEpoch: seed.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+
+    coordinator.enqueue(sink, chat(2, ['seed', 'next']))
+    const patch = sink.deliveries[1]
+    expect(patch.kind).toBe('patch')
+    // A reload can receive a patch with a stale renderer baseline. Treat the
+    // first ACK from its new epoch as a NACK and repair with one snapshot.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: patch.deliveryId,
+        deliveryEpoch: patch.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-b'
+      })
+    ).toBe(true)
+    expect(sink.deliveries).toHaveLength(3)
+    const recovery = sink.deliveries[2]
+    expect(recovery.kind).toBe('snapshot')
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: recovery.deliveryId,
+        deliveryEpoch: recovery.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-b'
+      })
+    ).toBe(true)
+    // An old async ACK cannot reopen or mutate the new baseline.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: seed.deliveryId,
+        deliveryEpoch: seed.deliveryEpoch,
+        applied: true,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(false)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
+  it('increments the delivery epoch when a target reloads and rejects its old ACKs', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(sink, chat(1, ['before reload']))
+    const beforeReload = sink.deliveries[0]
+    coordinator.clearTarget(sink.id)
+
+    coordinator.enqueue(sink, chat(2, ['after reload']))
+    const afterReload = sink.deliveries[1]
+    expect(afterReload.deliveryEpoch).toBeGreaterThan(beforeReload.deliveryEpoch ?? 0)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: beforeReload.deliveryId,
+        deliveryEpoch: beforeReload.deliveryEpoch,
+        applied: true,
+        chatId: beforeReload.chatId,
+        rendererEpoch: 'old-document'
+      })
+    ).toBe(false)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: afterReload.deliveryId,
+        deliveryEpoch: afterReload.deliveryEpoch,
+        applied: true,
+        chatId: afterReload.chatId,
+        rendererEpoch: 'new-document'
+      })
+    ).toBe(true)
+  })
+
+  it('releases one target/chat lane without disturbing sibling baselines', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    const sibling = { ...chat(1, ['sibling']), appChatId: 'chat-2' }
+    coordinator.enqueue(sink, chat(1, ['drop me']))
+    coordinator.enqueue(sink, sibling)
+    const droppedDelivery = sink.deliveries.find((delivery) => delivery.chatId === 'chat-1')!
+    const siblingDelivery = sink.deliveries.find((delivery) => delivery.chatId === 'chat-2')!
+
+    expect(coordinator.clearChat(sink.id, 'chat-1')).toBe(true)
+    expect(coordinator.statsForTarget(sink.id).trackedChats).toBe(1)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: droppedDelivery.deliveryId,
+        applied: true
+      })
+    ).toBe(false)
+    expect(ackAsRenderer(coordinator, sink, siblingDelivery).acknowledged).toBe(true)
+  })
+
+  it('releases a deleted chat from every renderer target', () => {
+    const first = target(7)
+    const second = target(8)
+    const coordinator = new ChatUpdateDeliveryCoordinator({ minDeliveryIntervalMs: 0 })
+    coordinator.enqueue(first, chat(1, ['first']))
+    coordinator.enqueue(second, chat(1, ['second']))
+
+    expect(coordinator.clearChatEverywhere('chat-1')).toBe(2)
+    expect(coordinator.statsForTarget(first.id).trackedChats).toBe(0)
+    expect(coordinator.statsForTarget(second.id).trackedChats).toBe(0)
+  })
+
+  it('records a render receipt without making rendering another transport gate', () => {
+    let now = 5_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const delivery = sink.deliveries[0]
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ renderPending: 1 })
+    now += 75
+    expect(coordinator.statsForTarget(sink.id).renderReceiptAgeMs).toBe(75)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a',
+        recordHash: 'wrong-record'
+      })
+    ).toBe(false)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ renderPending: 0 })
+    // Render receipts are idempotent and do not enqueue or block anything.
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: delivery.deliveryId,
+        deliveryEpoch: delivery.deliveryEpoch,
+        applied: true,
+        phase: 'rendered',
+        chatId: delivery.chatId,
+        rendererEpoch: 'renderer-a'
+      })
+    ).toBe(true)
+  })
+
+  it('bypasses stream cadence for a terminal chat update without widening the queue', () => {
+    let now = 10_000
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 1_000,
+      now: () => now
+    })
+    coordinator.enqueue(sink, chat(1, ['streaming']))
+    const first = sink.deliveries[0]
+    ackAsRenderer(coordinator, sink, first)
+
+    // This normal update arms the 1 s cadence timer.
+    coordinator.enqueue(sink, chat(2, ['streaming', 'ordinary progress']))
+    expect(sink.deliveries).toHaveLength(1)
+    coordinator.enqueue(sink, {
+      ...chat(3, ['streaming', 'ordinary progress', 'terminal']),
+      runs: [{ runId: 'r1', startedAt: '2026-08-21T15:00:00.000Z', status: 'completed' }]
+    })
+    expect(sink.deliveries).toHaveLength(2)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 1, pending: 0 })
+    now += 1
+  })
+
+  it('backs off timed-out snapshots and coalesces a newer update into the retry', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'))
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    const first = sink.deliveries[0]
+    const firstAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: first.kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(first)
+    })
+    const firstRetryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 1,
+      ackTimeoutMs: firstAckTimeout
+    })
+
+    vi.advanceTimersByTime(firstAckTimeout)
+    // The timeout retains a retry, but must not immediately enqueue another
+    // full structured clone into the already-slow renderer.
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 1 })
+
+    coordinator.enqueue(sink, {
+      ...chat(2, ['newest while cooling']),
+      // Terminal updates are urgent and cancel the ordinary cadence timer. They
+      // still must not bypass the snapshot retry circuit.
+      runs: [{ runId: 'r1', startedAt: '2026-09-04T00:00:00.000Z', status: 'completed' }]
+    })
+    vi.advanceTimersByTime(firstRetryDelay - 1)
+    expect(sink.deliveries).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[1].chat.updatedAt).toBe(2)
+
+    const secondAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: sink.deliveries[1].kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(sink.deliveries[1])
+    })
+    const secondRetryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 2,
+      ackTimeoutMs: secondAckTimeout
+    })
+    vi.advanceTimersByTime(secondAckTimeout)
+    vi.advanceTimersByTime(secondRetryDelay - 1)
+    expect(sink.deliveries).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+    expect(sink.deliveries).toHaveLength(3)
+    vi.useRealTimers()
+  })
+
+  it('keeps live rows enqueued during a failed snapshot in front of the retry — one coalesced snapshot', () => {
+    // Rows that arrived while a snapshot was still awaiting its ACK are already
+    // latest-wins-merged into `pending`. When that snapshot then times out, the
+    // timed-out generation must NOT be re-retained ahead of them: the single
+    // backoff-bound retry has to carry the newest content, not the corpse.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'))
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    coordinator.enqueue(sink, chat(2, ['one', 'two (live rows)']))
+    expect(sink.deliveries).toHaveLength(1)
+    const first = sink.deliveries[0]
+    expect(first.kind).toBe('snapshot')
+
+    const firstAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: first.kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(first)
+    })
+    vi.advanceTimersByTime(firstAckTimeout)
+    // The baseline is dropped, but the live rows remain the pending generation —
+    // nothing is sent early into the cooling renderer.
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 1 })
+
+    const retryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 1,
+      ackTimeoutMs: firstAckTimeout
+    })
+    vi.advanceTimersByTime(retryDelay - 1)
+    expect(sink.deliveries).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    // Exactly ONE retry, and it is the live generation — the timed-out
+    // snapshot's content is never re-sent ahead of it.
+    expect(sink.deliveries).toHaveLength(2)
+    const retry = sink.deliveries[1]
+    expect(retry.kind).toBe('snapshot')
+    if (retry.kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(retry.chat.updatedAt).toBe(2)
+    expect(retry.chat.messages.map((row) => row.content)).toEqual(['one', 'two (live rows)'])
+    vi.useRealTimers()
+  })
+
+  it('keeps a large thread patching across repeated anchored ticks without re-anchoring or dropping the baseline', () => {
+    // Row objects persist across ticks (only the tail is appended) — the exact
+    // shape a streaming thread presents. Every tick must stay a pure-suffix
+    // window patch whose ACK hashes the record the target actually holds,
+    // never degrading to another page snapshot as the window grows.
+    const rows: ChatMessage[] = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 200 },
+      (_, index) => message(`m-${index}`, `row ${index}`)
+    )
+    const record = (updatedAt: number): ChatRecord =>
+      ({ ...chat(updatedAt, []), messages: rows.slice() }) as ChatRecord
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, record(1))
+    expect(sink.deliveries).toHaveLength(1)
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
+    const windowLength = baseline.chat.messages.length
+    const anchorRowId = baseline.chat.messages[0]?.id
+
+    for (let tick = 0; tick < 6; tick += 1) {
+      rows.push(message(`m-${rows.length}`, `tick ${tick}`))
+      coordinator.enqueue(sink, record(2 + tick))
+      expect(sink.deliveries).toHaveLength(2 + tick)
+      const delivery = sink.deliveries[sink.deliveries.length - 1]
+      expect(delivery.kind).toBe('patch')
+      if (delivery.kind !== 'patch' || delivery.protocolVersion !== 2) {
+        throw new Error('Expected a v2 patch')
+      }
+      // Pure suffix inside the held window: one appended row, nothing replaced.
+      expect(delivery.messages?.start).toBe(windowLength + tick)
+      expect(delivery.messages?.deleteCount).toBe(0)
+      expect(delivery.messages?.items).toHaveLength(1)
+
+      const applied = applyChatUpdateDelivery(structuredClone(delivery), baseline)
+      expect(applied.ok).toBe(true)
+      if (!applied.ok) throw new Error(applied.reason)
+      expect(applied.baseline.chat.messages[0]?.id).toBe(anchorRowId)
+      expect(
+        coordinator.acknowledge(sink.id, {
+          deliveryId: delivery.deliveryId,
+          applied: true,
+          revision: delivery.revision,
+          recordHash: applied.baseline.recordHash,
+          ...(applied.baseline.transcriptHash
+            ? { transcriptHash: applied.baseline.transcriptHash }
+            : {})
+        })
+      ).toBe(true)
+      baseline = applied.baseline
+    }
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 6,
+      baselineDrops: 0,
+      windowedDeliveries: 7,
+      windowReanchors: 0
+    })
+    expect(baseline.chat.messages[0]?.id).toBe(anchorRowId)
+    expect(baseline.chat.messages).toHaveLength(windowLength + 6)
+  })
+})
+
+describe('paged chat live-update wiring', () => {
+  const source = (path: string): string => readFileSync(join(process.cwd(), path), 'utf8')
+
+  it('registers the bounded interest handshake and preserves the environment escape hatch', () => {
+    const main = source('src/main/index.ts')
+    const router = source('src/main/ChatUpdateInterestRouter.ts')
+    const handlers = source('src/main/ipc/chatUpdateInterestHandlers.ts')
+    expect(router).toContain("PAGED_CHAT_LIVE_UPDATES_ENV = 'TASKWRAITH_PAGED_CHAT_LIVE_UPDATES'")
+    expect(main).toContain('new ChatUpdateInterestRouter({')
+    expect(main).toContain('registerChatUpdateInterestHandlers({')
+    expect(handlers).toContain('normalizeChatUpdateInterestSnapshot(value)')
+    expect(handlers).toContain('workspacePopoutOwnerForSender(event.sender.id)')
+    expect(handlers).toContain('replaceTargetSnapshot(targetId, authorized)')
+  })
+
+  it('routes full interests through ACK delivery and compact interests through invalidation', () => {
+    const router = source('src/main/ChatUpdateInterestRouter.ts')
+    expect(router).toContain("if (this.modeFor(target.id, chat.appChatId) === 'full')")
+    expect(router).toContain('target.send(CHAT_UPDATE_INVALIDATION_CHANNEL, invalidation)')
+    expect(router).toContain('this.delivery.enqueue(target, chat)')
+    expect(router).toContain('this.delivery.reseed(target, chat)')
+    expect(router).toContain('this.projectCompactChat(chat)')
+  })
+
+  it('bridges replacement interests and invalidations through preload', () => {
+    const preload = source('src/preload/index.ts')
+    const declarations = source('src/preload/index.d.ts')
+    expect(preload).toContain('setChatUpdateInterests:')
+    expect(preload).toContain('onChatUpdateInvalidated:')
+    expect(preload).toContain('ipcRenderer.send(CHAT_UPDATE_INTEREST_CHANNEL, snapshot)')
+    expect(preload).toContain('pagedChatLiveUpdatesEnabled:')
+    expect(declarations).toContain('setChatUpdateInterests:')
+    expect(declarations).toContain('onChatUpdateInvalidated:')
+  })
+
+  it('installs the renderer invalidation listener before publishing its first snapshot', () => {
+    const renderer = source('src/renderer/src/App.tsx')
+    const runtime = source('src/renderer/src/hooks/useChatUpdateInterestRuntime.ts')
+    expect(renderer.indexOf('chatUpdateInterestRuntime.register()')).toBeGreaterThan(
+      renderer.indexOf('window.api.onChatUpdated')
+    )
+    expect(runtime.indexOf('this.bridge.onChatUpdateInvalidated!')).toBeLessThan(
+      runtime.indexOf('this.publishPending()')
+    )
+    expect(runtime).toContain('new PagedChatUpdateRefreshCoordinator({')
+    expect(runtime).toContain('includeShell: true')
+    expect(runtime).toContain('projectRendererChatListItem(summary, previousSummary)')
   })
 })
 
@@ -351,30 +1052,19 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     )
 
     coordinator.enqueue(sink, seed)
-    let applied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(applied.ok).toBe(true)
-    if (!applied.ok) throw new Error(applied.reason)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
 
     coordinator.enqueue(sink, freshReturnB)
     coordinator.enqueue(sink, staleReturnA)
     expect(sink.deliveries).toHaveLength(2)
-    const fresh = applyChatUpdateDelivery(sink.deliveries[1], applied.baseline)
-    expect(fresh.ok).toBe(true)
-    if (!fresh.ok) throw new Error(fresh.reason)
-    applied = fresh
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[1].deliveryId, applied: true })
+    baseline = ackAsRenderer(coordinator, sink, sink.deliveries[1], baseline).baseline
 
     for (const delivery of sink.deliveries.slice(2)) {
-      const next = applyChatUpdateDelivery(delivery, applied.baseline)
-      expect(next.ok).toBe(true)
-      if (!next.ok) throw new Error(next.reason)
-      applied = next
-      coordinator.acknowledge(sink.id, { deliveryId: delivery.deliveryId, applied: true })
+      baseline = ackAsRenderer(coordinator, sink, delivery, baseline).baseline
     }
 
     // The transcript the user reads must still hold child B's return card.
-    expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain('return B')
+    expect(baseline.chat.messages.map((entry) => entry.content)).toContain('return B')
   })
 
   it('heals an out-of-order pair sitting in the compose window instead of losing the fresher record', () => {
@@ -395,14 +1085,11 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     coordinator.enqueue(sink, freshReturnB)
     coordinator.enqueue(sink, staleReturnA)
 
-    const applied = applyChatUpdateDelivery(sink.deliveries[0])
-    expect(applied.ok).toBe(true)
-    if (!applied.ok) throw new Error(applied.reason)
-    coordinator.acknowledge(sink.id, { deliveryId: sink.deliveries[0].deliveryId, applied: true })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     expect(sink.deliveries).toHaveLength(2)
     const second = sink.deliveries[1]
-    const next = applyChatUpdateDelivery(second, applied.baseline)
+    const next = applyChatUpdateDelivery(structuredClone(second), seedBaseline)
     expect(next.ok).toBe(true)
     if (!next.ok) throw new Error(next.reason)
     // Both return cards survive: the late stale delta is spliced in FRONT of
@@ -417,6 +1104,72 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     expect(second.kind).toBe('patch')
   })
 
+  it('converges seven reversed fan-out returns into one bounded delivery chain', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const records = projectSequence(
+      chat(1, ['prompt']),
+      ...Array.from({ length: 7 }, (_, index) =>
+        chat(index + 2, [
+          'prompt',
+          ...Array.from({ length: index + 1 }, (_, lane) => `lane return ${lane + 1}`)
+        ])
+      )
+    )
+    const seed = records[0]
+    const returns = records.slice(1)
+
+    coordinator.enqueue(sink, seed)
+    // All seven lanes complete while the seed snapshot awaits its synchronous
+    // transport receipt, but arrive in the worst causal order.
+    for (const returned of [...returns].reverse()) coordinator.enqueue(sink, returned)
+    expect(sink.deliveries).toHaveLength(1)
+
+    const seedApplied = applyChatUpdateDelivery(structuredClone(sink.deliveries[0]))
+    if (!seedApplied.ok) throw new Error(seedApplied.reason)
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[0].deliveryId,
+      deliveryEpoch: sink.deliveries[0].deliveryEpoch,
+      applied: true,
+      revision: seedApplied.baseline.revision,
+      recordHash: seedApplied.baseline.recordHash,
+      transcriptHash: seedApplied.baseline.transcriptHash,
+      rendererEpoch: 'renderer-a'
+    })
+
+    expect(sink.deliveries).toHaveLength(2)
+    const allReturns = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[1]),
+      seedApplied.baseline
+    )
+    if (!allReturns.ok) throw new Error(allReturns.reason)
+    expect(allReturns.baseline.chat.messages.map((entry) => entry.content)).toEqual([
+      'prompt',
+      'lane return 1',
+      'lane return 2',
+      'lane return 3',
+      'lane return 4',
+      'lane return 5',
+      'lane return 6',
+      'lane return 7'
+    ])
+    expect(sink.deliveries[1].kind).toBe('patch')
+
+    coordinator.acknowledge(sink.id, {
+      deliveryId: sink.deliveries[1].deliveryId,
+      deliveryEpoch: sink.deliveries[1].deliveryEpoch,
+      applied: true,
+      revision: allReturns.baseline.revision,
+      recordHash: allReturns.baseline.recordHash,
+      transcriptHash: allReturns.baseline.transcriptHash,
+      rendererEpoch: 'renderer-a'
+    })
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+  })
+
   it('delivers the next reply after a save mutated the retained baseline record', () => {
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
@@ -426,12 +1179,7 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
     const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['one', 'the answer is 42']))
 
     coordinator.enqueue(sink, first)
-    const firstApplied = applyChatUpdateDelivery(sink.deliveries[0])
-    if (!firstApplied.ok) throw new Error(firstApplied.reason)
-    coordinator.acknowledge(sink.id, {
-      deliveryId: sink.deliveries[0].deliveryId,
-      applied: true
-    })
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, sink.deliveries[0])
 
     // AppStore.saveChat writes the NEW revision into its CALLER's record
     // (store/index.ts:7376), and on a getChat()-then-save path that caller's
@@ -444,11 +1192,158 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
 
     // What a human reads: the reply has to reach the renderer.
     expect(sink.deliveries).toHaveLength(2)
-    const applied = applyChatUpdateDelivery(sink.deliveries[1], firstApplied.baseline)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    const applied = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), seedBaseline)
     if (!applied.ok) throw new Error(applied.reason)
     expect(applied.baseline.chat.messages.map((entry) => entry.content)).toContain(
       'the answer is 42'
     )
   })
 
+  it('snapshots before diffing from a retained baseline whose metadata mutated in place', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    const first = {
+      ...chat(1, ['one']),
+      providerMetadata: { selectedModelType: 'gpt-5.6-luna' }
+    } as ChatRecord
+
+    coordinator.enqueue(sink, first)
+    ackAsRenderer(coordinator, sink, sink.deliveries[0])
+
+    // A later save/cache path mutates the coordinator's retained object. The
+    // revision stamp is expected and normalized; this metadata field is not.
+    first.persistenceRevision = 9
+    first.providerMetadata = {
+      ...first.providerMetadata,
+      codexGoalNativeAvailable: true
+    }
+    const second = {
+      ...chat(2, ['one', 'two']),
+      providerMetadata: first.providerMetadata
+    } as ChatRecord
+    coordinator.enqueue(sink, second)
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    const repaired = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]))
+    if (!repaired.ok) throw new Error(repaired.reason)
+    expect(repaired.baseline.chat).toEqual(second)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      baselineDrops: 1,
+      ackRejections: 0
+    })
+  })
+
+  it('does not put the full messages array on the wire when a baseline drop snapshots an oversized chat', () => {
+    const messages = Array.from({ length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 }, (_, index) =>
+      message(`m-${index}`, `row ${index}`)
+    )
+    const oversized = {
+      ...chat(3, ['placeholder']),
+      messages,
+      persistenceRevision: 3,
+      updatedAt: 3
+    } as ChatRecord
+    const stringify = vi.spyOn(JSON, 'stringify')
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, oversized)
+    const stringifiedFullMessages = stringify.mock.calls.some((args) => args[0] === messages)
+    stringify.mockRestore()
+
+    expect(stringifiedFullMessages).toBe(false)
+    expect(sink.deliveries).toHaveLength(1)
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+    if (sink.deliveries[0].kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(sink.deliveries[0].chat.messages.length).toBeLessThan(messages.length)
+    expect(sink.deliveries[0].chat.messages.length).toBeLessThanOrEqual(
+      DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+    )
+    expect(sink.deliveries[0].page?.hasOlder).toBe(true)
+  })
+})
+
+describe('AppStore stamping the retained baseline in place', () => {
+  // `AppStore.saveChat` writes BOTH scalars back onto its caller
+  // (store/index.ts: `chat.persistenceRevision = saved.persistenceRevision`,
+  // `chat.updatedAt = saved.updatedAt`), and that caller can be the exact
+  // object retained here as the renderer's baseline.
+  // `retainedBaselineMatchesAcknowledged` normalized only the revision, so the
+  // stamped `updatedAt` read as drift, the baseline was refused, and every
+  // later delivery degraded to a full snapshot — which overwrites whatever the
+  // user had optimistically changed, exactly as a NACK would have.
+  it('still patches after the caller-side updatedAt stamp', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['two']))
+    coordinator.enqueue(sink, first)
+    const snapshot = sink.deliveries[0]
+    expect(snapshot.kind).toBe('snapshot')
+    ackAsRenderer(coordinator, sink, snapshot)
+
+    // The stamp. Both scalars, on the object main retained.
+    ;(first as { persistenceRevision: number }).persistenceRevision = 1
+    ;(first as { updatedAt: number }).updatedAt = 99
+
+    coordinator.enqueue(sink, second)
+    expect(sink.deliveries[1].kind).toBe('patch')
+  })
+
+  it('chains the producer delta when the stamp reaches the pending revision', () => {
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+
+    const [first, second] = projectSequence(chat(1, ['one']), chat(2, ['one', 'two']))
+    coordinator.enqueue(sink, first)
+    const snapshot = sink.deliveries[0]
+    expect(snapshot.kind).toBe('snapshot')
+    // IPC gives the renderer a detached structured clone. Keeping the same
+    // object here would stamp the renderer's baseline along with main's and
+    // mask the divergence this test pins.
+    const { baseline: seedBaseline } = ackAsRenderer(coordinator, sink, snapshot)
+
+    // The same in-place stamp, but the unbroadcast save reached exactly the
+    // revision the next broadcast carries. A diff built from the drifted
+    // object then reads the stamped scalars as equal and omits
+    // persistenceRevision — while the transcript root is still taken at the
+    // pending revision, so the renderer NACKs and the baseline drops.
+    ;(first as { persistenceRevision: number }).persistenceRevision = 2
+    ;(first as { updatedAt: number }).updatedAt = 2
+
+    coordinator.enqueue(sink, second)
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    expect(coordinator.protocolCounters()).toMatchObject({
+      producerDeltaMissing: 0,
+      spliceRecoveries: 0
+    })
+    const patched = applyChatUpdateDelivery(structuredClone(sink.deliveries[1]), seedBaseline)
+    if (!patched.ok) throw new Error(patched.reason)
+    expect(
+      coordinator.acknowledge(sink.id, {
+        deliveryId: sink.deliveries[1].deliveryId,
+        applied: true,
+        revision: sink.deliveries[1].revision,
+        recordHash: patched.baseline.recordHash,
+        ...(patched.baseline.transcriptHash
+          ? { transcriptHash: patched.baseline.transcriptHash }
+          : {})
+      })
+    ).toBe(true)
+    expect(coordinator.protocolCounters()).toMatchObject({ baselineDrops: 0, ackRejections: 0 })
+  })
 })

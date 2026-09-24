@@ -44,6 +44,28 @@ function saveParent(): void {
   } as ChatRecord)
 }
 
+function saveChild(
+  provider: 'antigravity' | 'muse' | 'codex',
+  lastActualModel: string,
+  runs: ChatRecord['runs'] = []
+): void {
+  AppStore.saveChat({
+    appChatId: 'child-1',
+    scope: 'workspace',
+    chatKind: 'single',
+    provider,
+    lastActualModel,
+    title: 'Child',
+    workspaceId: 'ws-1',
+    workspacePath: '/repo',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs
+  } as ChatRecord)
+}
+
 describe('AppStore sub-thread mailbox ledger', () => {
   beforeEach(() => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
@@ -68,6 +90,54 @@ describe('AppStore sub-thread mailbox ledger', () => {
     expect(mailbox.events.every((event) => event.processedAt === event.createdAt)).toBe(true)
     expect(fs.existsSync(join(userDataPath, 'subthread-mailboxes.json'))).toBe(true)
     expect(fs.existsSync(join(userDataPath, 'chats', 'parent-1.json'))).toBe(false)
+  })
+
+  it.each([
+    ['antigravity', 'gemini-3-pro-high'],
+    ['muse', 'muse-spark-1.2']
+  ] as const)('captures and persists a returned %s child seat', (provider, model) => {
+    saveChild(provider, model, [
+      {
+        runId: 'child-run-1',
+        provider,
+        startedAt: '2026-07-11T12:00:00.000Z',
+        actualModel: model
+      }
+    ])
+
+    AppStore.enqueueSubThreadMailboxEvent({
+      ...eventInput(),
+      subThreadProvider: provider
+    })
+
+    expect(AppStore.getSubThreadMailbox('parent-1').events[0]?.source).toMatchObject({
+      subThreadProvider: provider,
+      subThreadSeat: { provider, model }
+    })
+  })
+
+  it('persists the exact returning UltraTask run effort rather than current child settings', () => {
+    saveChild('codex', 'gpt-5.6-terra-after-recall', [
+      {
+        runId: 'ultratask-run',
+        provider: 'codex',
+        startedAt: '2026-07-11T12:00:00.000Z',
+        actualModel: 'gpt-5.6-terra',
+        providerMetadata: { codexReasoningEffort: 'ultracode' }
+      }
+    ])
+
+    AppStore.enqueueSubThreadMailboxEvent({
+      ...eventInput(),
+      subThreadProvider: 'codex',
+      sourceRunId: 'ultratask-run'
+    })
+
+    expect(AppStore.getSubThreadMailbox('parent-1').events[0]?.source.subThreadSeat).toEqual({
+      provider: 'codex',
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'ultracode'
+    })
   })
 
   it('persists the delegated worker join policy on the child record', () => {

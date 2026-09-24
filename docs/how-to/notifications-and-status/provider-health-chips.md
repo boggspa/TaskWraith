@@ -3,26 +3,22 @@
 **Platform:** Electron
 
 ## What it is
-Provider health chips are small status pills in the composer that report whether the current chat's provider is ready to run. The runnable topology covers the static-live Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, and Mistral providers plus AntiGravity after its consent/credential setup; Gemini remains history-only. A warning chip appears when something needs attention — for example the provider binary, API key, or login isn't ready, runtime admission fails, network access is blocked, or a tool category is blocked by settings. Kimi's structural ACP admission runs in every build; an admitted binary without a reviewed roster tuple is labelled `unattested-development`. Cursor chips report ordinary setup, binary, login, and gateway readiness. For Ollama, readiness is shown alongside the normal permissions/runtime controls: the local model uses the same permission roles as cloud providers, while the Ollama run profile controls local prompting/runtime behavior.
+Provider health chips are small status pills in the composer that warn you when the current chat's provider isn't ready to run — for example the provider's CLI isn't installed or signed in, an API key is missing, network access is blocked, or a tool category is blocked by your settings.
 
 ## Where to find it
-Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. For Ollama specifically, status appears with the standard permission role and run-profile controls rather than a separate tool-tier picker.
+Chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip. The row only renders when there's something to show.
 
 <!-- screenshot-pending: OllamaHealthChip showing green/connected state next to provider picker -->
 
 ## How to use it
-1. Glance at the composer chips row before sending a message — a warning chip means the active provider has a problem (unavailable, blocked tool category, or blocked network access).
-2. Hover a warning chip to read its full tooltip message, which explains what's wrong and what it affects.
-3. For Ollama, use the normal permission picker to choose Plan, Ask, Accept Edits, Full WS Access, or Full Access, and use the run-profile control for local-model behavior.
-4. If the Ollama trigger shows a ⚠, open it and check whether the local server/model is unavailable or a standard permission/network policy is blocking the requested capability.
-5. Fix the underlying issue (sign in where relevant, start the local Ollama server, select an installed model, or adjust agentic service policy) and the chip clears automatically once the provider reports healthy.
-
-Cursor becomes runnable when `cursor-agent` is installed and logged in.
-Health chips report ordinary setup/binary/login readiness; they no longer encode
-an unconditional no-spawn security boundary.
+1. Glance at the chips row before sending a message — a warning chip means the active provider has a problem.
+2. Hover a chip to read the full tooltip: what's wrong and what it affects.
+3. Fix the underlying issue — install or sign in to the provider's CLI, start the local Ollama server, select an installed model, or adjust the agentic service policy — and the chip clears automatically once the provider reports healthy.
 
 ## Tips & related
-- [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chips these health warnings sit alongside, including the standard permissions picker used by Ollama.
-- [Participant health](participant-health.md) — the equivalent per-participant connectivity check inside Ensemble chats.
-- [Provider agentic policies](../approvals-and-permissions/provider-agentic-policies.md) — the settings that drive blocked-tool and blocked-network warnings.
-- [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to a provider or check its setup state when a chip reports it unavailable.
+- For Ollama, readiness appears alongside the standard permission picker (Plan, Ask, Accept Edits, Full WS Access, or Full Access) and the run-profile control — local models use the same permission roles as cloud providers.
+- Cursor becomes runnable once `cursor-agent` is installed and signed in; its chips report ordinary setup, binary, and login readiness.
+- [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chips these health warnings sit alongside.
+- [Participant health](participant-health.md) — the equivalent per-participant check inside Ensemble chats.
+- [Provider agentic policies](../approvals-and-permissions/provider-agentic-policies.md) — the settings behind blocked-tool and blocked-network warnings.
+- [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to a provider a chip reports as unavailable.

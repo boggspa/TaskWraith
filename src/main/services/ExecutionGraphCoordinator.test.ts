@@ -5,8 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunSessionChangeEvent } from '../RunManager'
 import { recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
+import { compileExecutionGraphRevision } from '../executionGraph/ExecutionGraphCompiler'
 import { ExecutionGraphRepository } from '../executionGraph/ExecutionGraphRepository'
-import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionGraphRevision,
+  ExecutionPermissionCeilingRef
+} from '../executionGraph/ExecutionGraphModel'
 import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
 import { buildExecutionGraphAttemptTerminalReceipt } from '../executionGraph/ExecutionGraphAttemptResult'
 import {
@@ -82,6 +86,13 @@ function runningEvent(runId: string): RunSessionChangeEvent {
   }
 }
 
+function startingEvent(runId: string): RunSessionChangeEvent {
+  return {
+    ...terminalEvent(runId, 'completed'),
+    session: { ...terminalEvent(runId, 'completed').session, status: 'starting' }
+  }
+}
+
 interface Harness {
   repository: ExecutionGraphRepository
   coordinator: ExecutionGraphCoordinator
@@ -90,9 +101,16 @@ interface Harness {
   cancelActiveRun: ReturnType<typeof vi.fn>
   materializePausedQueueJob: ReturnType<typeof vi.fn>
   anchorStatuses: Map<string, ExecutionGraphAnchorRunStatus>
+  ownerStatuses: Map<string, 'live' | 'missing'>
   templateRef: string
   ceiling: ExecutionPermissionCeilingRef
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
+  /**
+   * The process restarts: a fresh coordinator, with none of the old one's
+   * in-process memory, over the same ledger and persisted queue rows. Startup
+   * recovery only reconciles what an earlier process left behind.
+   */
+  restart: () => void
 }
 
 function harness(
@@ -160,6 +178,7 @@ function harness(
       return job
     }
   )
+  const ownerStatuses = new Map<string, 'live' | 'missing'>()
   let id = 0
   let clientRequest = 0
   const deps: ExecutionGraphCoordinatorDeps = {
@@ -168,6 +187,7 @@ function harness(
     getQueueJob: (runId) => jobs.get(runId) ?? null,
     transitionQueueJob: transitions,
     resolveAnchorRunStatus: (runId) => anchorStatuses.get(runId) ?? 'missing',
+    resolveOwnerStatus: (owner) => ownerStatuses.get(owner.threadId) ?? 'live',
     cancelActiveRun,
     now: () => '2026-07-18T11:00:00.000Z',
     createId: () => `id-${++id}`,
@@ -180,7 +200,7 @@ function harness(
     authorityDigest: 'a'.repeat(64),
     workspaceId: 'workspace-one'
   }
-  return {
+  const h: Harness = {
     repository,
     coordinator,
     jobs,
@@ -188,8 +208,12 @@ function harness(
     cancelActiveRun,
     materializePausedQueueJob,
     anchorStatuses,
+    ownerStatuses,
     templateRef: template.templateId,
     ceiling,
+    restart: () => {
+      h.coordinator = new ExecutionGraphCoordinator(deps)
+    },
     input: (overrides = {}) => {
       const clientRequestId = overrides.clientRequestId ?? `client-request-${++clientRequest}`
       return {
@@ -207,6 +231,7 @@ function harness(
       }
     }
   }
+  return h
 }
 
 function appendClaimCrashWindow(
@@ -306,6 +331,114 @@ function terminalReceipt(
     evidenceRefs: [`assistant-${runId}`],
     ...(status === 'failed' ? { error: 'Provider run failed.' } : {})
   })
+}
+
+function structuredJoinRevision(
+  h: Harness,
+  firstScoutAuthority?: { ceilingReferenceId: string; authorityDigest: string }
+): ExecutionGraphRevision {
+  const outputSchema = { type: 'object', additionalProperties: true } as const
+  const compiled = compileExecutionGraphRevision({
+    graphId: 'structured-join-graph',
+    revision: 1,
+    workspaceId: 'workspace-one',
+    name: 'Structured join graph',
+    createdAt: '2026-07-18T11:00:00.000Z',
+    steps: [
+      ...['scout-one', 'scout-two'].map((id, index) => ({
+        id,
+        kind: 'solo_agent' as const,
+        title: id,
+        objective: `Run ${id}.`,
+        effect: 'read_only' as const,
+        outputs: [{ name: 'report', schema: outputSchema, required: true }],
+        retry: { maxAttempts: 1 },
+        ...(index === 0 && firstScoutAuthority
+          ? {
+              permissionRequestRef: {
+                schemaVersion: 1 as const,
+                referenceId: 'scout-one-permission',
+                ceilingReferenceId: firstScoutAuthority.ceilingReferenceId,
+                authorityDigest: firstScoutAuthority.authorityDigest
+              }
+            }
+          : {}),
+        agent: {
+          provider: 'codex',
+          model: 'gpt-5.5',
+          runTemplateRef: h.templateRef,
+          session: { mode: 'fresh' as const }
+        }
+      })),
+      {
+        id: 'scout-join',
+        kind: 'join' as const,
+        title: 'Scout join',
+        objective: 'Join both scouts.',
+        effect: 'read_only' as const,
+        retry: { maxAttempts: 1 },
+        join: { mode: 'all' as const }
+      },
+      {
+        id: 'worker',
+        kind: 'solo_agent' as const,
+        title: 'Worker',
+        objective: 'Use both scout results.',
+        effect: 'read_only' as const,
+        inputs: [
+          { name: 'scout_1', schema: outputSchema, required: true },
+          { name: 'scout_2', schema: outputSchema, required: true }
+        ],
+        outputs: [{ name: 'artifact', schema: outputSchema, required: true }],
+        retry: { maxAttempts: 1 },
+        agent: {
+          provider: 'codex',
+          model: 'gpt-5.5',
+          runTemplateRef: h.templateRef,
+          session: { mode: 'fresh' as const }
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'control-scout-one-join',
+        kind: 'control',
+        fromStepId: 'scout-one',
+        toStepId: 'scout-join',
+        outcome: 'success'
+      },
+      {
+        id: 'control-scout-two-join',
+        kind: 'control',
+        fromStepId: 'scout-two',
+        toStepId: 'scout-join',
+        outcome: 'success'
+      },
+      {
+        id: 'control-join-worker',
+        kind: 'control',
+        fromStepId: 'scout-join',
+        toStepId: 'worker',
+        outcome: 'success'
+      },
+      {
+        id: 'data-scout-one-worker',
+        kind: 'data',
+        from: { stepId: 'scout-one', port: 'report' },
+        to: { stepId: 'worker', port: 'scout_1' }
+      },
+      {
+        id: 'data-scout-two-worker',
+        kind: 'data',
+        from: { stepId: 'scout-two', port: 'report' },
+        to: { stepId: 'worker', port: 'scout_2' }
+      }
+    ],
+    limits: { maxSteps: 4, maxConcurrentSteps: 2, maxAttempts: 4 }
+  })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.issues))
+  h.repository.saveRevision(compiled.revision)
+  return compiled.revision
 }
 
 describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
@@ -494,6 +627,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )
     expect(h.jobs.get(runId)?.status).toBe('starting')
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.jobs.get(runId)?.status).toBe('completed')
@@ -608,6 +742,24 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       executionGraph: { ...job.executionGraph!, executionId: 'another-execution' }
     })
     expect(() => h.coordinator.assertQueueJobDispatchable(runId)).toThrow(/not dispatchable/i)
+  })
+
+  it('keeps a provisional starting session queued until the adapter is running', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    markQueueStarting(h, runId)
+
+    expect(h.coordinator.onRunSessionChange(startingEvent(runId))).toBe('accepted')
+    const provisional = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(provisional.attempts)[0]?.state).toBe('queued')
+    expect(Object.values(provisional.activations)[0]?.state).toBe('queued')
+    expect(() => h.coordinator.assertQueueJobDispatchable(runId)).not.toThrow()
+
+    expect(h.coordinator.onRunSessionChange(runningEvent(runId))).toBe('accepted')
+    const adopted = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(adopted.attempts)[0]?.state).toBe('running')
+    expect(Object.values(adopted.activations)[0]?.state).toBe('running')
   })
 
   it('rejects provider dispatch once the graph attempt is terminal', () => {
@@ -854,6 +1006,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -861,6 +1014,101 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
     expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
+  })
+
+  /** The boot sweep of a restarted process leases a queued attempt the previous one left. */
+  function leasedAfterRestart(h: Harness) {
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const before = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(before.attempts)[0].state).toBe('queued')
+    expect(h.jobs.get(runId)?.status).toBe('queued')
+    h.restart()
+    h.coordinator.assertQueueJobDispatchable(runId)
+    markQueueStarting(h, runId)
+    h.coordinator.noteDispatchLease(runId)
+    return { executionId: started.executionId, runId, before }
+  }
+
+  it('leaves an attempt this process leased to its run lifecycle on recovery', () => {
+    // The boot sweep can lease a queued attempt before the deferred launch pass
+    // runs: that row is live here, not a dispatch from before the restart.
+    const h = harness()
+    const { executionId, runId, before } = leasedAfterRestart(h)
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('running')
+    expect(Object.values(recovered.attempts)[0].state).toBe('queued')
+    expect(recovered.lastSequence).toBe(before.lastSequence)
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+  })
+
+  it('parks a leased attempt whose queue row settled while its ledger settlement did not', () => {
+    // The row is this process's own view of the lease. Settled while the
+    // attempt is not means the settlement could not be written, and there is
+    // no run left behind the stack.
+    const h = harness()
+    const { executionId, runId } = leasedAfterRestart(h)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'failed' })
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/not authoritative provider terminal evidence/i)
+    })
+  })
+
+  it('parks a leased attempt whose dispatch failed before its session when nothing could be written', () => {
+    // A full disk: neither the queue row nor the ledger takes the failure, so
+    // the row still reads as leased. The failure itself withdraws the lease.
+    const h = harness()
+    const { executionId, runId } = leasedAfterRestart(h)
+    h.transitions.mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device, write')
+    })
+    const append = vi.spyOn(h.repository, 'appendExecutionEvents').mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device, write')
+    })
+    expect(() =>
+      h.coordinator.recordPreSessionDispatchFailure(
+        runId,
+        'Graph-owned provider dispatch failed: adapter refused'
+      )
+    ).toThrow('ENOSPC')
+    append.mockRestore()
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+    expect(h.coordinator.getExecution(executionId)?.state).toBe('running')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/side-effect boundary/i)
+    })
+  })
+
+  it('leaves an execution this process created to its own lifecycle on startup recovery', () => {
+    // Recovery would park this row as a dispatch from before a restart, but
+    // there was none: the Stack was created here.
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.transitions.mockClear()
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    const recovered = h.coordinator.getExecution(started.executionId)!
+    expect(recovered.state).toBe('running')
+    expect(recovered.lastSequence).toBe(started.lastSequence)
+    expect(h.transitions).not.toHaveBeenCalled()
   })
 
   it('continues recovering healthy executions after one execution throws', () => {
@@ -872,6 +1120,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const healthyRunId = providerRunId(healthy)
     h.jobs.set(healthyRunId, { ...h.jobs.get(healthyRunId)!, status: 'completed' })
 
+    h.restart()
     const internals = h.coordinator as unknown as {
       reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
     }
@@ -922,6 +1171,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       h.jobs.set(runId, genericRecovery.jobs[0])
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(first.executionId)!
@@ -960,6 +1210,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, genericRecovery.jobs[0])
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -995,6 +1246,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, genericRecovery.jobs[0])
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1021,6 +1273,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1040,6 +1293,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       h.jobs.set(runId, { ...h.jobs.get(runId)!, status: terminalStatus })
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1057,6 +1311,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     h.anchorStatuses.set('anchor-run', 'completed')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1072,6 +1327,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
       h.anchorStatuses.set('anchor-run', anchorStatus)
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1086,6 +1342,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     h.anchorStatuses.set('anchor-run', 'nonterminal')
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.coordinator.getExecution(waiting.executionId)?.state).toBe('waiting')
@@ -1097,6 +1354,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'activation-only')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1110,6 +1368,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'attempt-created')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1125,6 +1384,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1161,6 +1421,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1184,6 +1445,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1384,6 +1646,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.jobs.get(runId)?.status).toBe('queued')
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.jobs.get(runId)?.status).toBe('completed')
@@ -1463,5 +1726,636 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       'skipped',
       'skipped'
     ])
+  })
+})
+
+describe('ExecutionGraphCoordinator owner accountability', () => {
+  const owner = {
+    threadId: 'chat-one',
+    initiatingRunId: 'run-parent-one',
+    seatId: 'antigravity:gemini-3.1-pro'
+  }
+
+  it('dispatches while the owning thread is live', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'owned-live-execution',
+      title: 'Owned live execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).toHaveBeenCalled()
+    expect(h.coordinator.getExecution('owned-live-execution')?.state).toBe('running')
+  })
+
+  // The failure this exists to prevent: a graph that keeps dispatching provider
+  // work after nobody is left to answer for it or receive the result.
+  it('pauses instead of dispatching when the owning thread is gone', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    h.coordinator.startExecutionGraph({
+      executionId: 'owner-gone-execution',
+      title: 'Owner gone execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+    const projection = h.coordinator.getExecution('owner-gone-execution')!
+    expect(projection.state).toBe('requires_action')
+    expect(Object.keys(projection.attempts)).toHaveLength(0)
+  })
+
+  // Pre-ownership ledgers stay readable, but they are not grandfathered into
+  // dispatching: unowned means unaccountable, which means paused.
+  it('refuses to dispatch an execution that names no owner at all', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'unowned-execution',
+      title: 'Unowned execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+    const projection = h.coordinator.getExecution('unowned-execution')!
+    expect(projection.state).toBe('requires_action')
+    expect(Object.keys(projection.attempts)).toHaveLength(0)
+  })
+
+  it('pauses a running graph at the next drain once its owner disappears', () => {
+    const h = harness()
+    const started = h.coordinator.startExecutionGraph({
+      executionId: 'owner-lost-midflight',
+      title: 'Owner lost midflight',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    const firstRunId = providerRunId(started)
+    const dispatchesBefore = h.materializePausedQueueJob.mock.calls.length
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    markQueueStarting(h, firstRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'completed'),
+      terminalReceipt(h, firstRunId, 'completed')
+    )
+
+    expect(h.materializePausedQueueJob.mock.calls.length).toBe(dispatchesBefore)
+    expect(h.coordinator.getExecution('owner-lost-midflight')?.state).toBe('requires_action')
+  })
+
+  // Until now the ONLY thing that re-evaluated a paused graph was recover() at
+  // app start, so a thread that came back in the same session left its graph
+  // stopped with no way forward but a restart.
+  it('resumes a paused graph once its owner is back, and dispatches again', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'resume-me',
+      title: 'Resume me',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    expect(h.coordinator.getExecution('resume-me')?.state).toBe('requires_action')
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+
+    h.ownerStatuses.set('chat-one', 'live')
+    h.coordinator.resumeExecution('resume-me', 'Resumed by user.')
+
+    const resumed = h.coordinator.getExecution('resume-me')!
+    expect(resumed.state).toBe('running')
+    expect(h.materializePausedQueueJob).toHaveBeenCalled()
+  })
+
+  // Proven necessary by mutation: with the graph paused at START, no activation
+  // has reached `requires_action` yet, so asserting "none are parked" there is
+  // vacuously true and deleting the un-pause loop still passed. This pauses an
+  // activation for real first.
+  it('brings a parked activation back to ready so the next drain can claim it', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    const gated = h.coordinator.requireActionForProviderRun(
+      runId,
+      'Host-process reruns are not replay-safe for Stack attempts.'
+    )
+    expect(gated?.state).toBe('requires_action')
+    expect(Object.values(gated?.activations ?? {})[0]?.state).toBe('requires_action')
+
+    const resumed = h.coordinator.resumeExecution(started.executionId, 'Resumed by user.')
+
+    expect(resumed.state).toBe('running')
+    expect(
+      Object.values(resumed.activations).some(
+        (activation) => activation.state === 'requires_action'
+      )
+    ).toBe(false)
+  })
+
+  // Resuming into a missing owner would re-pause on the very next drain. Saying
+  // why is more use than a button that appears to do nothing.
+  it('refuses to resume while the owning thread is still gone', () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'still-orphaned',
+      title: 'Still orphaned',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(() => h.coordinator.resumeExecution('still-orphaned')).toThrow(
+      /owning thread is no longer available/i
+    )
+    expect(h.coordinator.getExecution('still-orphaned')?.state).toBe('requires_action')
+    expect(h.materializePausedQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('refuses to resume an execution that is not paused', () => {
+    const h = harness()
+    h.coordinator.startExecutionGraph({
+      executionId: 'already-running',
+      title: 'Already running',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    expect(h.coordinator.getExecution('already-running')?.state).toBe('running')
+    expect(() => h.coordinator.resumeExecution('already-running')).toThrow(/not paused/i)
+  })
+
+  it('refuses to resume an execution that has already finished', async () => {
+    const h = harness()
+    h.ownerStatuses.set('chat-one', 'missing')
+    h.coordinator.startExecutionGraph({
+      executionId: 'finished-graph',
+      title: 'Finished graph',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+    await h.coordinator.cancelExecution('finished-graph', 'Cancelled by user.')
+    expect(h.coordinator.getExecution('finished-graph')?.state).toBe('cancelled')
+    expect(() => h.coordinator.resumeExecution('finished-graph')).toThrow(/already finished/i)
+  })
+})
+
+describe('ExecutionGraphCoordinator structured graph scheduling', () => {
+  it('binds a narrower per-step permission digest under the execution ceiling', () => {
+    const h = harness()
+    const stepAuthorityDigest = 'b'.repeat(64)
+    const revision = structuredJoinRevision(h, {
+      ceilingReferenceId: h.ceiling.referenceId,
+      authorityDigest: stepAuthorityDigest
+    })
+    h.coordinator.startExecutionGraph({
+      executionId: 'step-authority-execution',
+      title: 'Step authority execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      owner: { threadId: 'chat-one', seatId: 'codex:gpt-5.6-sol' },
+      tenant: { kind: 'workflow' },
+      revision,
+      permissionCeilingRef: h.ceiling
+    })
+
+    expect(h.materializePausedQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionCeilingAuthorityDigest: stepAuthorityDigest })
+    )
+    expect([...h.jobs.values()][0]?.executionGraph?.permissionCeilingAuthorityDigest).toBe(
+      stepAuthorityDigest
+    )
+  })
+
+  it('rejects a step permission request that is not under the execution ceiling', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h, {
+      ceilingReferenceId: 'another-ceiling',
+      authorityDigest: 'b'.repeat(64)
+    })
+
+    expect(() =>
+      h.coordinator.startExecutionGraph({
+        executionId: 'wrong-ceiling-execution',
+        title: 'Wrong ceiling execution',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        tenant: { kind: 'workflow' },
+        revision,
+        permissionCeilingRef: h.ceiling
+      })
+    ).toThrow(/invalid permission request binding/i)
+    expect(h.jobs.size).toBe(0)
+  })
+
+  it('executes an all-join and binds exact predecessor results into the worker', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h)
+    const started = h.coordinator.startExecutionGraph({
+      executionId: 'structured-join-execution',
+      title: 'Structured join execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      owner: { threadId: 'chat-one', seatId: 'codex:gpt-5.6-sol' },
+      tenant: { kind: 'workflow', tenantId: 'ultratask-one' },
+      revision,
+      permissionCeilingRef: h.ceiling
+    })
+
+    const initialScoutAttempts = Object.values(started.attempts).filter((attempt) =>
+      attempt.stepId.startsWith('scout-')
+    )
+    expect(initialScoutAttempts).toHaveLength(2)
+    expect(initialScoutAttempts.map((attempt) => attempt.state)).toEqual(['queued', 'queued'])
+    expect(h.jobs.size).toBe(2)
+
+    const firstRunId = initialScoutAttempts[0]?.providerRunRef
+    const secondRunId = initialScoutAttempts[1]?.providerRunRef
+    if (!firstRunId || !secondRunId) throw new Error('Both scouts must materialize together.')
+    markQueueStarting(h, firstRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'completed'),
+      terminalReceipt(h, firstRunId, 'completed')
+    )
+
+    const afterFirst = h.coordinator.getExecution(started.executionId)!
+    expect(afterFirst.attempts[initialScoutAttempts[1]!.id]?.state).toBe('queued')
+    markQueueStarting(h, secondRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(secondRunId, 'completed'),
+      terminalReceipt(h, secondRunId, 'completed')
+    )
+
+    const afterJoin = h.coordinator.getExecution(started.executionId)!
+    expect(
+      Object.values(afterJoin.activations).find((activation) => activation.stepId === 'scout-join')
+        ?.state
+    ).toBe('succeeded')
+    const workerAttempt = Object.values(afterJoin.attempts).find(
+      (attempt) => attempt.stepId === 'worker'
+    )
+    expect(workerAttempt?.state).toBe('queued')
+    expect(h.materializePausedQueueJob).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        executionId: started.executionId,
+        inputs: {
+          scout_1: expect.objectContaining({
+            output: { schemaVersion: 1, kind: 'assistant_text', text: `Result from ${firstRunId}` }
+          }),
+          scout_2: expect.objectContaining({
+            output: { schemaVersion: 1, kind: 'assistant_text', text: `Result from ${secondRunId}` }
+          })
+        }
+      })
+    )
+
+    const workerRunId = workerAttempt?.providerRunRef
+    if (!workerRunId) throw new Error('Worker did not receive a provider run.')
+    markQueueStarting(h, workerRunId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(workerRunId, 'completed'),
+      terminalReceipt(h, workerRunId, 'completed')
+    )
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+  })
+
+  it('refuses graph controls the bound runtime does not enforce yet', () => {
+    const h = harness()
+    const revision = structuredJoinRevision(h)
+    expect(() =>
+      h.coordinator.startExecutionGraph({
+        executionId: 'budgeted-execution',
+        title: 'Budgeted execution',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        tenant: { kind: 'workflow' },
+        revision: {
+          ...revision,
+          limits: { ...revision.limits, maxCostUsd: 1 }
+        },
+        permissionCeilingRef: h.ceiling
+      })
+    ).toThrow(/unenforced budgets/i)
+  })
+})
+
+/* The owning turn is an anchor-less graph's lease on life: `ultra_task` tells
+ * the parent to hold its turn open and synthesize, so a graph must never
+ * outlive the run that started it. Anchored Stacks are excluded — there the
+ * initiating run is a trigger whose completion STARTS the graph. */
+describe('ExecutionGraphCoordinator owning-run tether', () => {
+  const owner = {
+    threadId: 'chat-one',
+    initiatingRunId: 'run-parent-one',
+    seatId: 'antigravity:gemini-3.1-pro'
+  }
+
+  function startTethered(h: Harness, executionId: string): ExecutionRunProjection {
+    return h.coordinator.startExecutionGraph({
+      executionId,
+      title: 'Tethered execution',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      tenant: { kind: 'workflow' },
+      owner,
+      revision: structuredJoinRevision(h),
+      permissionCeilingRef: h.ceiling
+    })
+  }
+
+  /* Joins the tether's in-flight cancellation (cancelExecution dedupes on the
+   * live operation, and no-ops on a terminal graph). The reason assertions stay
+   * pinned to the tether's own copy, so this flush cannot green a missing
+   * tether: without one, the flush cancels with this sentinel reason instead. */
+  async function settleCancellation(h: Harness, executionId: string): Promise<void> {
+    await h.coordinator.cancelExecution(executionId, 'Test flush must never be recorded.')
+  }
+
+  it('cancels a live tethered graph when its owning run completes', async () => {
+    const h = harness()
+    const started = startTethered(h, 'tether-owner-completed')
+    expect(started.state).toBe('running')
+    expect(h.jobs.size).toBe(2)
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'completed'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-completed')
+
+    const projection = h.coordinator.getExecution('tether-owner-completed')!
+    expect(projection.state).toBe('cancelled')
+    const activations = Object.values(projection.activations)
+    expect(activations).toHaveLength(4)
+    expect(activations.map((activation) => activation.state)).toEqual([
+      'cancelled',
+      'cancelled',
+      'cancelled',
+      'cancelled'
+    ])
+    expect(new Set(activations.map((activation) => activation.reason))).toEqual(
+      new Set(['The owning run ended before this execution settled.'])
+    )
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('cancels a live tethered graph when its owning run fails', async () => {
+    const h = harness()
+    startTethered(h, 'tether-owner-failed')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'failed'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-failed')
+
+    const projection = h.coordinator.getExecution('tether-owner-failed')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('The owning run failed before this execution settled.'))
+  })
+
+  it('cancels a live tethered graph when its owning run is cancelled', async () => {
+    const h = harness()
+    startTethered(h, 'tether-owner-cancelled')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-parent-one', 'cancelled'))).toBe(
+      'accepted'
+    )
+    await settleCancellation(h, 'tether-owner-cancelled')
+
+    const projection = h.coordinator.getExecution('tether-owner-cancelled')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('Cancelled with the owning parent run.'))
+  })
+
+  it('ignores unrelated run terminals and non-terminal owner updates', () => {
+    const h = harness()
+    startTethered(h, 'tether-untouched')
+
+    expect(h.coordinator.onRunSessionChange(terminalEvent('run-unrelated', 'completed'))).toBe(
+      'unclaimed'
+    )
+    expect(h.coordinator.onRunSessionChange(runningEvent('run-parent-one'))).toBe('unclaimed')
+
+    expect(h.coordinator.getExecution('tether-untouched')?.state).toBe('running')
+  })
+
+  it('pauses instead of cancelling when the owner terminal event names another thread', () => {
+    const h = harness()
+    startTethered(h, 'tether-thread-mismatch')
+
+    expect(
+      h.coordinator.onRunSessionChange(
+        terminalEvent('run-parent-one', 'completed', { appChatId: 'chat-two' })
+      )
+    ).toBe('rejected')
+
+    const projection = h.coordinator.getExecution('tether-thread-mismatch')!
+    expect(projection.state).toBe('requires_action')
+  })
+
+  it('closes a tethered graph on startup recovery because no owning turn survives a restart', async () => {
+    const h = harness()
+    startTethered(h, 'tether-restart')
+
+    h.restart()
+    h.coordinator.recover()
+    await settleCancellation(h, 'tether-restart')
+
+    const projection = h.coordinator.getExecution('tether-restart')!
+    expect(projection.state).toBe('cancelled')
+    expect(
+      Object.values(projection.activations).map((activation) => activation.reason)
+    ).toEqual(new Array(4).fill('The owning run did not survive the restart.'))
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
+  })
+
+  it('leaves a tethered graph a turn in this process started to its owning run on startup recovery', () => {
+    // A turn here can start one while the launch pass still waits on owner
+    // metadata. Its owning run is alive in this process, so nothing ended it.
+    const h = harness()
+    startTethered(h, 'tether-started-here')
+    h.transitions.mockClear()
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    expect(h.coordinator.getExecution('tether-started-here')?.state).toBe('running')
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['queued', 'queued'])
+    expect(h.transitions).not.toHaveBeenCalled()
+  })
+
+  it('recovery leaves a thread-owned Stack in flight', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+
+    h.restart()
+    h.coordinator.recover()
+
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
+  })
+
+  it('recovery keeps waiting on a nonterminal Stack anchor instead of tethering to it', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    expect(started.state).toBe('waiting')
+    h.anchorStatuses.set('anchor-run', 'nonterminal')
+
+    h.restart()
+    h.coordinator.recover()
+
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('waiting')
+  })
+})
+
+describe('ExecutionGraphCoordinator recovery retry and archive', () => {
+  /** A stack paused at restart whose exact queue row has since been pruned. */
+  function pausedOrphan(h: Harness): { executionId: string; runId: string } {
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.restart()
+    h.coordinator.recover()
+    const paused = h.coordinator.getExecution(started.executionId)!
+    expect(paused.state).toBe('requires_action')
+    expect(Object.values(paused.attempts)[0].state).toBe('interrupted')
+    h.jobs.delete(runId)
+    return { executionId: started.executionId, runId }
+  }
+
+  it('recoverExecutions re-runs recovery for the named executions only', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    expect(started.state).toBe('running')
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    h.restart()
+    // A foreign id resolves to nothing: no diagnostic, and the stack it did
+    // not name is not re-evaluated.
+    expect(h.coordinator.recoverExecutions(['never-created'])).toEqual([])
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
+
+    expect(h.coordinator.recoverExecutions([started.executionId, started.executionId])).toEqual([])
+    const paused = h.coordinator.getExecution(started.executionId)!
+    expect(paused.state).toBe('requires_action')
+    expect(paused.lastSequence).toBe(started.lastSequence + 1)
+  })
+
+  it('recoverExecutions reports only the named execution that still refuses', () => {
+    const h = harness()
+    const broken = h.coordinator.appendStackStep(h.input())
+    const healthy = h.coordinator.appendStackStep(
+      h.input({ rootChatId: 'chat-two', title: 'Second Stack' })
+    )
+    h.restart()
+    const internals = h.coordinator as unknown as {
+      reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
+    }
+    vi.spyOn(internals, 'reconcileTerminalAttemptQueueRows').mockImplementation((projection) => {
+      if (projection.executionId === broken.executionId) {
+        throw new Error('Execution ledger changed before append for "broken".')
+      }
+    })
+
+    expect(h.coordinator.recoverExecutions([broken.executionId, healthy.executionId])).toEqual([
+      {
+        executionId: broken.executionId,
+        message: 'Execution ledger changed before append for "broken".'
+      }
+    ])
+  })
+
+  it('archiveExecution closes a paused stack whose queue row is gone, where cancel refuses', async () => {
+    const h = harness()
+    const { executionId } = pausedOrphan(h)
+    const notices: string[] = []
+    ;(h.coordinator as unknown as { deps: ExecutionGraphCoordinatorDeps }).deps.onChanged = (
+      notice
+    ) => notices.push(notice.kind)
+
+    await h.coordinator.cancelExecution(executionId, 'Cancelled by user.')
+    expect(h.coordinator.getExecution(executionId)?.state).toBe('requires_action')
+
+    const archived = await h.coordinator.archiveExecution(executionId, 'Archived from notices.')
+
+    expect(archived.state).toBe('cancelled')
+    expect(Object.values(archived.activations).map((activation) => activation.state)).toEqual([
+      'cancelled'
+    ])
+    expect(Object.values(archived.activations)[0].reason).toBe('Archived from notices.')
+    expect(notices).toContain('execution-terminal')
+    const sequence = archived.lastSequence
+    expect(h.coordinator.recover()).toEqual([])
+    expect(h.coordinator.getExecution(executionId)?.lastSequence).toBe(sequence)
+  })
+
+  it('archiveExecution refuses while an owned queue row is still leaseable', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.restart()
+    h.coordinator.recover()
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
+
+    await expect(
+      h.coordinator.archiveExecution(started.executionId, 'Archived by user.')
+    ).rejects.toThrow(/still holds a live queue row/)
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
+  })
+
+  it('archiveExecution lets cancellation contain a queued stack before it is closed', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    const archived = await h.coordinator.archiveExecution(started.executionId, 'Archived by user.')
+
+    expect(archived.state).toBe('cancelled')
+    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+  })
+
+  it('archiveExecution returns a terminal execution untouched', async () => {
+    const h = harness()
+    const { executionId } = pausedOrphan(h)
+    const archived = await h.coordinator.archiveExecution(executionId)
+    const again = await h.coordinator.archiveExecution(executionId)
+    expect(again.lastSequence).toBe(archived.lastSequence)
+    expect(Object.values(again.activations)[0].reason).toBe('Archived by user.')
   })
 })

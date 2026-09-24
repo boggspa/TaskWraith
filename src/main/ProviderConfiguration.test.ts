@@ -244,10 +244,10 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       expect(getOllamaStatus).not.toHaveBeenCalled()
       expect(onDiscoveryComplete).not.toHaveBeenCalled()
 
-      // Seven staggered probes now (kimi, ollama, grok, cursor, mistral, pi, muse at
-      // 100ms apart); pi and muse resolve binaries but have no injected
-      // credentials, so they complete the round without joining the set.
-      await vi.advanceTimersByTimeAsync(600)
+      // Eight staggered probes now (kimi, ollama, grok, cursor, mistral, pi, muse,
+      // devin at 100ms apart); pi, muse, and devin resolve binaries but have no
+      // injected credentials, so they complete the round without joining the set.
+      await vi.advanceTimersByTimeAsync(700)
       await expect(discovery.snapshot(settings)).resolves.toEqual(
         new Set(['kimi', 'ollama', 'grok', 'cursor', 'mistral'])
       )
@@ -256,14 +256,14 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
         configuredProviders: new Set(['kimi', 'ollama', 'grok', 'cursor', 'mistral'])
       })
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(5)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(6)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
 
       discovery.start(settings)
       await vi.runAllTimersAsync()
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-      expect(resolveProviderBinary).toHaveBeenCalledTimes(5)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(6)
       expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
@@ -473,6 +473,40 @@ describe('configured AntiGravity discovery', () => {
     }
   })
 
+  it("a new settings generation clears the old one's pending probes, so a withdrawal is never followed by agy models", async () => {
+    vi.useFakeTimers()
+    try {
+      const getAntigravityCombinedModels = vi.fn(async () => [
+        { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
+      ])
+      const getKimiConfiguredStatus = vi.fn(async () => ({ available: false }))
+      const detector = createConfiguredProviderDetector(
+        {
+          getAntigravityCombinedModels,
+          getKimiConfiguredStatus,
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
+          resolveProviderBinary: async () => ({ binaryPath: null })
+        },
+        { staggerMs: 100 }
+      )
+
+      detector.start(optedInSettings)
+      // The first probe fires at once; AntiGravity's is still waiting its turn.
+      await vi.advanceTimersByTimeAsync(50)
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
+      const withdrawn = { ...optedInSettings, antigravityEnabled: false } as AppSettings
+      detector.start(withdrawn)
+      await vi.runAllTimersAsync()
+
+      expect(getAntigravityCombinedModels).not.toHaveBeenCalled()
+      // The new generation runs its own probes and completes.
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(2)
+      expect(detector.statusSnapshot(withdrawn).ready).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('invalidates a completed catalog when disclosure or key generation changes', async () => {
     vi.useFakeTimers()
     try {
@@ -508,6 +542,54 @@ describe('configured AntiGravity discovery', () => {
       detector.start(withdrawn)
       await vi.runAllTimersAsync()
       expect(getAntigravityCombinedModels).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('configured Ollama discovery', () => {
+  // The record is written main-side after a daemon answer, not through the
+  // renderer settings lane; without this key the roster stayed frozen on the
+  // pre-sign-in answer until an unrelated settings change restarted discovery.
+  it('starts a new discovery generation only when the remembered sign-in flag flips', async () => {
+    vi.useFakeTimers()
+    try {
+      const getOllamaStatus = vi.fn(async () => ({ available: true, modelCount: 1 }))
+      const detector = createConfiguredProviderDetector(
+        { getOllamaStatus, resolveProviderBinary: async () => ({ binaryPath: null }) },
+        { staggerMs: 0 }
+      )
+      const unknown = {} as AppSettings
+      detector.start(unknown)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+      detector.start(unknown)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+
+      const signedIn = {
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(signedIn)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(2)
+      await expect(detector.snapshot(signedIn)).resolves.toContain('ollama')
+
+      const restamped = {
+        ollamaCliSignIn: { signedIn: true, plan: 'max', updatedAt: '2026-09-01T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(restamped)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(2)
+      await expect(detector.snapshot(restamped)).resolves.toContain('ollama')
+
+      const signedOut = {
+        ollamaCliSignIn: { signedIn: false, updatedAt: '2026-09-02T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(signedOut)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(3)
     } finally {
       vi.useRealTimers()
     }

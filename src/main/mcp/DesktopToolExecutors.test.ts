@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
+import { createRunToolCapabilityReceipt } from '../providers/RunToolCapabilityReceipt'
 import {
   createDesktopToolExecutors,
   type DesktopAttachedWindowState,
@@ -205,11 +206,13 @@ function createExecutor(input: {
   daemon?: DesktopBridgeDaemon | null
   notifyRenderer?: NonNullable<DesktopToolExecutorDeps['notifyRenderer']>
   shell?: DesktopToolExecutorDeps['shell']
+  readToolCapabilityReceipt?: DesktopToolExecutorDeps['readToolCapabilityReceipt']
 }) {
   const chats = new Map(input.chats.map((item) => [item.appChatId, item]))
   const getRunEventReplay = vi.fn((runId: string) => input.replays?.[runId] || replay(runId))
   const getRunEvents = vi.fn((_filter?: RunEventFilter) => input.rawEvents || [])
   const deps: DesktopToolExecutorDeps = {
+    readToolCapabilityReceipt: input.readToolCapabilityReceipt,
     getBridgeDaemon: () => input.daemon ?? null,
     getCreativeApprovalGate: () => null,
     attachedWindow: input.attachedWindow ?? createAttachedWindowState().state,
@@ -1049,7 +1052,58 @@ describe('DesktopToolExecutors Codex auth projection', () => {
 })
 
 describe('DesktopToolExecutors approval status workspace grants', () => {
-  it("reports 'agents' wildcard grants alongside the caller's own legacy rows", () => {
+  it('returns the common exact-run shape without treating configured services as observed tools', async () => {
+    const current = chat('chat-a', ['parity-agy-run'])
+    current.runs![0].provider = 'antigravity'
+    const { executor } = createExecutor({ chats: [current] })
+    const result = await executor.executeApprovalStatus(
+      activeContext,
+      { runId: 'parity-agy-run' },
+      'codex'
+    )
+    expect(result).toMatchObject({
+      provider: 'antigravity',
+      toolCapabilityReceiptStatus: 'recorded-run-only',
+      toolCapabilityReceipt: {
+        runId: 'parity-agy-run',
+        chatId: 'chat-a',
+        provider: 'antigravity',
+        transport: 'unobserved',
+        effectivePermissions: null,
+        readiness: 'unverified',
+        managed: { observed: null }
+      }
+    })
+  })
+
+  it('rejects a foreign receipt returned by a history reader', async () => {
+    const current = chat('chat-a', ['parity-target'])
+    current.runs![0].provider = 'antigravity'
+    const foreign = createRunToolCapabilityReceipt({
+      runId: 'foreign',
+      chatId: 'chat-b',
+      provider: 'antigravity',
+      transport: 'agy',
+      model: null,
+      effectivePermissions: null,
+      scope: { kind: 'global', workspacePath: null, paths: [] }
+    }).snapshot()
+    const { executor } = createExecutor({
+      chats: [current],
+      readToolCapabilityReceipt: async () => foreign
+    })
+    const result = await executor.executeApprovalStatus(
+      activeContext,
+      { runId: 'parity-target' },
+      'codex'
+    )
+    expect(result).toMatchObject({
+      toolCapabilityReceiptStatus: 'recorded-run-only',
+      toolCapabilityReceipt: { runId: 'parity-target', chatId: 'chat-a' }
+    })
+  })
+
+  it("reports 'agents' wildcard grants alongside the caller's own legacy rows", async () => {
     const grants: AgenticWorkspaceGrant[] = [
       {
         id: 'grant-agents',
@@ -1083,12 +1137,12 @@ describe('DesktopToolExecutors approval status workspace grants', () => {
 
     // 'agents' rows report for any caller; the legacy codex row stays scoped
     // to codex; the other-workspace row is filtered by path.
-    const claudeResult = executor.executeApprovalStatus(activeContext, {}, 'claude') as {
+    const claudeResult = (await executor.executeApprovalStatus(activeContext, {}, 'claude')) as {
       workspaceGrants: AgenticWorkspaceGrant[]
     }
     expect(claudeResult.workspaceGrants.map((grant) => grant.id)).toEqual(['grant-agents'])
 
-    const codexResult = executor.executeApprovalStatus(activeContext, {}, 'codex') as {
+    const codexResult = (await executor.executeApprovalStatus(activeContext, {}, 'codex')) as {
       workspaceGrants: AgenticWorkspaceGrant[]
     }
     expect(codexResult.workspaceGrants.map((grant) => grant.id)).toEqual([

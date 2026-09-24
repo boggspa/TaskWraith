@@ -25,6 +25,8 @@ interface EnsembleBriefEditorProps {
   textareaRef?: RefObject<HTMLTextAreaElement | null>
   spellCheck?: boolean
   syncEpoch?: string | number
+  showPresetControls?: boolean
+  textareaAriaLabel?: string
   commitLabel?: string
   commitTitle?: string
   onCommit?: () => void
@@ -33,7 +35,9 @@ interface EnsembleBriefEditorProps {
   onContextMenu?: (event: MouseEvent<HTMLTextAreaElement>) => void
 }
 
-function suggestedPresetName(participants: EnsembleParticipant[]): string {
+// Exported for tests: the named-participant fallback is only reachable once
+// every generated name collides, which a rendered component cannot reach.
+export function suggestedPresetName(participants: EnsembleParticipant[]): string {
   const existing = new Set(
     [...BUILT_IN_ENSEMBLE_BRIEF_PRESETS, ...listUserEnsembleBriefPresets()].map((preset) =>
       preset.name.toLowerCase()
@@ -45,8 +49,12 @@ function suggestedPresetName(participants: EnsembleParticipant[]): string {
     const candidate = `${base} ${n}`
     if (!existing.has(candidate.toLowerCase())) return candidate
   }
-  const firstNamedParticipant = participants.find((participant) => participant.role.trim())
-  return firstNamedParticipant ? `${firstNamedParticipant.role.trim()} brief` : base
+  // `role`, like `instructions`, is typed required but reaches the renderer
+  // absent — main guards every read of it with `|| ''` (EnsembleErrors,
+  // EnsemblePrompt, EnsembleOrchestrator). Skip a participant that has no
+  // role rather than throwing over one.
+  const firstNamedParticipant = participants.find((participant) => (participant.role || '').trim())
+  return firstNamedParticipant ? `${(firstNamedParticipant.role || '').trim()} brief` : base
 }
 
 function promptForPresetName(defaultName: string): string | null {
@@ -69,6 +77,8 @@ export function EnsembleBriefEditor({
   textareaRef,
   spellCheck = true,
   syncEpoch = 'ensemble-brief-editor',
+  showPresetControls = true,
+  textareaAriaLabel,
   commitLabel = 'Save',
   commitTitle = 'Save changes',
   onCommit,
@@ -79,19 +89,28 @@ export function EnsembleBriefEditor({
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const resolvedTextareaRef = textareaRef || internalTextareaRef
   const [userPresets, setUserPresets] = useState<EnsembleBriefPreset[]>(() =>
-    listUserEnsembleBriefPresets()
+    showPresetControls ? listUserEnsembleBriefPresets() : []
   )
   const [selectedPresetId, setSelectedPresetId] = useState('')
 
   useEffect(() => {
+    if (!showPresetControls) return
+    setUserPresets(listUserEnsembleBriefPresets())
     return subscribeEnsembleBriefPresets(() => {
       setUserPresets(listUserEnsembleBriefPresets())
     })
-  }, [])
+  }, [showPresetControls])
 
   const selectedPreset = selectedPresetId ? getEnsembleBriefPreset(selectedPresetId) : null
   const selectedUserPreset = selectedPreset?.source === 'user' ? selectedPreset : null
-  const hasMentionOverlay = hasResolvedMention(value, participants)
+  // `EnsembleParticipant.instructions` is typed required but reaches the
+  // renderer absent — which is why main defends every read of it with
+  // `|| ''` (EnsemblePrompt, EnsembleRosterMutation, EnsembleOrchestrator).
+  // Trusting the type here took the whole transcript surface down on
+  // `value.trim()`. Normalise once so every consumer below is safe, and so
+  // the textarea stays controlled instead of silently going uncontrolled.
+  const briefValue = value ?? ''
+  const hasMentionOverlay = hasResolvedMention(briefValue, participants)
 
   const handleApplyPreset = (presetId: string): void => {
     setSelectedPresetId(presetId)
@@ -101,11 +120,11 @@ export function EnsembleBriefEditor({
   }
 
   const handleSavePreset = (): void => {
-    if (disabled || !value.trim()) return
+    if (disabled || !briefValue.trim()) return
     const name = promptForPresetName(suggestedPresetName(participants))
     if (!name) return
     try {
-      const preset = saveUserEnsembleBriefPreset(name, value)
+      const preset = saveUserEnsembleBriefPreset(name, briefValue)
       setUserPresets(listUserEnsembleBriefPresets())
       setSelectedPresetId(preset.id)
     } catch {
@@ -128,66 +147,68 @@ export function EnsembleBriefEditor({
     <div className={`ensemble-brief-editor${editorClassName ? ` ${editorClassName}` : ''}`}>
       <div className="ensemble-brief-editor-head">
         <span className={labelClassName || 'ensemble-brief-editor-label'}>{label}</span>
-        <div className="ensemble-brief-preset-controls">
-          {onCommit ? (
-            <button
-              type="button"
-              className="ensemble-brief-preset-action ensemble-brief-commit-action"
+        {showPresetControls ? (
+          <div className="ensemble-brief-preset-controls">
+            {onCommit ? (
+              <button
+                type="button"
+                className="ensemble-brief-preset-action ensemble-brief-commit-action"
+                disabled={disabled}
+                onClick={onCommit}
+                title={commitTitle}
+              >
+                {commitLabel}
+              </button>
+            ) : null}
+            <select
+              className="ensemble-brief-preset-select"
+              value={selectedPresetId}
               disabled={disabled}
-              onClick={onCommit}
-              title={commitTitle}
+              aria-label={`${label} preset`}
+              onChange={(event) => handleApplyPreset(event.target.value)}
             >
-              {commitLabel}
-            </button>
-          ) : null}
-          <select
-            className="ensemble-brief-preset-select"
-            value={selectedPresetId}
-            disabled={disabled}
-            aria-label={`${label} preset`}
-            onChange={(event) => handleApplyPreset(event.target.value)}
-          >
-            <option value="">Brief preset…</option>
-            <optgroup label="Role presets">
-              {BUILT_IN_ENSEMBLE_BRIEF_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id} title={preset.brief}>
-                  {preset.name}
-                </option>
-              ))}
-            </optgroup>
-            {userPresets.length > 0 && (
-              <optgroup label="My briefs">
-                {userPresets.map((preset) => (
+              <option value="">Brief preset…</option>
+              <optgroup label="Role presets">
+                {BUILT_IN_ENSEMBLE_BRIEF_PRESETS.map((preset) => (
                   <option key={preset.id} value={preset.id} title={preset.brief}>
                     {preset.name}
                   </option>
                 ))}
               </optgroup>
-            )}
-          </select>
-          <button
-            type="button"
-            className="ensemble-brief-preset-action"
-            disabled={disabled || !value.trim()}
-            onClick={handleSavePreset}
-            title="Save this brief as a reusable preset"
-          >
-            Save preset
-          </button>
-          <button
-            type="button"
-            className="ensemble-brief-preset-action"
-            disabled={disabled || !selectedUserPreset}
-            onClick={handleRenamePreset}
-            title={
-              selectedUserPreset
-                ? 'Rename selected saved brief'
-                : 'Select a saved brief before renaming'
-            }
-          >
-            Rename
-          </button>
-        </div>
+              {userPresets.length > 0 && (
+                <optgroup label="My briefs">
+                  {userPresets.map((preset) => (
+                    <option key={preset.id} value={preset.id} title={preset.brief}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            <button
+              type="button"
+              className="ensemble-brief-preset-action"
+              disabled={disabled || !briefValue.trim()}
+              onClick={handleSavePreset}
+              title="Save this brief as a reusable preset"
+            >
+              Save preset
+            </button>
+            <button
+              type="button"
+              className="ensemble-brief-preset-action"
+              disabled={disabled || !selectedUserPreset}
+              onClick={handleRenamePreset}
+              title={
+                selectedUserPreset
+                  ? 'Rename selected saved brief'
+                  : 'Select a saved brief before renaming'
+              }
+            >
+              Rename
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="ensemble-brief-textarea-wrap">
         <textarea
@@ -196,9 +217,10 @@ export function EnsembleBriefEditor({
             hasMentionOverlay ? ' has-mention-overlay' : ''
           }`}
           rows={rows}
-          value={value}
+          value={briefValue}
           disabled={disabled}
           spellCheck={spellCheck}
+          aria-label={textareaAriaLabel}
           onChange={(event) => {
             setSelectedPresetId('')
             onChange(event.target.value)
@@ -209,7 +231,7 @@ export function EnsembleBriefEditor({
         />
         {hasMentionOverlay && (
           <ComposerHighlightOverlay
-            value={value}
+            value={briefValue}
             participants={participants}
             textareaRef={resolvedTextareaRef}
             syncEpoch={syncEpoch}

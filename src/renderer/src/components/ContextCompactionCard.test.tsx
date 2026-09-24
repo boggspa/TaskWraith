@@ -46,6 +46,9 @@ describe('ContextCompactionCard', () => {
     // not as a logo pill — the row must read as transcript, not chrome.
     expect(html).toContain('provider-claude')
     expect(html).toContain('context-compaction-row-meta')
+    expect(html).toContain(
+      'aria-label="Claude — Compacted context — 24k → 1k tokens · manual · 12s"'
+    )
     expect(html).not.toContain('provider-brand-logo-image')
   })
 
@@ -67,6 +70,9 @@ describe('ContextCompactionCard', () => {
     expect(html).toContain('is-failed')
     expect(html).toContain('Context compaction failed')
     expect(html).toContain('Not enough messages to compact.')
+    expect(html).toContain(
+      'aria-label="Claude — Context compaction failed — Not enough messages to compact."'
+    )
   })
 
   it('prefers the frozen participant label over the live provider name', () => {
@@ -117,7 +123,7 @@ describe('ContextCompactionCard', () => {
     expect(html).not.toContain('provider-pi')
   })
 
-  it('exposes the failed bit + meta label for the collapsed one-liner lane', () => {
+  it('exposes the failed bit and frozen meta label to transcript consumers', () => {
     const failed = makeMessage({
       metadata: {
         kind: 'contextCompaction',
@@ -135,5 +141,28 @@ describe('ContextCompactionCard', () => {
       <ContextCompactionCard message={makeMessage({ metadata: { kind: 'providerRunFailure' } })} />
     )
     expect(html).toBe('')
+  })
+
+  it('shows requested and reported context limits in an expandable receipt', () => {
+    const message = makeMessage()
+    const metadata = message.metadata as any
+    metadata.contextCompaction.telemetry.contextPolicy = {
+      provider: 'codex',
+      model: 'gpt-6-astra',
+      modelCapacityTokens: 1_050_000,
+      requestedWindowTokens: 1_050_000,
+      requestedCompactionTokens: 850_000,
+      reportedWindowTokens: 258_400,
+      runtimeVersion: '0.153.0',
+      configurationSource: 'taskwraith'
+    }
+    const html = renderToStaticMarkup(<ContextCompactionCard message={message} />)
+    expect(html).toContain('<details')
+    expect(html).toContain('Context limits')
+    expect(html).toContain('Requested compaction threshold')
+    expect(html).toContain('850,000 tokens')
+    expect(html).toContain('258,400 tokens')
+    expect(html).toContain('Runtime compaction threshold</dt><dd>Not reported')
+    expect(html).toContain('0.153.0')
   })
 })

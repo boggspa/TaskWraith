@@ -19,6 +19,7 @@
 import http from 'http'
 import { randomBytes, randomUUID } from 'crypto'
 import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
+import { createKimiGatewayReadiness, type KimiGatewayReadiness } from './KimiGatewayReadiness'
 
 export interface KimiHttpMcpBridgeOptions {
   /**
@@ -38,11 +39,11 @@ export interface KimiHttpMcpBridgeHandle {
   /** The auth header name/value to advertise alongside the URL. */
   headerName: string
   headerValue: string
+  /** Successful responses served to this session; contact alone is not readiness. */
+  readiness: KimiGatewayReadiness
   /**
-   * True once Kimi has made any authenticated request to this bridge. A
-   * session that registers the server fetches its tool list immediately, so a
-   * bridge that stays dark past session readiness means the session is
-   * running without this run's gateway surface.
+   * Transport liveness only. This does not prove that a tool list was served
+   * or that the provider exposed it to the model. Use readiness for admission.
    */
   contacted: () => boolean
   /** Resolve true on first authenticated contact, false when timeoutMs
@@ -67,6 +68,7 @@ export async function startKimiHttpMcpBridge(
   // the header round-trip, not multi-session multiplexing here).
   let sessionId: string | null = null
   let contactSeen = false
+  const readiness = createKimiGatewayReadiness()
   const contactWaiters = new Set<(value: boolean) => void>()
   const recordContact = (): void => {
     if (contactSeen) return
@@ -95,6 +97,7 @@ export async function startKimiHttpMcpBridge(
     // Any authenticated request counts, including a declined GET stream: only
     // a client that registered this run's server can present its token.
     recordContact()
+    const generation = readiness.snapshot().generation
     // Kimi may open a GET stream for server-initiated messages; we never push, so
     // decline it. The client falls back to request/response over POST.
     if (req.method === 'GET') {
@@ -148,6 +151,7 @@ export async function startKimiHttpMcpBridge(
       return
     }
     res.writeHead(200, headers)
+    res.once('finish', () => readiness.responseServed(generation, message.method, response))
     res.end(JSON.stringify(response))
   }
 
@@ -166,6 +170,7 @@ export async function startKimiHttpMcpBridge(
     url: `http://127.0.0.1:${port}/mcp`,
     headerName: 'Authorization',
     headerValue,
+    readiness,
     contacted: () => contactSeen,
     waitForContact: (timeoutMs: number) =>
       new Promise<boolean>((resolve) => {
@@ -195,6 +200,7 @@ export async function startKimiHttpMcpBridge(
           return
         }
         closed = true
+        readiness.close()
         for (const waiter of contactWaiters) waiter(false)
         contactWaiters.clear()
         server.close(() => resolve())

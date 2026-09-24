@@ -28,6 +28,52 @@ describe('provider seat generation main-process integration', () => {
     expect(runtimeProfile).toContain('storeProviderSessionId: null')
   })
 
+  it('selects and propagates the lean solo catalogue at every provider boundary', () => {
+    const runtimeProfile = sourceBetween(
+      'function applyRuntimeProfileToPayload(',
+      'async function getCliProviderStatus('
+    )
+    expect(runtimeProfile.match(/soloThread: !applied\.ensembleRun/g)).toHaveLength(2)
+
+    const delegatedCompose = sourceBetween(
+      'async function composeDelegatedProviderPrompts(',
+      'function seedAgentDrivenSubThreadTranscript('
+    )
+    expect(delegatedCompose).toContain('soloThread: true')
+
+    const bridgeWrapper = sourceBetween(
+      'interface TaskWraithMcpBridgeArgOptions',
+      'function taskwraithMcpBridgeStaticRegistrationArgs'
+    )
+    expect(bridgeWrapper).toContain('soloSubset?: boolean')
+    expect(bridgeWrapper).toContain('options.soloSubset === true')
+
+    expect(
+      indexSource.match(/soloSubset: isSoloTaskWraithMcpProfile\(/g)?.length || 0
+    ).toBeGreaterThanOrEqual(6)
+  })
+
+  it('rebases a pre-dispatch Claude payload onto the current store session', () => {
+    const runtimeProfile = sourceBetween(
+      'function applyRuntimeProfileToPayload(',
+      'async function getCliProviderStatus('
+    )
+    const sessionResolution = runtimeProfile.indexOf('resolveTaskWraithMcpDispatchSession({')
+    const sessionRebase = runtimeProfile.indexOf(
+      'applied.providerSessionId = dispatchSession.providerSessionId'
+    )
+    const exactProfileResolution = runtimeProfile.indexOf(
+      'const resolution = resolveTaskWraithMcpProfile({'
+    )
+
+    expect(sessionResolution).toBeGreaterThanOrEqual(0)
+    expect(sessionRebase).toBeGreaterThan(sessionResolution)
+    expect(exactProfileResolution).toBeGreaterThan(sessionRebase)
+    expect(runtimeProfile).not.toContain(
+      'The Claude session changed before dispatch; retry this turn on the current session.'
+    )
+  })
+
   it('fingerprints stable seat prefix configuration without hashing user prompts', () => {
     const generationInput = sourceBetween(
       'function providerSeatGenerationInputForPayload(',

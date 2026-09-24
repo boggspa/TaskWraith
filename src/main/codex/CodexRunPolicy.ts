@@ -5,17 +5,64 @@ import {
   statSync,
   type Stats
 } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, parse, resolve, sep } from 'node:path'
+
+import {
+  resolveCodexSandboxControls,
+  type CodexSandboxControls
+} from '../../shared/codexSandboxControls'
 
 export function codexSandboxForMode(
   approvalMode?: string,
-  _fullAccessGranted?: boolean
-): 'read-only' | 'workspace-write' {
-  // Plan is always the read-only floor. A signed full-access grant changes
-  // which workspace tools may be called; it must not widen a workspace run's
-  // native filesystem sandbox beyond its declared workspace roots.
-  if (approvalMode === 'plan') return 'read-only'
-  return 'workspace-write'
+  fullAccessGranted?: boolean
+): 'read-only' | 'workspace-write' | 'danger-full-access' {
+  return resolveCodexSandboxControls({
+    planMode: approvalMode === 'plan',
+    fullAccessGranted: fullAccessGranted === true,
+    allowNativeWorkspaceWrite: true,
+    readableRoots: [],
+    writableRoots: [],
+    networkAccess: false
+  }).sandbox
+}
+
+export interface ResolveDesktopCodexSandboxControlsInput {
+  readonly approvalMode?: string
+  readonly workspace: string
+  readonly scope: 'workspace' | 'global'
+  readonly fullAccessGranted: boolean
+  readonly networkAccess: boolean
+}
+
+/**
+ * Desktop root/network projection around the shared Codex permission mapping.
+ * Ordinary workspace chats retain the exact-mutation read-only native boundary;
+ * a verified Full Access grant deliberately outranks that boundary. Global
+ * chats retain their host-root workspace policy below Full Access.
+ */
+export function resolveDesktopCodexSandboxControls(
+  input: ResolveDesktopCodexSandboxControlsInput
+): CodexSandboxControls {
+  const workspaceRoot = resolve(input.workspace)
+  const hostRoot = parse(workspaceRoot).root || sep
+  const gitMetadataRoots =
+    input.scope === 'global' ? [] : codexGitMetadataRootsForWorkspace(workspaceRoot)
+  const readableRoots =
+    input.scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
+  const writableRoots =
+    input.scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
+  return resolveCodexSandboxControls({
+    planMode: input.approvalMode === 'plan',
+    fullAccessGranted: input.fullAccessGranted,
+    allowNativeWorkspaceWrite: input.scope === 'global',
+    readableRoots,
+    writableRoots,
+    networkAccess: input.networkAccess
+  })
+}
+
+function uniqueRoots(roots: readonly string[]): string[] {
+  return [...new Set(roots.map((root) => resolve(root)))]
 }
 
 export interface CodexGitMetadataFs {

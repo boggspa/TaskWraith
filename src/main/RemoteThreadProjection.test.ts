@@ -18,6 +18,9 @@ import {
   buildStaleRunSettlementNotice
 } from './RunFailureNotice'
 import type { ContinuationHopsChangePayload } from '../shared/continuationHopsChange'
+import type { AutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
+import type { BlackboardChangePayload } from '../shared/blackboardChange'
+import type { ExecutionPlanChangePayload } from '../shared/executionPlanChange'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -667,6 +670,52 @@ describe('RemoteThreadProjection', () => {
       expect(toolRows[1].toolSummary?.activityCount).toBe(1)
     })
 
+    it('omits wrapper-only rows and counts only concrete tools in mixed bursts', () => {
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          {
+            id: 'wrapper-only',
+            role: 'tool',
+            content: '',
+            timestamp: FIXED,
+            toolActivities: [
+              activity({
+                id: 'wrapper-1',
+                toolName: 'callmcptool',
+                displayName: 'Used callmcptool',
+                category: 'unknown'
+              })
+            ]
+          },
+          {
+            id: 'mixed-tools',
+            role: 'tool',
+            content: '',
+            timestamp: FIXED,
+            toolActivities: [
+              activity({
+                id: 'wrapper-2',
+                toolName: 'mcp',
+                displayName: 'MCP',
+                category: 'unknown'
+              }),
+              activity({
+                id: 'read-1',
+                toolName: 'read_file',
+                displayName: 'Read file',
+                category: 'read'
+              })
+            ]
+          }
+        ]
+      )
+
+      expect(snap.rows.map((row) => row.id)).toEqual(['mixed-tools'])
+      expect(snap.rows[0].toolSummary).toMatchObject({ activityCount: 1, status: 'success' })
+      expect(snap.rows[0].toolSummary?.tools?.map((tool) => tool.name)).toEqual(['Read file'])
+    })
+
     it('projects ensemble round identity on rows and run summaries', () => {
       const snap = project(
         { kind: 'latestN', n: 50 },
@@ -724,9 +773,84 @@ describe('RemoteThreadProjection', () => {
       )
       const closeoutRow = snap.rows.find((row) => row.id === 'closeout-round-1')
       expect(closeoutRow?.speaker).toBe('TaskWraith')
+      expect(closeoutRow?.isCloseout).toBe(true)
+      // Older persisted close-outs may not have the explicit scope stamp;
+      // their immutable closeoutRoundId is still enough to identify round
+      // authority for the mobile completion card.
+      expect(closeoutRow?.closeoutScope).toBe('ensembleRound')
+      expect(closeoutRow?.closeoutRoundId).toBe('round-1')
       // Inherits the round id from closeoutRoundId → it is the round's last
       // tagged row, so iOS anchors the Task-complete card after the close-out.
       expect(closeoutRow?.ensembleRoundId).toBe('round-1')
+    })
+
+    it('keeps explicit round-close authority when generic metadata is stale', () => {
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            id: 'authoritative-closeout',
+            role: 'system',
+            content: 'Close-out.',
+            metadata: {
+              kind: 'taskWraithCloseout',
+              closeoutScope: 'ensembleRound',
+              closeoutRoundId: 'round-authoritative',
+              closeoutStatus: 'cancelled',
+              closeoutDurationMs: 42_000,
+              // A stale generic field must never redirect a close-out card to
+              // another round after a resumed/reconciled transcript.
+              ensembleRoundId: 'round-stale'
+            }
+          })
+        ]
+      )
+
+      expect(snap.rows[0]).toMatchObject({
+        isCloseout: true,
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-authoritative',
+        closeoutStatus: 'cancelled',
+        closeoutDurationMs: 42_000,
+        ensembleRoundId: 'round-authoritative'
+      })
+    })
+
+    it('keeps the closeout marker when byte pressure strips epic tables', () => {
+      const snap = project(
+        { kind: 'latestN', n: 1 },
+        [
+          msg(1, {
+            id: 'heavy-closeout',
+            role: 'system',
+            content: 'x'.repeat(4_000),
+            metadata: {
+              kind: 'taskWraithCloseout',
+              closeoutScope: 'ensembleRound',
+              closeoutRoundId: 'round-1',
+              closeoutStatus: 'cancelled',
+              closeoutDurationMs: 42_000,
+              closeoutCommits: Array.from({ length: 24 }, (_, index) => ({
+                hash: `hash-${index}`,
+                subject: 'x'.repeat(240)
+              }))
+            }
+          })
+        ],
+        [],
+        { previewMaxChars: 4_000 }
+      )
+
+      const fitted = fitRemoteThreadSnapshotToByteBudget(snap, 1_000)
+      expect(fitted.rows).toHaveLength(1)
+      expect(fitted.rows[0]).toMatchObject({
+        isCloseout: true,
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-1',
+        closeoutStatus: 'cancelled',
+        closeoutDurationMs: 42_000
+      })
+      expect(fitted.rows[0].closeoutCommits).toBeUndefined()
     })
 
     it('projects closeout Participant/Commit tables for the iOS Task-complete epic stack', () => {
@@ -792,7 +916,8 @@ describe('RemoteThreadProjection', () => {
                   status: 'created',
                   additions: 18
                 }
-              ]
+              ],
+              closeoutFileChangesTotal: 75
             }
           })
         ]
@@ -833,6 +958,7 @@ describe('RemoteThreadProjection', () => {
           additions: 18
         }
       ])
+      expect(closeoutRow?.closeoutFileChangesTotal).toBe(75)
     })
 
     it('projects the close-out Sub-threads table (the last desktop-only epic section)', () => {
@@ -1296,6 +1422,64 @@ describe('RemoteThreadProjection', () => {
           }
         }),
         msg(4, {
+          id: 'handoff-advance',
+          role: 'system',
+          content: 'Continuous handoff 49/124.',
+          metadata: {
+            continuationHopsChange: {
+              event: 'advance',
+              before: 48,
+              after: 49,
+              maxHops: 124,
+              changedAt: '2026-08-15T12:00:30.000Z'
+            }
+          }
+        }),
+        msg(8, {
+          id: 'auto-approvals',
+          role: 'system',
+          content: 'User enabled thread-wide Auto Approvals.',
+          metadata: {
+            autoApprovalsChange: {
+              before: false,
+              after: true,
+              changedAt: '2026-08-15T12:01:00.000Z'
+            }
+          }
+        }),
+        msg(5, {
+          id: 'blackboard-change',
+          role: 'system',
+          content: 'Blackboard updated: note / scout5-competitor-research.',
+          metadata: {
+            blackboardChange: {
+              action: 'updated',
+              key: 'scout5-competitor-research',
+              category: 'note',
+              scope: 'session',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba',
+              changedAt: '2026-08-15T12:02:00.000Z'
+            }
+          }
+        }),
+        msg(6, {
+          id: 'scout-brief-shared',
+          role: 'system',
+          content: 'Scout brief shared · Competitive scout (Alibaba) · Blackboard + next writer.',
+          metadata: {
+            blackboardChange: {
+              action: 'scoutBriefShared',
+              role: 'Competitive scout',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba',
+              changedAt: '2026-08-15T12:03:00.000Z'
+            }
+          }
+        }),
+        msg(7, {
           id: 'ordinary',
           role: 'system',
           content: 'Round closed.',
@@ -1306,8 +1490,16 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0].noticeKind).toBe('fleetWave')
       expect(snap.rows[1].noticeKind).toBe('ensembleBossmanPoll')
       expect(snap.rows[2].noticeKind).toBe('continuationHopsChange')
+      expect(snap.rows[3].noticeKind).toBe('continuationHopsChange')
+      expect(snap.rows[4].noticeKind).toBe('autoApprovalsChange')
+      expect(snap.rows[5].noticeKind).toBe('blackboardChange')
+      expect(snap.rows[5].providerHueClass).toBe('alibaba')
+      expect(snap.rows[5].speaker).toBeUndefined()
+      expect(snap.rows[6].noticeKind).toBe('blackboardChange')
+      expect(snap.rows[6].providerHueClass).toBe('alibaba')
+      expect(snap.rows[6].speaker).toBeUndefined()
       // Ordinary chrome keeps folding — the stamp marks the exceptions only.
-      expect(snap.rows[3].noticeKind).toBeUndefined()
+      expect(snap.rows[7].noticeKind).toBeUndefined()
     })
 
     it('rejects a malformed hop-change payload rather than stamping it', () => {
@@ -1329,6 +1521,83 @@ describe('RemoteThreadProjection', () => {
               actor: 'nobody',
               changedAt: 'soon'
             } as unknown as ContinuationHopsChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBeUndefined()
+    })
+
+    it('stamps a valid execution-plan change and rejects a malformed one', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan-change',
+          role: 'system',
+          content: 'Boss set the execution plan: Ship the parser first.',
+          metadata: {
+            executionPlanChange: {
+              summary: 'Ship the parser first.',
+              actor: 'boss',
+              changedAt: '2026-09-01T10:42:00.000Z'
+            }
+          }
+        }),
+        msg(2, {
+          id: 'bad-plan-change',
+          role: 'system',
+          content: 'Boss set the execution plan: Ship it.',
+          // Same contract as the desktop: what lands on disk is data, not
+          // trusted TypeScript, and a junk payload keeps the plain fallback.
+          metadata: {
+            executionPlanChange: {
+              summary: '',
+              actor: 'nobody',
+              changedAt: 'soon'
+            } as unknown as ExecutionPlanChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBe('executionPlanChange')
+      expect(snap.rows[1].noticeKind).toBeUndefined()
+    })
+
+    it('rejects a malformed Auto Approvals change rather than stamping it', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bad-auto-approvals',
+          role: 'system',
+          content: 'Thread-wide Auto Approvals updated.',
+          metadata: {
+            autoApprovalsChange: {
+              before: false,
+              after: false,
+              changedAt: 'soon'
+            } as unknown as AutoApprovalsChangePayload
+          }
+        })
+      ])
+
+      expect(snap.rows[0].noticeKind).toBeUndefined()
+    })
+
+    it('rejects a malformed Blackboard change rather than stamping it', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bad-blackboard-change',
+          role: 'system',
+          content: 'Blackboard updated.',
+          metadata: {
+            blackboardChange: {
+              action: 'updated',
+              key: '',
+              category: 'note',
+              scope: 'session',
+              provider: 'ollama',
+              displayProviderLabel: 'Alibaba',
+              displayHueClass: 'alibaba); color: red',
+              changedAt: 'soon'
+            } as unknown as BlackboardChangePayload
           }
         })
       ])
@@ -1690,6 +1959,66 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('seatParticipantAdded (user-added seat strip parity)', () => {
+    const addedRow = (seatChange: unknown, overrides = {}) =>
+      msg(1, {
+        id: 'ensemble-seat-added-r1',
+        role: 'system',
+        content: 'Participant Added worker added to the live roster.',
+        metadata: { kind: 'ensembleSeatChange', ensembleRoundId: 'r1', seatChange } as never,
+        ...overrides
+      })
+
+    const ADDED = {
+      participantId: 'p-added',
+      label: 'Added worker',
+      seat: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        role: 'Added worker',
+        seatNumber: 3,
+        permissionPresetId: 'read_only'
+      },
+      appliedAt: '2026-08-05T12:00:00.000Z'
+    }
+
+    it('projects the single added seat and never as a change or roster row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [addedRow(ADDED)])
+      expect(snap.rows[0].seatParticipantAdded).toEqual(ADDED)
+      expect(snap.rows[0].seatChange).toBeUndefined()
+      expect(snap.rows[0].seatRoster).toBeUndefined()
+      // Still an ordinary system row carrying its sentence, so a client
+      // without the strip renders exactly what it always has.
+      expect(snap.rows[0].kind).toBe('system')
+      expect(snap.rows[0].preview).toContain('Participant Added worker added to the live roster.')
+    })
+
+    it('ignores a payload that looks like a change or a roster', () => {
+      const changeLike = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ ...ADDED, after: ADDED.seat })
+      ])
+      expect(changeLike.rows[0].seatParticipantAdded).toBeUndefined()
+
+      const rosterLike = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ label: 'Ensemble roster applied', seats: [ADDED.seat] })
+      ])
+      expect(rosterLike.rows[0].seatParticipantAdded).toBeUndefined()
+      expect(rosterLike.rows[0].seatRoster).toBeDefined()
+    })
+
+    it('projects nothing without the writer stamp or with no resolvable seat', () => {
+      const unstamped = project({ kind: 'latestN', n: 10 }, [
+        addedRow(ADDED, { metadata: { seatChange: ADDED } as never })
+      ])
+      expect(unstamped.rows[0].seatParticipantAdded).toBeUndefined()
+
+      const noSeat = project({ kind: 'latestN', n: 10 }, [
+        addedRow({ ...ADDED, seat: { model: 'kimi-k2.7-code' } })
+      ])
+      expect(noSeat.rows[0].seatParticipantAdded).toBeUndefined()
+    })
+  })
+
   describe('agentQuestion', () => {
     const ask = (overrides = {}, runId?: string) =>
       msg(1, {
@@ -1749,6 +2078,85 @@ describe('RemoteThreadProjection', () => {
       // A marker without a runId attaches nothing.
       const unlinked = project({ kind: 'latestN', n: 10 }, [ask()], runs)
       expect(unlinked.rows[0].agentQuestion?.seat).toBeUndefined()
+    })
+
+    it('projects the SEALED tier, not the configured one, when they disagree', () => {
+      // The remote twin of the desktop fix: the snapshot's preset is what the
+      // seat was CONFIGURED as, and `permissionPosture.presetId` is the signed
+      // value the run actually executed under. Reading config here let the
+      // phone inherit the desktop's wrong badge — a lane sealed read_only
+      // wearing its roster's wider tier.
+      const seatRun = (extra: Record<string, unknown> = {}) =>
+        ({
+          runId: 'run-q1',
+          provider: 'claude',
+          ensembleRole: 'SolBoss',
+          ensembleOrder: 1,
+          ensembleSeatSnapshot: {
+            provider: 'claude',
+            model: 'claude-opus-5',
+            configuredPermissionPresetId: 'workspace_write'
+          },
+          ...extra
+        }) as unknown as ChatRun
+
+      const sealed = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            presetId: 'read_only',
+            readOnly: true,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        })
+      ])
+      expect(sealed.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('read_only')
+
+      // No posture (a run recorded before postures existed) keeps the captured
+      // configuration rather than projecting nothing.
+      const legacy = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [seatRun()])
+      expect(legacy.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('workspace_write')
+
+      // A posture with no preset falls through instead of blanking the tier.
+      const blank = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: false
+          }
+        })
+      ])
+      expect(blank.rows[0].agentQuestion?.seat?.permissionPresetId).toBe('workspace_write')
+
+      const signedBlankPreset = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        seatRun({
+          permissionPosture: {
+            schemaVersion: 1,
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        })
+      ])
+      expect(signedBlankPreset.rows[0].agentQuestion?.seat?.permissionPresetId).not.toBe(
+        'workspace_write'
+      )
+      expect(signedBlankPreset.rows[0].agentQuestion?.seat?.permissionPresetId).toBeUndefined()
+
+      // Neither side carries a tier: the phone shows NO chip, same honest
+      // unknown the desktop row keeps.
+      const unknown = project({ kind: 'latestN', n: 10 }, [ask({}, 'run-q1')], [
+        {
+          runId: 'run-q1',
+          provider: 'claude',
+          ensembleSeatSnapshot: { provider: 'claude', model: 'claude-opus-5' }
+        } as unknown as ChatRun
+      ])
+      expect(unknown.rows[0].agentQuestion?.seat?.permissionPresetId).toBeUndefined()
     })
 
     it('projects metadata.agentQuestion as an inline structured field (still an attention row)', () => {
@@ -1986,6 +2394,12 @@ describe('RemoteThreadProjection', () => {
               id: 'p2',
               messageIds: ['m2'],
               toolActivities: [
+                activity({
+                  id: 'wrapper',
+                  toolName: 'callmcptool',
+                  displayName: 'Used callmcptool',
+                  category: 'unknown'
+                }),
                 activity({ id: 'a1', toolName: 'read', displayName: 'Read', category: 'read' })
               ]
             },
@@ -3843,7 +4257,37 @@ describe('RemoteThreadProjection', () => {
         } as import('./store/types').ChatRun
       ])
       const message = msg(1, { runId: 'run-1' })
-      expect(labeler(message)).toBe('Codex · gpt-5.4-medium')
+      expect(labeler(message)).toBe('Codex · GPT-5.4 Medium')
+    })
+
+    it('uses the frozen bridge or run provider before the later chat provider', () => {
+      const labeler = soloSpeakerForMessage('codex', [
+        {
+          runId: 'pi-run',
+          provider: 'pi',
+          actualModel: 'deepseek/deepseek-v4-pro',
+          status: 'completed'
+        } as import('./store/types').ChatRun,
+        {
+          runId: 'ollama-run',
+          provider: 'ollama',
+          actualModel: 'glm-5.2:cloud',
+          status: 'completed'
+        } as import('./store/types').ChatRun
+      ])
+
+      expect(labeler(msg(1, { runId: 'pi-run' }))).toBe('DeepSeek · V4 Pro')
+      expect(labeler(msg(3, { runId: 'ollama-run' }))).toBe('Z.ai · GLM 5.2')
+      expect(
+        labeler(
+          msg(5, {
+            metadata: {
+              assistantProvider: 'ollama',
+              providerModel: 'glm-5.2:cloud'
+            }
+          })
+        )
+      ).toBe('Z.ai · GLM 5.2')
     })
 
     it('freezes a solo Pi assistant hue from its linked run model', () => {

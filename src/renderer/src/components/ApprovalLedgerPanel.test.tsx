@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
+import { ApprovalLedgerPanel, CommandRuleAdminSection } from './ApprovalLedgerPanel'
 import type { AgenticWorkspaceGrant } from '../../../main/store/types'
+import type { CommandRuleListItem } from '../../../shared/commandRules'
 
 function makeGrant(overrides: Partial<AgenticWorkspaceGrant> = {}): AgenticWorkspaceGrant {
   return {
@@ -35,6 +36,31 @@ describe('ApprovalLedgerPanel', () => {
     const html = renderToStaticMarkup(<ApprovalLedgerPanel workspaceGrants={[]} />)
 
     expect(html).toContain('No active workspace grants.')
+    expect(html).toContain('No exact command rules.')
+  })
+
+  it('renders exact command rules as explicitly unsandboxed and revocable', () => {
+    const rule: CommandRuleListItem = {
+      id: 'rule-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/Users/example/Documents/TaskWraith',
+      cwdRelativePath: '.',
+      executablePath: '/usr/local/bin/npm',
+      argv: ['run', 'test'],
+      fingerprint: 'a'.repeat(64),
+      riskClass: 'host_exact_unsandboxed',
+      createdAt: '2026-08-31T12:00:00.000Z',
+      updatedAt: '2026-08-31T12:00:00.000Z'
+    }
+    const html = renderToStaticMarkup(
+      <CommandRuleAdminSection rules={[rule]} onRevoke={() => undefined} />
+    )
+
+    expect(html).toContain('Exact command allowlist')
+    expect(html).toContain('npm run test')
+    expect(html).toContain('host unsandboxed')
+    expect(html).toContain('aaaaaaaaaaaa')
+    expect(html).toContain('Revoke')
   })
 
   // Slice (1.0.3) — bulk-forget affordance. The button surfaces only

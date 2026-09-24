@@ -84,7 +84,7 @@ struct TranscriptStackCollapseTests {
         #expect(summary.errorCount == 1)
     }
 
-    @Test func plainSystemNoticesAndCompactionRecordsCollapseButCardsDoNot() throws {
+    @Test func plainSystemNoticesCollapseButCompactionRecordsAndCardsDoNot() throws {
         let notice = try row(
             #"{"id":"s1","role":"system","preview":"@-mention: extra turn appended for kimi."}"#)
         #expect(twIsPlainSystemNoticeRow(notice))
@@ -95,12 +95,13 @@ struct TranscriptStackCollapseTests {
 
         let compaction = try row(
             #"{"id":"s2","role":"system","preview":"Context compacted: 80% -> 20%"}"#)
-        // Electron treats settled context-compaction records as ordinary
-        // collapsed notices; expanding the iOS one-liner restores the card.
-        #expect(twIsPlainSystemNoticeRow(compaction))
+        #expect(!twIsPlainSystemNoticeRow(compaction))
         let compactionFailure = try row(
             #"{"id":"s2-failed","role":"system","preview":"Context compaction failed · retry"}"#)
-        #expect(twIsPlainSystemNoticeRow(compactionFailure))
+        #expect(!twIsPlainSystemNoticeRow(compactionFailure))
+        let structuredCompaction = try row(
+            #"{"id":"s2-structured","role":"system","preview":"Kontext verdichtet","contextCompaction":{"phase":"completed"}}"#)
+        #expect(!twIsPlainSystemNoticeRow(structuredCompaction))
         let question = try row(
             #"{"id":"q1","role":"system","preview":"Pick one","agentQuestion":{"promptId":"p1","question":"Pick one"}}"#)
         #expect(!twIsPlainSystemNoticeRow(question))
@@ -108,6 +109,22 @@ struct TranscriptStackCollapseTests {
         #expect(!twIsPlainSystemNoticeRow(empty))
         let assistant = try row(#"{"id":"a1","role":"assistant","preview":"hello"}"#)
         #expect(!twIsPlainSystemNoticeRow(assistant))
+    }
+
+    @Test func durableCloseoutsNeverFoldIntoSystemOneLiners() throws {
+        // The desktop excludes taskWraithCloseout even when its epic tables
+        // are empty. The explicit marker preserves that standing after a
+        // byte-limited mobile projection has stripped table payloads.
+        let closeout = try row(
+            """
+            {"id":"closeout-1","role":"system","kind":"system","speaker":"TaskWraith",
+             "isCloseout":true,"closeoutScope":"ensembleRound","closeoutRoundId":"round-1",
+             "closeoutStatus":"cancelled","preview":"Worked for 42 seconds."}
+            """
+        )
+
+        #expect(!twIsPlainSystemNoticeRow(closeout))
+        #expect(!twCanCollapseIntoStack(closeout))
     }
 
     @Test func peopleContributionsNeverFoldToAnonymousSystemNotices() throws {

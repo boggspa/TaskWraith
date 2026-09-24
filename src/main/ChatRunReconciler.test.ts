@@ -3,6 +3,8 @@ import {
   BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS,
   bridgeTranscriptActivityIsLive,
   bridgeTranscriptIsOwnedByFinalizer,
+  chatHasReconcilableRun,
+  chatRunIsReconcilable,
   CHAT_RUN_STALE_EXIT_CODE,
   CHAT_RUN_STALE_REASON,
   CHAT_RUN_STALE_SETTLEMENT_STATUS,
@@ -14,7 +16,8 @@ import {
   settleStaleChatRun,
   terminalChatRunSealFromExactSession
 } from './ChatRunReconciler'
-import { staleRunSettlementNoticeId } from './RunFailureNotice'
+import { STALE_RUN_SETTLEMENT_METADATA_KEY, staleRunSettlementNoticeId } from './RunFailureNotice'
+import type { StaleRunSettlementCoverage } from './RunFailureNotice'
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
 
 const NOW = '2026-07-20T12:00:00.000Z'
@@ -30,11 +33,7 @@ function run(partial: Partial<ChatRun> & Pick<ChatRun, 'runId'>): ChatRun {
   }
 }
 
-function chat(
-  id: string,
-  runs: ChatRun[],
-  extra: Partial<ChatRecord> = {}
-): ChatRecord {
+function chat(id: string, runs: ChatRun[], extra: Partial<ChatRecord> = {}): ChatRecord {
   return {
     appChatId: id,
     title: id,
@@ -89,12 +88,41 @@ describe('settleStaleChatRun', () => {
   })
 
   it('preserves an existing exitCode and endedAt', () => {
-    const settled = settleStaleChatRun(
-      run({ runId: 'r1', exitCode: 42, endedAt: OLD }),
-      NOW
-    )
+    const settled = settleStaleChatRun(run({ runId: 'r1', exitCode: 42, endedAt: OLD }), NOW)
     expect(settled.exitCode).toBe(42)
     expect(settled.endedAt).toBe(OLD)
+  })
+
+  it('stamps provenance naming the seal it authored', () => {
+    const settled = settleStaleChatRun(run({ runId: 'r1', status: 'starting' }), NOW)
+    expect(settled.staleSettlementProvenance).toEqual({
+      schemaVersion: 1,
+      origin: 'stale-run-reconciler',
+      runId: 'r1',
+      settledAt: NOW,
+      previousStatus: 'starting',
+      authoredEndedAt: true,
+      authoredExitCode: true
+    })
+  })
+
+  it('marks only the fields this settlement actually wrote', () => {
+    const settled = settleStaleChatRun(run({ runId: 'r1', status: 'running', endedAt: OLD }), NOW)
+    expect(settled.endedAt).toBe(OLD)
+    expect(settled.exitCode).toBe(CHAT_RUN_STALE_EXIT_CODE)
+    expect(settled.staleSettlementProvenance).toMatchObject({
+      previousStatus: 'running',
+      authoredEndedAt: false,
+      authoredExitCode: true
+    })
+  })
+
+  it('marks nothing authored when the run already sealed its own fields', () => {
+    const settled = settleStaleChatRun(run({ runId: 'r1', exitCode: 42, endedAt: OLD }), NOW)
+    expect(settled.staleSettlementProvenance).toMatchObject({
+      authoredEndedAt: false,
+      authoredExitCode: false
+    })
   })
 })
 
@@ -166,9 +194,7 @@ describe('reconcileStaleChatRuns', () => {
       NOW,
       { minAgeMs: 30_000, nowMs: NOW_MS }
     )
-    expect(result.settlements).toEqual([
-      { chatId: 'c1', runId: 'old', previousStatus: 'running' }
-    ])
+    expect(result.settlements).toEqual([{ chatId: 'c1', runId: 'old', previousStatus: 'running' }])
     expect(result.chats[0]?.runs.map((r) => r.status)).toEqual(['running', 'failed'])
   })
 
@@ -360,11 +386,9 @@ describe('reconcileStaleChatRuns', () => {
       ]
       const result = reconcileStaleChatRuns(
         [
-          chat(
-            'c1',
-            [run({ runId: 'stale-1' }), run({ runId: 'done-1', status: 'success' })],
-            { messages }
-          )
+          chat('c1', [run({ runId: 'stale-1' }), run({ runId: 'done-1', status: 'success' })], {
+            messages
+          })
         ],
         () => false,
         NOW
@@ -423,6 +447,60 @@ describe('reconcileStaleChatRuns', () => {
         NOW
       )
       expect(result.chats).toEqual([])
+    })
+
+    it('stamps every settled run and covers every id on the one notice', () => {
+      const result = reconcileStaleChatRuns(
+        [
+          chat('c1', [
+            run({ runId: 'stale-1', status: 'running', provider: 'ollama' }),
+            run({ runId: 'stale-2', status: 'starting', provider: 'codex' }),
+            run({ runId: 'stale-3', status: 'running', provider: 'ollama' }),
+            run({ runId: 'stale-4', status: 'queued', provider: 'codex' })
+          ])
+        ],
+        () => false,
+        NOW
+      )
+      const settled = result.chats[0]
+      expect(settled.runs.map((r) => r.runId)).toEqual(['stale-1', 'stale-2', 'stale-3', 'stale-4'])
+      for (const settledRun of settled.runs) {
+        expect(settledRun.status).toBe(CHAT_RUN_STALE_SETTLEMENT_STATUS)
+        expect(settledRun.staleSettlementProvenance).toMatchObject({
+          schemaVersion: 1,
+          origin: 'stale-run-reconciler',
+          runId: settledRun.runId,
+          settledAt: NOW
+        })
+      }
+      expect(settled.runs[1].staleSettlementProvenance?.previousStatus).toBe('starting')
+      // Four ids, past the three-name prose cap — structure keeps them all.
+      const coverage = settled.messages[0].metadata?.[
+        STALE_RUN_SETTLEMENT_METADATA_KEY
+      ] as StaleRunSettlementCoverage
+      expect(coverage.coveredRunIds).toEqual(['stale-1', 'stale-2', 'stale-3', 'stale-4'])
+      expect(coverage.chatId).toBe('c1')
+      expect(settled.messages[0].content).toContain('+1 more')
+    })
+
+    it('leaves provider-sealed runs unstamped and never re-settles its own seal', () => {
+      const first = reconcileStaleChatRuns(
+        [
+          chat('c1', [
+            run({ runId: 'stale-1', status: 'running' }),
+            run({ runId: 'done-1', status: 'success', exitCode: 0 })
+          ])
+        ],
+        () => false,
+        NOW
+      )
+      const done = first.chats[0].runs.find((r) => r.runId === 'done-1')
+      expect(done?.staleSettlementProvenance).toBeUndefined()
+      // A second sweep over the settled output is a complete no-op: no new
+      // settlements, no second notice, no provenance rewrite.
+      const second = reconcileStaleChatRuns(first.chats, () => false, NOW)
+      expect(second.settlements).toEqual([])
+      expect(second.chats).toEqual([])
     })
   })
 })
@@ -713,6 +791,109 @@ describe('reconcileOrphanedRunQueueJobs', () => {
     expect(settlements).toHaveLength(1)
     expect('chatId' in settlements[0]).toBe(false)
   })
+
+  describe('exact live-ownership witness', () => {
+    it('settles exactly as before when no witness is supplied', () => {
+      const jobs = [
+        { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+        { runId: 'run-success', status: 'starting', chatId: 'chat-1' }
+      ]
+      expect(reconcileOrphanedRunQueueJobs(jobs, terminal)).toEqual(
+        reconcileOrphanedRunQueueJobs(jobs, terminal, {})
+      )
+      expect(reconcileOrphanedRunQueueJobs(jobs, terminal)).toHaveLength(2)
+    })
+
+    it('spares a job whose run is still owned, across every candidate status', () => {
+      const settlements = reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-failed', status: 'starting', chatId: 'chat-1' },
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-failed', status: 'cancelling', chatId: 'chat-1' }
+        ],
+        terminal,
+        { isRunLive: (runId) => runId === 'run-failed' }
+      )
+      expect(settlements).toEqual([])
+    })
+
+    it('outranks a terminal-looking seal of ANY status, not just failed', () => {
+      // The seed-then-prepare gap can leave a false 'failed' seal, but a live
+      // owner also outranks 'success'/'cancelled': the queue job is not
+      // orphaned bookkeeping while someone is still responsible for the run.
+      expect(
+        reconcileOrphanedRunQueueJobs(
+          [
+            { runId: 'run-success', status: 'active', chatId: 'chat-1' },
+            { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+            { runId: 'run-cancelled', status: 'cancelling', chatId: 'chat-2' }
+          ],
+          terminal,
+          { isRunLive: () => true }
+        )
+      ).toEqual([])
+    })
+
+    it('still settles the exact runs the witness disowns, sparing only its own', () => {
+      const settlements = reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-success', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-cancelled', status: 'cancelling', chatId: 'chat-2' }
+        ],
+        terminal,
+        { isRunLive: (runId) => runId === 'run-failed' }
+      )
+      expect(settlements.map((settlement) => settlement.runId)).toEqual([
+        'run-success',
+        'run-cancelled'
+      ])
+      expect(settlements.map((settlement) => settlement.nextStatus)).toEqual([
+        'completed',
+        'cancelled'
+      ])
+    })
+
+    it('asks the witness only about jobs that would otherwise settle now', () => {
+      const asked: string[] = []
+      reconcileOrphanedRunQueueJobs(
+        [
+          // Not a candidate status — a future prompt, never a run mirror.
+          { runId: 'run-success', status: 'queued', chatId: 'chat-1' },
+          { runId: 'run-success', status: 'completed', chatId: 'chat-1' },
+          // Candidate status, but the run itself is still active/unknown.
+          { runId: 'run-live', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-unknown', status: 'active', chatId: 'chat-1' },
+          // The only job that reaches the ownership question.
+          { runId: 'run-failed', status: 'active', chatId: 'chat-1' }
+        ],
+        terminal,
+        {
+          isRunLive: (runId) => {
+            asked.push(runId)
+            return false
+          }
+        }
+      )
+      expect(asked).toEqual(['run-failed'])
+    })
+
+    it('settles a disowned run once the owner is gone, so a real orphan still clears', () => {
+      const job = [{ runId: 'run-failed', status: 'active', chatId: 'chat-1' }]
+      // Preparation still in flight — spared.
+      expect(reconcileOrphanedRunQueueJobs(job, terminal, { isRunLive: () => true })).toEqual([])
+      // Owner released (or the process restarted, dropping in-memory owners).
+      expect(reconcileOrphanedRunQueueJobs(job, terminal, { isRunLive: () => false })).toEqual([
+        {
+          runId: 'run-failed',
+          chatId: 'chat-1',
+          previousStatus: 'active',
+          nextStatus: 'failed',
+          runStatus: 'failed'
+        }
+      ])
+    })
+  })
 })
 
 describe('queueJobStatusForTerminalRunStatus', () => {
@@ -723,5 +904,75 @@ describe('queueJobStatusForTerminalRunStatus', () => {
     expect(queueJobStatusForTerminalRunStatus('failed')).toBe('failed')
     expect(queueJobStatusForTerminalRunStatus('exploded')).toBe('failed')
     expect(queueJobStatusForTerminalRunStatus(undefined)).toBe('failed')
+  })
+})
+
+describe('chatRunIsReconcilable', () => {
+  it('accepts every status that projects as active', () => {
+    for (const status of [
+      'running',
+      'queued',
+      'starting',
+      'cancelling',
+      'steer_promoting',
+      'active',
+      'paused'
+    ]) {
+      expect(chatRunIsReconcilable({ status })).toBe(true)
+    }
+  })
+
+  it('rejects a sealed run', () => {
+    expect(chatRunIsReconcilable({ status: 'completed' })).toBe(false)
+    expect(chatRunIsReconcilable({ status: 'failed', endedAt: '2026-01-01T00:00:00.000Z' })).toBe(
+      false
+    )
+  })
+
+  it('accepts a legacy row that never recorded a status and never ended', () => {
+    expect(chatRunIsReconcilable({})).toBe(true)
+  })
+
+  it('rejects a legacy row that ended — history, not evidence of live work', () => {
+    expect(chatRunIsReconcilable({ endedAt: '2026-01-01T00:00:00.000Z' })).toBe(false)
+  })
+})
+
+describe('chatHasReconcilableRun', () => {
+  it('is false for a chat with no runs', () => {
+    expect(chatHasReconcilableRun({ runs: [] })).toBe(false)
+    expect(chatHasReconcilableRun({})).toBe(false)
+  })
+
+  it('is false when every run is sealed', () => {
+    expect(
+      chatHasReconcilableRun({
+        runs: [
+          { runId: 'a', startedAt: 'x', status: 'completed' },
+          { runId: 'b', startedAt: 'x', status: 'failed' }
+        ]
+      } as Parameters<typeof chatHasReconcilableRun>[0])
+    ).toBe(false)
+  })
+
+  it('finds a stuck run hiding UNDER a newer sealed one', () => {
+    // The whole reason the index cannot read `lastRun` alone: the crash case
+    // is an older run left running beneath a run that completed normally.
+    expect(
+      chatHasReconcilableRun({
+        runs: [
+          { runId: 'stuck', startedAt: 'x', status: 'running' },
+          { runId: 'newer', startedAt: 'x', status: 'completed' }
+        ]
+      } as Parameters<typeof chatHasReconcilableRun>[0])
+    ).toBe(true)
+  })
+
+  it('ignores a run with no usable id, matching the reconciler loop', () => {
+    expect(
+      chatHasReconcilableRun({
+        runs: [{ runId: '   ', startedAt: 'x', status: 'running' }]
+      } as Parameters<typeof chatHasReconcilableRun>[0])
+    ).toBe(false)
   })
 })

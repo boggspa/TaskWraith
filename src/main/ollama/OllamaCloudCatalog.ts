@@ -4,6 +4,7 @@ import {
   ollamaCloudBaseModelId
 } from '../../shared/ollamaModelAvailability'
 import { fetchOllamaCloudApiCatalog } from './OllamaCloudApi'
+import { OLLAMA_CLOUD_PROBE_TIMEOUT_MS, type OllamaProbeOutcome } from './OllamaCliSignInMemory'
 
 export interface OllamaCloudModelRecommendation {
   model: string
@@ -22,6 +23,10 @@ export interface OllamaCloudDiscoverySnapshot {
   source?: string
   /** A write-only encrypted key is configured for direct ollama.com API requests. */
   apiKeyConfigured?: boolean
+  /** `authenticated` came from the remembered CLI sign-in, not this probe. */
+  authenticatedFromMemory?: true
+  /** How the daemon account probe (`POST /api/me`) behind `authenticated` ended. */
+  accountProbe?: OllamaProbeOutcome
   models: OllamaCloudModelRecommendation[]
 }
 
@@ -37,6 +42,7 @@ interface JsonResult {
   ok: boolean
   status: number
   value: unknown
+  outcome: OllamaProbeOutcome
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -106,7 +112,11 @@ async function readJson(
   const abort = (): void => controller.abort()
   if (options.signal?.aborted) controller.abort()
   else options.signal?.addEventListener('abort', abort, { once: true })
-  const timer = setTimeout(abort, options.timeoutMs ?? 1_500)
+  let deadlineFired = false
+  const timer = setTimeout(() => {
+    deadlineFired = true
+    controller.abort()
+  }, options.timeoutMs ?? OLLAMA_CLOUD_PROBE_TIMEOUT_MS)
   try {
     const response = await fetchImpl(url, { ...init, signal: controller.signal })
     let value: unknown = null
@@ -121,10 +131,19 @@ async function readJson(
       reachable: true,
       ok: response.ok,
       status: response.status,
-      value
+      value,
+      outcome: 'answered'
     }
   } catch {
-    return { reachable: false, ok: false, status: 0, value: null }
+    // Our own deadline is not a transport verdict: the request may have been
+    // waiting behind a blocked event loop. Only a rejection that arrived before
+    // it fired says anything about whether a daemon is there.
+    const outcome: OllamaProbeOutcome = deadlineFired
+      ? 'timed-out'
+      : options.signal?.aborted
+        ? 'aborted'
+        : 'refused'
+    return { reachable: false, ok: false, status: 0, value: null, outcome }
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', abort)
@@ -167,6 +186,10 @@ export async function discoverOllamaCloud(
       : null
   const explicitlyDisabled = statusCloud?.disabled === true
   const source = optionalString(statusCloud?.source)
+  // LANDMINE, documented on purpose rather than "fixed": a configured API key
+  // is reported as `true` here without ever reaching `/api/me`, so it must not
+  // be threaded into the CLI sign-in memory's account probe — see
+  // `defaultProbeCloudAccount` in `ipc/ollamaAuthHandlers.ts`.
   const authenticated = apiKey
     ? true
     : accountResult.ok
@@ -195,6 +218,7 @@ export async function discoverOllamaCloud(
     supported,
     enabled,
     authenticated,
+    accountProbe: accountResult.outcome,
     ...(plan ? { plan } : {}),
     ...(source ? { source } : {}),
     ...(apiKey ? { apiKeyConfigured: true } : {}),

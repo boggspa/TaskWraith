@@ -1,5 +1,4 @@
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { writePiCerebrasModelRegistration } from '../../host-shared/pi/PiCerebrasModelRegistration'
 import {
   PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS,
   PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS,
@@ -14,38 +13,15 @@ export {
 
 /**
  * Pi reads `models.json` from PI_CODING_AGENT_DIR. TaskWraith gives every
- * run a fresh, owner-only directory, so write the selected Cerebras cap into
- * that isolated home instead of changing the user's global Pi configuration.
+ * run a fresh, owner-only directory. Register the selected Cerebras model and
+ * its optional cap together, without changing the user's global Pi config.
  */
 export function writePiCerebrasCompletionCapOverride(input: {
   isolatedHomeDir: string
   modelId: string
-  maxCompletionTokens: number
+  maxCompletionTokens?: number
 }): void {
-  const modelId = input.modelId.trim()
-  const maxCompletionTokens = normalizePiCerebrasMaxCompletionTokens(input.maxCompletionTokens)
-  if (!modelId || modelId.includes('\0')) {
-    throw new TypeError('Pi Cerebras model id is invalid.')
-  }
-  if (maxCompletionTokens === undefined) {
-    throw new RangeError(
-      `Pi Cerebras completion cap must be a whole number from 1 to ${PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS}.`
-    )
-  }
-
-  const modelsPath = join(input.isolatedHomeDir, 'models.json')
-  const config = {
-    providers: {
-      cerebras: {
-        modelOverrides: {
-          [modelId]: { maxTokens: maxCompletionTokens }
-        }
-      }
-    }
-  }
-  // The directory is freshly created and owner-only. Exclusive creation keeps
-  // a malformed pre-existing config from being overwritten or silently used.
-  writeFileSync(modelsPath, JSON.stringify(config), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+  writePiCerebrasModelRegistration(input)
 }
 
 /** One predicate for "a Cerebras model hit a rate wall" — shared by the

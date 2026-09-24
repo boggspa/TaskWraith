@@ -7,7 +7,7 @@ import type {
 } from '../../../main/store/types'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
 import { getProviderLabel } from './providerLabels'
-import { humaniseModelIdCompact } from './modelDisplayName'
+import { humaniseRecordedModelIdCompact } from './modelDisplayName'
 import { collectCloseoutCommits, validationSummarySentence } from './taskWraithCloseoutMessage'
 
 /** Size caps for the digest handed to the on-device summarizer. The main
@@ -111,7 +111,7 @@ function durationField(
 function modelField(run: ChatRun): Pick<CloseoutSummaryRequest, 'model'> {
   const modelId = run.actualModel || run.requestedModel
   if (!modelId) return {}
-  return { model: humaniseModelIdCompact(run.provider, modelId) || modelId }
+  return { model: humaniseRecordedModelIdCompact(run.provider, modelId) || modelId }
 }
 
 function promptField(
@@ -236,7 +236,7 @@ function participantsField(
         label: participant.role?.trim() || getProviderLabel(participant.provider),
         provider: getProviderLabel(participant.provider),
         ...(modelId
-          ? { model: humaniseModelIdCompact(participant.provider, modelId) || modelId }
+          ? { model: humaniseRecordedModelIdCompact(participant.provider, modelId) || modelId }
           : {}),
         ...(participant.status ? { status: participant.status } : {}),
         ...finalTextField(participantMessages, DIGEST_PARTICIPANT_TEXT_MAX_CHARS)

@@ -22,6 +22,9 @@ describe('normalizeBrowserUrlInput', () => {
     expect(normalizeBrowserUrlInput('localhost:3000')).toBe('http://localhost:3000/')
     expect(normalizeBrowserUrlInput('127.0.0.1:5173/app')).toBe('http://127.0.0.1:5173/app')
     expect(normalizeBrowserUrlInput('192.168.1.20:8080')).toBe('http://192.168.1.20:8080/')
+    expect(normalizeBrowserUrlInput('172.20.1.4:8080')).toBe('http://172.20.1.4:8080/')
+    expect(normalizeBrowserUrlInput('100.64.2.1:9000')).toBe('http://100.64.2.1:9000/')
+    expect(normalizeBrowserUrlInput('[fd00::1]:8080')).toBe('http://[fd00::1]:8080/')
   })
 
   it('rejects non-web schemes instead of fixing them', () => {

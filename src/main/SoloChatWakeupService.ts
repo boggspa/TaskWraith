@@ -280,6 +280,13 @@ export interface SoloChatWakeupServiceDeps {
   /** Returns iterable of all chats so the recovery scanner can
    * collect solo wakeups across every chat. */
   listChats: () => Iterable<ChatRecord>
+  /** Narrowed pre-filter of `listChats` for wakeup scans: the chats that might
+   * hold solo wakeups. Production wires `AppStore.getChatsWithSoloWakeups`,
+   * which reads only vouched candidates instead of parsing the whole corpus.
+   * Optional so unit harnesses can omit it; absent, scans fall back to
+   * `listChats`. Callers that need EVERY chat id (history fences) keep using
+   * `listChats` directly. */
+  listWakeupCandidateChats?: () => Iterable<ChatRecord>
   /** Programmatic run dispatch — same surface ensemble + bridge +
    * sub-thread paths all use. */
   dispatchRun: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
@@ -734,13 +741,19 @@ export class SoloChatWakeupService {
     )
   }
 
+  /** Chats a wakeup scan must visit: the narrowed candidates when wired,
+   * else the whole corpus. */
+  private scanChatsForWakeups(): Iterable<ChatRecord> {
+    return this.deps.listWakeupCandidateChats?.() ?? this.deps.listChats()
+  }
+
   /**
    * Collect every pending solo wakeup across all chats. Used by
    * boot-time recovery + ad-hoc lookups.
    */
   getAllPersistedWakeups(): SoloChatWakeupRecord[] {
     const out: SoloChatWakeupRecord[] = []
-    for (const chat of this.deps.listChats()) {
+    for (const chat of this.scanChatsForWakeups()) {
       if (chat.chatKind === 'ensemble') continue
       const records = chat.soloWakeups
       if (!records) continue
@@ -824,7 +837,7 @@ export class SoloChatWakeupService {
   private findRecordByWakeupId(
     wakeupId: string
   ): { chat: ChatRecord; wakeup: SoloChatWakeupRecord } | null {
-    for (const chat of this.deps.listChats()) {
+    for (const chat of this.scanChatsForWakeups()) {
       if (chat.chatKind === 'ensemble') continue
       const record = chat.soloWakeups?.[wakeupId]
       if (record) return { chat, wakeup: record }

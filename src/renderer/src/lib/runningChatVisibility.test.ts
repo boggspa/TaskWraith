@@ -166,6 +166,25 @@ describe('visibleRunningChatIds', () => {
     expect(visibleRunningChatIds(['chat-orphan'], {}, {})).toEqual(['chat-orphan'])
   })
 
+  it('retires an orphaned running id whose row was projected to a summary', () => {
+    const runningIds = new Set(['chat-projected'])
+    // Non-empty input is asserted so an empty result can never pass vacuously.
+    expect(runningIds.size).toBe(1)
+    expect(
+      visibleRunningChatIds(
+        runningIds,
+        {},
+        {
+          'chat-projected': {
+            appChatId: 'chat-projected',
+            runs: [],
+            lastRun: { runId: 'r1', endedAt: 'now' }
+          }
+        }
+      )
+    ).toEqual([])
+  })
+
   it('combines the pending-approval filter with the terminal-run filter', () => {
     expect(
       visibleRunningChatIds(
@@ -248,6 +267,31 @@ describe('hasTerminalLastRun', () => {
   it('returns false for a chat with no runs', () => {
     expect(hasTerminalLastRun({ appChatId: 'c', runs: [] })).toBe(false)
     expect(hasTerminalLastRun({ appChatId: 'c' })).toBe(false)
+  })
+
+  it('reads the projected lastRun when the transcript was projected away', () => {
+    // A paged shell / catalogue projection carries `runs: []` by construction
+    // and keeps the outcome on `lastRun`. The old tail-only read returned
+    // false here forever, so the orphan filter below could never fire.
+    expect(hasTerminalLastRun({ appChatId: 'c', runs: [], lastRun: { endedAt: 'now' } })).toBe(true)
+    expect(hasTerminalLastRun({ appChatId: 'c', runs: [], lastRun: { status: 'failed' } })).toBe(
+      true
+    )
+    expect(hasTerminalLastRun({ appChatId: 'c', runs: [], lastRun: { status: 'running' } })).toBe(
+      false
+    )
+  })
+
+  it('prefers canonical runs over lastRun, so the widening never swaps a run', () => {
+    // Ordering is load-bearing: whenever the canonical array is non-empty the
+    // result must be identical to the old tail read.
+    expect(
+      hasTerminalLastRun({
+        appChatId: 'c',
+        runs: [{ status: 'running' }],
+        lastRun: { endedAt: 'now' }
+      })
+    ).toBe(false)
   })
 
   it('returns true when the last run has an endedAt', () => {

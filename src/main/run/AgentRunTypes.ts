@@ -14,6 +14,7 @@ import type {
   ProviderRunReroute
 } from '../store/types'
 import type { ResolvedProjectReferenceContext } from '../../shared/projectReferenceContext'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 
 // Phase B1: AgentRunPayload + AgentRunRoute exported so extracted run services
 // can type their public surface without importing from main/index.ts.
@@ -158,6 +159,12 @@ export interface AgentRunPayload {
   providerSetupAbortSignal?: AbortSignal
   runtimeWorktree?: RuntimeWorktreeIntent
   effectivePermissions?: EffectiveRunPermissions
+  /**
+   * Host-stamped provenance of the prompt when it arrived through a machine
+   * channel (the local-control socket); the seeded user row carries it as
+   * `metadata.origin`. Never wire-supplied: the paired-device decoder strips it.
+   */
+  origin?: ChatMessageOrigin
   /**
    * HMAC over the run's permission posture (`approvalMode` +
    * `effectivePermissions`), stamped by the main-side producer that

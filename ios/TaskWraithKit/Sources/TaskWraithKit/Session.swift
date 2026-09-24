@@ -13,6 +13,17 @@
 import Foundation
 import CryptoKit
 
+/// Same gate and same deferred-evaluation contract as RelayTransportClient's
+/// `dbg` (which is private to that actor). `@autoclosure` is load-bearing, not
+/// style: the gate is checked INSIDE, so an eager `String` parameter would make
+/// every caller build its message even in production.
+private let twkSessionDebugEnabled =
+    ProcessInfo.processInfo.environment["TWK_DEBUG"] == "1"
+
+private func dbg(_ line: @autoclosure () -> String) {
+    if twkSessionDebugEnabled { FileHandle.standardError.write(Data("[twk] \(line())\n".utf8)) }
+}
+
 public final class E2eeSession {
     public enum SessionError: Error, Sendable {
         case macIdentityMismatch
@@ -51,6 +62,7 @@ public final class E2eeSession {
     /// Relay WebSocket pings only prove the relay is awake; this counter proves
     /// the Mac endpoint itself decrypted our ping and returned a pong.
     private var receivedPongCount: UInt64 = 0
+    private var authenticatedInboundCount: UInt64 = 0
 
     // Per-connection handshake state.
     private var ephemeral: Curve25519.KeyAgreement.PrivateKey?
@@ -109,6 +121,11 @@ public final class E2eeSession {
     public func takeEstablishedEdge() -> Bool { defer { establishedEdge = false }; return establishedEdge }
     public func takeError() -> Error? { defer { pendingError = nil }; return pendingError }
     public var peerPongCount: UInt64 { receivedPongCount }
+    /// Inbound frames that passed AES-GCM authentication. Only the peer holds
+    /// the key, so every one is proof the peer is live right now — evidence a
+    /// liveness probe can accept when the peer's pong is queued behind a large
+    /// push it is still streaming to us.
+    public var peerAuthenticatedFrameCount: UInt64 { authenticatedInboundCount }
 
     /// Begin (or restart, after reconnect) the handshake.
     public func start() {
@@ -380,10 +397,26 @@ public final class E2eeSession {
                 nonce: Base64.decode(frame.nonce) ?? Data(), ct: Base64.decode(frame.ct) ?? Data(),
                 tag: Base64.decode(frame.tag) ?? Data()))
         lastRecvSeq = frame.seq
+        authenticatedInboundCount &+= 1
         if let ack = frame.ack { trimReplayBuffer(ack) }
 
-        guard let obj = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
-            let method = obj["method"] as? String
+        // The ONLY site in the transport that can throw Foundation's
+        // "isn't in the correct format" — and it sits AFTER `TWCipher.open`, so
+        // the bytes are authenticated: a throw here means the Mac sealed
+        // something this build cannot parse, not that the wire corrupted it.
+        // Breadcrumb the payload so a repeating throw identifies itself instead
+        // of surfacing as an unattributed banner (gated on TWK_DEBUG, like the
+        // rest of `dbg`).
+        let obj: [String: Any]?
+        do {
+            obj = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any]
+        } catch {
+            dbg(
+                "onEncrypted PARSE-FAIL seq=\(frame.seq) bytes=\(plaintext.count) "
+                    + "head=\(String(data: plaintext.prefix(120), encoding: .utf8) ?? "<non-utf8>")")
+            throw error
+        }
+        guard let obj, let method = obj["method"] as? String
         else { return }
         let msgId = obj["msgId"] as? Int ?? 0
 

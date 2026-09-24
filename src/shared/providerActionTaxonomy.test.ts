@@ -298,6 +298,24 @@ describe('provider action taxonomy', () => {
     }
   })
 
+  it('classifies fresh opportunity redemption as non-mutating user elicitation', () => {
+    expect(TASKWRAITH_TOOL_ACTIONS.redeem_permission_opportunity).toEqual({
+      toolClass: 'ui_elicitation',
+      service: 'mcpTools',
+      operation: 'user.elicit',
+      dispatchOwner: 'user-question',
+      mutation: 'none',
+      lock: 'none',
+      networkEgress: 'none'
+    })
+    expect(resolveToolDispatchContractStrict('redeem_permission_opportunity')).toMatchObject({
+      ok: true,
+      toolClass: 'ui_elicitation',
+      mutation: 'none',
+      lock: 'none'
+    })
+  })
+
   it('covers the real advertised gateway and role-scoped audit unions exactly', () => {
     expect(TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
     expect(TAXONOMY_AUDIT_MCP_TOOL_NAMES).toEqual(AUDIT_MCP_TOOL_NAMES)
@@ -393,7 +411,7 @@ describe('provider action taxonomy', () => {
         parameters: { name: null }
       }
     ]) {
-      expect(resolveToolDispatchContractStrict('capability_invoke', args), args).toMatchObject({
+      expect(resolveToolDispatchContractStrict('capability_invoke', args), JSON.stringify(args)).toMatchObject({
         ok: false,
         code: 'gateway_target_identity_conflict'
       })
@@ -473,6 +491,33 @@ describe('provider action taxonomy', () => {
         rawInput: { driver: 'web', url: 'http://localhost:3000' }
       })
     ).toMatchObject({ ok: true, service: 'mcpTools' })
+  })
+
+  it('classifies fixed emulator open, pixel observation, and exact-surface step separately', () => {
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_open).toMatchObject({
+      toolClass: 'orchestration',
+      service: 'mcpTools',
+      operation: 'application.mutate',
+      dispatchOwner: 'emulator',
+      mutation: 'host-state',
+      lock: 'application-resource'
+    })
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_observe).toMatchObject({
+      toolClass: 'orchestration',
+      service: 'mcpTools',
+      operation: 'application.read',
+      dispatchOwner: 'emulator',
+      mutation: 'host-state',
+      lock: 'application-resource'
+    })
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_step).toMatchObject({
+      toolClass: 'workspace_write',
+      service: 'canvasInteraction',
+      operation: 'application.mutate',
+      dispatchOwner: 'emulator',
+      mutation: 'attached-application',
+      lock: 'application-resource'
+    })
   })
 
   it('gives every mutation scope an explicit matching lock policy', () => {
@@ -810,6 +855,7 @@ describe('provider action taxonomy', () => {
       'mcp__taskwraith-broker__',
       'mcp__taskwraith-grok__',
       'mcp__taskwraith-mistral__',
+      'mcp__taskwraith-devin__',
       'mcp_taskwraith-broker_',
       'mcp_taskwraith-broker-',
       'mcp_taskwraith_',
@@ -822,6 +868,7 @@ describe('provider action taxonomy', () => {
       'taskwraith_broker-',
       'taskwraith-grok__',
       'taskwraith-mistral__',
+      'taskwraith-devin__',
       'taskwraith__'
     ]) {
       expect(

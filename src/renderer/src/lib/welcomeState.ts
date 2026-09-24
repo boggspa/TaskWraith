@@ -45,6 +45,7 @@ export interface WelcomeStateInput {
 
 export interface WelcomeUsageDashboardBuildInput {
   isWelcomeChat: boolean
+  isThreadHomeOpen: boolean
   isCurrentGlobalChat: boolean
   usageInitialized: boolean
   isMultiviewSplit: boolean
@@ -101,14 +102,14 @@ export function shouldRenderWelcome(input: WelcomeStateInput): boolean {
 }
 
 /**
- * True only when the renderer is on a surface that can actually display the
- * welcome usage dashboard or its usage-backed standalone heatmaps.
+ * True only on a welcome screen or full Thread Home, the two surfaces that
+ * consume this aggregation for the dashboard and/or standalone heatmaps.
  */
 export function shouldBuildWelcomeUsageDashboardData(
   input: WelcomeUsageDashboardBuildInput
 ): boolean {
   return (
-    input.isWelcomeChat &&
+    (input.isWelcomeChat || input.isThreadHomeOpen) &&
     !input.isCurrentGlobalChat &&
     input.usageInitialized &&
     !input.isMultiviewSplit

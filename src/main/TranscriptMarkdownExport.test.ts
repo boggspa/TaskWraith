@@ -57,6 +57,29 @@ function activity(overrides: Partial<ToolActivity> = {}): ToolActivity {
 }
 
 describe('buildChatMarkdownTranscript', () => {
+  it('labels Mistral, Muse, and Devin seats by their canonical provider names', () => {
+    const seat = (id: string, provider: string, role: string, model: string): ChatMessage =>
+      message({
+        id,
+        role: 'assistant',
+        content: ` reporting`,
+        metadata: { ensembleProvider: provider, ensembleRole: role, ensembleModel: model }
+      })
+    const result = buildChatMarkdownTranscript(
+      chat([
+        seat('a1', 'devin', 'Whizz', 'swe-1-6-slow'),
+        seat('a2', 'mistral', 'Work', 'devstral-2'),
+        seat('a3', 'muse', 'Boss', 'muse-spark-1.3')
+      ]),
+      { copiedAt: '2026-06-16T12:00:00.000Z', homeDir: '/Users/dev' }
+    )
+
+    expect(result.markdown).toContain('## 0001 - Devin / Whizz (swe-1-6-slow)')
+    expect(result.markdown).toContain('## 0002 - Mistral / Work (devstral-2)')
+    expect(result.markdown).toContain('## 0003 - Muse / Boss (muse-spark-1.3)')
+    expect(result.markdown).not.toContain('Unknown provider')
+  })
+
   it('serializes visible user and assistant markdown with stable headings', () => {
     const result = buildChatMarkdownTranscript(
       chat([
@@ -473,6 +496,33 @@ describe('buildChatMessageTranscript', () => {
     expect(estimateChatMessageTranscriptChars(chat([message({ content: result.text })]))).toBe(
       result.charCount
     )
+  })
+
+  it('omits internal execution-attempt evidence from copies and handoff exports', () => {
+    const source = chat([
+      message({ id: 'u1', role: 'user', content: 'Normal user request' }),
+      message({
+        id: 'graph-prompt',
+        role: 'user',
+        content: 'INTERNAL_GRAPH_PROMPT',
+        metadata: { kind: 'executionGraphAttempt' }
+      }),
+      message({
+        id: 'graph-output',
+        role: 'assistant',
+        content: 'INTERNAL_SCOUT_OUTPUT',
+        metadata: { kind: 'executionGraphAttemptOutput' }
+      }),
+      message({ id: 'a1', role: 'assistant', content: 'Normal parent reply' })
+    ])
+
+    const copied = buildChatMessageTranscript(source)
+    const handoff = buildChatMarkdownTranscript(source)
+    expect(copied.text).toBe('Normal user request\n\nNormal parent reply')
+    expect(handoff.markdown).toContain('Normal user request')
+    expect(handoff.markdown).toContain('Normal parent reply')
+    expect(handoff.markdown).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(handoff.markdown).not.toContain('INTERNAL_SCOUT_OUTPUT')
   })
 
   it('keeps inter-seat notes in message-only transcript copies', () => {

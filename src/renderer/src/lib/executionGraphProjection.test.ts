@@ -158,6 +158,51 @@ describe('buildExecutionGraphProjection', () => {
     )
   })
 
+  /* The ledger stamps healthy transitions with reasons too ("Provider run is
+   * active."). Those are provenance, not impediments — presenting one as a
+   * blocker told users a working graph was stuck on its own intended state. */
+  it('never presents a progressing or successful step as blocked by its own reason', () => {
+    const projection = buildExecutionGraphProjection({
+      runId: 'run-healthy',
+      runState: 'running',
+      topology: topology([step('scout'), step('done'), step('grabbed'), step('lined')], []),
+      activations: [
+        activation('scout', 'running', { reason: 'Provider run is active.' }),
+        activation('done', 'succeeded', { reason: 'Provider run completed.' }),
+        activation('grabbed', 'claimed', { reason: 'Durably claimed.' }),
+        activation('lined', 'queued', { reason: 'Queued behind the provider.' })
+      ]
+    })
+
+    expect(projection.orderedSteps.map((item) => [item.stepId, item.blocker])).toEqual([
+      ['scout', null],
+      ['done', null],
+      ['grabbed', null],
+      ['lined', null]
+    ])
+    expect(projection.liveSummary).not.toContain('Provider run is active.')
+  })
+
+  it('keeps activation reasons on states that need or explain attention', () => {
+    const projection = buildExecutionGraphProjection({
+      runId: 'run-attention',
+      runState: 'requires_action',
+      topology: topology([step('paused'), step('halted'), step('shelved'), step('resumed')], []),
+      activations: [
+        activation('paused', 'requires_action', { reason: 'Owner approval expired.' }),
+        activation('halted', 'cancelled', { reason: 'Cancelled with the owning parent run.' }),
+        activation('shelved', 'skipped', { reason: 'The Stack anchor did not succeed.' }),
+        activation('resumed', 'ready', { reason: 'Resumed by user.' })
+      ]
+    })
+
+    const byStep = new Map(projection.orderedSteps.map((item) => [item.stepId, item.blocker]))
+    expect(byStep.get('paused')).toBe('Owner approval expired.')
+    expect(byStep.get('halted')).toBe('Cancelled with the owning parent run.')
+    expect(byStep.get('shelved')).toBe('The Stack anchor did not succeed.')
+    expect(byStep.get('resumed')).toBeNull()
+  })
+
   it('projects attempts, artifacts, data bindings, and the latest activation without mutation', () => {
     const source = {
       ...step('source'),

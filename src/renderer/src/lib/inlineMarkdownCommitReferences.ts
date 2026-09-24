@@ -64,7 +64,11 @@ function annotateCommitReferences(parent: Root | Element): void {
       continue
     }
 
-    if (child.type === 'element' && !SKIPPED_MARKDOWN_TAGS.has(child.tagName)) {
+    if (
+      child.type === 'element' &&
+      !SKIPPED_MARKDOWN_TAGS.has(child.tagName) &&
+      typeof child.properties.dataColorToken !== 'string'
+    ) {
       annotateCommitReferences(child)
     }
     nextChildren.push(child)

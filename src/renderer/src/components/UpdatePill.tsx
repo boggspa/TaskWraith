@@ -52,6 +52,25 @@ export function UpdatePill({
 }
 
 function labelForSnapshot(snapshot: UpdateStateSnapshot): string {
+  if (snapshot.identityHandoff) {
+    switch (snapshot.identityHandoff.phase) {
+      case 'ready':
+        return 'Move to Release'
+      case 'downloading':
+        return typeof snapshot.identityHandoff.percent === 'number'
+          ? `Moving ${Math.round(snapshot.identityHandoff.percent)}%`
+          : 'Moving to Release'
+      case 'downloaded':
+        return 'Install Release'
+      case 'awaiting-target':
+        return 'Finish Release move'
+      case 'error':
+      case 'blocked':
+        return 'Release move issue'
+      default:
+        break
+    }
+  }
   switch (snapshot.status) {
     case 'available':
       return snapshot.latestVersion ? `Update ${snapshot.latestVersion}` : 'Update'
@@ -69,6 +88,23 @@ function labelForSnapshot(snapshot: UpdateStateSnapshot): string {
 }
 
 function titleForSnapshot(snapshot: UpdateStateSnapshot): string {
+  if (snapshot.identityHandoff) {
+    switch (snapshot.identityHandoff.phase) {
+      case 'ready':
+        return 'Move TaskWraith 1.9.9 to the public Release identity'
+      case 'downloading':
+        return 'The verified TaskWraith Release installer is downloading'
+      case 'downloaded':
+        return 'Open the verified TaskWraith Release installer'
+      case 'awaiting-target':
+        return 'Open the Release installer again or finish the installation'
+      case 'error':
+      case 'blocked':
+        return snapshot.identityHandoff.errorMessage || 'TaskWraith Release handoff needs attention'
+      default:
+        break
+    }
+  }
   switch (snapshot.status) {
     case 'available':
       return snapshot.latestVersion
@@ -76,10 +112,18 @@ function titleForSnapshot(snapshot: UpdateStateSnapshot): string {
         : 'Download the latest TaskWraith update'
     case 'downloading':
       return 'TaskWraith update is downloading'
-    case 'downloaded':
-      return snapshot.restartPending
-        ? 'TaskWraith will restart when active work completes'
-        : 'Restart TaskWraith to install the update now'
+    case 'downloaded': {
+      const deferral = snapshot.restartDeferral
+      if (snapshot.restartPending) {
+        return deferral
+          ? `TaskWraith will restart when active work completes. ${deferral.reason}. Open the update sheet to restart anyway.`
+          : 'TaskWraith will restart when active work completes'
+      }
+      if (deferral?.expired) {
+        return `The queued restart stopped waiting (${deferral.reason}). Restart TaskWraith to install the update now.`
+      }
+      return 'Restart TaskWraith to install the update now'
+    }
     case 'error':
       return snapshot.errorMessage || 'TaskWraith update check failed'
     default:

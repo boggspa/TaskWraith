@@ -18,9 +18,18 @@ import {
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   GROK_ACP_READ_ONLY_DENY_RULES,
   GROK_ACP_WRITE_MODE_DENY_RULES,
+  GROK_ACP_WRITE_MODE_NATIVE_TOOLS,
   GROK_READ_ONLY_DENY_RULES,
   GROK_WRITE_MODE_DENY_RULES
 } from './GrokCliArgs'
+import {
+  AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
+  noToolsOverrideClause
+} from '../providers/NoToolsOverrideClause'
+import {
+  PROVIDER_ACTION_ADAPTERS,
+  compactProviderActionIdentifier
+} from '../../shared/providerActionTaxonomy'
 import type { ActiveGoal } from '../store/types'
 
 const grokNativeGoal: ActiveGoal = {
@@ -47,7 +56,12 @@ describe('normalizeGrokEffortFlag', () => {
     }
     expect(normalizeGrokEffortFlag('HIGH')).toBe('high')
     expect(normalizeGrokEffortFlag('XHIGH')).toBe('xhigh')
-    expect(normalizeGrokEffortFlag('max')).toBeNull()
+  })
+
+  it('clamps TaskWraith top-of-ladder tiers to the xhigh ceiling', () => {
+    for (const tier of ['ultra', 'ultracode', 'ultratask', 'max', 'UltraTask']) {
+      expect(normalizeGrokEffortFlag(tier)).toBe('xhigh')
+    }
   })
 
   it('rejects unknown values rather than passing them to the CLI', () => {
@@ -123,7 +137,7 @@ describe('buildGrokCliArgs', () => {
   it('disables the complete built-in tool set while retaining separately configured MCP', () => {
     const args = buildGrokCliArgs(base)
     expect(args[args.indexOf('--tools') + 1]).toBe('')
-    const acpArgs = buildGrokAcpCliArgs({ readOnlySeat: false })
+    const acpArgs = buildGrokAcpCliArgs({ readOnlySeat: true })
     expect(acpArgs[acpArgs.indexOf('--tools') + 1]).toBe('')
   })
 
@@ -179,9 +193,7 @@ describe('buildGrokCliArgs', () => {
     expect(args.indexOf('--model')).toBeLessThan(args.indexOf('agent'))
     expect(args.indexOf('--effort')).toBeLessThan(args.indexOf('agent'))
     expect(
-      args
-        .map((value, index) => (value === '--deny' ? args[index + 1] : null))
-        .filter(Boolean)
+      args.map((value, index) => (value === '--deny' ? args[index + 1] : null)).filter(Boolean)
     ).toEqual([...GROK_ACP_READ_ONLY_DENY_RULES])
   })
 
@@ -228,18 +240,49 @@ describe('buildGrokCliArgs', () => {
     expect(denied).not.toContain('Grep(*)')
   })
 
-  it('keeps ACP native edits broker-only on write-capable seats while preserving reads', () => {
+  it('routes ACP native edits and shell to the host gate on write-capable seats', () => {
     const args = buildGrokAcpCliArgs({ readOnlySeat: false })
     const denied = args
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
 
+    // A write seat denies nothing at argv. The mediation floor is the host:
+    // session/request_permission -> preflightNativeWorkspaceTool (closed grok
+    // adapter + path scope) -> approval chokepoint + DestructiveShellAsk.
     expect(denied).toEqual([...GROK_ACP_WRITE_MODE_DENY_RULES])
-    expect(denied).toContain('Edit(*)')
-    expect(denied).toContain('Write(*)')
-    expect(denied).toContain('Bash(*)')
-    expect(denied).toContain('Shell(*)')
-    expect(denied).not.toContain('Read(*)')
+    expect(denied).toEqual([])
+  })
+
+  it('offers a write-capable ACP seat only the natives the grok adapter declares', () => {
+    const args = buildGrokAcpCliArgs({ readOnlySeat: false })
+    const tools = args[args.indexOf('--tools') + 1].split(',').filter(Boolean)
+
+    expect(tools).toEqual([...GROK_ACP_WRITE_MODE_NATIVE_TOOLS])
+    // The point of the widening: native shell is present, alongside reads.
+    expect(tools).toContain('Bash')
+    expect(tools).toContain('Shell')
+    expect(tools).toContain('Read')
+    // Native writes stay broker-only: the seat policy denies access==='write',
+    // so offering these would be a guaranteed refusal on every call.
+    expect(tools).not.toContain('Write')
+    expect(tools).not.toContain('Edit')
+
+    // Every offered tool must compact onto an action the closed `grok` adapter
+    // declares. A tool the adapter does not declare is denied on EVERY call,
+    // which hard-cancels the turn and burns quota for no deliverable -- so the
+    // allowlist is pinned to the declared set, not merely to "no shell".
+    const declared = new Set(
+      Object.values(PROVIDER_ACTION_ADAPTERS.grok.nativeActionMappings).flatMap((mapping) =>
+        mapping.aliases.map((alias) => compactProviderActionIdentifier(alias))
+      )
+    )
+    for (const tool of tools) {
+      expect(declared.has(compactProviderActionIdentifier(tool))).toBe(true)
+    }
+    for (const undeclared of ['MultiEdit', 'TodoWrite', 'BashOutput', 'KillShell', 'Agent']) {
+      expect(declared.has(compactProviderActionIdentifier(undeclared))).toBe(false)
+      expect(tools).not.toContain(undeclared)
+    }
   })
 
   it('does not pass effort for Grok Composer 2.5 Fast', () => {
@@ -475,12 +518,12 @@ describe('applyGrokPromptPreamble', () => {
     expect(out).not.toContain(GROK_MCP_SHELL_TOOL_NAME)
   })
 
-  it('does not claim shell broker tooling on read-only seats', () => {
+  it('routes read-only ACP shell work through the broker tool name', () => {
     expect(
       buildGrokProviderPrompt('Inspect only.', 'plan', undefined, {
         taskWraithShellToolAvailable: true
       })
-    ).not.toContain(GROK_MCP_SHELL_PROMPT_NOTE)
+    ).toContain(GROK_MCP_SHELL_PROMPT_NOTE)
   })
 
   it('routes read-only ACP questions through the available broker tool', () => {
@@ -516,9 +559,7 @@ describe('formatGrokGoalSlashCommand', () => {
     )
     expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'paused' })).toBeNull()
     expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'completed' })).toBeNull()
-    expect(
-      formatGrokGoalSlashCommand({ ...grokNativeGoal, mode: 'taskwraith_steered' })
-    ).toBeNull()
+    expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, mode: 'taskwraith_steered' })).toBeNull()
   })
 
   it('keeps /goal as the first bytes of the provider prompt', () => {
@@ -559,12 +600,11 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(applyGrokReadOnlyPromptPreamble('x', readOnlySeatDefault)).toBe('x')
   })
 
-  it('steer keeps an unbrokered read-only seat off shell, writes, and dead ends', () => {
-    // Native Bash/Shell is deny-walled for this ACP seat. The prompt must say
-    // so rather than inventing a read-only shell route.
+  it('steer keeps an unbrokered read-only seat off native shell, writes, and dead ends', () => {
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/Native Bash\/Shell/i)
-    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt or search/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/TaskWraith MCP shell/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/prompt the user/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/describe what you would change/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/summar/i)
   })
@@ -574,5 +614,26 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(lower).toContain('no-tools instruction')
     expect(lower).toContain('do not call read, shell, file, goal, or any other tool')
     expect(lower).toContain('do not substitute unrelated workspace or goal tools')
+  })
+})
+
+describe('no-tools clause in the Grok preambles', () => {
+  it('embeds the conditional clause, not the phrasing a seat misread as a ban', () => {
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('read, shell, file, goal, or any other tool')
+    )
+    expect(GROK_WRITE_MODE_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('shell, file, goal, or any other tool')
+    )
+    expect(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('file, goal, or any other tool')
+    )
+    for (const preamble of [
+      GROK_READ_ONLY_PROMPT_PREAMBLE,
+      GROK_WRITE_MODE_PROMPT_PREAMBLE,
+      GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE
+    ]) {
+      expect(preamble).not.toContain(AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE)
+    }
   })
 })

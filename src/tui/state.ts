@@ -1,16 +1,27 @@
 import {
   createEmptyHostSnapshot,
   type HostCommandName,
+  type HostParticipantProjection,
   type HostSnapshot
 } from '../shared/hostProtocol'
+import type { HostHistoryCursor } from '../shared/hostHistoryProtocol'
+import type { HostWorkspaceGitReadOutcome } from '../host-client/HostProjectionClient'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
+  TaskWraithControlThread,
   TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import type { ColdStartFlowState, ColdStartPendingCommand } from './coldStartFlow'
 
 export type TuiConnectionState =
   | 'connecting'
@@ -20,8 +31,26 @@ export type TuiConnectionState =
   | 'incompatible-protocol'
   | 'demo'
   | 'replay'
-export type TuiOverlay = 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune'
+export type TuiOverlay =
+  | 'none'
+  | 'context'
+  | 'threads'
+  | 'missions'
+  | 'help'
+  | 'tune'
+  | 'setup'
+  | 'git'
+  | 'seats'
+  | 'workspaces'
+  | 'goal'
+  | 'theme'
+  | 'login'
+  | 'host'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
+/** The three workspace-git read scopes the Host serves (no show, no blame). */
+export type TuiGitScope = 'status' | 'diff' | 'log'
+/** First-run Host setup traps until ready; `/new`/`/provider` can be cancelled. */
+export type TuiColdStartIntent = 'required' | 'new-thread'
 
 export interface TuiNotice {
   text: string
@@ -37,6 +66,62 @@ export interface TuiPendingSelection {
   reasoningEffort?: string
 }
 
+export type TuiQueuedDraftPhase = 'queued' | 'dispatching' | 'blocked'
+
+/** One immutable user draft, bound to the thread and tuning choice it was authored for. */
+export interface TuiQueuedDraft {
+  id: string
+  threadId: string
+  text: string
+  enqueuedAt: number
+  phase: TuiQueuedDraftPhase
+  selection?: TuiPendingSelection
+  /** Exact live run observed when the draft joined the queue. */
+  blockedByRunId?: string
+  error?: string
+}
+
+export interface TuiHomeTuneProvider {
+  status: HostProviderStatusProjection
+  offers: HostProviderOffersProjection
+}
+
+/** Home-frame model defaults. These are preferences, never configure authority. */
+export interface TuiHomeTuneState {
+  loading?: boolean
+  error?: string
+  providers: TuiHomeTuneProvider[]
+  /** Provider owning the selected flattened model row (derived, not a second menu). */
+  providerIndex: number
+  /** Index into the one combined cross-provider model list. */
+  modelIndex: number
+  /** -1 means the provider's own default; non-negative indexes an offered row. */
+  reasoningIndex: number
+}
+
+/**
+ * Explicit in-session permission choice for the next thread created from Home.
+ * It is intentionally not persisted: selecting an elevated tier is live human
+ * consent for this TUI session, not a reusable authorization claim.
+ */
+export interface TuiHomePermissionSelection {
+  providerId: string
+  postureId: string
+}
+
+/** Dismissible provider setup hub. It never advances into thread creation. */
+export interface TuiProviderLoginState {
+  providers: HostProviderStatusProjection[]
+  selectedProviderId?: string
+  authStatus?: HostProviderAuthStatusProjection
+  flows: HostProviderAuthFlowProjection[]
+  flowIndex: number
+  loading?: boolean
+  error?: string
+  operationId?: string
+  pending?: ColdStartPendingCommand
+}
+
 /**
  * In-flight Host mutation (Wave 4.2b). Pending means Host is waiting on an
  * approval ask — never treat as completed.
@@ -50,6 +135,97 @@ export interface TuiPendingHostMutation {
   composerRestore?: string
 }
 
+/** Bounded transcript history fetched from the Host, separate from preview rows. */
+export interface TuiHistoryState {
+  readonly threadId: string
+  readonly generation: number
+  readonly cursor: number
+  readonly nextBefore?: HostHistoryCursor
+  readonly previewOnly: boolean
+  readonly loadingOlder?: boolean
+}
+
+/**
+ * The /git overlay's current read. `outcome` is the client's first-class
+ * union: `available: false` is a calm configuration state, never an error.
+ * `error` is set only when the request genuinely failed (disconnect, Host
+ * error) — a distinct render path from capability-unavailable.
+ */
+export interface TuiGitState {
+  scope: TuiGitScope
+  path?: string
+  loading?: boolean
+  outcome?: HostWorkspaceGitReadOutcome
+  error?: string
+}
+
+export type TuiHostPanelTone = 'good' | 'warning' | 'error'
+
+export interface TuiHostPanelField {
+  readonly label: string
+  readonly value: string
+  readonly tone?: TuiHostPanelTone
+}
+
+/**
+ * One Host row on the /host lens. `pid` and `holders` are always drawn whole;
+ * only `profile` is shortened, from the middle, so its unique tail survives.
+ */
+export interface TuiHostPanelHost {
+  readonly pid: string
+  readonly holders: string
+  readonly profile: string
+  readonly note?: string
+  readonly tone?: TuiHostPanelTone
+}
+
+/**
+ * The /host lens, built by the controller and drawn as given. A `prompt` means
+ * an explicit `y` is armed, so it states the total it acts on: rows past the
+ * viewport are counted as "+N more", never drawn.
+ */
+export interface TuiHostPanel {
+  readonly title: string
+  readonly fields: readonly TuiHostPanelField[]
+  readonly hostsHeading?: string
+  readonly hosts?: readonly TuiHostPanelHost[]
+  readonly notes?: readonly string[]
+  readonly prompt?: string
+  readonly hint: string
+}
+
+/**
+ * The /seats lens state. The roster itself is NEVER stored here — it always
+ * renders from the coherent Host projection (`hostProjection.participants`),
+ * so a live delta or the post-toggle refresh is the single source of truth
+ * and an optimistic flip is impossible. This state only keys the lens to the
+ * thread it was opened for and carries the async-read and toggle outcomes:
+ * `unavailable` is a calm capability state (the Host does not advertise
+ * 'ensemble'), `error` a genuine read failure, `actionError` the Host's
+ * typed toggle refusal in plain language — three distinct render paths.
+ */
+export interface TuiSeatsState {
+  /** The thread the lens was opened for; toggles target this thread only. */
+  threadId: string
+  loading?: boolean
+  unavailable?: string
+  error?: string
+  actionError?: string
+}
+
+/**
+ * The lens roster: the thread's participants from the coherent projection,
+ * in roster order. Shared by the renderer and the key handler so both act on
+ * the same rows.
+ */
+export function tuiSeatsRoster(state: TaskWraithTuiState): HostParticipantProjection[] {
+  const seats = state.seats
+  if (!seats) return []
+  return (state.hostProjection?.participants ?? [])
+    .filter((participant) => participant.threadId === seats.threadId)
+    .sort((left, right) => left.order - right.order)
+}
+
 export interface TaskWraithTuiState {
   connection: TuiConnectionState
   hostVersion?: string
@@ -58,10 +234,21 @@ export interface TaskWraithTuiState {
   hostProjection?: HostSnapshot
   thread?: TaskWraithControlThreadSnapshot
   selectedThreadId?: string
+  /** A thread born from this Home canvas keeps the landed hero above its transcript. */
+  homeContinuationThreadId?: string
   input: string
   inputCursor: number
   overlay: TuiOverlay
   overlayIndex: number
+  /** Palette-only filter text. Manual Ctrl+P keeps the composer draft separate. */
+  commandPaletteQuery?: string
+  /**
+   * The committed theme name, which may be `auto`. Distinct from the theme the
+   * frame is currently painted in: the `/theme` picker previews by repainting,
+   * so during a preview those two deliberately disagree, and this is the one
+   * the picker marks as current and the one that gets persisted.
+   */
+  themeName?: string
   /** Mission lens filter. Missing on older injected fixtures means active. */
   missionFilter?: TuiMissionFilter
   /** First participant row shown in the selected mission cast. */
@@ -75,8 +262,55 @@ export interface TaskWraithTuiState {
   /** Reasoning column index for the highlighted tune-lens model row. */
   tuneEffortIndex: number
   pendingSelection?: TuiPendingSelection
+  /** In-session per-thread FIFO. The Host remains authoritative for run state. */
+  queuedDrafts?: TuiQueuedDraft[]
+  /** Home-frame provider/model/reasoning preference picker. */
+  homeTune?: TuiHomeTuneState
+  /** Shift+Tab choice applied to the next lazy-created Home thread. */
+  homePermission?: TuiHomePermissionSelection
+  /** Provider authentication/setup hub. */
+  providerLogin?: TuiProviderLoginState
   /** Active deferred Host mutation, if any. */
   pendingHostMutation?: TuiPendingHostMutation
+  /** Guided setup state shown before the Host has a configured conversation. */
+  coldStart?: ColdStartFlowState
+  /** First-run setup traps until ready; `/new` is Esc-cancellable. */
+  coldStartIntent?: TuiColdStartIntent
+  /** Available setup providers; an explicit index is always user-controlled. */
+  coldStartProviderChoices?: readonly HostProviderStatusProjection[]
+  coldStartProviderIndex?: number
+  coldStartAuthFlowIndex?: number
+  coldStartModelIndex?: number
+  coldStartReasoningIndex?: number
+  coldStartPostureIndex?: number
+  /** Full Host history, when the negotiated capability is available. */
+  history?: TuiHistoryState
+  /** The /git overlay's current workspace-git read. */
+  git?: TuiGitState
+  /** The /seats lens state (ensemble seat control on the selected thread). */
+  seats?: TuiSeatsState
+  /** The /host lens: Host status, or a restart/stop-all plan awaiting an explicit y. */
+  hostPanel?: TuiHostPanel
+  /**
+   * Whether the /threads picker reveals archived chats. Off by default: the
+   * picker is for switching, and an archived chat cannot be selected.
+   */
+  showArchivedThreads?: boolean
+  /**
+   * Last successful workspace target. Explicit /workspace choices, registration,
+   * and opening an existing thread all update where the next fresh thread lands.
+   */
+  activeWorkspaceId?: string
+}
+
+/**
+ * Rows the /threads picker shows. Archived chats appear only when explicitly
+ * revealed, and the picker, its key handling and its renderer all read this one
+ * rule so a revealed row can never be at a different index in two of them.
+ */
+export function visibleThreadRows(state: TaskWraithTuiState): readonly TaskWraithControlThread[] {
+  const threads = state.snapshot?.threads ?? []
+  return state.showArchivedThreads ? threads : threads.filter((thread) => !thread.archived)
 }
 
 function row(
@@ -104,83 +338,6 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
   const grok = resolveTaskWraithProviderPresentation('grok', 'grok-4.6')
   const kimi = resolveTaskWraithProviderPresentation('kimi', 'kimi-k3')
   const startedAt = now - 2_000
-  const ensemble = {
-    preset: 'Build + Review',
-    mode: 'continuous',
-    fanout: 'off',
-    continuationHops: 0,
-    maxContinuationHops: 32,
-    backgroundCount: 1,
-    participants: [
-      {
-        id: 'lead',
-        provider: 'claude',
-        displayProvider: claude.displayProvider,
-        hueKey: claude.hueKey,
-        accent: claude.accent,
-        shortCode: claude.shortCode,
-        role: 'Lead',
-        model: 'Opus 4.8 1M',
-        reasoning: 'Ultracode',
-        order: 1,
-        stage: 'worker' as const,
-        status: 'running',
-        active: true,
-        next: false,
-        enabled: true
-      },
-      {
-        id: 'explorer',
-        provider: 'grok',
-        displayProvider: grok.displayProvider,
-        hueKey: grok.hueKey,
-        accent: grok.accent,
-        shortCode: grok.shortCode,
-        role: 'Explorer',
-        model: grok.modelLabel ?? 'Grok 4.6 Fast',
-        order: 2,
-        stage: 'scout' as const,
-        status: 'completed',
-        active: false,
-        next: false,
-        enabled: true
-      },
-      {
-        id: 'worker',
-        provider: 'codex',
-        displayProvider: codex.displayProvider,
-        hueKey: codex.hueKey,
-        accent: codex.accent,
-        shortCode: codex.shortCode,
-        role: 'Worker',
-        model: 'GPT-5.6',
-        reasoning: 'High',
-        order: 3,
-        stage: 'worker' as const,
-        status: 'pending',
-        active: false,
-        next: true,
-        enabled: true
-      },
-      {
-        id: 'review',
-        provider: 'kimi',
-        displayProvider: kimi.displayProvider,
-        hueKey: kimi.hueKey,
-        accent: kimi.accent,
-        shortCode: kimi.shortCode,
-        role: 'Review',
-        model: 'K3',
-        reasoning: 'Max',
-        order: 4,
-        stage: 'background' as const,
-        status: 'pending',
-        active: false,
-        next: false,
-        enabled: true
-      }
-    ]
-  }
   const thread = {
     id: 'demo-thread',
     workspaceId: 'demo-workspace',
@@ -191,36 +348,28 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     },
     reasoning: 'Ultracode',
     status: 'working' as const,
-    chatKind: 'ensemble' as const,
+    chatKind: 'single' as const,
     archived: false,
     pinned: false,
     updatedAt: now,
-    messageCount: 3,
+    messageCount: 2,
     wallTimeMs: now - startedAt,
     tokenEstimate: 386,
-    costText: '£0.19',
-    ensemble
+    costText: '£0.19'
   }
   const rows = [
     row(
       'demo-user',
       'user',
       'You',
-      'Keep the composer compact and preserve the ensemble distinctions.'
-    ),
-    row(
-      'demo-codex',
-      'assistant',
-      'Codex · Worker',
-      'I mapped the state into a three-row terminal checksum. The full roster remains one keystroke away.',
-      codex
+      'Keep the composer compact and let provider identity carry the chroma.'
     ),
     {
       ...row(
         'demo-claude',
         'assistant',
-        'Claude · Lead',
-        'I’ll keep the transcript plain and let provider identity carry the chroma.',
+        'Claude',
+        'I’ll keep the transcript plain and stage the next model from the tune lens.',
         claude
       ),
       tools: [
@@ -230,7 +379,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
           status: 'success' as const
         },
         {
-          name: 'Build responsive roster projection',
+          name: 'Build the compact tune lens',
           category: 'task' as const,
           status: 'running' as const
         }
@@ -290,8 +439,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
       permission: 'workspace_write',
       wallTimeMs: now - startedAt,
       tokenEstimate: 386,
-      costText: '£0.19',
-      ensemble
+      costText: '£0.19'
     }
   }
   const hostProjection = createEmptyHostSnapshot({
@@ -348,31 +496,10 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
       threadId: thread.id,
       status: 'running',
       startedAt,
-      routing: {
-        mode: ensemble.mode,
-        fanout: ensemble.fanout,
-        activeParticipantId: 'lead',
-        continuationHops: ensemble.continuationHops,
-        maxContinuationHops: ensemble.maxContinuationHops,
-        bossParticipantId: 'lead'
-      },
-      participantIds: ensemble.participants.map((participant) => participant.id),
+      participantIds: [],
       providerRunIds: []
     }
   ]
-  hostProjection.participants = ensemble.participants.map((participant) => ({
-    id: participant.id,
-    threadId: thread.id,
-    providerId: participant.provider,
-    role: participant.role,
-    ...(participant.model ? { modelId: participant.model } : {}),
-    stage: participant.stage,
-    order: participant.order,
-    enabled: participant.enabled,
-    status: participant.status,
-    active: participant.active
-  }))
-  hostProjection.routing = hostProjection.rounds[0]?.routing
   hostProjection.questions = [
     {
       questionId: 'demo-question',
@@ -399,6 +526,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
-    tuneEffortIndex: 0
+    tuneEffortIndex: 0,
+    queuedDrafts: []
   }
 }

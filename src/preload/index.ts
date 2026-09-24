@@ -1,3 +1,5 @@
+import { createThreadCatalogueReads } from './ThreadCatalogueReads'
+import './applicationMenuBridge'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   GeminiWorktreeLaunchOption,
@@ -13,6 +15,8 @@ import type {
   CloseoutSummarySnapshot,
   ContinuationProposalRequest,
   ContinuationProposalSnapshot,
+  ContinuationTitleApplyRequest,
+  ContinuationTitleApplyResult,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
   RepoConventionIndexSnapshot,
@@ -48,6 +52,15 @@ import type {
   GitUnpushedCommitStack
 } from '../shared/gitUnpushedCommits'
 import type {
+  RendererChatTranscriptMutationRequest,
+  RendererChatTranscriptMutationResult
+} from '../shared/rendererChatTranscriptMutation'
+import type { CommandRuleListItem, CommandRuleMutationResult } from '../shared/commandRules'
+import type {
+  ChatComposerSelectionPatchRequest,
+  ChatComposerSelectionPatchResult
+} from '../shared/chatComposerSelectionPatch'
+import type {
   GitCommitGroupPullRequestResult,
   GitPullRequestLifecycleAction,
   GitPullRequestLifecycleResult,
@@ -64,13 +77,21 @@ import {
   isStudioTranscriptStatus,
   type StudioTranscriptStatus
 } from '../shared/studioTranscriptStatus'
+import type { SharedWorkspaceOverview, SharedWorkspaceContributionPreview, SharedWorkspaceActionRequest, SharedWorkspaceActionResult } from '../shared/sharedWorkspace'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason,
   GitSnapshotSubscribeResult
 } from '../main/services/GitSnapshotPublisher'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type {
+  ExternalProviderThreadImportChatSummary,
+  ExternalProviderThreadImportProvider,
+  ExternalProviderThreadImportResult
+} from '../shared/externalProviderThreadImport'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
+import type { UsageWebSessionProviderId } from '../shared/usageWebSession'
 import type {
   LiveSteeringCancelRequest,
   LiveSteeringCancelResult,
@@ -100,7 +121,9 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphArchiveResult,
   ExecutionGraphDiagnosticsSnapshot,
+  ExecutionGraphRecoveryRetryCommand,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -134,10 +157,27 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import {
+  TRANSCRIPT_TAIL_CHANNEL,
+  TRANSCRIPT_TAIL_RECEIPT_CHANNEL,
+  buildTranscriptTailReceipt,
+  type TranscriptTailFrame
+} from '../shared/transcriptTailStream'
+import {
+  CHAT_UPDATE_INTEREST_CHANNEL,
+  CHAT_UPDATE_INVALIDATION_CHANNEL,
+  type ChatUpdateInterestSnapshot,
+  type ChatUpdateInvalidation
+} from '../shared/chatUpdateInterest'
+import {
+  SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL,
+  SYSTEM_ACCENT_COLOR_CHANNEL
+} from '../shared/systemAccentColor'
 import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
 } from '../shared/rendererDiagnostics'
+import { withBlinkCacheUsage } from './rendererDiagnosticResourceUsage'
 import {
   workLockProjectionUpdateIsStale,
   type WorkLockProjectionChangedEvent,
@@ -150,7 +190,8 @@ import {
 } from '../shared/workLockProjection'
 import type {
   ChatPopoutRoundExpansionSnapshot,
-  ChatPopoutScrollState
+  ChatPopoutScrollState,
+  TranscriptView
 } from '../shared/chatPopoutTransfer'
 import {
   SerializedChatPersistence,
@@ -202,6 +243,16 @@ window.addEventListener(
   'paste',
   (event) => {
     if (!event.isTrusted) return
+    // Only pastes directed at the simulator bezel mint a push proof. Without
+    // a target check every paste in the window (chat, settings, terminals)
+    // would authorize a host-to-sim pasteboard sync and send main an IPC
+    // invoke; the renderer only consumes this proof from bezel pastes.
+    // Duck-type the target: preload runs in an isolated world, so cross-realm
+    // instanceof checks are unreliable.
+    const target = event.target as Element | null
+    if (typeof target?.closest !== 'function' || !target.closest('[data-simulator-paste-target]')) {
+      return
+    }
     const token = globalThis.crypto?.randomUUID?.()
     if (!token) return
     pendingSimulatorPasteboardIntent = {
@@ -523,7 +574,30 @@ function stickyAppWatchOk(value: unknown): { ok: boolean } {
 // Custom APIs for renderer
 const api = {
   hostPlatform: process.platform,
+  pagedChatLiveUpdatesEnabled: process.env.TASKWRAITH_PAGED_CHAT_LIVE_UPDATES !== '0',
   getRuntimeVersions: () => ({ ...(process?.versions || {}) }),
+  terminal: {
+    create: (workspacePath, sessionId, cliId) =>
+      ipcRenderer.invoke('terminal:create', workspacePath, sessionId, cliId),
+    write: (sessionId, data) => ipcRenderer.invoke('terminal:write', sessionId, data),
+    resize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
+    detach: (sessionId) => ipcRenderer.invoke('terminal:detach', sessionId),
+    kill: (sessionId) => ipcRenderer.invoke('terminal:kill', sessionId),
+    list: () => ipcRenderer.invoke('terminal:list'),
+    getScrollback: (sessionId) => ipcRenderer.invoke('terminal:getScrollback', sessionId),
+    onData: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) =>
+        callback(sessionId, data)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
+    },
+    onExit: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) =>
+        callback(sessionId, exitCode)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
+    }
+  },
   channels: createChannelIpcBridge(ipcRenderer),
   channelAgents: createChannelAgentIpcBridge(ipcRenderer),
   channelMemberships: createChannelMemberIpcBridge(ipcRenderer),
@@ -761,6 +835,12 @@ const api = {
   // crosses the contextBridge deep-copy cheaply where a record array does not.
   getDailyUsageRollup: () => ipcRenderer.invoke('get-daily-usage-rollup'),
   getQuotaSnapshotHook: () => ipcRenderer.invoke('quota-snapshot-hook:get'),
+  getUsageWebSessionStatus: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:get-status', provider),
+  importUsageWebSession: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:import', provider),
+  clearUsageWebSession: (provider: UsageWebSessionProviderId) =>
+    ipcRenderer.invoke('usage-web-session:clear', provider),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
   // Mistral's estimated monthly burn. Not a probe and not a vendor figure:
   // Mistral publishes no quota and exposes no usage endpoint, so this reads the
@@ -829,6 +909,12 @@ const api = {
     ipcRenderer.invoke('git:work-provenance', payload) as Promise<
       GitResult<WorkProvenanceSnapshot>
     >,
+  gitSharedWorkspace: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string }) =>
+    ipcRenderer.invoke('git:shared-workspace', payload) as Promise<GitResult<SharedWorkspaceOverview>>,
+  gitContributionPreview: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string; id: string }) =>
+    ipcRenderer.invoke('git:contribution-preview', payload) as Promise<GitResult<SharedWorkspaceContributionPreview>>,
+  gitContributionAction: (payload: { repoPath?: string; workspacePath?: string; worktreePath?: string; chatId?: string } & SharedWorkspaceActionRequest) =>
+    ipcRenderer.invoke('git:contribution-action', payload) as Promise<SharedWorkspaceActionResult>,
   gitSubscribeSnapshot: (
     payload: { workspacePath?: string; repoPath?: string; chatId?: string },
     callback: (payload: GitSnapshotChangedPayload) => void
@@ -868,6 +954,13 @@ const api = {
       'work-locks:force-release-recovery',
       request
     ) as Promise<WorkLockRecoveryResult>,
+  getStartupAuthorityState: () => ipcRenderer.invoke('startup-authority:get'),
+  retryStartupAuthority: () => ipcRenderer.invoke('startup-authority:retry'),
+  onStartupAuthorityState: (callback: (state: unknown) => void) => {
+    const wrapped = (_event: unknown, state: unknown): void => callback(state)
+    ipcRenderer.on('startup-authority:state', wrapped)
+    return () => ipcRenderer.removeListener('startup-authority:state', wrapped)
+  },
   subscribeWorkLocks: (
     query: WorkLockProjectionQuery,
     callback: (update: WorkLockProjectionUpdate) => void
@@ -1082,6 +1175,9 @@ const api = {
   getKimiAuthStatus: () => ipcRenderer.invoke('get-kimi-auth-status'),
   storeKimiApiKey: (key: string) => ipcRenderer.invoke('store-kimi-api-key', key),
   clearKimiApiKey: () => ipcRenderer.invoke('clear-kimi-api-key'),
+  getKimiWebSessionStatus: () => ipcRenderer.invoke('get-kimi-web-session-status'),
+  importKimiWebSession: () => ipcRenderer.invoke('import-kimi-web-session'),
+  clearKimiWebSession: () => ipcRenderer.invoke('clear-kimi-web-session'),
   upgradeKimiCli: () => ipcRenderer.invoke('provider:open-upgrade-terminal', 'kimi'),
   getOllamaAuthStatus: () => ipcRenderer.invoke('get-ollama-auth-status'),
   storeOllamaApiKey: (key: string) => ipcRenderer.invoke('store-ollama-api-key', key),
@@ -1112,6 +1208,7 @@ const api = {
     ipcRenderer.invoke('rollback-agent-thread', provider, threadId, numTurns),
   startAgentReview: (provider: ProviderId, threadId: string, params: any = {}) =>
     ipcRenderer.invoke('start-agent-review', provider, threadId, params),
+  getPendingAgentApprovals: () => ipcRenderer.invoke('get-pending-agent-approvals'),
   respondAgentApproval: (
     requestId: string,
     action:
@@ -1125,8 +1222,19 @@ const api = {
       | 'declineExternalPath',
     // Order-4 — optional one-line "why" note. Persisted onto the
     // approval-ledger row's metadata; never required.
-    intentNote?: string
-  ) => ipcRenderer.invoke('respond-agent-approval', requestId, action, intentNote),
+    intentNote?: string,
+    commandRuleOfferId?: string
+  ) =>
+    ipcRenderer.invoke(
+      'respond-agent-approval',
+      requestId,
+      action,
+      intentNote,
+      commandRuleOfferId
+    ),
+  listCommandRules: (): Promise<CommandRuleListItem[]> => ipcRenderer.invoke('command-rules:list'),
+  removeCommandRule: (ruleId: string): Promise<CommandRuleMutationResult> =>
+    ipcRenderer.invoke('command-rules:remove', ruleId),
   writeGeminiInput: (data: string) => ipcRenderer.invoke('write-gemini-input', data),
   getDiff: (workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('get-diff', workspace),
@@ -1139,7 +1247,12 @@ const api = {
           targetPath?: string
           targetView?: 'editor' | 'diff'
         }
-      | { kind: 'chat'; chatId: string; workspacePath?: string }
+      | {
+          kind: 'chat'
+          chatId: string
+          workspacePath?: string
+          presentation?: ChatPopoutPresentation
+        }
   ) => ipcRenderer.invoke('open-workspace-popout', input) as Promise<{ ok: true }>,
   dockSideChatPopout: (input: {
     chatId: string
@@ -1147,6 +1260,9 @@ const api = {
     draft?: string
     scrollState?: ChatPopoutScrollState
     roundExpansion?: ChatPopoutRoundExpansionSnapshot
+    // Tri-state: a view pins, `null` clears back to the Appearance default,
+    // absent says nothing and leaves the main window's override alone.
+    transcriptView?: TranscriptView | null
   }) => ipcRenderer.invoke('dock-side-chat-popout', input) as Promise<{ ok: true }>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<boolean>,
   listWorkspaceFiles: (workspace: string) => ipcRenderer.invoke('list-workspace-files', workspace),
@@ -1234,11 +1350,12 @@ const api = {
     ipcRenderer.invoke('host-projection:command-submit', command),
   hostProjectionReceiptLookup: (params: { commandId: string }) =>
     ipcRenderer.invoke('host-projection:receipt-lookup', params),
-  // Host remains an in-process app capability: these channels expose its
-  // visible start/stop state without granting the renderer a process handle.
+  // The Host lifecycle as the app sees it: visible start/stop/restart state
+  // and a live inspect, without granting the renderer a process handle.
   hostLifecycleStatus: () => ipcRenderer.invoke('host-lifecycle:status'),
-  hostLifecycleSet: (request: { action: 'start' | 'stop' }) =>
+  hostLifecycleSet: (request: { action: 'start' | 'stop' | 'restart' }) =>
     ipcRenderer.invoke('host-lifecycle:set', request),
+  hostLifecycleInspect: () => ipcRenderer.invoke('host-lifecycle:inspect'),
   onHostLifecycleChanged: (callback: (snapshot: unknown) => void) => {
     const wrapped = (_event: unknown, snapshot: unknown) => callback(snapshot)
     ipcRenderer.on('host-lifecycle:changed', wrapped)
@@ -1311,8 +1428,7 @@ const api = {
   // audit-event broadcast the main process emits for every canvas action.
   canvas: {
     openWindow: (args: {
-      url: string
-      originAllowlist?: string[]
+      url?: string
       chatId: string
     }): Promise<
       | {
@@ -1325,8 +1441,7 @@ const api = {
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-window', args),
     openEmbedded: (args: {
-      url: string
-      originAllowlist?: string[]
+      url?: string
       chatId: string
       presentation?: 'dock'
     }): Promise<
@@ -1339,6 +1454,19 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
+    openEmulatorEmbedded: (args: {
+      chatId: string
+      presentation?: 'dock'
+    }): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-emulator-embedded', args),
     adoptEmbedded: (args: { chatId: string; canvasId: string }): Promise<unknown> =>
       ipcRenderer.invoke('canvas:adopt-embedded', args),
     openSketchWindow: (args: {
@@ -1366,6 +1494,22 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-sketch-embedded', args),
+    openPopout: (args: {
+      chatId: string
+      surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+      session?: {
+        canvasId: string
+        kind: 'web' | 'sketch' | 'emulator'
+        url?: string
+        title?: string
+      }
+    }): Promise<{ ok: true; senderId: number; created: boolean } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('canvas:open-popout', args),
+    dockPopout: (args: {
+      chatId: string
+      surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+    }): Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('canvas:dock-popout', args),
     // Chat-scoped list/close for the right-dock Canvas panel: covers agent-opened
     // canvases too (redacted summaries, no pixels), unlike `list` which only
     // returns canvases this renderer opened itself.
@@ -1420,6 +1564,38 @@ const api = {
       const wrapped = (_event: unknown, payload: unknown) => handler(payload)
       ipcRenderer.on('canvas-nav-state', wrapped)
       return () => ipcRenderer.removeListener('canvas-nav-state', wrapped)
+    },
+    onPopoutOpenSurface: (
+      handler: (payload: {
+        chatId: string
+        surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+        session?: {
+          canvasId: string
+          kind: 'web' | 'sketch' | 'emulator'
+          url?: string
+          title?: string
+        }
+      }) => void
+    ) => {
+      const wrapped = (_event: unknown, payload: Parameters<typeof handler>[0]) => handler(payload)
+      ipcRenderer.on('canvas-popout-open-surface', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-open-surface', wrapped)
+    },
+    onPopoutDockRequest: (
+      handler: (payload: {
+        chatId: string
+        surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+        canvases: unknown[]
+      }) => void
+    ) => {
+      const wrapped = (_event: unknown, payload: Parameters<typeof handler>[0]) => handler(payload)
+      ipcRenderer.on('canvas-popout-dock-request', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-dock-request', wrapped)
+    },
+    onPopoutChatUpdated: (handler: (payload: { chatId: string }) => void) => {
+      const wrapped = (_event: unknown, payload: { chatId: string }) => handler(payload)
+      ipcRenderer.on('canvas-popout-chat-updated', wrapped)
+      return () => ipcRenderer.removeListener('canvas-popout-chat-updated', wrapped)
     }
   },
 
@@ -1843,8 +2019,10 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   downloadUpdateAndRestart: () => ipcRenderer.invoke('download-update-and-restart'),
-  installUpdateOnQuit: () => ipcRenderer.invoke('install-update-on-quit'),
-  installUpdateNow: () => ipcRenderer.invoke('install-update-now'),
+  installUpdateNow: (options?: { force?: boolean }) =>
+    options
+      ? ipcRenderer.invoke('install-update-now', options)
+      : ipcRenderer.invoke('install-update-now'),
   changelogSnapshot: () => ipcRenderer.invoke('changelog-snapshot'),
   markChangelogSeen: (version: string) => ipcRenderer.invoke('mark-changelog-seen', version),
   onUpdateStatusChanged: (callback: (snapshot: unknown) => void) => {
@@ -2139,14 +2317,41 @@ const api = {
     ipcRenderer.invoke('projects:studio-discard', input),
   listProjectStudioArtifacts: (input: { projectId: string; includeDiscarded?: boolean }) =>
     ipcRenderer.invoke('projects:studio-list', input),
+  onWebSiteLoginsChanged: (callback: (site: unknown) => void) => {
+    const wrapped = (_event: unknown, site: unknown): void => callback(site)
+    ipcRenderer.on('web-login:changed', wrapped)
+    return () => ipcRenderer.removeListener('web-login:changed', wrapped)
+  },
+  listWebSiteLogins: () => ipcRenderer.invoke('web-login:list'),
+  listWebSiteLoginMigrationCandidates: () => ipcRenderer.invoke('web-login:migration-candidates'),
+  dismissWebSiteLoginMigrationCandidate: (input: { origin: string }) =>
+    ipcRenderer.invoke('web-login:migration-dismiss', input),
+  clearSharedBrowserData: () => ipcRenderer.invoke('web-login:clear-shared-jar'),
+  addWebSiteLogin: (input: { origin: string; label?: string }) =>
+    ipcRenderer.invoke('web-login:add', input),
+  updateWebSiteLogin: (input: {
+    id: string
+    label?: string
+    extraOrigins?: string[]
+    agentAccess?: 'off' | 'read' | 'act'
+  }) => ipcRenderer.invoke('web-login:update', input),
+  removeWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:remove', input),
+  signInWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-in', input),
+  signOutWebSiteLogin: (input: { id: string }) => ipcRenderer.invoke('web-login:sign-out', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
-  getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
+  getWorkspaceCommitAttributions: (workspaceId: string) =>
+    ipcRenderer.invoke('get-workspace-commit-attributions', workspaceId),
+  getHistoryIndexStatus: () => ipcRenderer.invoke('thread-catalogue:status'),
   getPinnedMessages: (workspaceId?: string) =>
     ipcRenderer.invoke('get-pinned-messages', workspaceId),
-  getChat: (chatId: string) => ipcRenderer.invoke('get-chat', chatId),
+  ...createThreadCatalogueReads((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
   unarchiveChat: (chatId: string) => ipcRenderer.invoke('unarchive-chat', chatId),
   exportArchivedChat: (input: { chatId: string; format: ArchivedChatExportFormat }) =>
     ipcRenderer.invoke('export-archived-chat', input),
+  importExternalProviderThread: (input: { provider: ExternalProviderThreadImportProvider }) =>
+    ipcRenderer.invoke('import-external-provider-thread', input) as Promise<
+      ExternalProviderThreadImportResult<ExternalProviderThreadImportChatSummary>
+    >,
   createChat: (workspaceId: string, workspacePath: string) =>
     ipcRenderer.invoke('create-chat', workspaceId, workspacePath),
   createGlobalChat: () => ipcRenderer.invoke('create-global-chat'),
@@ -2214,6 +2419,16 @@ const api = {
       schemaVersion: 1
       projectId: string
       referenceIds: string[]
+    }
+    /**
+     * Rewind-from-message ("Edit & resend from here") restart hints.
+     * Steer-mode only; MAIN sanitizes both fields and re-resolves the seat id
+     * against its canonical roster, so these are advisory routing hints, not
+     * authority.
+     */
+    rewind?: {
+      resumeFromParticipantId?: string
+      suppressPromptEcho?: boolean
     }
   }) => ipcRenderer.invoke('run-ensemble-round', payload),
   steerQueuedEnsemblePrompt: (payload: {
@@ -2471,6 +2686,15 @@ const api = {
   humanCollaborationCollaboratorReconnect: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:reconnect'),
   saveChat: (chat: ChatRecord) => serializedChatPersistence.save(chat),
+  saveChatWithOutcome: (chat: ChatRecord) => serializedChatPersistence.saveWithOutcome(chat),
+  patchChatComposerSelection: (
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<ChatComposerSelectionPatchResult> =>
+    ipcRenderer.invoke('patch-chat-composer-selection', request),
+  mutateChatTranscript: (
+    request: RendererChatTranscriptMutationRequest
+  ): Promise<RendererChatTranscriptMutationResult> =>
+    ipcRenderer.invoke('mutate-chat-transcript', request),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
     protectedChatIds?: string[]
@@ -2551,6 +2775,23 @@ const api = {
       executionId,
       reason
     ) as Promise<ExecutionRunProjection | null>,
+  resumeExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:resume',
+      executionId,
+      reason
+    ) as Promise<ExecutionRunProjection>,
+  archiveExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:archive',
+      executionId,
+      reason
+    ) as Promise<ExecutionGraphArchiveResult>,
+  retryExecutionGraphRecovery: (command: ExecutionGraphRecoveryRetryCommand = {}) =>
+    ipcRenderer.invoke(
+      'execution-graphs:retry-recovery',
+      command
+    ) as Promise<ExecutionGraphDiagnosticsSnapshot>,
   cancelExecutionRunStep: (command: ExecutionRunCancelStepCommand) =>
     ipcRenderer.invoke('execution-runs:cancel-step', command) as Promise<ExecutionRunProjection>,
   formalizeExecutionRun: (command: ExecutionRunFormalizeCommand) =>
@@ -2651,6 +2892,11 @@ const api = {
     ipcRenderer.invoke('closeout:summarize', request) as Promise<CloseoutSummarySnapshot>,
   proposeContinuation: (request: ContinuationProposalRequest) =>
     ipcRenderer.invoke('continuation:propose', request) as Promise<ContinuationProposalSnapshot>,
+  applyContinuationTitle: (request: ContinuationTitleApplyRequest) =>
+    ipcRenderer.invoke(
+      'continuation:apply-title',
+      request
+    ) as Promise<ContinuationTitleApplyResult>,
   getApprovalLedger: (filter: any = {}) => ipcRenderer.invoke('get-approval-ledger', filter),
   recordApprovalElevationAck: (input: {
     provider: string
@@ -2683,7 +2929,10 @@ const api = {
   getProductCrashes: (filter: any = {}) => ipcRenderer.invoke('get-product-crashes', filter),
   recordProductCrash: (input: any) => ipcRenderer.invoke('record-product-crash', input),
   recordRendererDiagnosticSample: (input: RendererDiagnosticClientSample) =>
-    ipcRenderer.invoke('record-renderer-diagnostic-sample', input) as Promise<boolean>,
+    ipcRenderer.invoke(
+      'record-renderer-diagnostic-sample',
+      withBlinkCacheUsage(input)
+    ) as Promise<boolean>,
   recordRendererErrorBoundary: (input: RendererErrorBoundaryReport) =>
     ipcRenderer.invoke('record-renderer-error-boundary', input) as Promise<boolean>,
   exportProductDiagnostics: (path?: string) =>
@@ -2920,11 +3169,32 @@ const api = {
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
   ackChatUpdated: (ack: ChatUpdateAck) => ipcRenderer.send(CHAT_UPDATE_ACK_CHANNEL, ack),
+  setChatUpdateInterests: (snapshot: ChatUpdateInterestSnapshot) =>
+    ipcRenderer.send(CHAT_UPDATE_INTEREST_CHANNEL, snapshot),
+  onChatUpdateInvalidated: (callback: (invalidation: ChatUpdateInvalidation) => void) => {
+    const wrapped = (_event: unknown, invalidation: ChatUpdateInvalidation): void =>
+      callback(invalidation)
+    ipcRenderer.on(CHAT_UPDATE_INVALIDATION_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(CHAT_UPDATE_INVALIDATION_CHANNEL, wrapped)
+  },
   /** Agent-set theme tokens changed in main; re-apply without a reload. */
   onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => {
     const wrapped = (_event: unknown, tokens: Record<string, string>): void => callback(tokens)
     ipcRenderer.on('agent-theme-tokens-changed', wrapped)
     return () => ipcRenderer.removeListener('agent-theme-tokens-changed', wrapped)
+  },
+  /**
+   * The host OS accent colour (macOS/Windows "accent"), or null where the
+   * platform reports none. `systemPreferences` is main-only, so this is the
+   * renderer's only route to the value `--accent` follows.
+   */
+  getSystemAccentColor: (): Promise<string | null> =>
+    ipcRenderer.invoke(SYSTEM_ACCENT_COLOR_CHANNEL),
+  /** The user changed their OS accent; re-apply without a reload. */
+  onSystemAccentColorChanged: (callback: (color: string | null) => void) => {
+    const wrapped = (_event: unknown, color: string | null): void => callback(color)
+    ipcRenderer.on(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(SYSTEM_ACCENT_COLOR_CHANGED_CHANNEL, wrapped)
   },
   onProjectsChanged: (callback: (projects: unknown) => void) => {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)
@@ -2941,6 +3211,20 @@ const api = {
       callback(event)
     ipcRenderer.on('context-compaction-progress', wrapped)
     return () => ipcRenderer.removeListener('context-compaction-progress', wrapped)
+  },
+  /**
+   * Rows main just appended. Separate from `onChatUpdated` on purpose: this one
+   * is unacked, so a slow renderer can never make main withhold the next frame.
+   */
+  onTranscriptTailAppended: (callback: (frame: TranscriptTailFrame) => void) => {
+    const wrapped = (_event: unknown, frame: TranscriptTailFrame): void => callback(frame)
+    ipcRenderer.on(TRANSCRIPT_TAIL_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(TRANSCRIPT_TAIL_CHANNEL, wrapped)
+  },
+  /** Telemetry receipt for the append-to-visible histogram. Never gates a send. */
+  reportTranscriptTailCommitted: (chatId: string, sequence: number) => {
+    const receipt = buildTranscriptTailReceipt(chatId, sequence)
+    if (receipt) ipcRenderer.send(TRANSCRIPT_TAIL_RECEIPT_CHANNEL, receipt)
   },
   onParticipantWorkingTelemetry: (callback: (event: ParticipantWorkingTelemetryEvent) => void) => {
     const wrapped = (_event: unknown, event: ParticipantWorkingTelemetryEvent): void =>
@@ -3108,6 +3392,14 @@ const api = {
     ipcRenderer.on('workspace-popout-open-file', wrapped)
     return () => ipcRenderer.removeListener('workspace-popout-open-file', wrapped)
   },
+  onChatPopoutPresentationChanged: (
+    callback: (payload: { presentation: ChatPopoutPresentation }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { presentation: ChatPopoutPresentation }): void =>
+      callback(payload)
+    ipcRenderer.on('chat-popout-presentation-changed', wrapped)
+    return () => ipcRenderer.removeListener('chat-popout-presentation-changed', wrapped)
+  },
   onSideChatDockRequest: (
     callback: (payload: {
       chatId: string
@@ -3116,6 +3408,7 @@ const api = {
       draft?: string
       scrollState?: ChatPopoutScrollState
       roundExpansion?: ChatPopoutRoundExpansionSnapshot
+      transcriptView?: TranscriptView | null
     }) => void
   ) => {
     const wrapped = (
@@ -3127,6 +3420,7 @@ const api = {
         draft?: string
         scrollState?: ChatPopoutScrollState
         roundExpansion?: ChatPopoutRoundExpansionSnapshot
+        transcriptView?: TranscriptView | null
       }
     ): void => callback(payload)
     ipcRenderer.on('side-chat:dock-request', wrapped)
@@ -3168,6 +3462,8 @@ const api = {
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
+    ipcRenderer.removeAllListeners(CHAT_UPDATE_INVALIDATION_CHANNEL)
+    ipcRenderer.removeAllListeners(TRANSCRIPT_TAIL_CHANNEL)
     ipcRenderer.removeAllListeners('participant-working-telemetry')
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')
@@ -3182,6 +3478,7 @@ const api = {
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
     ipcRenderer.removeAllListeners('workspace-popout-open-file')
+    ipcRenderer.removeAllListeners('chat-popout-presentation-changed')
     ipcRenderer.removeAllListeners('side-chat:dock-request')
     ipcRenderer.removeAllListeners('creative-action:request')
   }

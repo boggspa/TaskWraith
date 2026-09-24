@@ -44,6 +44,7 @@ struct ThirdPartyNoticesSettingsView: View {
         }
         .sheet(item: $selectedNotice) { resource in
             LicenseNoticeDocumentView(resource: resource)
+                .twSheetLiquidGlass(detents: [.large])
         }
     }
 
@@ -90,6 +91,7 @@ struct ThirdPartyNoticesSettingsView: View {
 
 private struct LicenseNoticeDocumentView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
     let resource: TaskWraithLicenseResource
 
     private var noticeText: String {
@@ -106,7 +108,10 @@ private struct LicenseNoticeDocumentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
             }
-            .background(TWTheme.appBg.ignoresSafeArea())
+            .background(
+                (glassSheetHosted ? Color.clear : TWTheme.appBg)
+                    .ignoresSafeArea()
+            )
             .navigationTitle(resource.title)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

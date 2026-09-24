@@ -1,5 +1,3 @@
-import { classifyReleaseCommand } from '../ReleaseCommandPolicy'
-
 export type AntigravityShellApprovalService = 'shellCommands' | 'externalPublish'
 
 /**
@@ -26,11 +24,12 @@ export function isAntigravityUserAuthorizedShellCommand(command: unknown): boole
 }
 
 /**
- * Preserve the permission ladder for publish/release commands even though agy
- * exposes them through its generic `run_command` tool. Accept Edits authorizes
- * ordinary shell work, but external publication remains a Full WS Access /
- * Full Access service.
+ * Native AntiGravity `run_command` calls use the ordinary shell service.
+ * Release-class lexical routing to `externalPublish` is retired so publish,
+ * notarize, and git push attempts are not diverted onto a dead ask path.
  */
-export function antigravityShellApprovalService(command: unknown): AntigravityShellApprovalService {
-  return classifyReleaseCommand(command) ? 'externalPublish' : 'shellCommands'
+export function antigravityShellApprovalService(
+  _command: unknown
+): AntigravityShellApprovalService {
+  return 'shellCommands'
 }

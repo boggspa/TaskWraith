@@ -139,6 +139,68 @@ describe('ComposerBranchWorktreePopover target chrome', () => {
     expect(html).toContain('a16d0b9e2')
   })
 
+  it('keeps the composer target distinct from the configured checkout', () => {
+    const html = renderToStaticMarkup(
+      <ComposerBranchPopoverWorktreeRow
+        worktree={{
+          path: '/repo-worktrees/feature',
+          branch: 'feature/rich-popover',
+          head: 'a16d0b9e2abcdef',
+          isCurrent: false
+        }}
+        gitSnapshot={{
+          ...snapshot,
+          requestedPath: '/repo-worktrees/feature',
+          repoRoot: '/repo-worktrees/feature'
+        }}
+        disabled
+        isComposerTarget
+        isComposerSelectionActive
+        onSelect={() => undefined}
+      />
+    )
+
+    expect(html).toContain('composer-branch-popover-item is-composer-target')
+    expect(html).toContain('Composer target · /repo-worktrees/feature')
+    expect(html).toContain('<i class="is-composer-target">selected</i>')
+    expect(html).toContain('<em class="composer-diff-add">+22</em>')
+  })
+
+  it('does not project a linked-worktree snapshot onto the configured branch', () => {
+    const html = renderToStaticMarkup(
+      <ComposerBranchPopoverBranchRow
+        branch={{ name: 'master', isCurrent: true, upstream: 'origin/master' }}
+        gitSnapshot={{
+          ...snapshot,
+          branch: 'feature/rich-popover',
+          upstream: 'origin/feature/rich-popover'
+        }}
+        disabled
+        onSelect={() => undefined}
+      />
+    )
+
+    expect(html).toContain('ref only')
+    expect(html).not.toContain('composer-diff-add')
+    expect(html).not.toContain('origin/feature/rich-popover')
+  })
+
+  it('offers the configured checkout as a composer-only escape target', () => {
+    const html = renderToStaticMarkup(
+      <ComposerBranchPopoverWorktreeRow
+        worktree={{ path: '/repo', branch: 'master', head: '83bbc32c8abcdef', isCurrent: true }}
+        gitSnapshot={snapshot}
+        disabled={false}
+        isComposerSelectionActive
+        onSelect={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Configured checkout')
+    expect(html).toContain('<i class="is-current">use checkout</i>')
+    expect(html).toContain('without changing Git checkout')
+  })
+
   it('keeps the shell background inherited while adding the target grid and facts rail', () => {
     const css = readFileSync(
       'src/renderer/src/components/ComposerBranchWorktreePopover.css',
@@ -156,5 +218,7 @@ describe('ComposerBranchWorktreePopover target chrome', () => {
       'grid-template-columns: 18px minmax(9rem, 1.15fr) minmax(14rem, 0.85fr)'
     )
     expect(facts).toContain('font-variant-numeric: tabular-nums')
+    expect(css).toContain('.composer-branch-popover-item.is-composer-target {')
+    expect(css).toContain('.composer-branch-popover-selection-summary {')
   })
 })

@@ -76,12 +76,14 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
         // pre-existing `.standard` host document into the shared suite first
         // (no-op once moved; never clobbers newer shared data).
         let sharedDefaults = UserDefaults(suiteName: TWPushKeyAccess.appGroup) ?? .standard
-        UserDefaultsPairedHostStore.migrate(from: .standard, to: sharedDefaults)
+        let stores = PairedHostAppGroupBootstrap.migrateAndMakeStores(
+            sharedDefaults: sharedDefaults)
         self.model = RemoteSessionModel(
             identityStore: KeychainIdentitySeedStore(
                 account: "remote-identity-seed",
                 accessGroup: TWPushKeyAccess.keychainAccessGroup),
-            pairingStore: UserDefaultsPairedHostStore(defaults: sharedDefaults),
+            pairingStore: stores.pairingStore,
+            hostSnapshotStore: stores.snapshotStore,
             pushGatewayDefaults: sharedDefaults)
         super.init()
     }

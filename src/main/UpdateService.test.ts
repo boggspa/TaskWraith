@@ -5,18 +5,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // during tests. `vi.hoisted` runs at the same hoisted phase as
 // `vi.mock`, sidestepping the temporal dead zone we'd hit if the
 // factory closed over a plain `const`.
-const mockAutoUpdater = vi.hoisted(() => ({
-  channel: 'latest' as string,
-  autoDownload: true,
-  autoInstallOnAppQuit: true,
-  autoRunAppAfterInstall: false,
-  logger: null as unknown,
-  checkForUpdates: vi.fn(async () => null),
-  downloadUpdate: vi.fn(async () => ['/tmp/update.dmg']),
-  quitAndInstall: vi.fn(),
-  on: vi.fn(),
-  emit: vi.fn()
-}))
+const mockAutoUpdater = vi.hoisted(() => {
+  const feed = { channel: 'latest' }
+  const updater = {
+    allowDowngrade: false,
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
+    autoRunAppAfterInstall: false,
+    logger: null as unknown,
+    checkForUpdates: vi.fn(async () => null),
+    downloadUpdate: vi.fn(async () => ['/tmp/update.dmg']),
+    quitAndInstall: vi.fn(),
+    on: vi.fn(),
+    emit: vi.fn(),
+    // electron-updater's real channel setter re-enables downgrades on every
+    // assignment (AppUpdater `set channel`); the mock reproduces that so the
+    // service's reset is exercised rather than assumed.
+    get channel(): string {
+      return feed.channel
+    },
+    set channel(value: string) {
+      feed.channel = value
+      updater.allowDowngrade = true
+    }
+  }
+  return updater
+})
 
 vi.mock('electron-updater', () => ({
   autoUpdater: mockAutoUpdater
@@ -27,11 +41,51 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
   UpdateService
 } from './UpdateService'
+import type { IdentityHandoffSnapshot } from './IdentityHandoffService'
 
 function emitUpdaterEvent(name: string, payload?: unknown): void {
   const handler = mockAutoUpdater.on.mock.calls.find((call) => call[0] === name)?.[1]
   if (typeof handler === 'function') {
     handler(payload)
+  }
+}
+
+function createIdentityHandoffBridge(initialPhase: IdentityHandoffSnapshot['phase'] = 'ready') {
+  let snapshot: IdentityHandoffSnapshot = {
+    active: true,
+    phase: initialPhase,
+    handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+    sourceVersion: '1.9.9',
+    targetVersion: '0.1.0',
+    targetAppId: 'com.taskwraith.desktop',
+    targetUpdateFeedChannel: 'release',
+    supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+    evidencePath: '/profile/identity-handoff-v1/state.json',
+    totalBytes: 100,
+    downloadedBytes: initialPhase === 'downloaded' ? 100 : 0,
+    percent: initialPhase === 'downloaded' ? 100 : 0
+  }
+  const listeners = new Set<(value: IdentityHandoffSnapshot) => void>()
+  const publish = (next: Partial<IdentityHandoffSnapshot>) => {
+    snapshot = { ...snapshot, ...next }
+    for (const listener of listeners) listener(snapshot)
+  }
+  return {
+    snapshot: vi.fn(() => snapshot),
+    subscribe: vi.fn((listener: (value: IdentityHandoffSnapshot) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }),
+    download: vi.fn(async () => {
+      publish({ phase: 'downloaded', downloadedBytes: 100, percent: 100 })
+      return snapshot
+    }),
+    retry: vi.fn(async () => {
+      publish({ phase: 'ready', errorMessage: undefined, errorCode: undefined })
+      return snapshot
+    }),
+    launch: vi.fn(() => true),
+    publish
   }
 }
 
@@ -87,6 +141,261 @@ describe('UpdateService', () => {
     const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
     svc.configure({ channel: 'nightly', enabled: true })
     expect(mockAutoUpdater.channel).toBe('beta')
+  })
+
+  it('keeps downgrades disabled even though the channel setter re-enables them', () => {
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    expect(mockAutoUpdater.allowDowngrade).toBe(true)
+    svc.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('latest')
+    expect(mockAutoUpdater.allowDowngrade).toBe(false)
+    svc.configure({ channel: 'nightly', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('beta')
+    expect(mockAutoUpdater.allowDowngrade).toBe(false)
+  })
+
+  it('follows the stable feed when the nightly feed is not published, without an error', async () => {
+    const missing = Object.assign(
+      new Error('Cannot find beta-mac.yml in the latest release artifacts'),
+      { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' }
+    )
+    mockAutoUpdater.checkForUpdates
+      .mockImplementationOnce(async () => {
+        // electron-updater emits the error before the check promise rejects.
+        emitUpdaterEvent('error', missing)
+        throw missing
+      })
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('update-not-available')
+        return null
+      })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'nightly', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('beta')
+
+    await svc.checkForUpdates()
+
+    expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
+    expect(mockAutoUpdater.channel).toBe('latest')
+    expect(mockAutoUpdater.allowDowngrade).toBe(false)
+    expect(svc.snapshot()).toMatchObject({
+      status: 'not-available',
+      channel: 'nightly',
+      feedNote: 'No nightly feed is published for the current release; following the stable feed.'
+    })
+    expect(svc.snapshot().errorMessage).toBeUndefined()
+  })
+
+  it('probes the nightly feed again on the next check and drops the note once it exists', async () => {
+    const missing = Object.assign(new Error('missing'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
+    })
+    const channelsProbed: string[] = []
+    mockAutoUpdater.checkForUpdates
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('error', missing)
+        throw missing
+      })
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('update-not-available')
+        return null
+      })
+      .mockImplementationOnce(async () => {
+        channelsProbed.push(mockAutoUpdater.channel)
+        emitUpdaterEvent('update-not-available')
+        return null
+      })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'nightly', enabled: true })
+
+    await svc.checkForUpdates()
+    expect(svc.snapshot().feedNote).toBeDefined()
+
+    await svc.checkForUpdates()
+    expect(channelsProbed).toEqual(['beta'])
+    expect(mockAutoUpdater.channel).toBe('beta')
+    expect(mockAutoUpdater.allowDowngrade).toBe(false)
+    expect(svc.snapshot().feedNote).toBeUndefined()
+    expect(svc.snapshot().status).toBe('not-available')
+  })
+
+  it('uses the arch-specific Windows feeds for the nightly fallback', async () => {
+    const missing = Object.assign(new Error('missing'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
+    })
+    mockAutoUpdater.checkForUpdates
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('error', missing)
+        throw missing
+      })
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('update-not-available')
+        return null
+      })
+    const svc = new UpdateService({ platform: 'win32', arch: 'arm64' })
+    svc.configure({ channel: 'nightly', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('beta-win-arm64')
+
+    await svc.checkForUpdates()
+
+    expect(mockAutoUpdater.channel).toBe('latest-win-arm64')
+    expect(svc.snapshot().status).toBe('not-available')
+  })
+
+  it('surfaces a missing feed as an error on the stable channel', async () => {
+    const missing = Object.assign(new Error('Cannot find latest-mac.yml'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
+    })
+    mockAutoUpdater.checkForUpdates.mockImplementationOnce(async () => {
+      emitUpdaterEvent('error', missing)
+      throw missing
+    })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+
+    await svc.checkForUpdates()
+
+    expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(svc.snapshot()).toMatchObject({
+      status: 'error',
+      errorMessage: 'Cannot find latest-mac.yml'
+    })
+  })
+
+  it('surfaces an error on nightly when the stable feed is missing as well', async () => {
+    const missing = Object.assign(new Error('Cannot find latest-mac.yml'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
+    })
+    mockAutoUpdater.checkForUpdates
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('error', missing)
+        throw missing
+      })
+      .mockImplementationOnce(async () => {
+        emitUpdaterEvent('error', missing)
+        throw missing
+      })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'nightly', enabled: true })
+
+    await svc.checkForUpdates()
+
+    expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
+    expect(svc.snapshot()).toMatchObject({
+      status: 'error',
+      errorMessage: 'Cannot find latest-mac.yml'
+    })
+  })
+
+  it('publishes restart deferrals once per change and drops them with the download', () => {
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+    emitUpdaterEvent('update-downloaded', {
+      version: '1.0.74',
+      files: [],
+      path: 'TaskWraith-1.0.74-universal-mac.zip',
+      sha512: 'abc'
+    })
+    const listener = vi.fn()
+    svc.subscribe(listener)
+    const deferral = {
+      reason: 'Waiting for 1 active agent run',
+      since: '2026-09-02T21:00:00.000Z',
+      expired: false
+    }
+
+    svc.setRestartPending(true, deferral)
+    svc.setRestartPending(true, { ...deferral })
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(svc.snapshot()).toMatchObject({ restartPending: true, restartDeferral: deferral })
+
+    svc.setRestartPending(false, { ...deferral, expired: true })
+    expect(svc.snapshot()).toMatchObject({
+      restartPending: false,
+      restartDeferral: { ...deferral, expired: true }
+    })
+
+    svc.setRestartPending(false)
+    expect(svc.snapshot().restartDeferral).toBeUndefined()
+    expect(listener).toHaveBeenCalledTimes(3)
+  })
+
+  it('ignores restart deferrals unless an update is downloaded', () => {
+    const svc = new UpdateService()
+    svc.configure({ channel: 'stable', enabled: true })
+    svc.setRestartPending(true, {
+      reason: 'Waiting for 1 active agent run',
+      since: '2026-09-02T21:00:00.000Z',
+      expired: false
+    })
+    expect(svc.snapshot()).toMatchObject({ restartPending: false })
+    expect(svc.snapshot().restartDeferral).toBeUndefined()
+  })
+
+  it('uses the isolated release feed for the public distribution identity', () => {
+    const mac = new UpdateService({
+      platform: 'darwin',
+      arch: 'arm64',
+      stableUpdateChannel: 'release'
+    })
+    mac.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('release')
+
+    const windows = new UpdateService({
+      platform: 'win32',
+      arch: 'arm64',
+      stableUpdateChannel: 'release'
+    })
+    windows.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.channel).toBe('release-win-arm64')
+
+    windows.configure({ channel: 'nightly', enabled: true })
+    expect(windows.snapshot().channel).toBe('stable')
+    expect(mockAutoUpdater.channel).toBe('release-win-arm64')
+  })
+
+  it('surfaces the explicit identity handoff even when automatic checks are off', () => {
+    const identityHandoff = createIdentityHandoffBridge()
+    const svc = new UpdateService({ identityHandoff })
+    svc.configure({ channel: 'stable', enabled: false })
+
+    expect(svc.snapshot()).toMatchObject({
+      status: 'available',
+      enabled: true,
+      latestVersion: '0.1.0',
+      releaseName: 'TaskWraith Release',
+      identityHandoff: {
+        active: true,
+        phase: 'ready',
+        targetAppId: 'com.taskwraith.desktop'
+      }
+    })
+    expect(mockAutoUpdater.channel).toBe('latest')
+    expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it('routes handoff download, progress, and install through the custom bridge', async () => {
+    const identityHandoff = createIdentityHandoffBridge()
+    const svc = new UpdateService({ identityHandoff })
+    svc.configure({ channel: 'stable', enabled: true })
+
+    identityHandoff.publish({
+      phase: 'downloading',
+      downloadedBytes: 40,
+      percent: 40
+    })
+    expect(svc.snapshot()).toMatchObject({
+      status: 'downloading',
+      downloadProgress: { transferred: 40, total: 100, percent: 40 }
+    })
+
+    await svc.downloadUpdate()
+    expect(identityHandoff.download).toHaveBeenCalledTimes(1)
+    expect(svc.snapshot()).toMatchObject({ status: 'downloaded' })
+    expect(svc.quitAndInstall()).toBe(true)
+    expect(identityHandoff.launch).toHaveBeenCalledTimes(1)
+    expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled()
+    expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled()
   })
 
   it('wires the autoUpdater event listeners exactly once', () => {

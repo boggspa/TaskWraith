@@ -203,6 +203,15 @@ describe('RevealingMarkdownMessage (smoke)', () => {
     expect(html).toContain('-5')
   })
 
+  it('shares inline color-token rendering with settled Markdown', () => {
+    const html = renderToStaticMarkup(
+      <RevealingMarkdownMessage content={'Violet #B73BD5 is ready.'} isLive={false} />
+    )
+    expect(html).toContain('class="markdown-color-token"')
+    expect(html).toContain('data-color-token="#B73BD5"')
+    expect(html).toContain('markdown-color-token-swatch')
+  })
+
   it('renders the stable prefix immediately even while live', () => {
     // The settled first block is solid regardless of the tail reveal cursor.
     const html = renderToStaticMarkup(

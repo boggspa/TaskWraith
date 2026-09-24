@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleDynamicStateSnapshot,
   buildDupProviderModelLabels,
+  ENSEMBLE_WRITER_GIT_GUIDANCE,
   buildEnsembleParticipantPrompt,
   buildEnsembleParticipantPromptProjection,
   buildParticipantTokenMap,
@@ -29,6 +30,7 @@ import type {
   ActiveGoal,
   ChatMessage,
   ChatRecord,
+  ConcurrentLane,
   EnsembleBossmanReviewGate,
   EnsembleConfig,
   EnsembleParticipant,
@@ -37,6 +39,10 @@ import type {
 } from './store/types'
 import { createActiveGoal } from './GoalState'
 import { ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS } from './antigravity/AntigravityEnsemblePromptProfile'
+import {
+  LANE_INTENT_BOUNDARY_READ_CLAMPED,
+  LANE_INTENT_BOUNDARY_TIER_PRESERVED
+} from './ensemble/EnsembleLanePosture'
 import { ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE } from './antigravity/AntigravityPermissionClaimEvidence'
 
 const ensemble: EnsembleConfig = {
@@ -301,6 +307,121 @@ describe('Ensemble prompt composition', () => {
       'codex',
       'gemini'
     ])
+  })
+
+  it('injects the ULTRA-TASK delegation block when a seat carries the exact synthetic effort', () => {
+    const ultraSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      reasoningEffort: 'ultraTask'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+      participant: ultraSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain('Priority order among listed tools: ensemble_fanout')
+    expect(prompt).toContain('Skip any name that is not listed for this seat')
+  })
+
+  it('gates UltraTask priority names to listed tools in every permission mode', () => {
+    for (const permissionPresetId of ['read_only', 'plan', 'workspace_write', 'full_access'] as const) {
+      const ultraSeat: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        reasoningEffort: 'ultraTask',
+        permissionPresetId
+      }
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+        participant: ultraSeat,
+        currentPrompt: 'Please implement this.',
+        roundId: 'round-1',
+        chatContextTurns: 4,
+        listedTools: ['delegate_wave', 'delegate_to_subthread', 'ensemble_await']
+      })
+      expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+      expect(prompt).toContain('delegate_wave (all chats)')
+      expect(prompt).not.toMatch(/Priority order[^\n]*ensemble_fanout/)
+    }
+  })
+
+  it('derives UltraTask listed tools from a Cursor gateway-solo receipt when the orchestrator omits listedTools', () => {
+    const ultraSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      id: 'cursor',
+      provider: 'cursor',
+      reasoningEffort: 'ultraTask',
+      permissionPresetId: 'read_only',
+      taskWraithMcpProfileReceipt: {
+        schemaVersion: 1,
+        profileId: 'taskwraith-gateway-solo-v1',
+        provider: 'cursor',
+        providerSessionId: 'cursor-sess-1',
+        pinnedAt: '2026-09-07T00:00:00.000Z'
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], ultraSeat] },
+      participant: ultraSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain("Priority order among this seat's listed tools")
+    expect(prompt).toContain('delegate_wave (all chats)')
+    expect(prompt).not.toMatch(/Priority order[^\n]*ensemble_fanout/)
+    expect(prompt).not.toContain('Skip any name that is not listed for this seat')
+  })
+
+  it.each(['ultra', 'ultracode', 'max'])(
+    'does not confer UltraTask delegation consent for the ordinary %s tier',
+    (reasoningEffort) => {
+      const seat: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        reasoningEffort
+      }
+      const prompt = buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config: { ...ensemble, participants: [ensemble.participants[0], seat] },
+        participant: seat,
+        currentPrompt: 'Please implement this.',
+        roundId: 'round-1',
+        chatContextTurns: 4
+      })
+
+      expect(prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    }
+  )
+
+  it('routes a Muse UltraTask seat through native sub-agents', () => {
+    const museSeat: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      provider: 'muse',
+      model: 'muse-spark-1.2',
+      reasoningEffort: 'ultraTask'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], museSeat] },
+      participant: museSeat,
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(prompt).toContain('subagent_spawn')
+    expect(prompt).toContain('subagent_wait')
+    expect(prompt).toContain('subagent_read_result')
+    expect(prompt).not.toContain('delegate_wave (all chats)')
+    expect(prompt).toContain('submit_reminder_decision')
+    expect(prompt).toContain('never a TaskWraith handoff')
   })
 
   it('builds bounded tagged context with roster and role instructions', () => {
@@ -575,8 +696,13 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain(
       'Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
     )
-    expect(prompt).toContain('`ensemble_fanout_all` has no writeScopes surface')
+    expect(prompt).toContain(
+      '`ensemble_fanout_all` has no writeScopes surface: write-capable seats join under their configured permission tier but receive reader intent'
+    )
     expect(prompt).toContain('`ensemble_fanout(mode="locked_writers", writeScopes=...)`')
+    expect(prompt).toContain('writeScopes is a writer map')
+    expect(prompt).toContain('correct the arguments, and retry ensemble_fanout')
+    expect(prompt).toContain('Respect a policy or user denial')
     expect(prompt).not.toContain('active Captain after Boss unavailability')
   })
 
@@ -653,9 +779,10 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1'
     })
 
-    expect(prompt).toContain('<taskwraith_active_goal>')
+    expect(prompt).toContain('<taskwraith_work_contract>')
+    expect(prompt).toContain('<taskwraith_active_goal_state>')
     expect(prompt).toContain('Keep participants inside their assigned roles.')
-    expect(prompt).toContain('Do not replace, clear, or silently reinterpret the objective')
+    expect(prompt).toContain('Goal = the user-owned prompt, expected outcome')
   })
 
   it('treats provider-native stored goals as TaskWraith-steered inside ensemble prompts', () => {
@@ -679,8 +806,8 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1'
     })
 
-    expect(prompt).toContain('<taskwraith_active_goal>')
-    expect(prompt).toContain('Provider mode: Guided by TaskWraith')
+    expect(prompt).toContain('<taskwraith_work_contract>')
+    expect(prompt).toContain('<taskwraith_active_goal_state>')
     expect(prompt).toContain('Keep the ensemble participants aligned.')
     expect(prompt).not.toContain('Native Grok goal')
   })
@@ -1065,6 +1192,33 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Olly')
   })
 
+  it('excludes imported provider history until an explicit host bridge creates a new row', () => {
+    const shared = chat()
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'imported-provider-row',
+        role: 'assistant',
+        content: 'display-only imported provider history',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: {
+          kind: 'externalProviderThreadImport',
+          sourceTrust: 'external_untrusted'
+        }
+      }
+    ]
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1',
+      chatContextTurns: 10
+    })
+
+    expect(prompt).not.toContain('display-only imported provider history')
+  })
+
   it('never tags an external-untrusted row as the host or as System', () => {
     const prompt = promptWithExternalRow('a contribution')
 
@@ -1208,13 +1362,23 @@ describe('Ensemble prompt composition', () => {
       }))
     ]
 
+    // Constrained via the per-model override (the chat-wide chars field is
+    // retired); a Spark seat keeps the 5K bounded-window premise intact.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      model: 'gpt-5.3-codex-spark'
+    }
     const projection = buildEnsembleParticipantPromptProjection({
       chat: shared,
-      config: { ...ensemble, ensembleContextChars: 5_000 },
-      participant: ensemble.participants[1],
+      config: {
+        ...ensemble,
+        participants: [ensemble.participants[0], sparkWorker, ensemble.participants[2]]
+      },
+      participant: sparkWorker,
       currentPrompt: 'Please implement this.',
       roundId: 'round-1',
-      chatContextTurns: 20
+      chatContextTurns: 20,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 5_000 }
     })
 
     expect(projection.prompt).not.toContain('OLD STEER THAT MUST REMAIN UNDELIVERED')
@@ -1241,13 +1405,23 @@ describe('Ensemble prompt composition', () => {
       }))
     ]
 
+    // The external-row cap scales with the seat budget; pin the seat to the
+    // retired 24K default via a Spark override so the F8 cap math is stable.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      model: 'gpt-5.3-codex-spark'
+    }
     const prompt = buildEnsembleParticipantPrompt({
       chat: shared,
-      config: ensemble,
-      participant: ensemble.participants[1],
+      config: {
+        ...ensemble,
+        participants: [ensemble.participants[0], sparkWorker, ensemble.participants[2]]
+      },
+      participant: sparkWorker,
       currentPrompt: 'Please implement this.',
       roundId: 'round-1',
-      chatContextTurns: 60
+      chatContextTurns: 60,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     })
 
     const included = Array.from({ length: 24 }, (_, index) => `flood body number ${index}`).filter(
@@ -1797,7 +1971,9 @@ describe('Ensemble prompt composition', () => {
   // passing the baton, but nobody was scheduled after them — the
   // failed yield routed back to user as if the round had broken.
   // Now the closer knows they're last + has no yield target.
-  it('marks the last speaker with "last speaker, position N of N" and emits the scoping rule (turn_bound)', () => {
+  it('normalizes a legacy turn_bound config to continuous semantics (no last-speaker rule)', () => {
+    // Continuous-only: the retired turn-bound last-speaker marker/rule must
+    // not resurrect even when an old chat record still says 'turn_bound'.
     const prompt = buildEnsembleParticipantPrompt({
       chat: chat(),
       config: ensemble,
@@ -1807,11 +1983,11 @@ describe('Ensemble prompt composition', () => {
       currentPrompt: 'Close out the round.',
       roundId: 'round-1'
     })
-    expect(prompt).toContain('Gemini / Researcher #p3 (you — last speaker, position 3 of 3)')
-    expect(prompt).toContain('SPEAKING LAST in this turn-bound round')
-    expect(prompt).toContain('position 3 of 3')
-    expect(prompt).toContain('`ensemble_yield(target: ...)` cannot route')
-    expect(prompt).toContain('ensemble_yield(target: "user")')
+    expect(prompt).not.toContain('SPEAKING LAST')
+    expect(prompt).not.toContain('last speaker')
+    expect(prompt).toContain('Gemini / Researcher #p3 (you — position 3 of 3)')
+    expect(prompt).toContain('Round policy: Continuous.')
+    expect(prompt).not.toContain('Turn-bound round:')
     expect(prompt).toContain('Plain `@user`, `@human`, and `@you` mentions address the human')
   })
 
@@ -1925,7 +2101,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Continuation-hop budget is nearly exhausted')
   })
 
-  it('gives a later-pass authority an explicit keep/skip routing checkpoint', () => {
+  it('gives a later-pass authority an advisory keep/skip routing checkpoint', () => {
     const continuousEnsemble: EnsembleConfig = {
       ...ensemble,
       orchestrationMode: 'continuous',
@@ -1939,8 +2115,7 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       authorityRoutingCheckpoint: {
         kind: 'later_pass',
-        pass: 2,
-        selectionRequired: true
+        pass: 2
       }
     })
 
@@ -1949,10 +2124,14 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('skip_intervention')
     expect(prompt).toContain('Continuous pass 1 may select')
     expect(prompt).toContain('unique foreground')
+    expect(prompt).toContain('These controls are optional')
+    expect(prompt).toContain('A valid direct yield wins over text mentions')
+    expect(prompt).toContain('the existing serial queue continues')
+    expect(prompt).not.toContain('re-summons you')
     expect(prompt).not.toContain('do not use a broad/all target')
   })
 
-  it('gives Continuous pass-1 authority the same must-route checkpoint stanza', () => {
+  it('tells Continuous pass-1 authority that a quiet turn advances the serial queue', () => {
     const continuousEnsemble: EnsembleConfig = {
       ...ensemble,
       orchestrationMode: 'continuous',
@@ -1966,13 +2145,13 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       authorityRoutingCheckpoint: {
         kind: 'later_pass',
-        pass: 1,
-        selectionRequired: true
+        pass: 1
       }
     })
 
     expect(prompt).toContain('Authority routing checkpoint (Continuous pass 1)')
-    expect(prompt).toContain('re-summons you instead of advancing ordinary serial seats')
+    expect(prompt).toContain('ending without a valid route advances the next eligible serial seat')
+    expect(prompt).not.toContain('re-summons you')
   })
 
   // 1.0.4-AR8 — meta-round suspension. When the chat has no workspace
@@ -2633,13 +2812,26 @@ describe('since-last-turn transcript widening', () => {
   })
 
   it('keeps the default window for participants with no prior turn', () => {
+    // Window-derived budgets widen every capable seat; pin this one to the
+    // retired 24K default via a Spark override so the no-unconditional-
+    // widening turn-window mechanics stay observable.
+    const sparkWorker: EnsembleParticipant = {
+      ...ensemble.participants.find((entry) => entry.id === 'codex')!,
+      model: 'gpt-5.3-codex-spark'
+    }
     const prompt = buildEnsembleParticipantPrompt({
       chat: chatWithLongRound(),
-      config: ensemble,
-      participant: ensemble.participants.find((entry) => entry.id === 'codex')!,
+      config: {
+        ...ensemble,
+        participants: ensemble.participants.map((entry) =>
+          entry.id === 'codex' ? sparkWorker : entry
+        )
+      },
+      participant: sparkWorker,
       currentPrompt: 'Continue your work.',
       roundId: 'round-delta-2',
-      chatContextTurns: 2
+      chatContextTurns: 2,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     })
     // Codex's own last turn (peer-9) is inside the default window already,
     // so the early claude message stays out — no unconditional widening.
@@ -2917,7 +3109,7 @@ describe('advisory seat soft boundary', () => {
     expect(prompt).toContain('Fallback takeover is NOT AVAILABLE')
   })
 
-  it('leaves the ordinary worker completion guidance unchanged', () => {
+  it('limits ordinary workers to their assignment contribution', () => {
     const config = withActiveRoundStatuses(
       { ...ensemble, orchestrationMode: 'continuous' },
       { claude: 'answered', codex: 'running', gemini: 'answered' }
@@ -2932,10 +3124,9 @@ describe('advisory seat soft boundary', () => {
     })
 
     expect(prompt).not.toContain('Advisory turn boundary')
-    expect(prompt).toContain('To END the round, finish the work')
-    expect(prompt).toContain(
-      'when the work is genuinely finished, use a listed goal-completion tool'
-    )
+    expect(prompt).toContain('You own only the assigned contribution')
+    expect(prompt).toContain('Do not call a root Goal lifecycle tool')
+    expect(prompt).toContain('Local todo completion never authorizes root Goal completion')
   })
 })
 
@@ -3554,6 +3745,80 @@ describe('Same-provider duplicate panels carry model labels (1.0.7)', () => {
     ).toBeUndefined()
   })
 
+  it('uses shared Pi and Ollama presentation for remote Ensemble speakers', () => {
+    const speakerFor = buildEnsembleSpeaker([
+      {
+        id: 'ollama-glm',
+        provider: 'ollama',
+        enabled: true,
+        role: 'Cloud',
+        instructions: 'Inspect cloud output.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        model: 'glm-5.2:cloud'
+      },
+      {
+        id: 'ollama-qwen',
+        provider: 'ollama',
+        enabled: true,
+        role: 'Local',
+        instructions: 'Inspect local output.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        model: 'qwen3.5:9b'
+      },
+      {
+        id: 'pi-deepseek',
+        provider: 'pi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research the issue.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        model: 'deepseek/deepseek-v4-pro'
+      },
+      {
+        id: 'pi-zai',
+        provider: 'pi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review the issue.',
+        order: 4,
+        permissionPresetId: 'read_only',
+        model: 'zai/glm-5.2'
+      }
+    ])
+
+    expect(
+      speakerFor({
+        id: 'ollama-row',
+        role: 'assistant',
+        content: 'x',
+        timestamp: 't',
+        metadata: {
+          ensembleProvider: 'ollama',
+          ensembleModel: 'glm-5.2:cloud',
+          ensembleRole: 'Cloud',
+          ensembleParticipantId: 'ollama-glm'
+        }
+      })
+    ).toBe('Z.ai / Cloud (GLM 5.2)')
+    expect(
+      speakerFor({
+        id: 'pi-row',
+        role: 'assistant',
+        content: 'x',
+        timestamp: 't',
+        metadata: {
+          ensembleProvider: 'pi',
+          ensembleModel: 'deepseek/deepseek-v4-pro',
+          ensembleRole: 'Researcher',
+          ensembleParticipantId: 'pi-deepseek'
+        }
+      })
+    ).toBe('DeepSeek / Researcher (V4 Pro)')
+  })
+
   it('buildDupProviderModelLabels maps only duplicated providers, skipping cli-default', () => {
     const labels = buildDupProviderModelLabels([
       ...dupEnsemble.participants,
@@ -3876,6 +4141,48 @@ describe('slim resumed-turn prompt shape', () => {
     expect(projection.transcriptAttribution.freshTranscriptMessageChars).toBeGreaterThan(0)
   })
 
+  it('budgets the slim delta from the seat ingest, not the retired chat-wide chars field', () => {
+    const base = chat()
+    const filler = 'delta filler line '.repeat(24)
+    base.messages = [
+      {
+        id: 'own-1',
+        role: 'assistant',
+        content: 'My earlier turn.',
+        timestamp: '2026-05-24T00:00:01.000Z',
+        metadata: { ensembleProvider: 'claude', ensembleParticipantId: 'claude' }
+      },
+      {
+        id: 'delta-oldest',
+        role: 'assistant',
+        content: 'OLDEST-DELTA-ROW would fall to a 5K budget.',
+        timestamp: '2026-05-24T00:00:02.000Z',
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      },
+      ...Array.from({ length: 30 }, (_, index) => ({
+        id: `delta-fill-${index}`,
+        role: 'assistant' as const,
+        content: `delta row ${index}: ${filler}`,
+        timestamp: `2026-05-24T00:01:${String(index).padStart(2, '0')}.000Z`,
+        metadata: { ensembleProvider: 'codex', ensembleParticipantId: 'codex' }
+      }))
+    ]
+    const projection = buildEnsembleParticipantPromptProjection({
+      chat: base,
+      // The retired chat-wide field must not squeeze a capable seat's delta —
+      // slim turns budget from the same window-derived seat ingest as full
+      // briefings.
+      config: { ...ensemble, ensembleContextChars: 5_000 },
+      participant: ensemble.participants.find((entry) => entry.id === 'claude')!,
+      currentPrompt: 'Continue.',
+      roundId: 'round-slim',
+      chatContextTurns: 60,
+      slimTurn: true
+    })
+    expect(projection.suppliedMessageIds).toContain('delta-oldest')
+    expect(projection.prompt).toContain('OLDEST-DELTA-ROW')
+  })
+
   it('separates replayed rows from new-to-seat rows in a full briefing', () => {
     const base = chat()
     base.messages = [
@@ -4176,14 +4483,18 @@ describe('seat compaction summary injection (wave 3)', () => {
 
 describe('Kimi prompt-projection compaction evidence', () => {
   function projectionFixture() {
+    // Budget-boundary mechanics need a CONSTRAINED seat now that ingest is
+    // window-derived: an override-eligible Spark seat pinned to the retired
+    // 24K default reproduces the old turn-window behavior exactly.
     const participant: EnsembleParticipant = {
-      id: 'kimi-seat',
-      provider: 'kimi',
+      id: 'spark-seat',
+      provider: 'codex',
       enabled: true,
       role: 'Worker',
       instructions: 'Work.',
       order: 1,
-      permissionPresetId: 'read_only'
+      permissionPresetId: 'read_only',
+      model: 'gpt-5.3-codex-spark'
     }
     const config: EnsembleConfig = {
       enabled: true,
@@ -4215,7 +4526,8 @@ describe('Kimi prompt-projection compaction evidence', () => {
     return {
       participant,
       config,
-      chat: { ...base, messages, ensemble: config }
+      chat: { ...base, messages, ensemble: config },
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 24_000 }
     }
   }
 
@@ -4558,5 +4870,620 @@ describe('ensemble user custom instructions', () => {
     expect(computeEnsemblePromptShellStamp(ensemble, { instructionsDigest: 'none' })).toBe(
       withoutInstructions
     )
+  })
+})
+
+describe('per-seat ingest budget (window-derived, replaces the chars slider)', () => {
+  const filler = (index: number): ChatMessage => ({
+    id: `filler-${index}`,
+    role: 'assistant',
+    content: `Filler analysis block ${index}. ${'x'.repeat(1_000)}`,
+    timestamp: `2026-05-24T01:${String(index % 60).padStart(2, '0')}:00.000Z`,
+    metadata: {
+      ensembleParticipantId: 'gemini',
+      ensembleProvider: 'gemini',
+      ensembleRole: 'Researcher'
+    }
+  })
+  const bigChat = (): ChatRecord => {
+    const base = chat()
+    return {
+      ...base,
+      messages: [
+        {
+          id: 'oldest',
+          role: 'assistant',
+          content: 'OLDEST_MARKER_ROW anchor for budget tests',
+          timestamp: '2026-05-24T00:30:00.000Z',
+          metadata: {
+            ensembleParticipantId: 'gemini',
+            ensembleProvider: 'gemini',
+            ensembleRole: 'Researcher'
+          }
+        },
+        ...Array.from({ length: 44 }, (_, index) => filler(index))
+      ]
+    }
+  }
+
+  it('gives capable models their full window instead of the retired 24K default', () => {
+    // ~45K chars of panel history. The retired chat-wide default (24K)
+    // dropped the oldest rows; the window-derived budget for a 200K-token
+    // model carries the whole transcript.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-1',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLDEST_MARKER_ROW')
+  })
+
+  it('defaults Codex Spark to the 50K exception budget and honors its per-model override', () => {
+    const sparkParticipant: EnsembleParticipant = {
+      id: 'spark',
+      provider: 'codex',
+      enabled: true,
+      role: 'Sparky',
+      instructions: 'Fast work.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gpt-5.3-codex-spark'
+    }
+    const config = { ...ensemble, participants: [...ensemble.participants, sparkParticipant] }
+    // Exception default (50K) still fits the ~45K transcript.
+    const defaulted = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config,
+      participant: sparkParticipant,
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-2',
+      chatContextTurns: 6
+    })
+    expect(defaulted).toContain('OLDEST_MARKER_ROW')
+    // A per-model override (settings `ensembleModelIngestChars`) constrains it.
+    const constrained = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config,
+      participant: sparkParticipant,
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-2',
+      chatContextTurns: 6,
+      modelIngestCharOverrides: { 'codex:gpt-5.3-codex-spark': 5_000 }
+    })
+    expect(constrained).not.toContain('OLDEST_MARKER_ROW')
+  })
+
+  it('ignores the retired per-chat ensembleContextChars field', () => {
+    // Legacy chats still carry the field; it must no longer constrain ingest.
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: bigChat(),
+      config: { ...ensemble, ensembleContextChars: 5_000 },
+      participant: ensemble.participants[0],
+      currentPrompt: 'Summarize the panel history.',
+      roundId: 'round-budget-3',
+      chatContextTurns: 6
+    })
+    expect(prompt).toContain('OLDEST_MARKER_ROW')
+  })
+})
+
+/*
+ * Effective lane posture — a fan-out lane that was runtime-narrowed at dispatch.
+ *
+ * The lane RECORD is never written back when a writer lane narrows to read, so
+ * `config.activeRound.lanes[…].intent` and the seat's own `permissionPresetId`
+ * both keep claiming "writer". Every posture statement in the prompt therefore
+ * has to come from `effectiveLanePosture`, and the reader boundary has to reach
+ * all four prompt shapes.
+ */
+describe('effective lane posture', () => {
+  const writeLane = (
+    participantId: string,
+    overrides: Partial<ConcurrentLane> = {}
+  ): ConcurrentLane => ({
+    laneId: `lane-${participantId}`,
+    participantId,
+    provider: 'codex',
+    status: 'running',
+    intent: 'write',
+    approvedWriteScopes: [
+      {
+        kind: 'path',
+        path: 'src/main/AssignedRepair.ts',
+        approvedBy: 'boss',
+        approvedAt: '2026-09-07T00:00:00.000Z'
+      }
+    ],
+    startedAt: '2026-09-07T00:00:00.000Z',
+    ...overrides
+  })
+
+  const withLanes = (lanes: Record<string, ConcurrentLane>): EnsembleConfig => {
+    const base = withActiveRoundStatuses(ensemble, { codex: 'running', claude: 'running' })
+    return {
+      ...base,
+      activeRound: { ...base.activeRound!, concurrentMode: true, lanes }
+    }
+  }
+
+  const readClamped = {
+    presetId: 'read_only' as const,
+    readOnly: true,
+    laneIntent: 'read' as const
+  }
+
+  it('keeps one seat’s write lane out of a different seat’s prompt', () => {
+    // Both existing lane fixtures in this file are self-lanes, so the wave-wide
+    // resolver this replaces looked correct: a writer ANYWHERE handed every
+    // reader on the panel the writer git guidance.
+    const config = withLanes({ 'lane-codex': writeLane('codex') })
+    const writer = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+    const otherSeat = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(writer).toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(otherSeat).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+  })
+
+  it('stops a completed write lane from poisoning later turns in the same round', () => {
+    // Lanes are never removed from `activeRound`, so an unfiltered resolver is
+    // sticky for the whole round: one writer finishing in pass 1 kept every
+    // later reader — and the writer's own later read turns — mislabelled.
+    const config = withLanes({
+      'lane-codex': writeLane('codex', { status: 'completed', endedAt: '2026-09-07T00:05:00.000Z' })
+    })
+    const sameSeatLater = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Report what landed.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+    const laterReader = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Review what landed.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(sameSeatLater).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(laterReader).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+  })
+
+  it('trusts the live posture over a stale write lane record', () => {
+    // The dangerous direction: the record still says write, the run does not.
+    const config = withLanes({ 'lane-codex': writeLane('codex') })
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).not.toContain(ENSEMBLE_WRITER_GIT_GUIDANCE)
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('states the reader boundary above the assignment in the default prompt shape', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('states the reader boundary on a slim resumed turn, which carries no other posture line', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      slimTurn: true,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'read'
+      }
+    })
+
+    expect(prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_TIER_PRESERVED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_TIER_PRESERVED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+    // The two other posture statements are absent from this shape entirely,
+    // which is why the boundary is the only thing standing between a resumed
+    // reader lane and a prompt with no posture at all.
+    expect(prompt).not.toContain('Your permission role is')
+    expect(prompt).not.toContain('Role boundary contract:')
+  })
+
+  it('states the reader boundary in the official-agy capsule, above the assignment', () => {
+    const antigravity: EnsembleParticipant = {
+      id: 'gempro',
+      provider: 'antigravity',
+      enabled: true,
+      role: 'GemProWork',
+      instructions: 'Implement the assigned slice.',
+      order: 1,
+      model: 'gemini-3.1-pro-high',
+      permissionPresetId: 'workspace_write'
+    }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [antigravity, ensemble.participants[1]]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: antigravity,
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-agy-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('AntiGravity official agy context capsule')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('states the reader boundary in the Ollama capsule, above the assignment', () => {
+    const ollamaParticipant: EnsembleParticipant = {
+      id: 'ollama-gemma',
+      provider: 'ollama',
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Add smoke tests.',
+      order: 4,
+      permissionPresetId: 'workspace_write',
+      model: 'gemma4:12b'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [...ensemble.participants, ollamaParticipant] },
+      participant: ollamaParticipant,
+      currentPrompt: 'LANE_ASSIGNMENT_MARKER inspect the dispatch path.',
+      roundId: 'round-ollama-lane',
+      chatContextTurns: 10,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('Ollama context capsule')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    expect(prompt.indexOf(LANE_INTENT_BOUNDARY_READ_CLAMPED)).toBeLessThan(
+      prompt.indexOf('LANE_ASSIGNMENT_MARKER')
+    )
+  })
+
+  it('names the clamped preset instead of the seat preset in the permission rule', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).toContain('Your permission role is read_only')
+    expect(prompt).not.toContain('Your permission role is workspace_write')
+  })
+
+  it('replaces the worker rule with a read/recon boundary on a read lane', () => {
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const config = withActiveRoundStatuses(
+      { ...ensemble, participants: [ensemble.participants[0], worker] },
+      { codex: 'running' }
+    )
+    const clamped = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+    const writing = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+
+    expect(clamped).not.toContain('Worker rule: execute the assigned implementation slice')
+    expect(clamped).toContain('Read-clamped lane: report findings, evidence, and risks')
+    expect(writing).toContain('Worker rule: execute the assigned implementation slice')
+    expect(writing).not.toContain('Read-clamped lane:')
+  })
+
+  it('drops the Boss/Captain write-allocation line when the live posture is read-clamped', () => {
+    // Sibling of the worker-stage case above, reached through an earlier branch:
+    // `hasBossDrivenWriteAllocation` reads the persisted lane record, and a
+    // writer lane narrowed to read at dispatch is never written back to it. The
+    // record still says `intent: 'write'` with boss-approved scopes, so without
+    // the posture gate the allocation branch matched first and told a run that
+    // cannot write to "execute the approved implementation slice".
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+
+    expect(prompt).not.toContain('Boss/Captain write allocation:')
+    expect(prompt).toContain('Read-clamped lane: report findings, evidence, and risks')
+    expect(prompt).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('drops the write-allocation line on a slim resumed turn too', () => {
+    // Third emission site for the same sentence, in the slim shape. Proven to
+    // self-contradict before the gate: the same prompt carried both the
+    // allocation line and the runtime-read-clamped boundary.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: worker,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-advisory',
+        chatContextTurns: 4,
+        slimTurn: true,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    const clamped = build(readClamped)
+    expect(clamped).toContain('TaskWraith Ensemble Mode — resumed turn')
+    expect(clamped).not.toContain('Boss/Captain write allocation:')
+    expect(clamped).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+
+    // Over-correction guard: a genuine allocation lane keeps the line.
+    const allocated = build(undefined)
+    expect(allocated).toContain('Boss/Captain write allocation:')
+    expect(allocated).not.toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+  })
+
+  it('keeps the write-allocation line for a genuine unclamped allocation lane', () => {
+    // The over-correction guard: the clamp supersedes the allocation for a
+    // read-clamped lane only. A live write lane — and a caller that supplies no
+    // posture at all, which is every non-lane caller — must be unchanged.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const base = withLanes({ 'lane-codex': writeLane('codex') })
+    const config: EnsembleConfig = {
+      ...base,
+      participants: [ensemble.participants[0], worker]
+    }
+    const writing = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+    const noPosture = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: worker,
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-advisory',
+      chatContextTurns: 4
+    })
+
+    expect(writing).toContain(
+      'Boss/Captain write allocation: execute the approved implementation slice'
+    )
+    expect(writing).not.toContain('Read-clamped lane:')
+    expect(noPosture).toContain(
+      'Boss/Captain write allocation: execute the approved implementation slice'
+    )
+    expect(noPosture).not.toContain('Read-clamped lane:')
+  })
+
+  it('says nothing extra for a write lane or for a seat with no lane at all', () => {
+    // Pins the same negative EnsembleOrchestrator.test.ts asserts for a
+    // write-intent BG lane: the reader sentence must never reach one.
+    const writeIntent = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-lane',
+      chatContextTurns: 4,
+      effectiveLanePosture: {
+        presetId: 'workspace_write',
+        readOnly: false,
+        laneIntent: 'write'
+      }
+    })
+    const serialSeat = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Land the assigned slice.',
+      roundId: 'round-lane',
+      chatContextTurns: 4
+    })
+
+    expect(writeIntent).not.toContain('inspection, recon, or review only')
+    expect(serialSeat).not.toContain('inspection, recon, or review only')
+    expect(serialSeat).toContain('Your permission role is workspace_write')
+  })
+
+  it('restores the advisory boundary a stale write allocation had suppressed', () => {
+    // Second consumer of the same stale signal as the role-boundary contract.
+    // `formatAdvisoryTurnBoundary` returned null on `bossDrivenWriteAllocation`
+    // alone, so a reviewer seat on a read-clamped lane lost its advisory
+    // framing on the strength of a write allocation it could no longer execute.
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      role: 'Reviewer',
+      stageRole: 'reviewer'
+    }
+    const config: EnsembleConfig = {
+      ...withLanes({ 'lane-codex': writeLane('codex') }),
+      participants: [ensemble.participants[0], reviewer]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: reviewer,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-advisory-consumer',
+        chatContextTurns: 4,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    expect(build(readClamped)).toContain('Stage role: reviewer')
+    // Over-correction guard: a genuine allocation still suppresses it.
+    expect(build(undefined)).not.toContain('Stage role: reviewer')
+  })
+
+  it('never tells a read-clamped seat to take an implementation turn', () => {
+    // Third consumer. The worker stage-role sentence was not gated on posture
+    // at all in this direction, so a read-clamped worker was still told to
+    // "take a serial implementation turn" underneath the reader boundary.
+    const worker: EnsembleParticipant = { ...ensemble.participants[1], stageRole: 'worker' }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [ensemble.participants[0], worker]
+    }
+    const build = (posture?: typeof readClamped): string =>
+      buildEnsembleParticipantPrompt({
+        chat: chat(),
+        config,
+        participant: worker,
+        currentPrompt: 'Inspect the dispatch path.',
+        roundId: 'round-worker-stage',
+        chatContextTurns: 4,
+        ...(posture ? { effectiveLanePosture: posture } : {})
+      })
+
+    expect(build(readClamped)).not.toContain('take a serial implementation turn')
+    expect(build(readClamped)).toContain(LANE_INTENT_BOUNDARY_READ_CLAMPED)
+    // Over-correction guard: an unclamped worker keeps its stage sentence.
+    expect(build(undefined)).toContain('take a serial implementation turn')
+  })
+
+  it.each([
+    ['antigravity' as const, 'gemini-3.1-pro-high'],
+    ['ollama' as const, 'qwen3:8b']
+  ])(
+    'does not tell a read-clamped %s capsule seat it is a worker',
+    (provider, model) => {
+      // The generic-shape gate missed the provider capsules, which render their
+      // own `Stage:` line — so the two surfaces the failing lanes actually ran
+      // on kept contradicting the boundary three lines above it.
+      const worker: EnsembleParticipant = {
+        ...ensemble.participants[1],
+        provider,
+        model,
+        stageRole: 'worker'
+      }
+      const config: EnsembleConfig = {
+        ...ensemble,
+        participants: [ensemble.participants[0], worker]
+      }
+      const build = (posture?: typeof readClamped): string =>
+        buildEnsembleParticipantPrompt({
+          chat: chat(),
+          config,
+          participant: worker,
+          currentPrompt: 'Inspect the dispatch path.',
+          roundId: `round-capsule-${provider}`,
+          chatContextTurns: 4,
+          ...(posture ? { effectiveLanePosture: posture } : {})
+        })
+
+      expect(build(readClamped)).not.toMatch(/Stage:\s*[Ww]orker/)
+      // Over-correction guard: an unclamped worker keeps its capsule stage.
+      expect(build(undefined)).toMatch(/Stage:\s*[Ww]orker/)
+    }
+  )
+
+  it('keeps a read-clamped reviewer’s capsule stage, which does not conflict', () => {
+    // Only `worker` contradicts a read lane. Suppressing scout/reviewer too
+    // would strip a seat of framing that is entirely compatible with reading.
+    const reviewer: EnsembleParticipant = {
+      ...ensemble.participants[1],
+      provider: 'antigravity',
+      model: 'gemini-3.1-pro-high',
+      stageRole: 'reviewer'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: { ...ensemble, participants: [ensemble.participants[0], reviewer] },
+      participant: reviewer,
+      currentPrompt: 'Inspect the dispatch path.',
+      roundId: 'round-capsule-reviewer',
+      chatContextTurns: 4,
+      effectiveLanePosture: readClamped
+    })
+    expect(prompt).toMatch(/Stage:\s*reviewer/i)
   })
 })

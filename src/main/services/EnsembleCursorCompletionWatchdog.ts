@@ -17,6 +17,13 @@ import {
  * quiescence window and has no active tool/approval, the run fails closed so
  * an OS-alive hung process cannot strand the round forever.
  *
+ * A seat whose child has not spawned yet is a third case entirely. Cursor
+ * installs transient `.cursor/` policy under a workspace-wide lease, and
+ * `CursorWorkspaceConfigLease` fairly queues an incompatible posture behind
+ * the current holder for the whole of that holder's turn. That queue wait is
+ * setup latency, not a silent transport, so it gets its own bounded startup
+ * window rather than the post-stream silence deadline.
+ *
  * Separately, critical context pressure with stalled token growth triggers a
  * discreet Path-B recovery (host prune + same-seat respawn) instead of a
  * user-visible failed seat.
@@ -25,13 +32,30 @@ import {
 export const CURSOR_COMPLETION_WATCHDOG_TIMEOUT_MS = 30_000
 export const CURSOR_COMPLETION_WATCHDOG_POLL_MS = 1_000
 export const CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS = 180_000
+/**
+ * Bounded window for a seat that has not spawned its child yet. Sized from the
+ * queue it has to absorb, not from spawn latency: a queued seat waits out the
+ * whole of the holder's turn, and over 40 local Cursor runs measured
+ * 2026-09-03 those turns ran p50 3m44s, p90 9m45s, p95 11m31s. Normal spawn
+ * latency by contrast is 2-13s, so nothing legitimate sits in the gap between
+ * the two. Wide enough for a p95 holder ahead in the queue, still a hard bound
+ * so a genuinely wedged setup cannot strand a seat forever. A round the user
+ * cancels aborts the lease wait immediately and never reaches this window.
+ */
+export const CURSOR_COMPLETION_WATCHDOG_STARTUP_MS = 900_000
 
-export type CursorTransportLiveness = 'alive' | 'exited' | 'unknown'
+export type CursorTransportLiveness = 'alive' | 'starting' | 'exited' | 'unknown'
 
 /**
- * Read only the exact RunManager-owned child handle. A missing process or
- * session is deliberately `unknown`; the watchdog decides whether that
- * unknown state has remained silent long enough to fail the run closed.
+ * Read only the exact RunManager-owned child handle. An untracked session is
+ * deliberately `unknown`; the watchdog decides whether that unknown state has
+ * remained silent long enough to fail the run closed.
+ *
+ * A session RunManager still holds as active, with no child attached, is
+ * `starting` rather than `unknown`. The two used to collapse together, which
+ * charged every pre-spawn seat the silence deadline meant for an unobservable
+ * transport and killed seats that were only queued for the workspace-config
+ * lease.
  */
 export function cursorTransportLivenessFromRunSession(
   session: RunSession | undefined
@@ -39,7 +63,7 @@ export function cursorTransportLivenessFromRunSession(
   if (!session) return 'unknown'
   if (!isActiveRunSessionStatus(session.status)) return 'exited'
   const process = session.process as { exitCode?: number | null; killed?: boolean } | undefined
-  if (!process) return 'unknown'
+  if (!process) return 'starting'
   return typeof process.exitCode === 'number' || process.killed === true ? 'exited' : 'alive'
 }
 
@@ -47,6 +71,7 @@ export type CursorCompletionWatchdogDecision =
   | { readonly kind: 'stop' }
   | { readonly kind: 'wait'; readonly delayMs: number }
   | { readonly kind: 'recover_context'; readonly reason: string }
+  | { readonly kind: 'recover_startup'; readonly reason: string }
   | { readonly kind: 'fail'; readonly reason: string }
 
 export function decideCursorCompletionWatchdog(input: {
@@ -58,6 +83,7 @@ export function decideCursorCompletionWatchdog(input: {
   readonly timeoutMs?: number
   readonly pollMs?: number
   readonly aliveQuiescenceMs?: number
+  readonly startupMs?: number
   readonly contextPressurePercent?: number | null
   readonly lastTokenGrowthAt?: number | null
   readonly contextPressureQuietMs?: number
@@ -77,6 +103,10 @@ export function decideCursorCompletionWatchdog(input: {
   if (!Number.isFinite(aliveQuiescenceMs) || aliveQuiescenceMs <= 0) {
     throw new Error('Cursor completion watchdog alive quiescence must be positive.')
   }
+  const startupMs = input.startupMs ?? CURSOR_COMPLETION_WATCHDOG_STARTUP_MS
+  if (!Number.isFinite(startupMs) || startupMs <= 0) {
+    throw new Error('Cursor completion watchdog startup window must be positive.')
+  }
 
   if (input.transportLiveness === 'exited') {
     return {
@@ -89,6 +119,23 @@ export function decideCursorCompletionWatchdog(input: {
   // Keep waiting even when the provider does not emit another stream event
   // until the approval/tool result arrives.
   if (input.hasActiveToolOrApproval) return { kind: 'wait', delayMs: pollMs }
+
+  // Nothing has spawned yet, so no provider output can arrive to extend the
+  // deadline: judging this window by the silence timeout kills a seat that is
+  // only waiting its turn on the workspace-config lease. Bounded all the same,
+  // because a setup that never spawns must not hold the round forever.
+  if (input.transportLiveness === 'starting') {
+    const startupRemainingMs = Math.max(0, input.lastActivityAt + startupMs - input.nowMs)
+    if (startupRemainingMs > 0) {
+      return { kind: 'wait', delayMs: Math.min(pollMs, startupRemainingMs) }
+    }
+    return {
+      kind: 'recover_startup',
+      reason:
+        `Cursor transport did not start within ${Math.round(startupMs / 1000)}s; ` +
+        'another Cursor seat may still hold the workspace configuration lease.'
+    }
+  }
 
   const pressureRecovery = decideCursorContextPressureRecovery({
     transportLiveness: input.transportLiveness,
@@ -134,6 +181,7 @@ export interface CursorCompletionWatchdogOptions {
   timeoutMs?: number
   pollMs?: number
   aliveQuiescenceMs?: number
+  startupMs?: number
   contextPressureQuietMs?: number
   hasActiveToolOrApproval: () => boolean
   transportLiveness: () => CursorTransportLiveness
@@ -143,6 +191,12 @@ export interface CursorCompletionWatchdogOptions {
   onMissingTerminal: (reason: string) => void
   /** Discreet Path-B recovery — must not surface a failed seat to the user. */
   onContextPressureRecovery?: (reason: string) => void
+  /**
+   * Discreet recovery for a seat whose transport never started. Nothing was
+   * produced, so a re-dispatch loses no work and must not surface a failed
+   * seat either.
+   */
+  onStartupRecovery?: (reason: string) => void
 }
 
 type WatchdogEntry = Omit<CursorCompletionWatchdogOptions, 'now'> & {
@@ -232,6 +286,7 @@ export class EnsembleCursorCompletionWatchdog {
       timeoutMs: entry.timeoutMs,
       pollMs: entry.pollMs,
       aliveQuiescenceMs: entry.aliveQuiescenceMs,
+      startupMs: entry.startupMs,
       contextPressurePercent: entry.contextPressurePercent?.() ?? null,
       lastTokenGrowthAt: entry.lastTokenGrowthAt,
       contextPressureQuietMs: entry.contextPressureQuietMs
@@ -244,6 +299,16 @@ export class EnsembleCursorCompletionWatchdog {
       this.entries.delete(entry.runId)
       if (entry.onContextPressureRecovery) {
         entry.onContextPressureRecovery(decision.reason)
+      } else {
+        // Legacy embedders without a recovery lane keep the fail-closed path.
+        entry.onMissingTerminal(decision.reason)
+      }
+      return
+    }
+    if (decision.kind === 'recover_startup') {
+      this.entries.delete(entry.runId)
+      if (entry.onStartupRecovery) {
+        entry.onStartupRecovery(decision.reason)
       } else {
         // Legacy embedders without a recovery lane keep the fail-closed path.
         entry.onMissingTerminal(decision.reason)

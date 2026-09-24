@@ -1,5 +1,16 @@
-import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
-import { buildChatTranscriptOps, type ChatTranscriptOp } from '../../shared/chatUpdateTransport'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ChatRun,
+  EnsembleConfig,
+  ThreadTitleProvenance,
+  ToolActivity
+} from './types'
+import { isPlaceholderThreadTitle } from '../../shared/threadTitles'
+import {
+  buildChatTranscriptOps,
+  type ChatUpdateTranscriptOp
+} from '../../shared/chatUpdateTransport'
 
 export const CHAT_RECORD_MUTATION_FORMAT = 'taskwraith-chat-mutation' as const
 export const CHAT_RECORD_MUTATION_VERSION = 1 as const
@@ -61,6 +72,33 @@ export type ChatRecordMutationOperation =
       runId: string
       run: ChatRun
     }
+  | {
+      type: 'ensemble_patch'
+      set: Record<string, unknown>
+      clear: string[]
+    }
+  | {
+      type: 'ensemble_participant_patch'
+      participantId: string
+      set: Record<string, unknown>
+      clear: string[]
+    }
+
+/** Exhaustive journal vocabulary; adding an operation must update its admission too. */
+export const CHAT_RECORD_MUTATION_OPERATION_TYPES = {
+  record_patch: true,
+  messages_splice: true,
+  message_content_append: true,
+  message_put: true,
+  message_patch: true,
+  tool_activities_presence: true,
+  tool_activities_splice: true,
+  tool_activity_put: true,
+  runs_splice: true,
+  run_put: true,
+  ensemble_patch: true,
+  ensemble_participant_patch: true
+} satisfies Record<ChatRecordMutationOperation['type'], true>
 
 export interface ChatRecordMutationBatch {
   format: typeof CHAT_RECORD_MUTATION_FORMAT
@@ -76,7 +114,7 @@ export interface ChatRecordMutationBatch {
 export interface DerivedChatRecordMutation {
   batch: ChatRecordMutationBatch
   /** null means the edit needs a recovery snapshot on the renderer wire. */
-  transcriptOps: ChatTranscriptOp[] | null
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -96,7 +134,7 @@ export type ChatTranscriptMutationOperation = Extract<
 
 export interface AuthoredChatTranscriptMutation {
   operations: ChatTranscriptMutationOperation[]
-  transcriptOps: ChatTranscriptOp[] | null
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -116,7 +154,12 @@ interface ObjectPatch {
 }
 
 const TOP_LEVEL_EXCLUDES = new Set(['appChatId', 'messages', 'runs', 'persistenceRevision'])
+const AUTHORED_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'ensemble'])
+const ENSEMBLE_PARTICIPANT_EXCLUDES = new Set(['participants'])
+const REBASE_TOP_LEVEL_EXCLUDES = new Set([...TOP_LEVEL_EXCLUDES, 'title', 'threadTitle'])
 const MESSAGE_FIELD_EXCLUDES = new Set(['id', 'content', 'toolActivities'])
+const MESSAGE_REBASE_EXCLUDES = new Set(['id'])
+const RUN_REBASE_EXCLUDES = new Set(['runId'])
 
 function persistenceRevision(record: Pick<ChatRecord, 'persistenceRevision'>): number {
   const revision = record.persistenceRevision
@@ -307,6 +350,93 @@ function deriveMessageOperations(
   return operations.length !== operationCount
 }
 
+function deriveAuthoredEnsembleOperations(
+  before: EnsembleConfig | undefined,
+  after: EnsembleConfig | undefined
+): ChatRecordMutationOperation[] {
+  if (Object.is(before, after)) return []
+  if (!before || !after) {
+    if (!after) {
+      return before ? [{ type: 'record_patch', set: {}, clear: ['ensemble'] }] : []
+    }
+    return [{ type: 'record_patch', set: { ensemble: jsonClone(after) }, clear: [] }]
+  }
+
+  const beforeSeats = before.participants || []
+  const afterSeats = after.participants || []
+  const rosterReplaced =
+    beforeSeats.length !== afterSeats.length ||
+    beforeSeats.some((seat, index) => seat.id !== afterSeats[index]?.id)
+  if (rosterReplaced) {
+    return [{ type: 'record_patch', set: { ensemble: jsonClone(after) }, clear: [] }]
+  }
+
+  const operations: ChatRecordMutationOperation[] = []
+  const chromePatch = objectPatch(
+    before as unknown as Record<string, unknown>,
+    after as unknown as Record<string, unknown>,
+    ENSEMBLE_PARTICIPANT_EXCLUDES
+  )
+  if (hasPatch(chromePatch)) operations.push({ type: 'ensemble_patch', ...chromePatch })
+
+  for (let index = 0; index < afterSeats.length; index += 1) {
+    const previousSeat = beforeSeats[index]
+    const nextSeat = afterSeats[index]
+    if (Object.is(previousSeat, nextSeat)) continue
+    const seatPatch = objectPatch(
+      previousSeat as unknown as Record<string, unknown>,
+      nextSeat as unknown as Record<string, unknown>,
+      new Set()
+    )
+    if (!hasPatch(seatPatch)) continue
+    operations.push({
+      type: 'ensemble_participant_patch',
+      participantId: nextSeat.id,
+      ...seatPatch
+    })
+  }
+  return operations
+}
+
+function deriveRunOperations(
+  beforeRuns: ChatRun[],
+  afterRuns: ChatRun[]
+): ChatRecordMutationOperation[] {
+  if (Object.is(beforeRuns, afterRuns)) return []
+  if (
+    beforeRuns.length === afterRuns.length &&
+    beforeRuns.every((run, index) => run.runId === afterRuns[index]?.runId)
+  ) {
+    const operations: ChatRecordMutationOperation[] = []
+    for (let index = 0; index < afterRuns.length; index += 1) {
+      const previous = beforeRuns[index]
+      const next = afterRuns[index]
+      if (Object.is(previous, next) || jsonEqual(previous, next)) continue
+      operations.push({ type: 'run_put', runId: next.runId, run: jsonClone(next) })
+    }
+    return operations
+  }
+  const operations: ChatRecordMutationOperation[] = []
+  const runStructure = deriveArrayStructure(beforeRuns, afterRuns, (run) => run.runId)
+  if (runStructure.splice) {
+    operations.push({
+      type: 'runs_splice',
+      index: runStructure.splice.index,
+      deleteCount: runStructure.splice.deleteCount,
+      runs: runStructure.splice.items
+    })
+  }
+  for (const pair of runStructure.stablePairs) {
+    if (jsonEqual(pair.before, pair.after)) continue
+    operations.push({
+      type: 'run_put',
+      runId: pair.after.runId,
+      run: jsonClone(pair.after)
+    })
+  }
+  return operations
+}
+
 export function deriveChatRecordMutationWithProjection(
   before: ChatRecord,
   after: ChatRecord,
@@ -323,15 +453,19 @@ export function deriveChatRecordMutationWithProjection(
     )
   }
 
+  const authored = Boolean(options.authoredTranscript)
   const operations: ChatRecordMutationOperation[] = []
   const recordPatch = objectPatch(
     before as unknown as Record<string, unknown>,
     after as unknown as Record<string, unknown>,
-    TOP_LEVEL_EXCLUDES
+    authored ? AUTHORED_TOP_LEVEL_EXCLUDES : TOP_LEVEL_EXCLUDES
   )
   if (hasPatch(recordPatch)) operations.push({ type: 'record_patch', ...recordPatch })
+  if (authored) {
+    operations.push(...deriveAuthoredEnsembleOperations(before.ensemble, after.ensemble))
+  }
 
-  let transcriptOps: ChatTranscriptOp[] | null
+  let transcriptOps: ChatUpdateTranscriptOp[] | null
   let changedMessageCount: number
   if (options.authoredTranscript) {
     if (
@@ -354,7 +488,9 @@ export function deriveChatRecordMutationWithProjection(
     transcriptOps = buildChatTranscriptOps(before.messages, after.messages)
     changedMessageCount =
       transcriptOps?.reduce((count, operation) => {
-        if (operation.op === 'append') return count + operation.messages.length
+        if (operation.op === 'append' || operation.op === 'insertBefore') {
+          return count + operation.messages.length
+        }
         return count + 1
       }, 0) ??
       (messageStructure.splice
@@ -374,23 +510,7 @@ export function deriveChatRecordMutationWithProjection(
     }
   }
 
-  const runStructure = deriveArrayStructure(before.runs, after.runs, (run) => run.runId)
-  if (runStructure.splice) {
-    operations.push({
-      type: 'runs_splice',
-      index: runStructure.splice.index,
-      deleteCount: runStructure.splice.deleteCount,
-      runs: runStructure.splice.items
-    })
-  }
-  for (const pair of runStructure.stablePairs) {
-    if (jsonEqual(pair.before, pair.after)) continue
-    operations.push({
-      type: 'run_put',
-      runId: pair.after.runId,
-      run: jsonClone(pair.after)
-    })
-  }
+  operations.push(...deriveRunOperations(before.runs, after.runs))
 
   return {
     batch: {
@@ -444,10 +564,238 @@ function applyPatch(target: Record<string, unknown>, patch: ObjectPatch): void {
   for (const key of patch.clear) delete target[key]
 }
 
+function recordsById<T>(
+  items: readonly T[],
+  idOf: (item: T) => string,
+  label: string
+): Map<string, T> {
+  const records = new Map<string, T>()
+  for (const item of items) {
+    const id = idOf(item)
+    if (!id || records.has(id)) throw new Error(`Chat rebase ${label} identities are ambiguous`)
+    records.set(id, item)
+  }
+  return records
+}
+
+function rebaseObjectFields<T extends object>(
+  base: T,
+  desired: T,
+  source: T,
+  excluded: ReadonlySet<string>,
+  depth = 0
+): T {
+  if (depth > 64) throw new Error('Chat rebase object depth exceeds its bound')
+  const baseRecord = base as unknown as Record<string, unknown>
+  const desiredRecord = desired as unknown as Record<string, unknown>
+  const sourceRecord = source as unknown as Record<string, unknown>
+  const rebased: Record<string, unknown> = { ...sourceRecord }
+  const keys = new Set([...Object.keys(baseRecord), ...Object.keys(desiredRecord)])
+  for (const key of keys) {
+    if (excluded.has(key)) continue
+    const baseHas =
+      Object.prototype.hasOwnProperty.call(baseRecord, key) && baseRecord[key] !== undefined
+    const desiredHas =
+      Object.prototype.hasOwnProperty.call(desiredRecord, key) && desiredRecord[key] !== undefined
+    if (!desiredHas) {
+      if (baseHas) delete rebased[key]
+      continue
+    }
+    if (baseHas && jsonEqual(baseRecord[key], desiredRecord[key])) continue
+    const baseValue = baseRecord[key]
+    const desiredValue = desiredRecord[key]
+    const sourceValue = sourceRecord[key]
+    rebased[key] =
+      isPlainJsonObject(baseValue) &&
+      isPlainJsonObject(desiredValue) &&
+      isPlainJsonObject(sourceValue)
+        ? rebaseObjectFields(baseValue, desiredValue, sourceValue, new Set(), depth + 1)
+        : jsonClone(desiredValue)
+  }
+  return rebased as unknown as T
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function rebaseIdentityArray<T extends object>(input: {
+  base: readonly T[]
+  desired: readonly T[]
+  source: readonly T[]
+  idOf: (item: T) => string
+  identityField: string
+  label: string
+}): T[] {
+  const baseById = recordsById(input.base, input.idOf, input.label)
+  const desiredById = recordsById(input.desired, input.idOf, input.label)
+  recordsById(input.source, input.idOf, input.label)
+  const removedByDesktop = new Set([...baseById.keys()].filter((id) => !desiredById.has(id)))
+  const result = input.source
+    .filter((item) => !removedByDesktop.has(input.idOf(item)))
+    .map((item) => jsonClone(item))
+  const resultIndexById = new Map(result.map((item, index) => [input.idOf(item), index]))
+
+  for (let desiredIndex = 0; desiredIndex < input.desired.length; desiredIndex += 1) {
+    const desiredItem = input.desired[desiredIndex]
+    const id = input.idOf(desiredItem)
+    const baseItem = baseById.get(id)
+    const sourceIndex = resultIndexById.get(id) ?? -1
+    if (baseItem) {
+      if (sourceIndex < 0) {
+        if (!jsonEqual(baseItem, desiredItem)) {
+          throw new Error(`Chat rebase ${input.label} ${id} changed after Host removal`)
+        }
+        continue
+      }
+      if (!jsonEqual(baseItem, desiredItem)) {
+        result[sourceIndex] = rebaseObjectFields(
+          baseItem,
+          desiredItem,
+          result[sourceIndex],
+          input.identityField === 'id' ? MESSAGE_REBASE_EXCLUDES : RUN_REBASE_EXCLUDES
+        )
+      }
+      continue
+    }
+
+    if (sourceIndex >= 0) {
+      if (!jsonEqual(result[sourceIndex], desiredItem)) {
+        throw new Error(`Chat rebase ${input.label} ${id} was added independently`)
+      }
+      continue
+    }
+
+    let targetIndex = result.length
+    for (let index = desiredIndex + 1; index < input.desired.length; index += 1) {
+      const anchor = resultIndexById.get(input.idOf(input.desired[index]))
+      if (anchor !== undefined) {
+        targetIndex = anchor
+        break
+      }
+    }
+    result.splice(targetIndex, 0, jsonClone(desiredItem))
+    for (let index = targetIndex; index < result.length; index += 1) {
+      resultIndexById.set(input.idOf(result[index]), index)
+    }
+  }
+  return result
+}
+
+function titlePair(record: ChatRecord): { title: string; provenance?: ThreadTitleProvenance } {
+  return { title: record.title, provenance: record.threadTitle }
+}
+
+function titlePairRank(pair: { title: string; provenance?: ThreadTitleProvenance }): number {
+  if (pair.provenance?.source === 'user') return 3
+  if (pair.provenance?.source === 'local-ai') return 2
+  if (pair.provenance?.source === 'prompt-fallback') return 1
+  if (pair.provenance?.source === 'placeholder') return 0
+  return isPlaceholderThreadTitle(pair.title) ? 0 : 3
+}
+
+function rebaseTitlePair(base: ChatRecord, desired: ChatRecord, source: ChatRecord) {
+  const basePair = titlePair(base)
+  const desiredPair = titlePair(desired)
+  const sourcePair = titlePair(source)
+  const desiredChanged = !jsonEqual(basePair, desiredPair)
+  const sourceChanged = !jsonEqual(basePair, sourcePair)
+  if (!desiredChanged) return sourcePair
+  if (!sourceChanged) return desiredPair
+  const desiredRank = titlePairRank(desiredPair)
+  const sourceRank = titlePairRank(sourcePair)
+  // Explicit intent beats automatic text. At equal precedence the current
+  // Host source wins, preventing a stale whole-record replay from clobbering a
+  // concurrent rename or a newer semantic refinement.
+  return desiredRank > sourceRank ? desiredPair : sourcePair
+}
+
+/**
+ * Three-way rebase for a Desktop full-record intent after the Host advanced
+ * the same chat. Fields untouched by Desktop remain Host-authored; explicit
+ * Desktop changes are replayed. Message/run additions from either side are
+ * retained by stable identity, while ambiguous identity collisions fail
+ * closed instead of overwriting transcript history.
+ */
+export function rebaseChatRecordUpdate(
+  base: ChatRecord,
+  desired: ChatRecord,
+  source: ChatRecord
+): ChatRecord {
+  if (
+    !base.appChatId ||
+    base.appChatId !== desired.appChatId ||
+    base.appChatId !== source.appChatId
+  ) {
+    throw new Error('Chat rebase requires one stable appChatId')
+  }
+  const baseRevision = persistenceRevision(base)
+  const desiredRevision = persistenceRevision(desired)
+  const sourceRevision = persistenceRevision(source)
+  if (desiredRevision <= baseRevision || sourceRevision < baseRevision) {
+    throw new Error(
+      `Chat rebase revision mismatch for ${base.appChatId}: ` +
+        `base ${baseRevision}, desired ${desiredRevision}, source ${sourceRevision}`
+    )
+  }
+  if (sourceRevision >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('Chat rebase source revision is exhausted')
+  }
+
+  const record = rebaseObjectFields(base, desired, source, REBASE_TOP_LEVEL_EXCLUDES)
+  const rebasedTitle = rebaseTitlePair(base, desired, source)
+  record.title = rebasedTitle.title
+  if (rebasedTitle.provenance) record.threadTitle = jsonClone(rebasedTitle.provenance)
+  else delete record.threadTitle
+  record.messages = rebaseIdentityArray({
+    base: base.messages,
+    desired: desired.messages,
+    source: source.messages,
+    idOf: (message) => message.id,
+    identityField: 'id',
+    label: 'message'
+  })
+  record.runs = rebaseIdentityArray({
+    base: base.runs,
+    desired: desired.runs,
+    source: source.runs,
+    idOf: (run) => run.runId,
+    identityField: 'runId',
+    label: 'run'
+  })
+  record.persistenceRevision = sourceRevision + 1
+  return record
+}
+
 export function applyChatRecordMutation(
   source: ChatRecord,
   batch: ChatRecordMutationBatch
 ): ChatRecord {
+  assertMutationSource(source, batch)
+  return applyChatRecordMutations(source, [batch])
+}
+
+/**
+ * Replay a revision chain on one private copy. Cloning the complete transcript
+ * for every streamed append makes a journal read grow with history × updates.
+ * Only the final record escapes; a rejected operation cannot mutate the caller
+ * or expose a partly applied chain. Operation payloads are still copied below.
+ */
+export function applyChatRecordMutations(
+  source: ChatRecord,
+  batches: readonly ChatRecordMutationBatch[]
+): ChatRecord {
+  const record = jsonClone(source)
+  for (const batch of batches) {
+    assertMutationSource(record, batch)
+    applyChatRecordMutationInPlace(record, batch)
+  }
+  return record
+}
+
+function assertMutationSource(source: ChatRecord, batch: ChatRecordMutationBatch): void {
   if (
     batch.format !== CHAT_RECORD_MUTATION_FORMAT ||
     batch.version !== CHAT_RECORD_MUTATION_VERSION
@@ -464,8 +812,10 @@ export function applyChatRecordMutation(
         `record ${sourceRevision}, batch ${batch.baseRevision} -> ${batch.revision}`
     )
   }
+}
 
-  const record = jsonClone(source)
+/** The record is owned exclusively by applyChatRecordMutations. */
+function applyChatRecordMutationInPlace(record: ChatRecord, batch: ChatRecordMutationBatch): void {
   for (const operation of batch.operations) {
     switch (operation.type) {
       case 'record_patch': {
@@ -568,11 +918,40 @@ export function applyChatRecordMutation(
         record.runs[index] = jsonClone(operation.run)
         break
       }
+      case 'ensemble_patch': {
+        if (!record.ensemble) throw new Error('Chat mutation ensemble is missing')
+        if (
+          Object.prototype.hasOwnProperty.call(operation.set, 'participants') ||
+          operation.clear.includes('participants')
+        ) {
+          throw new Error('Ensemble patch cannot replace participants')
+        }
+        applyPatch(record.ensemble as unknown as Record<string, unknown>, operation)
+        break
+      }
+      case 'ensemble_participant_patch': {
+        const seats = record.ensemble?.participants
+        const index = seats?.findIndex((seat) => seat.id === operation.participantId) ?? -1
+        if (!seats || index < 0) {
+          throw new Error(`Chat ensemble participant ${operation.participantId} is missing`)
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(operation.set, 'id') ||
+          operation.clear.includes('id')
+        ) {
+          throw new Error('Ensemble participant patch cannot replace identity')
+        }
+        applyPatch(seats[index] as unknown as Record<string, unknown>, operation)
+        break
+      }
+      default: {
+        const unsupported: never = operation
+        throw new Error(`Unsupported chat mutation operation: ${String(unsupported)}`)
+      }
     }
   }
 
   record.persistenceRevision = batch.revision
-  return record
 }
 
 export function estimateChatRecordMutationBytes(batch: ChatRecordMutationBatch): number {

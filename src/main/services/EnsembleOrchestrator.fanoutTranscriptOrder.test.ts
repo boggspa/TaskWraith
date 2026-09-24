@@ -544,6 +544,14 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
     "M2: holds the next serial speaker until the sourcing Lead's wave-2 lanes settle",
     { timeout: 20_000 },
     async () => {
+      // Continuous-only (2026-09-01): fan-out is On/Off, so 'read_only'
+      // normalises to 'all' and a no-Boss round start runs the user write-
+      // scope preflight (claim/ack/write passes) for every writer in the
+      // contiguous tail. This test pins the serial-writer configuration the
+      // preflight itself selects when concurrent write lanes are disabled
+      // ("TASKWRAITH_CONCURRENT_WRITE_LANES=0; continuing with serial
+      // writers." — EnsembleOrchestrator round-start writer partition).
+      vi.stubEnv('TASKWRAITH_CONCURRENT_WRITE_LANES', '0')
       const harness = makeHarness([
         participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
@@ -640,6 +648,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
         'W2-GROK-NOTE.',
         'BUILDER-LIVE-MESSAGE.'
       ])
+      vi.unstubAllEnvs()
     }
   )
 })

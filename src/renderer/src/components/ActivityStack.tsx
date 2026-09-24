@@ -25,6 +25,7 @@ import {
   extractMcpImageBlocks,
   getToolDisplayName,
   isErroredToolStatus,
+  isHiddenInfrastructureToolName,
   isReasoningToolName,
   isWriteLikeToolName,
   prettyPrintJson,
@@ -37,10 +38,13 @@ import {
 import { isClaudeWorkflowToolName } from '../../../shared/claudeWorkflow'
 import { isCodexReviewToolName } from '../../../shared/codexReview'
 import { isCodexMultiAgentToolName } from '../../../shared/codexMultiAgent'
+import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
+import { visibleTimelineItems, visibleTimelineSegments } from '../lib/transcriptViewFold'
+import { DEFAULT_TRANSCRIPT_VIEW, type TranscriptView } from '../lib/transcriptViewOverride'
 import { REVEAL_GROWTH_CEILING_PX } from '../lib/LiveActivityViewport'
 import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
@@ -53,7 +57,7 @@ import { renderActivitySummaryLabel } from '../lib/activitySummaryLabel'
 import { FileTypeIcon } from './FileTypeIcon'
 import { DigitOdometer } from './DigitOdometer'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
-import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
+import { ToolFamilyIcon, toolNameToFamily } from './icons/ToolFamilyIcon'
 import { CreativeTimelineDiffCard } from './CreativeTimelineDiffCard'
 import { creativeTimelineDiffModelFromActivity } from './CreativeTimelineDiffCardModel'
 import { CompactToolTrace } from './CompactToolTrace'
@@ -78,10 +82,11 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { providerAccentVar, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { setRefStateIfChanged } from '../lib/setRefStateIfChanged'
 import {
-  agentInvocationRouteLabel,
   childAgentInteractivityLabel,
   childAgentStateLabel
 } from '../lib/AgentInvocationPresentation'
+import { seatFromProviderNativeRun } from '../lib/transcriptSeat'
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
@@ -98,6 +103,8 @@ import {
   resolveImageViewCount
 } from '../../../shared/imageViewIdentity'
 import { useHydratedToolActivities } from '../lib/toolActivityDetailHydration'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -164,6 +171,14 @@ interface ActivityStackProps {
    * fan-out lane viewports leave it off (their rows carry their own diff
    * chrome, and sub-agent viewports render through their own card). */
   showDiffStats?: boolean
+  /** How much of the stack to render — see `lib/transcriptViewFold`.
+   *
+   * Optional ONLY so the 81 existing test call sites keep compiling; every
+   * non-test call site is pinned by the call-site guard in
+   * `ActivityStack.transcriptView.test.tsx`, because a stack that quietly
+   * defaults to `standard` renders everything, compiles clean and tells
+   * nobody. Absent means `DEFAULT_TRANSCRIPT_VIEW`. */
+  transcriptView?: TranscriptView
   thinkingTraceActions?: ThinkingTraceActionsConfig
 }
 
@@ -1061,11 +1076,30 @@ function renderEnsembleYieldTitle(
   // activity was constructed by the renderer-side path without an
   // orchestrator participant context).
   const display = activity.displayName || ''
-  const actorMatch = display.match(/^(.+?)\s+yielding\b/i)
+  const actorMatch = display.match(/^(.+?)\s+(?:yielding|yielded)\b/i)
   const actor = actorMatch && !actorMatch[1].toLowerCase().includes('_') ? actorMatch[1] : ''
+  const receipt = activity.rawResultEvent as { result?: { action?: string } } | undefined
+  // The bounded summary survives persistence when full tool details move out.
+  const held =
+    receipt?.result?.action === 'held_for_active_fanout' ||
+    activity.resultSummary?.startsWith('Fan-out handoff held:')
+  const incomplete = activity.status === 'error' ? 'failed' : held ? 'held' : undefined
+  const verb = activity.status === 'success' ? 'yielded' : 'yielding'
+  const label = incomplete
+    ? 'Handoff'
+    : actor
+      ? `${actor} ${verb}`
+      : verb === 'yielded'
+        ? 'Yielded'
+        : 'Yielding'
 
   if (!target) {
-    return <>{actor ? `${actor} yielding` : 'Yielding'}</>
+    return (
+      <>
+        {label}
+        {incomplete ? ` ${incomplete}` : ''}
+      </>
+    )
   }
 
   const chip = (
@@ -1080,8 +1114,8 @@ function renderEnsembleYieldTitle(
 
   return (
     <>
-      {actor ? `${actor} yielding to ` : 'Yielding to '}
-      {chip}
+      {label} to {chip}
+      {incomplete ? ` ${incomplete}` : ''}
     </>
   )
 }
@@ -1105,94 +1139,6 @@ function getReadableActivityDisplayName(activity: ToolActivity): string {
     lowerDisplay.startsWith('taskwraith__') ||
     lowerDisplay.includes('_')
   return displayLooksRaw ? fallback || displayName || rawToolName : displayName
-}
-
-const CALL_MCP_TOOL_WRAPPER_NAMES = new Set(['callmcptool', 'call_mcp_tool', 'mcp', 'use_tool'])
-
-const CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES = new Set([
-  'used callmcptool',
-  'used call_mcp_tool',
-  'used mcp',
-  'mcp',
-  'used an mcp tool'
-])
-
-const COMMAND_LIKE_ACTIVITY_KEYS = [
-  'command',
-  'cmd',
-  'script',
-  'bash',
-  'shell',
-  'shell_command',
-  'shellCommand',
-  'terminal_command',
-  'terminalCommand'
-]
-
-function plainRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function nestedActivityRecords(value: unknown): Record<string, unknown>[] {
-  const root = plainRecord(value)
-  if (!root) return []
-  const records = [root]
-  for (const key of ['parameters', 'params', 'payload', 'args', 'input', 'arguments']) {
-    const nested = plainRecord(root[key])
-    if (nested) records.push(nested)
-  }
-  return records
-}
-
-function hasCommandLikePayload(activity: ToolActivity): boolean {
-  if (activity.category === 'shell') return true
-  const records = [
-    ...(activity.parameters ? [activity.parameters] : []),
-    ...nestedActivityRecords(activity.rawUseEvent)
-  ]
-  return records.some((record) => Boolean(getStringParam(record, COMMAND_LIKE_ACTIVITY_KEYS)))
-}
-
-function hasMcpWrapperEvidence(activity: ToolActivity): boolean {
-  const records = [
-    ...(activity.parameters ? [activity.parameters] : []),
-    ...nestedActivityRecords(activity.rawUseEvent)
-  ]
-  return records.some((record) => {
-    const transportType = getStringParam(record, ['type', 'kind', 'tool_kind', 'toolKind'])
-    if (transportType?.toLowerCase().includes('mcp')) return true
-    if (
-      getStringParam(record, [
-        'server',
-        'serverName',
-        'server_name',
-        'providerIdentifier',
-        'provider_identifier',
-        'mcpToolName',
-        'mcp_tool_name',
-        'mcpTool',
-        'mcp_tool'
-      ])
-    ) {
-      return true
-    }
-    const wrapper = getStringParam(record, ['tool', 'toolName', 'tool_name', 'name'])
-    return wrapper ? CALL_MCP_TOOL_WRAPPER_NAMES.has(wrapper.toLowerCase()) : false
-  })
-}
-
-function isCallMcpToolActivity(activity: ToolActivity): boolean {
-  if (hasCommandLikePayload(activity)) return false
-  const toolName = (activity.toolName || '').trim().toLowerCase()
-  const displayName = (activity.displayName || '').trim().toLowerCase()
-  if (CALL_MCP_TOOL_WRAPPER_NAMES.has(toolName)) return true
-  if (CALL_MCP_TOOL_WRAPPER_DISPLAY_NAMES.has(displayName)) return true
-  if (toolName === 'unknown' || displayName === 'used unknown' || displayName === 'unknown') {
-    return hasMcpWrapperEvidence(activity)
-  }
-  return false
 }
 
 /**
@@ -1244,41 +1190,6 @@ function isThinkingTraceActivity(activity: ToolActivity): boolean {
 
 function activityProvider(activity: ToolActivity, fallback?: ProviderId): ProviderId | undefined {
   return activity.metadata?.ensembleProvider || activity.metadata?.provider || fallback
-}
-
-const CALL_MCP_TOOL_EASTER_EGG_FAMILIES: ToolFamily[] = [
-  'mcp',
-  'shell',
-  'search',
-  'edit',
-  'browser',
-  'task'
-]
-
-type CallMcpToolEasterEggStyle = CSSProperties & {
-  '--callmcp-delay': string
-}
-
-function CallMcpToolEasterEgg() {
-  return (
-    <span
-      className="callmcp-tool-easter-egg"
-      role="img"
-      aria-label="Used callmcptool"
-      title="Used callmcptool"
-    >
-      {CALL_MCP_TOOL_EASTER_EGG_FAMILIES.map((family, index) => (
-        <span
-          key={family}
-          className="callmcp-tool-easter-egg-icon"
-          style={{ '--callmcp-delay': `${index * -0.16}s` } as CallMcpToolEasterEggStyle}
-          aria-hidden="true"
-        >
-          <ToolFamilyIcon family={family} size={18} />
-        </span>
-      ))}
-    </span>
-  )
 }
 
 const PROGRESS_NOTE_CACHE_MAX = 64
@@ -1907,6 +1818,15 @@ function isGroupableActivity(activity: ToolActivity): boolean {
   // segment — sweeping one into a "used N tools" group would both hide the
   // card and defeat the anchor-id segment split.
   if (isChildAgentSpawnActivity(activity)) return false
+  // Goal-step / todo checklist calls render their own persistent
+  // "Goal steps · n/n complete" card (TodoChecklistCard — compact inline,
+  // full when the row is expanded). A compact group renders NO ActivityRow
+  // while collapsed, so folding one in unmounts the checklist behind a
+  // generic "used N tools" header with no visual trace a plan was ever
+  // there. `category: 'task'` puts todo_write next to summary/intent/
+  // progress/goal_update, so a single adjacent terminal task call was
+  // enough to swallow a just-completed checklist.
+  if (isTodoToolName(activity.toolName)) return false
   return true
 }
 
@@ -1925,6 +1845,9 @@ function isGroupableActivity(activity: ToolActivity): boolean {
 export function buildTimelineItems(activities: ToolActivity[]): ActivityTimelineItem[] {
   const items: ActivityTimelineItem[] = []
   let index = 0
+  // Synthetic housekeeping rows (AntiGravity cold-start init, unclassified
+  // agy "generic" steps) never render — skip before grouping.
+  activities = activities.filter((a) => !isHiddenInfrastructureToolName(a.toolName || ''))
   // A solitary terminal activity carries useful context (which file,
   // which command, the args) that a group header hides — so require
   // at least 2 consecutive same-family calls before grouping.
@@ -1980,6 +1903,51 @@ function timelineItemActivities(item: ActivityTimelineItem): ToolActivity[] {
  * anchors merge into one spawn-wave segment, mirroring how ensemble fan-out
  * lanes share one wave viewport.
  */
+/**
+ * Would opening this stack show the reader anything, under this view?
+ *
+ * Expandability is NOT a property of the view. A one-liner that opens onto
+ * nothing is a dead control, and a row whose content the view removed entirely
+ * must fold to an inert one-liner rather than vanish — which is what the
+ * user's own spec asks for: "retaining the existing one-liner collapsed, but
+ * never expands to show thinking viewports".
+ *
+ * This replicates the component's own pipeline because the CALLER has to
+ * decide `canExpand` before rendering the stack as children, so it cannot ask
+ * the mounted component. The one piece it deliberately omits is the collapse
+ * DEBOUNCE, which is a hook and cannot run here; that only delays items
+ * appearing, never changes whether any exist. `activityStackVisibleContentMatchesRender`
+ * in the test suite pins this function against what the component actually
+ * renders, for every view, so the two cannot drift apart silently.
+ *
+ * `chat` is deliberately NOT threaded through to `deriveChildAgentThreadsFromActivities`:
+ * that function MUTATES `chat.providerMetadata.agentIdentities`, and this is a
+ * question, not a render.
+ */
+export function activityStackHasVisibleContent(
+  activities: readonly ToolActivity[] | undefined,
+  view: TranscriptView,
+  options: { provider?: ProviderId; chatId?: string; runId?: string } = {}
+): boolean {
+  if (!activities || activities.length === 0) return false
+  // Standard hides nothing, so the answer is "yes" without doing any work —
+  // the default install must not pay for this.
+  if (view === 'standard') return true
+  const { provider, chatId, runId } = options
+  const childThreads = provider
+    ? deriveChildAgentThreadsFromActivities(provider, chatId, runId, activities as ToolActivity[])
+    : []
+  const childIds = new Set<string>()
+  const agentAnchorIds = new Set<string>()
+  for (const thread of childThreads) {
+    if (thread.parentToolCallId) agentAnchorIds.add(thread.parentToolCallId)
+    for (const id of thread.toolActivityIds) childIds.add(id)
+  }
+  const topLevel = (activities as ToolActivity[]).filter((activity) => !childIds.has(activity.id))
+  const segments = buildTimelineSegments(buildTimelineItems(topLevel), agentAnchorIds)
+  return visibleTimelineSegments(segments, view).length > 0
+}
+
 export function buildTimelineSegments(
   items: ActivityTimelineItem[],
   agentAnchorIds?: ReadonlySet<string>
@@ -2504,10 +2472,6 @@ function getInlineActivityTitle(
   workspacePath?: string,
   showFileHoverCard = true
 ): ReactNode {
-  if (isCallMcpToolActivity(activity)) {
-    return <CallMcpToolEasterEgg />
-  }
-
   if (isImageViewToolUse(activity.toolName, activity.parameters)) {
     return <>{IMAGE_VIEW_DISPLAY_NAME}</>
   }
@@ -2606,10 +2570,6 @@ function ActivityTitle({
   workspacePath?: string
   showFileHoverCard?: boolean
 }) {
-  if (isCallMcpToolActivity(activity)) {
-    return <CallMcpToolEasterEgg />
-  }
-
   if (isImageViewToolUse(activity.toolName, activity.parameters)) {
     return <>{IMAGE_VIEW_DISPLAY_NAME}</>
   }
@@ -2996,12 +2956,26 @@ export function liveActivityRevision(activities: readonly ToolActivity[]): strin
   let outputLen = 0
   for (const activity of activities) {
     const outputLength = (activity.resultSummary || activity.outputPreview || '').length
+    const diff = activity.diffSummary
+    const diffToken = [
+      diff?.additions ?? '',
+      diff?.deletions ?? '',
+      diff?.source ?? '',
+      diff?.confidence ?? '',
+      ...(diff?.files || []).flatMap((file) => [
+        file.path || '',
+        file.additions ?? '',
+        file.deletions ?? '',
+        file.status || ''
+      ])
+    ].join(',')
     const token = [
       activity.id,
       activity.toolName || '',
       activity.category || '',
       activity.status || '',
-      outputLength
+      outputLength,
+      diffToken
     ].join(':')
     outputLen += activity.resultSummary?.length || activity.outputPreview?.length || 0
     for (let i = 0; i < token.length; i += 1) {
@@ -3095,9 +3069,18 @@ export function ActivityStack({
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
   showDiffStats,
+  transcriptView = DEFAULT_TRANSCRIPT_VIEW,
   thinkingTraceActions
 }: ActivityStackProps) {
-  const activities = useHydratedToolActivities(compactActivities)
+  const hydratedActivities = useHydratedToolActivities(compactActivities)
+  // Provider MCP discovery/pre-call envelopes stay in the stored transcript
+  // for audit/replay, but are presentation plumbing rather than user work.
+  // Filter after hydration so legacy `unknown` rows can use their raw MCP
+  // evidence, and make every downstream row/group count share this boundary.
+  const activities = useMemo(
+    () => hydratedActivities.filter((activity) => !isMcpTransportWrapperActivity(activity)),
+    [hydratedActivities]
+  )
   const activityAccent = providerAccentVar(providerHueClass || resolveProviderHueClass(provider))
   const activityAccentStyle = activityAccent
     ? ({ '--accent': activityAccent } as CSSProperties)
@@ -3141,6 +3124,15 @@ export function ActivityStack({
   // participants array reference so we don't re-key every render when
   // the chat object has unrelated mutations.
   const participants = useMemo(() => chat?.ensemble?.participants, [chat?.ensemble?.participants])
+  const providerNativeSeat = useMemo(
+    () =>
+      seatFromProviderNativeRun({
+        run: runId ? chat?.runs?.find((run) => run.runId === runId) : undefined,
+        chat,
+        fallbackProvider: provider
+      }),
+    [chat, provider, runId]
+  )
 
   const childThreads = useMemo(() => {
     if (!provider || !activities || activities.length === 0) return [] as ChildAgentThread[]
@@ -3261,14 +3253,35 @@ export function ActivityStack({
   // Sub-agent spawn anchors segment as kind 'agent' so each spawn wave gets
   // its own viewport instead of being buried inside a tool-call viewport.
   const agentAnchorIds = useMemo(() => new Set(threadByParentId.keys()), [threadByParentId])
+  // Segments are built for the live tree, and ALSO whenever the view actually
+  // filters — the flat non-live tree below consumes the same survivors through
+  // `visibleTimelineItems`, so one transcript cannot hide different things
+  // depending on whether "Live activity viewport" happens to be on. Standard
+  // keeps today's exact behaviour: no segments built, no filter, no copy.
+  const viewFilters = transcriptView !== 'standard'
   const fullTimelineSegments = useMemo(
-    () => (liveViewportEnabled ? buildTimelineSegments(timelineItems, agentAnchorIds) : []),
-    [liveViewportEnabled, timelineItems, agentAnchorIds]
+    () =>
+      liveViewportEnabled || viewFilters
+        ? visibleTimelineSegments(
+            buildTimelineSegments(timelineItems, agentAnchorIds),
+            transcriptView
+          )
+        : [],
+    [liveViewportEnabled, viewFilters, timelineItems, agentAnchorIds, transcriptView]
   )
+  const viewFilteredTimelineItems = useMemo(
+    () => visibleTimelineItems(fullTimelineSegments, transcriptView, timelineItems),
+    [fullTimelineSegments, transcriptView, timelineItems]
+  )
+  // Both the cap and its banner count the items this view actually RENDERS.
+  // Reading the unfiltered list instead made the banner claim "30 earlier
+  // events hidden" on a Minimal row where the view, not the cap, had removed
+  // them — and where nothing was capped at all. Identical under standard,
+  // where the filtered list IS the unfiltered one, by reference.
   const collapseCapActive =
     liveViewportEnabled &&
     !anyLiveViewportExpanded &&
-    timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+    viewFilteredTimelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
   const timelineSegments = useMemo(
     () =>
       collapseCapActive
@@ -3277,7 +3290,7 @@ export function ActivityStack({
     [collapseCapActive, fullTimelineSegments]
   )
   const hiddenTimelineItemCount = collapseCapActive
-    ? timelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+    ? viewFilteredTimelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
     : 0
   const expandedIdsKey = useMemo(() => {
     if (!expandedIds || expandedIds.size === 0) return ''
@@ -3285,6 +3298,16 @@ export function ActivityStack({
   }, [expandedIds])
 
   if (!activities || activities.length === 0) return null
+  // A view that hid every segment must render NOTHING, not an empty timeline
+  // wrapper with its header and accent chrome still painted. The one-liner the
+  // reader keeps under Minimal is TranscriptPanel's collapsed row, not this
+  // component — if this returned an empty shell the transcript would show a
+  // bare rule where the work used to be.
+  // The plan rail is pinned STATUS, not a viewport — it is none of the three
+  // surfaces any view was asked to hide, so it outlives a filter that removed
+  // every segment. Standard never reaches this branch: `viewFilters` is false.
+  const hasPinnedLiveContent = planLanes.length > 1 || latestMergedTodos.length > 0
+  if (viewFilters && fullTimelineSegments.length === 0 && !hasPinnedLiveContent) return null
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -3396,6 +3419,7 @@ export function ActivityStack({
         workspacePath={workspacePath}
         childThread={thread}
         childActivities={thread ? resolveThreadActivities(thread) : undefined}
+        childAgentSeat={providerNativeSeat}
         provider={provider}
         participants={participants}
         todoItems={mergedTodosByActivityId.get(item.activity.id)}
@@ -3412,7 +3436,7 @@ export function ActivityStack({
   // Non-live path only (the live path renders per-segment viewports below and
   // early-returns) — don't eagerly build + discard the full element list on
   // every live delta flush. The collapsed item cap never applied here.
-  const timelineNodes = liveViewportEnabled ? [] : timelineItems.map(renderTimelineItem)
+  const timelineNodes = liveViewportEnabled ? [] : viewFilteredTimelineItems.map(renderTimelineItem)
   const pinnedLiveContent =
     planLanes.length > 1 ? (
       <div className="plan-rail-lanes">
@@ -3444,6 +3468,12 @@ export function ActivityStack({
     return (
       <div className="activity-timeline" style={activityAccentStyle}>
         {header}
+        {/* The rail normally rides inside the first segment's cached body. When
+         * a view has filtered every segment away there is no body to ride, so
+         * it renders here instead — pinned status must not disappear because
+         * the reader asked for a quieter transcript. Unreachable under
+         * standard, where a live viewport always has at least one segment. */}
+        {timelineSegments.length === 0 && pinnedLiveContent}
         {childThreads.length >= 2 && (
           <ChildAgentSpawnBlock
             threads={childThreads}
@@ -3493,6 +3523,12 @@ export function ActivityStack({
               liveActivityViewportActive ? '1' : '0',
               compactDensity ? '1' : '0',
               showDiffStats ? '1' : '0',
+              // Without this the cached body outlives a view flip: the segment
+              // survives the filter, keeps its id, and is served from
+              // `segmentChildrenCacheRef` exactly as it was rendered under the
+              // previous view. Nothing fails to compile and nothing fails to
+              // render — the transcript just ignores the menu.
+              transcriptView,
               pinnedDisclosure
             ].join('|')
           })
@@ -3674,28 +3710,27 @@ function ActivityDiffFiles({
 function ChildAgentThreadCard({
   thread,
   activities,
+  selectedSeat,
   workspacePath,
   shimmerNow
 }: {
   thread: ChildAgentThread
   activities: ToolActivity[]
+  selectedSeat?: SeatChangeSeatState | null
   workspacePath?: string
   shimmerNow?: number
 }) {
-  const [expanded, setExpanded] = useState(thread.state === 'running')
-  // Fan-out-viewport rule: a lane collapses to its one-liner once settled.
-  // Track the previous state so only real transitions drive auto-collapse /
-  // auto-expand — a user's manual toggle after settle sticks (the effect
-  // won't fire again without another state change).
+  // Provider-native agents enter as compact one-liners. Their parent activity
+  // already says "Used agent", and an empty expanded body only repeats that
+  // the child has not returned yet. A user may still open one explicitly.
+  const [expanded, setExpanded] = useState(false)
+  // Once a manually-expanded live card settles, collapse it to the same
+  // resting one-liner as fan-out lanes. Queued → running never auto-expands.
   const previousStateRef = useRef(thread.state)
   useEffect(() => {
     const previous = previousStateRef.current
     previousStateRef.current = thread.state
     if (previous === thread.state) return
-    if (thread.state === 'running') {
-      setExpanded(true)
-      return
-    }
     if (thread.state === 'completed' || thread.state === 'failed' || thread.state === 'cancelled') {
       setExpanded(false)
     }
@@ -3703,12 +3738,12 @@ function ChildAgentThreadCard({
   const interactivityLabel = childAgentInteractivityLabel(thread.interactivity)
   const stateLabel = childAgentStateLabel(thread.state)
 
-  // Resolve identity (assigned via assignAgentIdentity during thread derive).
-  // When present, the colored name + dot replace the generic "Task #N" label.
+  // The identicon distinguishes provider-native children visually, but its
+  // generated nickname is implementation detail. The selected run seat below
+  // tells the reader what actually executed: provider, model, and reasoning.
   const identity = thread.identity
-  const displayName = identity?.name || thread.name
-  const identityRole = identity?.role || thread.role
   const identityColor = identity?.color
+  const selectedSeatAccent = selectedSeat ? seatAccentVar(selectedSeat) : undefined
 
   return (
     <div
@@ -3716,8 +3751,8 @@ function ChildAgentThreadCard({
       data-agent-id={thread.id}
       data-provider={thread.provider}
       style={
-        identityColor
-          ? ({ ['--agent-identity-color' as string]: identityColor } as Record<string, string>)
+        selectedSeatAccent
+          ? ({ '--subagent-seat-accent': selectedSeatAccent } as CSSProperties)
           : undefined
       }
     >
@@ -3734,13 +3769,17 @@ function ChildAgentThreadCard({
         >
           <AgentIdentityIcon identity={identity} seed={thread.id} color={identityColor} size={22} />
         </span>
-        <span
-          className="child-agent-thread-name"
-          style={identityColor ? { color: identityColor } : undefined}
-        >
-          {displayName}
-        </span>
-        {identityRole && <span className="child-agent-thread-role">{identityRole}</span>}
+        {selectedSeat ? (
+          <SeatStateChips seat={selectedSeat} className="child-agent-thread-seat" />
+        ) : (
+          <span className="child-agent-thread-provider-fallback">
+            <ProviderBrandLogoIcon
+              provider={thread.provider}
+              wrapperClassName="child-agent-thread-provider-logo"
+            />
+            <span>{getProviderLabel(thread.provider)}</span>
+          </span>
+        )}
         <span className={`child-agent-thread-state state-${thread.state}`}>{stateLabel}</span>
         <span className="child-agent-thread-interactivity">{interactivityLabel}</span>
         {durationLabel(thread.durationMs) && (
@@ -3763,9 +3802,6 @@ function ChildAgentThreadCard({
       </button>
       {expanded && (
         <div className="child-agent-thread-body">
-          <div className="agent-invocation-route-note">
-            {agentInvocationRouteLabel('provider-native')}
-          </div>
           {thread.seedPrompt && (
             <div className="child-agent-section">
               <div className="child-agent-section-title">Prompt</div>
@@ -3818,6 +3854,8 @@ type ActivityRowProps = {
   liveThinkingTrim?: boolean
   childThread?: ChildAgentThread
   childActivities?: ToolActivity[]
+  /** Selected provider/model/reasoning inherited by provider-native children. */
+  childAgentSeat?: SeatChangeSeatState | null
   /** 1.4.2 — merged goal-step checklist state at this activity. */
   todoItems?: TodoItem[]
   /** 1.0.4 — ensemble participants for resolving an `ensemble_yield`
@@ -3859,6 +3897,7 @@ function activityRowPropsAreEqual(prev: ActivityRowProps, next: ActivityRowProps
   if (prev.todoItems !== next.todoItems) return false
   if (prev.childThread !== next.childThread) return false
   if (prev.childActivities !== next.childActivities) return false
+  if (prev.childAgentSeat !== next.childAgentSeat) return false
   if (prev.onOpenFileChangeInWorkbench !== next.onOpenFileChangeInWorkbench) return false
   if (prev.activity === next.activity) return true
   return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
@@ -3877,6 +3916,7 @@ const ThinkingTraceActivityRow = memo(
     progressNote,
     childThread,
     childActivities,
+    childAgentSeat,
     workspacePath,
     shimmerNow
   }: {
@@ -3887,6 +3927,7 @@ const ThinkingTraceActivityRow = memo(
     progressNote: { title: string; body?: string }
     childThread?: ChildAgentThread
     childActivities?: ToolActivity[]
+    childAgentSeat?: SeatChangeSeatState | null
     workspacePath?: string
     shimmerNow?: number
   }) {
@@ -3903,6 +3944,7 @@ const ThinkingTraceActivityRow = memo(
           <ChildAgentThreadCard
             thread={childThread}
             activities={childActivities || []}
+            selectedSeat={childAgentSeat}
             workspacePath={workspacePath}
             shimmerNow={shimmerNow}
           />
@@ -3917,6 +3959,7 @@ const ThinkingTraceActivityRow = memo(
     if (prev.progressNote !== next.progressNote) return false
     if (prev.childThread !== next.childThread) return false
     if (prev.childActivities !== next.childActivities) return false
+    if (prev.childAgentSeat !== next.childAgentSeat) return false
     if (prev.workspacePath !== next.workspacePath) return false
     if (prev.activity === next.activity) return true
     return activityRowPaintSignature(prev.activity) === activityRowPaintSignature(next.activity)
@@ -3929,6 +3972,7 @@ function ActivityRow(props: ActivityRowProps) {
     forceCompact = false,
     childThread,
     childActivities,
+    childAgentSeat,
     provider,
     thinkingTraceActions,
     liveThinkingTrim = false,
@@ -3948,6 +3992,7 @@ function ActivityRow(props: ActivityRowProps) {
         progressNote={progressNote}
         childThread={childThread}
         childActivities={childActivities}
+        childAgentSeat={childAgentSeat}
         workspacePath={workspacePath}
       />
     )
@@ -3960,6 +4005,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
   workspacePath,
   childThread,
   childActivities,
+  childAgentSeat,
   provider,
   participants,
   todoItems,
@@ -4019,7 +4065,8 @@ const ToolActivityRow = memo(function ToolActivityRow({
       deriveToolDiffSummary(
         activity.toolName,
         parameters,
-        activity.resultSummary || activity.outputPreview
+        activity.resultSummary || activity.outputPreview,
+        { category: activity.category }
       )
   // Pure helper that decides whether the per-row Codex-style `+X -Y` odometer
   // renders and what numbers it carries — handles MultiEdit `edits[]`,
@@ -4434,6 +4481,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
         <ChildAgentThreadCard
           thread={childThread}
           activities={childActivities || []}
+          selectedSeat={childAgentSeat}
           workspacePath={workspacePath}
         />
       )}

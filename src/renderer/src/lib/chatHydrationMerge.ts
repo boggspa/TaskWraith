@@ -8,6 +8,7 @@ import {
   retainChatsWithinByteBudget
 } from './chatByteLru'
 import { ChatTranscriptStore } from './chatTranscriptStore'
+import { markRendererChatReference } from './reconcileChatRefMap'
 
 export interface ResolveChatHydrationInput {
   incoming: ChatRecord
@@ -52,7 +53,7 @@ export function commitHydratedChat(input: {
     byteLru.touch(chat.appChatId)
     if (pinReason) byteLru.pin(chat.appChatId, pinReason)
   }
-  return chat
+  return markRendererChatReference(chat)
 }
 
 /**

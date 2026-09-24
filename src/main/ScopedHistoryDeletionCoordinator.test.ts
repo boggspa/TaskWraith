@@ -200,7 +200,9 @@ describe('ScopedHistoryDeletionCoordinator', () => {
         order.push('media')
         return media.promise
       }),
-      commitDelete: vi.fn(() => order.push('commit')),
+      commitDelete: vi.fn(() => {
+        order.push('commit')
+      }),
       endCanvasClear: vi.fn(() => order.push('canvas-end'))
     })
     const coordinator = new ScopedHistoryDeletionCoordinator(deps)
@@ -721,5 +723,55 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     const coordinator = new ScopedHistoryDeletionCoordinator(deps)
     await coordinator.run('chat', 'chat-a')
     expect(deps.commitDelete).toHaveBeenCalledOnce()
+  })
+
+  it('returns the real truncated record when commitTruncate resolves a promise (Host-routed)', async () => {
+    // Host-owned mode: commitTruncate is async. The coordinator must await it
+    // and surface the RECORD, not the promise, or the /clear broadcast is a
+    // promise-shaped hole. RED at HEAD: the promise itself was assigned.
+    const record = chat('chat-a')
+    const deps = createDeps({
+      commitTruncate: vi.fn(() => Promise.resolve(record))
+    })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+    const result = await coordinator.run('truncate', 'chat-a')
+    expect(result.truncated).toBe(record)
+  })
+
+  it('holds the commit boundary until commitDelete settles (delete durability)', async () => {
+    // Host-owned mode: the deletion is an async round trip. The coordinator's
+    // invariant is that retained holds release only after commit succeeds, so
+    // run() must not settle while the commit is still in flight. RED at HEAD:
+    // the commit fired and was forgotten, so run settled immediately.
+    const gate = deferred()
+    const deps = createDeps({ commitDelete: vi.fn(() => gate.promise) })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+    let settled = false
+    const running = coordinator.run('chat', 'chat-a').then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await vi.waitFor(() => expect(deps.commitDelete).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+    gate.resolve()
+    await running
+    expect(settled).toBe(true)
+  })
+
+  it('surfaces a commitDelete rejection to the caller instead of only logging it', async () => {
+    // A Host-routed delete failure must reject run(); the pre-fix bridge let
+    // the failure reach only a console log while the caller saw success.
+    const failure = new Error('host delete failed')
+    const rejected = Promise.reject(failure)
+    // Attach a handler so the pre-fix fire-and-forget use does not pollute
+    // the run as an unhandled rejection; the assertion is what turns red.
+    rejected.catch(() => undefined)
+    const deps = createDeps({ commitDelete: vi.fn(() => rejected) })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+    await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow('host delete failed')
   })
 })

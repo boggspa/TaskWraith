@@ -1,0 +1,245 @@
+import { describe, expect, it } from 'vitest'
+import {
+  PI_FULL_LADDER,
+  defaultPiReasoningEffort,
+  normalizePiReasoningEffortForModel,
+  resolvePiReasoningSupport
+} from './piReasoning'
+import { PI_STATIC_MODELS } from '../host-shared/pi/PiModels'
+
+describe('resolvePiReasoningSupport', () => {
+  // Each row is sourced to the upstream's own API docs. The point of the table
+  // is that one Pi seat fronts upstreams whose controls are genuinely
+  // different shapes — a four-tier ladder, a two-tier ladder, a boolean, and a
+  // token budget with no ladder at all.
+  const CASES: readonly (readonly [string, readonly string[]])[] = [
+    // DeepSeek: medium and xhigh are documented aliases for high. The two
+    // routes split on `low` — pi's own `thinkingLevelMap` maps Pro's `low` to
+    // null (no `--thinking` sent at all) but Flash's to a real `low`, so
+    // offering Low on Pro was a stop the upstream discarded.
+    ['deepseek/deepseek-v4-pro', ['off', 'high', 'max']],
+    ['deepseek/deepseek-v4-flash', ['off', 'low', 'high', 'max']],
+    // Z.ai collapses seven efforts onto two outcomes plus off.
+    ['zai/glm-5.2', ['off', 'high', 'max']],
+    // `reasoning_effort` is "GLM-5.2 and above".
+    ['zai/glm-5.1', ['off', 'high']],
+    // Qwen exposes `enable_thinking` plus a token budget, never a level.
+    ['qwen-token-plan/qwen3.8-max', ['off', 'high']],
+    ['cerebras/qwen-3.8-27b', ['off', 'low', 'medium', 'high']],
+    ['minimax/MiniMax-M3', ['off', 'high']],
+    ['xiaomi-token-plan-sgp/mimo-v2.5-pro', ['off', 'high']],
+    // V2.6 keeps MiMo's on/off toggle; dropping either row would fall back to
+    // the 7-stop FULL ladder and offer efforts Xiaomi has no parameter for.
+    ['xiaomi-token-plan-cn/mimo-v2.6-pro', ['off', 'high']],
+    ['xiaomi-token-plan-ams/mimo-v2.6-flash', ['off', 'high']],
+    // Mistral documents `high` and `none` only.
+    ['mistral/mistral-medium-3.5', ['off', 'high']],
+    ['mistral/zai-glm-5-2', ['off', 'high']],
+    // OpenRouter's GLM copy advertises a different pair from Z.ai's own.
+    ['openrouter/z-ai/glm-5.2', ['off', 'high', 'xhigh']],
+    ['openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', ['off', 'medium', 'high']],
+    ['openrouter/poolside/laguna-s-2.1', ['off', 'high']],
+    ['openrouter/cohere/north-mini-code:free', ['off', 'high']],
+    ['openrouter/minimax/minimax-m3:free', ['off', 'high']],
+    [
+      'openrouter/thinkingmachines/inkling:free',
+      ['off', 'minimal', 'low', 'medium', 'high', 'max']
+    ],
+    [
+      'openrouter/thinkingmachines/inkling-small:free',
+      ['off', 'minimal', 'low', 'medium', 'high', 'max']
+    ],
+    // Sakana's Fugu pair advertises `reasoning_effort` with supported_efforts
+    // unenumerated, which is the tunable-ladder shape — but NOT the 7-stop
+    // unlisted fallback: dropping either row here silently adds `xhigh`, a
+    // stop OpenRouter does not spell for these routes.
+    ['openrouter/sakana/fugu-max', ['off', 'minimal', 'low', 'medium', 'high', 'max']],
+    ['openrouter/sakana/fugu-ultra-v2', ['off', 'minimal', 'low', 'medium', 'high', 'max']],
+    // Space Bunny Alpha enumerates its efforts and marks reasoning mandatory:
+    // no Off, no Minimal, and both Extra High and Max. Dropping the row would
+    // hand it the 7-stop fallback — an Off the route cannot honour.
+    ['openrouter/stealth/space-bunny-alpha', ['low', 'medium', 'high', 'xhigh', 'max']]
+  ]
+
+  it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {
+    expect(resolvePiReasoningSupport(wireId).efforts).toEqual(efforts)
+  })
+
+  it('offers no control for a model with no reasoning at all', () => {
+    for (const wireId of [
+      'mistral/mistral-large-2512',
+      'mistral/devstral-2512',
+      'mistral/codestral-2508',
+      'mistral/ministral-3b-2512',
+      // Union Alpha is the only OpenRouter route here with NO reasoning axis:
+      // its supported_parameters carry neither `reasoning` nor
+      // `reasoning_effort`. Dropping its row does not fall back to "no
+      // control" — an unlisted id inherits the 7-stop FULL ladder, so the
+      // picker would offer seven stops the gateway silently discards.
+      'openrouter/stealth/union-alpha',
+      // Pareto has the same parameter surface as Union Alpha (no `reasoning`
+      // or `reasoning_effort`), and Jev is a structured decision model with
+      // no reasoning axis at all — both must read UNSUPPORTED, never inherit
+      // the FULL ladder.
+      'openrouter/unbiased/pareto',
+      'openrouter/typesafe/jev-1.13'
+    ]) {
+      expect(resolvePiReasoningSupport(wireId).kind, wireId).toBe('unsupported')
+      expect(resolvePiReasoningSupport(wireId).efforts, wireId).toEqual([])
+    }
+  })
+
+  it('locks the ladder for upstreams that reason on every turn', () => {
+    // Both accept a disable flag and ignore it, so an Off stop would be a
+    // control that silently does nothing.
+    for (const wireId of ['zai/glm-4.7', 'minimax/MiniMax-M2.7', 'cerebras/zai-glm-4.7']) {
+      const support = resolvePiReasoningSupport(wireId)
+      expect(support.canDisable, wireId).toBe(false)
+      expect(support.efforts, wireId).toEqual(['high'])
+    }
+    // Neither GPT-OSS host's enum carries a `none`.
+    for (const wireId of ['groq/openai/gpt-oss-120b', 'cerebras/gpt-oss-120b']) {
+      const support = resolvePiReasoningSupport(wireId)
+      expect(support.canDisable, wireId).toBe(false)
+      expect(support.efforts, wireId).toEqual(['low', 'medium', 'high'])
+    }
+    // OpenRouter reports Space Bunny Alpha's reasoning as `mandatory: true`.
+    expect(resolvePiReasoningSupport('openrouter/stealth/space-bunny-alpha').canDisable).toBe(false)
+  })
+
+  it('keeps the full ladder for an unlisted or unset model', () => {
+    // A newly registered upstream must not be silently stripped of a control
+    // it may well support, and the seat-level question ("what can Pi do?")
+    // stays the union until a model is chosen.
+    expect(resolvePiReasoningSupport('openrouter/stealth/ox-alpha').efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport('brand-new/model-1').efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport(undefined).efforts).toEqual(PI_FULL_LADDER)
+    expect(resolvePiReasoningSupport('').efforts).toEqual(PI_FULL_LADDER)
+  })
+
+  // The catalogue's `thinking` flag and this table are two statements about the
+  // same fact, and only one of them is read by sub-thread delegation — a
+  // disagreement there silently DROPS a delegated effort rather than failing.
+  it('agrees with every catalogue row about whether the model reasons', () => {
+    const disagreements = PI_STATIC_MODELS.filter(
+      (model) => model.thinking !== resolvePiReasoningSupport(model.wireId).efforts.length > 0
+    ).map((model) => model.wireId)
+    expect(disagreements).toEqual([])
+  })
+
+  it('routes the same model differently per upstream', () => {
+    // GLM-5.2 direct, via Mistral, and via OpenRouter are three different
+    // controls for one model — which is why the table is keyed by wire id.
+    expect(resolvePiReasoningSupport('zai/glm-5.2').efforts).toEqual(['off', 'high', 'max'])
+    expect(resolvePiReasoningSupport('mistral/zai-glm-5-2').efforts).toEqual(['off', 'high'])
+    expect(resolvePiReasoningSupport('openrouter/z-ai/glm-5.2').efforts).toEqual([
+      'off',
+      'high',
+      'xhigh'
+    ])
+  })
+
+  // A saved seat still names the pre-rename id. Resolving it as "unlisted"
+  // would hand it the 7-stop fallback — including an Off that route does not
+  // have — while dispatch quietly sent the request somewhere else entirely.
+  it('resolves a historical wire id to the ladder it actually dispatches to', () => {
+    for (const [legacy, canonical] of [
+      ['openrouter/zai/glm-5.2', 'openrouter/z-ai/glm-5.2'],
+      ['qwen-token-plan/qwen3.8-max-preview', 'qwen-token-plan/qwen3.8-max']
+    ]) {
+      expect(resolvePiReasoningSupport(legacy), legacy).toEqual(
+        resolvePiReasoningSupport(canonical)
+      )
+    }
+  })
+})
+
+describe('defaultPiReasoningEffort', () => {
+  // Callers hardcoded 'medium'. Most Pi models no longer offer it, so the
+  // membership guard downstream rejected it and a fresh seat fell to the
+  // ladder's first stop — `off`. Every Pi run would have launched
+  // `--thinking off` without anyone asking for it.
+  it('starts a seat on a stop its own model offers', () => {
+    expect(defaultPiReasoningEffort('zai/glm-5.2')).toBe('max')
+    expect(defaultPiReasoningEffort('deepseek/deepseek-v4-pro')).toBe('high')
+    expect(defaultPiReasoningEffort('cerebras/qwen-3.8-27b')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/zai/glm-5.2')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/cohere/north-mini-code:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/minimax/minimax-m3:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling:free')).toBe('high')
+    expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling-small:free')).toBe('high')
+    // OpenRouter's own default_effort for this route, so a fresh seat runs at
+    // what the gateway would pick with no effort sent at all.
+    expect(defaultPiReasoningEffort('openrouter/stealth/space-bunny-alpha')).toBe('max')
+    // No reasoning axis at all, so there is nothing to start on.
+    expect(defaultPiReasoningEffort('mistral/mistral-large-2512')).toBe('')
+    // Unset (seat-level) and unresearched both keep the historical default.
+    expect(defaultPiReasoningEffort('')).toBe('medium')
+    expect(defaultPiReasoningEffort('brand/new-model')).toBe('medium')
+  })
+
+  it('never starts a seat on a stop the model does not offer', () => {
+    for (const model of PI_STATIC_MODELS) {
+      const support = resolvePiReasoningSupport(model.wireId)
+      const start = defaultPiReasoningEffort(model.wireId)
+      if (support.efforts.length === 0) expect(start, model.wireId).toBe('')
+      else expect(support.efforts, model.wireId).toContain(start)
+    }
+  })
+})
+
+describe('normalizePiReasoningEffortForModel', () => {
+  it('preserves every real Inkling stop, including distinct Off and Minimal', () => {
+    const model = 'openrouter/thinkingmachines/inkling:free'
+    for (const effort of ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const) {
+      expect(normalizePiReasoningEffortForModel(model, effort)).toBe(effort)
+    }
+  })
+
+  it('clamps TaskWraith top tiers to the selected route ceiling', () => {
+    for (const effort of ['ultra', 'ultracode', 'ultraTask']) {
+      expect(
+        normalizePiReasoningEffortForModel('openrouter/cohere/north-mini-code:free', effort)
+      ).toBe('high')
+      expect(
+        normalizePiReasoningEffortForModel('openrouter/thinkingmachines/inkling:free', effort)
+      ).toBe('max')
+    }
+  })
+
+  it('folds stale Pi stops onto the model default and drops invalid/non-reasoning values', () => {
+    expect(normalizePiReasoningEffortForModel('openrouter/minimax/minimax-m3:free', 'medium')).toBe(
+      'high'
+    )
+    expect(normalizePiReasoningEffortForModel('zai/glm-4.7', 'off')).toBe('high')
+    expect(normalizePiReasoningEffortForModel('mistral/mistral-large-2512', 'high')).toBeNull()
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'ludicrous')).toBeNull()
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', '')).toBeNull()
+  })
+
+  // The two DeepSeek routes differ on exactly one stop, so a seat pinned to Low
+  // must round UP on Pro and pass THROUGH on Flash. Asserting both directions
+  // from the same token is what makes this test discriminating: a regression
+  // that re-adds Low to Pro's ladder keeps the Flash half green and only this
+  // Pro half reds. Rounding up rather than refusing is also what keeps an
+  // existing Pro seat off the stranding path documented on
+  // `HostNodePiProvider.validateThread`.
+  it('rounds a persisted Low up on V4 Pro while V4 Flash keeps it', () => {
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'low')).toBe('high')
+    expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-flash', 'low')).toBe('low')
+  })
+
+  // The first OpenRouter route offering BOTH Extra High and Max, so each must
+  // reach argv as itself rather than collapsing onto its neighbour. Off and
+  // Minimal are real Pi words the route does not have: they fold onto the
+  // route default like any other stale stop, never into a `--thinking off`.
+  it('passes every Space Bunny Alpha stop through and folds Off onto its Max default', () => {
+    const model = 'openrouter/stealth/space-bunny-alpha'
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      expect(normalizePiReasoningEffortForModel(model, effort)).toBe(effort)
+    }
+    expect(normalizePiReasoningEffortForModel(model, 'off')).toBe('max')
+    expect(normalizePiReasoningEffortForModel(model, 'minimal')).toBe('max')
+    expect(normalizePiReasoningEffortForModel(model, 'ultracode')).toBe('max')
+  })
+})

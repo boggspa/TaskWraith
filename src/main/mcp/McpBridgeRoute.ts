@@ -44,11 +44,14 @@ export const MCP_BRIDGE_PROFILE_ENV_KEYS = {
   planSubset: 'TASKWRAITH_MCP_PLAN_SUBSET',
   coreSubset: 'TASKWRAITH_MCP_CORE_SUBSET',
   gatewaySubset: 'TASKWRAITH_MCP_GATEWAY_SUBSET',
+  soloSubset: 'TASKWRAITH_MCP_SOLO_SUBSET',
   portableEnsembleControl: 'TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL',
   meshDirect: 'TASKWRAITH_MCP_MESH_DIRECT',
   meshTopologyDirect: 'TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT',
   sketchDirect: 'TASKWRAITH_MCP_SKETCH_DIRECT',
   orchestrationDirect: 'TASKWRAITH_MCP_ORCHESTRATION_DIRECT',
+  permissionOpportunityDirect: 'TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT',
+  computerUseDirect: 'TASKWRAITH_MCP_COMPUTER_USE_DIRECT',
   auditSubset: 'TASKWRAITH_MCP_AUDIT'
 } as const
 
@@ -76,11 +79,14 @@ export interface McpBridgeProfileEnvironment {
   planSubset: boolean
   coreSubset: boolean
   gatewaySubset: boolean
+  soloSubset: boolean
   portableEnsembleControl: boolean
   meshDirect: boolean
   meshTopologyDirect: boolean
   sketchDirect: boolean
   orchestrationDirect: boolean
+  permissionOpportunityDirect: boolean
+  computerUseDirect?: boolean
   auditSubset: boolean
 }
 
@@ -127,7 +133,9 @@ const VALID_MCP_BRIDGE_PARENT_PROVIDERS = new Set<ProviderId>([
   'pi',
   'antigravity',
   'mistral',
-  'ollama'
+  'ollama',
+  'muse',
+  'devin'
 ])
 
 const MAX_ROUTE_IDENTIFIER_LENGTH = 512
@@ -337,11 +345,14 @@ function emptyProfileEnvironment(): McpBridgeProfileEnvironment {
     planSubset: false,
     coreSubset: false,
     gatewaySubset: false,
+    soloSubset: false,
     portableEnsembleControl: false,
     meshDirect: false,
     meshTopologyDirect: false,
     sketchDirect: false,
     orchestrationDirect: false,
+    permissionOpportunityDirect: false,
+    computerUseDirect: false,
     auditSubset: false
   }
 }
@@ -502,6 +513,7 @@ export function buildMcpBridgeRouteEnv(
       [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: profile.planSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: profile.coreSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: profile.gatewaySubset ? '1' : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: profile.soloSubset ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: profile.portableEnsembleControl
         ? '1'
         : '0',
@@ -509,6 +521,10 @@ export function buildMcpBridgeRouteEnv(
       [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: profile.meshTopologyDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
+        ? '1'
+        : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]: profile.computerUseDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
     }
   }

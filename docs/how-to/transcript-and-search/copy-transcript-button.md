@@ -3,22 +3,26 @@
 **Platform:** Electron
 
 ## What it is
-The copy transcript button exports the current chat as handoff-ready Markdown to your clipboard, so you can paste the conversation into another app or share it with someone else.
+Exports the current chat so you can paste it elsewhere or share it. Offers Markdown, raw messages, or a downloaded file, within a chosen scope.
 
 ## Where to find it
-It's a small icon button in the composer's bottom telemetry row, next to the run timecode, Goal button, and Multiview layout picker, just below the message input. It's disabled when no chat is selected, the chat is archived, or the chat has no messages yet.
+In the composer's bottom row, next to the timecode, Goal button, and layout picker. Disabled when no chat is selected, the chat is archived, or it has no messages.
 
-<!-- screenshot-pending: Composer telemetry row showing the copy transcript button -->
+![Composer telemetry row showing the copy transcript button](../images/transcript-and-search__copy-transcript-button.png)
 
 ## How to use it
-1. Click the copy transcript icon to open the confirmation popover.
-2. Click **Copy handoff Markdown** to copy the visible transcript to your clipboard.
-3. Watch for the inline status message confirming how many messages were copied (and any omissions, such as content that couldn't be included).
-4. A checkmark briefly appears on the button to confirm the copy succeeded; press **Escape** or click outside the popover to dismiss it.
+1. Click the copy transcript icon to open the popover.
+2. Pick a scope: **Current round**, **Previous round**, **Choose round**, or **Entire task**.
+3. Choose an export:
+   - **Copy Markdown** — copies safe Markdown to your clipboard
+   - **Copy Messages** — copies raw messages only
+   - **Download** — saves as a `.md` file
+4. Check the status message for confirmation and any omissions.
+5. A checkmark appears briefly on the button. Press **Escape**, click **Close**, or click outside to dismiss.
 
-You can also assign a custom keyboard shortcut to the **Copy transcript** command from the Keyboard Shortcuts settings tab — it has no default binding.
+Assign a custom keyboard shortcut from Settings → Keyboard Shortcuts.
 
 ## Tips & related
-- [Keyboard shortcuts tab](../settings-and-configuration/keyboard-shortcuts-tab.md) — bind a hotkey to the Copy transcript command.
-- [Goal button](../composer/goal-button.md) — another control in the same composer telemetry row.
-- [Transcript message stream](transcript-message-stream.md) — the message content this button copies.
+- [Keyboard shortcuts tab](../settings-and-configuration/keyboard-shortcuts-tab.md) — bind a hotkey to Copy transcript
+- [Goal button](../composer/goal-button.md) — another control in the same row
+- [Transcript message stream](transcript-message-stream.md) — the content this button copies

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, type Dirent } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 
@@ -21,13 +21,26 @@ export interface MuseSessionIndexLookupRow {
   readonly sessionDir: string
 }
 
+/**
+ * How cron emptiness was established.
+ * - `session-index`: the CLI's index row resolved the session dir directly.
+ * - `lease-scan`: no index row, but every cron.db found in the lease-local
+ *   data home was inspected and empty.
+ * - `no-session-cron-artifacts`: no index row and no cron.db exists anywhere
+ *   in the lease-local data home (e.g. the run failed before its first turn,
+ *   or the CLI has not materialized session state) — vacuously empty.
+ */
+export type MuseCronAssertBasis = 'session-index' | 'lease-scan' | 'no-session-cron-artifacts'
+
 export type MuseCronAssertOk = Readonly<{
   ok: true
   sessionId: string
-  sessionDir: string
-  cronDbPath: string
+  sessionDir: string | null
+  cronDbPath: string | null
   jobCount: 0
   schemaVersion: string | null
+  /** Always set by this module; optional so external test seams stay source-compatible. */
+  basis?: MuseCronAssertBasis
 }>
 
 export type MuseCronAssertFailure = Readonly<{
@@ -178,6 +191,73 @@ export function museCronDbPathForSessionDir(sessionDir: string): string {
   return join(requireAbsolutePath(sessionDir, 'Muse session dir'), MUSE_CRON_DB_BASENAME)
 }
 
+const MUSE_CRON_SCAN_MAX_DEPTH = 12
+const MUSE_CRON_SCAN_MAX_ENTRIES = 20_000
+
+/**
+ * Bounded lease-local search for `cron.db` files under the Muse data home.
+ * Never follows symlinks, so a hostile session cannot point the scan outside
+ * the lease. A missing/unreadable directory yields an empty list — the seat
+ * simply has no cron artifacts.
+ */
+export function scanMuseDataHomeForCronDbs(museDataHome: string): string[] {
+  const root = requireAbsolutePath(museDataHome, 'Muse data home')
+  const found: string[] = []
+  let visited = 0
+  const walk = (dir: string, depth: number): void => {
+    if (depth > MUSE_CRON_SCAN_MAX_DEPTH) return
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      visited += 1
+      if (visited > MUSE_CRON_SCAN_MAX_ENTRIES) return
+      if (entry.isSymbolicLink()) continue
+      const child = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(child, depth + 1)
+      } else if (entry.isFile() && entry.name === MUSE_CRON_DB_BASENAME) {
+        found.push(child)
+      }
+    }
+  }
+  walk(root, 0)
+  return found.sort()
+}
+
+interface MuseCronDbCounts {
+  readonly schemaVersion: string | null
+  readonly jobCount: number
+  readonly permanentJobCount: number
+  readonly activeJobCount: number
+}
+
+/** Read the schema version and job counts from one cron.db (throws on error). */
+function readMuseCronDbCounts(sqlite: MuseSqliteReader, cronDbPath: string): MuseCronDbCounts {
+  const schemaVersion = sqlite.queryScalar(
+    cronDbPath,
+    "SELECT value FROM schema_meta WHERE key = 'schema_version' LIMIT 1"
+  )
+  const countRaw = sqlite.queryScalar(cronDbPath, 'SELECT COUNT(*) FROM cron_jobs')
+  const permanentRaw = sqlite.queryScalar(
+    cronDbPath,
+    'SELECT COUNT(*) FROM cron_jobs WHERE permanent != 0'
+  )
+  const activeRaw = sqlite.queryScalar(
+    cronDbPath,
+    "SELECT COUNT(*) FROM cron_jobs WHERE status = 'active'"
+  )
+  return {
+    schemaVersion,
+    jobCount: Number(countRaw ?? '0'),
+    permanentJobCount: Number(permanentRaw ?? '0'),
+    activeJobCount: Number(activeRaw ?? '0')
+  }
+}
+
 /**
  * Assert the session's `cron.db` has zero `cron_jobs` rows.
  * Lookup is always session-index → session dir → `cron.db`.
@@ -207,11 +287,18 @@ export function assertMuseCronJobsEmpty(input: AssertMuseCronJobsEmptyInput): Mu
   }
 
   if (!lookup) {
-    return {
-      ok: false,
-      reason: 'Muse session-index has no row for the seat session; cannot assert cron emptiness.',
-      sessionId
-    }
+    // The CLI writes the session-index row asynchronously, and a run that
+    // failed before its first turn (missing credentials, refused argv, crash
+    // on startup) never creates one at all. A missing row is therefore not
+    // evidence of a containment breach — but it also must not blind the
+    // assert, so degrade to a bounded lease-local scan for cron.db artifacts
+    // and judge those directly.
+    return assertCronArtifactsFromLeaseScan({
+      museDataHome,
+      sessionId,
+      leaseRoot: input.leaseRoot,
+      sqlite
+    })
   }
 
   const cronDbPath = museCronDbPathForSessionDir(lookup.sessionDir)
@@ -236,7 +323,8 @@ export function assertMuseCronJobsEmpty(input: AssertMuseCronJobsEmptyInput): Mu
         sessionDir: lookup.sessionDir,
         cronDbPath,
         jobCount: 0,
-        schemaVersion: null
+        schemaVersion: null,
+        basis: 'session-index'
       }
     }
     return {
@@ -253,22 +341,10 @@ export function assertMuseCronJobsEmpty(input: AssertMuseCronJobsEmptyInput): Mu
   let permanentJobCount: number
   let activeJobCount: number
   try {
-    schemaVersion = sqlite.queryScalar(
-      cronDbPath,
-      "SELECT value FROM schema_meta WHERE key = 'schema_version' LIMIT 1"
-    )
-    const countRaw = sqlite.queryScalar(cronDbPath, 'SELECT COUNT(*) FROM cron_jobs')
-    jobCount = Number(countRaw ?? '0')
-    const permanentRaw = sqlite.queryScalar(
-      cronDbPath,
-      'SELECT COUNT(*) FROM cron_jobs WHERE permanent != 0'
-    )
-    permanentJobCount = Number(permanentRaw ?? '0')
-    const activeRaw = sqlite.queryScalar(
-      cronDbPath,
-      "SELECT COUNT(*) FROM cron_jobs WHERE status = 'active'"
-    )
-    activeJobCount = Number(activeRaw ?? '0')
+    ;({ schemaVersion, jobCount, permanentJobCount, activeJobCount } = readMuseCronDbCounts(
+      sqlite,
+      cronDbPath
+    ))
   } catch (error) {
     return {
       ok: false,
@@ -329,6 +405,130 @@ export function assertMuseCronJobsEmpty(input: AssertMuseCronJobsEmptyInput): Mu
     sessionDir: lookup.sessionDir,
     cronDbPath,
     jobCount: 0,
-    schemaVersion
+    schemaVersion,
+    basis: 'session-index'
+  }
+}
+
+/**
+ * Missing session-index row fallback: judge cron emptiness from the lease's
+ * actual cron.db artifacts. No artifacts → vacuously empty (a run that never
+ * started cannot have scheduled crons). Any artifact found is inspected with
+ * the same schema and emptiness rules as the indexed path, so real leftovers
+ * still fail closed.
+ */
+function assertCronArtifactsFromLeaseScan(input: {
+  readonly museDataHome: string
+  readonly sessionId: string
+  readonly leaseRoot?: string
+  readonly sqlite: MuseSqliteReader
+}): MuseCronAssertResult {
+  const { museDataHome, sessionId, sqlite } = input
+
+  let scanned: string[]
+  try {
+    scanned = scanMuseDataHomeForCronDbs(museDataHome)
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `Muse cron assert could not scan the lease data home for cron.db artifacts: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      sessionId
+    }
+  }
+
+  if (input.leaseRoot) {
+    const leaseRoot = requireAbsolutePath(input.leaseRoot, 'Muse lease root')
+    for (const cronDbPath of scanned) {
+      if (!pathIsWithin(leaseRoot, cronDbPath)) {
+        return {
+          ok: false,
+          reason: 'Muse cron.db path escaped the isolated-home lease.',
+          sessionId,
+          cronDbPath
+        }
+      }
+    }
+  }
+
+  if (scanned.length === 0) {
+    return {
+      ok: true,
+      sessionId,
+      sessionDir: null,
+      cronDbPath: null,
+      jobCount: 0,
+      schemaVersion: null,
+      basis: 'no-session-cron-artifacts'
+    }
+  }
+
+  let firstSchemaVersion: string | null = null
+  for (const cronDbPath of scanned) {
+    let counts: MuseCronDbCounts
+    try {
+      counts = readMuseCronDbCounts(sqlite, cronDbPath)
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `Muse cron.db could not be read: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        sessionId,
+        cronDbPath
+      }
+    }
+    if (!Number.isFinite(counts.jobCount) || counts.jobCount < 0) {
+      return {
+        ok: false,
+        reason: 'Muse cron_jobs COUNT(*) was not a finite non-negative integer.',
+        sessionId,
+        cronDbPath,
+        schemaVersion: counts.schemaVersion,
+        jobCount: counts.jobCount
+      }
+    }
+    if (
+      counts.schemaVersion != null &&
+      counts.schemaVersion !== MUSE_EXPECTED_CRON_SCHEMA_VERSION
+    ) {
+      return {
+        ok: false,
+        reason: `Muse cron schema_version is ${JSON.stringify(
+          counts.schemaVersion
+        )}; expected ${JSON.stringify(MUSE_EXPECTED_CRON_SCHEMA_VERSION)}.`,
+        sessionId,
+        cronDbPath,
+        schemaVersion: counts.schemaVersion,
+        jobCount: counts.jobCount,
+        permanentJobCount: counts.permanentJobCount,
+        activeJobCount: counts.activeJobCount
+      }
+    }
+    if (counts.jobCount !== 0 || counts.permanentJobCount !== 0 || counts.activeJobCount !== 0) {
+      return {
+        ok: false,
+        reason:
+          'Muse containment breach: an unindexed session cron.db is not empty at seat teardown.',
+        sessionId,
+        cronDbPath,
+        schemaVersion: counts.schemaVersion,
+        jobCount: counts.jobCount,
+        permanentJobCount: counts.permanentJobCount,
+        activeJobCount: counts.activeJobCount
+      }
+    }
+    if (firstSchemaVersion == null) firstSchemaVersion = counts.schemaVersion
+  }
+
+  return {
+    ok: true,
+    sessionId,
+    sessionDir: null,
+    cronDbPath: scanned[0],
+    jobCount: 0,
+    schemaVersion: firstSchemaVersion,
+    basis: 'lease-scan'
   }
 }

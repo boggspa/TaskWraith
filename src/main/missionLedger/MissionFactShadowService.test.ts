@@ -52,6 +52,10 @@ function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
       id: 'goal-1',
       objective: 'Ship the mission ledger',
       objectiveSource: 'user',
+      specification: {
+        kind: 'user_prompt',
+        sourceMessageId: 'message-goal-source'
+      },
       status: 'active',
       mode: 'taskwraith_steered',
       provider: 'codex',
@@ -139,6 +143,10 @@ describe('MissionFactShadowService', () => {
       'system',
       'agent'
     ])
+    expect(replay.records[0].provenance).toMatchObject({
+      sourceId: 'goal-1',
+      sourcePromptMessageId: 'message-goal-source'
+    })
     expect(replay.records[2].provenance).toMatchObject({
       runId: 'run-plan',
       participantId: 'boss',

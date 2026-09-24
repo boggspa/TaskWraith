@@ -13,12 +13,50 @@ describe('providerDeliversImageAttachments', () => {
     expect(providerDeliversImageAttachments('codex')).toBe(true)
     expect(providerDeliversImageAttachments('gemini')).toBe(true)
     expect(providerDeliversImageAttachments('kimi')).toBe(true)
+    expect(providerDeliversImageAttachments('grok')).toBe(true)
+    expect(providerDeliversImageAttachments('mistral')).toBe(true)
+    expect(providerDeliversImageAttachments('ollama')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/stealth/ox-alpha')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/minimax/minimax-m3:free')).toBe(true)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(
+      true
+    )
+    expect(
+      providerDeliversImageAttachments('pi', 'openrouter/thinkingmachines/inkling-small:free')
+    ).toBe(true)
+    expect(providerDeliversImageAttachments('antigravity', 'gemini-api:gemini-2.5-flash')).toBe(
+      true
+    )
+  })
+
+  it('follows the Muse transport, because only one of its two lanes can carry images', () => {
+    const saved = process.env.TASKWRAITH_MUSE_MSP
+    try {
+      // MSP TurnInputPart image parts.
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(providerDeliversImageAttachments('muse')).toBe(true)
+      // `muse exec --json` has no image input at all. Claiming true there
+      // would drop every attachment with NO warning — the exact silent
+      // omission this matrix exists to prevent.
+      process.env.TASKWRAITH_MUSE_MSP = '0'
+      expect(providerDeliversImageAttachments('muse')).toBe(false)
+    } finally {
+      if (saved === undefined) delete process.env.TASKWRAITH_MUSE_MSP
+      else process.env.TASKWRAITH_MUSE_MSP = saved
+    }
   })
 
   it('refuses every lane without one', () => {
-    for (const provider of ['ollama', 'cursor', 'grok', 'pi', 'mistral', 'antigravity', 'muse']) {
+    for (const provider of ['cursor', 'devin']) {
       expect(providerDeliversImageAttachments(provider)).toBe(false)
     }
+    expect(providerDeliversImageAttachments('antigravity', 'claude-sonnet-4')).toBe(false)
+    expect(providerDeliversImageAttachments('antigravity', 'gemini-api:claude-3')).toBe(false)
+    expect(providerDeliversImageAttachments('antigravity')).toBe(false)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/z-ai/glm-5.2')).toBe(false)
+    expect(providerDeliversImageAttachments('pi', 'openrouter/cohere/north-mini-code:free')).toBe(
+      false
+    )
   })
 
   it('fails closed for unknown provider strings', () => {
@@ -30,14 +68,16 @@ describe('providerDeliversImageAttachments', () => {
 describe('describeImageAttachmentOmissionWarning', () => {
   it('names the provider, the count, and that the turn continues', () => {
     const single = describeImageAttachmentOmissionWarning('Ollama', 1)
-    expect(single).toContain('Ollama cannot receive image attachments')
+    expect(single).toContain(
+      "TaskWraith's current Ollama transport cannot deliver image attachments"
+    )
     expect(single).toContain('the attached image')
     expect(single).toContain('will not be delivered')
     expect(single).toContain('Continuing without it')
     const plural = describeImageAttachmentOmissionWarning('Pi', 3)
     expect(plural).toContain('the 3 attached images')
     expect(plural).toContain('Continuing without them')
-    expect(plural).toContain('Claude, Codex, Gemini, or Kimi')
+    expect(plural).toContain('live capability reports image input')
   })
 
   it('keeps the refusal alias on the same warn-and-continue copy', () => {
@@ -52,12 +92,22 @@ describe('resolveImagePathsForProvider', () => {
     expect(resolveImagePathsForProvider('codex', ['/tmp/a.png', ''], 'Codex')).toEqual({
       imagePaths: ['/tmp/a.png']
     })
+    expect(
+      resolveImagePathsForProvider('pi', ['/tmp/a.png'], 'Pi', 'openrouter/stealth/ox-alpha')
+    ).toEqual({ imagePaths: ['/tmp/a.png'] })
   })
 
   it('strips unsupported lanes and returns an omission warning', () => {
-    const resolved = resolveImagePathsForProvider('pi', ['/tmp/a.png', '/tmp/b.png'], 'Pi')
+    const resolved = resolveImagePathsForProvider(
+      'pi',
+      ['/tmp/a.png', '/tmp/b.png'],
+      'Pi',
+      'openrouter/z-ai/glm-5.2'
+    )
     expect(resolved.imagePaths).toEqual([])
-    expect(resolved.warning).toContain('Pi cannot receive image attachments')
+    expect(resolved.warning).toContain(
+      "TaskWraith's current Pi transport cannot deliver image attachments"
+    )
     expect(resolved.warning).toContain('Continuing without them')
   })
 })

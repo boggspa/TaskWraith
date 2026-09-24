@@ -18,6 +18,25 @@
 
 import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from './antigravityGeminiApiModelNaming'
 
+/**
+ * Official-ACP catalogue namespace. Shared cannot import main's `ACP_TOKEN`
+ * / `ANTIGRAVITY_ACP_MODEL_ID_PREFIX`; persisted picker ids freeze
+ * `antigravity-acp:` the same way `gemini-api:` is mirrored in this module.
+ * Strip before display-name and grouping so ACP rows read and group like
+ * their CLI counterparts. Do not strip `gemini-api:` — that lane keeps its
+ * own curated labels.
+ */
+const ANTIGRAVITY_ACP_MODEL_ID_PREFIX = 'antigravity-acp:'
+
+function stripAntigravityAcpModelNamespace(modelId: string): string {
+  const trimmed = modelId.trim()
+  const lower = trimmed.toLowerCase()
+  if (lower.startsWith(ANTIGRAVITY_ACP_MODEL_ID_PREFIX)) {
+    return trimmed.slice(ANTIGRAVITY_ACP_MODEL_ID_PREFIX.length)
+  }
+  return trimmed
+}
+
 export type AntigravityEffort = 'high' | 'medium' | 'low'
 export type AntigravityReasoningEffort = AntigravityEffort | 'on'
 
@@ -36,7 +55,7 @@ const FIXED_REASONING_MODELS: Record<string, AntigravityReasoningEffort> = {
 }
 
 export function antigravityEffortForModelId(modelId: string): AntigravityReasoningEffort | null {
-  const normalized = modelId.trim().toLowerCase()
+  const normalized = stripAntigravityAcpModelNamespace(modelId).toLowerCase()
   const match = VARIANT_EFFORT_SUFFIX.exec(normalized)
   if (match) {
     return match[1] as AntigravityEffort
@@ -96,7 +115,7 @@ export interface AntigravityVariantGroup {
   baseId: string
   displayName: string
   /** Present variants in slider order (low → high). */
-  variants: Array<{ effort: AntigravityEffort; id: string }>
+  variants: Array<{ effort: AntigravityEffort; id: string; ultraTaskSupported?: boolean }>
   /** Catalogue-first variant — what a fresh click on the row selects. */
   defaultId: string
 }
@@ -104,6 +123,7 @@ export interface AntigravityVariantGroup {
 export interface AntigravityGroupedModelRow {
   id: string
   label: string
+  ultraTaskSupported?: boolean
   /** Concrete wire-model variants retained for a consumer that needs to
    * switch the family through the reasoning ladder. */
   antigravityVariants?: AntigravityVariantGroup['variants']
@@ -112,6 +132,7 @@ export interface AntigravityGroupedModelRow {
 interface CatalogueOptionLike {
   id: string
   label?: string
+  ultraTaskSupported?: boolean
 }
 
 /** Human-readable name for a bare agy id ('gemini-3.6-flash' → 'Gemini 3.6
@@ -119,24 +140,26 @@ interface CatalogueOptionLike {
  * 'GPT-OSS 120B'). Generic word rules plus a tiny exception map; an unknown
  * id still comes out readable. */
 export function antigravityDisplayName(baseId: string): string {
-  const normalized = baseId.trim().toLowerCase()
+  const normalized = stripAntigravityAcpModelNamespace(baseId).toLowerCase()
   if (normalized === 'claude-sonnet-4-6' || normalized === 'claude-sonnet-4-6-thinking')
     return 'Sonnet 4.6'
   if (normalized === 'claude-opus-4-6' || normalized === 'claude-opus-4-6-thinking')
     return 'Opus 4.6'
   if (normalized.startsWith('gpt-oss-120b')) return 'GPT-OSS (120B Param)'
-  return collectDisplayNameTokens(baseId).join(' ')
+  return collectDisplayNameTokens(normalized).join(' ')
 }
 
 function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
   groupsByBase: Map<string, AntigravityVariantGroup>
   orderedEntries: Array<
-    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
+    | { kind: 'group'; baseId: string }
+    | { kind: 'single'; id: string; label?: string; ultraTaskSupported?: boolean }
   >
 } {
   const groupsByBase = new Map<string, AntigravityVariantGroup>()
   const orderedEntries: Array<
-    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
+    | { kind: 'group'; baseId: string }
+    | { kind: 'single'; id: string; label?: string; ultraTaskSupported?: boolean }
   > = []
   for (const option of options) {
     const id = option.id
@@ -146,21 +169,35 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
     // convention — those rows pass through completely untouched. Grouping
     // and prettifying apply to the agy CLI lane's bare ids only.
     if (id.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)) {
-      orderedEntries.push({ kind: 'single', id, label: option.label })
+      orderedEntries.push({
+        kind: 'single',
+        id,
+        label: option.label,
+        ultraTaskSupported: option.ultraTaskSupported
+      })
       continue
     }
-    const normalized = id.trim().toLowerCase()
+    const semanticId = stripAntigravityAcpModelNamespace(id)
+    const normalized = semanticId.toLowerCase()
     const effort =
       !FIXED_REASONING_MODELS[normalized] && VARIANT_EFFORT_SUFFIX.exec(normalized)
         ? (antigravityEffortForModelId(id) as AntigravityEffort)
         : null
     if (!effort) {
       // A curated label (differing from the id) is authored — keep it.
-      const curated = option.label && option.label !== id ? option.label : undefined
-      orderedEntries.push({ kind: 'single', id, label: curated })
+      const curated =
+        option.label && option.label !== id && option.label !== semanticId
+          ? option.label
+          : undefined
+      orderedEntries.push({
+        kind: 'single',
+        id,
+        label: curated,
+        ultraTaskSupported: option.ultraTaskSupported
+      })
       continue
     }
-    const baseId = id.slice(0, id.length - effort.length - 1)
+    const baseId = semanticId.slice(0, semanticId.length - effort.length - 1)
     let group = groupsByBase.get(baseId)
     if (!group) {
       group = {
@@ -173,7 +210,13 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
       orderedEntries.push({ kind: 'group', baseId })
     }
     if (!group.variants.some((variant) => variant.id === id)) {
-      group.variants.push({ effort, id })
+      group.variants.push({
+        effort,
+        id,
+        ...(typeof option.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: option.ultraTaskSupported }
+          : {})
+      })
     }
   }
   for (const group of groupsByBase.values()) {
@@ -195,18 +238,39 @@ export function groupAntigravityModelRows(
   const { groupsByBase, orderedEntries } = collectGroups(options)
   return orderedEntries.map((entry) => {
     if (entry.kind === 'single') {
-      return { id: entry.id, label: entry.label ?? antigravityDisplayName(entry.id) }
+      return {
+        id: entry.id,
+        label: entry.label ?? antigravityDisplayName(entry.id),
+        ...(typeof entry.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: entry.ultraTaskSupported }
+          : {})
+      }
     }
     const group = groupsByBase.get(entry.baseId)!
     const selected = selectedModelId
       ? group.variants.find((variant) => variant.id === selectedModelId)
       : undefined
+    const resolved = selected ?? group.variants.find((variant) => variant.id === group.defaultId)!
     return {
-      id: selected?.id ?? group.defaultId,
+      id: resolved.id,
       label: group.displayName,
-      antigravityVariants: group.variants
+      antigravityVariants: group.variants,
+      ...(typeof resolved.ultraTaskSupported === 'boolean'
+        ? { ultraTaskSupported: resolved.ultraTaskSupported }
+        : {})
     }
   })
+}
+
+/** Ladder label for one antigravity stop. The fixed-reasoning rows carry `on`,
+ * which reads as "Thinking" — it is a mode, not an effort level. */
+export function antigravityEffortLabel(effort: AntigravityReasoningEffort): string {
+  return effort === 'on' ? 'Thinking' : effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
+export interface AntigravityReasoningLadderOption {
+  value: string
+  label: string
 }
 
 /** The variant family containing `modelId`, or null for suffix-less models. */
@@ -219,4 +283,58 @@ export function antigravityVariantGroupForModel(
     if (group.variants.some((variant) => variant.id === modelId)) return group
   }
   return null
+}
+
+/**
+ * The wire model UltraTask rides on for `modelId`. A variant family maps onto
+ * its HIGHEST present variant (its ceiling — `-high` today, but derived rather
+ * than hardcoded so a family that ships without one still has a target); a
+ * fixed-reasoning row is already at its ceiling and maps onto itself. Null when
+ * the model has no reasoning of its own for UltraTask to sit on top of.
+ */
+export function antigravityUltraTaskTargetId(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  modelId: string
+): string | null {
+  const group = antigravityVariantGroupForModel(options, modelId)
+  if (group) return group.variants[group.variants.length - 1]?.id ?? null
+  return antigravityEffortForModelId(modelId) ? modelId : null
+}
+
+/**
+ * The reasoning stops one AntiGravity model offers. The composer and both seat
+ * editors all derive their ladder here so the stop a picker shows is always the
+ * stop that dispatches.
+ *
+ * - A variant family (`gemini-3.8-flash-low|-medium|-high`) offers its present
+ *   variants; choosing one swaps the concrete wire id.
+ * - A fixed-reasoning row (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`,
+ *   `gpt-oss-120b-medium`) offers its ONE real stop, labelled Thinking/Medium.
+ *   It is deliberately NOT seeded with an `off` bottom stop: these models
+ *   cannot stop reasoning, so an Off stop would be a lie.
+ * - Anything with no reasoning of its own (the `gemini-api:` lane, the Fast
+ *   rows) offers nothing; UltraTask alone still gets an `off` bottom stop so it
+ *   stays opt-in rather than becoming the ladder's only — and therefore locked
+ *   — value.
+ */
+export function antigravityReasoningLadderOptions(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  modelId: string,
+  ultraTaskSupported: boolean
+): AntigravityReasoningLadderOption[] {
+  const group = antigravityVariantGroupForModel(options, modelId)
+  const fixedEffort = group ? null : antigravityEffortForModelId(modelId)
+  const stops: AntigravityReasoningLadderOption[] = group
+    ? group.variants.map((variant) => ({
+        value: variant.effort,
+        label: antigravityEffortLabel(variant.effort)
+      }))
+    : fixedEffort
+      ? [{ value: fixedEffort, label: antigravityEffortLabel(fixedEffort) }]
+      : []
+  if (!ultraTaskSupported) return stops
+  const ultraTaskStop = { value: 'ultraTask', label: 'UltraTask' }
+  return antigravityUltraTaskTargetId(options, modelId)
+    ? [...stops, ultraTaskStop]
+    : [{ value: 'off', label: 'Off' }, ultraTaskStop]
 }

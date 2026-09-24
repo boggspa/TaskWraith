@@ -163,10 +163,13 @@ public enum TWTheme {
         case "claude": return 0xB16105
         case "kimi": return 0x0073E6
         case "cursor": return 0x8C7508
-        case "ollama": return 0x1A8562
+        case "ollama": return 0x976C52
         case "antigravity", "google": return 0x308713
         case "pi": return 0x68768C
         case "muse": return 0x1671EA
+        // Devin — TaskWraith design token, not a claim about Cognition's brand:
+        // steel blue raised to this palette's AA-on-both-grounds luminance.
+        case "devin": return 0x4878AE
         case "ensemble": return 0x986781
         case "grok": return 0x757575
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
@@ -198,8 +201,41 @@ public enum TWTheme {
         case "zai": return 0x177DAA
         case "minimax": return 0xC044A4
         case "mistral": return 0xD44404
+        case "xiaomi": return 0x008844
         case "cerebras": return 0xBB584A
         case "groq": return 0x088482
+        case "openrouter": return 0xE02948
+        // TaskWraith design token, not a claim about Thinking Machines' brand.
+        // It was the flagship Inkling card's #0155BF raised to this palette's
+        // AA-on-both-grounds luminance, which landed on #016EF6 — CIEDE2000
+        // dE 1.73 from meta/muse and 1.88 from gemini, i.e. the same colour on
+        // a chip strip. The blue band is full, so Inkling wears a rose of its
+        // own: dE 9.28 from liquid and 9.50 from the openrouter fallback.
+        case "thinkingmachines": return 0xC24E68
+        // Hy4 / Mercury Preview brand hues, raised (tencent) and lowered
+        // (inception) to this palette's AA-on-both-grounds luminance. The
+        // shipped brand values — 0x3458B0 and 0x9675FF — both failed a
+        // 4.5:1 ground. Mirrors theme.css.
+        case "tencent": return 0x4E73CA
+        case "inception": return 0x7C5BE9
+        // Nex AGI's mark is monochrome, so this is a TaskWraith design token
+        // rather than a brand claim: the most distinct near-neutral left in
+        // this palette's AA band. Mirrors theme.css.
+        case "nexagi": return 0x747A42
+        // Sakana's brand red (#E10600) pulled ~10 degrees toward crimson so it
+        // is not dE 2.2 from openbmb. Mirrors theme.css.
+        case "sakana": return 0xEA0C2D
+        // OpenRouter's anonymous stealth slot. A TaskWraith design token, not a
+        // vendor colour: the most saturated gold this band holds, sat between
+        // claude and cursor. Mirrors theme.css.
+        case "stealth": return 0x9E6C00
+        // Pareto's burnt vermilion. The vivid reds are taken, but dropping to
+        // HLS saturation 0.55 opens hue 17 without leaving orange: dE 7.2 from
+        // mistral and cerebras. Mirrors theme.css.
+        case "unbiased": return 0xB85A35
+        // TypeSafe's mark is a vivid pink, so Jev wears the magenta — dE 11.0
+        // from alibaba. Swapped with Pareto 2026-09-18. Mirrors theme.css.
+        case "typesafe": return 0xC700E4
         default: return chroma1Hex
         }
     }
@@ -238,7 +274,9 @@ public enum TWTheme {
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
-        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq"
+        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
+        "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana", "stealth",
+        "unbiased", "typesafe"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
@@ -264,6 +302,7 @@ public enum TWTheme {
         case "antigravity": return "AntiGravity"
         case "pi": return "Pi"
         case "muse": return "Muse"
+        case "devin": return "Devin"
         case "ensemble": return "Ensemble"
         case "alibaba": return "Alibaba"
         case "deep-reinforce": return "Deep Reinforce"
@@ -288,6 +327,8 @@ public enum TWTheme {
         case "mistral": return "Mistral"
         case "groq": return "Groq"
         case "cerebras": return "Cerebras"
+        case "openrouter": return "OpenRouter"
+        case "thinkingmachines": return "Thinking Machines"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()
         case nil: return "Agent"
         }
@@ -319,7 +360,7 @@ public enum TWTheme {
         return retiredProviderIds.contains(provider.lowercased())
     }
 
-    /// The nine providers approved for static new-run offer by product intent.
+    /// The ten providers approved for static new-run offer by product intent.
     /// Offer membership is independent of run-management maturity: Cursor's
     /// Path-B containment/evidence can strengthen or visibly degrade without
     /// changing whether Cursor is offered, and the same rule applies to Pi and
@@ -330,6 +371,7 @@ public enum TWTheme {
     /// shipped a Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
         "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral", "muse",
+        "devin",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {

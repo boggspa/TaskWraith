@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-08-16'
+export const RATE_TABLE_VERSION = '2026-09-02'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -91,6 +91,20 @@ export interface ModelRateEntry {
   subscriptionLane?: true
   /** The provider publishes this model itself at a zero per-token price. */
   freeModel?: true
+  /**
+   * The route is listed but its upstream publishes NO price yet (a "coming
+   * soon" launch). Like `subscriptionLane`, zero here is a neutral
+   * placeholder so the id never falls back to another model's rate — it is
+   * not a free-route claim, and the row must be re-verified at launch.
+   */
+  pricingPending?: true
+  /**
+   * Marks this row as the provider's fallback for an unmatched model id.
+   * `resolveModelRate` prefers it over the positional `models[0]`, so a table
+   * may be reordered without silently repricing the provider. Tables with no
+   * flagged row keep the positional behaviour.
+   */
+  isFallback?: true
   /** Explicit source confidence for the rate value. Missing means
    * baked-in manual table. */
   confidence?: ProviderRateConfidence
@@ -142,6 +156,37 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     provider: 'grok',
     pricingUrl: 'https://docs.x.ai/developers/pricing',
     models: [
+      {
+        // Grok 4.7 (added 2026-09-21): standard + Fast pair, rate carried
+        // forward from 4.6 until xAI publishes a 4.7 page.
+        modelId: 'grok-4.7',
+        isFallback: true,
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 12.0,
+        longContextCachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'xAI API pricing for Grok 4.7 (500K ctx), carried forward from 4.6. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
+      {
+        modelId: 'grok-4.7-fast',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 12.0,
+        longContextCachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'xAI API pricing for Grok 4.7 Fast (500K ctx), carried forward from 4.6. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
       {
         modelId: 'grok-4.6',
         inputUsdPerMillion: 2.0,
@@ -297,6 +342,55 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.6-luna',
         lastVerified: RATE_TABLE_VERSION
       },
+      // GPT-6 Astra — flagship, leads the picker from 2026-09-03. Unlike the
+      // 5.6 trio above, its long-context tier IS modelled: the pricing page
+      // publishes the rates outright rather than leaving them as a multiplier.
+      {
+        modelId: 'gpt-6-astra',
+        inputUsdPerMillion: 10.0,
+        outputUsdPerMillion: 50.0,
+        cachedInputUsdPerMillion: 1.0,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 20.0,
+        longContextOutputUsdPerMillion: 75.0,
+        longContextCachedInputUsdPerMillion: 2.0,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts at or above 272K tokens bill every token at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
+      // GPT-6 Sol and Luna — rolling out from 2026-09-22. The pricing page
+      // publishes the long-context tier outright for both, and each model page
+      // states the rule: prompts with more than 272K input tokens are priced at
+      // 2x input and cache rates and 1.5x output for the full request.
+      {
+        modelId: 'gpt-6-sol',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.2,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 15.0,
+        longContextCachedInputUsdPerMillion: 0.4,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
+      {
+        modelId: 'gpt-6-luna',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.5,
+        cachedInputUsdPerMillion: 0.01,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 0.2,
+        longContextOutputUsdPerMillion: 0.75,
+        longContextCachedInputUsdPerMillion: 0.02,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
       {
         modelId: 'gpt-5.5',
         inputUsdPerMillion: 5.0,
@@ -372,6 +466,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: '1M context window at standard rates — no long-context premium published.'
       },
       {
+        modelId: 'claude-fable-5-1',
+        inputUsdPerMillion: 10.0,
+        outputUsdPerMillion: 50.0,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/models/overview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current Fable release; successor to Fable 5 at the same $10/$50 per-token rate. Cache reads are $0.25/MTok (0.025x input — a quarter of the Fable 5 rate). 1M context is the default — no -1m variant.'
+      },
+      {
         modelId: 'claude-mythos-5',
         inputUsdPerMillion: 10.0,
         outputUsdPerMillion: 50.0,
@@ -382,6 +486,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Project Glasswing limited-availability 1M-context model with adaptive thinking. Published rate $10/$50.'
       },
       {
+        modelId: 'claude-opus-5-5',
+        inputUsdPerMillion: 4.0,
+        outputUsdPerMillion: 20.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current-gen Opus, released 2026-09-22 at $4/$20 (platform pricing page, read the same day). Cache reads are $0.20/MTok (0.05x input). 1M context is the default — no -1m variant. Fast mode bills 2x ($8/$40) upstream; table keeps the standard tier.'
+      },
+      {
         modelId: 'claude-opus-5',
         inputUsdPerMillion: 5.0,
         outputUsdPerMillion: 25.0,
@@ -389,7 +503,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://www.anthropic.com/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current-gen Opus, launched 2026-07-24 at Opus 4.8 pricing ($5/$25). 1M context is the default — no -1m variant. Fast mode bills 2x ($10/$50) upstream; table keeps the standard tier.'
+          'Previous-gen Opus as of Opus 5.5 (2026-09-22); launched 2026-07-24 at Opus 4.8 pricing ($5/$25). 1M context is the default — no -1m variant. Fast mode bills 2x ($10/$50) upstream; table keeps the standard tier.'
       },
       {
         modelId: 'claude-opus-4-8',
@@ -536,6 +650,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     pricingUrl: 'https://platform.kimi.ai/docs/pricing/chat',
     models: [
       {
+        modelId: 'kimi-k2.8-preview',
+        inputUsdPerMillion: 0.95,
+        outputUsdPerMillion: 4.0,
+        cachedInputUsdPerMillion: 0.19,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current Kimi Code CLI default, on the unchanged `kimi-for-coding` wire id K2.8 Preview took over on 2026-09-11. Moonshot has published no separate K2.8 chat rate, so the K2.7 Coding figures carry forward. PROJECTED API-equivalent for OAuth/subscription runs; automatic context cache hit pricing recorded as cached input.'
+      },
+      {
         modelId: 'kimi-k2.7-code',
         inputUsdPerMillion: 0.95,
         outputUsdPerMillion: 4.0,
@@ -543,7 +667,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current Kimi Code CLI default. PROJECTED API-equivalent for OAuth/subscription runs; automatic context cache hit pricing recorded as cached input.'
+          'Retired combined "K2.7 Coding" row. Kept so usage already recorded under that id still prices instead of falling through to the table head.'
       },
       {
         modelId: 'kimi-k2.7-code-highspeed',
@@ -553,7 +677,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Published Highspeed tier for the same K2.7 Coding model (Fast mode in TaskWraith). PROJECTED API-equivalent for OAuth/subscription runs.'
+          'Published Highspeed tier, still on K2.7 after the standard route moved to K2.8. Its own picker row since 2026-09-11. PROJECTED API-equivalent for OAuth/subscription runs.'
       },
       {
         modelId: 'kimi-k3',
@@ -563,7 +687,17 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Published K3 API pricing. PROJECTED API-equivalent for OAuth/subscription runs; the API page does not publish a separate long-context rate tier.'
+          'Published K3 API pricing for the plan-dependent long-context route. PROJECTED API-equivalent for OAuth/subscription runs.'
+      },
+      {
+        modelId: 'kimi-k3-256k',
+        inputUsdPerMillion: 3.0,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.3,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Same published K3 API pricing for the fixed 256K route. Kimi Code membership documents lower quota consumption than the 1M route; this remains a PROJECTED API-equivalent for subscription runs.'
       },
       {
         modelId: 'kimi-k2.6',
@@ -640,6 +774,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'qwen3.8-flash-next:125b-mlx',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Alibaba Qwen 3.8 Flash Next 125B-MLX running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'gemma3:4b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
@@ -707,6 +851,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Ornith 1.0 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'ornith-1.5:9b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Ornith 1.5 9B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'ornith-1.5:35b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Ornith 1.5 35B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -800,6 +964,36 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'granite4.2:3b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'IBM Granite 4.2 3B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'granite4.2:8b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'IBM Granite 4.2 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'granite4.2:30b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'IBM Granite 4.2 30B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'nemotron-3-nano:4b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
@@ -870,6 +1064,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Mistral Devstral Small 2 24B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'mistral-medium-3.5:128b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Mistral Medium 3.5 128B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       },
       {
@@ -989,34 +1193,45 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // silently priced at row 0 — i.e. every Z.ai, Qwen, MiniMax, Mistral, Groq
   // and Cerebras run was being projected at DeepSeek V4 Flash rates.
   //
-  // Values come from pi's bundled catalogue
-  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`) plus official
-  // Mistral model cards for deployments newer than pi 0.82.1. Re-check both on
-  // pi upgrades. Table-level `pricingUrl` can only ever verify one vendor, so
-  // each entry carries the vendor's own `sourceUrl` for the human half of the
-  // diligence cycle; expect the probe to report not-verified for the others.
+  // PRICE THESE ROWS FROM EACH ROW'S OWN `sourceUrl` — the vendor's page — and
+  // NEVER by re-syncing pi's bundled catalogue
+  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`). That file is
+  // a convenient list of which wire ids exist, and it is NOT a pricing
+  // authority: it is a snapshot taken whenever pi cut a release, it is not
+  // corrected between releases, and a wrong figure in it looks exactly like a
+  // right one. Measured 2026-09-10: its `deepseek-v4-pro` cost block said
+  // $0.435 / $0.87 while DeepSeek's own page said $0.66 / $1.98 off-peak and
+  // $1.32 / $3.96 peak, and 0.85.1 still shipped the same wrong numbers, so
+  // "re-check on pi upgrades" would have re-confirmed the error rather than
+  // caught it. Model cards / vendor pages are the authority for every upstream
+  // here, Mistral included. Table-level `pricingUrl` can only ever verify one
+  // vendor, so each entry carries the vendor's own `sourceUrl` for the human
+  // half of the diligence cycle; expect the probe to report not-verified for
+  // the others.
   pi: {
     provider: 'pi',
     pricingUrl: 'https://pi.dev/docs/latest/providers',
     models: [
       {
         modelId: 'deepseek/deepseek-v4-flash',
-        inputUsdPerMillion: 0.14,
-        outputUsdPerMillion: 0.28,
-        cachedInputUsdPerMillion: 0.0028,
+        isFallback: true,
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 1.2,
+        cachedInputUsdPerMillion: 0.006,
         sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
+          'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids. PEAK figures. DeepSeek bills peak 01:00-04:00 and 06:00-10:00 UTC Mon-Fri and half that off-peak ($0.15 / $0.60 / $0.003 cached), which this flat table cannot express; peak is carried so a projection never understates a bill. Re-verified 2026-09-10: DeepSeek released V4.1 Flash on 2026-09-10 under the new id `deepseek-flash` and now routes the legacy `deepseek-v4-flash` id to it at V4.1 Flash prices, so this row prices V4.1 Flash. The old V4 Flash figures ($0.14 / $0.28) are gone from the vendor page; pi 0.84.2 and 0.85.1 both still ship the stale $0.14 / $0.28 cost block, so do NOT re-sync this row from pi bundled data.'
       },
       {
         modelId: 'deepseek/deepseek-v4-pro',
-        inputUsdPerMillion: 0.435,
-        outputUsdPerMillion: 0.87,
-        cachedInputUsdPerMillion: 0.003625,
+        inputUsdPerMillion: 1.32,
+        outputUsdPerMillion: 3.96,
+        cachedInputUsdPerMillion: 0.044,
         sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'DeepSeek V4 Pro via the Pi seat.'
+        notes:
+          'DeepSeek V4 Pro via the Pi seat. PEAK figures, same window as the flash row above; off-peak is half ($0.66 / $1.98 / $0.022 cached). Re-verified 2026-09-10 against the vendor page. The previous $0.435 / $0.87 came from pi bundled data (`pi-ai/dist/providers/data/deepseek.json`), which disagrees with DeepSeek own published pricing and is still wrong in pi 0.85.1 - price this row from the vendor page, never from pi. SCHEDULED CHANGE: from 12:00 Beijing / 04:00 UTC on 2026-09-14, and until a future V4.1 Pro ships, DeepSeek routes every `deepseek-v4-pro` request to V4.1 Flash and bills at V4.1 Flash prices, so on that date this row should drop to the flash figures above. The flat table cannot express a dated change; this records it the way the gemini-3.6-flash row records its own.'
       },
       // Z.ai + Qwen are SUBSCRIPTION/token-plan lanes: pi publishes no
       // per-token price, so these are genuinely 0 and the display layer renders
@@ -1069,13 +1284,151 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
       },
       {
-        modelId: 'qwen-token-plan/qwen3.8-max-preview',
+        modelId: 'qwen-token-plan/qwen3.8-max',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
         subscriptionLane: true,
         sourceUrl: 'https://pi.dev/docs/latest/providers',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
+      },
+      // Xiaomi token plan — three regional deployments of the SAME prepaid
+      // MiMo catalog; pi publishes no per-token price, so 0 means "no
+      // per-token projection", NOT "free" (same rule as Z.ai/Qwen above).
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.6-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid credits, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-cn/mimo-v2.6-flash',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (China) — prepaid credits, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.6-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid credits, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-sgp/mimo-v2.6-flash',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Singapore) — prepaid credits, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.5',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.5-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.6-pro',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid credits, no per-token rate published.'
+      },
+      {
+        modelId: 'xiaomi-token-plan-ams/mimo-v2.6-flash',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://mimo.mi.com/docs/en-US/price/token-plan',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Xiaomi token plan (Amsterdam) — prepaid credits, no per-token rate published.'
       },
       {
         modelId: 'minimax/MiniMax-M2.7',
@@ -1230,12 +1583,208 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Paid tier; Cerebras also has a free 1M tokens/day tier.'
       },
       {
+        modelId: 'cerebras/qwen-3.8-27b',
+        inputUsdPerMillion: 0.99,
+        outputUsdPerMillion: 1.49,
+        sourceUrl: 'https://www.cerebras.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Listed on the Cerebras Developer Tier pricing table (~1,500 tokens/s); ~2.8x the gpt-oss-120b input rate.'
+      },
+      {
         modelId: 'cerebras/zai-glm-4.7',
         inputUsdPerMillion: 2.25,
         outputUsdPerMillion: 2.75,
         sourceUrl: 'https://www.cerebras.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Most expensive wired Pi model by input rate — ~16x DeepSeek V4 Flash.'
+      },
+      {
+        modelId: 'openrouter/stealth/ox-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/ox-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Formerly free on OpenRouter; retired 2026-08-28 and retained only so historical Pi chats and ensemble seats keep their cost records.'
+      },
+      {
+        modelId: 'openrouter/z-ai/glm-5.2',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/z-ai/glm-5.2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free on OpenRouter (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/poolside/laguna-s-2.1',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/poolside/laguna-s-2.1',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free on OpenRouter (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-21); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/cohere/north-mini-code:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/cohere/north-mini-code:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/minimax/minimax-m3:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/minimax/minimax-m3:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/thinkingmachines/inkling:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/thinkingmachines/inkling:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/thinkingmachines/inkling-small:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/thinkingmachines/inkling-small:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-08-30); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/tencent/hy4-preview',
+        inputUsdPerMillion: 0.834,
+        outputUsdPerMillion: 2.501,
+        sourceUrl: 'https://openrouter.ai/tencent/hy4-preview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-09); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/inception/mercury-2.5-preview',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.75,
+        sourceUrl: 'https://openrouter.ai/inception/mercury-2.5-preview',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-09); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/inception/mercury-2.5',
+        inputUsdPerMillion: 0.2,
+        outputUsdPerMillion: 0.75,
+        sourceUrl: 'https://openrouter.ai/inception/mercury-2.5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'List price (verified 2026-09-09). OpenRouter is discounting the launch 80% to $0.04/$0.15; the estimate tracks the list rate so it does not under-bill when that promotion ends.'
+      },
+      {
+        modelId: 'openrouter/nex-agi/nex-n2.5-mini:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nex-agi/nex-n2.5-mini:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-09-09); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/nex-agi/nex-n2.5-pro:free',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/nex-agi/nex-n2.5-pro:free',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'OpenRouter :free variant (verified 2026-09-09); mirrors cost 0/0 in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/sakana/fugu-max',
+        inputUsdPerMillion: 2,
+        outputUsdPerMillion: 6,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://openrouter.ai/sakana/fugu-max',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route, Sakana-hosted with no routing fan-out (verified 2026-09-11); mirrors the cost block in PiOpenRouterModelRegistration. Web search is billed separately at $10 per 1K calls and is not part of a token estimate.'
+      },
+      {
+        modelId: 'openrouter/sakana/fugu-ultra-v2',
+        inputUsdPerMillion: 5,
+        outputUsdPerMillion: 30,
+        cachedInputUsdPerMillion: 0.5,
+        sourceUrl: 'https://openrouter.ai/sakana/fugu-ultra-v2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route (verified 2026-09-11). BASE tier: OpenRouter publishes a pricing override that raises this to $10 / $45 with $1.00 cache read once the PROMPT exceeds 272,000 tokens. This flat table cannot express a prompt-length break, so a long-prompt turn is UNDER-estimated by up to 2x on input and 1.5x on output; the break is recorded in docs/MODEL_CATALOGUE.md.'
+      },
+      {
+        modelId: 'openrouter/stealth/union-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/union-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free stealth preview (verified 2026-09-16); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
+      },
+      {
+        modelId: 'openrouter/unbiased/pareto',
+        inputUsdPerMillion: 2.5,
+        outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://openrouter.ai/unbiased/pareto',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route, Unbiased-hosted with no routing fan-out (verified 2026-09-18); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/typesafe/jev-1.13',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        pricingPending: true,
+        sourceUrl: 'https://openrouter.ai/typesafe/jev-1.13',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Route listed 2026-09-17 but "coming soon" — OpenRouter publishes no pricing yet. Zero is a neutral placeholder, NOT a free-route claim: re-verify against the Models API at launch before it prices a run.'
+      },
+      {
+        modelId: 'openrouter/stealth/space-bunny-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/space-bunny-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free stealth preview (verified 2026-09-23); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
       }
     ]
   },
@@ -1413,6 +1962,36 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Third-party Z.ai GLM-5.2 served by Mistral.'
       },
       {
+        modelId: 'zai-glm-5-3',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.14,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "Third-party Z.ai GLM-5.3 served by Mistral, added 2026-09-18. CARRIED FORWARD from the GLM-5.2 row above: Mistral has published no separate GLM-5.3 rate, and Z.ai prices its own GLM-5.3 identically to 5.2 (see devinModelCatalog, 1.4/4.4). The cached-input figure is 5.2's Mistral-docs 0.14, not Z.ai's own 0.26. Re-verify against Mistral's model docs when the 5.3 page lands — every offered model must carry a rate row (providerApiRatesTable guard), so this is a sourced-adjacent estimate rather than an omission."
+      },
+      {
+        modelId: 'glm-5-2',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.26,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "GLM-5.2 hosted on the Vibe subscription (alias glm-5-2, same zai-glm-5-2 deployment as the API row above). Cached-input 0.26 read from the Vibe CLI's own bundled catalogue (vibe_cli_extra_models), authoritative over the marketing page; the API row above quotes the docs' 0.14. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
+        modelId: 'glm-5-3',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.26,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "GLM-5.3 hosted on the Vibe subscription (alias glm-5-3, added 2026-09-21). Rate CARRIED FORWARD from the 5.2 deployment (same 1.4/4.4, 0.26 cache read) and not independently verified. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
         modelId: 'codestral-2508',
         inputUsdPerMillion: 0.3,
         outputUsdPerMillion: 0.9,
@@ -1515,6 +2094,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     models: [
       {
         modelId: 'muse-spark-1.2',
+        isFallback: true,
         inputUsdPerMillion: 1.25,
         outputUsdPerMillion: 4.25,
         cachedInputUsdPerMillion: 0.15,
@@ -1522,6 +2102,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'PROJECTED API-equivalent from the Muse Code CLI catalog for muse-spark-1.2 ($1.25/$4.25/$0.15 per Mtok input/output/cached). Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-spark-1.2-contributor',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.002,
+        sourceUrl: 'https://www.meta.com/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'PROJECTED API-equivalent from the Muse Code CLI catalog for muse-spark-1.2-contributor ($0.10/$0.20/$0.002 per Mtok input/output/cached). Discounted tokens carry the provider notice that content, including inter-session messages, may be used for product improvement. Not Meta-billed invoice line items — subscription / plan spend may differ.'
       },
       {
         modelId: 'muse-default',
@@ -1532,8 +2122,39 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Wire-id alias for muse-spark-1.2 when a run records the seat default sentinel instead of the catalog id.'
+      },
+      {
+        modelId: 'muse-spark-1.3',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 4.25,
+        cachedInputUsdPerMillion: 0.15,
+        sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Model API published pricing for muse-spark-1.3 ($1.25/$4.25/$0.15 per Mtok input/output/cached), verified 2026-09-02 and identical to muse-spark-1.2. Not Meta-billed invoice line items — subscription / plan spend may differ.'
+      },
+      {
+        modelId: 'muse-spark-1.3-contributor',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.2,
+        cachedInputUsdPerMillion: 0.002,
+        sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Model API published pricing for muse-spark-1.3-contributor ($0.10/$0.20/$0.002 per Mtok input/output/cached), verified 2026-09-02. Discounted tokens carry the provider notice that content, including inter-session messages, may be used for product improvement. Not Meta-billed invoice line items — subscription / plan spend may differ.'
       }
     ]
+  },
+  // Devin bills in ACUs (Agent Compute Units) on a subscription plan, not per
+  // token — there is no per-model $/Mtok rate to bake in, so the models list is
+  // intentionally empty and spend rows stay zero. The pricingUrl is empty on
+  // purpose: an empty models list is the "no published per-token rates" signal
+  // (it also keeps probeAllProviderRates from fetching) and the rate-table
+  // invariant pairs it with an empty URL. Plan pricing: https://devin.ai/pricing
+  devin: {
+    provider: 'devin',
+    pricingUrl: '',
+    models: []
   }
 }
 
@@ -1694,7 +2315,8 @@ const providerIds = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

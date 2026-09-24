@@ -33,6 +33,7 @@ export type CanonicalToolClass =
   | 'ui_elicitation'
 
 export const CANONICAL_DISPATCH_OWNERS = [
+  'web-login',
   'workspace-tools',
   'git-tools',
   'web-tools',
@@ -59,9 +60,12 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'blackboard',
   'launch-control',
   'canvas',
+  'computer-use',
+  'emulator',
   'mesh-canvas',
   'simulator-canvas',
   'theme-control',
+  'thread-continuity',
   'cross-thread-recall',
   'introspection',
   'skills',
@@ -523,7 +527,7 @@ export const PROVIDER_ACTION_ADAPTERS = {
     nativeActionMappings: {}
   }),
   antigravity: adapter({
-    nativeSurface: 'unobservable-native',
+    nativeSurface: 'closed-native',
     mcpAttachment: 'route-dependent',
     nativeMediation: 'route-dependent',
     structuredKindMappings: {},
@@ -534,33 +538,87 @@ export const PROVIDER_ACTION_ADAPTERS = {
       'replace_file_content',
       'create_file',
       'delete_file',
-      'rename_file'
+      'rename_file',
+      'grep_search',
+      'view_file',
+      'read_file',
+      'list_dir',
+      'find_by_name',
+      'run_command',
+      'read_url_content',
+      'search_web',
+      'ask_question'
     ] as const,
     nativeActionMappings: {
       write_to_file: {
-        aliases: ['write_to_file'],
+        aliases: ['write_to_file', 'writeToFile'],
         catalogTool: 'write_file',
         action: 'workspace.mutate'
       },
       replace_file_content: {
-        aliases: ['replace_file_content'],
+        aliases: ['replace_file_content', 'replaceFileContent'],
         catalogTool: 'replace',
         action: 'workspace.mutate'
       },
       create_file: {
-        aliases: ['create_file'],
+        aliases: ['create_file', 'createFile'],
         catalogTool: 'write_file',
         action: 'workspace.mutate'
       },
       delete_file: {
-        aliases: ['delete_file'],
+        aliases: ['delete_file', 'deleteFile'],
         catalogTool: 'delete_path',
         action: 'workspace.mutate'
       },
       rename_file: {
-        aliases: ['rename_file'],
+        aliases: ['rename_file', 'renameFile'],
         catalogTool: 'rename_path',
         action: 'workspace.mutate'
+      },
+      grep_search: {
+        aliases: ['grep_search', 'grepSearch', 'grep'],
+        catalogTool: 'workspace_search',
+        action: 'workspace.search'
+      },
+      view_file: {
+        aliases: ['view_file', 'viewFile', 'view'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      read_file: {
+        aliases: ['read_file', 'readFile', 'read'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      list_dir: {
+        aliases: ['list_dir', 'listDir', 'list_directory'],
+        catalogTool: 'list_directory',
+        action: 'workspace.read'
+      },
+      find_by_name: {
+        aliases: ['find_by_name', 'findByName'],
+        catalogTool: 'find_files',
+        action: 'workspace.search'
+      },
+      run_command: {
+        aliases: ['run_command', 'runCommand'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      },
+      read_url_content: {
+        aliases: ['read_url_content', 'readUrlContent'],
+        catalogTool: 'web_fetch',
+        action: 'network.read'
+      },
+      search_web: {
+        aliases: ['search_web', 'searchWeb'],
+        catalogTool: 'web_search',
+        action: 'network.read'
+      },
+      ask_question: {
+        aliases: ['ask_question', 'askQuestion'],
+        catalogTool: 'ask_user_question',
+        action: 'user.elicit'
       }
     }
   }),
@@ -774,6 +832,116 @@ export const PROVIDER_ACTION_ADAPTERS = {
       },
       'web-fetch': {
         aliases: ['web_fetch', 'WebFetch', 'Fetch'],
+        catalogTool: 'web_fetch',
+        action: 'network.read'
+      }
+    }
+  }),
+  devin: adapter({
+    // `devin acp` over stdio. Native tool executions surface as ACP
+    // session/request_permission events answered by the host approval ledger
+    // (Synara source-verified; pending live measurement — see the
+    // defaultProviderDescriptor caveat). The TaskWraith MCP broker is
+    // advertised only behind the default-OFF devinMcpAdvertiseEnabled() gate,
+    // so attachment is conditional rather than required.
+    nativeSurface: 'closed-native',
+    mcpAttachment: 'conditional',
+    nativeMediation: 'taskwraith-preflight-and-approval',
+    structuredKindMappings: {
+      read: ['read', 'list'],
+      edit: ['write', 'edit', 'patch', 'create-directory'],
+      delete: 'delete',
+      move: ['move', 'rename'],
+      search: ['find', 'search', 'web-search'],
+      execute: 'shell',
+      fetch: 'web-fetch'
+    },
+    declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
+    deniedNativeActionMappings: {},
+    declaredNativeActions: [
+      'read',
+      'list',
+      'find',
+      'search',
+      'write',
+      'edit',
+      'patch',
+      'create-directory',
+      'delete',
+      'move',
+      'rename',
+      'shell',
+      'web-search',
+      'web-fetch'
+    ] as const,
+    nativeActionMappings: {
+      read: {
+        aliases: ['Read', 'Read file', 'read_file', 'Open file'],
+        catalogTool: 'read_file',
+        action: 'workspace.read'
+      },
+      list: {
+        aliases: ['LS', 'List directory', 'list_directory'],
+        catalogTool: 'list_directory',
+        action: 'workspace.read'
+      },
+      find: {
+        aliases: ['Glob', 'Find files'],
+        catalogTool: 'find_files',
+        action: 'workspace.search'
+      },
+      search: {
+        aliases: ['Grep', 'Search workspace'],
+        catalogTool: 'workspace_search',
+        action: 'workspace.search'
+      },
+      write: {
+        aliases: ['Write', 'Write file', 'Create file'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      edit: {
+        aliases: ['Edit', 'Edit file', 'Replace', 'search_replace'],
+        catalogTool: 'replace',
+        action: 'workspace.mutate'
+      },
+      patch: {
+        aliases: ['apply_patch', 'Apply patch', 'Patch'],
+        catalogTool: 'apply_patch',
+        action: 'workspace.mutate'
+      },
+      'create-directory': {
+        aliases: ['Create directory', 'Mkdir'],
+        catalogTool: 'create_directory',
+        action: 'workspace.mutate'
+      },
+      delete: {
+        aliases: ['Delete', 'Delete file', 'Delete path', 'Remove'],
+        catalogTool: 'delete_path',
+        action: 'workspace.mutate'
+      },
+      move: {
+        aliases: ['Move', 'Move file', 'Move path'],
+        catalogTool: 'move_path',
+        action: 'workspace.mutate'
+      },
+      rename: {
+        aliases: ['Rename', 'Rename file', 'Rename path'],
+        catalogTool: 'rename_path',
+        action: 'workspace.mutate'
+      },
+      shell: {
+        aliases: ['Bash', 'Shell', 'run_terminal_command', 'Run terminal command'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      },
+      'web-search': {
+        aliases: ['WebSearch', 'web_search', 'Search web'],
+        catalogTool: 'web_search',
+        action: 'network.read'
+      },
+      'web-fetch': {
+        aliases: ['Fetch', 'WebFetch', 'web_fetch'],
         catalogTool: 'web_fetch',
         action: 'network.read'
       }
@@ -1641,6 +1809,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'host-state',
     'host-resource'
   ),
+  redeem_permission_opportunity: tool(
+    'ui_elicitation',
+    'mcpTools',
+    'user.elicit',
+    'user-question',
+    'none',
+    'none'
+  ),
   goal_read: tool('orchestration', 'mcpTools', 'control.read', 'goal-control', 'none', 'none'),
   goal_update: tool(
     'orchestration',
@@ -1697,6 +1873,14 @@ export const TASKWRAITH_TOOL_ACTIONS = {
   // Batch spawn-only wave: same service/gate family as delegate_to_subthread.
   // Not auto-allowed; one approval card covers the whole wave when required.
   delegate_wave: tool(
+    'orchestration',
+    'subThreadDelegation',
+    'control.mutate',
+    'subthread-control',
+    'host-state',
+    'host-resource'
+  ),
+  ultra_task: tool(
     'orchestration',
     'subThreadDelegation',
     'control.mutate',
@@ -1769,6 +1953,9 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'none',
     'none'
   ),
+  // Composite dispatcher only: every contained operation re-enters its own
+  // canonical approval, route, lock and audit path before doing any work.
+  computer_use: tool('orchestration', 'mcpTools', 'control.read', 'computer-use', 'none', 'none'),
   canvas_open: tool(
     'workspace_write',
     'mcpTools',
@@ -1840,6 +2027,22 @@ export const TASKWRAITH_TOOL_ACTIONS = {
   ),
   canvas_list: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_status: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
+  canvas_drive_report: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'canvas',
+    'none',
+    'none'
+  ),
+  canvas_drive_verify: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'canvas',
+    'none',
+    'none'
+  ),
   canvas_snapshot: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_screenshot: tool(
     'orchestration',
@@ -1876,6 +2079,39 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'attached-application',
     'application-resource'
   ),
+  canvas_key: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_scroll: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_hover: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_select: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  canvas_wait_for: tool('orchestration', 'mcpTools', 'application.read', 'canvas', 'none', 'none'),
   canvas_annotate: tool(
     'orchestration',
     'mcpTools',
@@ -1889,6 +2125,37 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'canvasEval',
     'application.mutate',
     'canvas',
+    'attached-application',
+    'application-resource'
+  ),
+  // Fixed package admission; no agent-authored URL/game/ROM reaches this
+  // branch. It still opens a live main-owned surface and therefore stays on
+  // the ordinary grantable mcpTools approval path.
+  emulator_open: tool(
+    'orchestration',
+    'mcpTools',
+    'application.mutate',
+    'emulator',
+    'host-state',
+    'application-resource'
+  ),
+  // Pixel + bounded mapped-state egress mirrors canvas_screenshot: it remains
+  // mcpTools-gated rather than silently joining the read auto-allow set.
+  emulator_observe: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'emulator',
+    'host-state',
+    'application-resource'
+  ),
+  // Exact reviewed emulator surface actuation; AppDrive resolves its lease
+  // descriptor from the canonical canvasId before the executor steps frames.
+  emulator_step: tool(
+    'workspace_write',
+    'canvasInteraction',
+    'application.mutate',
+    'emulator',
     'attached-application',
     'application-resource'
   ),
@@ -1913,6 +2180,32 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'canvas',
     'host-state',
     'application-resource'
+  ),
+  // Authorized site sessions. The list is a catalogue read with no egress of
+  // its own; opening binds a canvas to a site and is webBrowsing, like every
+  // other verb that puts a page on screen.
+  web_login_list: tool(
+    'orchestration',
+    'mcpTools',
+    'application.read',
+    'web-login',
+    'none',
+    'none'
+  ),
+  // ALWAYS, not url-argument. Unlike canvas_navigate - whose back/forward/reload
+  // verbs carry no url - this verb always loads a document, landing on the
+  // site's own origin when no url is given. Classifying it by its url argument
+  // let a no-url call read as "no egress" and slip past a network-deny posture,
+  // because networkUrlArgumentIsRemote (ToolClassTaxonomy.ts) has no case for a
+  // tool it does not know and answers false.
+  web_login_open: tool(
+    'orchestration',
+    'webBrowsing',
+    'application.mutate',
+    'web-login',
+    'host-state',
+    'application-resource',
+    'always'
   ),
   mesh_scene_create: tool(
     'workspace_write',
@@ -2132,6 +2425,30 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'mcpTools',
     'control.mutate',
     'theme-control',
+    'host-state',
+    'host-resource'
+  ),
+  tw_history_search: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'thread-continuity',
+    'none',
+    'none'
+  ),
+  tw_history_read: tool(
+    'orchestration',
+    'mcpTools',
+    'control.read',
+    'thread-continuity',
+    'none',
+    'none'
+  ),
+  tw_checkpoint: tool(
+    'orchestration',
+    'mcpTools',
+    'control.mutate',
+    'thread-continuity',
     'host-state',
     'host-resource'
   ),
@@ -2697,7 +3014,8 @@ const STRICT_TASKWRAITH_MCP_SERVER_NAMES = new Set([
   'taskwraith',
   'taskwraith-broker',
   'taskwraith-grok',
-  'taskwraith-mistral'
+  'taskwraith-mistral',
+  'taskwraith-devin'
 ])
 
 const STRICT_TASKWRAITH_FLAT_PREFIXES = [
@@ -2715,6 +3033,7 @@ const STRICT_TASKWRAITH_FLAT_PREFIXES = [
   'taskwraith_broker-',
   'taskwraith-grok__',
   'taskwraith-mistral__',
+  'taskwraith-devin__',
   'taskwraith__'
 ] as const
 
@@ -3152,8 +3471,8 @@ export function resolveToolDispatchContractStrict(
       : isTaskWraithCatalogAction(canonical)
         ? TASKWRAITH_TOOL_ACTIONS[canonical]
         : AUDIT_MCP_TOOL_ACTIONS[canonical as TaxonomyAuditMcpToolName]
-  // capability_search is handled via CAPABILITY_GATEWAY_ACTIONS above and is
-  // never a TaskWraith catalog action — do not re-compare it here (TS2367).
+  // capability_search and capability_invoke are handled via CAPABILITY_GATEWAY_ACTIONS
+  // above and are never TaskWraith catalog actions — do not re-compare them here (TS2367).
   const service = isTaskWraithCatalogAction(canonical)
     ? resolveCatalogToolAgenticService(canonical, args)
     : metadata.service

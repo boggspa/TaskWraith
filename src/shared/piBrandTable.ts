@@ -31,9 +31,44 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // Reuses the Alibaba/Qwen purple already in the palette — see module note.
   'qwen-token-plan': { label: 'Qwen', hueClass: 'qwen' },
   minimax: { label: 'MiniMax', hueClass: 'minimax' },
+  // The three Xiaomi token-plan regions share one brand hue; the region is
+  // carried by the model label suffix, not a separate colour.
+  'xiaomi-token-plan-cn': { label: 'Xiaomi', hueClass: 'xiaomi' },
+  'xiaomi-token-plan-sgp': { label: 'Xiaomi', hueClass: 'xiaomi' },
+  'xiaomi-token-plan-ams': { label: 'Xiaomi', hueClass: 'xiaomi' },
   mistral: { label: 'Mistral', hueClass: 'mistral' },
   groq: { label: 'Groq', hueClass: 'groq' },
-  cerebras: { label: 'Cerebras', hueClass: 'cerebras' }
+  cerebras: { label: 'Cerebras', hueClass: 'cerebras' },
+  openrouter: { label: 'OpenRouter', hueClass: 'openrouter' },
+  // OpenRouter-specific overrides for models that should display with their original brand
+  // Keyed by OpenRouter's own namespace, which is `z-ai` (hyphenated) —
+  // NOT Z.ai's direct-route `zai`. Keep the two spellings apart.
+  'openrouter/cohere': { label: 'Cohere', hueClass: 'cohere' },
+  'openrouter/minimax': { label: 'MiniMax', hueClass: 'minimax' },
+  'openrouter/z-ai': { label: 'Z.ai', hueClass: 'zai' },
+  'openrouter/poolside': { label: 'Poolside', hueClass: 'poolside' },
+  'openrouter/nvidia': { label: 'NVIDIA', hueClass: 'nvidia' },
+  'openrouter/thinkingmachines': { label: 'Thinking Machines', hueClass: 'thinkingmachines' },
+  'openrouter/tencent': { label: 'Tencent', hueClass: 'tencent' },
+  'openrouter/inception': { label: 'Inception', hueClass: 'inception' },
+  // OpenRouter spells the namespace `nex-agi`; the hue class drops the hyphen
+  // so it stays a valid `--provider-<class>-color` token and CSS class name.
+  'openrouter/nex-agi': { label: 'Nex AGI', hueClass: 'nexagi' },
+  'openrouter/sakana': { label: 'Sakana', hueClass: 'sakana' },
+  // OpenRouter's `stealth` namespace is not a vendor: it is the anonymous
+  // slot an unnamed lab previews a model through. It still earns a brand
+  // override, because falling through to the generic OpenRouter red is what
+  // every OTHER openrouter route does, and a stealth preview is exactly the
+  // row a user needs to pick out of that list. Covers the retired Ox Alpha
+  // too, which was the same kind of route.
+  'openrouter/stealth': { label: 'Stealth', hueClass: 'stealth' },
+  // Unbiased (Pareto) wears a burnt vermilion that keeps its brand's red while
+  // clearing the palette's three vivid reds, and TypeSafe (Jev) wears a magenta
+  // that matches its pink mark. The two swapped on 2026-09-18 — the magenta was
+  // minted for Pareto first. See theme.css for both derivations and the dE
+  // bookkeeping.
+  'openrouter/unbiased': { label: 'Unbiased', hueClass: 'unbiased' },
+  'openrouter/typesafe': { label: 'TypeSafe', hueClass: 'typesafe' }
 }
 
 /**
@@ -51,16 +86,31 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
  * would otherwise be indistinguishable.
  */
 export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
-  'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
-  'deepseek/deepseek-v4-flash': 'DeepSeek V4 Flash',
+  'deepseek/deepseek-v4-pro': 'V4 Pro',
+  'deepseek/deepseek-v4-flash': 'V4 Flash',
   'zai/glm-5.2': 'GLM-5.2',
   'zai/glm-5.1': 'GLM-5.1',
   'zai/glm-4.7': 'GLM-4.7',
   'qwen-token-plan/qwen3.7-max': 'Qwen3.7 Max',
   'qwen-token-plan/qwen3.7-plus': 'Qwen3.7 Plus',
-  'qwen-token-plan/qwen3.8-max-preview': 'Qwen3.8 Max Preview',
-  'minimax/MiniMax-M3': 'MiniMax M3',
-  'minimax/MiniMax-M2.7': 'MiniMax M2.7',
+  'qwen-token-plan/qwen3.8-max': 'Qwen3.8 Max',
+  'minimax/MiniMax-M3': 'M3',
+  'minimax/MiniMax-M2.7': 'M2.7',
+  'xiaomi-token-plan-cn/mimo-v2-pro': 'MiMo V2 Pro (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.5': 'MiMo V2.5 (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.5-pro': 'MiMo V2.5 Pro (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.6-pro': 'MiMo V2.6 Pro (CN)',
+  'xiaomi-token-plan-cn/mimo-v2.6-flash': 'MiMo V2.6 Flash (CN)',
+  'xiaomi-token-plan-sgp/mimo-v2-pro': 'MiMo V2 Pro (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.5': 'MiMo V2.5 (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.5-pro': 'MiMo V2.5 Pro (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.6-pro': 'MiMo V2.6 Pro (SGP)',
+  'xiaomi-token-plan-sgp/mimo-v2.6-flash': 'MiMo V2.6 Flash (SGP)',
+  'xiaomi-token-plan-ams/mimo-v2-pro': 'MiMo V2 Pro (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.5': 'MiMo V2.5 (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.5-pro': 'MiMo V2.5 Pro (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.6-pro': 'MiMo V2.6 Pro (AMS)',
+  'xiaomi-token-plan-ams/mimo-v2.6-flash': 'MiMo V2.6 Flash (AMS)',
   'mistral/zai-glm-5-2': 'GLM-5.2 (via Mistral)',
   'mistral/mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral/mistral-medium-latest': 'Mistral Medium (Latest)',
@@ -77,7 +127,27 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'groq/openai/gpt-oss-120b': 'GPT-OSS 120B (Groq)',
   'groq/qwen/qwen3-32b': 'Qwen3 32B (Groq)',
   'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
-  'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)'
+  'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)',
+  'cerebras/qwen-3.8-27b': 'Qwen 3.8 27B (Cerebras)',
+  'openrouter/stealth/ox-alpha': 'Ox Alpha',
+  'openrouter/cohere/north-mini-code:free': 'North Mini Code',
+  'openrouter/minimax/minimax-m3:free': 'M3 (OpenRouter)',
+  'openrouter/z-ai/glm-5.2': 'GLM 5.2',
+  'openrouter/poolside/laguna-s-2.1': 'Laguna S 2.1',
+  'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 'Nemotron 3 Ultra',
+  'openrouter/thinkingmachines/inkling:free': 'Inkling',
+  'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small',
+  'openrouter/tencent/hy4-preview': 'Hy4 Preview',
+  'openrouter/inception/mercury-2.5-preview': 'Mercury 2.5 Preview',
+  'openrouter/inception/mercury-2.5': 'Mercury 2.5',
+  'openrouter/nex-agi/nex-n2.5-mini:free': 'Nex-N2.5-Mini',
+  'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro',
+  'openrouter/sakana/fugu-max': 'Fugu Max',
+  'openrouter/sakana/fugu-ultra-v2': 'Fugu Ultra v2',
+  'openrouter/stealth/union-alpha': 'Union Alpha',
+  'openrouter/unbiased/pareto': 'Pareto',
+  'openrouter/typesafe/jev-1.13': 'Jev 1.13',
+  'openrouter/stealth/space-bunny-alpha': 'Space Bunny Alpha'
 }
 
 /**
@@ -87,6 +157,25 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
  * there is exactly one literal.
  */
 export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
+
+/**
+ * Persisted Pi model ids whose upstream renamed the same offered model. Keep
+ * these out of PI_MODEL_LABELS/PI_STATIC_MODELS so dead rows never reappear in
+ * pickers; dispatch and historical presentation canonicalize through here.
+ */
+export const PI_MODEL_WIRE_ID_ALIASES: Readonly<Record<string, string>> = {
+  'qwen-token-plan/qwen3.8-max-preview': 'qwen-token-plan/qwen3.8-max',
+  // OpenRouter's Z.ai namespace is `z-ai`; TaskWraith shipped the
+  // unhyphenated form, which 404s. Without this alias a saved seat pinned to
+  // the old id falls through `normalizePiWireModelId` to the Pi DEFAULT model
+  // — a different vendor, key and bill, with no error.
+  'openrouter/zai/glm-5.2': 'openrouter/z-ai/glm-5.2'
+}
+
+export function canonicalPiWireModelId(wireModelId: string): string {
+  const wire = wireModelId.trim()
+  return PI_MODEL_WIRE_ID_ALIASES[wire] ?? wire
+}
 
 /**
  * Split a Pi wire id on the FIRST slash: upstream vs pi model id.
@@ -105,12 +194,28 @@ export function splitPiWireModelId(wireId: string): { upstream: string; modelId:
  * Brand for a Pi wire model id, or null when the id is malformed or names an
  * upstream this build does not surface. Callers fall back to the plain `pi`
  * hue, so an unknown upstream degrades to the seat colour rather than throwing.
+ *
+ * Special case: OpenRouter models that are resold from other providers (e.g.,
+ * `openrouter/z-ai/glm-5.2`) should display with the original provider's brand
+ * rather than the generic OpenRouter brand.
  */
 export function resolvePiUpstreamBrand(
   wireModelId: string | null | undefined
 ): PiUpstreamBrand | null {
-  const split = splitPiWireModelId(String(wireModelId || '').trim())
+  const wire = canonicalPiWireModelId(String(wireModelId || '').trim())
+  const split = splitPiWireModelId(wire)
   if (!split) return null
+
+  // Special case: OpenRouter resold models use original brand
+  if (split.upstream === 'openrouter') {
+    const nestedSplit = splitPiWireModelId(split.modelId)
+    if (nestedSplit) {
+      const openRouterBrandKey = `openrouter/${nestedSplit.upstream}`
+      const overrideBrand = PI_UPSTREAM_BRANDS[openRouterBrandKey]
+      if (overrideBrand) return overrideBrand
+    }
+  }
+
   return PI_UPSTREAM_BRANDS[split.upstream] ?? null
 }
 
@@ -126,11 +231,16 @@ export function resolvePiUpstreamBrand(
  * fragment of an id we cannot vouch for.
  */
 export function resolvePiModelLabel(wireModelId: string | null | undefined): string | null {
-  const wire = String(wireModelId || '').trim()
+  const wire = canonicalPiWireModelId(String(wireModelId || ''))
   if (!wire) return null
   const known = PI_MODEL_LABELS[wire]
   if (known) return known
   const split = splitPiWireModelId(wire)
-  if (!split || !PI_UPSTREAM_BRANDS[split.upstream]) return null
+  if (!split || !resolvePiUpstreamBrand(wire)) return null
+  if (split.upstream === 'openrouter') {
+    const nestedSplit = splitPiWireModelId(split.modelId)
+    const brandKey = nestedSplit ? `openrouter/${nestedSplit.upstream}` : ''
+    if (nestedSplit && PI_UPSTREAM_BRANDS[brandKey]) return nestedSplit.modelId
+  }
   return split.modelId
 }

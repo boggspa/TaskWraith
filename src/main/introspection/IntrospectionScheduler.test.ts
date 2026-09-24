@@ -3,6 +3,7 @@ import {
   buildRolling24hWindow,
   computeNextIntrospectionRunAt,
   dispatchDueIntrospectionSchedules,
+  dispatchDueIntrospectionSchedulesAsync,
   getNextIntrospectionScheduleRunAtMs,
   hasScheduledIntrospectionForDay,
   isIntrospectionScheduleDue,
@@ -88,6 +89,25 @@ describe('IntrospectionScheduler', () => {
     expect(
       hasScheduledIntrospectionForDay([scheduledRun('2026-07-04T12:00:00.000Z')], 'ws-1', '2026-07-05')
     ).toBe(false)
+  })
+
+  it('does not advance an asynchronous schedule while its durable collector is still running', async () => {
+    const runs: IntrospectionRunRecord[] = []
+    const update = vi.fn(() => ({ enabled: true, workspaceId: 'ws-1', lastRunAt: NOW_ISO, nextRunAt: NOW_ISO }))
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => { finish = resolve })
+    const store = { getIntrospectionScheduleRecords: () => [scheduleRecord()], updateIntrospectionScheduleRecord: update, getIntrospectionRuns: () => runs, getWorkspacePath: () => undefined,
+      runManualIntrospection: vi.fn(async () => {
+        const run = { ...scheduledRun(), status: 'collecting' as const }; runs.push(run)
+        await pending
+        return { run: scheduledRun(), pack: { schemaVersion: 1 as const, id: 'pack', introspectionRunId: run.id, proposals: [], evidenceItemCount: 0, windowStart: run.windowStart, windowEnd: run.windowEnd, createdAt: NOW_ISO, updatedAt: NOW_ISO }, evidenceCount: 0, proposalCount: 0 }
+      }) }
+    const first = dispatchDueIntrospectionSchedulesAsync(store, NOW_MS)
+    await dispatchDueIntrospectionSchedulesAsync(store, NOW_MS)
+    expect(store.runManualIntrospection).toHaveBeenCalledOnce()
+    expect(update).not.toHaveBeenCalled()
+    finish(); await first
+    expect(update).toHaveBeenCalledOnce()
   })
 
   it('dispatches a scheduled introspection run when due', () => {

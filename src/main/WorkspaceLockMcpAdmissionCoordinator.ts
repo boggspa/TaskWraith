@@ -1,11 +1,16 @@
 import { resolve } from 'node:path'
+import { waitForWorkspaceLockStateChange } from './WorkspaceLockAvailability'
+import { bindSharedWorkspaceActor, sharedWorkspaceOperationActive } from './sharedWorkspace/SharedWorkspaceSession'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
 import {
+  deriveGitLaneWritePaths,
   deriveWorkspaceMutationClaims,
   WorkspaceMutationClaimDerivationError
 } from './WorkspaceMutationClaims'
+import type { WorkspaceMutationCall } from './WorkspaceMutationClaims'
+import type { ProviderNativeActionContext } from '../shared/providerActionTaxonomy'
 import type {
   WorkspaceExternalMutationAuthorityReceipt,
   WorkspaceLockRuntime,
@@ -117,6 +122,44 @@ export interface WorkspaceLockMcpAdmissionInput<
    * to the approved command/cwd arguments and retain the exact command receipt.
    */
   allowApprovedUnscopedShell?: boolean
+  /**
+   * A user-authored, HMAC-verified exact direct-argv rule. It is intentionally
+   * separate from broad shell policy and one-shot approval. V1 admits its
+   * opaque host process without claims only outside path-scoped Ensemble lanes.
+   */
+  exactCommandRuleAuthority?: boolean
+  /**
+   * Which authority produced `allowApprovedUnscopedShell`.
+   *
+   * `resolved-policy` is the run's standing tier/grant (broad-write presets
+   * resolve `shellCommands: 'allow'`). `explicit-one-shot` is a user decision
+   * on this exact invocation.
+   *
+   * They are NOT interchangeable for an opaque background process: a standing
+   * tier cannot authorize starting one from inside a path-scoped writer lane,
+   * because the process can write outside that lane's FILE scope. Only a
+   * direct user approval can. Absent means `resolved-policy`.
+   */
+  unscopedProcessAuthority?: 'resolved-policy' | 'explicit-one-shot'
+  /**
+   * Provider-native provenance. Present when the mutation will be performed by
+   * the provider's OWN tool and TaskWraith is admitting it at the permission
+   * seam rather than executing it in the brokered critical section.
+   *
+   * `toolName` stays the CANONICAL catalog tool the native action resolved to,
+   * so contract, lane validation, owner identity and acquisition all behave
+   * exactly as they do for a brokered write -- that reuse is the point, because
+   * a parallel native admission path would be a second place for lane scope to
+   * silently stop binding. Only claim derivation differs: it resolves through
+   * the provider's closed adapter, and promoteNativeHunkClaims demotes hunk
+   * claims to whole-file ones, since TaskWraith cannot hold a hunk's
+   * coordinates across a write it does not perform.
+   */
+  nativeMutation?: {
+    /** The native action as the provider reported it, for strict resolution. */
+    action: string
+    nativeContext?: ProviderNativeActionContext
+  }
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -160,6 +203,12 @@ export class WorkspaceLockMcpAdmissionCoordinator {
   async admit<Context extends WorkspaceLockMcpAdmissionContext = WorkspaceLockMcpAdmissionContext>(
     input: WorkspaceLockMcpAdmissionInput<Context>
   ): Promise<WorkspaceLockMcpAdmission> {
+    let evidenceOwner: string | undefined
+    if (sharedWorkspaceOperationActive() && input.toolName === 'read_file' && input.context.scope === 'workspace' && input.context.appRunId) {
+      try { evidenceOwner = this.deps.getOpaqueOwnerId(this.ownerQuery(input, input.context.appRunId)) || undefined }
+      catch { /* Missing bookkeeping identity does not deny a read. Mutation admission remains authoritative below. */ }
+    }
+    bindSharedWorkspaceActor(input.context, input.provider, input.toolName, evidenceOwner)
     const contract = resolveToolDispatchContractStrict(input.toolName, input.args)
     if (!contract.ok) {
       return this.denied(input.toolName, contract.reason, {
@@ -208,6 +257,20 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       return this.denied(input.toolName, reason)
     }
 
+    if (
+      input.exactCommandRuleAuthority &&
+      input.toolName === 'run_shell_command' &&
+      !input.context.ensembleRun?.laneId
+    ) {
+      return {
+        ok: true,
+        claims: [],
+        canonicalClaims: [],
+        claimsHeld: false,
+        releaseAfterOperation: false
+      }
+    }
+
     if (input.allowApprovedUnscopedShell && input.toolName === 'run_shell_command') {
       return {
         ok: true,
@@ -215,6 +278,31 @@ export class WorkspaceLockMcpAdmissionCoordinator {
         canonicalClaims: [],
         claimsHeld: false,
         releaseAfterOperation: false
+      }
+    }
+
+    // A managed background process is opaque in the same way a shell command
+    // is: claim derivation can only ever refuse it. Admitting with NO claims is
+    // therefore the honest answer, but ONLY where an authority already covers
+    // opaque effects.
+    //
+    // The lane carve-out is the load-bearing part. A standing tier authorizes
+    // opaque effects across the whole workspace, which is strictly wider than a
+    // path-scoped writer lane — so inside a lane, a tier alone must NOT admit,
+    // or the lane's FILE scope silently stops binding. Falling through reaches
+    // claim derivation, whose refusal now carries an async-access retry offer,
+    // routing that seat to an explicit user approval instead of a dead end.
+    if (input.allowApprovedUnscopedShell && input.toolName === 'start_background_process') {
+      const laneScoped = Boolean(input.context.ensembleRun?.laneId)
+      const explicitOneShot = input.unscopedProcessAuthority === 'explicit-one-shot'
+      if (!laneScoped || explicitOneShot) {
+        return {
+          ok: true,
+          claims: [],
+          canonicalClaims: [],
+          claimsHeld: false,
+          releaseAfterOperation: false
+        }
       }
     }
 
@@ -230,19 +318,34 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     const chat = input.context.appChatId ? this.deps.getChat(input.context.appChatId) : null
     const baseWorkspacePath = resolve(chat?.workspacePath || effectiveWorkspacePath)
     const laneId = input.context.ensembleRun?.laneId
-    const mutation = {
-      source: 'taskwraith-catalog' as const,
-      provider: input.provider,
-      workspacePath: baseWorkspacePath,
-      worktreePath: effectiveWorkspacePath,
-      action: input.toolName,
-      args: input.args
-    }
+    const mutation: WorkspaceMutationCall = input.nativeMutation
+      ? {
+          source: 'provider-native' as const,
+          provider: input.provider,
+          workspacePath: baseWorkspacePath,
+          worktreePath: effectiveWorkspacePath,
+          action: input.nativeMutation.action,
+          ...(input.nativeMutation.nativeContext
+            ? { nativeContext: input.nativeMutation.nativeContext }
+            : {}),
+          args: input.args
+        }
+      : {
+          source: 'taskwraith-catalog' as const,
+          provider: input.provider,
+          workspacePath: baseWorkspacePath,
+          worktreePath: effectiveWorkspacePath,
+          action: input.toolName,
+          args: input.args
+        }
     let resourcePaths: readonly string[] | undefined
     try {
-      resourcePaths = (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
-        claim.targetPath ? [claim.targetPath] : []
-      )
+      resourcePaths =
+        laneId && (input.toolName === 'git_stage' || input.toolName === 'git_commit')
+          ? deriveGitLaneWritePaths(mutation)
+          : (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
+              claim.targetPath ? [claim.targetPath] : []
+            )
     } catch (error) {
       const reason =
         error instanceof Error
@@ -324,6 +427,13 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       })
     }
 
+    bindSharedWorkspaceActor(
+      input.context,
+      input.provider,
+      input.toolName,
+      acquired.owner.lockOwnerId,
+      input.nativeMutation ? 'provider-native' : 'broker'
+    )
     return {
       ok: true,
       owner: acquired.claims.length ? acquired.owner : undefined,
@@ -430,7 +540,7 @@ export class WorkspaceLockMcpAdmissionCoordinator {
   }
 }
 
-async function acquireWorkspaceMutationWhenAvailable(input: {
+export async function acquireWorkspaceMutationWhenAvailable(input: {
   runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>
   acquire: () => Promise<WorkspaceLockRuntimeAcquireResult>
   stillWanted: () => boolean
@@ -443,27 +553,6 @@ async function acquireWorkspaceMutationWhenAvailable(input: {
     result = await input.acquire()
   }
   return result
-}
-
-function waitForWorkspaceLockStateChange(
-  runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>,
-  stillWanted: () => boolean
-): Promise<void> {
-  return new Promise((resolveWait) => {
-    let settled = false
-    let subscription: ReturnType<WorkspaceLockRuntime['subscribe']> | null = null
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      clearInterval(cancelPoll)
-      subscription?.unsubscribe()
-      resolveWait()
-    }
-    const cancelPoll = setInterval(finish, 250)
-    cancelPoll.unref?.()
-    subscription = runtime.subscribe?.({}, () => finish()) || null
-    if (!stillWanted()) finish()
-  })
 }
 
 function exactRunId(value: string | null | undefined): string | null {

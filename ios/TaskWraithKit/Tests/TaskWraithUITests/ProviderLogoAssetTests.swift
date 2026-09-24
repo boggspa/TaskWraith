@@ -76,8 +76,8 @@ struct ProviderLogoAssetTests {
     }
 
     @Test func fullColourMarksUseOneAssetAcrossAppearances() {
-        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek"] {
-            let expected = "provider-logo-\(provider)"
+        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral", "muse", "deepseek"] {
+            let expected = provider == "muse" ? "provider-logo-meta" : "provider-logo-\(provider)"
             #expect(
                 ProviderLogoAssetResolver.assetName(
                     for: provider, darkBackground: false) == expected)
@@ -88,7 +88,7 @@ struct ProviderLogoAssetTests {
     }
 
     @Test func monochromeMarksChooseTheSurfaceSpecificAsset() {
-        for provider in ["cursor", "grok", "ollama", "pi", "cerebras"] {
+        for provider in ["cursor", "grok", "ollama", "pi", "cerebras", "devin"] {
             #expect(
                 ProviderLogoAssetResolver.assetName(
                     for: provider, darkBackground: false)
@@ -137,9 +137,12 @@ struct ProviderLogoAssetTests {
             "provider-logo-pi-on-light",
             "provider-logo-pi-on-dark",
             "provider-logo-mistral",
+            "provider-logo-meta",
             "provider-logo-deepseek",
             "provider-logo-cerebras-on-light",
             "provider-logo-cerebras-on-dark",
+            "provider-logo-devin-on-light",
+            "provider-logo-devin-on-dark",
         ]
         let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -148,6 +151,24 @@ struct ProviderLogoAssetTests {
             let data = try Data(contentsOf: url)
             #expect(data.prefix(pngSignature.count) == pngSignature)
         }
+    }
+
+    @Test func devinMarkIsMonochromeOnATransparentCanvasForBothSurfaces() throws {
+        // The official favicon is a black three-hexagon mark with real alpha-0
+        // pixels; the on-dark file is its recorded RGB inverse (white, same alpha).
+        let light = try #require(
+            ProviderLogoAssetResolver.resourceURL(for: "provider-logo-devin-on-light"))
+        let lightStats = try decodedPixelStats(at: light)
+        #expect(lightStats.transparent > 0)
+        #expect(lightStats.black > 0)
+        #expect(lightStats.chromatic == 0)
+
+        let dark = try #require(
+            ProviderLogoAssetResolver.resourceURL(for: "provider-logo-devin-on-dark"))
+        let darkStats = try decodedPixelStats(at: dark)
+        #expect(darkStats.transparent == lightStats.transparent)
+        #expect(darkStats.light > 0)
+        #expect(darkStats.chromatic == 0)
     }
 
     @MainActor

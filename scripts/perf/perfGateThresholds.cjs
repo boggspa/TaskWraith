@@ -41,9 +41,51 @@ const PERF_GATE_THRESHOLDS = Object.freeze({
   windowedRateWindowMs: 60 * 1000
 })
 
+/**
+ * PROPOSED, UNRATIFIED cross-thread bounds: no gate consumes these before
+ * Boss ratification at M1 exit. The seven acceptance rows have eight fields
+ * because the async-writer row specifies both byte capacity and fallbacks.
+ *
+ * Enumeration and JSON expose the eight canonical fields below. Legacy names
+ * remain available through non-enumerable readonly aliases for property access;
+ * their old JSON shape is intentionally not preserved.
+ */
+const proposedCrossThreadBounds = {
+  roundStartDeltaMs: 250,
+  persistBarrierDeltaMs: 300,
+  controlResponseMs: 300,
+  hostQueueWaitUnrelatedMs: 50,
+  hostEventLoopLagP95Ms: 25,
+  mainEventLoopLagP95Ms: PERF_GATE_THRESHOLDS.maxEventLoopLagP95Ms,
+  asyncWriterQueueBytesCap: 'configured',
+  fallbackCounterMax: 0
+}
+
+// Preserve the names used by the first M1 harness without adding extra bounds.
+for (const [legacy, canonical] of Object.entries({
+  maxRoundStartLatencyOverLightAloneP95Ms: 'roundStartDeltaMs',
+  maxPersistenceBarrierOverLightAloneP95Ms: 'persistBarrierDeltaMs',
+  maxControlResponseEndToEndP95Ms: 'controlResponseMs',
+  maxHostQueueWaitUnrelatedCommandP95Ms: 'hostQueueWaitUnrelatedMs',
+  maxHostEventLoopLagP95Ms: 'hostEventLoopLagP95Ms',
+  maxAsyncWriterFallbackCount: 'fallbackCounterMax'
+})) {
+  Object.defineProperty(proposedCrossThreadBounds, legacy, {
+    enumerable: false,
+    get: () => proposedCrossThreadBounds[canonical]
+  })
+}
+Object.defineProperty(proposedCrossThreadBounds, 'requireAsyncWriterQueueBytesWithinCap', {
+  enumerable: false,
+  get: () => proposedCrossThreadBounds.asyncWriterQueueBytesCap === 'configured'
+})
+
+const PROPOSED_CROSS_THREAD_BOUNDS = Object.freeze(proposedCrossThreadBounds)
+
 module.exports = {
   BYTES_1_5_GIB,
   BYTES_20_GIB,
   MIN_PROFILE_BYTES,
-  PERF_GATE_THRESHOLDS
+  PERF_GATE_THRESHOLDS,
+  PROPOSED_CROSS_THREAD_BOUNDS
 }

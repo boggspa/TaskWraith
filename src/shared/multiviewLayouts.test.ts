@@ -49,24 +49,30 @@ function everyAreaIsRectangle(grid: string[][]): boolean {
 }
 
 describe('multiviewLayouts catalogue', () => {
-  it('exposes exactly the eight requested layouts', () => {
+  it('exposes exactly the twelve requested layouts', () => {
     expect([...MULTIVIEW_LAYOUT_IDS]).toEqual([
       'single',
       'vertical-2',
+      'vertical-3',
+      'vertical-4',
       'horizontal-2',
       'two-top-one-bottom',
       'one-top-two-bottom',
       'one-left-two-right',
       'two-left-one-right',
-      'quad'
+      'quad',
+      'six-way',
+      'eight-way'
     ])
   })
 
-  it('defaults to single and caps panes at four', () => {
+  it('defaults to single and caps panes at eight', () => {
     expect(DEFAULT_MULTIVIEW_LAYOUT).toBe('single')
-    expect(MAX_MULTIVIEW_PANES).toBe(4)
+    expect(MAX_MULTIVIEW_PANES).toBe(8)
     expect(paneCountForLayout('single')).toBe(1)
     expect(paneCountForLayout('quad')).toBe(4)
+    expect(paneCountForLayout('six-way')).toBe(6)
+    expect(paneCountForLayout('eight-way')).toBe(8)
   })
 
   it('keeps cellAreas length aligned with paneCount and within the cap', () => {
@@ -104,6 +110,8 @@ describe('multiviewLayouts catalogue', () => {
 describe('multiviewLayouts helpers', () => {
   it('guards and normalizes layout values', () => {
     expect(isMultiviewLayout('quad')).toBe(true)
+    expect(isMultiviewLayout('vertical-4')).toBe(true)
+    expect(isMultiviewLayout('eight-way')).toBe(true)
     expect(isMultiviewLayout('nope')).toBe(false)
     expect(isMultiviewLayout(undefined)).toBe(false)
     expect(isMultiviewLayout(3)).toBe(false)
@@ -120,6 +128,17 @@ describe('multiviewLayouts helpers', () => {
   it('clampPaneChatIds pads empty cells with null', () => {
     expect(clampPaneChatIds(['x'], 'quad')).toEqual(['x', null, null, null])
     expect(clampPaneChatIds([], 'vertical-2')).toEqual([null, null])
+    expect(clampPaneChatIds(['x'], 'six-way')).toEqual(['x', null, null, null, null, null])
+    expect(clampPaneChatIds(['x'], 'eight-way')).toEqual([
+      'x',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ])
   })
 
   it('clampPaneChatIds truncates extra ids and preserves order', () => {
@@ -140,6 +159,8 @@ describe('multiviewLayouts helpers', () => {
     expect(clampFocusedPaneIndex(-2, 'vertical-2')).toBe(0)
     expect(clampFocusedPaneIndex(1.5, 'quad')).toBe(0)
     expect(clampFocusedPaneIndex(2, 'two-left-one-right')).toBe(2)
+    expect(clampFocusedPaneIndex(9, 'six-way')).toBe(5)
+    expect(clampFocusedPaneIndex(99, 'eight-way')).toBe(7)
   })
 
   it('every layout id round-trips through the catalogue', () => {
@@ -177,10 +198,18 @@ describe('grid parsing helpers', () => {
   it('default*Fractions derive equal tracks from each spec', () => {
     expect(defaultColumnFractions('vertical-2')).toEqual([1, 1])
     expect(defaultRowFractions('vertical-2')).toEqual([1])
+    expect(defaultColumnFractions('vertical-3')).toEqual([1, 1, 1])
+    expect(defaultRowFractions('vertical-3')).toEqual([1])
+    expect(defaultColumnFractions('vertical-4')).toEqual([1, 1, 1, 1])
+    expect(defaultRowFractions('vertical-4')).toEqual([1])
     expect(defaultColumnFractions('horizontal-2')).toEqual([1])
     expect(defaultRowFractions('horizontal-2')).toEqual([1, 1])
     expect(defaultColumnFractions('quad')).toEqual([1, 1])
     expect(defaultRowFractions('quad')).toEqual([1, 1])
+    expect(defaultColumnFractions('six-way')).toEqual([1, 1, 1])
+    expect(defaultRowFractions('six-way')).toEqual([1, 1])
+    expect(defaultColumnFractions('eight-way')).toEqual([1, 1, 1, 1])
+    expect(defaultRowFractions('eight-way')).toEqual([1, 1])
   })
 })
 
@@ -198,6 +227,36 @@ describe('computeGutterSegments', () => {
       gridColumn: '2',
       gridRow: '1 / 2'
     })
+  })
+
+  it('vertical-3: two full-height column gutters, no row gutters', () => {
+    const segs = computeGutterSegments('vertical-3')
+    expect(segs).toHaveLength(2)
+    expect(segs).toEqual([
+      expect.objectContaining({
+        orientation: 'column',
+        trackIndex: 0,
+        gridColumn: '2',
+        gridRow: '1 / 2'
+      }),
+      expect.objectContaining({
+        orientation: 'column',
+        trackIndex: 1,
+        gridColumn: '3',
+        gridRow: '1 / 2'
+      })
+    ])
+  })
+
+  it('vertical-4: three full-height column gutters, no row gutters', () => {
+    const segs = computeGutterSegments('vertical-4')
+    expect(segs).toHaveLength(3)
+    expect(segs).toEqual([
+      expect.objectContaining({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 2' }),
+      expect.objectContaining({ trackIndex: 1, gridColumn: '3', gridRow: '1 / 2' }),
+      expect.objectContaining({ trackIndex: 2, gridColumn: '4', gridRow: '1 / 2' })
+    ])
+    expect(segs.every((segment) => segment.orientation === 'column')).toBe(true)
   })
 
   it('horizontal-2: one full-width row gutter, no column gutters', () => {
@@ -219,6 +278,29 @@ describe('computeGutterSegments', () => {
     expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 3' })
+  })
+
+  it('six-way: two full-height column gutters and one full-width row gutter', () => {
+    const segs = computeGutterSegments('six-way')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    expect(cols).toHaveLength(2)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
+    expect(cols[1]).toMatchObject({ trackIndex: 1, gridColumn: '3', gridRow: '1 / 3' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 4' })
+  })
+
+  it('eight-way: three full-height column gutters and one full-width row gutter', () => {
+    const segs = computeGutterSegments('eight-way')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    expect(cols).toHaveLength(3)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
+    expect(cols[1]).toMatchObject({ trackIndex: 1, gridColumn: '3', gridRow: '1 / 3' })
+    expect(cols[2]).toMatchObject({ trackIndex: 2, gridColumn: '4', gridRow: '1 / 3' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 5' })
   })
 
   it('one-left-two-right ("a b" / "a c"): full-height col gutter; row gutter only in the right column', () => {

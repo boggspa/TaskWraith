@@ -1,5 +1,5 @@
 // Phase 2 (P2a) — durable, host-owned contribution rules for human-collaboration
-// shares (docs/human-collaboration-phase-2-spec.md §4).
+// shares (the Phase 2 collaboration contract §4).
 //
 // The Phase 1 share `mode` ('readOnly' | 'comments') conflated three concepts:
 // projection access, contribution access, and provider influence. This module

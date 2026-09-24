@@ -171,12 +171,20 @@
   box-shadow: inset 2px 0 var(--accent);
 }
 
-.composer-branch-popover-item:disabled:not(.is-current) {
+/* The configured checkout and the composer's selected linked worktree are
+   intentionally separate states. Keep both visible when they differ. */
+.composer-branch-popover-item.is-composer-target {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.composer-branch-popover-item:disabled:not(.is-current):not(.is-composer-target) {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.composer-branch-popover-item.is-current:disabled {
+.composer-branch-popover-item.is-current:disabled,
+.composer-branch-popover-item.is-composer-target:disabled {
   opacity: 1;
   cursor: default;
 }
@@ -271,6 +279,11 @@
   color: var(--accent);
 }
 
+.composer-branch-popover-fact-values i.is-composer-target {
+  color: var(--accent);
+  font-weight: 680;
+}
+
 .composer-branch-popover-fact-values .is-ahead {
   color: #ffc248;
 }
@@ -285,6 +298,47 @@
 
 .composer-branch-popover-section > .composer-branch-popover-status {
   padding: 0.55rem 0.75rem 0.7rem;
+}
+
+.composer-branch-popover-selection-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.55rem;
+  row-gap: 0.12rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.composer-branch-popover-selection-summary > span {
+  align-self: baseline;
+  color: var(--accent);
+  font-size: calc(var(--font-size-xs) - 2px);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.composer-branch-popover-selection-summary > strong,
+.composer-branch-popover-selection-summary > small,
+.composer-branch-popover-selection-summary > i {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-branch-popover-selection-summary > strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.composer-branch-popover-selection-summary > small,
+.composer-branch-popover-selection-summary > i {
+  grid-column: 2;
+  color: var(--text-tertiary);
+  font-size: calc(var(--font-size-xs) - 1px);
+  font-style: normal;
 }
 
 .composer-branch-popover-create {

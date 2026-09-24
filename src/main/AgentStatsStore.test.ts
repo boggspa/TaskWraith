@@ -165,6 +165,29 @@ describe('toolActivityStatsForRun', () => {
       writeToolCalls: 1
     })
   })
+
+  it('excludes MCP transport wrappers from user-facing tool-call stats', () => {
+    const messages: Pick<ChatMessage, 'runId' | 'toolActivities'>[] = [
+      {
+        runId: 'run-1',
+        toolActivities: [
+          activity({
+            id: 'wrapper-1',
+            toolName: 'callmcptool',
+            displayName: 'Used callmcptool',
+            category: 'unknown'
+          }),
+          activity({ id: 'read-1', category: 'read' }),
+          activity({ id: 'write-1', category: 'write' })
+        ]
+      }
+    ]
+
+    expect(toolActivityStatsForRun('run-1', messages)).toEqual({
+      toolCalls: 2,
+      writeToolCalls: 1
+    })
+  })
 })
 
 describe('status + terminal', () => {

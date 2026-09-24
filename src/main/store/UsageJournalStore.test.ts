@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { createHash } from 'crypto'
 import type { UsageRecord } from './types'
-import { UsageJournalStore } from './UsageJournalStore'
+import { UsageJournalStore, UsageJournalStoreReadOnlyError } from './UsageJournalStore'
 import { USAGE_ROTATION_RETENTION_MS } from './usageRotation'
 
 function usageRecord(id: string, timestamp: number): UsageRecord {
@@ -35,6 +35,27 @@ function ownedUsageRecord(
     responseText: `response-${id}`,
     ...overrides
   }
+}
+
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    rows.push({
+      relative: path.relative(root, current) || '.',
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      mode: stat.mode,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
 }
 
 describe('UsageJournalStore', () => {
@@ -76,6 +97,66 @@ describe('UsageJournalStore', () => {
     stores.push(store)
     return store
   }
+
+  it('constructs and reads in no-repair mode without creating or changing artifacts', () => {
+    const missing = path.join(directory, 'missing')
+    const missingStore = new UsageJournalStore({
+      checkpointPath: path.join(missing, 'usage.json'),
+      journalPath: path.join(missing, 'usage-journal.jsonl'),
+      archivePath: path.join(missing, 'usage-archive.jsonl'),
+      canWrite: () => false
+    })
+    stores.push(missingStore)
+    expect(missingStore.getRecords()).toEqual([])
+    expect(fs.existsSync(missing)).toBe(false)
+
+    fs.writeFileSync(checkpointPath, '{corrupt')
+    fs.writeFileSync(journalPath, `\n${JSON.stringify(usageRecord('read-only', now))}`)
+    const retiredDirectory = path.join(
+      directory,
+      '.usage.json.retire-1234-123e4567-e89b-12d3-a456-426614174000'
+    )
+    fs.mkdirSync(retiredDirectory, { mode: 0o700 })
+    const before = snapshotTree(directory)
+    const store = createStore({
+      canWrite: () => false,
+      compactAfterRecords: 1,
+      compactionDelayMs: 1
+    })
+    expect(store.getRecords().map((record) => record.id)).toEqual(['read-only'])
+    expect(() => store.append(usageRecord('late', now + 1))).toThrow(UsageJournalStoreReadOnlyError)
+    expect(() => store.compact()).toThrow(UsageJournalStoreReadOnlyError)
+    expect(() =>
+      store.beginHistoryMutation({
+        operationId: 'read-only-purge',
+        kind: 'global',
+        chatIds: [],
+        runIds: []
+      })
+    ).toThrow(UsageJournalStoreReadOnlyError)
+    expect(snapshotTree(directory)).toEqual(before)
+    expect(fs.existsSync(retiredDirectory)).toBe(true)
+    expect(fs.readdirSync(directory).some((name) => name.includes('.corrupt-'))).toBe(false)
+  })
+
+  it('cancels already-scheduled compaction when dynamic write authority closes', () => {
+    vi.useFakeTimers()
+    let writable = true
+    const store = createStore({
+      canWrite: () => writable,
+      compactAfterRecords: 1,
+      compactionDelayMs: 10
+    })
+    store.append(usageRecord('before-cutover', now))
+    const before = snapshotTree(directory)
+    writable = false
+    vi.advanceTimersByTime(100)
+    expect(snapshotTree(directory)).toEqual(before)
+    expect(fs.existsSync(checkpointPath)).toBe(false)
+    expect(() => store.append(usageRecord('after-cutover', now + 1))).toThrow(
+      UsageJournalStoreReadOnlyError
+    )
+  })
 
   it('fsyncs an append journal without rewriting the usage.json checkpoint', () => {
     const checkpointRecord = usageRecord('checkpoint', now - 2)

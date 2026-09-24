@@ -5,10 +5,10 @@ import {
   buildEnsembleRosterPresetFromConfig,
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
+  overwriteEnsembleRosterPresetFromConfig,
   renameEnsembleRosterPreset,
   saveEnsembleRosterPreset,
   subscribeEnsembleRosterPresets,
-  upsertEnsembleRosterPreset,
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
@@ -94,11 +94,17 @@ function rosterPresetComparableKey(preset: EnsembleRosterPreset): string {
     // policy. Agent-applied presets materialize that projection even when the
     // saved portable preset omitted it, so comparing both fields reports a
     // false edit immediately after load.
-    fanoutPolicy: preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'read_only' : 'off'),
+    // Collapse to the live On/Off + Continuous-only vocabulary so a preset
+    // saved before the retirement (read_only / turn_bound) still compares
+    // equal to the normalized capture of the same roster.
+    fanoutPolicy:
+      (preset.fanoutPolicy ?? (preset.concurrentModeEnabled ? 'all' : 'off')) === 'off'
+        ? 'off'
+        : 'all',
     maxContinuationHops:
       typeof preset.maxContinuationHops === 'number' ? preset.maxContinuationHops : null,
     maxParticipants: preset.maxParticipants,
-    orchestrationMode: preset.orchestrationMode,
+    orchestrationMode: 'continuous',
     participants: [...preset.participants]
       .sort((a, b) => a.order - b.order)
       .map(rosterParticipantComparable)
@@ -156,9 +162,7 @@ export function rosterPresetTriggerLabel(name: string | null | undefined): strin
 export function rosterPresetMenuMeta(preset: EnsembleRosterPreset): string {
   const count = preset.participants.length
   const participantLabel = count === 1 ? 'participant' : 'participants'
-  return `${count} ${participantLabel} · ${
-    preset.orchestrationMode === 'continuous' ? 'Continuous' : 'Turn'
-  }`
+  return `${count} ${participantLabel}`
 }
 
 export function rosterPresetInteractionState(
@@ -184,6 +188,9 @@ export function EnsembleRosterPresetPicker({
 }: EnsembleRosterPresetPickerProps): React.JSX.Element | null {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [popoverOpen, setPopoverOpen] = useState(false)
+  // A Save refusal keeps the popover open and says why. Before this the throw
+  // escaped the click handler: nothing persisted and nothing was shown.
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
   const [pendingPresetName, setPendingPresetName] = useState<string | null>(null)
@@ -209,6 +216,10 @@ export function EnsembleRosterPresetPicker({
   useEffect(() => {
     if (!disabled) setPendingPresetName(null)
   }, [disabled])
+
+  useEffect(() => {
+    if (popoverOpen) setSaveError(null)
+  }, [popoverOpen])
 
   const rosterSelection = rosterPresetSelectionForEnsemble(ensemble, presets)
   const activePreset = rosterSelection.preset
@@ -327,14 +338,16 @@ export function EnsembleRosterPresetPicker({
       handleSaveAsCurrent()
       return
     }
-    const next = {
-      ...buildEnsembleRosterPresetFromConfig(target.name, ensemble, Date.now()),
-      id: target.id,
-      createdAt: target.createdAt,
-      name: target.name
+    const outcome = overwriteEnsembleRosterPresetFromConfig(target, ensemble)
+    if (!outcome.ok) {
+      // Stay open. A closed popover would read as a successful save, which is
+      // exactly how this failure went unnoticed.
+      setSaveError(outcome.message)
+      refreshPresets()
+      return
     }
-    upsertEnsembleRosterPreset(next)
-    onActivePresetChange?.(next.id)
+    setSaveError(null)
+    onActivePresetChange?.(outcome.preset.id)
     refreshPresets()
     setPopoverOpen(false)
   }
@@ -476,6 +489,11 @@ export function EnsembleRosterPresetPicker({
                   <span className="composer-combined-picker-row-label">Save As</span>
                 </button>
               </div>
+              {saveError ? (
+                <div className="ensemble-roster-preset-popover-error" role="alert">
+                  {saveError}
+                </div>
+              ) : null}
               <div className="ensemble-roster-preset-popover-header">Saved rosters</div>
               {presets.length === 0 ? (
                 <div className="ensemble-roster-preset-popover-empty">

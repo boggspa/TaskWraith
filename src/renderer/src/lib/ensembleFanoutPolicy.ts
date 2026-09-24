@@ -12,11 +12,14 @@ export function normalizeEnsembleFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
 ): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+  const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
-      ? 'read_only'
+      ? 'all'
       : 'off'
+  // Fan-out is On/Off now: On carries the old 'all' semantics, and the
+  // retired 'read_only' / 'locked_writers_*' levels collapse into it.
+  return recognized === 'off' ? 'off' : 'all'
 }
 
 export function ensembleFanoutPolicyEnabled(policy: EnsembleFanoutPolicy): boolean {

@@ -53,7 +53,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toBe('')
   })
 
-  it('renders live onboarding plus historical Gemini reporting when open', () => {
+  it('renders live onboarding including the Muse card, with Gemini retired', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -65,7 +65,9 @@ describe('FirstLaunchSheet', () => {
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
-    expect(html).toContain('data-provider="gemini"')
+    expect(html).toContain('data-provider="muse"')
+    expect(html).toContain('data-provider="devin"')
+    expect(html).not.toContain('data-provider="gemini"')
     // AntiGravity stays hidden until BOTH pieces of its conditional setup exist.
     expect(html).not.toContain('data-provider="antigravity"')
     expect(html).toContain('data-provider="kimi"')
@@ -102,6 +104,52 @@ describe('FirstLaunchSheet', () => {
     expect(card).not.toContain('Sign out')
   })
 
+  it('offers the Devin CLI seat with its env/TOML credential guidance', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        devinStatus={{ available: true, authState: 'unknown' }}
+      />
+    )
+
+    const card = providerCardMarkup(html, 'devin')
+    expect(card).toContain('Devin CLI coding agent')
+    expect(card).toContain('devin acp')
+    expect(card).toContain('WINDSURF_API_KEY')
+    expect(card).toContain('credential state not observed')
+    expect(card).toContain('Sign in')
+  })
+
+  it('shows no Optional/Conditional badge chip on any provider card', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        antigravityProviderOffered={true}
+      />
+    )
+    // Scoped to the provider grid: other sheet sections (the GitHub CLI
+    // install card, the product-observation survey) have their own,
+    // unrelated "Optional" badges that are out of scope here.
+    expect(html).not.toContain('first-launch-sheet-provider-card-optional-badge')
+    const grid = html.slice(
+      html.indexOf('first-launch-sheet-provider-grid'),
+      html.indexOf('first-launch-sheet-install')
+    )
+    expect(grid).not.toContain('>Optional<')
+    expect(grid).not.toContain('>Conditional<')
+  })
+
   it('renders Welcome heading and the numbered onboarding sections', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
@@ -134,15 +182,16 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('Delegate a focused worker')
     expect(html).toContain('live token + projected-cost tally')
     expect(html).toContain('BG seats skip ordinary rotation')
-    expect(html).toContain('returns control instead of burning hops')
+    expect(html).toContain('return control instead of burning hops')
     expect(html).toContain('choose individual saved panels')
     expect(html).toContain('namespaced workspace tools')
     expect(html).toContain('repository-local hooks, filters')
-    expect(html).toContain('K2.7 Coding switches between Standard and Highspeed')
-    expect(html).toContain('K3 has no Fast tier')
-    expect(html).toContain('K2.7 Coding has a fixed On setting')
-    expect(html).toContain('K3 lets')
+    expect(html).toContain('Kimi exposes no Fast toggle')
+    expect(html).toContain('K2.8 Preview, K2.7 Code Highspeed, and both K3 routes')
+    expect(html).toContain('K2.8 Preview and both K3 routes')
+    expect(html).toContain('K2.7 Code Highspeed has a fixed On setting')
     expect(html).toContain('choose Low, High, or Max effort')
+    expect(html).not.toContain('K2.7 Coding switches between Standard and Highspeed')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {
@@ -155,9 +204,10 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}      />
     )
-    // The "It wraps …" sentence is an OFFER surface, so the retired Gemini must
-    // not appear there even though its chat history is preserved elsewhere.
-    expect(html).toContain('local-first desktop workbench')
+    // The "TaskWraith brings together …" sentence is an OFFER surface, so the
+    // retired Gemini must not appear there even though its chat history is
+    // preserved elsewhere.
+    expect(html).toContain('TaskWraith brings together')
     expect(html).toContain('<strong>Codex</strong>')
     expect(html).toContain('<strong>Ollama</strong>')
     expect(html).toContain('<strong>Pi</strong>')
@@ -213,7 +263,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('<em>Ollama</em>')
     expect(html).not.toContain('<em>Gemini</em>')
     expect(html).toContain('Toggle Ensemble while the thread is idle')
-    expect(html).toContain('Turn / Continuous in the composer')
+    expect(html).toContain('Fan-Out, Isolate and Turns in the composer')
     expect(html).toContain('detached read-only work')
   })
 
@@ -268,6 +318,8 @@ describe('FirstLaunchSheet', () => {
         'first-launch-sheet-provider-status-dot-signed-in'
       )
     }
+    // Ollama's green means runnable, not signed in — so it still offers Sign in.
+    expect(providerCardMarkup(html, 'ollama')).toContain('aria-label="Sign in to Ollama"')
     expect(providerCardMarkup(html, 'cursor')).toContain('Sign in')
     expect(html).toContain('Needs setup or sign-in')
     expect(html).not.toContain('stay amber')
@@ -290,22 +342,25 @@ describe('FirstLaunchSheet', () => {
     expect(card).not.toContain('first-launch-sheet-provider-card-deemphasised')
   })
 
-  it('reports historical Gemini without offering a new-run action', () => {
+  it('offers Muse Code setup with real sign-in and sign-out actions', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
         onDismiss={() => {}}
         onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}      />
+        kimiAuthStatus={null}
+        museStatus={{ available: true, credentialPresent: true }}
+      />
     )
-    const card = providerCardMarkup(html, 'gemini')
-    expect(card).toContain('Historical · not offered for new runs')
-    expect(card).toContain('Historical')
-    expect(card).not.toContain('Sign in')
-    expect(card).not.toContain('Open Settings')
-    expect(card).not.toContain('Manage in Settings')
+    const card = providerCardMarkup(html, 'muse')
+    expect(card).toContain('Muse Code CLI over the Meta Model API')
+    expect(card).toContain('Muse Code configured')
+    expect(card).toContain('Sign out')
+    expect(card).toContain('Manage in Settings')
   })
 
   it('shows AntiGravity only when the host conditional-offer snapshot includes it', () => {
@@ -350,7 +405,7 @@ describe('FirstLaunchSheet', () => {
     expect(card).toContain('Open Settings')
   })
 
-  it('renders Ollama as a local-first provider; no sign-in shown without a login handler', () => {
+  it('reads a running Ollama as ready even before an ollama.com account exists', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -362,17 +417,20 @@ describe('FirstLaunchSheet', () => {
         ollamaProviderAvailable={true}
       />
     )
-    expect(html).toContain('Local runtime ready')
-    expect(providerCardMarkup(html, 'ollama')).toContain(
-      'first-launch-sheet-provider-status-dot-signed-in'
-    )
+    const card = providerCardMarkup(html, 'ollama')
+    // The retired amber "setup optional" state must not come back: a
+    // permanently-warning dot is what made this card unreadable.
+    expect(card).toContain('Running · not signed in')
+    expect(card).not.toContain('setup optional')
+    expect(card).not.toContain('first-launch-sheet-provider-status-dot-partial')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
     expect(html).toContain('no cloud account needed')
-    // Without an onProviderLogin handler the optional cloud sign-in is not shown.
-    expect(html).not.toContain('aria-label="Sign in to Ollama Cloud"')
-    expect(html).not.toContain('aria-label="Sign out of Ollama"')
+    // Without an onProviderLogin handler no sign-in action is offered.
+    expect(card).not.toContain('aria-label="Sign in to Ollama"')
+    expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('does not show the optional ollama.com cloud Sign in once local Ollama is ready', () => {
+  it('offers Sign in — never Sign out — while a running Ollama has no account', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -386,13 +444,45 @@ describe('FirstLaunchSheet', () => {
       />
     )
     const card = providerCardMarkup(html, 'ollama')
-    expect(card).toContain('Local runtime ready')
-    expect(card).not.toContain('aria-label="Sign in to Ollama Cloud"')
+    // Green dot, but the account axis still drives the actions — a signed-out
+    // user must not be handed a sign-out.
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
+    expect(card).toContain('Running · not signed in')
+    expect(card).toContain('aria-label="Sign in to Ollama"')
+    expect(card).toContain('Open Settings')
+    // The de-emphasised cloud-only affordance is gone with the optional framing.
     expect(card).not.toContain('Sign in to Cloud')
     expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('exposes the optional ollama.com cloud Sign in while local Ollama still needs setup', () => {
+  it('reports a remembered ollama.com sign-in as signed in, with a sign-out action', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        ollamaProviderAvailable={true}
+        ollamaStatus={{
+          available: true,
+          localAvailable: true,
+          cloud: { supported: true, enabled: true, authenticated: true, plan: 'pro', models: [] }
+        }}
+      />
+    )
+    const card = providerCardMarkup(html, 'ollama')
+    expect(card).toContain('Signed in (pro)')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-signed-in')
+    expect(card).toContain('aria-label="Sign out of Ollama"')
+    expect(card).toContain('Manage in Settings')
+    expect(card).not.toContain('aria-label="Sign in to Ollama"')
+  })
+
+  it('leaves a runtime with neither server nor account neutral, not red', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -406,9 +496,15 @@ describe('FirstLaunchSheet', () => {
       />
     )
     const card = providerCardMarkup(html, 'ollama')
-    expect(card).toContain('Local setup optional')
-    expect(card).toContain('aria-label="Sign in to Ollama Cloud"')
-    expect(card).toContain('Sign in to Cloud')
+    expect(card).toContain('Ollama not running')
+    expect(card).not.toContain('setup optional')
+    expect(card).toContain('first-launch-sheet-provider-status-dot-not-signed-in')
+    // Ollama is opt-in — nothing is broken, so it must not borrow the red
+    // "CLI not found · install it" treatment.
+    expect(card).not.toContain('first-launch-sheet-provider-status-dot-not-available')
+    // Onboarding keeps its own install copy for this one state.
+    expect(card).toContain('Rnj-1 needs Ollama 0.13.3+')
+    expect(card).toContain('aria-label="Sign in to Ollama"')
     expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
@@ -716,6 +812,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('ollama run nemotron3:33b')
     expect(html).toContain('ollama run ornith:9b')
     expect(html).toContain('ollama run ornith:35b')
+    expect(html).toContain('ollama run ornith-1.5:35b')
     expect(html).toContain('ollama run laguna-xs-2.1:q8_0')
     expect(html).toContain('ollama run qwen3.6:35b')
     expect(html).toContain('ollama run qwen3.8:27b-mlx')

@@ -2,6 +2,7 @@ import type { TranscriptPanelProps } from '../components/TranscriptPanel'
 import type { MultiviewPaneRefs } from '../hooks/useMultiviewState'
 import { isGlobalChat } from './chatScope'
 import { getLiveToolFileDiffSummaries } from './LiveFileDiffSummary'
+import { formatWorkDuration } from './runCompleteSummary'
 import {
   mergeCompletionFileChangeSummaries,
   selectCompletionRunIds,
@@ -29,6 +30,12 @@ export interface BuildChatViewPropsInput {
   refs: Refs
   chat: TranscriptPanelProps['currentChat']
   messages: TranscriptPanelProps['messages']
+  /**
+   * Runs backing the run-evidence projections when the record's own arrays are
+   * unavailable — a Stage 1b paged shell strips `chat.runs` by design, so the
+   * pane passes the store window's runs here. Defaults to `chat.runs`.
+   */
+  runs?: NonNullable<TranscriptPanelProps['currentChat']>['runs']
   provider: TranscriptPanelProps['currentProvider']
   providerLabel: string
   isWelcomeChat: boolean
@@ -36,6 +43,12 @@ export interface BuildChatViewPropsInput {
   pendingPlanChoice?: TranscriptPanelProps['pendingPlanChoice']
   pendingProposedPlan?: TranscriptPanelProps['pendingProposedPlan']
   runCompleteNotice: TranscriptPanelProps['runCompleteNotice']
+  /** True while this pane's thread owns an unsettled durable execution. */
+  hasLiveOwnedExecution?: TranscriptPanelProps['hasLiveOwnedExecution']
+  /** Ghost-strip views for the executions this pane's thread owns. */
+  ownedExecutionViews?: TranscriptPanelProps['ownedExecutionViews']
+  onCancelOwnedExecution?: TranscriptPanelProps['onCancelOwnedExecution']
+  onResumeOwnedExecution?: TranscriptPanelProps['onResumeOwnedExecution']
   pendingAgentQuestions: TranscriptPanelProps['pendingAgentQuestions']
   contextCompactionProgress?: TranscriptPanelProps['contextCompactionProgress']
   onAgentQuestionSubmit?: TranscriptPanelProps['onAgentQuestionSubmit']
@@ -76,6 +89,9 @@ export interface BuildChatViewPropsInput {
   thinkingModelBadge?: TranscriptPanelProps['thinkingModelBadge']
   liveActivityViewport?: boolean
   fanoutLaneLayout?: TranscriptPanelProps['fanoutLaneLayout']
+  defaultTranscriptView?: TranscriptPanelProps['defaultTranscriptView']
+  transcriptTextSize?: TranscriptPanelProps['transcriptTextSize']
+  transcriptWidth?: TranscriptPanelProps['transcriptWidth']
   onInspectRun?: TranscriptPanelProps['onInspectRun']
   currency?: TranscriptPanelProps['currency']
   currencyOverestimatePercent?: number
@@ -159,7 +175,7 @@ function paneFileChangePresentation(input: BuildChatViewPropsInput): PaneFileCha
   const key = paneFileChangeMemoKey(input)
   const chatKind = input.chat?.chatKind
   const activeRound = input.chat?.chatKind === 'ensemble' ? input.chat.ensemble?.activeRound : null
-  const runs = input.chat?.runs
+  const runs = input.runs ?? input.chat?.runs
   const hasRunCompleteNotice = Boolean(input.runCompleteNotice)
   const cached = paneFileChangeMemo.get(key)
   if (
@@ -200,10 +216,11 @@ function computePaneFileChangePresentation(
     : null
   const hasExactSummaries = exactSummaries !== null && exactSummaries.length > 0
   const currentRunId = input.currentRun?.runId
+  const evidenceRuns = input.runs ?? input.chat?.runs
   const currentRunMessages = currentRunId
     ? selectRunEvidenceMessages(input.messages, {
         runIds: [currentRunId],
-        runs: input.chat?.runs
+        runs: evidenceRuns
       })
     : []
   const liveSummaries = getLiveToolFileDiffSummaries(
@@ -224,12 +241,21 @@ function computePaneFileChangePresentation(
     (summary) => !summary.isNoise
   )
   const roundRunIds = input.runCompleteNotice
-    ? selectCompletionRunIds(input.chat, input.currentRun)
+    ? selectCompletionRunIds(
+        input.chat
+          ? {
+              chatKind: input.chat.chatKind,
+              ensemble: input.chat.ensemble,
+              runs: evidenceRuns ?? []
+            }
+          : input.chat,
+        input.currentRun
+      )
     : new Set<string>()
   const roundMessages = input.runCompleteNotice
     ? selectRunEvidenceMessages(input.messages, {
         runIds: roundRunIds,
-        runs: input.chat?.runs
+        runs: evidenceRuns
       })
     : []
   const roundSummaries =
@@ -296,7 +322,16 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
     onEnsemblePollVote: input.onEnsemblePollVote,
     runCompleteNotice: input.runCompleteNotice,
-    runCompleteDurationText: null,
+    hasLiveOwnedExecution: input.hasLiveOwnedExecution,
+    ownedExecutionViews: input.ownedExecutionViews,
+    onCancelOwnedExecution: input.onCancelOwnedExecution,
+    onResumeOwnedExecution: input.onResumeOwnedExecution,
+    // Same derivation as the focused surface (App's runCompleteDurationText):
+    // the pane's Task Complete card header reads "Worked for …" too.
+    runCompleteDurationText: formatWorkDuration(
+      input.runCompleteNotice?.startedAt,
+      input.runCompleteNotice?.timestamp
+    ),
     currentChat: input.chat,
     isGlobal: isGlobalChat(input.chat),
     currentRun: input.currentRun ?? null,
@@ -334,6 +369,12 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     compactDensity: input.compactDensity,
     liveActivityViewport: input.liveActivityViewport,
     fanoutLaneLayout: input.fanoutLaneLayout,
+    defaultTranscriptView: input.defaultTranscriptView,
+    // Declaring it on the input type above WITHOUT this line compiles: the
+    // target prop is optional on TranscriptPanelProps, so every multiview pane
+    // would silently fall back to Default while the main pane resized.
+    transcriptTextSize: input.transcriptTextSize,
+    transcriptWidth: input.transcriptWidth,
     onCopyMessage: input.onCopyMessage,
     onAddMessageToPrompt: input.onAddMessageToPrompt,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,

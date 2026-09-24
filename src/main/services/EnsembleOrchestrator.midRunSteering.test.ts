@@ -7,6 +7,7 @@ import type {
   EnsembleSideMessageSteeringResult
 } from '../steering/EnsembleSideMessageSteering'
 import { EnsembleOrchestrator, type EnsembleDispatchPromptEvidence } from './EnsembleOrchestrator'
+import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import { deriveActiveEnsembleWorkingPresentations } from '../../renderer/src/lib/workingIndicatorPresentation'
 
 const CHAT_ID = 'ensemble-chat'
@@ -132,6 +133,9 @@ function makeHarness(
         ensembleModeEnabled: true,
         chatContextTurns: 8
       }) as AppSettings,
+    hostAdmissionRuntime: new EnsembleHostAdmissionRuntime({
+      scheduleBuildTurn: (task) => task()
+    }),
     dispatch: vi.fn(async (payload: AgentRunPayload, _event, _observer, evidence) => {
       dispatched.push(payload)
       promptEvidence.push(evidence)
@@ -191,6 +195,21 @@ function makeHarness(
 
 type Harness = ReturnType<typeof makeHarness>
 
+// Continuous-only rounds auto-continue after the roster drains; a completed
+// goal is the established kill-switch that lets a drained round complete
+// (same device as EnsembleOrchestrator.test.ts).
+function seedCompletedGoal(harness: Harness): void {
+  harness.chat.activeGoal = {
+    id: 'goal-steering-complete',
+    objective: 'Already satisfied — the round may close when the roster drains.',
+    status: 'completed',
+    mode: 'taskwraith_steered',
+    provider: 'codex',
+    createdAt: '2026-07-29T03:00:00.000Z',
+    updatedAt: '2026-07-29T03:00:00.000Z'
+  }
+}
+
 function complete(harness: Harness, index: number): void {
   const payload = harness.dispatched[index]
   expect(harness.accepted[index]).toBe(true)
@@ -229,6 +248,7 @@ async function reachFinalLiveSeat(harness: Harness): Promise<string> {
 describe('EnsembleOrchestrator mid-run steering', () => {
   it('absorbs a final-hop interjection and delivers it in the same round', async () => {
     const harness = makeHarness()
+    seedCompletedGoal(harness)
     const roundId = await reachFinalLiveSeat(harness)
 
     expect(
@@ -303,6 +323,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
 
   it('tries another eligible seat when the preferred boundary dispatch is rejected', async () => {
     const harness = makeHarness({ rejectFirstBoundaryDispatch: true })
+    seedCompletedGoal(harness)
     const roundId = await reachFinalLiveSeat(harness)
 
     expect(
@@ -412,6 +433,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       participant('grok-bg', 'grok', 4, { role: 'Background', stageRole: 'background' })
     ]
     const harness = makeHarness({ participants: roster })
+    seedCompletedGoal(harness)
     const started = harness.orchestrator.startRound({
       chatId: CHAT_ID,
       prompt: 'Original round work.',
@@ -465,7 +487,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       (message) => message.metadata?.kind === 'midRunSteering' && message.content === userPrompt
     )
     const dispatchRowIndex = harness.chat.messages.findIndex((message) =>
-      message.content.startsWith('User Fan-Out · 2 participant(s) dispatched concurrently')
+      message.content.startsWith(
+        'User Fan-Out · 2 participant(s) requested; preparing under bounded host admission'
+      )
     )
     expect(userRowIndex).toBeGreaterThanOrEqual(0)
     expect(dispatchRowIndex).toBeGreaterThan(userRowIndex)
@@ -473,6 +497,26 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(dispatchRow.metadata?.ensembleFanoutCategory).toBe('user')
     expect(dispatchRow.metadata?.ensembleFanoutLabel).toBe('User Fan-Out')
     expect(dispatchRow.metadata?.ensembleFanoutWaveId).toBe(dispatchRow.id)
+    expect(dispatchRow.metadata?.ensembleFanoutDispatch).toEqual({
+      label: 'User Fan-Out',
+      category: 'user',
+      participants: [
+        {
+          participantId: 'claude',
+          provider: 'claude',
+          role: 'Reviewer',
+          model: 'claude-model',
+          intent: 'write'
+        },
+        {
+          participantId: 'grok-bg',
+          provider: 'grok',
+          role: 'Background',
+          model: 'grok-model',
+          intent: 'write'
+        }
+      ]
+    })
     expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([])
     expect(
       harness.chat.ensemble?.activeRound?.participants.some(
@@ -512,6 +556,13 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
     })
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content === 'User Fan-Out complete · 2 lane(s) returned.'
+      )
+    ).toBe(false)
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
@@ -536,13 +587,10 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('owner')
 
-    const olderWave = await harness.orchestrator.fanoutForRun(
-      harness.dispatched[0].appRunId,
-      {
-        targets: ['Work1'],
-        prompt: 'Keep inspecting while the owner continues.'
-      }
-    )
+    const olderWave = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Work1'],
+      prompt: 'Keep inspecting while the owner continues.'
+    })
     expect(olderWave.ok).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     stream(harness, 1, 'OLDER-WORK1-LANE.')
@@ -567,7 +615,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     const dispatchIndex = harness.chat.messages.findIndex(
       (message) =>
         message.metadata?.kind === 'ensembleRoundStatus' &&
-        message.content.startsWith('User Fan-Out · 1 participant(s) dispatched concurrently')
+        message.content.startsWith(
+          'User Fan-Out · 1 participant(s) requested; preparing under bounded host admission'
+        )
     )
     expect(dispatchIndex).toBeGreaterThanOrEqual(0)
     const dispatchWaveId = harness.chat.messages[dispatchIndex].metadata?.ensembleFanoutWaveId
@@ -583,9 +633,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       message.content.includes('NEW-ORCHESTRATOR-LANE.')
     )
     expect(newLaneIndex).toBeGreaterThan(dispatchIndex)
-    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(
-      dispatchWaveId
-    )
+    expect(harness.chat.messages[newLaneIndex].metadata?.ensembleFanoutWaveId).toBe(dispatchWaveId)
 
     complete(harness, 2)
     complete(harness, 1)
@@ -605,6 +653,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       participant('grok-bg', 'grok', 4, { role: 'Background', stageRole: 'background' })
     ]
     const harness = makeHarness({ participants: roster })
+    seedCompletedGoal(harness)
     const started = harness.orchestrator.startRound({
       chatId: CHAT_ID,
       prompt: 'Original round work.',
@@ -637,9 +686,7 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
     ).toEqual(['claude', 'observer', 'grok-bg'])
     expect(
-      harness.dispatched.filter(
-        (payload) => payload.ensembleRun?.participantId === 'codex'
-      )
+      harness.dispatched.filter((payload) => payload.ensembleRun?.participantId === 'codex')
     ).toHaveLength(1)
     expect(
       harness.promptEvidence
@@ -657,6 +704,41 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
     })
+  })
+
+  it('expands a user @Management steer to every idle enabled Captain beside the active Boss', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Coordinator' }),
+      participant('captain-a', 'claude', 2, { role: 'Planner' }),
+      participant('captain-b', 'kimi', 3, { role: 'Verifier' }),
+      participant('worker', 'grok', 4, { role: 'Builder' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original management round.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: '@Management review the changed direction.'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(
+      harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
+    ).toEqual(['captain-a', 'captain-b'])
+    expect(
+      harness.dispatched.some((payload) => payload.ensembleRun?.participantId === 'worker')
+    ).toBe(false)
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
 
   it('keeps an already-running tagged seat on ordinary steer semantics without a duplicate lane', async () => {
@@ -688,7 +770,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(harness.appendMidRunSteering).toHaveBeenCalledOnce()
     expect(harness.cancelRun).not.toHaveBeenCalled()
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
 
     complete(harness, 0)
@@ -742,6 +826,11 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     // The old derivation required BOTH, so the `fanoutPolicy` clause is what
     // actually dropped this seat. Assert both halves so a future change to
     // either one cannot quietly restore the hole.
+    await vi.waitFor(() =>
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})[0]?.status).toBe(
+        'running'
+      )
+    )
     const round = harness.chat.ensemble?.activeRound
     expect(round?.concurrentMode).toBe(true)
     expect(round?.fanoutPolicy).toBe('off')
@@ -775,13 +864,16 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
 
+    // The run-ensemble-round handler absorbs eligible steers through the
+    // PUBLIC absorbMidRunSteering wrapper and returns before beginRound's
+    // mode:'steer' branch runs — so this entry, not just beginRound, must
+    // open the tagged seats' wave.
     const prompt = '@Reviewer try your slice again.'
     expect(
-      harness.orchestrator.startRound({
+      harness.orchestrator.absorbMidRunSteering({
         chatId: CHAT_ID,
-        prompt,
-        event: { sender: {} as Electron.WebContents },
-        mode: 'steer'
+        roundId: started.roundId!,
+        text: prompt
       })
     ).toEqual({ status: 'steered', roundId: started.roundId })
 
@@ -791,6 +883,33 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
     ).toBe(true)
     // Additive: the original speaker is never interrupted to make room.
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('keeps an untagged public-wrapper steer on ordinary absorb semantics without a wave', async () => {
+    const roster = [
+      participant('codex', 'codex', 1, { role: 'Worker' }),
+      participant('claude', 'claude', 2, { role: 'Reviewer' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Original round work.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId: started.roundId!,
+        text: 'plain interjection with no seat tag'
+      })
+    ).toEqual({ status: 'steered', roundId: started.roundId })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    // No fallback lane: the interjection rides the next hop prompt only.
+    expect(harness.dispatched).toHaveLength(1)
     expect(harness.cancelRun).not.toHaveBeenCalled()
   })
 
@@ -1018,6 +1137,36 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     expect(sideMessage?.metadata?.toUser).toBeUndefined()
   })
 
+  it('expands @Captains side-message recipients from configured authority ids', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Lead' }),
+      participant('captain-a', 'claude', 2, { role: 'Analyst' }),
+      participant('captain-b', 'kimi', 3, { role: 'Verifier' }),
+      participant('role-only', 'grok', 4, { role: 'Captain' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Lead owns the current turn.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.sendSideMessageForRun(harness.dispatched[0].appRunId, {
+      to: '@Captains',
+      message: 'Please compare the two options.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      toParticipantIds: ['captain-a', 'captain-b']
+    })
+    expect(result.toParticipantIds).not.toContain('role-only')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
   it('lets the Boss route an assistant-authored stage group in roster order', async () => {
     const roster = [
       participant('boss', 'codex', 1, { role: 'Boss', stageRole: 'worker' }),
@@ -1043,6 +1192,67 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     complete(harness, 1)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('worker-2')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
+  it('lets the Boss route every configured Captain despite broad-group authority exclusions', async () => {
+    const roster = [
+      participant('boss', 'codex', 1, { role: 'Lead' }),
+      participant('captain-a', 'claude', 2, { role: 'Analyst' }),
+      participant('worker', 'grok', 3, { role: 'Builder' }),
+      participant('captain-b', 'kimi', 4, { role: 'Verifier' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Coordinate the management pass.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@Captains decide the review split together.')
+    complete(harness, 0)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('captain-a')
+    complete(harness, 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
+    await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
+  })
+
+  it('keeps assistant @Management collective instead of collapsing to the priority Boss', async () => {
+    const roster = [
+      participant('captain-a', 'claude', 1, { role: 'Analyst' }),
+      participant('boss', 'codex', 2, { role: 'Lead' }),
+      participant('worker', 'grok', 3, { role: 'Builder' }),
+      participant('captain-b', 'kimi', 4, { role: 'Verifier' })
+    ]
+    const harness = makeHarness({ participants: roster })
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-a', 'captain-b']
+    harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Ask management to choose the route.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    stream(harness, 0, '@Management decide together before implementation.')
+    complete(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('boss')
+    complete(harness, 1)
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain-b')
+    expect(
+      harness.dispatched
+        .slice(0, 3)
+        .some((payload) => payload.ensembleRun?.participantId === 'worker')
+    ).toBe(false)
     await expect(harness.orchestrator.cancelRound(CHAT_ID, 'test complete')).resolves.toBe(true)
   })
 
@@ -1156,7 +1366,8 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     ).toEqual({ status: 'steered', roundId: started.roundId })
 
     expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
-    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+    // On/Off collapse: the round's admitted policy reads as On ('all').
+    expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('all')
   })
 
   it('returns to the continuous panel after a message-local handoff to a settled fan-out seat', async () => {
@@ -1509,7 +1720,9 @@ describe('EnsembleOrchestrator mid-run steering', () => {
       ).toHaveLength(2)
     )
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
 
     releaseCompaction()
@@ -1637,7 +1850,142 @@ describe('EnsembleOrchestrator mid-run steering', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(harness.dispatched).toHaveLength(1)
     expect(
-      harness.chat.messages.some((message) => message.content.startsWith('User Fan-Out ·'))
+      harness.chat.messages.some((message) =>
+        message.content.startsWith('User Fan-Out provider dispatch started')
+      )
     ).toBe(false)
+  })
+})
+
+describe('EnsembleOrchestrator host-stamped origin', () => {
+  const ORIGIN = { channel: 'local-control' as const, pid: 4242, label: 'Claude Code' }
+
+  it('hands an absorbed interjection origin to the transcript append seam', async () => {
+    const harness = makeHarness()
+    seedCompletedGoal(harness)
+    const roundId = await reachFinalLiveSeat(harness)
+    expect(
+      harness.orchestrator.absorbMidRunSteering({
+        chatId: CHAT_ID,
+        roundId,
+        text: STEER_TEXT,
+        origin: ORIGIN
+      })
+    ).toEqual({ status: 'steered', roundId })
+    expect(harness.appendMidRunSteering).toHaveBeenCalledWith(
+      expect.objectContaining({ text: STEER_TEXT, origin: ORIGIN })
+    )
+  })
+
+  it('stamps the origin on the user row of a round it starts, and only then', async () => {
+    const harness = makeHarness()
+    seedCompletedGoal(harness)
+    const started = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Sent through the socket.',
+      event: { sender: {} as Electron.WebContents },
+      origin: ORIGIN
+    })
+    expect(started.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const rows = harness.chat.messages.filter(
+      (message) => message.role === 'user' && message.metadata?.kind === 'ensembleRoundPrompt'
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.metadata?.origin).toEqual(ORIGIN)
+
+    const plain = makeHarness()
+    seedCompletedGoal(plain)
+    plain.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Typed at the desk.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(plain.dispatched).toHaveLength(1))
+    const plainRow = plain.chat.messages.find(
+      (message) => message.role === 'user' && message.metadata?.kind === 'ensembleRoundPrompt'
+    )
+    expect(plainRow?.metadata).not.toHaveProperty('origin')
+  })
+})
+
+describe('a blocked queued head announces itself instead of silently stalling the FIFO', () => {
+  const BLOCKED_REASON =
+    'Queued prompt preserved but not dispatched after restart because attachment paths must be re-selected.'
+
+  function runtimeFor(harness: Harness): { queuedPrompts: Array<Record<string, unknown>> } {
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { queuedPrompts: Array<Record<string, unknown>> }>
+      }
+    ).roundsByChatId.get(CHAT_ID)
+    expect(runtime).toBeTruthy()
+    return runtime as { queuedPrompts: Array<Record<string, unknown>> }
+  }
+
+  async function liveRoundWithBlockedHead(harness: Harness): Promise<{
+    queuedPrompts: Array<Record<string, unknown>>
+  }> {
+    const result = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Initial ensemble prompt.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = runtimeFor(harness)
+    runtime.queuedPrompts = [
+      { id: 'q-blocked', prompt: 'blocked head', restartRecoveryBlockedReason: BLOCKED_REASON },
+      { id: 'q-next', prompt: 'the message queued behind it' }
+    ]
+    return runtime
+  }
+
+  // The drain only ever inspects queuedPrompts[0]. Its sibling branch --
+  // queuedTargetUnavailableReason, six lines below -- calls appendRoundStatus
+  // and returns; this one only returned. So a head blocked by restart recovery
+  // head-of-line blocked every later message the user typed, at every boundary,
+  // for the life of the round, with nothing surfaced anywhere.
+  it('announces the blocked head at a boundary without reordering the queue', async () => {
+    const harness = makeHarness()
+    const runtime = await liveRoundWithBlockedHead(harness)
+    stream(harness, 0, 'Worker answer.')
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('attachment paths must be re-selected')
+        )
+      ).toBe(true)
+    )
+    // Announce, never skip: reordering would deliver the user's messages out of
+    // the order they typed them.
+    expect(runtime.queuedPrompts.map((entry) => entry.prompt)).toEqual([
+      'blocked head',
+      'the message queued behind it'
+    ])
+  })
+
+  it('announces once rather than at every boundary', async () => {
+    const harness = makeHarness()
+    await liveRoundWithBlockedHead(harness)
+    stream(harness, 0, 'Worker answer.')
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter((message) =>
+          message.content.includes('attachment paths must be re-selected')
+        )
+      ).toHaveLength(1)
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThanOrEqual(2))
+    stream(harness, 1, 'Reviewer answer.')
+    complete(harness, 1)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(
+      harness.chat.messages.filter((message) =>
+        message.content.includes('attachment paths must be re-selected')
+      )
+    ).toHaveLength(1)
   })
 })

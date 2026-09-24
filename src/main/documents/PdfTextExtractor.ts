@@ -6,7 +6,7 @@
  * — the sibling `pdftoppm` dependency in PdfAttachmentRenderService silently
  * degrades to `sips` when poppler is absent, and we didn't want a second feature
  * with a "works on my machine" failure mode. The don't-bundle precedent
- * (docs/audio-video-pipeline-design.md §6) is specifically about ffmpeg's
+ * (the ffmpeg precedent §6) is specifically about ffmpeg's
  * licensing and the universal-build native-dep ban; pdfjs is neither.
  *
  * What this does NOT do: rasterize. Page images remain

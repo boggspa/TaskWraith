@@ -1,11 +1,43 @@
 import type { ChatRecord } from '../main/store/types'
 
 type CanonicalChatResult = ChatRecord | null
+type QueuedChatOperationResult = CanonicalChatResult | CanonicalChatSaveOutcome
 
 export interface CanonicalChatSaveResult {
   chat: ChatRecord
   previous: ChatRecord | null
   accepted: boolean
+}
+
+/** What a caller learns from one whole-record save: the canonical record, and
+ *  whether canonical actually took the write. */
+export interface CanonicalChatSaveOutcome {
+  chat: ChatRecord
+  accepted: boolean
+}
+
+/**
+ * What a canonical refusal discarded.
+ *
+ * `ChatService.saveChatInternal` rejects a whole-record save whose
+ * `persistenceRevision` does not match the canonical record and returns that
+ * canonical record unchanged, so the caller's promise RESOLVES and every field
+ * the payload authored is dropped. In the field that is indistinguishable from
+ * a renderer-side pre-revert, a fence throw, or a delivery that simply never
+ * carried the edit — which is why "I set it and it came back" has been
+ * diagnosed three times from structure alone. Reporting the refusal makes the
+ * revision gap and the discarded field set observable at the moment it happens.
+ */
+export interface ChatSaveRejection {
+  chatId: string
+  /** Revision the payload was derived from. */
+  snapshotRevision: number
+  /** Revision the canonical record actually holds. */
+  canonicalRevision: number
+  /** Top-level fields whose authored value the refusal discarded. */
+  discardedFields: string[]
+  /** Whether this payload had already been rebased onto a known lineage. */
+  rebased: boolean
 }
 
 interface AcceptedChatLineage {
@@ -88,6 +120,17 @@ function isDeepStrictEqual(left: unknown, right: unknown): boolean {
     (key) =>
       Object.prototype.hasOwnProperty.call(rightRecord, key) &&
       isDeepStrictEqual(leftRecord[key], rightRecord[key])
+  )
+}
+
+/** Default reporter: the preload has no logger of its own, and the renderer
+ *  console is where a live repro is already being watched. */
+function reportChatSaveRejection(rejection: ChatSaveRejection): void {
+  console.warn(
+    `[chat-save] canonical refused a stale whole-record save for ${rejection.chatId}: ` +
+      `payload revision ${rejection.snapshotRevision} vs canonical ${rejection.canonicalRevision}` +
+      `${rejection.rebased ? ' (rebased)' : ''}. Discarded: ` +
+      `${rejection.discardedFields.length > 0 ? rejection.discardedFields.join(', ') : '(nothing)'}`
   )
 }
 
@@ -208,15 +251,64 @@ function rebaseQueuedSnapshot(
  * otherwise main's CAS rejects the original stale clone without losing data.
  */
 export class SerializedChatPersistence {
-  private readonly tails = new Map<string, Promise<CanonicalChatResult>>()
+  private readonly tails = new Map<string, Promise<QueuedChatOperationResult>>()
   private readonly acceptedLineageByChatId = new Map<string, AcceptedChatLineage>()
   private readonly pendingRevisionCountsByChatId = new Map<string, Map<number, number>>()
 
   constructor(
-    private readonly saveRemote: (chat: ChatRecord) => Promise<CanonicalChatSaveResult>
+    private readonly saveRemote: (chat: ChatRecord) => Promise<CanonicalChatSaveResult>,
+    private readonly onRejected: (rejection: ChatSaveRejection) => void = reportChatSaveRejection
   ) {}
 
+  /**
+   * Observation only: never changes what `save` returns, what the lineage
+   * retains, or whether a caller sees an error. A reporter that throws is
+   * swallowed for the same reason.
+   */
+  private reportRejection(
+    chatId: string,
+    payload: ChatRecord,
+    canonical: ChatRecord,
+    rebased: boolean
+  ): void {
+    try {
+      const discardedFields: string[] = []
+      const fields = new Set<keyof ChatRecord>([
+        ...(Object.keys(payload) as Array<keyof ChatRecord>),
+        ...(Object.keys(canonical) as Array<keyof ChatRecord>)
+      ])
+      for (const field of fields) {
+        if (MAIN_OWNED_FIELDS.has(field)) continue
+        if (!sameField(payload, canonical, field)) discardedFields.push(String(field))
+      }
+      this.onRejected({
+        chatId,
+        snapshotRevision: persistenceRevision(payload),
+        canonicalRevision: persistenceRevision(canonical),
+        discardedFields: discardedFields.sort(),
+        rebased
+      })
+    } catch {
+      // A diagnostic must never alter the outcome of a save.
+    }
+  }
+
   save(chat: ChatRecord): Promise<ChatRecord> {
+    return this.saveWithOutcome(chat).then((outcome) => outcome.chat)
+  }
+
+  /**
+   * `save`, plus whether canonical actually took the write.
+   *
+   * The flag is already on the IPC result and was previously used only for the
+   * console diagnostic. A caller that authored a user-visible slice needs it to
+   * ACT: a refusal resolves with the canonical record exactly as an acceptance
+   * does, so without this the only way to tell them apart is to guess from the
+   * content — and a guess cannot distinguish "main dropped my edit" from "main
+   * accepted it and normalized it", which is the difference between a
+   * worthwhile retry and an infinite fight with the normalizer.
+   */
+  saveWithOutcome(chat: ChatRecord): Promise<CanonicalChatSaveOutcome> {
     const chatId = chat.appChatId
     // Capture the whole-record snapshot at invocation time. A queued IPC call
     // must not observe later in-place mutations made by its renderer caller.
@@ -233,6 +325,9 @@ export class SerializedChatPersistence {
             : null
         const payload = rebased ?? snapshot
         const result = await this.saveRemote(payload)
+        if (result.accepted === false) {
+          this.reportRejection(chatId, payload, result.chat, rebased !== null)
+        }
         if (result.accepted && result.previous) {
           const previous = structuredClone(result.previous)
           const canonical = structuredClone(result.chat)
@@ -255,7 +350,7 @@ export class SerializedChatPersistence {
           // lineage. Do not use stale renderer history to advance later saves.
           this.acceptedLineageByChatId.delete(chatId)
         }
-        return result.chat
+        return { chat: result.chat, accepted: result.accepted !== false }
       } catch (error) {
         // IPC failure is ambiguous: main may have committed before the reply
         // was lost. Discard the lineage rather than lending that revision.
@@ -264,7 +359,7 @@ export class SerializedChatPersistence {
       } finally {
         this.releasePendingRevision(chatId, snapshotRevision)
       }
-    }) as Promise<ChatRecord>
+    })
   }
 
   /** Serialize another canonical chat mutation (for example `/clear`). */
@@ -299,6 +394,15 @@ export class SerializedChatPersistence {
 
     const lineage = this.acceptedLineageByChatId.get(chatId)
     if (!lineage) return
+    // Accepted records exist only to rebase snapshots that were already queued
+    // from an older revision. Once the last pending revision drains there is no
+    // descendant left that can consume this lineage, so retaining `canonical`
+    // would pin one complete ChatRecord (including its transcript) for the
+    // lifetime of every renderer preload.
+    if (!counts || counts.size === 0) {
+      this.acceptedLineageByChatId.delete(chatId)
+      return
+    }
     const canonicalRevision = persistenceRevision(lineage.canonical)
     for (const knownRevision of lineage.basesByRevision.keys()) {
       if (knownRevision !== canonicalRevision && !counts?.has(knownRevision)) {
@@ -307,15 +411,18 @@ export class SerializedChatPersistence {
     }
   }
 
-  private enqueue(
+  // Generic in the operation's result so the queue can carry either a bare
+  // canonical record or a save outcome; the tail only needs ORDER, never the
+  // shape of what it is ordering.
+  private enqueue<T extends QueuedChatOperationResult>(
     chatId: string,
-    operation: () => Promise<CanonicalChatResult>
-  ): Promise<CanonicalChatResult> {
+    operation: () => Promise<T>
+  ): Promise<T> {
     const previous = this.tails.get(chatId)
     const queued = (previous ? previous.catch(() => null) : Promise.resolve(null)).then(
       operation
     )
-    const tracked: Promise<CanonicalChatResult> = queued.finally(() => {
+    const tracked: Promise<T> = queued.finally(() => {
       if (this.tails.get(chatId) === tracked) this.tails.delete(chatId)
     })
     this.tails.set(chatId, tracked)

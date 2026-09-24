@@ -168,16 +168,45 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     expect(registry.lookupByChatId('chat-fanout')).toBe(scheduled)
   })
 
+  it('lets graph lanes overlap their parent turn and sibling graph lanes', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const parent = registry.reserveOrdinaryChatDispatch('chat-ultratask')
+    const firstScout = registry.reserveConcurrentGraphChatDispatch('chat-ultratask')
+    const secondScout = registry.reserveConcurrentGraphChatDispatch('chat-ultratask')
+
+    expect(registry.hasOrdinaryChatDispatchReservation('chat-ultratask')).toBe(true)
+    expect(registry.hasConcurrentGraphChatDispatchReservation('chat-ultratask')).toBe(true)
+    expectCode(
+      () => registry.register({ ...owner('scheduled'), chatId: 'chat-ultratask' }),
+      'duplicate-chat'
+    )
+    expectCode(() => registry.reserveExclusiveChatDispatch('chat-ultratask'), 'duplicate-chat')
+
+    expect(registry.releaseConcurrentGraphChatDispatch(firstScout)).toBe(true)
+    expect(registry.hasConcurrentGraphChatDispatchReservation('chat-ultratask')).toBe(true)
+    expect(registry.releaseOrdinaryChatDispatch(parent)).toBe(true)
+    // A later ordinary parent turn may also coexist with the durable graph.
+    const continuedParent = registry.reserveOrdinaryChatDispatch('chat-ultratask')
+    expect(registry.releaseConcurrentGraphChatDispatch(secondScout)).toBe(true)
+    expect(registry.hasConcurrentGraphChatDispatchReservation('chat-ultratask')).toBe(false)
+    expect(registry.releaseOrdinaryChatDispatch(continuedParent)).toBe(true)
+
+    const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-ultratask' })
+    expectCode(
+      () => registry.reserveConcurrentGraphChatDispatch('chat-ultratask'),
+      'duplicate-chat'
+    )
+    expect(registry.release(scheduled)).toBe(true)
+  })
+
   it('uses an exclusive pre-session reservation to fence every competing launch', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const exclusive = registry.reserveExclusiveChatDispatch('chat-graph')
 
     expect(registry.hasExclusiveChatDispatchReservation('chat-graph')).toBe(true)
     expectCode(() => registry.reserveOrdinaryChatDispatch('chat-graph'), 'duplicate-chat')
-    expectCode(
-      () => registry.reserveExclusiveChatDispatch('chat-graph'),
-      'duplicate-chat'
-    )
+    expectCode(() => registry.reserveConcurrentGraphChatDispatch('chat-graph'), 'duplicate-chat')
+    expectCode(() => registry.reserveExclusiveChatDispatch('chat-graph'), 'duplicate-chat')
     expectCode(
       () => registry.register({ ...owner('scheduled'), chatId: 'chat-graph' }),
       'duplicate-chat'

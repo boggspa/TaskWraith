@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { NotificationZone, notificationDirectionForDrag } from './NotificationZone'
 import { PINNED_APP_NOTIFICATIONS, type AppNotification } from '../../../shared/appNotifications'
+import {
+  publishDynamicAppNotifications,
+  resetDynamicAppNotificationsForTests,
+  type DynamicAppNotification
+} from '../lib/dynamicAppNotifications'
 import { TASKWRAITH_PROVIDER_ACCENTS } from '../../../shared/taskWraithProviderPresentation'
 
 /**
@@ -215,16 +220,17 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-newadditions-provider provider-muse')
     expect(html).toContain('notification-newadditions-provider provider-mistral')
     expect(html).toContain('notification-newadditions-provider provider-ollama')
-    expect(html).not.toContain('notification-newadditions-provider provider-pi')
+    expect(html).toContain('notification-newadditions-provider provider-pi')
     expect(html).toContain('data-provider-logo="antigravity"')
     expect(html).toContain('data-provider-logo="mistral"')
     expect(html).toContain('data-provider-logo="ollama"')
-    expect(html).not.toContain('data-provider-logo="pi"')
-    expect(html).toContain('Gemini 3.7 Flash')
-    expect(html).toContain('Grok 4.6 Fast')
+    expect(html).toContain('data-provider-logo="pi"')
+    expect(html).toContain('Gemini 3.8 Flash')
+    expect(html).toContain('Grok 4.7')
+    expect(html).toContain('Grok 4.7 Fast')
     expect(html).toContain('Grok 4.6')
-    expect(html).toContain('Devstral Small')
     expect(html).toContain('Mistral 3.5 Medium')
+    expect(html).toContain('GLM-5.2 (Mistral Hosted)')
     expect(html).toContain('Qwen 3.8 (27B-MLX)')
     expect(html).toContain('Muse Glimmer (30B-MLX)')
     expect(html).toContain('Nemotron 3.5 Lightning (30B-MLX)')
@@ -263,5 +269,80 @@ describe('NotificationZone', () => {
     expect(
       renderToStaticMarkup(<NotificationZone notifications={[expired]} now={999} />)
     ).toContain('Timed notice.')
+  })
+})
+
+describe('NotificationZone action notices', () => {
+  afterEach(() => {
+    resetDynamicAppNotificationsForTests()
+  })
+
+  const paused: DynamicAppNotification = {
+    id: 'stack-diagnostic-0123456789abcdef',
+    kind: 'warning',
+    title: 'Stack recovery paused',
+    body: 'Stack ultratask-4aff240d: Execution ledger changed before append.',
+    dismissible: true,
+    actions: [
+      { id: 'open-stack', label: 'Open stack' },
+      { id: 'retry-recovery', label: 'Retry recovery' },
+      { id: 'archive-stack', label: 'Archive stack', tone: 'danger' }
+    ]
+  }
+
+  it('renders every action as a swipe-ignored button under the copy, archive in the danger tone', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={[paused]} />)
+    expect(html).toContain('notification-card--warning')
+    expect(html).toContain('<p class="notification-card-copy">')
+    expect(html).toContain('<div class="notification-card-actions" data-swipe-ignore="true">')
+    expect(html).toContain('>Open stack</button>')
+    expect(html).toContain('>Retry recovery</button>')
+    expect(html).toContain(
+      '<button type="button" class="notification-card-action notification-card-action--danger" data-swipe-ignore="true">Archive stack</button>'
+    )
+    expect(html.match(/class="notification-card-action( |")/g)).toHaveLength(3)
+  })
+
+  it('keeps the plain paragraph for notices without actions', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={[addition]} />)
+    expect(html).toContain('<p class="notification-card-text">')
+    expect(html).not.toContain('notification-card-actions')
+  })
+
+  it('renders the error kind on the red card and the warning kind on the amber card', () => {
+    expect(
+      renderToStaticMarkup(
+        <NotificationZone notifications={[{ ...paused, kind: 'error', actions: undefined }]} />
+      )
+    ).toContain('notification-card--danger')
+    expect(renderToStaticMarkup(<NotificationZone notifications={[paused]} />)).not.toContain(
+      'notification-card--danger'
+    )
+  })
+
+  it('keeps the dismiss affordance on a published diagnostic notice', () => {
+    publishDynamicAppNotifications([paused])
+    const html = renderToStaticMarkup(<NotificationZone />)
+    expect(html).toContain('aria-label="Dismiss notification: Stack recovery paused"')
+  })
+
+  it('shows published notices ahead of the registry, and drops them once cleared', () => {
+    publishDynamicAppNotifications([paused])
+    const withNotice = renderToStaticMarkup(<NotificationZone />)
+    expect(withNotice).toContain('Stack recovery paused')
+    expect(withNotice).toContain('notification-zone--rotating')
+    expect(withNotice).not.toContain('<strong>New Additions</strong>')
+
+    publishDynamicAppNotifications([])
+    const cleared = renderToStaticMarkup(<NotificationZone />)
+    expect(cleared).not.toContain('Stack recovery paused')
+    expect(cleared).toContain('New Additions')
+  })
+
+  it('ships the warning tone and action styles in the welcome CSS', () => {
+    expect(notificationCss).toContain('.notification-card--warning {')
+    expect(notificationCss).toContain('.notification-card-actions {')
+    expect(notificationCss).toContain('.notification-card-action {')
+    expect(notificationCss).toContain('.notification-card-action--danger {')
   })
 })

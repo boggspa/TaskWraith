@@ -364,3 +364,485 @@ struct ReconnectStormApnsWakeTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// Round 4 (2026-08-27): notification-tap / silent APNs / widget cold-start
+/// plus the scenePhase `.active` foreground probe can land `.health` with
+/// `socketAlive: false` on a session that established milliseconds ago.
+/// The coordinator's half-open path used to supersede that session; the
+/// post-establish grace + shared health probe close the remaining storm.
+@Suite("Reconnect storm — post-establish grace")
+@MainActor
+struct ReconnectStormPostEstablishTests {
+    private static let unroutableRelay = "ws://reconnect-storm-grace.invalid:9"
+
+    @Test("notification-tap + scenePhase.active does not redial a just-established session")
+    func notificationTapAndForegroundDoNotRedialFreshSession() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        #expect(model.trustedReconnectDialsForTesting == 0)
+
+        // Exact race: AppDelegate/notification tap calls handleRemoteWake
+        // while RootView.onChange(scenePhase -> .active) calls reconnectIfStale
+        // → requestReconnect(.foreground) → verifyConnectedSocket. With no live
+        // client both land as `.health` + socketAlive:false from `.connected`.
+        async let wake: Bool = model.handleRemoteWake(
+            reason: "notification-tap", timeoutMs: 0)
+        model.reconnectIfStale()
+        _ = await wake
+
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "a racy health-false against a just-established session started a new dial")
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record("phase became \(String(describing: model.phase)) instead of staying connected")
+        }
+        model.forgetAllHosts()
+    }
+
+    @Test("an explicit health-false after grace still redials")
+    func healthFalseAfterGraceStillRedials() {
+        let model = makePairedModel()
+        let establishedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        model.markJustEstablishedForTesting(at: establishedAt)
+        // Drive the coordinator clock past the grace via a direct evaluate-equivalent
+        // wake: requestReconnect uses Date(), so stamp establish in the past.
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 0.1)))
+        model.requestReconnect(.health, socketAlive: false)
+        #expect(
+            model.trustedReconnectDialsForTesting == 1,
+            "a genuine half-open past the grace window must still start a dial")
+        model.forgetAllHosts()
+    }
+
+    @Test("overlapping wake and foreground probes share one health flight")
+    func overlappingWakeAndForegroundShareOneHealthFlight() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        model.healthProbeOverrideForTesting = {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            return true
+        }
+
+        async let wake: Bool = model.handleRemoteWake(
+            reason: "notification-tap", timeoutMs: 500)
+        // Yield so the wake starts the hanging probe, then the scenePhase
+        // `.active` path must JOIN it rather than start a second ping.
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        model.reconnectIfStale()
+        _ = await wake
+
+        #expect(
+            model.socketHealthProbeStartsForTesting == 1,
+            "handleRemoteWake and verifyConnectedSocket stacked independent probes")
+        #expect(model.trustedReconnectDialsForTesting == 0)
+        model.forgetAllHosts()
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectStormGrace.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: GraceSeedStore(), pairingStore: store)
+    }
+
+    private struct GraceSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}
+
+/// Round 5 (2026-08-27): explicit disconnect / demo / host-switch must invalidate
+/// an in-flight trusted walk and the 1.2s `handleSocketClosed` redial, and the
+/// lock-screen approval path must fit the ~30s iOS background window.
+@Suite("Reconnect lifecycle invalidation")
+@MainActor
+struct ReconnectLifecycleInvalidationTests {
+    private static let unroutableRelay = "ws://reconnect-lifecycle.invalid:9"
+
+    @Test("a walk resolving after disconnect does not resurrect the session")
+    func walkAfterDisconnectDoesNotResurrect() async {
+        let model = makePairedModel()
+        model.requestReconnect(.user)
+        #expect(model.trustedReconnectDialsForTesting == 1)
+        #expect(model.reconnectCoordinatorInFlightForTesting)
+
+        model.disconnect()
+        #expect(model.phase == .idle)
+
+        // The ATS-rejected walk finishes in the next turn and used to overwrite
+        // `.idle` with `.error` then arm `scheduleAutoReconnect`.
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(
+            model.phase == .idle,
+            "in-flight walk resurrected phase to \(String(describing: model.phase)) after disconnect")
+        #expect(
+            !model.reconnectCoordinatorInFlightForTesting,
+            "disconnect left the coordinator in-flight so a later wake could supersede")
+        #expect(
+            model.trustedReconnectDialsForTesting == 1,
+            "a late walk or auto-retry started another dial after disconnect")
+        model.forgetAllHosts()
+    }
+
+    @Test("enterDemo during an in-flight walk stays on the demo session")
+    func enterDemoDuringWalkDoesNotResurrect() async {
+        let model = makePairedModel()
+        model.requestReconnect(.user)
+        model.enterDemoMode()
+        #expect(model.isDemo)
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record("demo phase was \(String(describing: model.phase)) instead of .connected")
+        }
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(model.isDemo, "late walk cleared the demo flag")
+        if case .connected = model.phase {
+            // expected
+        } else {
+            Issue.record(
+                "late walk resurrected demo phase to \(String(describing: model.phase))")
+        }
+        #expect(model.trustedReconnectDialsForTesting == 1)
+        model.forgetAllHosts()
+    }
+
+    @Test("disconnect during the delayed socket-closed redial does not redial")
+    func disconnectCancelsDelayedSocketClosedRedial() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting()
+        model.socketClosedRedialDelayMsForTesting = 40
+        model.simulateUnexpectedSocketCloseForTesting()
+        #expect(model.trustedReconnectDialsForTesting == 0)
+
+        model.disconnect()
+        #expect(model.phase == .idle)
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "the 1.2s delayed redial started a walk after explicit disconnect")
+        #expect(model.phase == .idle)
+        model.forgetAllHosts()
+    }
+
+    @Test("the legacy wake + peer + ack stack exceeds the background budget")
+    func legacyApprovalStackExceedsBackgroundBudget() {
+        let stacked =
+            22_000
+            + RemoteSessionModel.notificationApprovalPeerPreflightMs
+            + RemoteSessionModel.notificationApprovalDefaultAckTimeoutMs
+        #expect(stacked > RemoteSessionModel.notificationApprovalBackgroundBudgetMs)
+    }
+
+    @Test("remaining ack timeout never lets wake + peer + ack exceed the budget")
+    func remainingAckTimeoutFitsBackgroundBudget() {
+        let budget = RemoteSessionModel.notificationApprovalBackgroundBudgetMs
+
+        let afterLongWake = RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(
+            elapsedMs: 22_000)
+        if let afterLongWake {
+            #expect(
+                22_000 + afterLongWake <= budget,
+                "full 7s ack after a 22s wake overflows the \(budget)ms budget")
+        }
+
+        let afterWakeAndPeer = RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(
+            elapsedMs: 22_000,
+            peerPreflightMs: RemoteSessionModel.notificationApprovalPeerPreflightMs)
+        if let afterWakeAndPeer {
+            #expect(
+                22_000 + RemoteSessionModel.notificationApprovalPeerPreflightMs + afterWakeAndPeer
+                    <= budget,
+                "wake + 6s peer + ack overflows the background budget")
+        } else {
+            // aborting is also a valid fit
+        }
+
+        #expect(
+            RemoteSessionModel.remainingNotificationApprovalAckTimeoutMs(elapsedMs: 27_500) == nil,
+            "a nearly exhausted budget must abort rather than start a 7s ack")
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectLifecycle.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: LifecycleSeedStore(), pairingStore: store)
+    }
+
+    private struct LifecycleSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}
+
+/// S3 (2026-08-27): cold-launch cached recovery + notification deep-link ordering.
+/// A stored pairing must keep ConnectedShell mounted on the next launch, a wake
+/// establish must rehydrate, and the tap target must be registered before the
+/// reconnect walk so `.established` can consume it.
+@Suite("Cached recovery + notification entry")
+@MainActor
+struct ReconnectCachedRecoveryTests {
+    private static let unroutableRelay = "ws://reconnect-cached.invalid:9"
+
+    @Test("a stored pairing restores wasEverConnected on cold launch")
+    func storedPairingRestoresWasEverConnected() {
+        let model = makePairedModel()
+        #expect(
+            model.wasEverConnected,
+            "cold launch with a persisted pairing left wasEverConnected=false, so PairingView mounts")
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: model.wasEverConnected,
+                hasStoredPairing: model.hasStoredPairing,
+                phase: .idle),
+            "RootView would flash PairingView on a paired cold launch")
+        model.forgetAllHosts()
+    }
+
+    @Test("forgetting every host clears wasEverConnected for the next launch")
+    func forgetAllHostsClearsWasEverConnectedAcrossLaunches() {
+        let suite = "ReconnectCachedForget.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = seedPairing(defaults: defaults)
+        let model = RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+        model.applySessionEstablishedForTesting()
+        #expect(model.wasEverConnected)
+        model.forgetAllHosts()
+
+        let relaunch = RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+        #expect(!relaunch.hasStoredPairing)
+        #expect(
+            !relaunch.wasEverConnected,
+            "forgetAllHosts left wasEverConnected set so a later unpaired launch would still hold the shell")
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: relaunch.wasEverConnected,
+                hasStoredPairing: relaunch.hasStoredPairing,
+                phase: .idle))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    @Test("notification tap registers the deep-link target before the wake walk")
+    func notificationTapRegistersDeepLinkBeforeWake() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        var pendingAtWakeStart: String?
+        model.remoteWakeBeganHookForTesting = {
+            pendingAtWakeStart = model.pendingDeepLinkThreadIdForTesting
+        }
+
+        await model.performNotificationTapForTesting(threadId: "thread-notif")
+
+        #expect(
+            pendingAtWakeStart == "thread-notif",
+            "handleNotificationTap registered the target after handleRemoteWake, so .established during the walk missed it")
+        model.forgetAllHosts()
+    }
+
+    @Test("an .established from a notification wake rehydrates the projection")
+    func establishedFromWakeRehydrates() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(reason: "notification-tap", timeoutMs: 0)
+        #expect(model.aliveRehydrateInvocationsForTesting == 0)
+
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 1,
+            ".established from a wake did not call rehydrateAfterAliveWake — home list stays stale")
+        model.forgetAllHosts()
+    }
+
+    @Test("silent push and approval wakes do not arm wake rehydrate")
+    func silentAndApprovalWakesDoNotArmRehydrate() async {
+        let model = makePairedModel()
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(
+            reason: RemoteSessionModel.silentPushWakeReason, timeoutMs: 0)
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 0,
+            "silent-push establish spent the background budget on a projection resync")
+
+        model.setPhaseForTesting(.idle)
+        _ = await model.handleRemoteWake(
+            reason: RemoteSessionModel.approvalAckWakeReason, timeoutMs: 0)
+        model.applySessionEstablishedForTesting()
+        #expect(
+            model.aliveRehydrateInvocationsForTesting == 0,
+            "approval-ack establish spent the background budget on a projection resync")
+        model.forgetAllHosts()
+    }
+
+    @Test("shell policy holds ConnectedShell on idle/error only after a real pairing")
+    func shellPolicyHoldsOnlyAfterPairing() {
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .idle))
+        #expect(
+            SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .connecting))
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: false, hasStoredPairing: true, phase: .idle),
+            "first pairing must still get PairingView")
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: false, phase: .idle))
+        #expect(
+            !SessionShellPolicy.showShellDuringDrop(
+                wasEverConnected: true, hasStoredPairing: true, phase: .connected))
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectCached.\(UUID().uuidString)")!
+        let store = seedPairing(defaults: defaults)
+        return RemoteSessionModel(
+            identityStore: CachedSeedStore(), pairingStore: store, pushGatewayDefaults: defaults)
+    }
+
+    private func seedPairing(defaults: UserDefaults) -> UserDefaultsPairedHostStore {
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Cached Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-08-27T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return store
+    }
+
+    private struct CachedSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}
+
+/// Round 6 (2026-09-15, user-reported on device: Home Screen AND notification
+/// opens both storm): every earlier round bounded how many dials a burst of
+/// WAKES could buy. None touched what happens after a successful establish —
+/// the phone fires its establish-time actions, each demands an encrypted pong
+/// within 6s, and the Mac's pong is queued behind the projection snapshot it
+/// is streaming (and behind its post-establish chat-store sweep). The missed
+/// pong was read as "host unavailable" → `.health socketAlive:false` from
+/// `.connected` → teardown of a healthy session → walk → establish → sweep →
+/// missed pong → … A re-dial can never help against a busy Mac; only a dead
+/// SOCKET is worth one.
+@Suite("Reconnect storm — peer-silent hold")
+@MainActor
+struct ReconnectStormPeerSilentTests {
+    private static let unroutableRelay = "ws://reconnect-storm-peer.invalid:9"
+
+    @Test("a silent Mac behind a live socket holds the session instead of dialling")
+    func peerSilentOnLiveSocketDoesNotDial() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 1)))
+        model.installBareClientForTesting()
+        model.healthProbeOverrideForTesting = { false }  // no pong, twice
+        model.socketProbeOverrideForTesting = { true }  // but the link is up
+
+        var threw = false
+        do {
+            _ = try await model.requestActionAckWithWakeForTesting(["method": "setWatchedThread"])
+        } catch TransportError.hostUnavailable {
+            threw = true
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+
+        #expect(threw, "the action must still fail honestly")
+        #expect(model.peerSilentHoldsForTesting == 1)
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "a busy Mac behind a live socket bought a fresh relay-door walk — the storm")
+        if case .connected = model.phase {
+            // expected: the session survives
+        } else {
+            Issue.record("phase became \(String(describing: model.phase)) instead of staying connected")
+        }
+        model.forgetAllHosts()
+    }
+
+    /// Teeth: the SAME silent peer over a DEAD socket is the case a dial fixes.
+    @Test("a silent Mac behind a dead socket still dials")
+    func peerSilentOnDeadSocketDials() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 1)))
+        model.installBareClientForTesting()
+        model.healthProbeOverrideForTesting = { false }
+        model.socketProbeOverrideForTesting = { false }
+
+        // The dial path then waits up to 12s for the walk (ATS-rejected, so it
+        // fails at once); poll for the dial rather than racing a fixed sleep
+        // against the rest of the suite sharing the MainActor.
+        let action = Task { try await model.requestActionAckWithWakeForTesting(["method": "x"]) }
+        for _ in 0..<40 where model.trustedReconnectDialsForTesting == 0 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(model.peerSilentHoldsForTesting == 0)
+        #expect(model.trustedReconnectDialsForTesting == 1, "a dead socket must still earn a dial")
+        action.cancel()
+        _ = await action.result
+        model.forgetAllHosts()
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectStormPeer.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-09-15T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: PeerSeedStore(), pairingStore: store)
+    }
+
+    private struct PeerSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}

@@ -105,6 +105,8 @@ export interface GeminiToolContext {
   appRunId?: string
   appChatId?: string
   providerSessionId?: string | null
+  /** Main-resolved model selected for this exact run. */
+  model?: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
   sessionTrust?: boolean

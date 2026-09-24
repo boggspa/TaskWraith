@@ -22,6 +22,13 @@ import type {
   CanvasChartSeries,
   CanvasChartValidation
 } from '../../shared/canvasChart'
+import type { EmulatorObservation, EmulatorStepToolInput } from '../../shared/emulatorCanvas'
+import type {
+  AppDriveActionReport,
+  AppDriveObservationReceipt,
+  AppDriveSessionReport,
+  AppDriveVerificationVerdict
+} from '../appDrive/AppDriveSessionReport'
 import {
   CANVAS_CHART_KINDS,
   CANVAS_CHART_MAX_JSON_BYTES,
@@ -63,6 +70,8 @@ export type CanvasDriverKind =
   | 'device'
   /** Structured telemetry chart — screenshot-capable; docks without WebContentsView. */
   | 'chart'
+  /** Packaged WebAssembly emulator surface, admitted by CanvasService for the fixed reviewed game. */
+  | 'emulator'
 
 export type CanvasSessionStatus = 'opening' | 'active' | 'error' | 'closed'
 
@@ -74,6 +83,22 @@ export interface CanvasViewport {
 export interface CanvasDeviceTarget {
   /** Simulator UDID (uppercase UUID) or 'booted'. Omit → the booted simulator. */
   udid?: string
+}
+
+/**
+ * The only packaged game identifier reserved by the emulator foundation.
+ *
+ * This is deliberately a closed internal union: a Canvas caller cannot turn an
+ * emulator open into an arbitrary ROM/file/URL loader. The first runnable
+ * package slice supplies the reviewed assets for this identifier.
+ */
+export const CANVAS_EMULATOR_GAME_IDS = ['homebrew-demo'] as const
+export type CanvasEmulatorGameId = (typeof CANVAS_EMULATOR_GAME_IDS)[number]
+
+export function isCanvasEmulatorGameId(value: unknown): value is CanvasEmulatorGameId {
+  return (
+    typeof value === 'string' && (CANVAS_EMULATOR_GAME_IDS as readonly string[]).includes(value)
+  )
 }
 
 /**
@@ -92,11 +117,20 @@ export interface CanvasOpenInput {
   url?: string
   viewport?: CanvasViewport
   /**
-   * Host allowlist. When non-empty, only loopback hosts plus these hosts (exact
-   * or dotted-suffix match) may load. Link-local / cloud-metadata addresses are
-   * blocked regardless (SSRF guard), so an allowlist can never re-enable them.
+   * INTERNAL ONLY. The fixed packaged emulator game to start. Public MCP
+   * admission goes through emulator_open, which always passes the reviewed
+   * packaged id; arbitrary game/ROM/URL input is never accepted.
    */
-  originAllowlist?: string[]
+  gameId?: CanvasEmulatorGameId
+  /**
+   * Bind this canvas to one saved site login (web driver only).
+   *
+   * The surface then uses that site's OWN persistent partition and may only
+   * navigate documents to origins the user authorized for it. Omitted means the
+   * pre-existing unbound surface on the shared app-wide profile.
+   * See docs/appdrive/authorized-site-sessions.md.
+   */
+  siteId?: string
   // --- device driver (iOS simulator; P4) ---
   /** Target simulator. Omit → the currently-booted sim. */
   device?: CanvasDeviceTarget
@@ -105,18 +139,19 @@ export interface CanvasOpenInput {
   /** Bundle id to launch + screenshot. REQUIRED for the device driver. */
   bundleId?: string
   /**
-   * Renderer-pane embed (web driver only): host the preview as a WebContentsView
-   * inside the app window instead of a standalone BrowserWindow. Set by the
-   * renderer's canvas-pane IPC, or by the agent executor only after the caller
-   * explicitly requests the governed `presentation: "dock"` tool contract.
+   * Renderer-pane embed for a live web, sketch, or internal emulator driver:
+   * host the preview as a WebContentsView inside the app window instead of a
+   * standalone BrowserWindow. Renderer IPC opens web/sketch surfaces; the
+   * packaged emulator is admitted only through the main-owned path, under
+   * canonical agent or trusted renderer authority.
    */
   embed?: boolean
   /**
    * INTERNAL ONLY. Distinguishes an explicit agent request to focus the Canvas
    * dock from an ordinary renderer-owned embed (for example, a multiview pane).
-   * For web/sketch this requires `embed: true`. For `chart`, presentation:"dock"
-   * is allowed WITHOUT a WebContentsView embed (native TelemetryPane). Renderer
-   * IPC never forwards this field.
+   * For web/sketch/internal-emulator this requires `embed: true`. For `chart`,
+   * presentation:"dock" is allowed WITHOUT a WebContentsView embed (native
+   * TelemetryPane). Renderer IPC never forwards this field.
    */
   presentation?: 'dock'
   // --- html driver (agent-authored layout/SVG; canvas_render_html) ---
@@ -195,6 +230,8 @@ export interface CanvasElementTree {
    * their isolated renderer world and retain an independent main-process guard.
    */
   inputEpoch?: number
+  /** Trusted post-action observation receipt for canvas_drive_verify. */
+  driveObservation?: AppDriveObservationReceipt
 }
 
 export interface CanvasFrame {
@@ -213,6 +250,39 @@ export interface CanvasFrame {
    * trail) should be able to see that the redaction ran.
    */
   secretsRedacted?: number
+}
+
+/** Public-safe emulator observation plus its separately delivered PNG bytes. */
+export interface CanvasEmulatorObservationResult {
+  readonly observation: EmulatorObservation
+  readonly frame: Readonly<CanvasFrame>
+  readonly driveObservation?: AppDriveObservationReceipt
+}
+
+export type CanvasEmulatorStepRefusalReason =
+  | 'stale_observation'
+  | 'stale_input_epoch'
+  | 'user_active'
+  | Extract<
+      CanvasActRefusalReason,
+      | 'appdrive_lease_required'
+      | 'appdrive_lease_expired'
+      | 'appdrive_step_budget_exhausted'
+      | 'appdrive_binding_mismatch'
+      | 'appdrive_independent_verifier_required'
+    >
+
+/** Honest whole-macro status; `executed` may be true while `partial` is true. */
+export interface CanvasEmulatorStepResult extends CanvasEmulatorObservationResult {
+  readonly outcome: 'completed' | 'refused' | 'interrupted'
+  readonly refusalReason?: CanvasEmulatorStepRefusalReason
+  readonly framesRequested: number
+  readonly framesCompleted: number
+  readonly executed: boolean
+  readonly partial: boolean
+  readonly driveReportId?: string
+  readonly driveActionId?: string
+  readonly independentVerificationRequired?: boolean
 }
 
 export interface CanvasElementDetail {
@@ -234,14 +304,27 @@ export interface CanvasInspectInput {
   expectedObservationId?: string
 }
 
-/** P1 interaction. ref-first; selector/xy are explicit fallbacks. */
+export type CanvasActionKind = 'click' | 'fill' | 'key' | 'scroll' | 'hover' | 'select' | 'wait_for'
+
+export type CanvasControlActionKind = Exclude<CanvasActionKind, 'wait_for'>
+
+/** Structured interaction. ref-first; selector/xy are explicit fallbacks. */
 export interface CanvasActionInput {
-  kind: 'click' | 'fill'
+  kind: CanvasActionKind
   ref?: string
   selector?: string
   x?: number
   y?: number
   value?: string
+  /** Non-text keyboard key (Enter/Escape/Tab/arrows/etc.) for `key`. */
+  key?: string
+  /** Scroll delta in CSS pixels for `scroll`. */
+  deltaX?: number
+  deltaY?: number
+  /** Poll ceiling for `wait_for` (milliseconds). */
+  timeoutMs?: number
+  /** Require a different Ensemble participant to attest the postcondition. */
+  requireIndependentVerifier?: boolean
   /**
    * The `inputEpoch` from the snapshot this action was planned against. When
    * supplied and no longer current — i.e. the human has touched the surface since
@@ -284,10 +367,30 @@ export type CanvasActRefusalReason =
    * The observation the plan was built on is stale; re-snapshot.
    */
   | 'stale_input_epoch'
+  /** No live user-minted AppDrive lease exists for this exact web surface. */
+  | 'appdrive_lease_required'
+  /** The bounded AppDrive lease expired and must be approved again. */
+  | 'appdrive_lease_expired'
+  /** The user-approved AppDrive step budget has been consumed. */
+  | 'appdrive_step_budget_exhausted'
+  /** The lease belongs to another run/provider/participant binding. */
+  | 'appdrive_binding_mismatch'
+  /** A solo actor requested a verifier split that requires two Ensemble seats. */
+  | 'appdrive_independent_verifier_required'
+  /** The driver intentionally does not implement this structured verb. */
+  | 'unsupported_action'
+  /** `wait_for` reached its bounded timeout without finding the target. */
+  | 'wait_timeout'
   /**
    * Native target appears consequential and no content-bound confirmation
    * receipt exists. Nothing was dispatched.
    */
+  /**
+   * The canvas is bound to a saved site login the user granted READ access to.
+   * Never retried and never worked around: the user chose to be signed in
+   * there without being acted for, and only they can widen it.
+   */
+  | 'site_read_only'
   | 'consequential_confirmation_required'
 
 /**
@@ -315,7 +418,7 @@ export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
 
 export interface CanvasActResult {
   ok: boolean
-  action: 'click' | 'fill'
+  action: CanvasActionKind
   ref?: string
   selector?: string
   found: boolean
@@ -348,6 +451,10 @@ export interface CanvasActResult {
    */
   url?: string
   title?: string
+  /** Value-free AppDrive report correlation for this consumed action step. */
+  driveReportId?: string
+  driveActionId?: string
+  independentVerificationRequired?: boolean
 }
 
 /**
@@ -583,6 +690,11 @@ export interface CanvasSessionSummary {
   isLoading?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  /**
+   * Live-only human-play flag (emulator driver). Present once a page
+   * observation exists; never present for persisted history.
+   */
+  humanActive?: boolean
 }
 
 /** Persisted session record (audit / history). */
@@ -593,11 +705,12 @@ export interface CanvasSessionRecord {
   url: string
   title: string
   viewport: CanvasViewport
-  originAllowlist: string[]
   status: CanvasSessionStatus
   chatId?: string
   runId?: string
   workspacePath?: string
+  /** The saved site login this canvas was bound to, when it was site-bound. */
+  siteId?: string
   createdAt: string
   updatedAt: string
   closedAt?: string
@@ -655,12 +768,32 @@ export interface CanvasController {
   ): Promise<{ canvasId: string } & CanvasSessionHandle>
   list(ctx: CanvasCallContext): CanvasSessionSummary[]
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null
+  /** Value-free AppDrive reports across web, Simulator, and managed native surfaces. */
+  driveReports?(
+    input: { reportId?: string; surfaceId?: string; limit?: number },
+    ctx: CanvasCallContext
+  ): readonly AppDriveSessionReport[]
+  /** Record a post-observation attestation for one reported action. */
+  verifyDriveAction?(
+    input: {
+      reportId: string
+      actionId: string
+      surfaceId: string
+      observationId: string
+      verdict: AppDriveVerificationVerdict
+    },
+    ctx: CanvasCallContext
+  ): AppDriveActionReport
   /**
    * Structured chart payload for a live chart session (Canvas dock TelemetryPane).
    * Returns null when the canvas is missing, not owned, or not a chart driver.
    */
   getChartDocument(canvasId: string, ctx: CanvasCallContext): CanvasChartDocument | null
-  snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree>
+  snapshot(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    options?: { driveActionId?: string }
+  ): Promise<CanvasElementTree>
   screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame>
   inspect(
     canvasId: string,
@@ -684,6 +817,7 @@ export interface CanvasController {
   ): Promise<CanvasViewport>
   click(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   fill(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
+  act(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
   annotate(canvasId: string, marks: CanvasMark[], ctx: CanvasCallContext): Promise<CanvasAnnotation>
   sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument>
   sketchUpdate(
@@ -709,6 +843,8 @@ export interface CanvasController {
     ctx: CanvasCallContext,
     opts?: { chargeInteraction?: boolean }
   ): Promise<CanvasNavState>
+  /** Main-owned live placement update used when a Canvas pop-out returns. */
+  presentInDock?(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 
@@ -718,6 +854,9 @@ export interface CanvasCallContext {
   chatId?: string
   runId?: string
   workspacePath?: string
+  /** Main-owned renderer WebContents id for an embedded Canvas host. Never
+   * accepted from MCP/tool input; renderer IPC stamps it from the sender. */
+  surfaceHostId?: number
   /**
    * Ensemble seat that opened the canvas (when present). Device-driver lease
    * mint uses this as ownerParticipantId.
@@ -725,6 +864,29 @@ export interface CanvasCallContext {
   participantId?: string
   /** Required by CanvasService for the signed-elevated canvas_eval verb. */
   canvasEvalApproval?: CanvasEvalApprovalReceipt
+}
+
+/**
+ * Separate internal emulator seam. CanvasController remains unchanged so every
+ * existing generic Canvas fake need not pretend to expose emulator controls.
+ */
+export interface CanvasEmulatorController {
+  observeEmulator(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorObservationResult>
+  stepEmulator(
+    canvasId: string,
+    input: EmulatorStepToolInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorStepResult>
+}
+
+/** Main-only exact-surface resolution for future AppDrive composition wiring. */
+export type CanvasEmulatorSurfaceResolution = 'emulator' | 'other' | 'missing'
+
+export interface CanvasEmulatorSurfaceResolver {
+  resolveEmulatorSurface(canvasId: string, ctx: CanvasCallContext): CanvasEmulatorSurfaceResolution
 }
 
 // ---------------------------------------------------------------------------
@@ -830,14 +992,6 @@ export function isLoopbackHost(rawHost: string): boolean {
   return classifyCanvasHost(rawHost) === 'loopback'
 }
 
-function hostMatchesAllowlist(rawHost: string, allowlist: string[]): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
-  const allow = allowlist
-    .map((entry) => entry.toLowerCase().trim().replace(/\.$/, ''))
-    .filter(Boolean)
-  return allow.some((entry) => host === entry || host.endsWith(`.${entry}`))
-}
-
 export interface CanvasUrlValidation {
   ok: boolean
   reason?: string
@@ -847,13 +1001,12 @@ export interface CanvasUrlValidation {
 }
 
 /**
- * Top-level open gate. Blocks non-http(s) and link-local/metadata always;
- * allows loopback always; allows a private (RFC1918 / ULA / CGNAT) host only if
- * it is in the allowlist; allows public hosts (the user-gated canvas_open modal
- * is the governing control there, and isCanvasRequestBlocked stops the loaded
- * page from then reaching internal ranges). `URL` is a Node/Web global.
+ * Top-level browser gate. Any http(s) host the user enters is valid, including
+ * loopback, LAN, CGNAT, and ULA addresses. Link-local/cloud-metadata targets
+ * remain a fixed deny rule rather than an origin allowlist. `URL` is a Node/Web
+ * global.
  */
-export function validateCanvasUrl(rawUrl: string, allowlist: string[] = []): CanvasUrlValidation {
+export function validateCanvasUrl(rawUrl: string): CanvasUrlValidation {
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -878,39 +1031,17 @@ export function validateCanvasUrl(rawUrl: string, allowlist: string[] = []): Can
       hostClass
     }
   }
-  if (hostClass === 'loopback') return { ok: true, host, hostClass, normalizedUrl }
-  if (hostClass === 'private') {
-    return hostMatchesAllowlist(host, allowlist)
-      ? { ok: true, host, hostClass, normalizedUrl }
-      : {
-          ok: false,
-          reason: `Private host "${host}" must be in the canvas origin allowlist.`,
-          host,
-          hostClass
-        }
-  }
-  // public
-  if (allowlist.length > 0 && !hostMatchesAllowlist(host, allowlist)) {
-    return {
-      ok: false,
-      reason: `Host "${host}" is not in the canvas origin allowlist.`,
-      host,
-      hostClass
-    }
-  }
   return { ok: true, host, hostClass, normalizedUrl }
 }
 
 /**
- * Per-request SSRF gate for EVERY request the loaded page makes — wired to
- * session.webRequest.onBeforeRequest, so it covers the main frame, subframes,
- * subresources (img/script/fetch/XHR) and websockets that the navigation
- * events miss. Blocks link-local/metadata always and private ranges unless
- * allowlisted; allows loopback + public (a real page legitimately loads public
- * CDNs and same-origin loopback APIs). This is what actually closes the
- * iframe/fetch-to-metadata hole.
+ * Per-request fixed deny rule for EVERY request the loaded page makes — wired
+ * to session.webRequest.onBeforeRequest, so it covers the main frame,
+ * subframes, subresources and websockets. Ordinary public, loopback and private
+ * network requests are all browser-addressable; link-local/cloud-metadata
+ * targets stay blocked.
  */
-export function isCanvasRequestBlocked(rawUrl: string, allowlist: string[] = []): boolean {
+export function isCanvasRequestBlocked(rawUrl: string): boolean {
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -920,8 +1051,7 @@ export function isCanvasRequestBlocked(rawUrl: string, allowlist: string[] = [])
   if (!parsed.hostname) return false
   const hostClass = classifyCanvasHost(parsed.hostname)
   if (hostClass === 'linklocal') return true
-  if (hostClass === 'private') return !hostMatchesAllowlist(parsed.hostname, allowlist)
-  return false // loopback / public / invalid → allow
+  return false // loopback / private / public / invalid → allow
 }
 
 /**

@@ -1,0 +1,270 @@
+/**
+ * Provider registry for the pure-Node Host.
+ *
+ * The registry dispatches read operations to the correct provider instance,
+ * computes aggregate status/auth projections, and exposes capability flags for
+ * the production server. It rejects duplicate ids and can validate that the
+ * composed set exactly matches the live static set before the listener opens.
+ */
+
+import { createHash } from 'node:crypto'
+
+import {
+  ANTIGRAVITY_PROVIDER_ID,
+  LIVE_SELECTABLE_PROVIDER_IDS,
+  isLiveSelectableProvider
+} from '../shared/retiredProviders'
+import type { HostProviderModelProjection } from '../shared/hostProtocol'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderAuthStatusProjection,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
+import type { HostProviderRunPort } from '../host-runtime/HostProviderRunPort'
+import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderInventoryModel
+} from './HostNodeProvider'
+
+export interface IHostNodeProviderRegistry {
+  readonly providerIds: readonly string[]
+  readonly supportsApprovals: boolean
+  readonly supportsQuestions: boolean
+  hasProvider(providerId: string): boolean
+  getInstance(providerId: string): HostNodeProviderInstance | undefined
+  getOffers(providerId: string): HostProviderOffersProjection | undefined
+  refreshOffers(providerId: string): Promise<HostProviderOffersProjection | undefined>
+  providerStatuses(): Promise<readonly HostProviderStatusProjection[]>
+  providerAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection | null>
+  providerAuthFlows(providerId: string): Promise<readonly HostProviderAuthFlowProjection[] | null>
+  shutdown(): Promise<void>
+}
+
+export interface HostNodeProviderRegistryOptions {
+  readonly providers: readonly HostNodeProvider[]
+  readonly runPort: HostProviderRunPort
+  readonly interactions: HostNodeInteractionResolver
+}
+
+function isUsableInventoryModel(value: unknown): value is HostNodeProviderInventoryModel {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const model = value as { modelId?: unknown; label?: unknown }
+  if (typeof model.modelId !== 'string' || typeof model.label !== 'string') return false
+  if (
+    model.modelId.length === 0 ||
+    model.modelId.length > 512 ||
+    model.label.length === 0 ||
+    model.label.length > 200 ||
+    model.modelId.trim() !== model.modelId ||
+    model.label.trim() !== model.label
+  ) {
+    return false
+  }
+  // eslint-disable-next-line no-control-regex -- inventory metadata never carries control bytes.
+  return !/[\u0000-\u001f\u007f]/.test(model.modelId + model.label)
+}
+
+/**
+ * Merge a provider's snapshot-only metadata with its currently runnable
+ * offers. Live offers replace a same-id fallback row, while fallback rows
+ * remain visible when a dynamic probe is temporarily unavailable.
+ */
+function providerInventoryModels(
+  factory: HostNodeProvider,
+  offers: HostProviderOffersProjection
+): HostNodeProviderInventoryModel[] {
+  const byId = new Map<string, HostNodeProviderInventoryModel>()
+  const add = (candidate: unknown): void => {
+    if (!isUsableInventoryModel(candidate)) return
+    byId.set(candidate.modelId.toLowerCase(), {
+      modelId: candidate.modelId,
+      label: candidate.label
+    })
+  }
+
+  try {
+    for (const model of factory.getInventoryModels?.() ?? []) add(model)
+  } catch {
+    // A cache read is advisory. The dynamic runtime offers still get a chance
+    // to publish their current rows below.
+  }
+  for (const model of offers.models) {
+    if (!model.available) continue
+    add({ modelId: model.modelId, label: model.label })
+  }
+
+  const preferredModel = offers.models.find((model) => model.default && model.available)
+  if (!preferredModel) return [...byId.values()]
+  const preferredKey = preferredModel.modelId.toLowerCase()
+  const preferred = byId.get(preferredKey)
+  if (!preferred) return [...byId.values()]
+  return [preferred, ...[...byId.values()].filter((model) => model !== preferred)]
+}
+
+/** True when the composed set exactly equals the canonical live-selectable set. */
+export function validateHostNodeProviderComposition(providerIds: readonly string[]): void {
+  const composed = new Set(providerIds)
+  if (
+    composed.size !== LIVE_SELECTABLE_PROVIDER_IDS.length ||
+    !LIVE_SELECTABLE_PROVIDER_IDS.every((id) => composed.has(id))
+  ) {
+    throw new Error(
+      `HostNodeProviderRegistry requires the exact live provider set: ${LIVE_SELECTABLE_PROVIDER_IDS.join(', ')}`
+    )
+  }
+}
+
+export class HostNodeProviderRegistry implements IHostNodeProviderRegistry {
+  private readonly factories = new Map<string, HostNodeProvider>()
+  private readonly providers = new Map<string, HostNodeProviderInstance>()
+  private readonly offers = new Map<string, HostProviderOffersProjection>()
+  private readonly _providerIds: string[]
+  private readonly _supportsApprovals: boolean
+  private readonly _supportsQuestions: boolean
+
+  constructor(options: HostNodeProviderRegistryOptions) {
+    const ids: string[] = []
+    let approvals = false
+    let questions = false
+    for (const factory of options.providers) {
+      const conditionallyAdmitted =
+        factory.providerId === ANTIGRAVITY_PROVIDER_ID &&
+        factory.conditionalAdmission === 'antigravity-live-guarded'
+      if (!isLiveSelectableProvider(factory.providerId) && !conditionallyAdmitted) {
+        throw new Error(
+          `HostNodeProviderRegistry rejected non-live provider: ${factory.providerId}`
+        )
+      }
+      if (this.providers.has(factory.providerId)) {
+        throw new Error(
+          `HostNodeProviderRegistry rejected duplicate provider: ${factory.providerId}`
+        )
+      }
+      const instance = factory.create({
+        runPort: options.runPort,
+        interactions: options.interactions
+      })
+      this.factories.set(factory.providerId, factory)
+      this.providers.set(factory.providerId, instance)
+      this.offers.set(factory.providerId, factory.offers)
+      ids.push(factory.providerId)
+      if (factory.supportsApprovals) approvals = true
+      if (factory.supportsQuestions) questions = true
+    }
+    this._providerIds = ids
+    this._supportsApprovals = approvals
+    this._supportsQuestions = questions
+  }
+
+  get providerIds(): readonly string[] {
+    return this._providerIds
+  }
+
+  get supportsApprovals(): boolean {
+    return this._supportsApprovals
+  }
+
+  get supportsQuestions(): boolean {
+    return this._supportsQuestions
+  }
+
+  providerInventory(): readonly HostProviderModelProjection[] {
+    const inventory: HostProviderModelProjection[] = []
+    for (const providerId of this.providerIds) {
+      const factory = this.factories.get(providerId)!
+      const offers = this.offers.get(providerId)!
+      const models = providerInventoryModels(factory, offers)
+      if (factory.conditionalAdmission && models.length === 0) continue
+      if (models.length === 0) {
+        inventory.push({
+          providerId,
+          displayProvider: factory.displayProvider,
+          shortCode: factory.shortCode,
+          available: true
+        })
+        continue
+      }
+      for (const model of models) {
+        inventory.push({
+          providerId,
+          displayProvider: factory.displayProvider,
+          shortCode: factory.shortCode,
+          available: true,
+          modelId: model.modelId,
+          modelLabel: model.label
+        })
+      }
+    }
+    return inventory
+  }
+
+  hasProvider(providerId: string): boolean {
+    return this.providers.has(providerId)
+  }
+
+  getInstance(providerId: string): HostNodeProviderInstance | undefined {
+    return this.providers.get(providerId)
+  }
+
+  getOffers(providerId: string): HostProviderOffersProjection | undefined {
+    return this.offers.get(providerId)
+  }
+
+  async refreshOffers(providerId: string): Promise<HostProviderOffersProjection | undefined> {
+    const instance = this.providers.get(providerId)
+    const previous = this.offers.get(providerId)
+    if (!instance || !previous || !instance.getOffers) return previous
+    try {
+      const current = await instance.getOffers()
+      if (current.providerId !== providerId) {
+        throw new Error('Dynamic provider offers changed provider identity')
+      }
+      this.offers.set(providerId, current)
+      return current
+    } catch {
+      const unavailable: HostProviderOffersProjection = {
+        providerId,
+        offerRevision: createHash('sha256')
+          .update(`${previous.offerRevision}:dynamic-unavailable`)
+          .digest('hex'),
+        models: [],
+        postures: previous.postures.map((posture) => ({ ...posture, available: false }))
+      }
+      this.offers.set(providerId, unavailable)
+      return unavailable
+    }
+  }
+
+  async providerStatuses(): Promise<readonly HostProviderStatusProjection[]> {
+    const statuses = await Promise.all(
+      [...this.providers.values()].map(async (instance) => {
+        await this.refreshOffers(instance.providerId)
+        return instance.getStatus()
+      })
+    )
+    return statuses
+  }
+
+  async providerAuthStatus(providerId: string): Promise<HostProviderAuthStatusProjection | null> {
+    const instance = this.providers.get(providerId)
+    if (!instance) return null
+    await this.refreshOffers(providerId)
+    return instance.getAuthStatus()
+  }
+
+  async providerAuthFlows(
+    providerId: string
+  ): Promise<readonly HostProviderAuthFlowProjection[] | null> {
+    const instance = this.providers.get(providerId)
+    if (!instance) return null
+    await this.refreshOffers(providerId)
+    return instance.getAuthFlows()
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all([...this.providers.values()].map((instance) => instance.shutdown()))
+  }
+}

@@ -67,6 +67,8 @@ import {
   CloseoutSummarySnapshot,
   ContinuationProposalRequest,
   ContinuationProposalSnapshot,
+  ContinuationTitleApplyRequest,
+  ContinuationTitleApplyResult,
   AgenticServiceId,
   EffectiveRunPermissions,
   AuditRunRecord,
@@ -87,10 +89,32 @@ import {
   HydratedToolActivityDetail,
   ToolActivityDetailRef
 } from '../main/store/types'
+import type { CommandRuleListItem, CommandRuleMutationResult } from '../shared/commandRules'
+import type {
+  RendererChatTranscriptMutationRequest,
+  RendererChatTranscriptMutationResult
+} from '../shared/rendererChatTranscriptMutation'
+import type {
+  ChatComposerSelectionPatchRequest,
+  ChatComposerSelectionPatchResult
+} from '../shared/chatComposerSelectionPatch'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type {
+  UsageWebSessionImportOutcome,
+  UsageWebSessionProviderId,
+  UsageWebSessionStatus
+} from '../shared/usageWebSession'
 import type { DailyUsageRollupPayload } from '../shared/dailyUsageRollup'
 import type { TranscriptExportScope } from '../shared/transcriptExportScope'
+import type { StartupAuthorityRecoveryState } from '../shared/startupAuthority'
+import type { ChatPopoutPresentation } from '../shared/chatPopoutPresentation'
 import type { ArchivedChatExportFormat } from '../shared/archivedChatExport'
+import type { TranscriptPage, TranscriptPageRequest } from '../shared/transcriptPage'
+import type {
+  ExternalProviderThreadImportChatSummary,
+  ExternalProviderThreadImportProvider,
+  ExternalProviderThreadImportResult
+} from '../shared/externalProviderThreadImport'
 import type {
   LiveSteeringCancelRequest,
   LiveSteeringCancelResult,
@@ -107,6 +131,7 @@ import type {
 import type {
   HostLifecycleActionRequest,
   HostLifecycleActionResult,
+  HostLifecycleInspectResult,
   HostLifecycleSnapshot,
   HostLifecycleStatusResult
 } from '../shared/hostLifecycle'
@@ -119,6 +144,10 @@ import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPre
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import type {
+  ChatUpdateInterestSnapshot,
+  ChatUpdateInvalidation
+} from '../shared/chatUpdateInterest'
 import type {
   RendererDiagnosticClientSample,
   RendererErrorBoundaryReport
@@ -149,6 +178,7 @@ import type {
   ProjectReferenceExtractConsent
 } from '../shared/projectReferenceExtract'
 import type { ProjectStudioCompanionMeta, ProjectStudioKind } from '../shared/projectStudio'
+import type { WebSiteLogin, WebSiteLoginAccess } from '../shared/webSiteLogin'
 import type { DispatchResult } from '../main/services/RunCoordinator'
 import type {
   ProjectLegacyImportMarker,
@@ -158,7 +188,8 @@ import type {
 } from '../main/store/ProjectRegistry'
 import type {
   ChatPopoutRoundExpansionSnapshot,
-  ChatPopoutScrollState
+  ChatPopoutScrollState,
+  TranscriptView
 } from '../shared/chatPopoutTransfer'
 import type {
   WorkflowRunSummary,
@@ -262,6 +293,12 @@ import type {
 } from '../main/DiffService'
 import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
+  SharedWorkspaceOverview,
+  SharedWorkspaceContributionPreview,
+  SharedWorkspaceActionRequest,
+  SharedWorkspaceActionResult
+} from '../shared/sharedWorkspace'
+import type {
   SimulatorCapabilityStatus,
   SimulatorDeviceInfo,
   SimulatorGestureResult,
@@ -309,7 +346,9 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphArchiveResult,
   ExecutionGraphDiagnosticsSnapshot,
+  ExecutionGraphRecoveryRetryCommand,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -488,6 +527,10 @@ interface ComposerRunInput {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   runtimeProfileId?: string
@@ -695,7 +738,19 @@ declare global {
   interface Window {
     api: {
       hostPlatform: NodeJS.Platform
+      pagedChatLiveUpdatesEnabled: boolean
       getRuntimeVersions: () => NodeJS.ProcessVersions
+      terminal: {
+        create: (workspacePath: string, sessionId: string, cliId?: string) => Promise<void>
+        write: (sessionId: string, data: string) => Promise<void>
+        resize: (sessionId: string, cols: number, rows: number) => Promise<void>
+        detach: (sessionId: string) => Promise<void>
+        kill: (sessionId: string) => Promise<void>
+        list: () => Promise<{ sessionId: string; workspacePath: string }[]>
+        getScrollback: (sessionId: string) => Promise<string>
+        onData: (callback: (sessionId: string, data: string) => void) => () => void
+        onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void
+      }
       channels: ChannelIpcApi
       channelAgents: ChannelAgentIpcApi
       channelMemberships: ChannelMemberIpcApi
@@ -883,6 +938,8 @@ declare global {
           }>
           defaultReasoningEffort?: string | null
           additionalSpeedTiers?: string[]
+          contextWindow?: number
+          ultraTaskSupported?: boolean
         }>
       >
       getAgentRateLimits: (provider: ProviderId, options?: { force?: boolean }) => Promise<any>
@@ -892,6 +949,17 @@ declare global {
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
       getDailyUsageRollup: () => Promise<DailyUsageRollupPayload>
       getQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
+      getUsageWebSessionStatus: (
+        provider: UsageWebSessionProviderId
+      ) => Promise<UsageWebSessionStatus>
+      importUsageWebSession: (
+        provider: UsageWebSessionProviderId
+      ) => Promise<UsageWebSessionImportOutcome>
+      clearUsageWebSession: (provider: UsageWebSessionProviderId) => Promise<{
+        ok: boolean
+        status: UsageWebSessionStatus
+        error?: string
+      }>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       /** Locally accumulated Mistral burn estimate; null until the seat has run. */
       getMistralQuotaEstimate: () => Promise<MistralQuotaSnapshot | null>
@@ -980,6 +1048,27 @@ declare global {
         worktreePath?: string
         chatId?: string
       }) => Promise<GitResult<WorkProvenanceSnapshot>>
+      gitSharedWorkspace: (payload: {
+        repoPath?: string
+        workspacePath?: string
+        worktreePath?: string
+        chatId?: string
+      }) => Promise<GitResult<SharedWorkspaceOverview>>
+      gitContributionPreview: (payload: {
+        repoPath?: string
+        workspacePath?: string
+        worktreePath?: string
+        chatId?: string
+        id: string
+      }) => Promise<GitResult<SharedWorkspaceContributionPreview>>
+      gitContributionAction: (
+        payload: {
+          repoPath?: string
+          workspacePath?: string
+          worktreePath?: string
+          chatId?: string
+        } & SharedWorkspaceActionRequest
+      ) => Promise<SharedWorkspaceActionResult>
       gitSubscribeSnapshot: (
         payload: {
           workspacePath?: string
@@ -1170,6 +1259,21 @@ declare global {
         error?: string
       }>
       clearKimiApiKey: () => Promise<void>
+      getKimiWebSessionStatus: () => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      }>
+      importKimiWebSession: () => Promise<{
+        ok: boolean
+        reason?: 'cancelled' | 'unavailable' | 'storeFailed'
+        status?: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+      }>
+      clearKimiWebSession: () => Promise<{
+        ok: boolean
+        status: { configured: boolean; encryptionAvailable: boolean; updatedAt?: string }
+        error?: string
+      }>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
       importOllamaWebSession: () => Promise<{
         ok: boolean
@@ -1191,6 +1295,9 @@ declare global {
         encryptionAvailable: boolean
         webSessionConfigured: boolean
         webSessionUpdatedAt?: string
+        cliSignedIn?: boolean
+        cliPlan?: string
+        cliSignInUpdatedAt?: string
       }>
       storeOllamaApiKey: (key: string) => Promise<{
         stored: boolean
@@ -1233,10 +1340,12 @@ declare global {
         numTurns?: number
       ) => Promise<any>
       startAgentReview: (provider: ProviderId, threadId: string, params?: any) => Promise<any>
+      getPendingAgentApprovals: () => Promise<AgentApprovalRequest[]>
       respondAgentApproval: (
         requestId: string,
         action: AgentApprovalAction,
-        intentNote?: string
+        intentNote?: string,
+        commandRuleOfferId?: string
       ) => Promise<
         | boolean
         | {
@@ -1245,8 +1354,11 @@ declare global {
             decisionSource: 'user' | 'system'
             reason?: string
             message?: string
+            commandRule?: CommandRuleListItem
           }
       >
+      listCommandRules: () => Promise<CommandRuleListItem[]>
+      removeCommandRule: (ruleId: string) => Promise<CommandRuleMutationResult>
       writeGeminiInput: (data: string) => Promise<boolean>
       getDiff: (
         workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }
@@ -1270,6 +1382,7 @@ declare global {
               kind: 'chat'
               chatId: string
               workspacePath?: string
+              presentation?: ChatPopoutPresentation
             }
       ) => Promise<{ ok: true }>
       dockSideChatPopout: (input: {
@@ -1278,6 +1391,7 @@ declare global {
         draft?: string
         scrollState?: ChatPopoutScrollState
         roundExpansion?: ChatPopoutRoundExpansionSnapshot
+        transcriptView?: TranscriptView | null
       }) => Promise<{ ok: true }>
       quitApp: () => Promise<boolean>
       listWorkspaceFiles: (workspace: string) => Promise<WorkspaceFileEntry[]>
@@ -1388,9 +1502,11 @@ declare global {
       hostProjectionReceiptLookup: (params: {
         commandId: string
       }) => Promise<{ ok: true; receipt: HostCommandReceipt } | { ok: false; error: string }>
-      /** Visible lifecycle of Host inside the current TaskWraith process. */
+      /** Visible lifecycle of the Host this TaskWraith process is attached to. */
       hostLifecycleStatus: () => Promise<HostLifecycleStatusResult>
       hostLifecycleSet: (request: HostLifecycleActionRequest) => Promise<HostLifecycleActionResult>
+      /** Live inspect: the snapshot, the Host's own status, and main's lease. Main window only. */
+      hostLifecycleInspect: () => Promise<HostLifecycleInspectResult>
       onHostLifecycleChanged: (handler: (snapshot: HostLifecycleSnapshot) => void) => () => void
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string
@@ -1450,7 +1566,7 @@ declare global {
         error?: string
       }>
       canvas: {
-        openWindow: (args: { url: string; originAllowlist?: string[]; chatId: string }) => Promise<
+        openWindow: (args: { url?: string; chatId: string }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -1460,12 +1576,17 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openEmbedded: (args: {
-          url: string
-          originAllowlist?: string[]
-          chatId: string
-          presentation?: 'dock'
-        }) => Promise<
+        openEmbedded: (args: { url?: string; chatId: string; presentation?: 'dock' }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
+        openEmulatorEmbedded: (args: { chatId: string; presentation?: 'dock' }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -1511,6 +1632,22 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        openPopout: (args: {
+          chatId: string
+          surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+          session?: {
+            canvasId: string
+            kind: 'web' | 'sketch' | 'emulator'
+            url?: string
+            title?: string
+          }
+        }) => Promise<
+          { ok: true; senderId: number; created: boolean } | { ok: false; error: string }
+        >
+        dockPopout: (args: {
+          chatId: string
+          surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+        }) => Promise<{ ok: true; canvasIds: string[] } | { ok: false; error: string }>
         listForChat: (chatId: string) => Promise<unknown[]>
         /**
          * Structured chart document for a chat-owned chart canvas (TelemetryPane).
@@ -1545,6 +1682,26 @@ declare global {
         list: () => Promise<unknown[]>
         onEvent: (handler: (event: unknown) => void) => () => void
         onNavState: (handler: (payload: unknown) => void) => () => void
+        onPopoutOpenSurface: (
+          handler: (payload: {
+            chatId: string
+            surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+            session?: {
+              canvasId: string
+              kind: 'web' | 'sketch' | 'emulator'
+              url?: string
+              title?: string
+            }
+          }) => void
+        ) => () => void
+        onPopoutDockRequest: (
+          handler: (payload: {
+            chatId: string
+            surface: 'browser' | 'sketch' | 'emulator' | 'mesh' | 'simulator' | 'media'
+            canvases: unknown[]
+          }) => void
+        ) => () => void
+        onPopoutChatUpdated: (handler: (payload: { chatId: string }) => void) => () => void
       }
       meshCanvas: {
         listForChat: (chatId: string) => Promise<unknown[]>
@@ -1805,8 +1962,7 @@ declare global {
       checkForUpdates: () => Promise<UpdateStateSnapshot>
       downloadUpdate: () => Promise<UpdateStateSnapshot>
       downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot>
-      installUpdateOnQuit: () => Promise<UpdateStateSnapshot>
-      installUpdateNow: () => Promise<UpdateStateSnapshot>
+      installUpdateNow: (options?: { force?: boolean }) => Promise<UpdateStateSnapshot>
       changelogSnapshot: () => Promise<ProductChangelogSnapshot>
       markChangelogSeen: (version: string) => Promise<ProductChangelogSnapshot>
       onUpdateStatusChanged: (callback: (snapshot: UpdateStateSnapshot) => void) => () => void
@@ -2245,6 +2401,31 @@ declare global {
         | { ok: true; text: string; truncated: boolean; charCount: number }
         | { ok: false; code: string; message: string }
       >
+      onWebSiteLoginsChanged: (callback: (site: WebSiteLogin) => void) => () => void
+      listWebSiteLogins: () => Promise<WebSiteLogin[]>
+      listWebSiteLoginMigrationCandidates: () => Promise<Array<{ origin: string; host: string }>>
+      dismissWebSiteLoginMigrationCandidate: (input: {
+        origin: string
+      }) => Promise<{ ok: boolean; error?: string }>
+      clearSharedBrowserData: () => Promise<{ ok: boolean; error?: string }>
+      addWebSiteLogin: (input: {
+        origin: string
+        label?: string
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      updateWebSiteLogin: (input: {
+        id: string
+        label?: string
+        extraOrigins?: string[]
+        agentAccess?: WebSiteLoginAccess
+      }) => Promise<{ ok: boolean; error?: string; site?: WebSiteLogin }>
+      removeWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
+      signInWebSiteLogin: (input: { id: string }) => Promise<{
+        ok: boolean
+        reason?: string
+        suggestedOrigins?: string[]
+        site?: WebSiteLogin | null
+      }>
+      signOutWebSiteLogin: (input: { id: string }) => Promise<{ ok: boolean; error?: string }>
       generateProjectStudioDraft: (input: {
         projectId: string
         kind: ProjectStudioKind
@@ -2280,9 +2461,20 @@ declare global {
       >
       clearWorkspaces: () => Promise<void>
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>
+      /** Transcript-reduced records carrying only commit receipts. */
+      getWorkspaceCommitAttributions: (workspaceId: string) => Promise<ChatRecord[]>
+      getHistoryIndexStatus: () => Promise<{
+        complete: boolean
+        loaded: number
+        failed: number
+        error: string | null
+      }>
+      getTranscriptMessage: (chatId: string, messageId: string) => Promise<ChatMessage | null>
+      getChatRunSummaries: (workspaceId?: string) => Promise<ChatListItem[]>
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
       getPinnedMessages: (workspaceId?: string) => Promise<PinnedMessageGroup[]>
       getChat: (chatId: string) => Promise<ChatRecord | null>
+      getChatTranscriptPage: (request: TranscriptPageRequest) => Promise<TranscriptPage | null>
       unarchiveChat: (
         chatId: string
       ) => Promise<
@@ -2298,6 +2490,9 @@ declare global {
         reason?: 'not-found' | 'not-archived' | 'invalid-request'
         error?: string
       }>
+      importExternalProviderThread: (input: {
+        provider: ExternalProviderThreadImportProvider
+      }) => Promise<ExternalProviderThreadImportResult<ExternalProviderThreadImportChatSummary>>
       createChat: (workspaceId: string, workspacePath: string) => Promise<ChatRecord>
       createGlobalChat: () => Promise<ChatRecord>
       createEnsembleChat: (args?: {
@@ -2338,6 +2533,13 @@ declare global {
         exactPickerParticipantId?: string
         /** P1 F6 — Use-next Project reference selection for this round. */
         projectReferenceContextSelection?: ProjectReferenceContextSelection
+        /** Rewind-from-message ("Edit & resend from here") restart hints;
+         * steer-mode only, advisory — MAIN sanitizes and re-resolves against
+         * its canonical roster. */
+        rewind?: {
+          resumeFromParticipantId?: string
+          suppressPromptEcho?: boolean
+        }
       }) => Promise<{ status: string; roundId?: string }>
       steerQueuedEnsemblePrompt: (payload: {
         chatId: string
@@ -2641,6 +2843,15 @@ declare global {
         displayName: string
       }>
       saveChat: (chat: ChatRecord) => Promise<ChatRecord>
+      /** `saveChat`, plus whether canonical took the write. A refusal resolves
+       *  with the canonical record exactly as an acceptance does. */
+      saveChatWithOutcome: (chat: ChatRecord) => Promise<{ chat: ChatRecord; accepted: boolean }>
+      patchChatComposerSelection: (
+        request: ChatComposerSelectionPatchRequest
+      ) => Promise<ChatComposerSelectionPatchResult>
+      mutateChatTranscript: (
+        request: RendererChatTranscriptMutationRequest
+      ) => Promise<RendererChatTranscriptMutationResult>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {
         protectedChatIds?: string[]
@@ -2659,6 +2870,11 @@ declare global {
       forceReleaseRecoveryBlockedWorkLock: (
         request: WorkLockRecoveryRequest
       ) => Promise<WorkLockRecoveryResult>
+      getStartupAuthorityState: () => Promise<StartupAuthorityRecoveryState>
+      retryStartupAuthority: () => Promise<StartupAuthorityRecoveryState>
+      onStartupAuthorityState: (
+        callback: (state: StartupAuthorityRecoveryState) => void
+      ) => () => void
       subscribeWorkLocks: (
         query: WorkLockProjectionQuery,
         callback: (update: WorkLockProjectionUpdate) => void
@@ -2705,6 +2921,14 @@ declare global {
         executionId: string,
         reason?: string
       ) => Promise<ExecutionRunProjection | null>
+      resumeExecutionRun: (executionId: string, reason?: string) => Promise<ExecutionRunProjection>
+      archiveExecutionRun: (
+        executionId: string,
+        reason?: string
+      ) => Promise<ExecutionGraphArchiveResult>
+      retryExecutionGraphRecovery: (
+        command?: ExecutionGraphRecoveryRetryCommand
+      ) => Promise<ExecutionGraphDiagnosticsSnapshot>
       cancelExecutionRunStep: (
         command: ExecutionRunCancelStepCommand
       ) => Promise<ExecutionRunProjection>
@@ -2823,6 +3047,9 @@ declare global {
       proposeContinuation: (
         request: ContinuationProposalRequest
       ) => Promise<ContinuationProposalSnapshot>
+      applyContinuationTitle: (
+        request: ContinuationTitleApplyRequest
+      ) => Promise<ContinuationTitleApplyResult>
       getApprovalLedger: (filter?: ApprovalLedgerFilter) => Promise<ApprovalLedgerRecord[]>
       recordApprovalElevationAck: (input: {
         provider: string
@@ -3019,8 +3246,19 @@ declare global {
       ) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
+      setChatUpdateInterests: (snapshot: ChatUpdateInterestSnapshot) => void
+      onChatUpdateInvalidated: (
+        callback: (invalidation: ChatUpdateInvalidation) => void
+      ) => () => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */
       onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => () => void
+      /**
+       * The host OS accent colour (macOS/Windows "accent"), or null where the
+       * platform reports none — the value `--accent` follows.
+       */
+      getSystemAccentColor: () => Promise<string | null>
+      /** The user changed their OS accent; re-apply without a reload. */
+      onSystemAccentColorChanged: (callback: (color: string | null) => void) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void
@@ -3090,6 +3328,9 @@ declare global {
           view?: 'editor' | 'diff'
         }) => void
       ) => () => void
+      onChatPopoutPresentationChanged: (
+        callback: (payload: { presentation: ChatPopoutPresentation }) => void
+      ) => () => void
       onSideChatDockRequest: (
         callback: (payload: {
           chatId: string
@@ -3098,6 +3339,7 @@ declare global {
           draft?: string
           scrollState?: ChatPopoutScrollState
           roundExpansion?: ChatPopoutRoundExpansionSnapshot
+          transcriptView?: TranscriptView | null
         }) => void
       ) => () => void
       onCreativeActionRequest: (

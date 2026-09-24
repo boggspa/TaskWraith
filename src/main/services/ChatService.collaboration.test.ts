@@ -50,6 +50,11 @@ function harness(options: { withQueue?: boolean } = {}) {
   const chats = new Map<string, ChatRecord>([['chat-1', chat()]])
   const store: ChatServiceStore = {
     getChats: vi.fn(() => Array.from(chats.values())),
+    getAbandonedReapCandidates: vi.fn(() => ({
+      chats: Array.from(chats.values()),
+      parentChatIds: new Set<string>()
+    })),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => Array.from(chats.values())),
     getChatList: vi.fn(() => []),
     getPinnedMessages: vi.fn(() => []),
     getChat: vi.fn((chatId) => chats.get(chatId) || null),
@@ -65,6 +70,10 @@ function harness(options: { withQueue?: boolean } = {}) {
       chats.set(next.appChatId, next)
       return next
     }),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: chats.get(request.chatId) || chat({ appChatId: request.chatId }),
+      changed: false
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn()
   }
@@ -859,6 +868,11 @@ function roomHarness(
   const calls: string[] = []
   const store: ChatServiceStore = {
     getChats: vi.fn(() => Array.from(chats.values())),
+    getAbandonedReapCandidates: vi.fn(() => ({
+      chats: Array.from(chats.values()),
+      parentChatIds: new Set<string>()
+    })),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => Array.from(chats.values())),
     getChatList: vi.fn((workspaceId?: string): ChatListItem[] =>
       Array.from(chats.values())
         .filter((record) => !workspaceId || record.workspaceId === workspaceId)
@@ -883,6 +897,10 @@ function roomHarness(
       chats.set(next.appChatId, next)
       return next
     }),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: chats.get(request.chatId) || chat({ appChatId: request.chatId }),
+      changed: false
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn()
   }

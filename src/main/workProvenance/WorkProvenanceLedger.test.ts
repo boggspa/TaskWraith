@@ -4,13 +4,15 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  promises as fs,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   readWorkProvenanceEvents,
@@ -19,6 +21,14 @@ import {
 } from './WorkProvenanceLedger'
 
 const roots: string[] = []
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 function makeRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'work-provenance-test-'))
@@ -42,6 +52,7 @@ function recorder(): WorkProvenanceRecorder {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true })
 })
 
@@ -308,10 +319,319 @@ describe('WorkProvenanceRecorder', () => {
   })
 
   it('bounds provider-seam provenance work without leaking late rejection', async () => {
+    let observedSignal: AbortSignal | undefined
     const started = Date.now()
-    const result = await settleWorkProvenanceWithin(() => new Promise<string>(() => undefined), 10)
+    const result = await settleWorkProvenanceWithin((signal) => {
+      observedSignal = signal
+      return new Promise<string>(() => undefined)
+    }, 10)
     expect(result).toBeNull()
+    expect(observedSignal?.aborted).toBe(true)
     expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('makes an aborted one-shot capture permanently null', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    const operation = await provenance.beginBrokeredMutation({
+      workspacePath: root,
+      operationId: 'aborted-capture',
+      toolName: 'replace',
+      actor: { runId: 'aborted-capture' },
+      targets: [{ path: target, kind: 'file' }]
+    })
+    writeFileSync(target, 'export const a = 12\n')
+
+    const entered = deferred()
+    const release = deferred()
+    const resumed = deferred()
+    const realLstat = fs.lstat.bind(fs)
+    let held = false
+    vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
+      if (!held && String(path).endsWith('/src/a.ts')) {
+        held = true
+        entered.resolve()
+        await release.promise
+        const stat = await realLstat(path)
+        resumed.resolve()
+        return stat
+      }
+      return realLstat(path)
+    })
+
+    let capture!: Promise<Awaited<ReturnType<NonNullable<typeof operation>['capture']>>>
+    const settlement = settleWorkProvenanceWithin(() => {
+      capture = operation!.capture('success')
+      return capture
+    }, 20)
+    await entered.promise
+    expect(await settlement).toBeNull()
+    expect(await capture).toBeNull()
+    expect(await operation!.capture('retry')).toBeNull()
+    release.resolve()
+    await resumed.promise
+    await Promise.resolve()
+    await provenance.persist(await operation!.capture('retry-again'))
+    expect(await readWorkProvenanceEvents(root)).toEqual([])
+  })
+
+  it('does not start delayed capture I/O from an expired deadline context', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    const operation = await provenance.beginBrokeredMutation({
+      workspacePath: root,
+      operationId: 'delayed-aborted-capture',
+      toolName: 'replace',
+      actor: { runId: 'delayed-aborted-capture' },
+      targets: [{ path: target, kind: 'file' }]
+    })
+    writeFileSync(target, 'export const a = 13\n')
+
+    const lstat = vi.spyOn(fs, 'lstat')
+    const unhandled: unknown[] = []
+    const onUnhandled = (error: unknown): void => {
+      unhandled.push(error)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    let delayedCapture: Promise<
+      Awaited<ReturnType<NonNullable<typeof operation>['capture']>>
+    > | null = null
+    try {
+      expect(
+        await settleWorkProvenanceWithin(() => {
+          setTimeout(() => {
+            delayedCapture = operation!.capture('success')
+          }, 30)
+          return new Promise<never>(() => undefined)
+        }, 10)
+      ).toBeNull()
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+      expect(delayedCapture).not.toBeNull()
+      expect(await delayedCapture!).toBeNull()
+      await new Promise((resolveWait) => setImmediate(resolveWait))
+      expect(lstat).not.toHaveBeenCalled()
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('removes an aborted native baseline before a later run begins', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    writeFileSync(target, 'export const a = 20\n')
+
+    const entered = deferred()
+    const release = deferred()
+    const realLstat = fs.lstat.bind(fs)
+    let held = false
+    const lstat = vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
+      if (!held && String(path).endsWith('/src/a.ts')) {
+        held = true
+        entered.resolve()
+        await release.promise
+      }
+      return realLstat(path)
+    })
+    let firstBegin!: ReturnType<WorkProvenanceRecorder['beginObservedNativeRun']>
+    const settlement = settleWorkProvenanceWithin(() => {
+      firstBegin = provenance.beginObservedNativeRun({
+        workspacePath: root,
+        runId: 'native-aborted',
+        actor: { runId: 'native-aborted' }
+      })
+      return firstBegin
+    }, 20)
+    await entered.promise
+    expect(await settlement).toBeNull()
+    lstat.mockRestore()
+
+    const later = await provenance.beginObservedNativeRun({
+      workspacePath: root,
+      runId: 'native-later',
+      actor: { runId: 'native-later' }
+    })
+    expect(later).not.toBeNull()
+    release.resolve()
+    expect(await firstBegin).toBeNull()
+    writeFileSync(target, 'export const a = 21\n')
+    await provenance.finishObservedNativeRun(later!, 'completed')
+
+    expect(await readWorkProvenanceEvents(root)).toMatchObject([
+      {
+        kind: 'origin',
+        confidence: 'observed-native',
+        operation: { id: 'native-later', exclusive: true }
+      }
+    ])
+  })
+
+  it('removes an aborted native finish before a later run begins', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    const finishing = await provenance.beginObservedNativeRun({
+      workspacePath: root,
+      runId: 'native-finishing',
+      actor: { runId: 'native-finishing' }
+    })
+    writeFileSync(target, 'export const a = 25\n')
+
+    const entered = deferred()
+    const release = deferred()
+    const realLstat = fs.lstat.bind(fs)
+    let held = false
+    const lstat = vi.spyOn(fs, 'lstat').mockImplementation(async (path) => {
+      if (!held && String(path).endsWith('/src/a.ts')) {
+        held = true
+        entered.resolve()
+        await release.promise
+      }
+      return realLstat(path)
+    })
+    let firstFinish!: ReturnType<WorkProvenanceRecorder['finishObservedNativeRun']>
+    const settlement = settleWorkProvenanceWithin(() => {
+      firstFinish = provenance.finishObservedNativeRun(finishing!, 'completed')
+      return firstFinish
+    }, 20)
+    await entered.promise
+    expect(await settlement).toBeNull()
+    lstat.mockRestore()
+
+    const later = await provenance.beginObservedNativeRun({
+      workspacePath: root,
+      runId: 'native-after-finish',
+      actor: { runId: 'native-after-finish' }
+    })
+    expect(later).not.toBeNull()
+    release.resolve()
+    await firstFinish
+    writeFileSync(target, 'export const a = 26\n')
+    await provenance.finishObservedNativeRun(later!, 'completed')
+
+    expect(await readWorkProvenanceEvents(root)).toMatchObject([
+      {
+        kind: 'origin',
+        confidence: 'observed-native',
+        operation: { id: 'native-after-finish', exclusive: true }
+      }
+    ])
+  })
+
+  it('serializes persistence and drops a queued receipt when its deadline expires', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    const firstOperation = await provenance.beginBrokeredMutation({
+      workspacePath: root,
+      operationId: 'persist-first',
+      toolName: 'replace',
+      actor: { runId: 'persist-first' },
+      targets: [{ path: target, kind: 'file' }]
+    })
+    writeFileSync(target, 'export const a = 30\n')
+    const firstCaptured = await firstOperation!.capture('success')
+    const secondOperation = await provenance.beginBrokeredMutation({
+      workspacePath: root,
+      operationId: 'persist-queued',
+      toolName: 'replace',
+      actor: { runId: 'persist-queued' },
+      targets: [{ path: target, kind: 'file' }]
+    })
+    writeFileSync(target, 'export const a = 31\n')
+    const secondCaptured = await secondOperation!.capture('success')
+
+    const linked = deferred()
+    const releaseLink = deferred()
+    const realLink = fs.link.bind(fs)
+    let held = false
+    vi.spyOn(fs, 'link').mockImplementation(async (existingPath, newPath) => {
+      await realLink(existingPath, newPath)
+      if (!held) {
+        held = true
+        linked.resolve()
+        await releaseLink.promise
+      }
+    })
+
+    const firstPersist = provenance.persist(firstCaptured)
+    await linked.promise
+    let queuedPersist!: Promise<void>
+    const queuedSettlement = settleWorkProvenanceWithin(() => {
+      queuedPersist = provenance.persist(secondCaptured)
+      return queuedPersist
+    }, 20)
+    expect((await queuedSettlement) == null).toBe(true)
+    await queuedPersist
+    releaseLink.resolve()
+    await firstPersist
+
+    const origins = (await readWorkProvenanceEvents(root)).filter(
+      (event) => event.kind === 'origin'
+    )
+    expect(origins).toHaveLength(1)
+    expect(origins[0].operation?.id).toBe('persist-first')
+    const eventsDirectory = join(
+      firstCaptured!.workspace.gitCommonDir,
+      'taskwraith',
+      'work-provenance-v1',
+      'events'
+    )
+    expect(readdirSync(eventsDirectory).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('finishes durable publication when the deadline expires after hard-link commit', async () => {
+    const root = makeRepo()
+    const provenance = recorder()
+    const target = join(root, 'src', 'a.ts')
+    const operation = await provenance.beginBrokeredMutation({
+      workspacePath: root,
+      operationId: 'persist-committed',
+      toolName: 'replace',
+      actor: { runId: 'persist-committed' },
+      targets: [{ path: target, kind: 'file' }]
+    })
+    writeFileSync(target, 'export const a = 40\n')
+    const captured = await operation!.capture('success')
+
+    const linked = deferred()
+    const releaseLink = deferred()
+    const realLink = fs.link.bind(fs)
+    vi.spyOn(fs, 'link').mockImplementation(async (existingPath, newPath) => {
+      await realLink(existingPath, newPath)
+      linked.resolve()
+      await releaseLink.promise
+    })
+    const open = vi.spyOn(fs, 'open')
+    let persistence!: Promise<void>
+    const settlement = settleWorkProvenanceWithin(() => {
+      persistence = provenance.persist(captured)
+      return persistence
+    }, 50)
+    await linked.promise
+    expect((await settlement) == null).toBe(true)
+    releaseLink.resolve()
+    await persistence
+
+    expect(await readWorkProvenanceEvents(root)).toMatchObject([
+      { kind: 'origin', operation: { id: 'persist-committed' } }
+    ])
+    const eventsDirectory = join(
+      captured!.workspace.gitCommonDir,
+      'taskwraith',
+      'work-provenance-v1',
+      'events'
+    )
+    expect(
+      open.mock.calls.some(
+        ([path, flags]) => String(path) === eventsDirectory && String(flags) === 'r'
+      )
+    ).toBe(true)
+    expect(readdirSync(eventsDirectory).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
   it('disables repository fsmonitor code while sampling a mutation baseline', async () => {

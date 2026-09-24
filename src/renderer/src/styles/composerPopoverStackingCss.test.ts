@@ -73,6 +73,24 @@ describe('composer popover vs transcript rail stacking', () => {
     expect(z).toBeGreaterThan(gutterZ)
   })
 
+  it('raises only roster-owned nested pickers above the outer Ensemble portal', () => {
+    const baseCombinedZ = baseRuleZIndex(
+      readCss('08-theme-picker-overrides.css'),
+      '.composer-combined-picker-popover'
+    )
+    const outerRosterZ = baseRuleZIndex(
+      readCss('03-composer-welcome-activity.css'),
+      '.composer-ensemble-toggle-popover'
+    )
+    const nestedRosterZ = baseRuleZIndex(
+      readCss('39-ensemble-roster-popover.css'),
+      '.composer-combined-picker-popover.is-ensemble-roster-nested-picker'
+    )
+
+    expect(baseCombinedZ).toBeLessThan(outerRosterZ)
+    expect(nestedRosterZ).toBeGreaterThan(outerRosterZ)
+  })
+
   it('keeps the chip popover from covering its own hover tooltip band', () => {
     // The tooltip is suppressed while the popover is open (`!overflowOpen` in
     // EnsembleParticipantsAboveRow), so they never actually collide — but both

@@ -56,7 +56,10 @@ describe('tokeniseMentions provider hue class', () => {
 
 describe('tokeniseMentions roster groups', () => {
   it('emits provider-neutral group segments without requiring a roster', () => {
-    const segments = tokeniseMentions('@All ask @Reviewers, then @BG.', [])
+    const segments = tokeniseMentions(
+      '@All ask @Captains and @Management, then @Reviewers and @BG.',
+      []
+    )
 
     expect(segments.filter((segment) => segment.kind === 'group-mention')).toEqual([
       {
@@ -64,6 +67,18 @@ describe('tokeniseMentions roster groups', () => {
         text: '@All',
         group: 'all',
         sourceLength: '@All'.length
+      },
+      {
+        kind: 'group-mention',
+        text: '@Captains',
+        group: 'captains',
+        sourceLength: '@Captains'.length
+      },
+      {
+        kind: 'group-mention',
+        text: '@Management',
+        group: 'management',
+        sourceLength: '@Management'.length
       },
       {
         kind: 'group-mention',
@@ -78,7 +93,9 @@ describe('tokeniseMentions roster groups', () => {
         sourceLength: '@BG'.length
       }
     ])
-    expect(segments.map((segment) => segment.text).join('')).toBe('@All ask @Reviewers, then @BG.')
+    expect(segments.map((segment) => segment.text).join('')).toBe(
+      '@All ask @Captains and @Management, then @Reviewers and @BG.'
+    )
     expect(hasResolvedMention('@Scouts inspect this', [])).toBe(true)
   })
 })

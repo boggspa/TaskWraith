@@ -1,7 +1,16 @@
 import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { MESH_MCP_TOOL_NAMES, type MeshMcpToolName } from '../../shared/taskWraithMcpCatalog'
+import { ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA } from '../../shared/ensembleFanoutLaneBriefs'
+import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA
+} from '../../shared/ensembleFanoutWriteScopes'
+import {
+  MCP_BROKER_LONG_POLL_TIMEOUT_MS,
+  MCP_BROKER_REQUEST_TIMEOUT_MS
+} from '../mcp/McpBrokerTimeouts'
 
 /**
  * The intentionally small coordination surface Pi receives in Ensemble mode.
@@ -11,71 +20,38 @@ import { MESH_MCP_TOOL_NAMES, type MeshMcpToolName } from '../../shared/taskWrai
  * TaskWraith broker. It is not a generic MCP proxy; only the fixed exact-file
  * and managed-shell lists below may be combined with it.
  */
-export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
-  'ensemble_yield',
-  'ensemble_send',
-  'ensemble_fanout',
-  'ensemble_poll_response',
-  'scout_brief',
-  'blackboard_post',
-  'blackboard_read',
-  'blackboard_delete'
-] as const)
+// Allowlists live in src/host-shared/pi/PiTaskWraithToolNames.ts so the pure-Node
+// Host shares one definition. Re-exported here: this module API is unchanged.
+import {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_ULTRATASK_DELEGATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES,
+  PI_MESH_TOOL_NAMES,
+  isPiEnsembleCoordinationToolName,
+  isPiUltraTaskDelegationToolName,
+  isPiTaskWraithToolName,
+  type PiEnsembleCoordinationToolName,
+  type PiUltraTaskDelegationToolName,
+  type PiExactFileToolName,
+  type PiManagedShellToolName,
+  type PiTaskWraithToolName
+} from '../../host-shared/pi/PiTaskWraithToolNames'
 
-/** Exact workspace mutation tools whose arguments can be locked and committed
- * inside TaskWraith's broker transaction. */
-export const PI_EXACT_FILE_TOOL_NAMES = Object.freeze([
-  'write_file',
-  'replace',
-  'apply_patch'
-] as const)
-
-/** Managed shell and elevation tools. Native Pi bash remains disabled: proven
- * reads use the normal route and opaque process effects require one visible,
- * audited host approval. */
-export const PI_MANAGED_SHELL_TOOL_NAMES = Object.freeze([
-  'run_shell_command',
-  'request_tool_permission'
-] as const)
-
-/** Chat-local Mesh scene/topology tools admitted through the normal main gate. */
-export const PI_MESH_TOOL_NAMES = Object.freeze([...MESH_MCP_TOOL_NAMES])
-
-export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
-export type PiExactFileToolName = (typeof PI_EXACT_FILE_TOOL_NAMES)[number]
-export type PiManagedShellToolName = (typeof PI_MANAGED_SHELL_TOOL_NAMES)[number]
-export type PiTaskWraithToolName =
-  | PiEnsembleCoordinationToolName
-  | PiExactFileToolName
-  | PiManagedShellToolName
-  | MeshMcpToolName
-
-/**
- * The broker enforces this independently of Pi's extension registration.
- *
- * A write-capable Pi seat can inspect its own process environment, so the
- * run-bound local-broker token is authentication, not a capability boundary.
- * Keep the authorization boundary server-side: even a caller that obtained
- * that token cannot turn the contained Pi route into the generic TaskWraith
- * MCP surface.
- */
-export function isPiEnsembleCoordinationToolName(
-  value: unknown
-): value is PiEnsembleCoordinationToolName {
-  return (
-    typeof value === 'string' &&
-    (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(value)
-  )
-}
-
-export function isPiTaskWraithToolName(value: unknown): value is PiTaskWraithToolName {
-  return (
-    isPiEnsembleCoordinationToolName(value) ||
-    (typeof value === 'string' &&
-      ((PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value) ||
-        (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(value) ||
-        (PI_MESH_TOOL_NAMES as readonly string[]).includes(value)))
-  )
+export {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_ULTRATASK_DELEGATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES,
+  PI_MESH_TOOL_NAMES,
+  isPiEnsembleCoordinationToolName,
+  isPiUltraTaskDelegationToolName,
+  isPiTaskWraithToolName,
+  type PiEnsembleCoordinationToolName,
+  type PiUltraTaskDelegationToolName,
+  type PiExactFileToolName,
+  type PiManagedShellToolName,
+  type PiTaskWraithToolName
 }
 
 /** Printed by the app-owned extension only after every fixed tool is registered. */
@@ -198,6 +174,7 @@ export function piEnsembleCoordinationReadyPromptAppendix(
     `- Transport: managed Pi extension over the TaskWraith local broker (receipt ${receipt.sourceSha256.slice(0, 12)}).`,
     `- Direct coordination tools: ${receipt.toolNames.map((name) => `\`${name}\``).join(', ')}.`,
     '- This is a narrow coordination surface only. Your native Pi file/shell allowlist is unchanged; do not look for generic MCP, shell, or file tools through this extension.',
+    `- ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`,
     '- If a coordination call is rejected by its normal policy, report that result and continue with the round; do not probe another transport.'
   ].join('\n')
 }
@@ -214,6 +191,13 @@ export function piTaskWraithToolsReadyPromptAppendix(
   const coordinationTools = receipt.toolNames.filter((name) =>
     (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(name)
   )
+  const ultraTaskDelegationTools = receipt.toolNames.filter((name) =>
+    (PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).includes(name)
+  )
+  const ultraTaskDelegationEnabled = ultraTaskDelegationTools.some(
+    (name) => name === 'ultra_task' || name === 'delegate_wave' || name === 'delegate_to_subthread'
+  )
+  const mainOwnedUltraTaskEnabled = ultraTaskDelegationTools.includes('ultra_task')
   const meshTools = receipt.toolNames.filter((name) =>
     (PI_MESH_TOOL_NAMES as readonly string[]).includes(name)
   )
@@ -235,7 +219,20 @@ export function piTaskWraithToolsReadyPromptAppendix(
       : []),
     ...(coordinationTools.length
       ? [
-          '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.'
+          '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.',
+          `- ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`
+        ]
+      : []),
+    ...(ultraTaskDelegationEnabled
+      ? [
+          '- UltraTask delegated-review transport is enabled for this run by the main-signed reasoning-picker consent. This does not widen native Pi file, shell, network, or generic MCP access.',
+          ...(mainOwnedUltraTaskEnabled
+            ? [
+                '- In a solo workspace chat, call `ultra_task` once with the current task. TaskWraith owns every staged worker and join; after it returns a workflow id, this provider turn may finish without cancelling the workflow.'
+              ]
+            : []),
+          '- In an Ensemble, or only when `ultra_task` is unavailable, use `delegate_wave` / `delegate_to_subthread` and immediately call `ensemble_await` with the returned `waveIds` or `subThreadIds`.',
+          '- Use `list_subthreads` / `read_subthread_result` only for bounded lifecycle or result inspection when a join times out or reports an unclear target.'
         ]
       : []),
     ...(meshTools.length
@@ -243,7 +240,7 @@ export function piTaskWraithToolsReadyPromptAppendix(
           '- Mesh Canvas tools edit chat-owned scenes through the same meshCanvas permission gate. Inspect the latest topology revision before each edit and retry stale revisions only after re-inspection.'
         ]
       : []),
-    '- If a call is rejected, report the tool result and continue; do not probe another transport.'
+    '- If a call is rejected by policy, report the tool result and continue; do not probe another transport.'
   ].join('\n')
 }
 
@@ -261,6 +258,7 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
   exactFileToolsExpected: boolean
   shellToolsExpected: boolean
   coordinationExpected: boolean
+  ultraTaskDelegationExpected?: boolean
   meshToolsExpected?: boolean
   reason?: string
 }): string {
@@ -279,6 +277,11 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
     ...(input.coordinationExpected
       ? [
           '- Do not call, search for, or retry `ensemble_*`, `blackboard_*`, or `scout_brief` tools. Use one unambiguous `@Role` or `@Model` mention instead.'
+        ]
+      : []),
+    ...(input.ultraTaskDelegationExpected
+      ? [
+          '- UltraTask delegation tools were expected but their run-bound transport did not prove ready. Do not invent a delegated review; report that `ultra_task` is unavailable for this turn and continue with the evidence you can gather directly.'
         ]
       : []),
     ...(input.meshToolsExpected
@@ -416,6 +419,8 @@ const TOKEN = process.env.TASKWRAITH_PI_COORDINATION_TOKEN || ''
 const RUN_ID = process.env.TASKWRAITH_RUN_ID || ''
 const CHAT_ID = process.env.TASKWRAITH_CHAT_ID || ''
 const WORKSPACE_PATH = process.env.TASKWRAITH_WORKSPACE_PATH || ''
+const DEFAULT_BROKER_TIMEOUT_MS = ${MCP_BROKER_REQUEST_TIMEOUT_MS}
+const LONG_POLL_BROKER_TIMEOUT_MS = ${MCP_BROKER_LONG_POLL_TIMEOUT_MS}
 
 function resultText(result) {
   if (result && Array.isArray(result.content)) {
@@ -449,7 +454,7 @@ function brokerCall(tool, args) {
     }
     timeout = setTimeout(
       () => finish({ ok: false, error: 'TaskWraith coordination broker timed out.' }),
-      130000
+      tool === 'ensemble_await' ? LONG_POLL_BROKER_TIMEOUT_MS : DEFAULT_BROKER_TIMEOUT_MS
     )
     socket.setEncoding('utf8')
     socket.on('connect', () => {
@@ -489,12 +494,31 @@ function descriptionFor(name) {
   const descriptions = {
     ensemble_yield: 'Pass this Ensemble turn to the next or named participant. Optional: target and reason.',
     ensemble_send: 'Send a visible participant-authored note to participant aliases and/or User (User, Human, or You, with or without @). User delivery is durable transcript-only; @All remains roster-only. Required: to and message; optional reason.',
-    ensemble_fanout: 'Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation.',
+    ensemble_fanout: ${JSON.stringify('Ask eligible Ensemble peers to run scoped parallel lanes. Required: prompt; optional targets, reason, mode, targetStage, writeScopes, isolation. ' + ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE)},
     ensemble_poll_response: 'Vote on an active Ensemble poll. Required: pollId and choice; optional rationale.',
     scout_brief: 'Emit structured findings from a parallel scout lane. Required: findings and confidence; optional blockers, recommendations, tags.',
     blackboard_post: 'Post a shared Ensemble entry. Required: key and value; optional attachmentIds, workspaceImagePaths, pollOptions, category, scope, ttlMinutes (whole minutes; omit for durable).',
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
+    ensemble_fanout_all: 'Fan out one prompt to the whole eligible roster as parallel reader lanes. Required: prompt; optional targets, reason, targetStage.',
+    ensemble_await: 'Wait (bounded) for fan-out lanes, sub-threads, waves, or durable executions to settle. Optional: laneIds, subThreadIds, waveIds, executionIds, timeoutSeconds. A paused execution counts as settled.',
+    ensemble_lane_result: "Read one finished fan-out lane's structured output. Required: laneId; optional fanoutId.",
+    ultra_task: 'Start one staged UltraTask graph owned by this thread. Required: task; optional exact provider/model, enableFanout, enableReview, maxWorkers (2-64, clamped to 6), reasoningEffort, and returnResult. You do not join the graph, but you stay accountable for it: call ensemble_await with the returned executionId immediately, and do not report completion before its result reaches you.',
+    delegate_wave: 'Spawn a fresh delegated-review wave. Required: workers; optional lifecycle, allowMultiProvider, and join. Call ensemble_await with the returned waveId immediately.',
+    delegate_to_subthread: 'Spawn a fresh delegated reviewer, or recall one owned sub-thread. Required: provider and prompt; optional model, reasoningEffort, kimiThinking, returnResult, and subThreadId. Call ensemble_await with the returned subThreadId immediately.',
+    list_subthreads: 'List lifecycle-aware sub-threads owned by this parent. Optional: parentChatId, includeArchived, includePrompt, waveId.',
+    read_subthread_result: 'Read one owned sub-thread lifecycle/result projection. Required: subThreadId; optional depth, includeRuns, includeMessages, includeEvents, messageLimit, eventLimit.',
+    ensemble_control: 'Compact Boss/Captain control surface. Required: action; optional params plus flat action fields (e.g. planSummary).',
+    ensemble_bossman_control: 'Boss/Captain control surface (canonical name). Required: action; optional params plus flat action fields.',
+    list_ensemble_participants: 'List Ensemble participants with roles, models, and availability.',
+    ensemble_propose_goal_complete: 'Open a binding goal-complete poll for the active goal. Optional: goalId, summary, reason.',
+    canvas_sketch_open: 'Open or restore the chat-owned bidirectional Sketch Canvas. Optional: width, height.',
+    canvas_sketch_get: 'Return the current Sketch Canvas document (title, viewport, elements). Required: canvasId.',
+    canvas_sketch_update: 'Edit a Sketch Canvas with structured primitives. Modes: append/replace/clear/delete. Required: canvasId; optional mode, title, expectedUpdatedAt, elementIds, elements.',
+    browser_open: 'Open a URL or workspace file in the dedicated TaskWraith browser window. Optional: url, path, show, width, height.',
+    browser_click: 'Click in the dedicated TaskWraith browser window by selector or viewport coordinates. Optional: selector, x, y.',
+    browser_screenshot: 'Capture the dedicated TaskWraith browser window, optionally writing a workspace PNG. Optional: path.',
+    browser_console: 'Return recent browser or app console messages. Optional: target (browser/app/all), clear, limit.',
     write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
     replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
     apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.',
@@ -533,10 +557,11 @@ function parametersFor(name) {
       return object({
         targets: optionalTextArray(),
         prompt: Type.String(),
+        laneBriefs: Type.Optional(${JSON.stringify(ENSEMBLE_FANOUT_LANE_BRIEFS_SCHEMA)}),
         reason: optionalText(),
         mode: optionalText(),
         targetStage: optionalText(),
-        writeScopes: Type.Optional(Type.Any()),
+        writeScopes: Type.Optional(${JSON.stringify(ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA)}),
         isolation: optionalText()
       })
     case 'ensemble_poll_response':
@@ -575,6 +600,144 @@ function parametersFor(name) {
         keys: optionalTextArray(),
         category: optionalText(),
         all: Type.Optional(Type.Boolean())
+      })
+    case 'ensemble_fanout_all':
+      return object({
+        targets: optionalTextArray(),
+        prompt: Type.String(),
+        reason: optionalText(),
+        targetStage: optionalText()
+      })
+    case 'ensemble_await':
+      return object({
+        laneIds: optionalTextArray(),
+        subThreadIds: optionalTextArray(),
+        waveIds: optionalTextArray(),
+        executionIds: optionalTextArray(),
+        timeoutSeconds: Type.Optional(Type.Number())
+      })
+    case 'ensemble_lane_result':
+      return object({ laneId: Type.String(), fanoutId: optionalText() })
+    case 'ultra_task':
+      return object({
+        task: Type.String(),
+        provider: optionalText(),
+        model: optionalText(),
+        enableFanout: Type.Optional(Type.Boolean()),
+        enableReview: Type.Optional(Type.Boolean()),
+        maxWorkers: Type.Optional(Type.Number()),
+        reasoningEffort: optionalText(),
+        returnResult: Type.Optional(Type.Boolean())
+      })
+    case 'delegate_wave':
+      return object({
+        lifecycle: optionalText(),
+        allowMultiProvider: Type.Optional(Type.Boolean()),
+        workers: Type.Array(
+          Type.Object(
+            {
+              provider: optionalText(),
+              prompt: Type.String(),
+              role: optionalText(),
+              label: optionalText(),
+              model: optionalText(),
+              reasoningEffort: optionalText(),
+              kimiThinking: Type.Optional(Type.Boolean())
+            },
+            { additionalProperties: true }
+          ),
+          { minItems: 1, maxItems: 64 }
+        ),
+        join: Type.Optional(
+          Type.Object(
+            {
+              required: Type.Optional(Type.Boolean()),
+              quorum: Type.Optional(Type.Number()),
+              deadlineMs: Type.Optional(Type.Number()),
+              debounceMs: Type.Optional(Type.Number())
+            },
+            { additionalProperties: true }
+          )
+        )
+      })
+    case 'delegate_to_subthread':
+      return object({
+        provider: Type.String(),
+        prompt: Type.String(),
+        model: optionalText(),
+        reasoningEffort: optionalText(),
+        kimiThinking: Type.Optional(Type.Boolean()),
+        returnResult: Type.Optional(Type.Boolean()),
+        subThreadId: optionalText()
+      })
+    case 'list_subthreads':
+      return object({
+        parentChatId: optionalText(),
+        includeArchived: Type.Optional(Type.Boolean()),
+        includePrompt: Type.Optional(Type.Boolean()),
+        waveId: optionalText()
+      })
+    case 'read_subthread_result':
+      return object({
+        subThreadId: Type.String(),
+        depth: optionalText(),
+        includeRuns: Type.Optional(Type.Boolean()),
+        includeMessages: Type.Optional(Type.Boolean()),
+        includeEvents: Type.Optional(Type.Boolean()),
+        messageLimit: Type.Optional(Type.Number()),
+        eventLimit: Type.Optional(Type.Number())
+      })
+    case 'ensemble_control':
+    case 'ensemble_bossman_control':
+      return object({
+        action: Type.String(),
+        params: Type.Optional(Type.Any())
+      })
+    case 'list_ensemble_participants':
+      return object({})
+    case 'ensemble_propose_goal_complete':
+      return object({
+        goalId: optionalText(),
+        summary: optionalText(),
+        reason: optionalText()
+      })
+    case 'canvas_sketch_open':
+      return object({
+        width: Type.Optional(Type.Number()),
+        height: Type.Optional(Type.Number())
+      })
+    case 'canvas_sketch_get':
+      return object({ canvasId: Type.String() })
+    case 'canvas_sketch_update':
+      return object({
+        canvasId: Type.String(),
+        mode: optionalText(),
+        title: optionalText(),
+        expectedUpdatedAt: optionalText(),
+        elementIds: Type.Optional(Type.Array(Type.String())),
+        elements: Type.Optional(Type.Array(Type.Any()))
+      })
+    case 'browser_open':
+      return object({
+        url: optionalText(),
+        path: optionalText(),
+        show: Type.Optional(Type.Boolean()),
+        width: Type.Optional(Type.Number()),
+        height: Type.Optional(Type.Number())
+      })
+    case 'browser_click':
+      return object({
+        selector: optionalText(),
+        x: Type.Optional(Type.Number()),
+        y: Type.Optional(Type.Number())
+      })
+    case 'browser_screenshot':
+      return object({ path: optionalText() })
+    case 'browser_console':
+      return object({
+        target: optionalText(),
+        clear: Type.Optional(Type.Boolean()),
+        limit: Type.Optional(Type.Number())
       })
     case 'write_file':
       return object({ path: Type.String(), content: Type.String() })

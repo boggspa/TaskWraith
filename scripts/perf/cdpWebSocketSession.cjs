@@ -95,11 +95,27 @@ function openCdpWebSocketSession(options) {
       }
     })
 
+    function failPending(reason) {
+      const err = new Error(reason)
+      for (const [, entry] of pending) {
+        try {
+          entry.reject(err)
+        } catch {
+          // already settled
+        }
+      }
+      pending.clear()
+    }
+
     ws.on('error', (err) => {
       if (settled) return
       settled = true
       cleanupTimer()
       reject(err instanceof Error ? err : new Error(String(err)))
+    })
+
+    ws.on('close', () => {
+      failPending('CDP session closed')
     })
 
     ws.on('open', () => {
@@ -108,10 +124,27 @@ function openCdpWebSocketSession(options) {
       cleanupTimer()
       resolve({
         url,
-        send(method, params) {
+        send(method, params, sendOptions) {
           const id = nextId++
+          const timeoutMs =
+            sendOptions && Number.isFinite(sendOptions.timeoutMs) ? sendOptions.timeoutMs : 0
           return new Promise((res, rej) => {
-            pending.set(id, { resolve: res, reject: rej })
+            let timer = null
+            const settle = (fn) => (value) => {
+              if (timer) clearTimeout(timer)
+              pending.delete(id)
+              fn(value)
+            }
+            pending.set(id, { resolve: settle(res), reject: settle(rej) })
+            if (timeoutMs > 0) {
+              timer = setTimeout(() => {
+                if (!pending.has(id)) return
+                pending.delete(id)
+                const err = new Error(`CDP ${method} timed out after ${timeoutMs}ms`)
+                err.code = 'CAPTURE_TIMEOUT'
+                rej(err)
+              }, timeoutMs)
+            }
             const payload = JSON.stringify({
               id,
               method,
@@ -120,6 +153,7 @@ function openCdpWebSocketSession(options) {
             try {
               ws.send(payload)
             } catch (error) {
+              if (timer) clearTimeout(timer)
               pending.delete(id)
               rej(error instanceof Error ? error : new Error(String(error)))
             }
@@ -130,10 +164,7 @@ function openCdpWebSocketSession(options) {
           return () => eventHandlers.delete(handler)
         },
         close() {
-          for (const [, entry] of pending) {
-            entry.reject(new Error('CDP session closed'))
-          }
-          pending.clear()
+          failPending('CDP session closed')
           eventHandlers.clear()
           try {
             ws.close()
@@ -242,6 +273,15 @@ async function attachRendererCdpSession(options) {
     browserVersion: version && version['Browser'] ? version['Browser'] : null,
     session,
     send: session.send,
+    // Same send->post adaptation the main inspector wrapper below performs, and
+    // for the same reason: the collectors in collectors/ are written against
+    // Session.post. Without it `sampleHostSpans` refused EVERY production
+    // renderer with `renderer_runtime_session_required` — a guard on a verb this
+    // object had never exposed — so `metrics.crossThread` could not be folded on
+    // any run, while every test passed against a fake that did expose `post`.
+    post(method, params, sendOptions) {
+      return session.send(method, params, sendOptions)
+    },
     onEvent: session.onEvent,
     close: session.close
   }
@@ -269,8 +309,11 @@ async function attachMainInspectorSession(options) {
     kind: 'main_inspector',
     url,
     session,
-    post(method, params) {
-      return session.send(method, params)
+    // sendOptions is forwarded: openCdpWebSocketSession supports a per-send
+    // timeout and this adapter used to drop it, so no collector could bound an
+    // individual inspector call even though the transport could.
+    post(method, params, sendOptions) {
+      return session.send(method, params, sendOptions)
     },
     on(event, handler) {
       return session.onEvent((msg) => {

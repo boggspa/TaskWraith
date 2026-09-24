@@ -9,6 +9,7 @@ import {
   CompactModelUsageGrid,
   EXPANDED_USAGE_PROVIDER_ORDER,
   ModelUsageCard,
+  PeriodicModelUsageList,
   orderExpandedQuotaWindows,
   orderExpandedUsageProviders,
   type ModelUsageApiSpendOptions
@@ -30,6 +31,7 @@ import {
 } from '../../../main/mistral/MistralQuotaEstimate'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
 import { formatResetShort } from '../lib/UsageFormat'
+import { quotaSegmentCount } from '../lib/quotaSegments'
 
 const MISTRAL_CYCLE_START = new Date('2026-07-01T00:00:00.000Z')
 
@@ -100,6 +102,105 @@ function quotaEntry(overrides: Partial<ModelUsageAggregate> = {}): ModelUsageAgg
 }
 
 describe('ModelUsageCard', () => {
+  it('groups sidebar meters by period while preserving every provider window and its bar', () => {
+    const entries = [
+      quotaEntry({
+        provider: 'kimi',
+        windows: [
+          {
+            id: 'month',
+            label: 'Monthly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '41% used',
+            usedPercent: 41
+          },
+          ...quotaEntry().windows!
+        ]
+      }),
+      quotaEntry({
+        provider: 'codex',
+        planName: 'Pro',
+        windows: [
+          {
+            id: 'spark-5h',
+            label: 'Spark 5H',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '25% used',
+            usedPercent: 25
+          },
+          {
+            id: 'weekly',
+            label: 'Weekly',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '77% used',
+            usedPercent: 77
+          }
+        ]
+      }),
+      quotaEntry({
+        provider: 'devin',
+        windows: [
+          {
+            id: 'daily',
+            label: 'Daily quota',
+            runs: 0,
+            totalTokens: 0,
+            limitLabel: '10% used',
+            usedPercent: 10
+          }
+        ]
+      })
+    ]
+    const html = renderToStaticMarkup(<PeriodicModelUsageList quotaEntries={entries} />)
+    const periods = [...html.matchAll(/aria-label="([^"]+ usage)"/g)].map((match) => match[1])
+    expect(periods).toEqual(['5H usage', 'Daily usage', 'Weekly usage', 'Monthly + API usage'])
+    expect(html.match(/class="model-usage-window"/g)).toHaveLength(6)
+    expect(html.indexOf('Codex ')).toBeLessThan(html.indexOf('Kimi '))
+    expect(html).toContain('Codex (Pro) Spark 5H: 25% used')
+    expect(html).toContain('model-usage-window-glyph')
+    const barParts = (markup: string) =>
+      [...markup.matchAll(/class="quota-[^"]*"[^>]*>/g)].map((match) => match[0]).sort()
+    const original = renderToStaticMarkup(<ModelUsageCard usageSummary={entries} />)
+    expect(barParts(html)).toEqual(barParts(original))
+    expect(original).not.toContain('model-usage-period-section')
+    expect(
+      renderToStaticMarkup(<ModelUsageCard usageSummary={entries} variant="sidebar" />)
+    ).toContain('model-usage-period-section')
+  })
+
+  it('keeps bespoke Grok and Mistral readings and puts unavailable providers at the end', () => {
+    const grok = parseGrokUsage('Credits used: 38%\nResets at: Jul 1, 2026 12:00 PM')
+    grok.usageKind = 'weekly_limit'
+    const mistral = mistralSnapshot(3, 'mistral', 0.1)
+    const html = renderToStaticMarkup(
+      <PeriodicModelUsageList
+        quotaEntries={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [],
+            quotaConfigured: true,
+            quotaError: 'Official quota probe timed out.'
+          })
+        ]}
+        grokUsage={{ snapshot: grok, loading: false, errored: false, stale: true }}
+        mistralQuota={{ snapshot: mistral, loading: false }}
+      />
+    )
+    expect(html).toContain('aria-label="Weekly usage"')
+    expect(html).toContain('Grok Weekly')
+    expect(html).toContain('38%')
+    expect(html).toContain('stale')
+    expect(html).toContain('aria-label="Monthly + API usage"')
+    expect(html).toContain('tracked locally since reading')
+    expect(html).toContain('Official quota probe timed out.')
+    expect(html.indexOf('Mistral ')).toBeLessThan(html.indexOf('Antigravity'))
+    expect(html).not.toContain('model-usage-provider-heading')
+    expect(html).not.toContain('aria-label="Daily usage"')
+  })
+
   it('renders cached zero-usage quota windows instead of dropping the provider', () => {
     const html = renderToStaticMarkup(<ModelUsageCard usageSummary={[quotaEntry()]} />)
 
@@ -118,6 +219,136 @@ describe('ModelUsageCard', () => {
 
     expect(html).toContain('model-usage-tier-badge')
     expect(html).toContain('>Pro<')
+  })
+
+  it('prefixes Spark, Luna Reserve, and Fable meters with display-only glyphs', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'codex',
+            windows: [
+              {
+                id: 'primary-weekly',
+                label: 'Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '79% remaining',
+                usedPercent: 21
+              },
+              {
+                id: 'additional-0-5h',
+                label: 'Spark 5h',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              },
+              {
+                id: 'additional-0-weekly',
+                label: 'Spark Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '3% remaining',
+                usedPercent: 97
+              },
+              {
+                id: 'additional-1-weekly',
+                label: 'Luna Reserve Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              }
+            ]
+          }),
+          quotaEntry({
+            provider: 'claude',
+            windows: [
+              {
+                id: 'claude-weekly-fable',
+                label: 'Fable',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '42% remaining',
+                usedPercent: 58
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">⚡ </span>Spark 5h'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">⚡ </span>Spark Weekly'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🌙 </span>Luna Reserve Weekly'
+    )
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🪶 </span>Fable'
+    )
+    // The plain aggregate row stays glyph-free — asserted as the exact
+    // glyph-less label span, not a not.toContain that could pass vacuously.
+    expect(html).toContain('<span class="model-usage-window-label">Weekly</span>')
+    // Tooltips keep the clean label: no emoji leaks into title text.
+    expect(html).toContain('title="Spark 5h: 100% remaining"')
+  })
+
+  it('moons a stale gpt-reserve label from a pre-rename cached snapshot', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'codex',
+            windows: [
+              {
+                id: 'additional-1-weekly',
+                label: 'gpt-reserve Weekly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain(
+      '<span class="model-usage-window-glyph" aria-hidden="true">🌙 </span>gpt-reserve Weekly'
+    )
+  })
+
+  it('gives no Codex bolt to non-Codex spark-named windows', () => {
+    // Muse's model literally ships as "Muse Spark 1.2" — the glyph rule is
+    // provider-gated so that window must render as a plain label.
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'muse',
+            windows: [
+              {
+                id: 'muse-monthly',
+                label: 'Spark 1.2 Monthly',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '90% remaining',
+                usedPercent: 10
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('<span class="model-usage-window-label">Spark 1.2 Monthly</span>')
+    expect(html).not.toContain('model-usage-window-glyph')
   })
 
   it('fills API-credit meters up with credit used rather than down with credit remaining', () => {
@@ -165,6 +396,8 @@ describe('ModelUsageCard', () => {
       'deepseek',
       'codex',
       'mistral',
+      'qwen',
+      'mimo',
       'antigravity',
       'cerebras',
       'cursor',
@@ -173,7 +406,7 @@ describe('ModelUsageCard', () => {
     ] as const
 
     expect(orderExpandedUsageProviders(scrambled)).toEqual(
-      EXPANDED_USAGE_PROVIDER_ORDER.slice(0, 11)
+      EXPANDED_USAGE_PROVIDER_ORDER.slice(0, 13)
     )
   })
 
@@ -354,6 +587,37 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('model-usage-window-list')
   })
 
+  it('keeps default Plan selected while its first availability check is unresolved', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'plan',
+      planAvailabilityPending: true
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    // ApiSpendView owns the getChatList effect. Keeping its body out of this
+    // branch is what prevents the transient all-history startup fetch.
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="Plan limits"/)
+    expect(html).toMatch(/aria-checked="false"[^>]*aria-label="API spend"/)
+    expect(html).not.toContain('No API spend tracked in the last 30 days')
+  })
+
+  it('preserves an explicit Spend selection while Plan availability is unresolved', () => {
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: {},
+      view: 'spend',
+      planAvailabilityPending: true
+    }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[]} variant="sidebar" apiSpend={apiSpend} />
+    )
+
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="API spend"/)
+    expect(html).toContain('No API spend tracked in the last 30 days')
+  })
+
   it('renders the context-lengths table when view=context (static data, no IPC)', () => {
     const apiSpend: ModelUsageApiSpendOptions = { providerRates: {}, view: 'context' }
     const html = renderToStaticMarkup(
@@ -382,7 +646,11 @@ describe('ModelUsageCard', () => {
     const rates: RendererProviderRates = {
       codex: [{ modelId: 'gpt-5.5', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }]
     }
-    const apiSpend: ModelUsageApiSpendOptions = { providerRates: rates, view: 'plan' }
+    const apiSpend: ModelUsageApiSpendOptions = {
+      providerRates: rates,
+      view: 'plan',
+      planAvailabilityPending: false
+    }
     // No quota entries at all → spend + context views are available in the sidebar.
     // The toggle shows spend ⇄ context, but no Plan tab (no quota meters).
     const html = renderToStaticMarkup(
@@ -546,6 +814,47 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('provider-grok')
     expect(html).not.toContain('>Mistral</th>')
     expect(html).not.toContain('>MO</th>')
+  })
+
+  it('maps the Muse subscription meters onto the 5H/WK compact rows', () => {
+    const museEntry = quotaEntry({
+      provider: 'muse',
+      quotaError: undefined,
+      windows: [
+        {
+          id: 'muse-subscription-current',
+          label: 'Current usage',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '63% remaining · imported browser session',
+          usedPercent: 37,
+          remainingPercent: 63
+        },
+        {
+          id: 'muse-subscription-weekly',
+          label: 'Weekly limit',
+          runs: 0,
+          totalTokens: 0,
+          limitLabel: '18% remaining · imported browser session',
+          usedPercent: 82,
+          remainingPercent: 18,
+          resetAt: '2026-09-07T00:00:00.000Z'
+        }
+      ]
+    })
+    const html = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[museEntry]} />)
+
+    expect(html).toContain('>Muse</th>')
+    const currentIndex = html.indexOf('Muse Current usage: 37%')
+    const weeklyIndex = html.indexOf('Muse Weekly limit: 82%')
+    expect(currentIndex).toBeGreaterThan(html.indexOf('>5H</th>'))
+    expect(currentIndex).toBeLessThan(html.indexOf('>WK</th>'))
+    expect(weeklyIndex).toBeGreaterThan(html.indexOf('>WK</th>'))
+    expect(weeklyIndex).toBeLessThan(html.indexOf('>X1</th>'))
+
+    // No import, no column: the Muse lane is admitted on its entry alone.
+    const withoutMuse = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[]} />)
+    expect(withoutMuse).not.toContain('>Muse</th>')
   })
 
   it('hides the row legend column when there are more than 8 providers', () => {
@@ -1178,6 +1487,147 @@ describe('API spend roster lockstep', () => {
 // exactly that state while the expanded meters (which build
 // `var(--provider-<id>-color)` directly) were already tinted. Pin the full
 // column roster against both the accent rule and the token it points at.
+describe('OpenRouter usage meter', () => {
+  it('renders the OpenRouter credit row in the expanded card when its snapshot is present', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'openrouter',
+            windows: [
+              {
+                id: 'openrouter-credit-used',
+                label: 'Credit used',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '~$3.00 of $50.00 · Tracked OpenRouter spend since billing anchor',
+                usedPercent: 6,
+                remainingPercent: 94,
+                valueText: '~$3.00',
+                unit: 'USD',
+                windowKind: 'local-estimate',
+                resetAt: '2026-08-20T00:00:00.000Z'
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('OpenRouter')
+    expect(html).toContain('Credit used')
+    expect(html).toContain('~$3.00')
+    expect(html).toContain('~$3.00 of $50.00')
+  })
+
+  it('shows the OpenRouter column in the compact grid beside the other API-credit lanes', () => {
+    const financialWindow = (
+      id: string,
+      label: string,
+      valueText: string,
+      limitLabel: string,
+      usedPercent: number
+    ) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel,
+      usedPercent,
+      valueText,
+      unit: 'USD'
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [
+              financialWindow('deepseek-credit', 'Credit used', '$0.92', '$0.92 of $10.00', 9.2)
+            ]
+          }),
+          quotaEntry({
+            provider: 'openrouter',
+            windows: [
+              financialWindow(
+                'openrouter-credit-used',
+                'Credit used',
+                '~$3.00',
+                '~$3.00 of $50.00',
+                6
+              )
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('>DeepSeek</th>')
+    expect(html).toContain('>OpenRouter</th>')
+    expect(html).toContain('>$0.92</td>')
+    expect(html).toContain('>~$3.00</td>')
+  })
+
+  it('shows the Devin column in the compact grid with daily/weekly in X1/X2', () => {
+    const devinWindow = (id: string, label: string, usedPercent: number) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel: `${100 - usedPercent}% remaining · local Devin state`,
+      usedPercent,
+      remainingPercent: 100 - usedPercent,
+      limitWindowSeconds: id === 'devin-daily' ? 86400 : 604800
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'devin',
+            windows: [
+              devinWindow('devin-daily', 'Daily quota (Core)', 60),
+              devinWindow('devin-weekly', 'Weekly quota (Core)', 20)
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('>Devin</th>')
+    expect(html).toContain('>60%</td>')
+    expect(html).toContain('>20%</td>')
+  })
+
+  it('maps the Devin daily/weekly windows to 6/7 division dashes end to end', () => {
+    // The exact window shape the hook emits for a Core plan: the daily lane
+    // must resolve to 6 ticks (24h Devin-gated band) and the weekly lane to
+    // 7 (weekly band). This is the assertion that finally feeds the mapper's
+    // Devin branches real windows instead of fixtures.
+    expect(
+      quotaSegmentCount('devin', {
+        id: 'devin-daily',
+        label: 'Daily quota (Core)',
+        limitWindowSeconds: 86400
+      })
+    ).toBe(6)
+    expect(
+      quotaSegmentCount('devin', {
+        id: 'devin-weekly',
+        label: 'Weekly quota (Core)',
+        limitWindowSeconds: 604800
+      })
+    ).toBe(7)
+  })
+
+  it('maps the OpenRouter credit window to four division dashes without a mapper change', () => {
+    // 'Credit used' already resolves to 4 via the credit regex — this pins
+    // the new lane to that mapping so a mapper edit cannot silently undash it.
+    expect(
+      quotaSegmentCount('openrouter', { id: 'openrouter-credit-used', label: 'Credit used' })
+    ).toBe(4)
+  })
+})
+
 describe('compact grid accent lockstep', () => {
   it('gives every compact column an accent rule wired to a defined brand token', () => {
     const cardCss = readFileSync(

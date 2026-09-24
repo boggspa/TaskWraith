@@ -59,6 +59,7 @@ export function rendererSafeSettings(settings: AppSettings): AppSettings {
     apnsConfig,
     imageGeneration,
     tailscaleOAuth,
+    commandRules: _commandRules,
     ...safeSettings
   } = settings
 
@@ -135,6 +136,24 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     agentThemeTokens: settings.agentThemeTokens,
     appIconVariant: settings.appIconVariant,
     promptSurfaceStyle: settings.promptSurfaceStyle,
+    // Was MISSING since the setting shipped: this projection is the ONLY lane a
+    // popped-out chat or a utility window has, so a user who chose `stacked`
+    // got `paired` in every window except the main one. The `as AppSettings`
+    // cast below is why that omission never type-errored.
+    fanoutLaneLayout: settings.fanoutLaneLayout,
+    defaultTranscriptView: settings.defaultTranscriptView,
+    // The transcript text size MUST be here, and it is the one appearance key
+    // where an omission is worse than a stale value: a popped-out chat that
+    // never learns the size renders its transcript at 1x while its own
+    // virtualiser is calibrated for 1x too — consistent, but a different size
+    // from the main window with no way for the reader to tell which is right.
+    transcriptTextSize: settings.transcriptTextSize,
+    // Same lane, same `as AppSettings` cast hiding an omission. A popped-out chat
+    // that never learns the width renders at Medium while the main window is
+    // Wide — and its virtualiser measures the column it actually got, so the two
+    // windows are internally consistent and disagree with each other, which is
+    // the hardest version of this bug to see.
+    transcriptWidth: settings.transcriptWidth,
     composerStyle: settings.composerStyle,
     transcriptFontFamily: settings.transcriptFontFamily,
     composerFontFamily: settings.composerFontFamily,
@@ -230,6 +249,12 @@ function rendererChatSettings(
       : {}),
     ...(providerRunPauses ? { providerRunPauses } : {}),
     ...(settings.ollamaDefaultModel ? { ollamaDefaultModel: settings.ollamaDefaultModel } : {}),
+    // The composer picker lists these back to the user, so the renderer needs
+    // them in its own settings copy — omitting the key here makes a saved
+    // custom model appear to persist and then vanish on the next reload.
+    ...(settings.customProviderModels
+      ? { customProviderModels: settings.customProviderModels }
+      : {}),
     ensembleModeEnabled: settings.ensembleModeEnabled,
     geminiCheckpointingEnabled: settings.geminiCheckpointingEnabled,
     chatContextTurns: settings.chatContextTurns,

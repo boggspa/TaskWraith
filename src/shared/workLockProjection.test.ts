@@ -47,6 +47,72 @@ function source(overrides: Partial<WorkLockProjectionSource> = {}): WorkLockProj
 }
 
 describe('workLockProjection', () => {
+  it('produces schema version 2 and copies only the declared holder fields', () => {
+    const projected = projectWorkLock(
+      source({
+        holder: {
+          instanceScope: 'other',
+          liveness: 'lapsed',
+          heartbeatAgeMs: 123_456.7,
+          generation: 41,
+          ownerPid: 4102,
+          processBirthIdentity: 'secret-birth-receipt',
+          heartbeatPath: '/private/holders/x.json'
+        } as WorkLockProjectionSource['holder']
+      })
+    )
+
+    expect(projected.schemaVersion).toBe(2)
+    expect(projected.holder).toEqual({
+      instanceScope: 'other',
+      liveness: 'lapsed',
+      heartbeatAgeMs: 123_457,
+      generation: 41
+    })
+    expect(JSON.stringify(projected.holder)).not.toContain('4102')
+    expect(JSON.stringify(projected.holder)).not.toContain('birth-receipt')
+    expect(JSON.stringify(projected.holder)).not.toContain('heartbeatPath')
+    expect(projectWorkLock(source()).holder).toBeUndefined()
+    expect(
+      createWorkLockProjectionSnapshot({
+        generation: 1,
+        sampledAt: '2026-09-23T10:00:00.000Z',
+        locks: [source()]
+      }).schemaVersion
+    ).toBe(2)
+  })
+
+  it('never invents a liveness it does not know and clamps a malformed holder block', () => {
+    const projected = projectWorkLock(
+      source({
+        holder: {
+          instanceScope: 'elsewhere',
+          liveness: 'thriving',
+          heartbeatAgeMs: -5,
+          generation: 1.5
+        } as unknown as WorkLockProjectionSource['holder']
+      })
+    )
+    expect(projected.holder).toEqual({
+      instanceScope: 'other',
+      liveness: 'unknown',
+      heartbeatAgeMs: 0,
+      generation: 0
+    })
+  })
+
+  it('still accepts a v1 public lock as input without re-converting its coordinates', () => {
+    const v1 = {
+      ...projectWorkLock(source()),
+      schemaVersion: 1 as const
+    }
+    expect(v1.target).toMatchObject({ kind: 'hunk', startLine: 18, endLine: 29 })
+    const reprojected = projectWorkLock(v1)
+    expect(reprojected.target).toEqual(v1.target)
+    expect(reprojected.schemaVersion).toBe(2)
+    expect(reprojected.holder).toBeUndefined()
+  })
+
   it('copies the complete UI identity while dropping process recovery identity', () => {
     const projected = projectWorkLock(source())
 

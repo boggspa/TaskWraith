@@ -46,12 +46,17 @@ export function clampMaxWaveAgents(value: unknown): number {
  * caller is a configured Ensemble Boss/Captain AND the seat permission tier
  * is Accept Edits (`default`), Full WS Access (`workspace_write`), or Full
  * Access (`full_access`). Plan / Ask (`read_only`) / custom always prompt —
- * even for Boss/Captain. Non-authority seats always prompt.
+ * even for Boss/Captain. Non-authority seats always prompt. Exact UltraTask
+ * consent also returns false deliberately: it must flow through the central
+ * resolver so its explicit-user-request auto-allow is audited rather than
+ * disappearing into this older Boss/Captain card-skip.
  */
 export function shouldSkipDelegateWaveApproval(input: {
   isBossOrCaptain: boolean
   permissionPresetId?: PermissionPresetId | string | null
+  ultraTaskDelegationAutoAllow?: boolean
 }): boolean {
+  if (input.ultraTaskDelegationAutoAllow === true) return false
   if (!input.isBossOrCaptain) return false
   const preset = typeof input.permissionPresetId === 'string' ? input.permissionPresetId : ''
   return preset === 'default' || preset === 'workspace_write' || preset === 'full_access'
@@ -88,7 +93,8 @@ export type ParseDelegateWaveResult =
 export interface DelegateWaveChildSpawned {
   subThreadId: string
   provider: ProviderId
-  status: 'spawned'
+  status: 'spawned' | 'queued'
+  hostAdmissionInitialState?: 'admitted' | 'queued'
 }
 
 export interface DelegateWaveResult {
@@ -219,7 +225,9 @@ function parseWorker(
   if (raw.role !== undefined && role === undefined) {
     return {
       ok: false,
-      message: `delegate_wave: workers[${index}].role must be scout, worker, or reviewer when set.`
+      message:
+        `delegate_wave: workers[${index}].role must be scout, work, or review when set ` +
+        `(worker and reviewer remain accepted aliases).`
     }
   }
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined
@@ -329,14 +337,22 @@ export function parseDelegateWaveArgs(
 
 export function shapeDelegateWaveResult(input: {
   waveId: string
-  children: Array<{ subThreadId: string; provider: ProviderId }>
+  children: Array<{
+    subThreadId: string
+    provider: ProviderId
+    hostAdmissionInitialState?: 'admitted' | 'queued'
+  }>
 }): DelegateWaveResult {
   return {
     waveId: input.waveId,
     children: input.children.map((child) => ({
       subThreadId: child.subThreadId,
       provider: child.provider,
-      status: 'spawned' as const
+      status:
+        child.hostAdmissionInitialState === 'queued' ? ('queued' as const) : ('spawned' as const),
+      ...(child.hostAdmissionInitialState
+        ? { hostAdmissionInitialState: child.hostAdmissionInitialState }
+        : {})
     }))
   }
 }
@@ -510,6 +526,8 @@ export interface DelegateWaveSpawnedChild {
   title: string
   /** Seeded child `appRunId` — required so all-or-nothing rollback can cancel. */
   runId: string
+  /** Provider-launch state at the shared host-admission reservation boundary. */
+  hostAdmissionInitialState?: 'admitted' | 'queued'
 }
 
 /**
@@ -544,6 +562,9 @@ export async function executeDelegateWaveTool(input: {
   allowedProvidersLabel?: string
   isBossOrCaptain: boolean
   permissionPresetId?: PermissionPresetId | string | null
+  /** Exact signed UltraTask selection. Forces the central audited resolver even
+   * when this caller would otherwise take the local Boss/Captain skip. */
+  ultraTaskDelegationAutoAllow?: boolean
   budgetRemaining: number
   tryConsumeBudgetSlot: () => 'allowed' | 'exhausted'
   /**
@@ -581,6 +602,11 @@ export async function executeDelegateWaveTool(input: {
     }>
   }) => Promise<boolean>
   assertParentStillValid: () => void
+  /**
+   * Last shared parent-capacity gate after approval/revalidation and before the
+   * first child is created. Throwing refunds the wave budget and spawns none.
+   */
+  prepareSpawn?: () => void
   resolveWorkerSettings: (
     worker: DelegateWaveWorkerSpec
   ) => { ok: true; value: DelegateWaveResolvedWorkerSettings } | { ok: false; message: string }
@@ -678,7 +704,8 @@ export async function executeDelegateWaveTool(input: {
 
   const skipApproval = shouldSkipDelegateWaveApproval({
     isBossOrCaptain: input.isBossOrCaptain,
-    permissionPresetId: input.permissionPresetId
+    permissionPresetId: input.permissionPresetId,
+    ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow
   })
   const workersForApproval = workers.map((worker, index) => ({
     provider: worker.provider,
@@ -724,6 +751,7 @@ export async function executeDelegateWaveTool(input: {
 
   try {
     input.assertParentStillValid()
+    input.prepareSpawn?.()
   } catch (error) {
     refundReservedSlots()
     return {
@@ -781,14 +809,21 @@ export async function executeDelegateWaveTool(input: {
     waveId,
     children: children.map((child) => ({
       subThreadId: child.subThreadId,
-      provider: child.provider
+      provider: child.provider,
+      hostAdmissionInitialState: child.hostAdmissionInitialState
     }))
   })
+  const queuedChildren = children.filter(
+    (child) => child.hostAdmissionInitialState === 'queued'
+  ).length
   const childSummary = children
     .map((child) => `${child.provider} "${child.title}" (id=${child.subThreadId})`)
     .join('; ')
   const text =
-    `Spawned wave ${waveId} with ${children.length} sub-threads: ${childSummary}. ` +
+    `Created wave ${waveId} with ${children.length} sub-threads: ${childSummary}. ` +
+    (queuedChildren > 0
+      ? `${queuedChildren} provider run(s) are queued for bounded host capacity; admitted runs start automatically as capacity frees. `
+      : '') +
     `Join groupId=${waveId}; results return to this parent as untrusted sub-thread results on completion. ` +
     `Poll progress anytime with list_subthreads({waveId: "${waveId}"}) — it includes archived ` +
     `die-on-return workers and a settled rollup — and read finished workers with read_subthread_result.`

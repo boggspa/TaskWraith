@@ -3,6 +3,13 @@ import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
 import { isCanvasMcpToolName, type CanvasMcpToolName } from '../mcp/CanvasToolExecutors'
 
 type JsonRecord = Record<string, unknown>
+type NativeCanvasCompatToolName = CanvasMcpToolName | 'computer_use'
+
+// Computer Use has its own dispatcher, but its native provider echoes contain
+// the same sensitive inputs and observations as the underlying Canvas calls.
+function isNativeCanvasCompatToolName(value: string): value is NativeCanvasCompatToolName {
+  return value === 'computer_use' || isCanvasMcpToolName(value)
+}
 
 const ID_KEYS = [
   'tool_id',
@@ -61,22 +68,22 @@ function isToolEnvelope(value: JsonRecord): boolean {
   )
 }
 
-function permissionRetryTarget(value: JsonRecord): CanvasMcpToolName | null {
+function permissionRetryTarget(value: JsonRecord): NativeCanvasCompatToolName | null {
   for (const key of ['arguments', 'parameters', 'params', 'input'] as const) {
     const request = recordFromMaybeJson(value[key])
     if (!request || typeof request.toolName !== 'string') continue
     const canonical = canonicalTaskWraithToolName(request.toolName)
-    if (isCanvasMcpToolName(canonical)) return canonical
+    if (isNativeCanvasCompatToolName(canonical)) return canonical
   }
   return null
 }
 
-function gatewayTarget(value: JsonRecord): CanvasMcpToolName | null {
+function gatewayTarget(value: JsonRecord): NativeCanvasCompatToolName | null {
   for (const key of ['arguments', 'parameters', 'params', 'input'] as const) {
     const container = recordFromMaybeJson(value[key])
     if (!container || typeof container.name !== 'string') continue
     const canonical = canonicalTaskWraithToolName(container.name)
-    if (isCanvasMcpToolName(canonical)) return canonical
+    if (isNativeCanvasCompatToolName(canonical)) return canonical
     if (canonical !== 'request_tool_permission') continue
     const retryTarget = permissionRetryTarget(container)
     if (retryTarget) return retryTarget
@@ -84,8 +91,11 @@ function gatewayTarget(value: JsonRecord): CanvasMcpToolName | null {
   return null
 }
 
-/** Resolve a canonical Canvas identity only from a tool-shaped envelope. */
-export function nativeCanvasCompatToolName(value: unknown, depth = 0): CanvasMcpToolName | null {
+/** Resolve a protected Canvas or Computer Use identity from a tool-shaped envelope. */
+export function nativeCanvasCompatToolName(
+  value: unknown,
+  depth = 0
+): NativeCanvasCompatToolName | null {
   if (depth > 8) return null
   if (Array.isArray(value)) {
     for (const child of value) {
@@ -104,7 +114,7 @@ export function nativeCanvasCompatToolName(value: unknown, depth = 0): CanvasMcp
     for (const key of TOOL_IDENTITY_KEYS) {
       if (typeof value[key] !== 'string') continue
       const canonical = canonicalTaskWraithToolName(value[key] as string)
-      if (isCanvasMcpToolName(canonical)) return canonical
+      if (isNativeCanvasCompatToolName(canonical)) return canonical
       if (canonical === 'request_tool_permission') {
         const target = permissionRetryTarget(value)
         if (target) return target
@@ -205,7 +215,7 @@ function argumentByteLength(value: JsonRecord): number {
 
 function safeProjection(
   value: JsonRecord,
-  toolName: CanvasMcpToolName,
+  toolName: NativeCanvasCompatToolName,
   toolId: string | undefined,
   result: boolean
 ): JsonRecord {
@@ -257,7 +267,7 @@ export interface NativeCanvasCompatSanitizer {
 }
 
 interface PendingCanvasCorrelation {
-  toolName: CanvasMcpToolName
+  toolName: NativeCanvasCompatToolName
   projectedToolId?: string
 }
 
@@ -276,7 +286,7 @@ export function createNativeCanvasCompatSanitizer(maxPending = 2048): NativeCanv
 
   const remember = (
     scope: string,
-    toolName: CanvasMcpToolName,
+    toolName: NativeCanvasCompatToolName,
     ids: Iterable<string>
   ): string | undefined => {
     const idList = [...new Set([...ids].filter(Boolean))]
@@ -314,7 +324,7 @@ export function createNativeCanvasCompatSanitizer(maxPending = 2048): NativeCanv
   return {
     prime(scope, toolName, ids) {
       const canonical = canonicalTaskWraithToolName(toolName)
-      if (isCanvasMcpToolName(canonical)) remember(scope, canonical, ids)
+      if (isNativeCanvasCompatToolName(canonical)) remember(scope, canonical, ids)
     },
 
     projectedToolId(scope, ids) {

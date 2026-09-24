@@ -21,12 +21,14 @@ import {
   type HostHealthFrame,
   type HostSnapshotFrame
 } from './hostProtocol'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from './providerModelCatalogLimits'
 import {
   HOST_LOCAL_TRANSPORT_ERROR_CODES,
   HOST_LOCAL_TRANSPORT_EVENT_KINDS,
   HOST_LOCAL_TRANSPORT_MAX_ID,
   HOST_LOCAL_TRANSPORT_REQUEST_KINDS,
   HOST_LOCAL_TRANSPORT_VERSION,
+  HOST_WORKSPACE_GIT_RESULT_MAX_BYTES,
   assertHostLocalTransportErrorBodyFree,
   decodeHostLocalTransportClientFrame,
   decodeHostLocalTransportHostFrame,
@@ -197,6 +199,14 @@ function sampleThreadOffers(): TaskWraithControlThreadOffers {
     },
     currentModel: 'gpt-5.6-sol',
     currentReasoningEffort: 'high',
+    currentPostureId: 'default',
+    postures: [
+      {
+        id: 'default',
+        label: 'Accept Edits',
+        requiresExplicitConsent: false
+      }
+    ],
     models: [
       {
         id: 'gpt-5.6-sol',
@@ -208,6 +218,117 @@ function sampleThreadOffers(): TaskWraithControlThreadOffers {
     ],
     source: 'curated'
   }
+}
+
+/** Byte goldens of every pre-lease client frame, recorded at 2a71f9580. */
+const PRE_LEASE_CLIENT_GOLDENS: Record<string, string> = {
+  hello:
+    '{"type":"hello","transportVersion":1,"token":"tok-aaaaaaaaaaaaaaaaaaaaaaaaaaaa","hello":{"type":"host.hello","protocolVersion":2,"projectionVersion":2,"controlProtocolCompat":1,"client":{"clientId":"client-desktop-1","clientClass":"desktop","clientVersion":"1.9.2"},"capabilities":["bootstrap","snapshot","deltas","commands","receipts","health"]}}',
+  'snapshot.get':
+    '{"type":"request","transportVersion":1,"id":"req-snapshot.get","kind":"snapshot.get","params":{}}',
+  'deltas.since':
+    '{"type":"request","transportVersion":1,"id":"req-deltas.since","kind":"deltas.since","params":{"generation":3,"cursor":10}}',
+  'thread.offers':
+    '{"type":"request","transportVersion":1,"id":"req-thread.offers","kind":"thread.offers","params":{"threadId":"thread-1"}}',
+  'provider.status':
+    '{"type":"request","transportVersion":1,"id":"req-provider.status","kind":"provider.status","params":{}}',
+  'provider.offers':
+    '{"type":"request","transportVersion":1,"id":"req-provider.offers","kind":"provider.offers","params":{"providerId":"codex"}}',
+  'provider.auth.flows':
+    '{"type":"request","transportVersion":1,"id":"req-provider.auth.flows","kind":"provider.auth.flows","params":{"providerId":"codex"}}',
+  'provider.auth.status':
+    '{"type":"request","transportVersion":1,"id":"req-provider.auth.status","kind":"provider.auth.status","params":{"providerId":"codex"}}',
+  'thread.history':
+    '{"type":"request","transportVersion":1,"id":"req-thread.history","kind":"thread.history","params":{"threadId":"thread-1","limit":25}}',
+  'thread.catalogue':
+    '{"type":"request","transportVersion":1,"id":"req-thread.catalogue","kind":"thread.catalogue","params":{"method":"list","limit":25}}',
+  'thread.catalogue.maintenance':
+    '{"type":"request","transportVersion":1,"id":"req-thread.catalogue.maintenance","kind":"thread.catalogue.maintenance","params":{"method":"owner","owner":{"writer":"desktop","writerId":"desktop-id"}}}',
+  'workspace.git.read':
+    '{"type":"request","transportVersion":1,"id":"req-workspace.git.read","kind":"workspace.git.read","params":{"workspaceId":"workspace-1","scope":"status"}}',
+  'history.since':
+    '{"type":"request","transportVersion":1,"id":"req-history.since","kind":"history.since","params":{"threadId":"thread-1","since":{"generation":1,"cursor":2}}}',
+  'receipt.lookup':
+    '{"type":"request","transportVersion":1,"id":"req-receipt.lookup","kind":"receipt.lookup","params":{"commandId":"cmd-1"}}',
+  'health.get':
+    '{"type":"request","transportVersion":1,"id":"req-health.get","kind":"health.get","params":{}}',
+  'host.shutdown':
+    '{"type":"request","transportVersion":1,"id":"req-host.shutdown","kind":"host.shutdown","params":{}}',
+  'command.submit':
+    '{"type":"request","transportVersion":1,"id":"req-command.submit","kind":"command.submit","params":{"type":"host.command","protocolVersion":2,"commandId":"cmd-1","idempotencyKey":"idem-1","actor":{"actorId":"user-1","clientId":"client-desktop-1","clientClass":"desktop"},"name":"composer.send","target":{"threadId":"thread-1"},"arguments":{"text":"hello host"},"issuedAt":"2026-08-03T17:00:00.000Z"}}',
+  'twmission.export':
+    '{"type":"request","transportVersion":1,"id":"req-twmission.export","kind":"twmission.export","params":{}}',
+  'thread.catalogue+background':
+    '{"type":"request","transportVersion":1,"id":"catalogue-priority","kind":"thread.catalogue","params":{"method":"summary","chatId":"chat-1"},"priority":"background"}'
+}
+
+/** Byte goldens of every pre-lease host frame, recorded at 2a71f9580. */
+const PRE_LEASE_HOST_GOLDENS: Record<string, string> = {
+  welcome:
+    '{"type":"welcome","transportVersion":1,"welcome":{"type":"host.welcome","protocolVersion":2,"controlProtocolCompat":1,"projectionVersion":2,"hostId":"host-local-1","hostVersion":"1.9.2","sessionId":"sess-1","generation":3,"cursor":10,"authenticatedClient":{"clientId":"client-desktop-1","clientClass":"desktop","clientVersion":"1.9.2"},"capabilities":["bootstrap","snapshot","deltas","commands","receipts","health"],"freshness":"live"}}',
+  'response:snapshot.get':
+    '{"type":"response","transportVersion":1,"id":"r-snap","ok":true,"result":{"kind":"snapshot.get","frame":{"type":"host.snapshot","protocolVersion":2,"snapshot":{"protocolVersion":2,"projectionVersion":2,"generatedAt":"2026-08-03T17:00:00.000Z","generation":3,"cursor":10,"freshness":"live","health":{"hostStatus":"ok","connectionPhase":"live","supervised":true,"freshness":"live"},"workspaces":[],"threads":[],"runs":[],"missions":[],"rounds":[],"participants":[],"providers":[],"questions":[],"approvals":[],"schedules":[],"usage":{"availability":"unavailable","confidence":"unknown","band":"unknown"},"artifacts":[],"warnings":[],"recovery":{"reopenStatus":"unknown"}}}}}',
+  'response:deltas.since':
+    '{"type":"response","transportVersion":1,"id":"r-deltas","ok":true,"result":{"kind":"deltas.since","frame":{"type":"host.deltas","protocolVersion":2,"result":{"kind":"deltas","generation":3,"fromCursor":10,"toCursor":11,"deltas":[{"protocolVersion":2,"projectionVersion":2,"generation":3,"cursor":11,"previousCursor":10,"kind":"upsert","family":"thread","at":"2026-08-03T17:00:00.000Z","entityId":"thread-1","payload":{"title":"Mission"}}]}}}}',
+  'response:thread.offers':
+    '{"type":"response","transportVersion":1,"id":"r-offers","ok":true,"result":{"kind":"thread.offers","offers":{"threadId":"thread-1","provider":{"runtimeProvider":"codex","displayProvider":"Codex","hueKey":"codex","accent":"#705AFF","model":"gpt-5.6-sol","modelLabel":"GPT-5.6-Sol","shortCode":"CDX"},"currentModel":"gpt-5.6-sol","currentReasoningEffort":"high","currentPostureId":"default","postures":[{"id":"default","label":"Accept Edits","requiresExplicitConsent":false}],"models":[{"id":"gpt-5.6-sol","label":"GPT-5.6-Sol","current":true,"reasoningEfforts":[{"id":"high","isDefault":true}],"defaultReasoningEffort":"high"}],"source":"curated"}}}',
+  'response:workspace.git.read':
+    '{"type":"response","transportVersion":1,"id":"r-workspace-git","ok":true,"result":{"kind":"workspace.git.read","result":{"scope":"status","branch":"main","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","files":[],"truncated":false}}}',
+  'response:receipt.lookup':
+    '{"type":"response","transportVersion":1,"id":"r-receipt","ok":true,"result":{"kind":"receipt.lookup","receipt":{"type":"host.receipt","protocolVersion":2,"commandId":"cmd-1","idempotencyKey":"idem-1","name":"composer.send","actor":{"actorId":"user-1","clientId":"client-desktop-1","clientClass":"desktop"},"authority":{"decision":"allow"},"status":"succeeded","commandFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generation":3,"cursor":11,"createdAt":"2026-08-03T17:00:00.000Z","updatedAt":"2026-08-03T17:00:01.000Z","resultSummary":"queued"}}}',
+  'response:health.get':
+    '{"type":"response","transportVersion":1,"id":"r-health","ok":true,"result":{"kind":"health.get","frame":{"type":"host.health","protocolVersion":2,"health":{"hostStatus":"ok","connectionPhase":"live","supervised":true,"freshness":"live"}}}}',
+  'response:host.shutdown:stopping':
+    '{"type":"response","transportVersion":1,"id":"r-shutdown","ok":true,"result":{"kind":"host.shutdown","state":"stopping"}}',
+  'response:host.shutdown:already_stopping':
+    '{"type":"response","transportVersion":1,"id":"r-shutdown-again","ok":true,"result":{"kind":"host.shutdown","state":"already_stopping"}}',
+  'response:command.submit':
+    '{"type":"response","transportVersion":1,"id":"r-cmd","ok":true,"result":{"kind":"command.submit","receipt":{"type":"host.receipt","protocolVersion":2,"commandId":"cmd-1","idempotencyKey":"idem-1","name":"composer.send","actor":{"actorId":"user-1","clientId":"client-desktop-1","clientClass":"desktop"},"authority":{"decision":"allow"},"status":"succeeded","commandFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","generation":3,"cursor":11,"createdAt":"2026-08-03T17:00:00.000Z","updatedAt":"2026-08-03T17:00:01.000Z","resultSummary":"queued"}}}',
+  'response:provider.status':
+    '{"type":"response","transportVersion":1,"id":"r-provider.status","ok":true,"result":{"kind":"provider.status","statuses":[{"providerId":"codex","status":"ready","label":"Codex"}]}}',
+  'response:provider.offers':
+    '{"type":"response","transportVersion":1,"id":"r-provider.offers","ok":true,"result":{"kind":"provider.offers","offers":{"providerId":"codex","offerRevision":"catalog-r1","models":[{"modelId":"gpt-5.6","label":"GPT-5.6","available":true,"reasoning":[]}],"postures":[{"postureId":"plan","label":"Plan","available":true,"requiresExplicitConsent":true,"ceiling":"workspace_write"}]}}}',
+  'response:provider.auth.flows':
+    '{"type":"response","transportVersion":1,"id":"r-provider.auth.flows","ok":true,"result":{"kind":"provider.auth.flows","flows":[{"flowId":"browser","kind":"browser","label":"Browser","available":true}]}}',
+  'response:provider.auth.status':
+    '{"type":"response","transportVersion":1,"id":"r-provider.auth.status","ok":true,"result":{"kind":"provider.auth.status","status":{"providerId":"codex","state":"unauthenticated"}}}',
+  'response:thread.history':
+    '{"type":"response","transportVersion":1,"id":"r-thread.history","ok":true,"result":{"kind":"thread.history","page":{"threadId":"thread-1","generation":1,"cursor":3,"entries":[]}}}',
+  'response:history.since':
+    '{"type":"response","transportVersion":1,"id":"r-history.since","ok":true,"result":{"kind":"history.since","result":{"kind":"deltas","threadId":"thread-1","generation":1,"fromCursor":2,"toCursor":3,"deltas":[{"kind":"append","entry":{"entryId":"message-1","role":"assistant","createdAt":1,"text":"Hello"}}]}}}',
+  'response:thread.catalogue':
+    '{"type":"response","transportVersion":1,"id":"catalogue-error","ok":true,"result":{"kind":"thread.catalogue","reply":{"data":null,"error":{"code":"source_changed"}}}}',
+  'response:twmission.export':
+    '{"type":"response","transportVersion":1,"id":"r-tw","ok":true,"result":{"kind":"twmission.export","result":{"bundle":{"a":1}}}}',
+  'error:unsupported_transport_version':
+    '{"type":"response","transportVersion":1,"id":"err-unsupported_transport_version","ok":false,"error":{"code":"unsupported_transport_version"}}',
+  'error:unknown_frame_kind':
+    '{"type":"response","transportVersion":1,"id":"err-unknown_frame_kind","ok":false,"error":{"code":"unknown_frame_kind"}}',
+  'error:unknown_request_kind':
+    '{"type":"response","transportVersion":1,"id":"err-unknown_request_kind","ok":false,"error":{"code":"unknown_request_kind"}}',
+  'error:invalid_frame':
+    '{"type":"response","transportVersion":1,"id":"err-invalid_frame","ok":false,"error":{"code":"invalid_frame"}}',
+  'error:missing_id':
+    '{"type":"response","transportVersion":1,"id":"err-missing_id","ok":false,"error":{"code":"missing_id"}}',
+  'error:oversize_id':
+    '{"type":"response","transportVersion":1,"id":"err-oversize_id","ok":false,"error":{"code":"oversize_id"}}',
+  'error:invalid_token':
+    '{"type":"response","transportVersion":1,"id":"err-invalid_token","ok":false,"error":{"code":"invalid_token"}}',
+  'error:invalid_payload':
+    '{"type":"response","transportVersion":1,"id":"err-invalid_payload","ok":false,"error":{"code":"invalid_payload"}}',
+  'error:unauthorized':
+    '{"type":"response","transportVersion":1,"id":"err-unauthorized","ok":false,"error":{"code":"unauthorized"}}',
+  'error:host_unavailable':
+    '{"type":"response","transportVersion":1,"id":"err-host_unavailable","ok":false,"error":{"code":"host_unavailable"}}',
+  'error:shutting_down':
+    '{"type":"response","transportVersion":1,"id":"err-shutting_down","ok":false,"error":{"code":"shutting_down"}}',
+  'event:deltas':
+    '{"type":"event","transportVersion":1,"event":"deltas","sequence":7,"payload":{"type":"host.deltas","protocolVersion":2,"result":{"kind":"deltas","generation":3,"fromCursor":10,"toCursor":11,"deltas":[{"protocolVersion":2,"projectionVersion":2,"generation":3,"cursor":11,"previousCursor":10,"kind":"upsert","family":"thread","at":"2026-08-03T17:00:00.000Z","entityId":"thread-1","payload":{"title":"Mission"}}]}}}',
+  'event:history':
+    '{"type":"event","transportVersion":1,"event":"history","sequence":9,"payload":{"type":"host.history","protocolVersion":2,"threadId":"thread-1","result":{"kind":"deltas","threadId":"thread-1","generation":1,"fromCursor":2,"toCursor":3,"deltas":[]}}}',
+  'event:health':
+    '{"type":"event","transportVersion":1,"event":"health","sequence":8,"payload":{"type":"host.health","protocolVersion":2,"health":{"hostStatus":"ok","connectionPhase":"live","supervised":true,"freshness":"live"}}}',
+  'event:host.closing': '{"type":"event","transportVersion":1,"event":"host.closing","sequence":9}'
 }
 
 function expectClientRoundTrip(frame: HostLocalTransportClientFrame): void {
@@ -254,16 +375,58 @@ describe('hostProtocolTransport Wave 3.2', () => {
         case 'thread.offers':
           frame = { ...base, kind, params: { threadId: 'thread-1' } }
           break
+        case 'provider.status':
+          frame = { ...base, kind, params: {} }
+          break
+        case 'provider.offers':
+        case 'provider.auth.flows':
+        case 'provider.auth.status':
+          frame = { ...base, kind, params: { providerId: 'codex' } }
+          break
+        case 'thread.history':
+          frame = { ...base, kind, params: { threadId: 'thread-1', limit: 25 } }
+          break
+        case 'thread.catalogue':
+          frame = { ...base, kind, params: { method: 'list', limit: 25 } }
+          break
+        case 'thread.catalogue.maintenance':
+          frame = {
+            ...base,
+            kind,
+            params: { method: 'owner', owner: { writer: 'desktop', writerId: 'desktop-id' } }
+          }
+          break
+        case 'workspace.git.read':
+          frame = {
+            ...base,
+            kind,
+            params: { workspaceId: 'workspace-1', scope: 'status' }
+          }
+          break
+        case 'history.since':
+          frame = {
+            ...base,
+            kind,
+            params: { threadId: 'thread-1', since: { generation: 1, cursor: 2 } }
+          }
+          break
         case 'receipt.lookup':
           frame = { ...base, kind, params: { commandId: 'cmd-1' } }
           break
         case 'health.get':
+        case 'host.shutdown':
           frame = { ...base, kind, params: {} }
           break
         case 'command.submit':
           frame = { ...base, kind, params: sampleCommand() }
           break
         case 'twmission.export':
+          frame = { ...base, kind, params: {} }
+          break
+        case 'host.lease':
+          frame = { ...base, kind, params: { action: 'renew', leaseId: 'lease-1' } }
+          break
+        case 'host.status':
           frame = { ...base, kind, params: {} }
           break
         default: {
@@ -309,6 +472,22 @@ describe('hostProtocolTransport Wave 3.2', () => {
         {
           type: 'response',
           transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-workspace-git',
+          ok: true,
+          result: {
+            kind: 'workspace.git.read',
+            result: {
+              scope: 'status',
+              branch: 'main',
+              head: 'a'.repeat(40),
+              files: [],
+              truncated: false
+            }
+          }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
           id: 'r-receipt',
           ok: true,
           result: { kind: 'receipt.lookup', receipt }
@@ -323,6 +502,20 @@ describe('hostProtocolTransport Wave 3.2', () => {
         {
           type: 'response',
           transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-shutdown',
+          ok: true,
+          result: { kind: 'host.shutdown', state: 'stopping' }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'r-shutdown-again',
+          ok: true,
+          result: { kind: 'host.shutdown', state: 'already_stopping' }
+        },
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
           id: 'r-cmd',
           ok: true,
           result: { kind: 'command.submit', receipt }
@@ -331,6 +524,80 @@ describe('hostProtocolTransport Wave 3.2', () => {
       for (const frame of results) {
         expectHostRoundTrip(frame)
       }
+    })
+
+    it('round-trips setup/history responses and the separate history event', () => {
+      const historyResult = {
+        kind: 'deltas' as const,
+        threadId: 'thread-1',
+        generation: 1,
+        fromCursor: 2,
+        toCursor: 3,
+        deltas: [
+          {
+            kind: 'append' as const,
+            entry: { entryId: 'message-1', role: 'assistant' as const, createdAt: 1, text: 'Hello' }
+          }
+        ]
+      }
+      for (const result of [
+        {
+          kind: 'provider.status' as const,
+          statuses: [{ providerId: 'codex', status: 'ready' as const, label: 'Codex' }]
+        },
+        {
+          kind: 'provider.offers' as const,
+          offers: {
+            providerId: 'codex',
+            offerRevision: 'catalog-r1',
+            models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+            postures: [
+              {
+                postureId: 'plan',
+                label: 'Plan',
+                available: true,
+                requiresExplicitConsent: true,
+                ceiling: 'workspace_write' as const
+              }
+            ]
+          }
+        },
+        {
+          kind: 'provider.auth.flows' as const,
+          flows: [
+            { flowId: 'browser', kind: 'browser' as const, label: 'Browser', available: true }
+          ]
+        },
+        {
+          kind: 'provider.auth.status' as const,
+          status: { providerId: 'codex', state: 'unauthenticated' as const }
+        },
+        {
+          kind: 'thread.history' as const,
+          page: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+        },
+        { kind: 'history.since' as const, result: historyResult }
+      ]) {
+        expectHostRoundTrip({
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: `r-${result.kind}`,
+          ok: true,
+          result
+        } as HostLocalTransportResponse)
+      }
+      expectHostRoundTrip({
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        event: 'history',
+        sequence: 9,
+        payload: {
+          type: 'host.history',
+          protocolVersion: 2,
+          threadId: 'thread-1',
+          result: historyResult
+        }
+      })
     })
 
     it('round-trips body-free error responses for every closed code', () => {
@@ -372,6 +639,193 @@ describe('hostProtocolTransport Wave 3.2', () => {
         event: 'host.closing',
         sequence: 9
       })
+    })
+  })
+
+  describe('workspace Git read contract', () => {
+    it('accepts either a workspace or thread target and round-trips typed results', () => {
+      for (const frame of [
+        {
+          type: 'request' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-workspace',
+          kind: 'workspace.git.read' as const,
+          params: {
+            workspaceId: 'workspace-1',
+            scope: 'diff' as const,
+            path: 'src/shared/hostProtocol.ts'
+          }
+        },
+        {
+          type: 'request' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-thread',
+          kind: 'workspace.git.read' as const,
+          params: { threadId: 'thread-1', scope: 'status' as const }
+        }
+      ]) {
+        expect(decodeHostLocalTransportClientFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+
+      for (const frame of [
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-status',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'status' as const,
+              branch: 'main',
+              head: 'a'.repeat(40),
+              files: [
+                {
+                  path: 'src/shared/hostProtocol.ts',
+                  index: 'M',
+                  workingTree: ' ',
+                  kind: 'modified' as const,
+                  staged: true,
+                  unstaged: false
+                }
+              ],
+              truncated: false
+            }
+          }
+        },
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-diff',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'diff' as const,
+              branch: null,
+              head: null,
+              text: 'diff --git a/file b/file',
+              truncated: true
+            }
+          }
+        },
+        {
+          type: 'response' as const,
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'git-log',
+          ok: true as const,
+          result: {
+            kind: 'workspace.git.read' as const,
+            result: {
+              scope: 'log' as const,
+              branch: 'feature',
+              head: 'b'.repeat(64),
+              text: 'b'.repeat(64) + ' subject',
+              truncated: false
+            }
+          }
+        }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+    })
+
+    it('rejects ambiguous targets, invalid scopes, unsafe paths, and unknown fields', () => {
+      for (const params of [
+        { scope: 'status' },
+        { workspaceId: 'workspace-1', threadId: 'thread-1', scope: 'status' },
+        { workspaceId: 'workspace-1', scope: 'show' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: '/etc/passwd' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: 'C:\\Windows\\system.ini' },
+        { workspaceId: 'workspace-1', scope: 'diff', path: 'src/../secret' },
+        { workspaceId: 'workspace-1', scope: 'diff', extra: true }
+      ]) {
+        expect(
+          decodeHostLocalTransportClientFrame({
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: 'git-invalid',
+            kind: 'workspace.git.read',
+            params
+          })
+        ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+      }
+    })
+
+    it('strictly decodes bounded results with an explicit truncation marker', () => {
+      expect(HOST_WORKSPACE_GIT_RESULT_MAX_BYTES).toBe(128 * 1024)
+      const base = {
+        type: 'response' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'git-result',
+        ok: true as const
+      }
+      for (const result of [
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'diff',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: 'diff',
+            truncated: false,
+            extra: true
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'status',
+            branch: 'main',
+            head: 'not-a-revision',
+            files: [],
+            truncated: false
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'status',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            files: [
+              {
+                path: '../outside',
+                index: '?',
+                workingTree: '?',
+                kind: 'untracked',
+                staged: false,
+                unstaged: true
+              }
+            ],
+            truncated: false
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'diff',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: '\\'.repeat(HOST_WORKSPACE_GIT_RESULT_MAX_BYTES),
+            truncated: true
+          }
+        },
+        {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'log',
+            branch: null,
+            head: null,
+            text: 'log without marker'
+          }
+        }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame({ ...base, result })).toEqual({
+          ok: false,
+          error: { code: 'invalid_payload' }
+        })
+      }
     })
   })
 
@@ -484,6 +938,38 @@ describe('hostProtocolTransport Wave 3.2', () => {
             offers: { ...sampleThreadOffers(), models: [{ id: 'invented' }] }
           }
         })
+      ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+    })
+
+    it('accepts the shared provider model cap and rejects cap plus one', () => {
+      const responseWithModelCount = (modelCount: number) => ({
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'offers-model-cap',
+        ok: true,
+        result: {
+          kind: 'thread.offers',
+          offers: {
+            ...sampleThreadOffers(),
+            models: Array.from({ length: modelCount }, (_, index) => ({
+              id: `model-${index}`,
+              label: `Model ${index}`,
+              reasoningEfforts: []
+            }))
+          }
+        }
+      })
+
+      expect(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER).toBe(64)
+      expect(
+        decodeHostLocalTransportHostFrame(
+          responseWithModelCount(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER)
+        )
+      ).toMatchObject({ ok: true })
+      expect(
+        decodeHostLocalTransportHostFrame(
+          responseWithModelCount(PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER + 1)
+        )
       ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
     })
 
@@ -651,6 +1137,459 @@ describe('hostProtocolTransport Wave 3.2', () => {
       expect(withoutLineComments).not.toMatch(/require\s*\(/)
       expect(withoutLineComments).not.toMatch(/electron/i)
       expect(withoutLineComments).not.toMatch(/\bnet\b|\bfs\b|\bchild_process\b/)
+    })
+  })
+
+  describe('Host lease and status request kinds (Host-lifetime programme)', () => {
+    const request = (kind: 'host.lease' | 'host.status', params: unknown) => ({
+      type: 'request',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: `req-${kind}`,
+      kind,
+      params
+    })
+    const response = (result: unknown) => ({
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: 'r-lease',
+      ok: true,
+      result
+    })
+
+    it('adds request kinds only: the event kind set is exactly what it was', () => {
+      expect(HOST_LOCAL_TRANSPORT_REQUEST_KINDS).toEqual(
+        expect.arrayContaining(['host.lease', 'host.status'])
+      )
+      expect([...HOST_LOCAL_TRANSPORT_EVENT_KINDS]).toEqual([
+        'deltas',
+        'history',
+        'health',
+        'host.closing'
+      ])
+    })
+
+    it('round-trips every lease action and rejects malformed params', () => {
+      for (const params of [
+        { action: 'acquire' },
+        { action: 'decline' },
+        { action: 'renew', leaseId: 'lease-1' },
+        { action: 'release', leaseId: 'lease-1' }
+      ]) {
+        const frame = request('host.lease', params)
+        expect(decodeHostLocalTransportClientFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+      for (const params of [
+        {},
+        { action: 'steal' },
+        { action: 'acquire', leaseId: 'lease-1' },
+        { action: 'renew' },
+        { action: 'renew', leaseId: '' },
+        { action: 'renew', leaseId: 'x'.repeat(HOST_LOCAL_TRANSPORT_MAX_ID + 1) },
+        { action: 'release', leaseId: 'lease-1', force: true },
+        'acquire'
+      ]) {
+        expect(decodeHostLocalTransportClientFrame(request('host.lease', params))).toEqual({
+          ok: false,
+          error: { code: 'invalid_payload' }
+        })
+      }
+      expect(
+        decodeHostLocalTransportClientFrame(request('host.status', { verbose: true }))
+      ).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+    })
+
+    it('round-trips lease results and rejects malformed or padded ones', () => {
+      for (const result of [
+        {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: 'lease-1',
+          heartbeatMs: 5000,
+          ttlMs: 20000,
+          hostNowMs: 0
+        },
+        {
+          kind: 'host.lease',
+          action: 'renew',
+          leaseId: 'lease-1',
+          expiresInMs: 20000,
+          hostNowMs: 12
+        },
+        { kind: 'host.lease', action: 'release', released: true },
+        { kind: 'host.lease', action: 'decline', declined: true }
+      ]) {
+        const frame = response(result)
+        expect(decodeHostLocalTransportHostFrame(frame)).toEqual({ ok: true, value: frame })
+      }
+      for (const result of [
+        {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: 'lease-1',
+          heartbeatMs: 0,
+          ttlMs: 20000,
+          hostNowMs: 0
+        },
+        {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: 'lease-1',
+          heartbeatMs: 5000,
+          ttlMs: 20000,
+          hostNowMs: -1
+        },
+        {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: 'lease-1',
+          heartbeatMs: 5000,
+          ttlMs: 20000,
+          hostNowMs: 0,
+          extra: 1
+        },
+        { kind: 'host.lease', action: 'renew', leaseId: 'lease-1', expiresInMs: 1.5, hostNowMs: 0 },
+        { kind: 'host.lease', action: 'release', released: false },
+        { kind: 'host.lease', action: 'decline', declined: true, note: 'x' },
+        { kind: 'host.lease', action: 'evict' }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame(response(result))).toEqual({
+          ok: false,
+          error: { code: 'invalid_payload' }
+        })
+      }
+    })
+
+    it('passes a host.status record through for hostProtocol to decode and rejects anything else', () => {
+      const frame = response({ kind: 'host.status', status: { pid: 1, unknown: true } })
+      expect(decodeHostLocalTransportHostFrame(frame)).toEqual({ ok: true, value: frame })
+      for (const result of [
+        { kind: 'host.status' },
+        { kind: 'host.status', status: 'up' },
+        { kind: 'host.status', status: {}, extra: 1 }
+      ]) {
+        expect(decodeHostLocalTransportHostFrame(response(result))).toEqual({
+          ok: false,
+          error: { code: 'invalid_payload' }
+        })
+      }
+    })
+  })
+
+  describe('pre-lease wire bytes', () => {
+    // Recorded from a pristine worktree at 2a71f9580. The lease request kinds
+    // landed on top of a6c49813f, twelve commits later; neither protocol module
+    // changed in between, and these goldens replay green at a6c49813f. The
+    // lease slice may add kinds; it may not move a byte of any frame an older
+    // client or Host already speaks.
+    it('encodes every pre-lease client frame byte-identically to the HEAD goldens', () => {
+      const base = (kind: string) => ({
+        type: 'request' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: `req-${kind}`
+      })
+      const frames: Record<string, HostLocalTransportClientFrame> = {
+        hello: {
+          type: 'hello',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          token: 'tok-'.padEnd(32, 'a'),
+          hello: sampleHello()
+        },
+        'snapshot.get': { ...base('snapshot.get'), kind: 'snapshot.get', params: {} },
+        'deltas.since': {
+          ...base('deltas.since'),
+          kind: 'deltas.since',
+          params: { generation: 3, cursor: 10 }
+        },
+        'thread.offers': {
+          ...base('thread.offers'),
+          kind: 'thread.offers',
+          params: { threadId: 'thread-1' }
+        },
+        'provider.status': { ...base('provider.status'), kind: 'provider.status', params: {} },
+        'provider.offers': {
+          ...base('provider.offers'),
+          kind: 'provider.offers',
+          params: { providerId: 'codex' }
+        },
+        'provider.auth.flows': {
+          ...base('provider.auth.flows'),
+          kind: 'provider.auth.flows',
+          params: { providerId: 'codex' }
+        },
+        'provider.auth.status': {
+          ...base('provider.auth.status'),
+          kind: 'provider.auth.status',
+          params: { providerId: 'codex' }
+        },
+        'thread.history': {
+          ...base('thread.history'),
+          kind: 'thread.history',
+          params: { threadId: 'thread-1', limit: 25 }
+        },
+        'thread.catalogue': {
+          ...base('thread.catalogue'),
+          kind: 'thread.catalogue',
+          params: { method: 'list', limit: 25 }
+        },
+        'thread.catalogue.maintenance': {
+          ...base('thread.catalogue.maintenance'),
+          kind: 'thread.catalogue.maintenance',
+          params: { method: 'owner', owner: { writer: 'desktop', writerId: 'desktop-id' } }
+        },
+        'workspace.git.read': {
+          ...base('workspace.git.read'),
+          kind: 'workspace.git.read',
+          params: { workspaceId: 'workspace-1', scope: 'status' }
+        },
+        'history.since': {
+          ...base('history.since'),
+          kind: 'history.since',
+          params: { threadId: 'thread-1', since: { generation: 1, cursor: 2 } }
+        },
+        'receipt.lookup': {
+          ...base('receipt.lookup'),
+          kind: 'receipt.lookup',
+          params: { commandId: 'cmd-1' }
+        },
+        'health.get': { ...base('health.get'), kind: 'health.get', params: {} },
+        'host.shutdown': { ...base('host.shutdown'), kind: 'host.shutdown', params: {} },
+        'command.submit': {
+          ...base('command.submit'),
+          kind: 'command.submit',
+          params: sampleCommand()
+        },
+        'twmission.export': { ...base('twmission.export'), kind: 'twmission.export', params: {} },
+        'thread.catalogue+background': {
+          type: 'request',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'catalogue-priority',
+          kind: 'thread.catalogue',
+          params: { method: 'summary', chatId: 'chat-1' },
+          priority: 'background'
+        }
+      }
+      expect(Object.keys(frames).sort()).toEqual(Object.keys(PRE_LEASE_CLIENT_GOLDENS).sort())
+      for (const [label, frame] of Object.entries(frames)) {
+        const encoded = encodeHostLocalTransportClientFrame(frame)
+        expect(encoded.ok, label).toBe(true)
+        if (!encoded.ok) continue
+        expect(JSON.stringify(encoded.value), label).toBe(PRE_LEASE_CLIENT_GOLDENS[label])
+      }
+    })
+
+    it('encodes every pre-lease host frame byte-identically to the HEAD goldens', () => {
+      const receipt = sampleReceipt()
+      const response = (
+        id: string,
+        result: Extract<HostLocalTransportResponse, { ok: true }>['result']
+      ): HostLocalTransportHostFrame => ({
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result
+      })
+      const frames: Record<string, HostLocalTransportHostFrame> = {
+        welcome: {
+          type: 'welcome',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          welcome: sampleWelcome()
+        },
+        'response:snapshot.get': response('r-snap', {
+          kind: 'snapshot.get',
+          frame: sampleSnapshotFrame()
+        }),
+        'response:deltas.since': response('r-deltas', {
+          kind: 'deltas.since',
+          frame: sampleDeltasFrame()
+        }),
+        'response:thread.offers': response('r-offers', {
+          kind: 'thread.offers',
+          offers: sampleThreadOffers()
+        }),
+        'response:workspace.git.read': response('r-workspace-git', {
+          kind: 'workspace.git.read',
+          result: {
+            scope: 'status',
+            branch: 'main',
+            head: 'a'.repeat(40),
+            files: [],
+            truncated: false
+          }
+        }),
+        'response:receipt.lookup': response('r-receipt', { kind: 'receipt.lookup', receipt }),
+        'response:health.get': response('r-health', {
+          kind: 'health.get',
+          frame: sampleHealthFrame()
+        }),
+        'response:host.shutdown:stopping': response('r-shutdown', {
+          kind: 'host.shutdown',
+          state: 'stopping'
+        }),
+        'response:host.shutdown:already_stopping': response('r-shutdown-again', {
+          kind: 'host.shutdown',
+          state: 'already_stopping'
+        }),
+        'response:command.submit': response('r-cmd', { kind: 'command.submit', receipt }),
+        'response:provider.status': response('r-provider.status', {
+          kind: 'provider.status',
+          statuses: [{ providerId: 'codex', status: 'ready', label: 'Codex' }]
+        }),
+        'response:provider.offers': response('r-provider.offers', {
+          kind: 'provider.offers',
+          offers: {
+            providerId: 'codex',
+            offerRevision: 'catalog-r1',
+            models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+            postures: [
+              {
+                postureId: 'plan',
+                label: 'Plan',
+                available: true,
+                requiresExplicitConsent: true,
+                ceiling: 'workspace_write'
+              }
+            ]
+          }
+        }),
+        'response:provider.auth.flows': response('r-provider.auth.flows', {
+          kind: 'provider.auth.flows',
+          flows: [{ flowId: 'browser', kind: 'browser', label: 'Browser', available: true }]
+        }),
+        'response:provider.auth.status': response('r-provider.auth.status', {
+          kind: 'provider.auth.status',
+          status: { providerId: 'codex', state: 'unauthenticated' }
+        }),
+        'response:thread.history': response('r-thread.history', {
+          kind: 'thread.history',
+          page: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+        }),
+        'response:history.since': response('r-history.since', {
+          kind: 'history.since',
+          result: {
+            kind: 'deltas',
+            threadId: 'thread-1',
+            generation: 1,
+            fromCursor: 2,
+            toCursor: 3,
+            deltas: [
+              {
+                kind: 'append',
+                entry: { entryId: 'message-1', role: 'assistant', createdAt: 1, text: 'Hello' }
+              }
+            ]
+          }
+        }),
+        'response:thread.catalogue': response('catalogue-error', {
+          kind: 'thread.catalogue',
+          reply: { data: null, error: { code: 'source_changed' } }
+        }),
+        'response:twmission.export': response('r-tw', {
+          kind: 'twmission.export',
+          result: { bundle: { a: 1 } }
+        }),
+        'event:deltas': {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'deltas',
+          sequence: 7,
+          payload: sampleDeltasFrame()
+        },
+        'event:history': {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'history',
+          sequence: 9,
+          payload: {
+            type: 'host.history',
+            protocolVersion: 2,
+            threadId: 'thread-1',
+            result: {
+              kind: 'deltas',
+              threadId: 'thread-1',
+              generation: 1,
+              fromCursor: 2,
+              toCursor: 3,
+              deltas: []
+            }
+          }
+        },
+        'event:health': {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'health',
+          sequence: 8,
+          payload: sampleHealthFrame()
+        },
+        'event:host.closing': {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'host.closing',
+          sequence: 9
+        }
+      }
+      for (const code of HOST_LOCAL_TRANSPORT_ERROR_CODES) {
+        frames[`error:${code}`] = {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: `err-${code}`,
+          ok: false,
+          error: { code }
+        }
+      }
+      expect(Object.keys(frames).sort()).toEqual(Object.keys(PRE_LEASE_HOST_GOLDENS).sort())
+      for (const [label, frame] of Object.entries(frames)) {
+        const encoded = encodeHostLocalTransportHostFrame(frame)
+        expect(encoded.ok, label).toBe(true)
+        if (!encoded.ok || !('value' in encoded)) continue
+        expect(JSON.stringify(encoded.value), label).toBe(PRE_LEASE_HOST_GOLDENS[label])
+      }
+    })
+  })
+
+  describe('thread catalogue request-local extensions', () => {
+    it('preserves an additive background lane while leaving legacy foreground frames unchanged', () => {
+      const base = {
+        type: 'request' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: 'catalogue-priority',
+        kind: 'thread.catalogue' as const,
+        params: { method: 'summary' as const, chatId: 'chat-1' }
+      }
+      expect(decodeHostLocalTransportClientFrame({ ...base, priority: 'background' })).toEqual({
+        ok: true,
+        value: { ...base, priority: 'background' }
+      })
+      expect(decodeHostLocalTransportClientFrame(base)).toEqual({ ok: true, value: base })
+      expect(decodeHostLocalTransportClientFrame({ ...base, priority: 'foreground' })).toEqual({
+        ok: false,
+        error: { code: 'invalid_payload' }
+      })
+    })
+
+    it('accepts only body-free catalogue errors with a null legacy data fallback', () => {
+      const response = (reply: unknown) =>
+        decodeHostLocalTransportHostFrame({
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: 'catalogue-error',
+          ok: true,
+          result: { kind: 'thread.catalogue', reply }
+        })
+      expect(response({ data: null, error: { code: 'source_changed' } })).toMatchObject({
+        ok: true,
+        value: {
+          result: { reply: { data: null, error: { code: 'source_changed' } } }
+        }
+      })
+      expect(response({ data: { legacy: true } })).toMatchObject({ ok: true })
+      for (const reply of [
+        { data: 'sentinel', error: { code: 'source_changed' } },
+        { data: null, error: { code: 'unknown' } },
+        { data: null, error: { code: 'source_changed', detail: 'leak' } }
+      ]) {
+        expect(response(reply)).toEqual({ ok: false, error: { code: 'invalid_payload' } })
+      }
     })
   })
 })

@@ -62,13 +62,36 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
-    @Test("claude-fable-5 row: 1_000_000 / 1.0M")
+    @Test("claude-opus-5-5 row leads the claude group: 1_000_000 / 1.0M")
+    func claudeOpus55() {
+        let claudeModels =
+            ModelContextLengths.buildGroups().first { $0.provider == "claude" }?.models ?? []
+        #expect(claudeModels.first?.modelId == "claude-opus-5-5")
+        let row = claudeModels.first { $0.modelId == "claude-opus-5-5" }
+        #expect(row != nil)
+        #expect(row?.label == "Opus 5.5")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("claude-fable-5-1 row: 1_000_000 / 1.0M")
+    func claudeFable51() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "claude" }?
+            .models.first { $0.modelId == "claude-fable-5-1" }
+        #expect(row != nil)
+        #expect(row?.label == "Fable 5.1")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("claude-fable-5 row: 1_000_000 / 1.0M, relabelled Legacy")
     func claudeFable5() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-fable-5" }
         #expect(row != nil)
-        #expect(row?.label == "Fable 5")
+        #expect(row?.label == "Fable 5 Legacy")
         #expect(row?.contextWindow == 1_000_000)
         #expect(row?.formatted == "1.0M")
     }
@@ -99,11 +122,13 @@ struct ModelContextLengthsTests {
     func claudeGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
-        // Current models first, the Legacy cluster (4.8 1M among them) below.
+        // Current models first, the Legacy cluster (Fable 5 and 4.8 1M among them) below.
         #expect(claudeModels.map(\.modelId) == [
+            "claude-opus-5-5",
             "claude-opus-5",
-            "claude-fable-5",
+            "claude-fable-5-1",
             "claude-sonnet-5",
+            "claude-fable-5",
             "claude-sonnet-4-6",
             "claude-opus-4-8-1m",
             "claude-opus-4-7-1m",
@@ -124,13 +149,34 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.1M")
     }
 
-    @Test("codex gpt-5.4-mini: 400_000 / 400k")
-    func codexGpt54Mini() {
+    @Test("codex gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
+    func codexGpt6SolAndLuna() {
+        let codex = ModelContextLengths.buildGroups().first { $0.provider == "codex" }?.models ?? []
+        for (modelId, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+            let row = codex.first { $0.modelId == modelId }
+            #expect(row != nil)
+            #expect(row?.label == label)
+            #expect(row?.contextWindow == 1_050_000)
+            #expect(row?.formatted == "1.1M")
+        }
+        // Mirrors the TS order: gpt-5.5 first, the GPT-6 pair, then the 5.6 trio.
+        let ids = codex.map(\.modelId)
+        #expect(ids.firstIndex(of: "gpt-6-sol") == 1)
+        #expect(ids.firstIndex(of: "gpt-6-luna") == 2)
+        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 3)
+    }
+
+    @Test("codex drops the rows retired on 2026-09-18")
+    func codexRetiredRowsAbsent() {
+        // Was pinned on gpt-5.4-mini (400k) until the user retired the 5.4
+        // family and Spark. Mirrors modelContextLengths.test.ts.
         let groups = ModelContextLengths.buildGroups()
-        let row = groups.first { $0.provider == "codex" }?
-            .models.first { $0.modelId == "gpt-5.4-mini" }
-        #expect(row?.contextWindow == 400_000)
-        #expect(row?.formatted == "400k")
+        let codex = groups.first { $0.provider == "codex" }?.models ?? []
+        #expect(!codex.isEmpty)
+        for modelId in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"] {
+            #expect(!codex.contains { $0.modelId == modelId })
+        }
+        #expect(codex.contains { $0.modelId == "gpt-5.5" })
     }
 
     // MARK: - Cursor group
@@ -155,45 +201,74 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "256k")
     }
 
-    @Test("cursor grok-4.5 retains its established 500_000 / 500k window")
-    func cursorGrok45() {
+    @Test("cursor drops the retired grok-4.5 row from the curated catalog")
+    func cursorGrok45Retired() {
+        // Cursor's own catalogue no longer carries the Grok 4.5 family and its
+        // CLI rejects those wire ids outright, so the curated list must not
+        // advertise one. ContextWindows keeps the 500_000 entry so historical
+        // runs still resolve a window (see ContextWindowsTests).
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "cursor" }?
             .models.first { $0.modelId == "grok-4.5" }
-        #expect(row != nil)
-        #expect(row?.label == "Cursor Grok 4.5")
-        #expect(row?.contextWindow == 500_000)
-        #expect(row?.formatted == "500k")
+        #expect(row == nil)
     }
 
     // MARK: - Kimi group
 
-    @Test("kimi kimi-k2.7-code: 256_000 / 256k")
-    func kimiK27Code() {
+    @Test("kimi kimi-k2.8-preview: 1M, the window it took from K2.7")
+    func kimiK28Preview() {
+        // K2.8 Preview replaced K2.7 on the standard `kimi-for-coding` route on
+        // 2026-09-11 and raised it from 256K to 1M on every membership tier.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
-            .models.first { $0.modelId == "kimi-k2.7-code" }
-        #expect(row?.contextWindow == 256_000)
+            .models.first { $0.modelId == "kimi-k2.8-preview" }
+        #expect(row?.label == "K2.8 Preview")
+        #expect(row?.contextWindow == 1_048_576)
+    }
+
+    @Test("kimi kimi-k2.7-code-highspeed: exact 262_144 / displayed 256k")
+    func kimiK27CodeHighspeed() {
+        // Highspeed stayed on K2.7 and kept its 256K window when the standard
+        // route moved, which is why it is a row rather than a speed tier.
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "kimi" }?
+            .models.first { $0.modelId == "kimi-k2.7-code-highspeed" }
+        #expect(row?.label == "K2.7 Code Highspeed")
+        #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "256k")
     }
 
-    @Test("kimi kimi-k3: 256k base and plan-dependent 1M maximum")
+    @Test("kimi kimi-k3: official fixed 1M window, range display retired")
     func kimiK3() {
+        // Mirrors desktop f661ac2a1: the split routes each carry their own
+        // official window, so the old plan-dependent '256k–1.0M' is retired.
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3" }
         #expect(row != nil)
-        #expect(row?.label == "K3")
-        #expect(row?.contextWindow == 256_000)
-        #expect(row?.maxContextWindow == 1_048_576)
-        #expect(row?.formatted == "256k–1.0M")
+        #expect(row?.label == "K3 (1M)")
+        #expect(row?.contextWindow == 1_048_576)
+        #expect(row?.formatted == "1.0M")
     }
 
-    @Test("kimi group mirrors the current picker rows (K2.7 default first, then K3)")
+    @Test("kimi fixed K3 route: exact 262_144 / displayed 256k")
+    func kimiK3256K() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "kimi" }?
+            .models.first { $0.modelId == "kimi-k3-256k" }
+        #expect(row?.label == "K3 (256K)")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "256k")
+    }
+
+    @Test("kimi group mirrors the current picker rows (K2.8, Highspeed, both K3 routes)")
     func kimiGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let kimiModels = groups.first { $0.provider == "kimi" }?.models ?? []
-        #expect(kimiModels.map(\.modelId) == ["kimi-k2.7-code", "kimi-k3"])
+        #expect(
+            kimiModels.map(\.modelId) == [
+                "kimi-k2.8-preview", "kimi-k2.7-code-highspeed", "kimi-k3", "kimi-k3-256k",
+            ])
     }
 
     // MARK: - Grok group
@@ -277,23 +352,65 @@ struct ModelContextLengthsTests {
 
     // MARK: - Mistral group
 
-    @Test("mistral devstral-small leads (seat default): 262_144 / 262k")
-    func mistralDevstralSmall() {
+    @Test("mistral medium-3.5 leads (Vibe 2.25 seat default): 262_144 / 262k")
+    func mistralMedium35() {
         let groups = ModelContextLengths.buildGroups()
         let row = groups.first { $0.provider == "mistral" }?
-            .models.first { $0.modelId == "devstral-small" }
+            .models.first { $0.modelId == "mistral-medium-3.5" }
         #expect(row != nil)
-        #expect(row?.label == "Devstral Small")
+        #expect(row?.label == "Mistral Medium 3.5")
         #expect(row?.contextWindow == 262_144)
         #expect(row?.formatted == "262k")
     }
 
-    @Test("mistral group is the two BARE Vibe seat ids, never Pi's mistral/<model> wire ids")
+    @Test("mistral group is BARE seat ids only, never Pi's mistral/<model> wire ids")
     func mistralGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let models = groups.first { $0.provider == "mistral" }?.models ?? []
-        #expect(models.map(\.modelId) == ["devstral-small", "mistral-medium-3.5"])
+        // `glm-5-3` (Vibe subscription) joined 2026-09-21 beside the earlier
+        // API-key `zai-glm-5-3` (2026-09-18). Both are bare seat ids, which is
+        // what this guard is about. The `zai-` prefix keeps the API row off
+        // Devin's identically-named glm-5-3.
+        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2", "glm-5-3", "zai-glm-5-3"])
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
+    }
+
+    // MARK: - Pi group
+
+    @Test("pi group carries exactly one Xiaomi row: the V2.6 Pro (SGP) flagship at 1_048_576 / 1.0M")
+    func piXiaomiFlagshipRow() {
+        // One flagship row per BYOK upstream by design (`options(for: "pi")`).
+        // Xiaomi's current flagship is V2.6 Pro (released 2026-09-22); V2.5 Pro
+        // is legacy until its 2026-10-21 sunset, so the row must not slide back
+        // to it — and a dropped row must not read as "no Xiaomi rows to check",
+        // which is why the whole filtered list is pinned, not a first-match.
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let xiaomiRows = piRows.filter { $0.modelId.hasPrefix("xiaomi-token-plan-") }
+        #expect(xiaomiRows.map(\.modelId) == ["xiaomi-token-plan-sgp/mimo-v2.6-pro"])
+        let row = xiaomiRows.first
+        #expect(row?.label == "MiMo V2.6 Pro (SGP)")
+        #expect(row?.contextWindow == 1_048_576)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("pi group lists Space Bunny Alpha once at 1_000_000 / 1.0M")
+    func piSpaceBunnyAlphaRow() {
+        // The desktop derives this list from the ensemble catalogue; the phone
+        // hand-lists it, so a new OpenRouter route has to be added here too. The
+        // filtered list is pinned rather than a first-match, so a dropped row
+        // reds instead of reading as "nothing to check".
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let rows = piRows.filter { $0.modelId == "openrouter/stealth/space-bunny-alpha" }
+        #expect(rows.map(\.label) == ["Space Bunny Alpha"])
+        let row = rows.first
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
     }
 
     // MARK: - Provider order
@@ -355,6 +472,16 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
+    @Test("ollama ornith-1.5:35b: 262_144 / 262k")
+    func ollamaOrnith15_35b() {
+        let groups = ModelContextLengths.buildGroups(includeOllama: true)
+        let row = groups.first { $0.provider == "ollama" }?
+            .models.first { $0.modelId == "ornith-1.5:35b" }
+        #expect(row?.label == "Ornith 1.5 (35B Param)")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
+    }
+
     @Test("ollama laguna-xs-2.1:q8_0: 262_144 / 262k")
     func ollamaLagunaXs21Q8() {
         let groups = ModelContextLengths.buildGroups(includeOllama: true)
@@ -403,7 +530,7 @@ struct ModelContextLengthsTests {
             "ministral-3:3b": ("Ministral 3 (3B Param)", 262_144),
             "granite4:3b": ("Granite 4.0 (3B Param)", 131_072),
             "qwen3.5:2b": ("Qwen 3.5 (2B Param)", 262_144),
-            "deepseek-r1:1.5b": ("DeepSeek R1 (1.5B Param)", 131_072),
+            "deepseek-r1:1.5b": ("R1 (1.5B Param)", 131_072),
             "nemotron-3-nano:4b": ("Nemotron 3 Nano (4B Param)", 262_144),
             "lfm2.5-thinking:1.2b": ("LFM 2.5 Thinking (1.2B Param)", 128_000),
             "gemma3:4b": ("Gemma 3 (4B Param)", 131_072),
@@ -425,7 +552,7 @@ struct ModelContextLengthsTests {
         }
 
         #expect(row("llama3.1:8b")?.contextWindow == 131_072)
-        #expect(row("deepseek-r1:8b")?.label == "DeepSeek R1 (8B Param)")
+        #expect(row("deepseek-r1:8b")?.label == "R1 (8B Param)")
         #expect(row("rnj-1")?.contextWindow == 32_768)
         #expect(row("glm-4.7-flash:q4_K_M")?.contextWindow == 202_752)
         #expect(row("north-mini-code-1.0:q4_K_M")?.contextWindow == 500_000)
@@ -436,6 +563,15 @@ struct ModelContextLengthsTests {
         #expect(row("nemotron-3.5-lightning:30b-mlx")?.contextWindow == 262_144)
         #expect(row("qwen3.8:27b-mlx")?.label == "Qwen 3.8 (27B-MLX)")
         #expect(row("qwen3.8:27b-mlx")?.contextWindow == 262_144)
+        #expect(
+            row("qwen3.8-flash-next:125b-mlx")?.label == "Qwen 3.8 Flash Next (125B-MLX)")
+        #expect(row("qwen3.8-flash-next:125b-mlx")?.contextWindow == 262_144)
+        #expect(
+            row("mistral-medium-3.5:128b")?.label == "Mistral Medium 3.5 (128B Param)")
+        #expect(row("mistral-medium-3.5:128b")?.contextWindow == 262_144)
+        #expect(row("granite4.2:3b")?.contextWindow == 131_072)
+        #expect(row("granite4.2:8b")?.contextWindow == 131_072)
+        #expect(row("granite4.2:30b")?.contextWindow == 131_072)
         #expect(row("muse-glimmer:30b-mlx")?.label == "Muse Glimmer (30B-MLX)")
         #expect(row("muse-glimmer:30b-mlx")?.contextWindow == 131_072)
         #expect(row("llama3.2:3b")?.contextWindow == 131_072)

@@ -35,6 +35,8 @@ vi.mock('./Composer', () => ({
     workspaceDiffStats?: { filesChanged: number; additions: number; deletions: number }
     primaryPr?: { number?: number }
     primaryCi?: { status?: string }
+    onOpenCompactChat?: () => void
+    onOpenWorkspaceStats?: () => void
   }) => (
     <div
       data-testid="pane-composer-stub"
@@ -44,6 +46,8 @@ vi.mock('./Composer', () => ({
       data-git-changed={String(props.workspaceDiffStats?.filesChanged ?? 0)}
       data-pr-number={String(props.primaryPr?.number ?? '')}
       data-ci-status={props.primaryCi?.status || ''}
+      data-has-compact-chat-opener={String(Boolean(props.onOpenCompactChat))}
+      data-has-workspace-stats-opener={String(Boolean(props.onOpenWorkspaceStats))}
     >{`pane-composer:${props.prompt ?? ''}`}</div>
   )
 }))
@@ -165,6 +169,89 @@ describe('chatViewPanePropsEqual', () => {
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ copiedId: 'm1' }))).toBe(false)
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ interfaceStyle: 'codex' }))).toBe(false)
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ providerClass: 'claude' }))).toBe(false)
+  })
+
+  it('re-renders when the Appearance transcript-view default changes', () => {
+    // `defaultTranscriptView` is INHERITED from BuildChatViewPropsInput, so
+    // TypeScript never asked for it in the comparator. Unlisted, every
+    // unfocused pane keeps rendering the old default until an unrelated prop
+    // happens to change — no type error, no render error, looks intermittent.
+    expect(
+      chatViewPanePropsEqual(makeProps(), makeProps({ defaultTranscriptView: 'minimal' }))
+    ).toBe(false)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ defaultTranscriptView: 'tools' }),
+        makeProps({ defaultTranscriptView: 'standard' })
+      )
+    ).toBe(false)
+    // Positive control: the comparator still bails out when it has not moved,
+    // so the two assertions above are the field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ defaultTranscriptView: 'minimal' }),
+        makeProps({ defaultTranscriptView: 'minimal' })
+      )
+    ).toBe(true)
+  })
+
+  it('re-renders when the Appearance transcript text size changes', () => {
+    // Inherited the same way, and worse to miss than the view default: this one
+    // resolves to the scale the pane's OWN virtualiser is calibrated for, so an
+    // unlisted pane renders AND estimates at the old size while its neighbours
+    // move — one window right, the others silently wrong.
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ transcriptTextSize: 'large' }))).toBe(
+      false
+    )
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptTextSize: 'small' }),
+        makeProps({ transcriptTextSize: 'large' })
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the two above are
+    // this field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptTextSize: 'large' }),
+        makeProps({ transcriptTextSize: 'large' })
+      )
+    ).toBe(true)
+  })
+
+  it('re-renders when the Appearance transcript width changes', () => {
+    // Called, not read out of the source. The sibling text-size case above is
+    // pinned behaviourally; the width entry shipped pinned only by a raw-source
+    // `toContain('a.transcriptWidth === b.transcriptWidth &&')`, which a comment
+    // satisfies and which cannot tell `&&` from `||`.
+    //
+    // Inherited from BuildChatViewPropsInput, so TypeScript never asked for it.
+    // Unlisted, a Multiview pane keeps BOTH the old column cap on
+    // `.transcript-inner` and the old estimator calibration until some unrelated
+    // prop happens to move — one pane right, the others silently wrong.
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ transcriptWidth: 'wide' }))).toBe(false)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: 'narrow' }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(false)
+    // Absence is how every settings file written before this control spells
+    // Medium, so it has to be distinguishable from a chosen width too.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: undefined }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the three above are
+    // this field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: 'wide' }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(true)
   })
 
   it('re-renders when the chat record identity changes', () => {
@@ -420,6 +507,56 @@ describe('ChatViewPane shared composer', () => {
     )
     expect(html).not.toContain('data-testid="pane-composer-stub"')
   })
+
+  it('gives each workspace pane local Stats and Compact Chat openers', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'chat-1',
+            workspacePath: '/repo'
+          } as unknown as ChatViewPaneProps['chat'],
+          currentWorkspacePath: '/repo',
+          composerProps: stubComposerProps(),
+          topRightChromeActions: [
+            {
+              id: 'compact-companion',
+              title: 'Open Compact Companion',
+              icon: <span>compact</span>,
+              onClick: vi.fn()
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('data-has-workspace-stats-opener="true"')
+    expect(html).toContain('data-has-compact-chat-opener="true"')
+    expect(paneSource).toContain('const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)')
+    expect(paneSource).toContain('actionPillRef={paneActionPillRef}')
+    expect(paneSource).toContain(
+      'canOpenPaneWorkspaceStats ? requestPaneWorkspaceStats : undefined'
+    )
+  })
+
+  it('does not expose a Stats opener when this pane does not own a Stats pill', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'chat-1',
+            workspacePath: '/repo'
+          } as unknown as ChatViewPaneProps['chat'],
+          currentWorkspacePath: '/repo',
+          composerProps: stubComposerProps(),
+          topRightChrome: <div>Custom pane chrome</div>
+        })}
+      />
+    )
+
+    expect(html).toContain('data-has-workspace-stats-opener="false"')
+    expect(html).toContain('data-has-compact-chat-opener="false"')
+  })
 })
 
 describe('ChatViewPane chrome actions', () => {
@@ -436,12 +573,13 @@ describe('ChatViewPane chrome actions', () => {
     expect(html).toContain('>People</button>')
   })
 
-  it('renders the same six workspace actions as the focused pane with pane-scoped ids', () => {
+  it('renders the same seven workspace actions as the focused pane with pane-scoped ids', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
           chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
           currentWorkspacePath: '/repo',
+          onClosePane: vi.fn(),
           topLeftChromeAction: {
             id: 'workspace-sidebar',
             title: 'Hide workspace sidebar',
@@ -482,7 +620,7 @@ describe('ChatViewPane chrome actions', () => {
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
       (match) => match[1]
     )
-    expect(actionIds).toEqual(['fx', 'info', 'workspace-stats', 'popout', 'run', 'home'])
+    expect(actionIds).toEqual(['fx', 'info', 'workspace-stats', 'popout', 'run', 'home', 'close'])
     expect(html).toContain('title="Hide workspace sidebar"')
     expect(html).toContain('sidebar-toggle')
     expect(html).toContain('id="multiview-pane-1-fx-trigger"')
@@ -494,6 +632,24 @@ describe('ChatViewPane chrome actions', () => {
     expect(html).toContain('pane-preview-menu')
     expect(html).toContain('Preview :5173')
     expect(html).toContain('title="Hide sidebar home"')
+    expect(html).toContain('aria-label="Close pane"')
+  })
+})
+
+describe('ChatViewPane pane-local follow recovery', () => {
+  it('renders the jump affordance from this pane scroll hook', () => {
+    const hookStart = paneSource.indexOf('const paneScrollState = useTranscriptScrollState({')
+    const composerStart = paneSource.indexOf('{effectiveComposerProps && (', hookStart)
+    expect(hookStart).toBeGreaterThan(-1)
+    expect(composerStart).toBeGreaterThan(hookStart)
+
+    const paneTranscript = paneSource.slice(hookStart, composerStart)
+    expect(paneTranscript).toContain('<TranscriptJumpToLatestPill')
+    expect(paneTranscript).toContain(
+      'visible={!paneIsWelcomeChat && paneScrollState.showJumpToLatestPill}'
+    )
+    expect(paneTranscript).toContain('unreadCount={paneScrollState.unreadFromBottomCount}')
+    expect(paneTranscript).toContain('onJumpToLatest={paneScrollState.handleJumpToLatest}')
   })
 })
 
@@ -571,6 +727,67 @@ describe('ChatViewPane per-pane run data visualization', () => {
     expect(chatViewPanePropsEqual(runDataProps(), runDataProps({ showRunDataViz: false }))).toBe(
       false
     )
+  })
+})
+
+describe('ChatViewPane paged-shell chat (Stage 1b parity)', () => {
+  // A Stage 1b paged open leaves `messages`/`runs` empty on the record by
+  // design (chrome shell + store window). App derives pane welcome-ness from
+  // `messages.length === 0`, which reads true for EVERY shell — so a resting
+  // pane showing a paged chat painted a welcome hero over a real transcript.
+  const pagedShell = {
+    appChatId: 'paged-chat',
+    scope: 'workspace',
+    title: 'Big thread',
+    workspacePath: '/tmp/AGBench',
+    summaryOnly: true,
+    transcriptPaged: true,
+    messageCount: 2200,
+    runCount: 4,
+    messages: [],
+    runs: []
+  } as unknown as ChatViewPaneProps['chat']
+
+  it('renders the transcript, not a welcome hero, when App mis-gates a paged shell as welcome', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: pagedShell,
+          isWelcomeChat: true,
+          messages: [],
+          composerProps: stubComposerProps()
+        })}
+      />
+    )
+    expect(html).toContain('multiview-pane-content')
+    expect(html).not.toContain('welcome-mode')
+  })
+
+  it('keeps genuine welcome panes (non-shell chats) on the welcome surface', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'fresh-chat',
+            scope: 'workspace',
+            title: 'New Chat'
+          } as unknown as ChatViewPaneProps['chat'],
+          isWelcomeChat: true,
+          messages: [],
+          composerProps: stubComposerProps()
+        })}
+      />
+    )
+    expect(html).toContain('welcome-mode')
+    expect(html).not.toContain('multiview-pane-content')
+  })
+
+  it('sources the pane transcript from the store window while the chat is paged', () => {
+    expect(paneSource).toContain('useCurrentChatTranscriptWindow(props.chat ?? null, {')
+    expect(paneSource).toContain('shouldDeferTranscriptPresentation({')
+    expect(paneSource).toContain('running: props.isThinking === true')
+    expect(paneSource).toContain('paneTranscript.paged ? paneTranscript.messages : props.messages')
+    expect(paneSource).toContain('runs: paneTranscript.paged ? paneTranscript.runs : undefined')
   })
 })
 

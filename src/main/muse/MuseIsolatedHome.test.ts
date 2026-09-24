@@ -5,13 +5,15 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs'
+import { linkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   MUSE_EMPTY_TRUST_DOCUMENT,
@@ -19,10 +21,13 @@ import {
   createMuseIsolatedHome,
   museLaunchEnvPathsStayInsideLease,
   projectMuseAuthJson,
+  scrubMuseDurableSeatHome,
+  projectMuseKeychainAccessIfRequired,
   verifyMuseIsolatedHome,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
 import { MUSE_LISTABLE_BUNDLED_SKILL_NAMES, museBundledSkillUri } from './MuseSkillPin'
+import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
 
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'taskwraith-muse-isolated-home-test-'))
 const leases: MuseIsolatedHomeLease[] = []
@@ -111,6 +116,34 @@ describe('Muse isolated home', () => {
     expect(trust.projects).toEqual({})
   })
 
+  it('writes app-owned MCP route authority only into the disposable settings document', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'mcp-settings',
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+        env: {
+          TASKWRAITH_PARENT_PROVIDER: 'muse',
+          TASKWRAITH_MCP_BROKER_TOKEN: 'a'.repeat(64)
+        }
+      })
+    })
+    leases.push(lease)
+
+    const settings = JSON.parse(readFileSync(lease.settingsPath, 'utf8')) as {
+      mcp_servers?: Record<string, { command?: string; env?: Record<string, string> }>
+    }
+    expect(settings.mcp_servers?.taskwraith).toMatchObject({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      env: { TASKWRAITH_PARENT_PROVIDER: 'muse' }
+    })
+    expect(lease.env.TASKWRAITH_MCP_BROKER_TOKEN).toBeUndefined()
+
+    expect(lease.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    expect(existsSync(lease.settingsPath)).toBe(false)
+  })
+
   it('projects Muse OAuth into a private run-local auth.json and removes it at teardown', () => {
     const authJsonText = JSON.stringify({
       schema_version: 1,
@@ -143,6 +176,83 @@ describe('Muse isolated home', () => {
     expect(() =>
       projectMuseAuthJson(lease, JSON.stringify({ schema_version: 1, providers: {} }))
     ).toThrow(/no supported Meta credential/i)
+  })
+
+  // Subscription-era `muse login` (Muse 1.x) writes a schema-v2 locator whose
+  // OAuth secret lives in the macOS login keychain. The CLI resolves that
+  // keychain through `$HOME/Library/Keychains`, so the relocated seat HOME
+  // needs a keychain graft or the run fails with "missing meta credentials"
+  // despite a projected auth.json (confirmed against Muse Code 1.0.1).
+  const KEYCHAIN_LOCATOR_AUTH_JSON = JSON.stringify({
+    schema_version: 2,
+    providers: {
+      meta: {
+        mechanism: 'oauth',
+        storage: 'keychain',
+        obtained_via: 'device_code'
+      }
+    }
+  })
+
+  it('grafts real-keychain access for a schema-v2 keychain locator without copying a secret', () => {
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains')
+    mkdirSync(realKeychainsDir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(realKeychainsDir, 'login.keychain-db'), 'sentinel-not-a-real-keychain')
+
+    const lease = create('keychain-locator')
+    const authPath = projectMuseAuthJson(lease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(readFileSync(authPath, 'utf8')).toBe(KEYCHAIN_LOCATOR_AUTH_JSON)
+
+    const linkPath = join(lease.homePath, 'Library', 'Keychains')
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(linkPath)).toBe(realKeychainsDir)
+    // The projection itself never reads or copies the keychain secret.
+    expect(readFileSync(authPath, 'utf8')).not.toContain('sentinel')
+
+    // Teardown removes only the symlink; the real keychain directory and its
+    // contents survive untouched.
+    expect(lease.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    expect(existsSync(lease.path)).toBe(false)
+    expect(lstatSync(realKeychainsDir).isDirectory()).toBe(true)
+    expect(readFileSync(join(realKeychainsDir, 'login.keychain-db'), 'utf8')).toBe(
+      'sentinel-not-a-real-keychain'
+    )
+  })
+
+  it('does not graft keychain access for inline credentials or non-darwin platforms', () => {
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains-unused')
+    mkdirSync(realKeychainsDir, { recursive: true, mode: 0o700 })
+
+    const inlineLease = create('keychain-not-needed-inline')
+    projectMuseAuthJson(
+      inlineLease,
+      JSON.stringify({
+        schema_version: 1,
+        providers: { meta: { mechanism: 'oauth', access_token: 'inline-token' } }
+      }),
+      { platform: 'darwin', realKeychainsDir }
+    )
+    expect(existsSync(join(inlineLease.homePath, 'Library'))).toBe(false)
+
+    const linuxLease = create('keychain-not-darwin')
+    projectMuseAuthJson(linuxLease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'linux',
+      realKeychainsDir
+    })
+    expect(existsSync(join(linuxLease.homePath, 'Library'))).toBe(false)
+  })
+
+  it('skips the keychain graft when the real keychain directory is absent', () => {
+    const lease = create('keychain-absent')
+    const authPath = projectMuseAuthJson(lease, KEYCHAIN_LOCATOR_AUTH_JSON, {
+      platform: 'darwin',
+      realKeychainsDir: join(TEMP_ROOT, 'no-such-keychains-dir')
+    })
+    expect(readFileSync(authPath, 'utf8')).toBe(KEYCHAIN_LOCATOR_AUTH_JSON)
+    expect(existsSync(join(lease.homePath, 'Library'))).toBe(false)
   })
 
   it('scrubs credential and Muse auth env keys from the parent process', () => {
@@ -192,6 +302,24 @@ describe('Muse isolated home', () => {
     }
   })
 
+  it('forwards MUSE_LOG and RUST_LOG when museLogLevel is provided and omits them otherwise', () => {
+    const leaseWithLog = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'log-enabled',
+      museLogLevel: 'debug'
+    })
+    leases.push(leaseWithLog)
+    expect(leaseWithLog.env.MUSE_LOG).toBe('debug')
+    expect(leaseWithLog.env.RUST_LOG).toBe('debug')
+
+    const leaseWithoutLog = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'log-disabled'
+    })
+    leases.push(leaseWithoutLog)
+    expect(leaseWithoutLog.env.MUSE_LOG).toBeUndefined()
+    expect(leaseWithoutLog.env.RUST_LOG).toBeUndefined()
+  })
   it('refuses a mode-weakened directory where POSIX mode semantics are available', () => {
     if (process.platform === 'win32') return
     const lease = create('mode-change')
@@ -253,5 +381,486 @@ describe('Muse isolated home', () => {
       cleanup: () => ({ ok: true as const, alreadyAbsent: false })
     }
     expect(() => verifyMuseIsolatedHome(forged)).toThrow(/main-issued/i)
+  })
+})
+
+describe('Muse durable per-chat seat home', () => {
+  const seatRoots: string[] = []
+
+  function seat(name: string): { boundaryRoot: string; path: string } {
+    const boundaryRoot = join(TEMP_ROOT, `seats-${name}`)
+    seatRoots.push(boundaryRoot)
+    return { boundaryRoot, path: join(boundaryRoot, `seat-${name}`) }
+  }
+
+  function attach(
+    durableSeat: { boundaryRoot: string; path: string },
+    input: Partial<Parameters<typeof createMuseIsolatedHome>[0]> = {}
+  ): MuseIsolatedHomeLease {
+    return createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'durable-run',
+      ...input,
+      durableSeat
+    })
+  }
+
+  /** Stand in for what Muse writes into the seat during a turn. */
+  function seedProviderResidue(lease: MuseIsolatedHomeLease): void {
+    const sessions = join(lease.museDataDir, 'sessions', '.msp-view-v1', 'session-a')
+    mkdirSync(sessions, { recursive: true })
+    writeFileSync(join(sessions, 'HEAD.json'), '{"turn":1}')
+    writeFileSync(join(lease.museDataDir, 'session-index.db'), 'index-bytes')
+    mkdirSync(join(lease.museDataDir, 'local-tracing', 'bootstrap'), { recursive: true })
+    writeFileSync(join(lease.museDataDir, 'local-tracing', 'bootstrap', 'cli.log'), 'trace')
+    writeFileSync(join(lease.museConfigDir, '.auth.json.lock'), 'lock')
+    // A sibling of muse/ inside XDG_DATA_HOME: not on the continuity list at
+    // any depth, so it must not survive either.
+    writeFileSync(join(lease.xdgDataHome, 'stray-provider-state'), 'stray')
+    writeFileSync(join(lease.tmpDir, 'scratch.bin'), 'temp')
+  }
+
+  afterAll(() => {
+    for (const root of seatRoots) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('attests a durable posture distinct from the disposable mkdtemp home', () => {
+    const target = seat('posture')
+    const lease = attach(target)
+
+    expect(lease.authority.strategy).toBe('node-durable-seat-verified-v1')
+    expect(lease.authority.cleanupPolicy).toBe('identity-match-scrub-to-continuity')
+    expect(lease.path).toBe(realpathSync(target.path))
+    expect(verifyMuseIsolatedHome(lease).fileIdentity).toEqual(lease.authority.fileIdentity)
+    if (process.platform !== 'win32') {
+      expect(lstatSync(target.boundaryRoot).mode & 0o777).toBe(0o700)
+      expect(lstatSync(lease.path).mode & 0o777).toBe(0o700)
+    }
+    lease.cleanup()
+  })
+
+  it('keeps the session log across a turn boundary and scrubs everything else', () => {
+    const target = seat('continuity')
+    const first = attach(target)
+    seedProviderResidue(first)
+    projectMuseAuthJson(
+      first,
+      JSON.stringify({
+        schema_version: 1,
+        providers: {
+          meta: { mechanism: 'oauth', access_token: 'secret-token', expires_at: 1_900_000_000 }
+        }
+      })
+    )
+    expect(existsSync(join(first.museConfigDir, 'auth.json'))).toBe(true)
+
+    expect(first.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+
+    // The seat itself survives — that is the whole point of the durable lane.
+    expect(existsSync(target.path)).toBe(true)
+    expect(
+      existsSync(join(first.museDataDir, 'sessions', '.msp-view-v1', 'session-a', 'HEAD.json'))
+    ).toBe(true)
+    expect(readFileSync(join(first.museDataDir, 'session-index.db'), 'utf8')).toBe('index-bytes')
+    // ...and nothing else does.
+    expect(existsSync(join(first.museDataDir, 'local-tracing'))).toBe(false)
+    expect(existsSync(join(first.xdgDataHome, 'stray-provider-state'))).toBe(false)
+    expect(existsSync(join(first.museConfigDir, 'auth.json'))).toBe(false)
+    expect(existsSync(join(first.museConfigDir, '.auth.json.lock'))).toBe(false)
+    expect(existsSync(first.settingsPath)).toBe(false)
+    expect(existsSync(first.trustPath)).toBe(false)
+    expect(existsSync(join(first.tmpDir, 'scratch.bin'))).toBe(false)
+    expect(existsSync(first.homePath)).toBe(false)
+
+    const second = attach(target)
+    expect(readFileSync(join(second.museDataDir, 'session-index.db'), 'utf8')).toBe('index-bytes')
+    expect(existsSync(second.settingsPath)).toBe(true)
+    second.cleanup()
+  })
+
+  // 2026-09-11, thread 5b648b4a: nine Muse runs were dispatched into one chat
+  // inside 611ms and every one of them attached THIS seat. The attach scrub is
+  // what makes a reused seat safe — it removes the previous turn's credentials
+  // before the provider sees them — so under contention each attach deleted the
+  // auth.json the already-launched seats were still starting with. Eight runs
+  // reported `missing meta credentials: run muse login or set META_API_KEY` and
+  // the ninth tripped the continuity assertion on a `model-catalog` directory a
+  // live seat had just written. The seat can hold exactly one turn, so a second
+  // concurrent attach must be refused rather than served destructively.
+  it('refuses a second concurrent attach instead of scrubbing the live turn', () => {
+    const target = seat('concurrent')
+    const first = attach(target, { runId: 'concurrent-run-1' })
+    projectMuseAuthJson(
+      first,
+      JSON.stringify({
+        schema_version: 1,
+        providers: {
+          meta: { mechanism: 'oauth', access_token: 'live-turn-token', expires_at: 1_900_000_000 }
+        }
+      })
+    )
+
+    expect(() => attach(target, { runId: 'concurrent-run-2' })).toThrow(/already in use/i)
+
+    // The live turn keeps the credentials it launched with.
+    expect(readFileSync(join(first.museConfigDir, 'auth.json'), 'utf8')).toContain(
+      'live-turn-token'
+    )
+    expect(existsSync(first.settingsPath)).toBe(true)
+
+    // ...and the seat is free again the moment that turn releases it.
+    expect(first.cleanup()).toEqual({ ok: true, alreadyAbsent: false })
+    const next = attach(target, { runId: 'concurrent-run-3' })
+    expect(existsSync(join(next.museConfigDir, 'auth.json'))).toBe(false)
+    next.cleanup()
+  })
+
+  // A refused attach must not leave the seat marked busy: the next turn would
+  // then be refused too, and the chat would be dead until the app restarted.
+  it('leaves the seat claimable after an attach that threw', () => {
+    const target = seat('release-on-throw')
+    const first = attach(target, { runId: 'throwing-run-1' })
+    expect(() => attach(target, { runId: 'throwing-run-2' })).toThrow(/already in use/i)
+    first.cleanup()
+
+    const recovered = attach(target, { runId: 'throwing-run-3' })
+    expect(recovered.path).toBe(realpathSync(target.path))
+    recovered.cleanup()
+  })
+
+  // One failed attach must not refuse every later turn in the thread. The claim
+  // is taken before the seat directory is established, so the establish itself
+  // is the first thing that can throw while holding it.
+  it('frees a seat whose attach threw before any lease was issued', () => {
+    const target = seat('establish-fail')
+    mkdirSync(target.boundaryRoot, { recursive: true, mode: 0o700 })
+    writeFileSync(target.path, 'a file where the seat directory belongs')
+
+    expect(() => attach(target, { runId: 'establish-fail-1' })).toThrow()
+
+    rmSync(target.path, { force: true })
+    const recovered = attach(target, { runId: 'establish-fail-2' })
+    expect(recovered.path).toBe(realpathSync(target.path))
+    recovered.cleanup()
+  })
+
+  // Two different chats are two different seats; one busy thread must never
+  // block another.
+  it('scopes the refusal to the seat, not to Muse', () => {
+    const one = seat('scope-a')
+    const two = seat('scope-b')
+    const first = attach(one, { runId: 'scope-run-1' })
+    const second = attach(two, { runId: 'scope-run-2' })
+
+    expect(second.path).toBe(realpathSync(two.path))
+    first.cleanup()
+    second.cleanup()
+  })
+
+  it('never serves a later turn the MCP broker token minted for an earlier one', () => {
+    const target = seat('broker')
+    const first = attach(target, {
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge'],
+        env: {
+          TASKWRAITH_PARENT_PROVIDER: 'muse',
+          TASKWRAITH_MCP_BROKER_TOKEN: 'turn-one-token'
+        }
+      })
+    })
+    expect(readFileSync(first.settingsPath, 'utf8')).toContain('turn-one-token')
+    // A crashed turn never reaches cleanup; the attach scrub still has to hold.
+    const second = attach(target)
+
+    const settings = JSON.parse(readFileSync(second.settingsPath, 'utf8')) as {
+      mcp_servers?: Record<string, unknown>
+    }
+    expect(readFileSync(second.settingsPath, 'utf8')).not.toContain('turn-one-token')
+    expect(settings.mcp_servers).toBeUndefined()
+    second.cleanup()
+  })
+
+  it('gives a reused seat a private settings document and empty trust', () => {
+    const target = seat('reuse')
+    const first = attach(target)
+    writeFileSync(
+      first.trustPath,
+      JSON.stringify({ schema_version: 1, projects: { '/etc': true } })
+    )
+    if (process.platform !== 'win32') chmodSync(first.settingsPath, 0o644)
+
+    const second = attach(target)
+    expect(JSON.parse(readFileSync(second.trustPath, 'utf8'))).toEqual(MUSE_EMPTY_TRUST_DOCUMENT)
+    if (process.platform !== 'win32') {
+      expect(lstatSync(second.settingsPath).mode & 0o777).toBe(0o600)
+    }
+    second.cleanup()
+  })
+
+  it('refuses a symlinked seat root or seat home before writing anything', () => {
+    if (process.platform === 'win32') return
+    const elsewhere = join(TEMP_ROOT, 'seat-decoy')
+    mkdirSync(elsewhere, { recursive: true, mode: 0o700 })
+
+    const linkedRoot = join(TEMP_ROOT, 'seats-linked-root')
+    seatRoots.push(linkedRoot)
+    symlinkSync(elsewhere, linkedRoot)
+    expect(() => attach({ boundaryRoot: linkedRoot, path: join(linkedRoot, 'seat') })).toThrow(
+      /seat root is not a real directory/
+    )
+
+    const realRoot = join(TEMP_ROOT, 'seats-linked-home')
+    seatRoots.push(realRoot)
+    mkdirSync(realRoot, { recursive: true, mode: 0o700 })
+    const linkedHome = join(realRoot, 'seat')
+    symlinkSync(elsewhere, linkedHome)
+    expect(() => attach({ boundaryRoot: realRoot, path: linkedHome })).toThrow(
+      /seat home is not a real directory/
+    )
+    expect(existsSync(join(elsewhere, 'xdg-config'))).toBe(false)
+  })
+
+  it('drops the whole session log when a hard link is planted inside it', () => {
+    if (process.platform === 'win32') return
+    const target = seat('tampered')
+    const first = attach(target)
+    seedProviderResidue(first)
+    const secretTarget = join(TEMP_ROOT, 'seat-secret.txt')
+    writeFileSync(secretTarget, 'not-muse-material')
+
+    const sessions = join(first.museDataDir, 'sessions')
+    symlinkSync(secretTarget, join(sessions, 'redirect'))
+    first.cleanup()
+    expect(existsSync(sessions)).toBe(false)
+
+    const relinked = attach(target)
+    seedProviderResidue(relinked)
+    const hardLinked = join(relinked.museDataDir, 'sessions', 'hardlink')
+    linkSync(secretTarget, hardLinked)
+    expect(lstatSync(hardLinked).nlink).toBe(2)
+    relinked.cleanup()
+
+    // The whole entry goes, not just the offending leaf: a session log we
+    // cannot fully re-prove is not one we hand back to a provider process.
+    expect(existsSync(sessions)).toBe(false)
+    expect(readFileSync(secretTarget, 'utf8')).toBe('not-muse-material')
+    // An untampered sibling on the continuity list is unaffected.
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(true)
+  })
+
+  it('scrubs residue on attach when the previous turn never reached cleanup', () => {
+    const target = seat('crashed')
+    const first = attach(target)
+    seedProviderResidue(first)
+    projectMuseAuthJson(
+      first,
+      JSON.stringify({
+        schema_version: 1,
+        providers: {
+          meta: {
+            mechanism: 'oauth',
+            access_token: 'crashed-turn-secret',
+            expires_at: 1_900_000_000
+          }
+        }
+      })
+    )
+    // No cleanup(): the host died mid-turn. The next attach is the only thing
+    // between that credential and the next provider process.
+    expect(existsSync(join(first.museConfigDir, 'auth.json'))).toBe(true)
+    expect(existsSync(join(first.tmpDir, 'scratch.bin'))).toBe(true)
+
+    const second = attach(target)
+    expect(existsSync(join(second.museConfigDir, 'auth.json'))).toBe(false)
+    expect(existsSync(join(second.museDataDir, 'local-tracing'))).toBe(false)
+    expect(existsSync(join(second.museConfigDir, '.auth.json.lock'))).toBe(false)
+    expect(existsSync(join(second.tmpDir, 'scratch.bin'))).toBe(false)
+    // ...while the session log the crashed turn produced is still resumable.
+    expect(readFileSync(join(second.museDataDir, 'session-index.db'), 'utf8')).toBe('index-bytes')
+    second.cleanup()
+  })
+
+  it('evicts material the provider stashed inside the retained session log', () => {
+    const target = seat('stash')
+    const first = attach(target)
+    seedProviderResidue(first)
+    const sessions = join(first.museDataDir, 'sessions')
+    // The provider owns this tree and can write anything into it, so a copied
+    // credential would otherwise be retained permanently — the settings
+    // rewrite cannot reach it.
+    writeFileSync(join(sessions, 'stashed-auth.json'), 'access_token')
+    first.cleanup()
+
+    expect(existsSync(join(sessions, 'stashed-auth.json'))).toBe(false)
+    // ...while the real log shape is untouched.
+    expect(existsSync(join(sessions, '.msp-view-v1', 'session-a', 'HEAD.json'))).toBe(true)
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(true)
+  })
+
+  it('refuses to retain an allowlisted name recreated as the wrong type', () => {
+    const target = seat('typeconfusion')
+    const first = attach(target)
+    seedProviderResidue(first)
+    // A directory wearing the index's name would be unbounded permanent
+    // storage under a name the allowlist blesses.
+    rmSync(join(first.museDataDir, 'session-index.db'), { force: true })
+    mkdirSync(join(first.museDataDir, 'session-index.db', 'stash'), { recursive: true })
+    writeFileSync(join(first.museDataDir, 'session-index.db', 'stash', 'payload'), 'x')
+    first.cleanup()
+
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(false)
+    expect(existsSync(join(first.museDataDir, 'sessions'))).toBe(true)
+  })
+
+  it('refuses a seat it cannot reduce and self-heals after the obstruction clears', () => {
+    if (process.platform === 'win32') return
+    const target = seat('unreducible')
+    const first = attach(target)
+    seedProviderResidue(first)
+    // An unreadable directory makes the recursive delete of xdg-config throw.
+    const locked = join(first.museConfigDir, 'locked')
+    mkdirSync(locked, { recursive: true })
+    writeFileSync(join(locked, 'inner'), 'x')
+    chmodSync(locked, 0o000)
+
+    // Fails closed, and says whether the seat was actually discarded — an
+    // unreadable directory defeats the destroy for the same reason it defeated
+    // the scrub, and "may still hold run material" is a different problem.
+    try {
+      expect(() => attach(target)).toThrow(
+        /could not be reduced to session continuity and was left in place/
+      )
+      expect(existsSync(target.path)).toBe(true)
+      expect(existsSync(locked)).toBe(true)
+    } finally {
+      if (existsSync(locked)) chmodSync(locked, 0o700)
+    }
+
+    // Self-healing: once the obstruction is gone the next attach reduces the
+    // seat and proceeds, so the chat is not permanently unusable.
+    const recovered = attach(target)
+    expect(existsSync(locked)).toBe(false)
+    expect(existsSync(recovered.settingsPath)).toBe(true)
+    recovered.cleanup()
+  })
+
+  it('re-points a keychain graft that no longer resolves where it should', () => {
+    if (process.platform !== 'darwin') return
+    const realKeychainsDir = join(TEMP_ROOT, 'real-keychains')
+    const decoy = join(TEMP_ROOT, 'decoy-keychains')
+    mkdirSync(realKeychainsDir, { recursive: true })
+    mkdirSync(decoy, { recursive: true })
+    const lease = attach(seat('keychain'))
+    const authJsonText = JSON.stringify({
+      schema_version: 2,
+      providers: { meta: { mechanism: 'oauth', storage: 'keychain', account: 'a' } }
+    })
+
+    const linkPath = projectMuseKeychainAccessIfRequired(lease, authJsonText, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(linkPath).toBeTruthy()
+    expect(readlinkSync(linkPath as string)).toBe(realKeychainsDir)
+
+    // Someone re-pointed the graft between turns.
+    rmSync(linkPath as string, { force: true })
+    symlinkSync(decoy, linkPath as string)
+    projectMuseKeychainAccessIfRequired(lease, authJsonText, {
+      platform: 'darwin',
+      realKeychainsDir
+    })
+    expect(readlinkSync(linkPath as string)).toBe(realKeychainsDir)
+    lease.cleanup()
+  })
+
+  it('refuses to scrub through a root that is not the verified seat', () => {
+    if (process.platform === 'win32') return
+    // readdirSync FOLLOWS a symlink-to-directory and rmSync(recursive) deletes
+    // THROUGH one, so a scrub that trusted its argument would turn a swapped
+    // seat into a recursive delete of whatever the link points at. The
+    // disposable lane cannot do this: there the destructive step is one rmSync
+    // on the leaf, which merely unlinks the link.
+    const victim = join(TEMP_ROOT, 'scrub-victim')
+    mkdirSync(join(victim, 'precious'), { recursive: true })
+    writeFileSync(join(victim, 'precious', 'keep.txt'), 'do not delete')
+    const swapped = join(TEMP_ROOT, 'scrub-swapped-seat')
+    symlinkSync(victim, swapped)
+
+    const result = scrubMuseDurableSeatHome(swapped)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join(' ')).toContain('refused')
+    expect(readFileSync(join(victim, 'precious', 'keep.txt'), 'utf8')).toBe('do not delete')
+  })
+
+  it('refuses to scrub a real directory outside the seat root', () => {
+    const outside = join(TEMP_ROOT, 'scrub-outside')
+    mkdirSync(outside, { recursive: true, mode: 0o700 })
+    writeFileSync(join(outside, 'keep.txt'), 'still here')
+    const target = seat('containment')
+    const lease = attach(target)
+
+    // Same identity checks pass — it is a real 0700 directory owned by us —
+    // but it is not inside the seat root this lease was issued against.
+    const result = scrubMuseDurableSeatHome(outside, { boundaryRoot: target.boundaryRoot })
+    expect(result.ok).toBe(false)
+    expect(existsSync(join(outside, 'keep.txt'))).toBe(true)
+    lease.cleanup()
+  })
+
+  it('preserves the seat when creation fails after the home is established', () => {
+    const target = seat('failure')
+    const first = attach(target)
+    seedProviderResidue(first)
+    first.cleanup()
+
+    // A skill-pin document that cannot be serialized fails the attach after
+    // establishMuseDurableSeat has already run.
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    expect(() => attach(target, { skillPinSettings: circular as never })).toThrow()
+
+    expect(existsSync(target.path)).toBe(true)
+    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(true)
+  })
+})
+
+describe('developer tools bin on PATH', () => {
+  // macOS `/usr/bin/git` is an xcrun stub whose cache dir Muse's sandbox does
+  // not allow; putting the developer tools bin first resolves git without it.
+  const devBin = ['', 'Applications', 'Xcode.app', 'Contents', 'Developer', 'usr', 'bin'].join('/')
+
+  it('puts the developer tools bin first on the launch PATH', () => {
+    // @portability-ok: opaque caller-supplied PATH entries, joined with the platform delimiter.
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin',
+      sourceEnvironment: { PATH: ['/usr/bin', '/bin'].join(delimiter) },
+      developerToolsBinPath: devBin
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe([devBin, '/usr/bin', '/bin'].join(delimiter))
+  })
+
+  it('moves an already-present entry to the front instead of duplicating it', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin-dup',
+      sourceEnvironment: { PATH: ['/usr/bin', devBin, '/bin'].join(delimiter) },
+      developerToolsBinPath: devBin
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe([devBin, '/usr/bin', '/bin'].join(delimiter))
+  })
+
+  it('leaves PATH alone when no developer tools bin is given', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin-none',
+      sourceEnvironment: { PATH: ['/usr/bin', '/bin'].join(delimiter) }
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe(['/usr/bin', '/bin'].join(delimiter))
   })
 })

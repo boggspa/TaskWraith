@@ -57,7 +57,7 @@ async function main() {
   for (const entry of fs.readdirSync(outRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === '.cache') continue
     if (!prepared.some((item) => item.dirName === entry.name)) {
-      fs.rmSync(path.join(outRoot, entry.name), { recursive: true, force: true })
+      fs.rmSync(path.join(outRoot, entry.name), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }
 
@@ -140,7 +140,7 @@ async function prepareTarget(target, version, checksumManifest) {
   })
 
   const targetDir = path.join(outRoot, target.dirName)
-  fs.rmSync(targetDir, { recursive: true, force: true })
+  fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   fs.mkdirSync(targetDir, { recursive: true })
 
   const binaryName = target.platform === 'win32' ? 'node.exe' : 'node'
@@ -318,7 +318,7 @@ function assertArchiveChecksum(filePath, expectedSha256, label = path.basename(f
 
 function extractNodePayload(archivePath, target, version, destBinary, destLicense) {
   const tmpDir = path.join(cacheRoot, `extract-${target.dirName}-${process.pid}`)
-  fs.rmSync(tmpDir, { recursive: true, force: true })
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   fs.mkdirSync(tmpDir, { recursive: true })
 
   try {
@@ -352,7 +352,7 @@ function extractNodePayload(archivePath, target, version, destBinary, destLicens
     }
     copyNodeDistributionLicense(tmpDir, distributionName, destLicense)
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   }
 }
 

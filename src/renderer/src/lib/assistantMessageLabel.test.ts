@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
-import { formatAssistantMessageLabel } from './assistantMessageLabel'
+import {
+  formatAssistantMessageLabel,
+  mostRecentSoloRunModel
+} from './assistantMessageLabel'
 
 const assistant = (metadata?: ChatMessage['metadata']): ChatMessage => ({
   id: 'm1',
@@ -85,6 +88,25 @@ describe('formatAssistantMessageLabel', () => {
       providerClass: 'deep-reinforce',
       modelBadge: 'Ornith 1.0 (35B Param)'
     })
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          providerModel: 'ornith-1.5:35b',
+          ensembleProvider: 'ollama',
+          ensembleModel: 'ornith-1.5:35b',
+          ensembleReasoningEffort: 'on'
+        }),
+        'Ollama',
+        'ollama',
+        { isEnsembleChat: true }
+      )
+    ).toEqual({
+      label: 'Deep Reinforce',
+      provider: 'ollama',
+      providerClass: 'deep-reinforce',
+      modelBadge: 'Ornith 1.5 (35B Param) Thinking'
+    })
   })
 
   it('uses the Liquid brand for LFM through Ollama', () => {
@@ -141,6 +163,12 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses every Pi upstream brand and human model name for solo transcript attribution', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(
@@ -155,6 +183,13 @@ describe('formatAssistantMessageLabel', () => {
   })
 
   it('uses the Pi upstream hue for guest transcript attribution', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'openrouter/unclaimed-lab/some-model' }),
+        'Pi',
+        'pi'
+      )
+    ).toMatchObject({ label: 'OpenRouter', provider: 'pi', providerClass: 'openrouter' })
     expect(
       formatAssistantMessageLabel(
         assistant({
@@ -230,6 +265,12 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses every Pi upstream brand and human model name for ensemble assistant bubbles', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(
@@ -250,6 +291,146 @@ describe('formatAssistantMessageLabel', () => {
         modelBadge: PI_MODEL_LABELS[modelId!]
       })
     }
+  })
+
+  it('keeps a frozen solo speaker identity when the chat later selects another provider', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          assistantProvider: 'pi',
+          providerModel: 'qwen-token-plan/qwen3.7-max',
+          assistantReasoningEffort: 'ultratask'
+        }),
+        'Claude',
+        'claude'
+      )
+    ).toEqual({
+      label: 'Qwen',
+      provider: 'pi',
+      providerClass: 'qwen',
+      modelBadge: 'Qwen3.7 Max UltraTask'
+    })
+  })
+
+  it('keeps Ollama Cloud DeepSeek V4 Pro Max on the ensemble header instead of Low', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'ollama',
+          ensembleRole: 'Work4',
+          ensembleModel: 'deepseek-v4-pro:cloud',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Ollama',
+        'ollama',
+        { isEnsembleChat: true }
+      )
+    ).toMatchObject({
+      label: 'DeepSeek / Work4',
+      modelBadge: 'V4 Pro Max'
+    })
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'ollama',
+          ensembleRole: 'Work4',
+          ensembleModel: 'deepseek-v4-pro:cloud',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Ollama',
+        'ollama',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).not.toBe('V4 Pro Low')
+  })
+
+  it('shows selected effort for every adjustable ensemble provider', () => {
+    const cases: Array<{
+      provider: ProviderId
+      model: string
+      expected: string
+    }> = [
+      { provider: 'grok', model: 'grok-4.6', expected: 'Grok 4.6 Fast UltraTask' },
+      { provider: 'cursor', model: 'cursor-grok-4.6-low', expected: 'Grok 4.6 UltraTask' },
+      { provider: 'pi', model: 'deepseek/deepseek-v4-pro', expected: 'V4 Pro UltraTask' },
+      { provider: 'mistral', model: 'devstral-small', expected: 'Devstral Small UltraTask' },
+      { provider: 'muse', model: 'muse-spark-1.2', expected: 'Spark 1.2 UltraTask' },
+      {
+        provider: 'antigravity',
+        model: 'gemini-api:gemini-2.5-flash',
+        expected: '2.5 Flash UltraTask'
+      }
+    ]
+
+    for (const entry of cases) {
+      expect(
+        formatAssistantMessageLabel(
+          assistant({
+            ensembleProvider: entry.provider,
+            ensembleRole: 'Specialist',
+            ensembleModel: entry.model,
+            ensembleReasoningEffort: 'ultratask'
+          }),
+          'Codex',
+          'codex',
+          { isEnsembleChat: true }
+        ).modelBadge
+      ).toBe(entry.expected)
+    }
+  })
+
+  it('normalizes legacy default sentinels before rendering an assistant model badge', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'cli-default'
+        }),
+        'Claude',
+        'claude',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('Sonnet 5')
+  })
+
+  it('keeps an exact recorded K2.7 identity without changing current K2.8 presentation', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          assistantProvider: 'kimi',
+          providerModel: 'kimi-k2.7-code'
+        }),
+        'Kimi',
+        'kimi'
+      ).modelBadge
+    ).toBe('K2.7 Coding')
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleModel: 'kimi-k2.7-code',
+          ensembleThinkingEnabled: true
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K2.7 Coding Thinking')
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleModel: 'kimi-k2.8-preview',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K2.8 Preview Max')
   })
 
   it('recovers K3 effort from a captured seat snapshot for older transcript rows', () => {
@@ -277,6 +458,22 @@ describe('formatAssistantMessageLabel', () => {
       providerClass: 'kimi',
       modelBadge: 'K3 Max'
     })
+  })
+
+  it('keeps the fixed-256K K3 route distinct in transcript badges', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'kimi-k3-256k',
+          ensembleReasoningEffort: 'high'
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K3 (256K) High')
   })
 
   it('uses pooled-agent nickname and identity when present on ensemble rows', () => {
@@ -348,6 +545,118 @@ describe('formatAssistantMessageLabel', () => {
       providerClass: 'codex',
       modelBadge: '5.5',
       agentAccent: '#06D6A0'
+    })
+  })
+})
+
+describe('mostRecentSoloRunModel', () => {
+  it('uses a same-provider fallback only when the history is unambiguous', () => {
+    expect(
+      mostRecentSoloRunModel(
+        [
+          { provider: 'pi', requestedModel: 'deepseek/deepseek-v4-flash' },
+          { provider: 'pi', actualModel: 'deepseek/deepseek-v4-pro' }
+        ],
+        'pi'
+      )
+    ).toBeNull()
+  })
+
+  it('never borrows another provider model as a fallback', () => {
+    const runs = [
+      { provider: 'claude', requestedModel: 'claude-opus-4.7' },
+      { provider: 'codex', requestedModel: 'gpt-5.5' }
+    ]
+    expect(mostRecentSoloRunModel(runs, 'pi')).toBeNull()
+  })
+
+  it('prefers a same-provider run found further back over a newer foreign one', () => {
+    expect(
+      mostRecentSoloRunModel(
+        [
+          { provider: 'pi', requestedModel: 'zai/glm-5.2' },
+          { provider: 'claude', requestedModel: 'claude-opus-4.7' }
+        ],
+        'pi'
+      )
+    ).toBe('zai/glm-5.2')
+  })
+
+  it('returns null for empty or model-less runs and tolerates undefined input', () => {
+    expect(mostRecentSoloRunModel([], 'pi')).toBeNull()
+    expect(mostRecentSoloRunModel([{ provider: 'pi' }], 'pi')).toBeNull()
+    expect(mostRecentSoloRunModel(undefined, 'pi')).toBeNull()
+  })
+})
+
+describe('cli-default sentinel expansion', () => {
+  it('expands the sentinel from the seat model for a solo Pi row', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'cli-default',
+        seatModelId: 'qwen-token-plan/qwen3.7-max'
+      })
+    ).toMatchObject({
+      label: 'Qwen',
+      providerClass: 'qwen',
+      modelBadge: 'Qwen3.7 Max'
+    })
+  })
+
+  it('falls back to the provider default when the seat carries no configured model', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'cli-default'
+      })
+    ).toMatchObject({
+      label: 'DeepSeek',
+      providerClass: 'deepseek',
+      modelBadge: 'V4 Flash'
+    })
+  })
+
+  it('expands the sentinel from the seat model for a solo Ollama row', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Ollama', 'ollama', {
+        soloModelId: 'cli-default',
+        seatModelId: 'deepseek-r1:8b'
+      })
+    ).toMatchObject({
+      label: 'DeepSeek',
+      providerClass: 'deepseek'
+    })
+  })
+
+  it('expands an ensemble sentinel from the captured seat snapshot', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'pi',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'cli-default',
+          ensembleSeatSnapshot: { schemaVersion: 1, provider: 'pi', model: 'zai/glm-5.2' }
+        }),
+        'Pi',
+        'pi',
+        { isEnsembleChat: true }
+      )
+    ).toMatchObject({
+      label: 'Z.ai / Reviewer',
+      providerClass: 'zai',
+      modelBadge: 'GLM-5.2'
+    })
+  })
+
+  it('never lets the seat model override a concrete recorded model', () => {
+    expect(
+      formatAssistantMessageLabel(assistant(), 'Pi', 'pi', {
+        soloModelId: 'zai/glm-5.2',
+        seatModelId: 'qwen-token-plan/qwen3.7-max'
+      })
+    ).toMatchObject({
+      label: 'Z.ai',
+      providerClass: 'zai',
+      modelBadge: 'GLM-5.2'
     })
   })
 })

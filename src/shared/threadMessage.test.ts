@@ -11,7 +11,8 @@ import {
   enqueueThreadMessage,
   normalizeThreadMessageInbox,
   pendingThreadMessages,
-  summarizeThreadMessageInbox
+  summarizeThreadMessageInbox,
+  type ThreadMessageInput
 } from './threadMessage'
 
 const CTRL = (code: number): string => String.fromCharCode(code)
@@ -26,7 +27,7 @@ const BASE = {
   createdAt: 1_700_000_000_000
 }
 
-const event = (overrides: Partial<typeof BASE> = {}) =>
+const event = (overrides: Partial<ThreadMessageInput> = {}) =>
   createThreadMessageEvent({ ...BASE, ...overrides })
 
 describe('createThreadMessageEvent', () => {
@@ -116,7 +117,7 @@ describe('createThreadMessageEvent', () => {
   })
 
   it('does not mark an in-budget body as truncated', () => {
-    expect(event().truncated).toBeUndefined()
+    expect(event()?.truncated).toBeUndefined()
   })
 })
 

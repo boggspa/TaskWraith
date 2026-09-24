@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PI_MODEL_LABELS,
   PI_UPSTREAM_BRANDS,
+  canonicalPiWireModelId,
   resolvePiModelLabel,
   resolvePiUpstreamBrand,
   splitPiWireModelId
@@ -23,6 +24,7 @@ function relativeLuminance(hex: string): number {
 }
 const onWhite = (hex: string): number => 1.05 / (relativeLuminance(hex) + 0.05)
 const onBlack = (hex: string): number => (relativeLuminance(hex) + 0.05) / 0.05
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 describe('splitPiWireModelId', () => {
   it('splits on the FIRST slash so Groq two-slash ids keep their upstream', () => {
@@ -47,15 +49,70 @@ describe('splitPiWireModelId', () => {
 })
 
 describe('resolvePiUpstreamBrand', () => {
+  it.each(['cerebras/gpt-oss-120b', 'cerebras/qwen-3.8-27b'])(
+    'keeps the Cerebras serving brand for %s',
+    (wireId) => {
+      expect(resolvePiUpstreamBrand(wireId)).toEqual({ label: 'Cerebras', hueClass: 'cerebras' })
+    }
+  )
+
   it('resolves each surfaced upstream from a wire id', () => {
     expect(resolvePiUpstreamBrand('mistral/devstral-2512')?.hueClass).toBe('mistral')
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')
     expect(resolvePiUpstreamBrand('minimax/MiniMax-M3')?.label).toBe('MiniMax')
+    // `openrouter/stealth` gained a brand override when Union Alpha landed
+    // (2026-09-16). Ox Alpha is retired but still decodes in saved chats, and
+    // it was the same kind of route, so it moves to the gold with it rather
+    // than keeping the generic OpenRouter red.
+    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.hueClass).toBe('stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.hueClass).toBe('stealth')
+    // Space Bunny Alpha (2026-09-23) is the next preview through the same
+    // anonymous namespace, so it wears the stealth gold with no new override.
+    expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.hueClass).toBe('stealth')
+    // Unbiased and TypeSafe (2026-09-17) each get their own override rather
+    // than the generic OpenRouter red — both vendor reds live in the
+    // palette's most crowded band, so they wear design tokens instead.
+    expect(resolvePiUpstreamBrand('openrouter/unbiased/pareto')?.label).toBe('Unbiased')
+    expect(resolvePiUpstreamBrand('openrouter/unbiased/pareto')?.hueClass).toBe('unbiased')
+    expect(resolvePiUpstreamBrand('openrouter/typesafe/jev-1.13')?.label).toBe('TypeSafe')
+    expect(resolvePiUpstreamBrand('openrouter/typesafe/jev-1.13')?.hueClass).toBe('typesafe')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.label).toBe('Z.ai')
+    expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
+    expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
+    expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.hueClass).toBe('poolside')
+    expect(resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.label).toBe(
+      'NVIDIA'
+    )
+    expect(
+      resolvePiUpstreamBrand('openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')?.hueClass
+    ).toBe('nvidia')
   })
 
   it('maps qwen-token-plan to the EXISTING qwen hue, not a new one', () => {
     // Qwen must read identically whether it arrives via Ollama or via Pi.
     expect(resolvePiUpstreamBrand('qwen-token-plan/qwen3.7-max')?.hueClass).toBe('qwen')
+  })
+
+  it('resolves OpenRouter free models to their original provider brands', () => {
+    expect(resolvePiUpstreamBrand('openrouter/cohere/north-mini-code:free')).toEqual({
+      label: 'Cohere',
+      hueClass: 'cohere'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/minimax/minimax-m3:free')).toEqual({
+      label: 'MiniMax',
+      hueClass: 'minimax'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/thinkingmachines/inkling:free')).toEqual({
+      label: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    })
+    expect(resolvePiUpstreamBrand('openrouter/thinkingmachines/inkling-small:free')).toEqual({
+      label: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    })
   })
 
   it.each([null, undefined, '', 'garbage', 'anthropic/claude-opus'])(
@@ -70,7 +127,38 @@ describe('resolvePiModelLabel', () => {
   it('humanises a catalogued wire id', () => {
     expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2')
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
-    expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
+    expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('V4 Flash')
+    expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
+    expect(resolvePiModelLabel('openrouter/stealth/union-alpha')).toBe('Union Alpha')
+    expect(resolvePiModelLabel('openrouter/unbiased/pareto')).toBe('Pareto')
+    expect(resolvePiModelLabel('openrouter/typesafe/jev-1.13')).toBe('Jev 1.13')
+    expect(resolvePiModelLabel('openrouter/stealth/space-bunny-alpha')).toBe('Space Bunny Alpha')
+  })
+
+  it('humanises the new OpenRouter free-model wire ids', () => {
+    expect(resolvePiModelLabel('openrouter/cohere/north-mini-code:free')).toBe('North Mini Code')
+    expect(resolvePiModelLabel('openrouter/minimax/minimax-m3:free')).toBe('M3 (OpenRouter)')
+    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling:free')).toBe('Inkling')
+    expect(resolvePiModelLabel('openrouter/thinkingmachines/inkling-small:free')).toBe(
+      'Inkling Small'
+    )
+  })
+
+  it('canonicalizes the retired Qwen preview id for dispatch and historical labels', () => {
+    expect(canonicalPiWireModelId('qwen-token-plan/qwen3.8-max-preview')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+    expect(resolvePiModelLabel('qwen-token-plan/qwen3.8-max-preview')).toBe('Qwen3.8 Max')
+  })
+
+  it('canonicalizes the pre-rename OpenRouter Z.ai id', () => {
+    // OpenRouter's namespace is `z-ai`; the unhyphenated form we shipped 404s.
+    // A saved seat naming it must still find its brand and its ladder rather
+    // than falling through to the Pi default model.
+    expect(canonicalPiWireModelId('openrouter/zai/glm-5.2')).toBe('openrouter/z-ai/glm-5.2')
+    expect(resolvePiUpstreamBrand('openrouter/zai/glm-5.2')).toEqual(
+      resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')
+    )
   })
 
   it('keeps the disambiguating suffix on models two upstreams both serve', () => {
@@ -83,6 +171,7 @@ describe('resolvePiModelLabel', () => {
   it('drops the redundant upstream prefix for an uncatalogued model', () => {
     // The upstream is already rendered beside the label as the brand name.
     expect(resolvePiModelLabel('mistral/some-future-model')).toBe('some-future-model')
+    expect(resolvePiModelLabel('openrouter/z-ai/some-future-model')).toBe('some-future-model')
   })
 
   it.each([null, undefined, '', 'noslash', 'anthropic/claude-opus'])(
@@ -176,8 +265,11 @@ describe('iOS PiBrandTable twin', () => {
   it.each(Object.entries(PI_UPSTREAM_BRANDS))(
     'mirrors the %s brand into Swift',
     (upstream, brand) => {
-      expect(swift).toContain(
-        `"${upstream}": Brand(label: "${brand.label}", hueClass: "${brand.hueClass}")`
+      expect(swift).toMatch(
+        new RegExp(
+          `"${escapeRegExp(upstream)}": Brand\\(\\s*label: "${escapeRegExp(brand.label)}",\\s*` +
+            `hueClass: "${escapeRegExp(brand.hueClass)}"\\s*\\)`
+        )
       )
     }
   )
@@ -187,7 +279,7 @@ describe('iOS PiBrandTable twin', () => {
   })
 
   it('surfaces no upstream or model the desktop does not', () => {
-    const swiftUpstreams = [...swift.matchAll(/^\s{8}"([a-z0-9-]+)": Brand\(/gm)].map((m) => m[1])
+    const swiftUpstreams = [...swift.matchAll(/^\s{8}"([a-z0-9/-]+)": Brand\(/gm)].map((m) => m[1])
     expect(swiftUpstreams.sort()).toEqual(Object.keys(PI_UPSTREAM_BRANDS).sort())
     const swiftModels = [...swift.matchAll(/^\s{8}"([^"]+\/[^"]+)": "/gm)].map((m) => m[1])
     expect(swiftModels.sort()).toEqual(Object.keys(PI_MODEL_LABELS).sort())
@@ -198,13 +290,15 @@ describe('the renderer ensemble-editor mirror', () => {
   // A FOURTH hand-maintained copy of this catalog (main, shared, iOS, and the
   // ensemble seat editor). It has drifted before, which puts two different
   // names for one model in front of the same user; pin ids and labels together.
+  // Anchor on the literal PI_MODEL_ROWS array — PI_MODELS is a derived
+  // withCuratedUltraTaskSupport(...) wrapper, not the inline list.
   const source = readFileSync(
     join(process.cwd(), 'src/renderer/src/lib/ensembleProviderDefaults.ts'),
     'utf8'
   )
-  const block = source.slice(source.indexOf('const PI_MODELS'))
+  const block = source.slice(source.indexOf('const PI_MODEL_ROWS'))
   const listed = [
-    ...block.slice(0, block.indexOf('\n]')).matchAll(/\{ id: '([^']+)', label: '([^']+)' \}/g)
+    ...block.slice(0, block.indexOf('\n]')).matchAll(/\{\s*id: '([^']+)',\s*label: '([^']+)'\s*\}/g)
   ]
 
   it('lists every catalogued model exactly once', () => {

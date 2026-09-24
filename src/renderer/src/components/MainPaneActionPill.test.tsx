@@ -14,7 +14,12 @@ import {
 
 const noop = (): void => undefined
 
-function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true): string {
+function renderPill(
+  popoutMenuOpen = false,
+  idScope?: string,
+  workspace = true,
+  includeClose = true
+): string {
   return renderToStaticMarkup(
     <MainPaneActionPill
       idScope={idScope}
@@ -49,6 +54,7 @@ function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true):
       onOpenDiffStudio={noop}
       onOpenFileEditor={noop}
       onOpenChatPopout={noop}
+      onOpenCompactCompanion={noop}
       runTitle="Start local server"
       runMenuOpen={false}
       runHasMenu={false}
@@ -56,12 +62,13 @@ function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true):
       onRun={noop}
       homeOpen={false}
       onToggleHome={noop}
+      onCloseThread={includeClose ? noop : undefined}
     />
   )
 }
 
 describe('MainPaneActionPill', () => {
-  it('renders exactly six primary actions for a workspace pane in the requested order', () => {
+  it('renders exactly seven primary actions for a workspace pane in the requested order', () => {
     const html = renderPill()
     const actionIds = Array.from(
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
@@ -69,13 +76,14 @@ describe('MainPaneActionPill', () => {
     )
 
     expect(actionIds).toEqual([...MAIN_PANE_PRIMARY_ACTION_IDS])
-    expect(html.match(/<button/g)).toHaveLength(6)
+    expect(html.match(/<button/g)).toHaveLength(7)
     expect(html).toContain('aria-label="Choose visual effects"')
     expect(html).toContain('aria-label="Choose product information"')
     expect(html).toContain('aria-label="Open Workspace Stats"')
     expect(html).toContain('aria-label="Open popout tools"')
     expect(html).toContain('aria-label="Run build or preview"')
     expect(html).toContain('aria-label="Toggle sidebar home"')
+    expect(html).toContain('aria-label="Close thread view"')
   })
 
   it('omits Workspace Stats from global or otherwise unbound panes', () => {
@@ -85,8 +93,14 @@ describe('MainPaneActionPill', () => {
       (match) => match[1]
     )
 
-    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home'])
+    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home', 'close'])
     expect(html).not.toContain('aria-label="Open Workspace Stats"')
+  })
+
+  it('omits the close segment when the owning surface has no close action', () => {
+    const html = renderPill(false, undefined, true, false)
+    expect(html).not.toContain('data-main-pane-action="close"')
+    expect(html).not.toContain('aria-label="Close thread view"')
   })
 
   it('defines the exact FX and Info picker contents', () => {
@@ -107,7 +121,8 @@ describe('MainPaneActionPill', () => {
     expect(html).toContain('>Diff Studio<')
     expect(html).toContain('>File Editor<')
     expect(html).toContain('>Pop-Out Chat<')
-    expect(html.match(/role="menuitem"/g)).toHaveLength(4)
+    expect(html).toContain('>Compact Companion<')
+    expect(html.match(/role="menuitem"/g)).toHaveLength(5)
   })
 
   it('uses the app-wide glass popover chrome for every top-right picker', () => {
@@ -132,6 +147,20 @@ describe('MainPaneActionPill', () => {
     )
     expect(css).toMatch(/\.workspace-stats-popover-host\s*\{[^}]*position: fixed;/s)
     expect(css).not.toContain('.chat-corner-controls > .workspace-stats-popover-host')
+  })
+
+  it('exposes a pane-local handle that opens only this Workspace Stats picker', () => {
+    const component = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/MainPaneActionPill.tsx'),
+      'utf8'
+    )
+
+    expect(component).toContain('export interface MainPaneActionPillHandle')
+    expect(component).toContain('useImperativeHandle(')
+    expect(component).toContain('openWorkspaceStats: () => {')
+    expect(component).toContain('if (!workspaceStats) return')
+    expect(component).toContain("setMenu('workspace-stats')")
+    expect(component).toContain('setPopoutMenuOpen(false)')
   })
 
   it('scopes trigger and menu ids when several pane pills are mounted', () => {

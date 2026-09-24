@@ -6,18 +6,28 @@ import {
   AppDriveSessionError,
   type AppDriveSessionBinding
 } from './AppDriveSession'
+import { AppDriveSessionReportStore } from './AppDriveSessionReport'
 
 function createSession(nowValue = 10_000): {
   session: AppDriveSession
   now: { value: number }
+  reports: AppDriveSessionReportStore
 } {
   const now = { value: nowValue }
   let id = 0
+  let reportId = 0
+  let actionId = 0
+  const reports = new AppDriveSessionReportStore({
+    now: () => now.value,
+    createReportId: () => `report-${++reportId}`,
+    createActionId: () => `action-${++actionId}`
+  })
   const session = new AppDriveSession({
     now: () => now.value,
-    createSessionId: () => `session-${++id}`
+    createSessionId: () => `session-${++id}`,
+    reports
   })
-  return { session, now }
+  return { session, now, reports }
 }
 
 function binding(overrides: Partial<AppDriveSessionBinding> = {}): AppDriveSessionBinding {
@@ -145,6 +155,33 @@ describe('AppDriveSession', () => {
     expect(resumed.pausedAt).toBeNull()
     expect(session.canAdmitActions()).toBe(true)
     session.assertCanAdmitActions('observe')
+  })
+
+  it('reports native actions and defaults consequential Ensemble control to a verifier split', () => {
+    const { session, reports } = createSession()
+    session.bind(binding({ participantId: 'seat-actor' }))
+    const action = session.beginReportedAction('click')
+    expect(action).toMatchObject({
+      reportId: 'report-1',
+      actionId: 'action-1',
+      independentVerificationRequired: true
+    })
+    session.completeReportedAction({
+      actionId: action.actionId,
+      executed: true,
+      surfaceVerification: 'unknown'
+    })
+    session.updateReportedSurfaceVerification(action.actionId, 'changed')
+    expect(reports.query({ chatId: 'chat-a' })[0]).toMatchObject({
+      counts: { total: 1, awaitingVerification: 1 },
+      actions: [
+        expect.objectContaining({
+          actor: expect.objectContaining({ participantId: 'seat-actor' }),
+          surfaceVerification: 'changed',
+          status: 'awaiting-verification'
+        })
+      ]
+    })
   })
 
   it('refuses new actions during takeover until explicit resume', () => {

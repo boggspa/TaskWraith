@@ -5,6 +5,13 @@ import { join, resolve } from 'node:path'
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
 import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
 import {
+  decodeWorkspaceLockHolderHeartbeat,
+  encodeWorkspaceLockHolderHeartbeat,
+  workspaceLockHolderHeartbeatFilename,
+  type WorkspaceLockHolderHeartbeat,
+  type WorkspaceLockHolderKey
+} from './WorkspaceLockHolderHeartbeat'
+import {
   ensureRuntimeMarkerExcluded,
   type WorkspaceMarkerExcludeOutcome
 } from './WorkspaceMarkerGitExclude'
@@ -18,6 +25,12 @@ export const WORKSPACE_LOCK_AUTHORITY_DIRECTORY = 'work-lock-authority'
 export const WORKSPACE_LOCK_EVENTS_FILENAME = 'events.jsonl'
 export const WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME = 'instance-fence.json'
 export const WORKSPACE_LOCK_RECLAIM_GUARD_FILENAME = 'instance-fence.reclaim-guard.json'
+export const WORKSPACE_LOCK_CHECKPOINT_FILENAME = 'checkpoint.json'
+export const WORKSPACE_LOCK_ARCHIVE_DIRECTORY = 'archive'
+/** Holder heartbeat sidecars; a subdirectory older builds never read. */
+export const WORKSPACE_LOCK_HOLDERS_DIRECTORY = 'holders'
+/** Append-only audit of every periodic reclaim and the evidence behind it. */
+export const WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME = 'reclaims.jsonl'
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
@@ -62,6 +75,32 @@ export interface NodeWorkspaceLockPersistenceFs {
   linkSync(existingPath: string, newPath: string): void
   renameSync(oldPath: string, newPath: string): void
   unlinkSync(path: string): void
+  /** Optional only so constrained test substitutes keep compiling; production has it. */
+  readdirSync?(path: string): string[]
+}
+
+/**
+ * Asynchronous seam for the holder heartbeat and its reclaim audit. These are
+ * the only writes the authority performs outside the transition mutex, and
+ * deliberately the only ones without an fsync: a lost beat costs one late
+ * heartbeat, while a synchronous fsync every ten seconds on a stalled disk
+ * would block the main thread the sidecar exists to protect.
+ */
+export interface NodeWorkspaceLockPersistenceAsyncFs {
+  /** Never recursive: a beat must not recreate an authority root removed underneath it. */
+  mkdir(path: string, options: { mode: number }): Promise<unknown>
+  writeFile(path: string, data: string, options: { mode: number; flag: 'wx' }): Promise<void>
+  rename(oldPath: string, newPath: string): Promise<void>
+  unlink(path: string): Promise<void>
+  appendFile(path: string, data: string, options: { mode: number }): Promise<void>
+}
+
+const productionAsyncFs: NodeWorkspaceLockPersistenceAsyncFs = {
+  mkdir: (path, options) => nodeFs.promises.mkdir(path, options),
+  writeFile: (path, data, options) => nodeFs.promises.writeFile(path, data, options),
+  rename: (oldPath, newPath) => nodeFs.promises.rename(oldPath, newPath),
+  unlink: (path) => nodeFs.promises.unlink(path),
+  appendFile: (path, data, options) => nodeFs.promises.appendFile(path, data, options)
 }
 
 const productionFs: NodeWorkspaceLockPersistenceFs = {
@@ -104,6 +143,14 @@ export interface NodeWorkspaceLockPersistenceOptions {
    */
   ensureMarkerExcluded?: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
   fs?: NodeWorkspaceLockPersistenceFs
+  /** Async seam for heartbeat/audit writes; tests substitute a recording fake. */
+  asyncFs?: NodeWorkspaceLockPersistenceAsyncFs
+}
+
+export interface WorkspaceLockHolderHeartbeatReadResult {
+  heartbeats: WorkspaceLockHolderHeartbeat[]
+  /** Unreadable or malformed sidecars are reported, never treated as evidence. */
+  errors: string[]
 }
 
 export interface WorkspaceLockEventSnapshot {
@@ -141,12 +188,15 @@ interface WorkspaceLockReclaimGuard {
  */
 export class NodeWorkspaceLockPersistence {
   private readonly fs: NodeWorkspaceLockPersistenceFs
+  private readonly asyncFs: NodeWorkspaceLockPersistenceAsyncFs
   private readonly platform: NodeJS.Platform
   private readonly root: string
   private readonly authorityDirectory: string
   private readonly onReclaimGuardAcquired?: () => void
   private readonly onStaleReclaimGuardQuarantined?: () => void | Promise<void>
   private readonly ensureMarkerExcluded: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
+  /** Exact file revision whose complete prefix was validated in this process. */
+  private validatedEventsRevision: string | null = null
   /** Roots already settled this process. 'write-failed' is deliberately not
    *  memoized, so a transient failure is retried at the next marker write. */
   private readonly markerExclusionSettled = new Set<string>()
@@ -160,6 +210,7 @@ export class NodeWorkspaceLockPersistence {
       throw new Error('Workspace-lock authority directory name is unsafe.')
     }
     this.fs = options.fs || productionFs
+    this.asyncFs = options.asyncFs || productionAsyncFs
     this.platform = options.platform || process.platform
     this.root = resolve(options.userDataRoot)
     this.authorityDirectory = join(this.root, directoryName)
@@ -177,12 +228,17 @@ export class NodeWorkspaceLockPersistence {
     this.ensureAuthorityDirectory()
     const path = this.eventsPath()
     const snapshot = this.readOptionalRegularFile(path, true)
-    if (!snapshot) return { raw: '', byteLength: 0, revision: 'absent' }
+    if (!snapshot) {
+      this.validatedEventsRevision = 'absent'
+      return { raw: '', byteLength: 0, revision: 'absent' }
+    }
     validateJsonLines(snapshot.raw, path)
+    const revision = eventRevision(snapshot.stat, path)
+    this.validatedEventsRevision = snapshot.raw.endsWith('\n') ? revision : null
     return {
       raw: snapshot.raw,
       byteLength: snapshot.bytes.byteLength,
-      revision: eventRevision(snapshot.stat, path)
+      revision
     }
   }
 
@@ -213,18 +269,32 @@ export class NodeWorkspaceLockPersistence {
     this.ensureAuthorityDirectory()
 
     const path = this.eventsPath()
-    const before = this.readOptionalRegularFile(path)
-    const observedByteLength = before?.bytes.byteLength || 0
-    if (observedByteLength !== expectedByteLength) {
+    const observedRevision = this.readEventsRevision()
+    const existedBeforeAppend = observedRevision !== 'absent'
+    if (!existedBeforeAppend && expectedByteLength !== 0) {
       throw new Error(
-        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${observedByteLength}).`
+        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed 0).`
       )
     }
-    if (before) {
-      validateJsonLines(before.raw, path)
-      if (!before.raw.endsWith('\n')) {
-        throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+    if (observedRevision !== this.validatedEventsRevision) {
+      const before = this.readOptionalRegularFile(path)
+      const observedByteLength = before?.bytes.byteLength || 0
+      if (observedByteLength !== expectedByteLength) {
+        throw new Error(
+          `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${observedByteLength}).`
+        )
       }
+      const validatedRevision = before ? eventRevision(before.stat, path) : 'absent'
+      if (validatedRevision !== observedRevision) {
+        throw new Error('Workspace-lock WAL changed while validating the append prefix.')
+      }
+      if (before) {
+        validateJsonLines(before.raw, path)
+        if (!before.raw.endsWith('\n')) {
+          throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+        }
+      }
+      this.validatedEventsRevision = validatedRevision
     }
 
     const encoded = Buffer.from(serializedLineWithNewline, 'utf8')
@@ -238,19 +308,26 @@ export class NodeWorkspaceLockPersistence {
       fd = this.fs.openSync(path, flags, PRIVATE_FILE_MODE)
       const opened = this.fs.fstatSync(fd)
       assertRegularFile(opened, path)
+      if (existedBeforeAppend && eventRevision(opened, path) !== observedRevision) {
+        throw new Error('Workspace-lock WAL changed identity or revision while opening for append.')
+      }
       const actualLength = numericSize(opened.size, path)
       if (actualLength !== expectedByteLength) {
         throw new Error(
           `Workspace-lock WAL byte fence changed while opening (expected ${expectedByteLength}, observed ${actualLength}).`
         )
       }
+      // From this point a failed write/fsync has an ambiguous durable tail.
+      // Force a complete validation before any retry can append again.
+      this.validatedEventsRevision = null
       writeFully(this.fs, fd, encoded)
       this.fs.fsyncSync(fd)
-      if (!before) this.fsyncDirectory(this.authorityDirectory)
-      return actualLength + encoded.byteLength
+      if (!existedBeforeAppend) this.fsyncDirectory(this.authorityDirectory)
     } finally {
       if (fd !== null) this.fs.closeSync(fd)
     }
+    this.validatedEventsRevision = this.readEventsRevision()
+    return expectedByteLength + encoded.byteLength
   }
 
   /**
@@ -519,6 +596,210 @@ export class NodeWorkspaceLockPersistence {
       if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return false
       throw error
     }
+  }
+
+  /** Cheap identity so a cached, already-validated checkpoint can be reused. */
+  readCheckpointRevision(): string {
+    this.ensureAuthorityDirectory()
+    const path = this.checkpointPath()
+    try {
+      const stat = this.fs.lstatSync(path)
+      assertRegularFile(stat, path)
+      return eventRevision(stat, path)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return 'absent'
+      throw error
+    }
+  }
+
+  /** Raw checkpoint document, or null on a v1 authority root that has none. */
+  readCheckpointDocument(): string | null {
+    this.ensureAuthorityDirectory()
+    const snapshot = this.readOptionalRegularFile(this.checkpointPath())
+    return snapshot ? snapshot.raw : null
+  }
+
+  /**
+   * Step 2 of the publication protocol: seal history that the checkpoint will
+   * stand for. Writing this before the checkpoint means no frame ever exists in
+   * neither the tail nor the archive.
+   */
+  writeArchiveSegment(filename: string, content: string): void {
+    if (!isSinglePathSegment(filename) || !/^events-\d{20}\.jsonl$/.test(filename)) {
+      throw new Error('Workspace-lock archive segment filename is unsafe.')
+    }
+    if (typeof content !== 'string' || !content.endsWith('\n')) {
+      throw new Error('Workspace-lock archive segment must be newline-terminated JSONL.')
+    }
+    validateJsonLines(content, filename)
+    const directory = this.archiveDirectory()
+    this.ensurePrivateDirectory(directory)
+    this.atomicReplaceRegularFile(join(directory, filename), content)
+    const written = this.readRequiredRegularFile(join(directory, filename))
+    if (written.raw !== content) {
+      throw new Error('Workspace-lock archive segment could not be verified.')
+    }
+  }
+
+  /** Step 3: publish the checkpoint. Atomic; a reader sees old or new, never half. */
+  writeCheckpointDocument(content: string): void {
+    if (typeof content !== 'string' || !content.endsWith('\n') || content === '\n') {
+      throw new Error('Workspace-lock checkpoint must be one newline-terminated document.')
+    }
+    if (content.slice(0, -1).includes('\n')) {
+      throw new Error('Workspace-lock checkpoint must be a single line.')
+    }
+    this.ensureAuthorityDirectory()
+    this.atomicReplaceRegularFile(this.checkpointPath(), content)
+    if (this.readRequiredRegularFile(this.checkpointPath()).raw !== content) {
+      throw new Error('Workspace-lock checkpoint could not be verified.')
+    }
+  }
+
+  /**
+   * Step 4: drop the sealed prefix. Only ever removes bytes that are already an
+   * exact prefix of the live file, so a concurrent appender's frames survive or
+   * the truncation refuses.
+   */
+  truncateEventsToSuffix(expectedByteLength: number, retainedFrames: string): number {
+    validateExpectedByteLength(expectedByteLength)
+    if (typeof retainedFrames !== 'string' || (retainedFrames && !retainedFrames.endsWith('\n'))) {
+      throw new Error('Workspace-lock retained frames must be empty or newline-terminated.')
+    }
+    validateJsonLines(retainedFrames, this.eventsPath())
+    this.ensureAuthorityDirectory()
+    const path = this.eventsPath()
+    const current = this.readRequiredRegularFile(path)
+    if (current.bytes.byteLength !== expectedByteLength) {
+      throw new Error(
+        `Workspace-lock WAL byte fence changed (expected ${expectedByteLength}, observed ${current.bytes.byteLength}).`
+      )
+    }
+    validateJsonLines(current.raw, path)
+    if (!current.raw.endsWith('\n')) {
+      throw new Error(`Workspace-lock WAL has an uncommitted torn tail: ${path}`)
+    }
+    if (!current.raw.endsWith(retainedFrames)) {
+      throw new Error('Workspace-lock retained frames are not the exact live WAL suffix.')
+    }
+    // A failed replace leaves an ambiguous cursor; force full revalidation.
+    this.validatedEventsRevision = null
+    this.atomicReplaceRegularFile(path, retainedFrames)
+    const truncated = this.readEvents()
+    const truncatedByteLength = Buffer.byteLength(retainedFrames, 'utf8')
+    if (truncated.raw !== retainedFrames || truncated.byteLength !== truncatedByteLength) {
+      throw new Error('Workspace-lock WAL truncation could not be verified.')
+    }
+    return truncatedByteLength
+  }
+
+  /**
+   * Holder heartbeat: same-directory temp + rename, private mode, no fsync and
+   * no transition mutex. Loss of one beat is the accepted failure; blocking the
+   * main thread on a stalled disk is not.
+   */
+  async writeHolderHeartbeat(record: WorkspaceLockHolderHeartbeat): Promise<void> {
+    const content = encodeWorkspaceLockHolderHeartbeat(record)
+    const directory = await this.ensureHoldersDirectory()
+    const temporaryPath = join(directory, `.${randomUUID()}.tmp`)
+    try {
+      await this.asyncFs.writeFile(temporaryPath, content, { mode: PRIVATE_FILE_MODE, flag: 'wx' })
+      await this.asyncFs.rename(temporaryPath, this.holderHeartbeatPath(record))
+    } catch (error) {
+      try {
+        await this.asyncFs.unlink(temporaryPath)
+      } catch {
+        // The temp inode was never published; a leftover is inert.
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Every readable sidecar under `holders/`. A malformed or vanishing file is
+   * reported and skipped: it is never liveness evidence in either direction.
+   */
+  readHolderHeartbeats(): WorkspaceLockHolderHeartbeatReadResult {
+    const directory = this.holdersDirectory()
+    if (typeof this.fs.readdirSync !== 'function') {
+      return { heartbeats: [], errors: ['holder heartbeats are unreadable: no directory listing'] }
+    }
+    let names: string[]
+    try {
+      const stat = this.fs.lstatSync(directory)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        return { heartbeats: [], errors: [`holders: not a real directory: ${directory}`] }
+      }
+      names = this.fs.readdirSync(directory)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return { heartbeats: [], errors: [] }
+      return { heartbeats: [], errors: [`holders: ${errorText(error)}`] }
+    }
+    const heartbeats: WorkspaceLockHolderHeartbeat[] = []
+    const errors: string[] = []
+    for (const name of [...names].sort()) {
+      if (name.startsWith('.') || !name.endsWith('.json')) continue
+      const path = join(directory, name)
+      try {
+        const snapshot = this.readOptionalRegularFile(path)
+        if (!snapshot) continue
+        heartbeats.push(decodeWorkspaceLockHolderHeartbeat(snapshot.raw))
+      } catch (error) {
+        errors.push(`${name}: ${errorText(error)}`)
+      }
+    }
+    return { heartbeats, errors }
+  }
+
+  /** Removes exactly this holder's sidecar; absent is not an error. */
+  removeHolderHeartbeat(key: WorkspaceLockHolderKey): boolean {
+    const path = this.holderHeartbeatPath(key)
+    try {
+      const stat = this.fs.lstatSync(path)
+      assertRegularFile(stat, path)
+      this.fs.unlinkSync(path)
+      return true
+    } catch (error) {
+      if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return false
+      throw error
+    }
+  }
+
+  /** One JSONL audit line per periodic reclaim; async and unfsynced like the beat. */
+  async appendHolderReclaimAudit(serializedLineWithNewline: string): Promise<void> {
+    validateJsonlFrame(serializedLineWithNewline)
+    const directory = await this.ensureHoldersDirectory()
+    await this.asyncFs.appendFile(
+      join(directory, WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME),
+      serializedLineWithNewline,
+      { mode: PRIVATE_FILE_MODE }
+    )
+  }
+
+  holdersDirectory(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_HOLDERS_DIRECTORY)
+  }
+
+  private async ensureHoldersDirectory(): Promise<string> {
+    const directory = this.holdersDirectory()
+    try {
+      await this.asyncFs.mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) throw error
+    }
+    return directory
+  }
+
+  private holderHeartbeatPath(key: WorkspaceLockHolderKey): string {
+    return join(this.holdersDirectory(), workspaceLockHolderHeartbeatFilename(key))
+  }
+
+  private checkpointPath(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_CHECKPOINT_FILENAME)
+  }
+
+  private archiveDirectory(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_ARCHIVE_DIRECTORY)
   }
 
   private eventsPath(): string {
@@ -993,6 +1274,10 @@ function isOpaqueId(value: unknown): value is string {
 
 function isIsoTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function isErrno(error: unknown, code: string): boolean {

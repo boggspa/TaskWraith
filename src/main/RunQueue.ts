@@ -226,6 +226,16 @@ export function updateRunQueueJobRecord(
   if (status !== 'steer_promoting') {
     next.promotedAt = undefined
     next.steerPreparationKind = undefined
+    // Retain an admission receipt on terminal rows for diagnosis and proof
+    // that startup/cancellation did not silently replay uncertain provider
+    // input. A main-owned transition back to a runnable state clears it only
+    // after explicit rejection or proven pre-write failure.
+    if (RUN_QUEUE_NONTERMINAL_STATUS_SET[status]) {
+      next.steerDeliveryPhase = undefined
+      next.steerDeliveryActiveRunId = undefined
+      next.steerDeliveryStrategy = undefined
+      next.steerDeliveryAttemptedAt = undefined
+    }
   }
   if (!RUN_QUEUE_NONTERMINAL_STATUS_SET[status]) {
     next.promotionAttempt = undefined
@@ -248,6 +258,22 @@ export function recoverInterruptedRunQueueJobs(
       // all other promotion owners disappeared with the previous renderer and
       // must return to the runnable queue instead of becoming zombies or being
       // misreported as interrupted provider processes.
+      if (job.steerDeliveryPhase !== undefined && job.steerDeliveryPhase !== 'prepared') {
+        return updateRunQueueJobRecord(
+          job,
+          {
+            status: 'failed',
+            statusReason:
+              'Live steering admission was interrupted while its provider outcome was unknown.',
+            lastError:
+              'TaskWraith did not replay this steering message because the provider may already have accepted it.',
+            recoveryReason: 'ambiguous_live_steer_admission_on_startup',
+            interruptedAt: recoveredAt,
+            recoveredAt
+          },
+          recoveredAt
+        )
+      }
       if (isPreparedSoloSteerTranscriptBarrier(job)) return job
       return updateRunQueueJobRecord(
         job,

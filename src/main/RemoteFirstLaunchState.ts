@@ -120,7 +120,8 @@ const PROVIDER_ORDER: ProviderId[] = [
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 const OPTIONAL_PROVIDERS = new Set<ProviderId>([
   'kimi',
@@ -129,7 +130,8 @@ const OPTIONAL_PROVIDERS = new Set<ProviderId>([
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
@@ -153,7 +155,9 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   mistral:
     "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream.",
   muse:
-    'Muse Code CLI (`muse exec --json`) on a Meta Model API key or Muse login.'
+    'Muse Code CLI (`muse exec --json`) on a Meta Model API key or Muse login.',
+  devin:
+    'Devin CLI agent over ACP (`devin acp`). Sign-in happens on the Mac through `devin auth login` or a WINDSURF_API_KEY environment key.'
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -173,7 +177,9 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   mistral:
     'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.',
   muse:
-    'On your Mac, install the Muse Code CLI and finish Muse login or Meta Model API key setup.'
+    'On your Mac, install the Muse Code CLI and finish Muse login or Meta Model API key setup.',
+  devin:
+    'On your Mac, install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then run `devin auth login` or set WINDSURF_API_KEY.'
 }
 
 export function buildRemoteFirstLaunchState(
@@ -206,6 +212,17 @@ export function buildRemoteFirstLaunchState(
   }
 }
 
+/**
+ * The iOS carousel knows two tones (RemoteNoticeCarousel.swift only ever
+ * compares `tone == "danger"`). The renderer's amber `warning` treatment is a
+ * session-notice affordance that never reaches this projection, so anything
+ * that is not red projects as the default card instead of leaking a value the
+ * remote cannot render.
+ */
+function remoteNoticeTone(kind: AppNotification['kind']): RemoteFirstLaunchNotice['tone'] {
+  return appNotificationTone(kind) === 'danger' ? 'danger' : 'default'
+}
+
 function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLaunchNotice[] {
   const now = Date.now()
   return notifications
@@ -215,7 +232,7 @@ function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLau
       kind: notice.kind,
       title: notice.title,
       body: notice.body,
-      tone: appNotificationTone(notice.kind),
+      tone: remoteNoticeTone(notice.kind),
       accent: appNotificationAccent(notice),
       ...(notice.icon ? { icon: notice.icon } : {}),
       dismissible: notice.dismissible !== false,
@@ -457,5 +474,7 @@ function providerLabel(provider: ProviderId): string {
       return 'Mistral'
     case 'muse':
       return 'Muse'
+    case 'devin':
+      return 'Devin'
   }
 }

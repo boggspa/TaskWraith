@@ -48,28 +48,44 @@ import type { HostActorIdentity, HostCapability } from '../../shared/hostProtoco
 import type {
   AppStoreHostAuthorityExecutor,
   AppStoreHostAuthorityHealthProvider
-} from './AppStoreHostAuthority'
-import type { HostAuthorityCallContext } from './HostAuthority'
+} from '../../host-runtime/AppStoreHostAuthority'
+import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
 import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
 import { HostChannelCommandExecutor } from './HostChannelCommandExecutor'
-import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
-import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
-import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelopeResolver'
-import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
-import { HostLocalServer, type HostLocalServerOptions } from './HostLocalServer'
+import { HostCommandMutationPipeline } from '../../host-runtime/HostCommandMutationPipeline'
+import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
+import { HostDeferredCommandEnvelopeResolver } from '../../host-runtime/HostDeferredCommandEnvelopeResolver'
+import { HostDomainDeltaPublisher } from '../../host-runtime/HostDomainDeltaPublisher'
+import { HostLocalServer, type HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
 import {
   createHostMainComposition,
-  hostRuntimeDataDir,
   type HostMainComposition,
   type HostMainCompositionInput
-} from './HostMainComposition'
-import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
-import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
-import { createHostProductionAuthorityEvaluator } from './HostProductionAuthorityEvaluator'
+} from '../../host-runtime/HostMainComposition'
+import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
+import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
+import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
+import {
+  HostProfileDomainStore,
+  type HostProfileAuthorityPort
+} from '../../host-runtime/HostProfileDomainStore'
+import {
+  HostProfileRecordCommandExecutor,
+  isHostProfileRecordMutationName
+} from '../../host-runtime/HostProfileRecordCommandExecutor'
+import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
 import {
   createHostProductionContextResolvers,
   type HostProductionContextResolverDeps
 } from './HostProductionContextResolvers'
+import {
+  createHostProductionHistoryAdapter,
+  type HostProductionHistoryAdapterOptions
+} from './HostProductionHistoryAdapter'
+import {
+  createHostProductionSetupAdapter,
+  type HostProductionSetupAdapterOptions
+} from './HostProductionSetupAdapter'
 import {
   createHostProductionSuppliers,
   type HostProductionApprovalListPort,
@@ -83,15 +99,15 @@ import {
   type HostProductionRoundListPort,
   type HostProductionRunListPort,
   type HostProductionScheduleListPort
-} from './HostProductionSuppliers'
+} from '../../host-runtime/HostProductionSuppliers'
 import type { HostChannelAdminPort } from './HostChannelCommandExecutor'
-import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
-import type { HostSessionHostIdentity } from './HostSession'
+import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
+import type { HostSessionHostIdentity } from '../../host-runtime/HostSession'
 import {
   createHostSupervisor,
   type HostSupervisor,
   type HostSupervisorInput
-} from './HostSupervisor'
+} from '../../host-runtime/HostSupervisor'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -204,6 +220,13 @@ export interface HostProductionBootstrapOptions {
    * canonical store/service callbacks, never Host domain logic.
    */
   readonly contextSources: HostProductionContextResolverDeps
+  /** Exact in-process profile lease authority; absent on the external Node Host path. */
+  readonly profileAuthority?: HostProfileAuthorityPort
+  /** Complete main-backed provider/setup ports; omitted means no setup capabilities. */
+  readonly setup?: HostProductionSetupAdapterOptions
+  /** Complete canonical history ports; omitted means history remains unavailable. */
+  readonly history?: Omit<HostProductionHistoryAdapterOptions, 'getPosition'>
+  readonly threadCatalogueProvider?: HostMainCompositionInput['threadCatalogueProvider']
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: () => void | Promise<void>
   /** Optional diagnostic logger. */
@@ -224,18 +247,19 @@ export interface HostProductionBootstrapOptions {
   readonly createSupervisor?: (input: HostSupervisorInput) => HostSupervisor
 }
 
-function hostProductionCapabilityOffer(
-  options: HostProductionBootstrapOptions
-): readonly HostCapability[] {
-  const capabilities: HostCapability[] = [
-    'bootstrap',
-    'snapshot',
-    'deltas',
-    'model-offers',
-    'commands',
-    'receipts',
-    'health'
-  ]
+function hostProductionCapabilityOffer(input: {
+  readonly options: HostProductionBootstrapOptions
+  readonly setupAvailable: boolean
+  readonly historyAvailable: boolean
+}): readonly HostCapability[] {
+  const { options } = input
+  const capabilities: HostCapability[] = ['bootstrap', 'snapshot', 'deltas', 'model-offers']
+  if (input.setupAvailable) {
+    capabilities.push('provider-catalog', 'provider-auth')
+  }
+  if (input.historyAvailable) capabilities.push('history')
+  if (input.setupAvailable) capabilities.push('setup')
+  capabilities.push('commands', 'receipts', 'health')
   if (options.missions) capabilities.push('missions')
   if (options.rounds && options.participants) capabilities.push('ensemble')
   // Deferred Host commands always project their own approval challenges even
@@ -328,6 +352,9 @@ export function createHostProductionBootstrap(
   if (typeof options.contextSources.getQuestion !== 'function') {
     throw new Error('HostProductionBootstrap requires contextSources.getQuestion')
   }
+  if (options.history !== undefined && typeof options.history.getChat !== 'function') {
+    throw new Error('HostProductionBootstrap requires history.getChat to be a function')
+  }
   if (options.providers !== undefined && typeof options.providers.getProviders !== 'function') {
     throw new Error('HostProductionBootstrap requires providers.getProviders to be a function')
   }
@@ -377,6 +404,12 @@ export function createHostProductionBootstrap(
   ) {
     throw new Error('HostProductionBootstrap requires an injected host identity')
   }
+  if (
+    options.profileAuthority !== undefined &&
+    typeof options.profileAuthority.assertProfileAuthority !== 'function'
+  ) {
+    throw new Error('HostProductionBootstrap requires profileAuthority.assertProfileAuthority')
+  }
 
   /* ---- re-entrancy: one live supervisor per resolved data dir ---- */
   const key = registryKey(options.userDataPath)
@@ -417,8 +450,26 @@ export function createHostProductionBootstrap(
     resolvers: contextResolvers,
     ...(options.nowMs ? { nowMs: options.nowMs } : {})
   })
+  const profileRecordExecutor = options.profileAuthority
+    ? new HostProfileRecordCommandExecutor({
+        profilePath: options.userDataPath,
+        store: new HostProfileDomainStore({
+          profilePath: options.userDataPath,
+          authority: options.profileAuthority
+        })
+      })
+    : null
   const channelExecutor = options.channels ? new HostChannelCommandExecutor(options.channels) : null
   const commandExecutor: AppStoreHostAuthorityExecutor = (command, context) => {
+    if (isHostProfileRecordMutationName(command.name)) {
+      return profileRecordExecutor
+        ? profileRecordExecutor.execute(command)
+        : {
+            status: 'failed',
+            errorCode: 'host_unavailable',
+            errorMessage: 'In-process profile mutation authority is unavailable'
+          }
+    }
     if (command.name === 'channel.member.revoke' || command.name === 'channel.close') {
       return channelExecutor
         ? channelExecutor.execute(command, context)
@@ -430,6 +481,10 @@ export function createHostProductionBootstrap(
     }
     return bridgeExecutor.execute(command, context)
   }
+  // Setup is a separate Host executor. Construction validates every backing
+  // service/terminal port before any corresponding capability is advertised.
+  const setupAdapter = options.setup ? createHostProductionSetupAdapter(options.setup) : null
+  let historyAdapter: ReturnType<typeof createHostProductionHistoryAdapter> | null = null
 
   /* ---- 2. healthProvider circularity ---- */
   // The supervisor owns the honest health projection (it alone knows whether
@@ -458,6 +513,12 @@ export function createHostProductionBootstrap(
   let compositionRef: HostMainComposition | null = null
 
   const pipelineFactory = (runtime: HostRuntimeBootstrap): HostDeferredAllowPipeline => {
+    if (options.history) {
+      historyAdapter = createHostProductionHistoryAdapter({
+        ...options.history,
+        getPosition: () => runtime.getPosition()
+      })
+    }
     const resolver = new HostDeferredCommandEnvelopeResolver({
       envelopeStore: runtime.envelopeStore,
       receiptStore: runtime.receiptStore,
@@ -512,8 +573,42 @@ export function createHostProductionBootstrap(
     authorityEvaluator,
     healthProvider,
     threadOffersProvider,
+    ...(options.threadCatalogueProvider
+      ? { threadCatalogueProvider: options.threadCatalogueProvider }
+      : {}),
+    ...(setupAdapter
+      ? {
+          setupExecutor: setupAdapter.setupExecutor,
+          providerStatusesProvider: () => setupAdapter.providerStatuses(),
+          providerOffersProvider: (providerId: string) => setupAdapter.providerOffers(providerId),
+          providerAuthFlowsProvider: (providerId: string) =>
+            setupAdapter.providerAuthFlows(providerId),
+          providerAuthStatusProvider: (providerId: string) =>
+            setupAdapter.providerAuthStatus(providerId)
+        }
+      : {}),
+    ...(options.history
+      ? {
+          threadHistoryProvider: (
+            request: Parameters<NonNullable<HostMainCompositionInput['threadHistoryProvider']>>[0]
+          ) => {
+            if (!historyAdapter) throw new Error('Host history adapter is unavailable')
+            return historyAdapter.threadHistory(request)
+          },
+          historySinceProvider: (
+            request: Parameters<NonNullable<HostMainCompositionInput['historySinceProvider']>>[0]
+          ) => {
+            if (!historyAdapter) throw new Error('Host history adapter is unavailable')
+            return historyAdapter.historySince(request)
+          }
+        }
+      : {}),
     host: options.host,
-    hostCapabilityOffer: hostProductionCapabilityOffer(options),
+    hostCapabilityOffer: hostProductionCapabilityOffer({
+      options,
+      setupAvailable: setupAdapter !== null,
+      historyAvailable: options.history !== undefined
+    }),
     pipelineFactory,
     ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
     ...(options.nowIso ? { now: options.nowIso } : {})

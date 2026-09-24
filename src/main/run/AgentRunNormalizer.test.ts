@@ -580,23 +580,25 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(normalizeClaude('claude-opus-4-8-1m').claudeFastMode).toBe(true)
   })
 
-  it('forces Kimi thinking on, validates K3 effort, and removes K3 Fast mode', () => {
-    const result = normalizeAgentRunPayload(
-      {
-        provider: 'kimi',
-        scope: 'workspace',
-        workspace: '/repo',
-        prompt: 'do work',
-        model: 'kimi-k3',
-        reasoningEffort: 'high',
-        serviceTier: 'fast',
-        kimiThinking: false
-      },
-      makeDeps()
-    )
-    expect(result.reasoningEffort).toBe('high')
-    expect(result.serviceTier).toBe('standard')
-    expect(result.kimiThinking).toBe(true)
+  it('forces Kimi thinking on, validates both K3 routes, and removes K3 Fast mode', () => {
+    for (const model of ['kimi-k3', 'kimi-k3-256k']) {
+      const result = normalizeAgentRunPayload(
+        {
+          provider: 'kimi',
+          scope: 'workspace',
+          workspace: '/repo',
+          prompt: 'do work',
+          model,
+          reasoningEffort: 'high',
+          serviceTier: 'fast',
+          kimiThinking: false
+        },
+        makeDeps()
+      )
+      expect(result.reasoningEffort).toBe('high')
+      expect(result.serviceTier).toBe('standard')
+      expect(result.kimiThinking).toBe(true)
+    }
 
     const invalid = normalizeAgentRunPayload(
       {
@@ -604,13 +606,51 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
         scope: 'workspace',
         workspace: '/repo',
         prompt: 'do work',
-        model: 'kimi-k3',
+        model: 'kimi-k3-256k',
         reasoningEffort: 'off'
       },
       makeDeps()
     )
     expect(invalid.reasoningEffort).toBe('max')
     expect(invalid.kimiThinking).toBe(true)
+  })
+
+  it('preserves bounded Goal specification provenance through the run boundary', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'codex',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'continue',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Ship the feature.',
+          objectiveSource: 'user',
+          specification: {
+            kind: 'approved_plan',
+            sourceMessageId: 'message-source',
+            intendedPlanId: 'plan-1',
+            acceptanceCriteria: ['Works.', 'Tested.']
+          },
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'codex',
+          createdAt: '2026-08-21T00:00:00.000Z',
+          updatedAt: '2026-08-21T00:00:00.000Z'
+        }
+      },
+      makeDeps()
+    )
+
+    expect(result.activeGoal).toMatchObject({
+      objectiveSource: 'user',
+      specification: {
+        kind: 'approved_plan',
+        sourceMessageId: 'message-source',
+        intendedPlanId: 'plan-1',
+        acceptanceCriteria: ['Works.', 'Tested.']
+      }
+    })
   })
 
   // Invariant 5 (coverage): the global-scope branch threads requireGlobalChat +
@@ -665,5 +705,33 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
       profileId: undefined,
       profileName: undefined
     })
+  })
+})
+
+describe('normalizeAgentRunPayload — host-stamped origin', () => {
+  it('keeps a well-formed origin in its sanitised shape and drops anything else', () => {
+    const base = {
+      provider: 'codex',
+      scope: 'workspace',
+      workspace: '/repo',
+      prompt: 'hello',
+      approvalMode: 'auto_edit',
+      effectivePermissions: VALID_PERMS,
+      effectivePermissionsSignature: 'deadbeef'
+    }
+    const deps = makeDeps({ verifyRunPosture: vi.fn(() => true) })
+    expect(
+      normalizeAgentRunPayload(
+        {
+          ...base,
+          origin: { channel: 'local-control', pid: 4242, label: ' Claude Code ', token: 'x' }
+        },
+        deps
+      ).origin
+    ).toEqual({ channel: 'local-control', pid: 4242, label: 'Claude Code' })
+    expect(
+      normalizeAgentRunPayload({ ...base, origin: { channel: 'ios-bridge', pid: 1 } }, deps)
+    ).not.toHaveProperty('origin')
+    expect(normalizeAgentRunPayload(base, deps)).not.toHaveProperty('origin')
   })
 })

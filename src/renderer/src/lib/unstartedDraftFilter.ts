@@ -14,6 +14,7 @@ export interface UnstartedDraftChatLike extends ReusableChatLike {
   activeGoal?: unknown
   /** A rename off the create-factory default is intent (keep it visible). */
   title?: string
+  threadTitle?: { source?: 'placeholder' | 'prompt-fallback' | 'local-ai' | 'user' }
   /** Any populated chat-todo lane is intent even before the first message. */
   chatTodos?: Record<string, ReadonlyArray<unknown> | undefined | null>
 }
@@ -63,8 +64,14 @@ export function isHideableUnstartedDraft(
   if (chat.pinned) return false
   if (chat.pinnedNotes && chat.pinnedNotes.trim().length > 0) return false
   if (chat.activeGoal) return false
+  if (
+    chat.threadTitle?.source &&
+    chat.threadTitle.source !== 'placeholder' &&
+    chat.threadTitle.source !== 'prompt-fallback'
+  )
+    return false
   const title = chat.title?.trim()
-  if (title && !DEFAULT_TITLES.has(title)) return false
+  if (!chat.threadTitle && title && !DEFAULT_TITLES.has(title)) return false
   if (
     chat.chatTodos &&
     Object.values(chat.chatTodos).some((lane) => Array.isArray(lane) && lane.length > 0)

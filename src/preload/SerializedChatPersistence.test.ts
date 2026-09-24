@@ -31,6 +31,13 @@ function deferred<T>() {
 }
 
 describe('SerializedChatPersistence', () => {
+  function retainedLineageChatIds(persistence: SerializedChatPersistence): string[] {
+    const internals = persistence as unknown as {
+      acceptedLineageByChatId: Map<string, unknown>
+    }
+    return Array.from(internals.acceptedLineageByChatId.keys())
+  }
+
   function createCasRemote(initial: ChatRecord) {
     let canonical = structuredClone(initial)
     const saveRemote = vi.fn(async (record: ChatRecord) => {
@@ -47,6 +54,61 @@ describe('SerializedChatPersistence', () => {
     })
     return { saveRemote, canonical: () => structuredClone(canonical) }
   }
+
+  it('releases the accepted full-record lineage after the final save drains', async () => {
+    const largeMessage = {
+      id: 'message-1',
+      role: 'user' as const,
+      content: 'Large canonical transcript',
+      timestamp: 'now'
+    }
+    const remote = createCasRemote(
+      chat('chat-1', 7, {
+        messages: [largeMessage]
+      })
+    )
+    const persistence = new SerializedChatPersistence(remote.saveRemote)
+
+    await persistence.save(chat('chat-1', 7, { title: 'Accepted title', messages: [largeMessage] }))
+
+    expect(retainedLineageChatIds(persistence)).toEqual([])
+  })
+
+  it('retains lineage while an older sibling remains queued, then releases it', async () => {
+    const remote = createCasRemote(
+      chat('chat-1', 7, { title: 'Base title', messages: [], updatedAt: 10 })
+    )
+    const secondStarted = deferred<void>()
+    const releaseSecond = deferred<void>()
+    let callCount = 0
+    const saveRemote = vi.fn(async (record: ChatRecord) => {
+      callCount += 1
+      if (callCount === 2) {
+        secondStarted.resolve()
+        await releaseSecond.promise
+      }
+      return remote.saveRemote(record)
+    })
+    const persistence = new SerializedChatPersistence(saveRemote)
+
+    const first = persistence.save(chat('chat-1', 7, { title: 'Accepted title' }))
+    const queuedSibling = persistence.save(
+      chat('chat-1', 7, { title: 'Base title', pinnedNotes: 'Queued sibling' })
+    )
+
+    await first
+    await secondStarted.promise
+    expect(retainedLineageChatIds(persistence)).toEqual(['chat-1'])
+    expect(saveRemote.mock.calls[1][0]).toMatchObject({
+      persistenceRevision: 8,
+      title: 'Accepted title',
+      pinnedNotes: 'Queued sibling'
+    })
+
+    releaseSecond.resolve()
+    await queuedSibling
+    expect(retainedLineageChatIds(persistence)).toEqual([])
+  })
 
   it('three-way rebases disjoint title and message mutations so both survive', async () => {
     const remote = createCasRemote(
@@ -407,5 +469,86 @@ describe('SerializedChatPersistence', () => {
       accepted: false
     })
     await expect(second).resolves.toMatchObject({ title: 'Canonical main mutation' })
+  })
+})
+
+describe('SerializedChatPersistence rejection reporting', () => {
+  function casRemote(initial: ChatRecord) {
+    let canonical = structuredClone(initial)
+    return {
+      canonicalNow: () => canonical,
+      advanceCanonical: (next: ChatRecord) => {
+        canonical = structuredClone(next)
+      },
+      saveRemote: vi.fn(async (record: ChatRecord) => {
+        const previous = structuredClone(canonical)
+        if (record.persistenceRevision !== canonical.persistenceRevision) {
+          return { chat: structuredClone(canonical), previous, accepted: false }
+        }
+        canonical = {
+          ...structuredClone(record),
+          persistenceRevision: (record.persistenceRevision ?? 0) + 1
+        }
+        return { chat: structuredClone(canonical), previous, accepted: true }
+      })
+    }
+  }
+
+  it('reports the revision gap and the fields a refusal discarded', async () => {
+    const remote = casRemote(chat('c1', 5, { title: 'canonical' }))
+    const rejections: unknown[] = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 4, { title: 'authored on a stale base' }))
+
+    expect(rejections).toEqual([
+      {
+        chatId: 'c1',
+        snapshotRevision: 4,
+        canonicalRevision: 5,
+        discardedFields: ['title'],
+        rebased: false
+      }
+    ])
+  })
+
+  it('names every discarded field, so a lost goal is legible', async () => {
+    const goal = { id: 'goal-1', objective: 'ship it' } as unknown as ChatRecord['activeGoal']
+    const remote = casRemote(chat('c1', 5))
+    const rejections: Array<{ discardedFields: string[] }> = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 4, { activeGoal: goal, title: 'renamed' }))
+
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].discardedFields).toEqual(['activeGoal', 'title'])
+  })
+
+  it('stays silent when the canonical record accepts the save', async () => {
+    const remote = casRemote(chat('c1', 5))
+    const rejections: unknown[] = []
+    const persistence = new SerializedChatPersistence(remote.saveRemote, (rejection) => {
+      rejections.push(rejection)
+    })
+
+    await persistence.save(chat('c1', 5, { title: 'authored on the current base' }))
+
+    expect(rejections).toEqual([])
+  })
+
+  it('keeps the save resolving to the canonical record when the reporter throws', async () => {
+    const remote = casRemote(chat('c1', 5, { title: 'canonical' }))
+    const persistence = new SerializedChatPersistence(remote.saveRemote, () => {
+      throw new Error('a diagnostic must never break a save')
+    })
+
+    await expect(persistence.save(chat('c1', 4, { title: 'stale' }))).resolves.toMatchObject({
+      title: 'canonical',
+      persistenceRevision: 5
+    })
   })
 })

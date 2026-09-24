@@ -69,9 +69,14 @@ import {
   matchOllamaBrand,
   resolveHealthEntryPresentation
 } from '../shared/ollamaBrandTable'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import { isContinuationHopsChangePayload } from '../shared/continuationHopsChange'
+import { isExecutionPlanChangePayload } from '../shared/executionPlanChange'
+import { isMcpTransportWrapperActivity } from '../shared/toolInvocationPresentation'
+import { isAutoApprovalsChangePayload } from '../shared/autoApprovalsChange'
+import { isBlackboardChangePayload } from '../shared/blackboardChange'
 import {
   usageCacheCreationInputTokens,
   usageCacheReadInputTokens,
@@ -119,7 +124,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
 }
 
 const FALLBACK_FX_RATES_PER_USD: Record<RemoteDisplayCurrency, number> = {
@@ -443,32 +449,31 @@ export function soloSpeakerForMessage(
   return (message) => {
     if (message.role !== 'assistant' && message.role !== 'tool') return undefined
     if (message.metadata?.ensembleProvider) return undefined
-    const provider =
-      (message.metadata?.ensembleProvider as ProviderId | undefined) ?? chatProvider
-    if (!provider) return undefined
-    let label = PROVIDER_LABELS[provider] ?? provider
     const run = typeof message.runId === 'string' ? runById.get(message.runId) : undefined
+    const metadata = message.metadata as Record<string, unknown> | undefined
+    const provider =
+      (typeof metadata?.assistantProvider === 'string' ? metadata.assistantProvider : undefined) ??
+      (typeof metadata?.provider === 'string' ? metadata.provider : undefined) ??
+      run?.provider ??
+      chatProvider
+    if (!provider) return undefined
     const model =
-      (typeof message.metadata?.providerModel === 'string'
-        ? message.metadata.providerModel
+      (typeof metadata?.providerModel === 'string'
+        ? metadata.providerModel
         : undefined) ||
       (typeof message.metadata?.ensembleModel === 'string'
         ? message.metadata.ensembleModel
         : undefined) ||
       run?.actualModel ||
       run?.requestedModel
-    // Ollama-backed display brands spoof their upstream provider name on the
-    // phone transcript header (e.g. "Alibaba · Qwen 3.5"), mirroring the
-    // desktop assistant header so iOS reads as the same product.
-    if (provider === 'ollama' && model) {
-      const brand = matchOllamaBrand(model)
-      if (brand) label = brand.providerLabel
+    const modelLabel =
+      typeof metadata?.providerModelLabel === 'string' ? metadata.providerModelLabel : undefined
+    const presentation = resolveTaskWraithProviderPresentation(provider, model, modelLabel)
+    if (presentation.modelLabel) {
+      const short = shortModelLabel(presentation.modelLabel)
+      return short ? `${presentation.displayProvider} · ${short}` : presentation.displayProvider
     }
-    if (model) {
-      const short = shortModelLabel(model)
-      return short ? `${label} · ${short}` : label
-    }
-    return label
+    return presentation.displayProvider
   }
 }
 
@@ -701,6 +706,19 @@ export interface RemoteSeatRoster {
   label: string
   seats: RemoteSeatRosterSeat[]
   /** ISO timestamp of the LATEST fold into this row. */
+  appliedAt: string
+}
+
+/** User-added participant mid-round (desktop SeatParticipantAddedRow parity):
+ * a single seat with no before side, rendered as a first-class strip. Same
+ * carrier and degradation story as `seatChange`; mutually exclusive by payload
+ * shape. */
+export interface RemoteSeatParticipantAdded {
+  participantId: string
+  /** Human seat label at emit time (role or provider). */
+  label: string
+  seat: RemoteSeatChangeSeat
+  /** ISO timestamp of the LATEST coalesced adjustment. */
   appliedAt: string
 }
 
@@ -1087,6 +1105,10 @@ export interface RemoteThreadRow {
    * (desktop SeatRosterStack parity). Same carrier and degradation story as
    * `seatChange`; the two are mutually exclusive by payload shape. */
   seatRoster?: RemoteSeatRoster
+  /** Present on a user-added-participant row — drives the remote added seat
+   * strip (desktop SeatParticipantAddedRow parity). Same carrier and
+   * degradation story as `seatChange`; mutually exclusive by payload shape. */
+  seatParticipantAdded?: RemoteSeatParticipantAdded
   /**
    * TaskWraith close-out Participants table for the Task-complete epic stack.
    * Absent on older Macs and non-close-out rows; the phone falls back to the
@@ -1100,9 +1122,29 @@ export interface RemoteThreadRow {
    * Absent on older Macs and non-close-out rows; never carries diffText.
    */
   closeoutFileChanges?: RemoteCloseoutFileChange[]
+  /** Full valid-path count when closeoutFileChanges is a bounded prefix. */
+  closeoutFileChangesTotal?: number
   /** TaskWraith close-out Sub-threads rows — the last epic-stack section that
    * was desktop-only. Bounded at 24 (the desktop caps its own display). */
   closeoutSubThreads?: RemoteCloseoutSubThread[]
+  /**
+   * True for the durable TaskWraith close-out carrier itself. Close-outs may
+   * have no epic-table payload (or lose those payloads under wire pressure),
+   * but they must still stay distinct from foldable system chrome on mobile.
+   */
+  isCloseout?: true
+  /** Scope stamped by the close-out author. An ensemble-round close-out is
+   * authoritative for the round outcome; a run-scoped close-out is not. */
+  closeoutScope?: 'run' | 'ensembleRound'
+  /** Exact round identity stamped on an ensemble-round close-out. Kept
+   * separately from `ensembleRoundId` so stale generic metadata cannot
+   * redirect the card to another round. */
+  closeoutRoundId?: string
+  /** Authoritative close-out outcome, including e.g. a cancelled round whose
+   * final participant lane happened to succeed. */
+  closeoutStatus?: string
+  /** Authoritative close-out wall-clock duration in milliseconds. */
+  closeoutDurationMs?: number
   /** Present on an ask_user_question asking message — drives the inline question
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
@@ -1416,6 +1458,14 @@ function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
     // it under pressure and the degraded row folds into anonymous chrome —
     // the same reason `peopleContribution` is preserved here.
     ...(row.noticeKind ? { noticeKind: row.noticeKind } : {}),
+    ...(row.isCloseout ? { isCloseout: true } : {}),
+    ...(row.closeoutScope ? { closeoutScope: row.closeoutScope } : {}),
+    ...(row.closeoutRoundId ? { closeoutRoundId: row.closeoutRoundId } : {}),
+    ...(row.closeoutStatus ? { closeoutStatus: row.closeoutStatus } : {}),
+    ...(row.closeoutDurationMs ? { closeoutDurationMs: row.closeoutDurationMs } : {}),
+    ...(row.closeoutFileChangesTotal
+      ? { closeoutFileChangesTotal: row.closeoutFileChangesTotal }
+      : {}),
     ...(row.speaker ? { speaker: row.speaker } : {}),
     ...(row.threadMessage ? { threadMessage: row.threadMessage } : {}),
     ...(row.peopleContribution ? { peopleContribution: row.peopleContribution } : {}),
@@ -1694,6 +1744,15 @@ function distinguishedNoticeKind(
   if (isContinuationHopsChangePayload(metadata.continuationHopsChange)) {
     return 'continuationHopsChange'
   }
+  if (isExecutionPlanChangePayload(metadata.executionPlanChange)) {
+    return 'executionPlanChange'
+  }
+  if (isAutoApprovalsChangePayload(metadata.autoApprovalsChange)) {
+    return 'autoApprovalsChange'
+  }
+  if (isBlackboardChangePayload(metadata.blackboardChange)) {
+    return 'blackboardChange'
+  }
   return undefined
 }
 
@@ -1712,7 +1771,7 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   // desktop card renders them inline via ActivityStack); without this widening
   // the phone dropped every fan-out tool call on the floor and showed prose only.
   if (message.role !== 'tool' && !isFanoutResultMessage(message)) return undefined
-  const activities = message.toolActivities || []
+  const activities = presentableToolActivities(message.toolActivities || [])
   if (activities.length === 0) return undefined
   let running = 0
   let success = 0
@@ -1729,6 +1788,19 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   else status = 'success'
   const tools: RemoteToolEntry[] = activities.slice(0, 12).map(toolEntryFromActivity)
   return { activityCount: activities.length, status, tools }
+}
+
+function presentableToolActivities(activities: readonly ToolActivity[]): ToolActivity[] {
+  return activities.filter((activity) => !isMcpTransportWrapperActivity(activity))
+}
+
+function isMcpWrapperOnlyToolMessage(message: ChatMessage): boolean {
+  const activities = message.toolActivities || []
+  return (
+    message.role === 'tool' &&
+    activities.length > 0 &&
+    activities.every(isMcpTransportWrapperActivity)
+  )
 }
 
 function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
@@ -2125,16 +2197,17 @@ function buildFanoutParts(
       coalesced.push(part)
       continue
     }
-    if (part.toolActivities.length === 0) continue
+    const activities = presentableToolActivities(part.toolActivities)
+    if (activities.length === 0) continue
     const previous = coalesced[coalesced.length - 1]
     if (previous?.kind === 'tools') {
       coalesced[coalesced.length - 1] = {
         ...previous,
-        toolActivities: [...previous.toolActivities, ...part.toolActivities]
+        toolActivities: [...previous.toolActivities, ...activities]
       }
       continue
     }
-    coalesced.push(part)
+    coalesced.push({ ...part, toolActivities: activities })
   }
   const totalParts = coalesced.length
   if (totalParts === 0) return undefined
@@ -2441,6 +2514,30 @@ function buildSeatRoster(message: ChatMessage): RemoteSeatRoster | undefined {
   }
 }
 
+/**
+ * Project the user-added-participant strip from the SAME `metadata.seatChange`
+ * carrier. The discriminator is a single `seat` object (not an array and not
+ * an `after` side), so `buildSeatChange` and `buildSeatRoster` can never claim
+ * it.
+ */
+function buildSeatParticipantAdded(message: ChatMessage): RemoteSeatParticipantAdded | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (message.role !== 'system' || metadata?.kind !== 'ensembleSeatChange') return undefined
+  const raw = metadata.seatChange
+  if (!raw || typeof raw !== 'object') return undefined
+  const payload = raw as Record<string, unknown>
+  if (Array.isArray(payload.seats) || 'after' in payload) return undefined
+  const participantId = stringField(payload.participantId, REMOTE_SEAT_FIELD_MAX)
+  const seat = buildSeatChangeSeat(payload.seat)
+  if (!participantId || !seat) return undefined
+  return {
+    participantId,
+    label: stringField(payload.label, REMOTE_SEAT_FIELD_MAX) ?? seat.role ?? seat.provider,
+    seat,
+    appliedAt: stringField(payload.appliedAt, 40) ?? message.timestamp
+  }
+}
+
 function buildCloseoutSeatLink(raw: unknown): RemoteCloseoutSeatLink | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const payload = raw as Record<string, unknown>
@@ -2650,10 +2747,16 @@ function questionSeatFromRun(run: ChatRun): RemoteSeatChangeSeat | undefined {
   if (typeof snapshot.thinkingEnabled === 'boolean') {
     result.thinkingEnabled = snapshot.thinkingEnabled
   }
-  const permissionPresetId = stringField(
-    snapshot.configuredPermissionPresetId,
-    REMOTE_SEAT_FIELD_MAX
-  )
+  // Seal before config, exactly as the renderer does. The snapshot's preset is
+  // what the seat was CONFIGURED as; `permissionPosture.presetId` is the signed
+  // value the run actually executed under. Reading config here would have let
+  // the phone inherit the desktop's wrong badge — a lane sealed read_only
+  // wearing its roster's wider tier. Falls back to the snapshot so rows
+  // predating recorded postures still project nothing rather than a guess.
+  const permissionPresetId = run.permissionPosture?.signaturePresent
+    ? stringField(run.permissionPosture.presetId, REMOTE_SEAT_FIELD_MAX)
+    : stringField(run.permissionPosture?.presetId, REMOTE_SEAT_FIELD_MAX) ||
+      stringField(snapshot.configuredPermissionPresetId, REMOTE_SEAT_FIELD_MAX)
   if (permissionPresetId) result.permissionPresetId = permissionPresetId
   return result
 }
@@ -2860,6 +2963,12 @@ function messageProviderHueClass(
   metadata: Record<string, unknown> | undefined
 ): string | undefined {
   if (!metadata) return undefined
+  // Blackboard calls intentionally carry no `ensembleProvider`: that field
+  // would make iOS render a seat-name speaker header. Preserve provider
+  // attribution through the validated glyph/row hue alone.
+  if (isBlackboardChangePayload(metadata.blackboardChange)) {
+    return metadata.blackboardChange.displayHueClass
+  }
   const provider =
     providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
   if (!provider) return undefined
@@ -2934,7 +3043,22 @@ function buildRow(
       : undefined)
   if (providerHueClass) row.providerHueClass = providerHueClass
   if (metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) {
+    row.isCloseout = true
     row.speaker = 'TaskWraith'
+    const closeoutRoundId = stringField(metadata.closeoutRoundId, 160)
+    if (closeoutRoundId) row.closeoutRoundId = closeoutRoundId
+    const closeoutScope = metadata.closeoutScope
+    if (closeoutScope === 'run' || closeoutScope === 'ensembleRound') {
+      row.closeoutScope = closeoutScope
+    } else if (closeoutRoundId) {
+      // Historical round close-outs predate the explicit scope stamp, but
+      // `closeoutRoundId` itself is unambiguous round authority.
+      row.closeoutScope = 'ensembleRound'
+    }
+    const closeoutStatus = stringField(metadata.closeoutStatus, 80)
+    if (closeoutStatus) row.closeoutStatus = closeoutStatus
+    const closeoutDurationMs = positiveNumber(metadata.closeoutDurationMs)
+    if (closeoutDurationMs) row.closeoutDurationMs = closeoutDurationMs
     // Associate an ensemble-ROUND close-out with its round so the iOS
     // completion (Task-complete) card anchors AFTER the close-out, not before
     // it. A round close-out carries `closeoutRoundId` (not `ensembleRoundId`),
@@ -2942,8 +3066,8 @@ function buildRow(
     // round's last *tagged* row, and an untagged close-out then renders after
     // the card. Run-scoped close-outs already carry the run's `runId`, so they
     // are the run's last row and need no help here.
-    if (typeof metadata.closeoutRoundId === 'string' && metadata.closeoutRoundId.trim()) {
-      row.ensembleRoundId = metadata.closeoutRoundId.trim()
+    if (closeoutRoundId) {
+      row.ensembleRoundId = closeoutRoundId
     }
     // Epic-stack tables live on the close-out row so Task-complete can render
     // Participants → File changes → Commits without reparsing markdown.
@@ -2951,6 +3075,10 @@ function buildRow(
     if (participantTable) row.closeoutParticipantTable = participantTable
     const fileChanges = buildCloseoutFileChanges(metadata)
     if (fileChanges) row.closeoutFileChanges = fileChanges
+    const closeoutFileChangesTotal = positiveNumber(metadata.closeoutFileChangesTotal)
+    if (closeoutFileChangesTotal && closeoutFileChangesTotal > (fileChanges?.length || 0)) {
+      row.closeoutFileChangesTotal = closeoutFileChangesTotal
+    }
     const commits = buildCloseoutCommits(metadata)
     if (commits) row.closeoutCommits = commits
     const subThreads = buildCloseoutSubThreads(metadata)
@@ -2963,7 +3091,11 @@ function buildRow(
   if (rowMedia.length > 0) {
     row.media = rowMedia
   }
-  if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
+  if (
+    !row.closeoutRoundId &&
+    typeof metadata?.ensembleRoundId === 'string' &&
+    metadata.ensembleRoundId.trim()
+  ) {
     row.ensembleRoundId = metadata.ensembleRoundId
   }
   const pooledAgentIdentity =
@@ -3068,6 +3200,8 @@ function buildRow(
   if (seatChange) row.seatChange = seatChange
   const seatRoster = buildSeatRoster(message)
   if (seatRoster) row.seatRoster = seatRoster
+  const seatParticipantAdded = buildSeatParticipantAdded(message)
+  if (seatParticipantAdded) row.seatParticipantAdded = seatParticipantAdded
   if (metadata?.kind === 'contextCompaction') {
     // Mirror the renderer's mapping (ContextCompactionCard): 'failed' and
     // 'started' pass through, anything else — including record kinds a
@@ -3886,7 +4020,11 @@ export function projectRemoteThread(
 ): RemoteThreadSnapshot {
   const all = Array.isArray(messages)
     ? messages.filter(
-        (m) => m && typeof m.id === 'string' && !isRetiredExternalChannelInboundMessage(m)
+        (m) =>
+          m &&
+          typeof m.id === 'string' &&
+          !isRetiredExternalChannelInboundMessage(m) &&
+          !isMcpWrapperOnlyToolMessage(m)
       )
     : []
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX

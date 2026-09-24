@@ -15,14 +15,22 @@
 import { createHash } from 'crypto'
 import type {
   CanvasActionInput,
+  CanvasActionKind,
   CanvasActResult,
   CanvasAnnotation,
   CanvasController,
   CanvasCallContext,
   CanvasChartDocument,
   CanvasConsoleEntry,
+  CanvasControlActionKind,
   CanvasDriver,
   CanvasDriverKind,
+  CanvasEmulatorController,
+  CanvasEmulatorGameId,
+  CanvasEmulatorObservationResult,
+  CanvasEmulatorSurfaceResolver,
+  CanvasEmulatorStepRefusalReason,
+  CanvasEmulatorStepResult,
   CanvasElementDetail,
   CanvasElementTree,
   CanvasEvalResult,
@@ -44,6 +52,12 @@ import type {
   CanvasViewport,
   CanvasWindowOpenTarget
 } from './canvasTypes'
+import {
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError,
+  type CanvasEmulatorAtomicObservation
+} from './CanvasEmulatorDriver'
 import { assertCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import {
   assessConsequentialTarget,
@@ -52,6 +66,7 @@ import {
 } from './CanvasConsequentialTarget'
 import {
   isValidBundleId,
+  isCanvasEmulatorGameId,
   redactUrlQuery,
   resolveViewport,
   validateCanvasChart,
@@ -60,6 +75,24 @@ import {
   validateCanvasUrl
 } from './canvasTypes'
 import type { CanvasStore } from './CanvasStore'
+import type {
+  AppDriveLeaseRegistry,
+  AppDriveLeaseRevocationReason
+} from '../appDrive/AppDriveLease'
+import type {
+  AppDriveActionReport,
+  AppDriveObservationReceipt,
+  AppDriveSessionReport,
+  AppDriveVerificationVerdict
+} from '../appDrive/AppDriveSessionReport'
+import {
+  validateEmulatorObservation,
+  validateEmulatorStepToolInput,
+  type EmulatorButton,
+  type EmulatorObservation,
+  type EmulatorObservationState,
+  type EmulatorStepToolInput
+} from '../../shared/emulatorCanvas'
 
 export interface CanvasServiceDeps {
   createDriver: (
@@ -67,20 +100,40 @@ export interface CanvasServiceDeps {
     sessionId: string,
     opts?: {
       embedded?: boolean
-      /** Canonical main-owned chat authority for content-addressed image reads. */
+      /** Canonical main-owned chat authority for surface grouping and
+       * content-addressed image reads. */
       appChatId?: string
+      /** Main-owned renderer WebContents id for an embedded surface host. */
+      surfaceHostId?: number
       /** Canonical main-owned run authority for a native-window target. */
       appRunId?: string
       /** Ensemble seat owner for device-driver controller lease mint. */
       ownerParticipantId?: string
+      /** Exact user-reviewed Simulator target for the device lease. */
+      deviceTarget?: { udid: string; bundleId: string }
+      /** Provider identity bound into the device lease. */
+      provider?: string
+      /** Fixed internal packaged game; never a user-supplied file, ROM, or URL. */
+      gameId?: CanvasEmulatorGameId
       /** Opaque main-owned native-window lease; never sourced from canvas_open. */
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+      /** Saved site login this web canvas is bound to. The composition root
+       *  turns it into that site's own partition plus a navigation fence. */
+      siteId?: string
       /** Live browser-chrome state stream for the web driver (ephemeral). */
       onNavState?: (state: CanvasNavState) => void
       /** Committed main-frame / in-page navigation (url settled). */
       onNavigationCommitted?: (state: CanvasNavState) => void
+      /** Floating browser rail routes through CanvasService as a human action. */
+      onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+      /** Floating Browser/Sketch control requests a dock presentation. */
+      onDockRequest?: () => void | Promise<void>
+      /** Floating tab-strip + opens another Browser tab in the same chat host. */
+      onNewTabRequest?: () => void | Promise<void>
+      /** Native window/tab closed by the human rather than CanvasService. */
+      onSurfaceClosed?: () => void
     }
   ) => CanvasDriver
   store: CanvasStore
@@ -107,13 +160,33 @@ export interface CanvasServiceDeps {
    * CLOSED: nothing is dispatched.
    */
   confirmConsequentialAction?: (request: CanvasConsequentialConfirmRequest) => Promise<boolean>
+  /** User-minted, expiring step budget for web actuation. */
+  appDriveLeases?: Pick<
+    AppDriveLeaseRegistry,
+    | 'acquireAndConsume'
+    | 'completeAction'
+    | 'queryReports'
+    | 'recordObservation'
+    | 'verifyAction'
+    | 'refundConsumedStep'
+  >
+  /** Revoke the lease and its exact permission grant on navigation/close/takeover. */
+  onSurfaceAuthorityInvalidated?: (input: {
+    canvasId: string
+    record: CanvasSessionRecord
+    ctx: CanvasCallContext
+    reason: Extract<
+      AppDriveLeaseRevocationReason,
+      'navigation' | 'surface-closed' | 'human-takeover'
+    >
+  }) => void
 }
 
 /** What the human is asked. Deliberately carries no page-authored text. */
 export interface CanvasConsequentialConfirmRequest {
   readonly canvasId: string
   readonly chatId?: string
-  readonly action: 'click' | 'fill'
+  readonly action: CanvasControlActionKind
   /** TaskWraith-authored, built from the matched term. Never page prose. */
   readonly summary: string
   readonly category: CanvasConsequentialCategory
@@ -140,6 +213,10 @@ interface LiveSession {
   evals: number
   generation: number
   presentation?: 'dock'
+  /** Live-only; never persisted or shared across a closed/reopened canvas. */
+  emulatorObservation?: CanvasEmulatorAtomicObservation
+  /** Pending macro report completed before lifecycle invalidation ends its lease. */
+  emulatorDriveAction?: { action: EmulatorDriveAction; ctx: CanvasCallContext }
 }
 
 interface PendingOpen {
@@ -182,14 +259,19 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'sketch',
   'device',
   'window',
-  'chart'
+  'chart',
+  'emulator'
 ])
-// Defence-in-depth cap so a hijacked agent (or a session-granted approval)
-// cannot machine-gun clicks/fills against a live app. Per live session.
-const MAX_INTERACTIONS_PER_SESSION = 200
-// Eval is RCE and human-approved per call, but cap it anyway so a compromised
-// approve-loop can't run unbounded scripts. Separate, tighter budget.
-const MAX_EVALS_PER_SESSION = 50
+// Defence-in-depth ceiling: a hijacked agent (or a session-granted approval)
+// still cannot drive an UNBOUNDED click/fill loop against a live app. Per live
+// session. Raised 200 -> 8000 (lead-dev authorised) for long, high-throughput
+// interactive canvas sessions.
+const MAX_INTERACTIONS_PER_SESSION = 8000
+// Eval keeps a separate spend counter so a runaway loop remains finite, but the
+// ceiling matches ordinary Canvas interactions. The exact-surface 12h approval
+// window is intended for real browser work; the old 50-call ceiling contradicted
+// that user-approved session shape long before the window expired.
+const MAX_EVALS_PER_SESSION = 8000
 
 function canonicalAuthority(value: unknown): string | undefined {
   return typeof value === 'string' && Boolean(value) && value.trim() === value ? value : undefined
@@ -246,7 +328,110 @@ function canvasTargetAudit(args: {
   }
 }
 
-export class CanvasService implements CanvasController {
+interface CanvasEmulatorControlDriver extends CanvasDriver {
+  observeEmulator(): Promise<CanvasEmulatorAtomicObservation>
+  stepEmulator(
+    buttons: readonly EmulatorButton[],
+    expectedObservationId?: string
+  ): Promise<CanvasEmulatorAtomicObservation>
+}
+
+interface EmulatorDriveAction {
+  readonly leaseId: string
+  readonly reportId: string
+  readonly actionId: string
+  readonly independentVerificationRequired: boolean
+}
+
+function isCanvasEmulatorControlDriver(
+  driver: CanvasDriver
+): driver is CanvasEmulatorControlDriver {
+  const candidate = driver as Partial<CanvasEmulatorControlDriver>
+  return (
+    driver.kind === 'emulator' &&
+    typeof candidate.observeEmulator === 'function' &&
+    typeof candidate.stepEmulator === 'function'
+  )
+}
+
+function freezeEmulatorObservationState(state: EmulatorObservationState): EmulatorObservationState {
+  if (state.kind === 'unavailable') {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'no_verified_adapter' as const })
+  }
+  return Object.freeze({
+    kind: 'mapped' as const,
+    adapterId: state.adapterId,
+    adapterRevision: state.adapterRevision,
+    schemaSha256: state.schemaSha256,
+    fields: Object.freeze(state.fields.map((field) => Object.freeze({ ...field }))),
+    truncated: state.truncated
+  })
+}
+
+function projectEmulatorObservation(
+  atomic: CanvasEmulatorAtomicObservation
+): CanvasEmulatorObservationResult {
+  const candidate = {
+    schemaVersion: 1,
+    token: {
+      observationId: atomic.observationId,
+      emulationGeneration: atomic.emulationGeneration,
+      frameId: atomic.frameId,
+      inputEpoch: atomic.inputEpoch
+    },
+    capturedAt: atomic.capturedAt,
+    humanActive: atomic.humanActive,
+    frame: {
+      mimeType: atomic.frame.mimeType,
+      width: atomic.frame.width,
+      height: atomic.frame.height,
+      byteLength: atomic.frame.byteLength,
+      hash: atomic.frame.hash,
+      capturedAt: atomic.frame.capturedAt
+    },
+    state: atomic.mappedState
+  }
+  const validated = validateEmulatorObservation(candidate)
+  if (!validated.ok) {
+    throw new Error(`Emulator observation projection was invalid: ${validated.reason}`)
+  }
+  const observation: EmulatorObservation = Object.freeze({
+    schemaVersion: validated.value.schemaVersion,
+    token: Object.freeze({ ...validated.value.token }),
+    capturedAt: validated.value.capturedAt,
+    humanActive: validated.value.humanActive,
+    frame: Object.freeze({ ...validated.value.frame }),
+    state: freezeEmulatorObservationState(validated.value.state)
+  })
+  const frame = Object.freeze({ ...atomic.frame })
+  return Object.freeze({ observation, frame })
+}
+
+function emulatorAuditDetail(atomic: CanvasEmulatorAtomicObservation): Record<string, unknown> {
+  const mappedState =
+    atomic.mappedState.kind === 'mapped'
+      ? {
+          kind: 'mapped',
+          adapterId: atomic.mappedState.adapterId,
+          adapterRevision: atomic.mappedState.adapterRevision,
+          schemaSha256: atomic.mappedState.schemaSha256,
+          fieldCount: atomic.mappedState.fields.length
+        }
+      : { kind: 'unavailable', reason: 'no_verified_adapter' }
+  return {
+    emulationGeneration: atomic.emulationGeneration,
+    frameId: atomic.frameId,
+    frameHash: atomic.frame.hash,
+    width: atomic.frame.width,
+    height: atomic.frame.height,
+    byteLength: atomic.frame.byteLength,
+    mappedState
+  }
+}
+
+export class CanvasService
+  implements CanvasController, CanvasEmulatorController, CanvasEmulatorSurfaceResolver
+{
   private readonly sessions = new Map<string, LiveSession>()
   private readonly pendingOpens = new Map<string, PendingOpen>()
   private readonly closingSessions = new Map<string, ClosingSession>()
@@ -267,6 +452,7 @@ export class CanvasService implements CanvasController {
   private readonly scopedClearOperations = new Set<Promise<void>>()
   private browserProfileClearAdmissionBlocked = false
   private browserProfileClearInFlight: Promise<CanvasBrowserProfileClearResult> | null = null
+  private readonly dockTransfers = new Set<string>()
 
   constructor(private readonly deps: CanvasServiceDeps) {}
 
@@ -466,16 +652,29 @@ export class CanvasService implements CanvasController {
   }
 
   /**
-   * Ordinary Canvas sessions remain chat-scoped for compatibility. A native
-   * window is an actuation capability and is reachable only from the exact
-   * canonical chat AND run that adopted it; legacy/incomplete window records
-   * therefore fail closed.
+   * Ordinary Canvas sessions remain chat-scoped for compatibility. Native
+   * windows and fixed emulator surfaces are actuation capabilities, reachable
+   * only from the exact canonical chat AND run that adopted them.
    */
   private owns(record: CanvasSessionRecord, ctx: CanvasCallContext): boolean {
     const sameChat = (record.chatId ?? null) === (ctx.chatId ?? null)
-    if (record.driver !== 'window') return sameChat
+    if (record.driver !== 'window' && record.driver !== 'emulator') return sameChat
     const chatId = canonicalAuthority(record.chatId)
     const runId = canonicalAuthority(record.runId)
+    const surfaceHostId = ctx.surfaceHostId
+    // A positive host id is stamped by trusted renderer IPC. It grants only
+    // same-chat human presentation authority; tool contexts carry no host id
+    // and therefore remain exact chat+run bound below.
+    if (
+      record.driver === 'emulator' &&
+      ctx.runId === undefined &&
+      ctx.provider === undefined &&
+      typeof surfaceHostId === 'number' &&
+      Number.isSafeInteger(surfaceHostId) &&
+      surfaceHostId > 0
+    ) {
+      return Boolean(chatId) && chatId === canonicalAuthority(ctx.chatId)
+    }
     return (
       Boolean(chatId && runId) &&
       chatId === canonicalAuthority(ctx.chatId) &&
@@ -541,6 +740,7 @@ export class CanvasService implements CanvasController {
     const url = redactUrlQuery(state.url)
     const title = state.title
     if (session.record.url === url && session.record.title === title) return
+    this.invalidateSurfaceAuthority(canvasId, session, ctx, 'navigation')
     session.record = { ...session.record, url, title, updatedAt: this.deps.now() }
     try {
       this.deps.store.upsertSession(session.record)
@@ -573,7 +773,9 @@ export class CanvasService implements CanvasController {
     let deviceAppChatId: string | undefined
     let deviceAppRunId: string | undefined
     let deviceOwnerParticipantId: string | undefined
+    let deviceTarget: { udid: string; bundleId: string } | undefined
     let windowTarget: CanvasWindowOpenTarget | undefined
+    let emulatorGameId: CanvasEmulatorGameId | undefined
     if (driverKind === 'window') {
       const chatId = canonicalAuthority(ctx.chatId)
       const runId = canonicalAuthority(ctx.runId)
@@ -609,6 +811,7 @@ export class CanvasService implements CanvasController {
       }
       eventHost = (input.device?.udid || 'booted').trim()
       recordUrl = `device://${eventHost}/${bundleId}`
+      deviceTarget = { udid: eventHost, bundleId }
     } else if (driverKind === 'html') {
       // Agent-authored HTML/SVG. No URL / no host — it is rasterized offscreen
       // with scripts off and egress cut, so there is no SSRF surface to gate;
@@ -652,13 +855,57 @@ export class CanvasService implements CanvasController {
       input.chartDocument = verdict.document
       recordUrl = `chart://${createHash('sha256').update(JSON.stringify(verdict.document)).digest('hex').slice(0, 8)}`
       eventHost = undefined
+    } else if (driverKind === 'emulator') {
+      const chatId = canonicalAuthority(ctx.chatId)
+      const runId = canonicalAuthority(ctx.runId)
+      const trustedRenderer =
+        Boolean(chatId) &&
+        ctx.runId === undefined &&
+        ctx.provider === undefined &&
+        typeof ctx.surfaceHostId === 'number' &&
+        Number.isSafeInteger(ctx.surfaceHostId) &&
+        ctx.surfaceHostId > 0
+      const agentRun = Boolean(chatId && runId)
+      if (!agentRun && !trustedRenderer) {
+        throw new Error(
+          'The emulator driver requires canonical agent or trusted renderer authority.'
+        )
+      }
+      if (input.embed !== true) {
+        throw new Error(
+          'The emulator driver is available only as an embedded Canvas dock or Thread Home presentation.'
+        )
+      }
+      if (agentRun && input.presentation !== 'dock') {
+        throw new Error('Agent emulator surfaces require the Canvas dock presentation.')
+      }
+      if (trustedRenderer && input.presentation !== undefined && input.presentation !== 'dock') {
+        throw new Error('Human emulator presentation must be Thread Home or dock.')
+      }
+      if (input.url !== undefined) {
+        throw new Error('The emulator driver never accepts a URL.')
+      }
+      if (!isCanvasEmulatorGameId(input.gameId)) {
+        throw new Error('The emulator driver requires a canonical packaged game id.')
+      }
+      emulatorGameId = input.gameId
+      recordUrl = `emulator://${emulatorGameId}`
+      eventHost = undefined
     } else {
-      const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
-      if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
-      recordUrl = redactUrlQuery(verdict.normalizedUrl ?? (input.url || ''))
-      eventHost = verdict.host
+      const rawUrl = (input.url || '').trim()
+      if (!rawUrl) {
+        recordUrl = 'about:blank'
+        eventHost = undefined
+      } else {
+        const verdict = validateCanvasUrl(rawUrl)
+        if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
+        recordUrl = redactUrlQuery(verdict.normalizedUrl ?? rawUrl)
+        eventHost = verdict.host
+      }
     }
 
+    // Site binding is web-only: no other driver kind has a cookie jar to fence.
+    const siteId = driverKind === 'web' ? (input.siteId || '').trim() || undefined : undefined
     const canvasId = this.deps.uuid()
     this.canvasGenerations.set(canvasId, generation)
     const nowIso = this.deps.now()
@@ -673,13 +920,11 @@ export class CanvasService implements CanvasController {
       url: recordUrl,
       title: '',
       viewport,
-      // The allowlist is live driver policy, not useful durable history. Never
-      // persist arbitrary caller strings in the session record.
-      originAllowlist: [],
       status: 'opening',
       chatId: ctx.chatId,
       runId: ctx.runId,
       workspacePath: ctx.workspacePath,
+      ...(siteId ? { siteId } : {}),
       createdAt: nowIso,
       updatedAt: nowIso
     }
@@ -692,23 +937,31 @@ export class CanvasService implements CanvasController {
       throw error
     }
 
-    // Only drivers with a live, hostable surface can embed — web and sketch;
-    // html/image/device/window/chart have no WebContentsView. Chart is the
+    // Only drivers with a live, hostable surface can embed — web, sketch, and
+    // the fixed packaged emulator. html/image/device/window/chart have no
+    // WebContentsView. Chart remains the
     // exception that may still claim presentation:"dock" (native TelemetryPane)
     // so it focuses the Canvas dock without landing in off-screen agent canvases.
     // Renderer opens set embed directly; agents set presentation only through the
     // governed dock-presentation tool contract (canvas_render_chart for charts).
-    const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
+    const embedded =
+      (driverKind === 'web' || driverKind === 'sketch' || driverKind === 'emulator') &&
+      input.embed === true
     const dockPresentation = input.presentation === 'dock' && (embedded || driverKind === 'chart')
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
     try {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
-        appChatId: imageAppChatId ?? windowAppChatId ?? deviceAppChatId,
+        ...(siteId ? { siteId } : {}),
+        appChatId:
+          imageAppChatId ?? windowAppChatId ?? deviceAppChatId ?? canonicalAuthority(ctx.chatId),
+        ...(Number.isSafeInteger(ctx.surfaceHostId) ? { surfaceHostId: ctx.surfaceHostId } : {}),
         ...(windowAppRunId || deviceAppRunId ? { appRunId: windowAppRunId ?? deviceAppRunId } : {}),
         ...(deviceOwnerParticipantId ? { ownerParticipantId: deviceOwnerParticipantId } : {}),
+        ...(deviceTarget ? { deviceTarget, provider: ctx.provider } : {}),
         ...(windowTarget ? { windowTarget } : {}),
+        ...(emulatorGameId ? { gameId: emulatorGameId } : {}),
         initialSketchDocument: sketchScope
           ? (this.deps.store.getSketchDocument(sketchScope) ?? undefined)
           : undefined,
@@ -723,8 +976,33 @@ export class CanvasService implements CanvasController {
               }
             }
           : undefined,
+        onDockRequest: () => this.moveFloatingSurfaceToDock(canvasId, generation, ctx),
+        onNewTabRequest: () =>
+          this.open(
+            {
+              driver: 'web',
+              viewport,
+              // A "+" inside a site-bound browser must not silently drop to the
+              // shared any-origin profile: the authority would widen with
+              // nothing on screen to say so.
+              ...(siteId ? { siteId } : {})
+            },
+            ctx
+          ).then(() => undefined),
+        onSurfaceClosed: () => {
+          // BrowserWindow/tab close is an external lifecycle edge. If service
+          // initiated teardown it already removed the session, making this an
+          // idempotent no-op; otherwise retire the durable record and audit it.
+          void this.close(canvasId, ctx).catch((error) => {
+            this.deps.logger?.warn?.(
+              `canvas: host-close teardown failed for ${canvasId}: ${String(error)}`
+            )
+          })
+        },
         ...(driverKind === 'web'
           ? {
+              onHumanNavigate: (input: CanvasNavigateInput) =>
+                this.navigate(canvasId, input, ctx, { chargeInteraction: false }),
               onNavState: (state: CanvasNavState) => {
                 if (
                   generation !== this.generation ||
@@ -797,7 +1075,10 @@ export class CanvasService implements CanvasController {
         status: 'active',
         // Never trust a native bridge response to supply a durable URL. Its
         // only record identity is the service-minted lease digest above.
-        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
+        url:
+          driverKind === 'window' || driverKind === 'emulator'
+            ? recordUrl
+            : redactUrlQuery(handle.url),
         title: handle.title,
         viewport: handle.viewport,
         updatedAt: this.deps.now()
@@ -818,13 +1099,16 @@ export class CanvasService implements CanvasController {
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
-        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
+        url:
+          driverKind === 'window' || driverKind === 'emulator'
+            ? recordUrl
+            : redactUrlQuery(handle.url),
         ...(dockPresentation ? { presentation: 'dock' } : {})
       })
       return {
         canvasId,
         ...handle,
-        url: driverKind === 'window' ? recordUrl : handle.url
+        url: driverKind === 'window' || driverKind === 'emulator' ? recordUrl : handle.url
       }
     } catch (err) {
       this.sessions.delete(canvasId)
@@ -883,9 +1167,9 @@ export class CanvasService implements CanvasController {
     }
   }
 
-  /** Summary of a LIVE session, enriched with browser-chrome state when available. */
+  /** Summary of a LIVE session, enriched with live driver state when available. */
   private liveSummary(session: LiveSession): CanvasSessionSummary {
-    const summary = toSummary(session.record)
+    const summary: CanvasSessionSummary = toSummary(session.record)
     if (session.presentation) summary.presentation = session.presentation
     if (session.record.driver === 'web') {
       try {
@@ -906,6 +1190,13 @@ export class CanvasService implements CanvasController {
       } catch {
         // Driver may be tearing down; omit document rather than fail list/status.
       }
+    }
+    if (session.record.driver === 'emulator') {
+      // Live-only: the cached atomic observation carries the page-reported
+      // human play flag and is refreshed on observe/step and on human-takeover
+      // interruptions. Omit the field until an observation exists.
+      const cached = session.emulatorObservation
+      if (cached) summary.humanActive = cached.humanActive
     }
     return summary
   }
@@ -936,6 +1227,67 @@ export class CanvasService implements CanvasController {
     return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
   }
 
+  resolveEmulatorSurface(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): 'emulator' | 'other' | 'missing' {
+    if (this.contextHistoryBlocked(ctx)) return 'missing'
+    const session = this.sessions.get(canvasId)
+    if (
+      !session ||
+      session.generation !== this.generation ||
+      this.canvasGenerations.get(canvasId) !== session.generation
+    ) {
+      return 'missing'
+    }
+    const chatId = canonicalAuthority(ctx.chatId)
+    const runId = canonicalAuthority(ctx.runId)
+    const recordChatId = canonicalAuthority(session.record.chatId)
+    const recordRunId = canonicalAuthority(session.record.runId)
+    if (!chatId || !runId || !recordChatId || recordChatId !== chatId) return 'missing'
+    if (recordRunId && recordRunId !== runId) return 'missing'
+    if (session.record.driver !== 'emulator') return 'other'
+    if (!recordRunId) return 'missing'
+    return 'emulator'
+  }
+
+  driveReports(
+    input: { reportId?: string; surfaceId?: string; limit?: number },
+    ctx: CanvasCallContext
+  ): readonly AppDriveSessionReport[] {
+    if (!ctx.chatId || !this.deps.appDriveLeases || this.contextHistoryBlocked(ctx)) return []
+    return this.deps.appDriveLeases.queryReports({
+      chatId: ctx.chatId,
+      ...(input.reportId ? { reportId: input.reportId } : {}),
+      ...(input.surfaceId ? { surfaceId: input.surfaceId } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {})
+    })
+  }
+
+  verifyDriveAction(
+    input: {
+      reportId: string
+      actionId: string
+      surfaceId: string
+      observationId: string
+      verdict: AppDriveVerificationVerdict
+    },
+    ctx: CanvasCallContext
+  ): AppDriveActionReport {
+    if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) {
+      throw new Error('AppDrive verification requires exact chat, run, and provider authority.')
+    }
+    return this.deps.appDriveLeases.verifyAction({
+      ...input,
+      chatId: ctx.chatId,
+      verifier: {
+        runId: ctx.runId,
+        provider: ctx.provider,
+        participantId: ctx.participantId ?? null
+      }
+    })
+  }
+
   /**
    * Chat-scoped chart document for the Canvas dock. Live sessions only —
    * persisted history does not retain the structured payload.
@@ -946,7 +1298,11 @@ export class CanvasService implements CanvasController {
     return summary.chartDocument ?? null
   }
 
-  async snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree> {
+  async snapshot(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    options: { driveActionId?: string } = {}
+  ): Promise<CanvasElementTree> {
     const session = this.require(canvasId, ctx)
     const tree = await session.driver.snapshot()
     this.assertLiveAfterAwait(canvasId, session, ctx, 'snapshot')
@@ -954,7 +1310,26 @@ export class CanvasService implements CanvasController {
       nodeCount: tree.nodeCount,
       url: redactUrlQuery(tree.url)
     })
-    return tree
+    const driveObservation =
+      (session.record.driver === 'web' || session.record.driver === 'window') &&
+      ctx.chatId &&
+      ctx.runId &&
+      ctx.provider &&
+      this.deps.appDriveLeases
+        ? this.deps.appDriveLeases.recordObservation({
+            chatId: ctx.chatId,
+            observer: {
+              runId: ctx.runId,
+              provider: ctx.provider,
+              participantId: ctx.participantId ?? null
+            },
+            ...(session.record.driver === 'web'
+              ? { surfaceId: canvasId, surfaceKind: 'web' as const }
+              : { surfaceKind: 'native' as const }),
+            ...(options.driveActionId ? { actionId: options.driveActionId } : {})
+          })
+        : null
+    return driveObservation ? { ...tree, driveObservation } : tree
   }
 
   async screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame> {
@@ -968,6 +1343,425 @@ export class CanvasService implements CanvasController {
       byteLength: frame.byteLength
     })
     return frame
+  }
+
+  private requireEmulatorDriver(session: LiveSession): CanvasEmulatorControlDriver {
+    if (session.record.driver !== 'emulator' || !isCanvasEmulatorControlDriver(session.driver)) {
+      throw new Error('This Canvas is not an active emulator surface.')
+    }
+    return session.driver
+  }
+
+  private cacheEmulatorObservation(
+    session: LiveSession,
+    atomic: CanvasEmulatorAtomicObservation
+  ): CanvasEmulatorObservationResult {
+    const projection = projectEmulatorObservation(atomic)
+    session.emulatorObservation = atomic
+    return projection
+  }
+
+  private completeEmulatorDriveAction(
+    action: EmulatorDriveAction,
+    ctx: CanvasCallContext,
+    executed: boolean | null,
+    refusalCode?: string
+  ): void {
+    this.deps.appDriveLeases?.completeAction({
+      leaseId: action.leaseId,
+      actionId: action.actionId,
+      actor: {
+        runId: ctx.runId!,
+        provider: ctx.provider!,
+        participantId: ctx.participantId ?? null
+      },
+      executed,
+      surfaceVerification: executed === true ? 'changed' : 'unknown',
+      ...(refusalCode ? { refusalCode } : {})
+    })
+  }
+
+  private settlePendingEmulatorDriveAction(
+    session: LiveSession,
+    executed: boolean | null,
+    refusalCode?: string
+  ): void {
+    const pending = session.emulatorDriveAction
+    if (!pending) return
+    session.emulatorDriveAction = undefined
+    this.completeEmulatorDriveAction(pending.action, pending.ctx, executed, refusalCode)
+  }
+
+  private recordEmulatorDriveObservation(
+    canvasId: string,
+    ctx: CanvasCallContext,
+    action?: EmulatorDriveAction
+  ): AppDriveObservationReceipt | undefined {
+    if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) return undefined
+    return (
+      this.deps.appDriveLeases.recordObservation({
+        chatId: ctx.chatId,
+        ...(action ? { reportId: action.reportId } : {}),
+        surfaceId: canvasId,
+        surfaceKind: 'emulator',
+        ...(action ? { actionId: action.actionId } : {}),
+        observer: {
+          runId: ctx.runId,
+          provider: ctx.provider,
+          participantId: ctx.participantId ?? null
+        }
+      }) ?? undefined
+    )
+  }
+
+  private emulatorStepResult(input: {
+    projection: CanvasEmulatorObservationResult
+    outcome: CanvasEmulatorStepResult['outcome']
+    framesRequested: number
+    framesCompleted: number
+    refusalReason?: CanvasEmulatorStepRefusalReason
+    driveAction?: EmulatorDriveAction
+    driveObservation?: AppDriveObservationReceipt
+  }): CanvasEmulatorStepResult {
+    const executed = input.framesCompleted > 0
+    return Object.freeze({
+      ...input.projection,
+      outcome: input.outcome,
+      framesRequested: input.framesRequested,
+      framesCompleted: input.framesCompleted,
+      executed,
+      partial: executed && input.framesCompleted < input.framesRequested,
+      ...(input.refusalReason ? { refusalReason: input.refusalReason } : {}),
+      ...(input.driveAction
+        ? {
+            driveReportId: input.driveAction.reportId,
+            driveActionId: input.driveAction.actionId,
+            independentVerificationRequired: input.driveAction.independentVerificationRequired
+          }
+        : {}),
+      ...(input.driveObservation ? { driveObservation: input.driveObservation } : {})
+    })
+  }
+
+  private emulatorStepAuditDetail(input: {
+    observation: CanvasEmulatorAtomicObservation
+    startFrameId?: number
+    segmentCount: number
+    framesRequested: number
+    buttonCount: number
+    framesCompleted?: number
+    outcome?: CanvasEmulatorStepResult['outcome'] | 'error'
+    refusalReason?: CanvasEmulatorStepRefusalReason | 'driver_error'
+  }): Record<string, unknown> {
+    return {
+      action: 'emulator_step',
+      startFrameId: input.startFrameId ?? input.observation.frameId,
+      endFrameId: input.observation.frameId,
+      segmentCount: input.segmentCount,
+      framesRequested: input.framesRequested,
+      buttonCount: input.buttonCount,
+      ...(input.framesCompleted !== undefined ? { framesCompleted: input.framesCompleted } : {}),
+      ...(input.outcome ? { outcome: input.outcome } : {}),
+      ...(input.refusalReason ? { refusalReason: input.refusalReason } : {}),
+      ...emulatorAuditDetail(input.observation)
+    }
+  }
+
+  /**
+   * Internal public-safe emulator observation. It keeps bridge-minted token
+   * identity intact and never persists the atomic state or PNG bytes.
+   */
+  async observeEmulator(
+    canvasId: string,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorObservationResult> {
+    return this.serializeInteraction(canvasId, async () => {
+      const session = this.require(canvasId, ctx)
+      const driver = this.requireEmulatorDriver(session)
+      const atomic = await driver.observeEmulator()
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator observation')
+      const projection = this.cacheEmulatorObservation(session, atomic)
+      this.emit(canvasId, 'screenshot', ctx, emulatorAuditDetail(atomic))
+      const driveObservation = this.recordEmulatorDriveObservation(canvasId, ctx)
+      return driveObservation ? Object.freeze({ ...projection, driveObservation }) : projection
+    })
+  }
+
+  /**
+   * Execute one bounded emulator macro. Each individual emulator frame remains
+   * serialized and freshness-checked; AppDrive sees one action for the macro.
+   */
+  async stepEmulator(
+    canvasId: string,
+    input: EmulatorStepToolInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasEmulatorStepResult> {
+    const validated = validateEmulatorStepToolInput(input)
+    if (!validated.ok) throw new Error(validated.reason)
+    const request = validated.value
+    const framesRequested = request.segments.reduce((total, segment) => total + segment.frames, 0)
+    const buttonCount = request.segments.reduce(
+      (total, segment) => total + segment.buttons.length,
+      0
+    )
+
+    return this.serializeInteraction(canvasId, async () => {
+      const session = this.require(canvasId, ctx)
+      const driver = this.requireEmulatorDriver(session)
+      let current = session.emulatorObservation
+      if (!current) throw new Error('Observe the emulator before stepping.')
+      const startFrameId = current.frameId
+
+      this.chargeInteraction(session)
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator step')
+      this.emit(canvasId, 'interaction', ctx, {
+        phase: 'intent',
+        ...this.emulatorStepAuditDetail({
+          observation: current,
+          startFrameId,
+          segmentCount: request.segments.length,
+          framesRequested,
+          buttonCount
+        })
+      })
+
+      if (!ctx.chatId || !ctx.runId || !ctx.provider || !this.deps.appDriveLeases) {
+        const projection = this.cacheEmulatorObservation(session, current)
+        const refusalReason: CanvasEmulatorStepRefusalReason =
+          !ctx.chatId || !ctx.runId || !ctx.provider
+            ? 'appdrive_binding_mismatch'
+            : 'appdrive_lease_required'
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason,
+          framesRequested,
+          framesCompleted: 0
+        })
+      }
+
+      const lease = this.deps.appDriveLeases.acquireAndConsume({
+        surfaceId: canvasId,
+        surfaceKind: 'emulator',
+        chatId: ctx.chatId,
+        runId: ctx.runId,
+        provider: ctx.provider,
+        ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
+        verb: 'emulator_step',
+        independentVerificationRequired: request.requireIndependentVerifier === true
+      })
+      if (!lease.ok) {
+        const refusalReason: CanvasEmulatorStepRefusalReason =
+          lease.code === 'expired'
+            ? 'appdrive_lease_expired'
+            : lease.code === 'step-budget-exhausted'
+              ? 'appdrive_step_budget_exhausted'
+              : lease.code === 'binding-mismatch'
+                ? 'appdrive_binding_mismatch'
+                : lease.code === 'independent-verifier-required'
+                  ? 'appdrive_independent_verifier_required'
+                  : 'appdrive_lease_required'
+        const projection = this.cacheEmulatorObservation(session, current)
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason,
+          framesRequested,
+          framesCompleted: 0
+        })
+      }
+      const driveAction: EmulatorDriveAction = {
+        leaseId: lease.lease.leaseId,
+        reportId: lease.reportId,
+        actionId: lease.actionId,
+        independentVerificationRequired: lease.independentVerificationRequired
+      }
+      session.emulatorDriveAction = { action: driveAction, ctx }
+
+      if (current.observationId !== request.expectedObservationId) {
+        const projection = this.cacheEmulatorObservation(session, current)
+        this.settlePendingEmulatorDriveAction(session, false, 'stale_observation')
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted: 0,
+            outcome: 'refused',
+            refusalReason: 'stale_observation'
+          })
+        })
+        return this.emulatorStepResult({
+          projection,
+          outcome: 'refused',
+          refusalReason: 'stale_observation',
+          framesRequested,
+          framesCompleted: 0,
+          driveAction
+        })
+      }
+
+      let framesCompleted = 0
+      try {
+        for (const segment of request.segments) {
+          for (let frame = 0; frame < segment.frames; frame += 1) {
+            let next: CanvasEmulatorAtomicObservation | undefined
+            let failure: unknown
+            try {
+              next = await driver.stepEmulator(segment.buttons, current.observationId)
+            } catch (error) {
+              failure = error
+            }
+            this.assertLiveAfterAwait(canvasId, session, ctx, 'emulator frame step')
+
+            if (!failure && next) {
+              if (
+                next.emulationGeneration !== current.emulationGeneration ||
+                next.frameId !== current.frameId + 1
+              ) {
+                throw new Error('Emulator frame transition did not advance exactly one frame.')
+              }
+              current = next
+              this.cacheEmulatorObservation(session, current)
+              framesCompleted += 1
+              continue
+            }
+
+            const typed =
+              failure instanceof CanvasEmulatorObservationStaleError ||
+              failure instanceof CanvasEmulatorInputEpochStaleError ||
+              failure instanceof CanvasEmulatorUserActiveError
+                ? failure
+                : null
+            if (!typed) throw failure instanceof Error ? failure : new Error(String(failure))
+
+            const framesAdvanced = typed.framesAdvanced
+            if (!typed.observation) {
+              throw new Error('Emulator typed interruption did not carry a current observation.')
+            }
+            if (
+              typed.observation.emulationGeneration !== current.emulationGeneration ||
+              typed.observation.frameId < current.frameId ||
+              typed.observation.inputEpoch < current.inputEpoch ||
+              (framesAdvanced === 1 && typed.observation.frameId !== current.frameId + 1)
+            ) {
+              throw new Error('Emulator typed interruption did not carry one exact frame advance.')
+            }
+            current = typed.observation
+            this.cacheEmulatorObservation(session, current)
+            framesCompleted += framesAdvanced
+            const outcome: CanvasEmulatorStepResult['outcome'] =
+              framesCompleted === 0 ? 'refused' : 'interrupted'
+            const projection = this.cacheEmulatorObservation(session, current)
+            this.settlePendingEmulatorDriveAction(
+              session,
+              framesCompleted === 0 ? false : null,
+              typed.code
+            )
+            if (
+              outcome === 'refused' &&
+              (typed.code === 'stale_input_epoch' || typed.code === 'user_active')
+            ) {
+              this.deps.appDriveLeases?.refundConsumedStep({
+                surfaceId: canvasId,
+                leaseId: driveAction.leaseId,
+                actionId: driveAction.actionId
+              })
+            }
+            this.emit(canvasId, 'interaction', ctx, {
+              phase: 'outcome',
+              ...this.emulatorStepAuditDetail({
+                observation: current,
+                startFrameId,
+                segmentCount: request.segments.length,
+                framesRequested,
+                buttonCount,
+                framesCompleted,
+                outcome,
+                refusalReason: typed.code
+              })
+            })
+            return this.emulatorStepResult({
+              projection,
+              outcome,
+              refusalReason: typed.code,
+              framesRequested,
+              framesCompleted,
+              driveAction
+            })
+          }
+        }
+      } catch (error) {
+        this.settlePendingEmulatorDriveAction(session, null, 'driver_error')
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          ...this.emulatorStepAuditDetail({
+            observation: current,
+            startFrameId,
+            segmentCount: request.segments.length,
+            framesRequested,
+            buttonCount,
+            framesCompleted,
+            outcome: 'error',
+            refusalReason: 'driver_error'
+          })
+        })
+        throw error
+      }
+
+      const projection = this.cacheEmulatorObservation(session, current)
+      this.settlePendingEmulatorDriveAction(session, true)
+      const driveObservation = this.recordEmulatorDriveObservation(canvasId, ctx, driveAction)
+      this.emit(canvasId, 'interaction', ctx, {
+        phase: 'outcome',
+        ...this.emulatorStepAuditDetail({
+          observation: current,
+          startFrameId,
+          segmentCount: request.segments.length,
+          framesRequested,
+          buttonCount,
+          framesCompleted,
+          outcome: 'completed'
+        })
+      })
+      return this.emulatorStepResult({
+        projection,
+        outcome: 'completed',
+        framesRequested,
+        framesCompleted,
+        driveAction,
+        ...(driveObservation ? { driveObservation } : {})
+      })
+    })
   }
 
   async inspect(
@@ -1105,14 +1899,19 @@ export class CanvasService implements CanvasController {
   private async gateConsequentialAction(
     canvasId: string,
     session: LiveSession,
-    kind: 'click' | 'fill',
+    kind: CanvasControlActionKind,
     args: CanvasActionInput,
     ctx: CanvasCallContext
-  ): Promise<{ refusal?: CanvasActResult; pin: Partial<CanvasActionInput> }> {
+  ): Promise<{
+    refusal?: CanvasActResult
+    pin: Partial<CanvasActionInput>
+    consequential: boolean
+  }> {
+    if (kind === 'scroll' || kind === 'hover') return { pin: {}, consequential: false }
     const describeTarget = session.driver.describeTarget?.bind(session.driver)
     // A surface with no page labels to judge (sketch, chart, image, device) is
     // not gated: refusing on an absent probe would block every action there.
-    if (!describeTarget) return { pin: {} }
+    if (!describeTarget) return { pin: {}, consequential: false }
 
     let description: CanvasTargetDescription
     try {
@@ -1121,12 +1920,14 @@ export class CanvasService implements CanvasController {
       // A probe that cannot run tells us nothing about the target. Let the
       // ordinary dispatch path report the real failure rather than inventing a
       // consequential refusal for what is probably a closed surface.
-      return { pin: {} }
+      return { pin: {}, consequential: false }
     }
-    if (!description.found) return { pin: {} }
+    if (!description.found) return { pin: {}, consequential: false }
 
     const assessment = assessConsequentialTarget(description.label)
-    if (!assessment.consequential || !assessment.category) return { pin: {} }
+    if (!assessment.consequential || !assessment.category) {
+      return { pin: {}, consequential: false }
+    }
 
     const refusal = (): CanvasActResult => ({
       ok: false,
@@ -1143,7 +1944,7 @@ export class CanvasService implements CanvasController {
 
     const confirm = this.deps.confirmConsequentialAction
     // Fail closed: a consequential target with nobody to ask is not dispatched.
-    if (!confirm) return { refusal: refusal(), pin: {} }
+    if (!confirm) return { refusal: refusal(), pin: {}, consequential: true }
 
     let confirmed: boolean
     try {
@@ -1158,7 +1959,7 @@ export class CanvasService implements CanvasController {
     } catch {
       confirmed = false
     }
-    if (!confirmed) return { refusal: refusal(), pin: {} }
+    if (!confirmed) return { refusal: refusal(), pin: {}, consequential: true }
 
     // Pin the epoch the human actually decided against. If they touched the
     // page while the dialog was open, the dispatch refuses with
@@ -1167,13 +1968,14 @@ export class CanvasService implements CanvasController {
       pin:
         typeof description.inputEpoch === 'number'
           ? { expectedInputEpoch: description.inputEpoch }
-          : {}
+          : {},
+      consequential: true
     }
   }
 
   private interact(
     canvasId: string,
-    kind: 'click' | 'fill',
+    kind: CanvasActionKind,
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
@@ -1203,7 +2005,10 @@ export class CanvasService implements CanvasController {
       // Consequential-action confirmation (design §7). Runs BEFORE dispatch and
       // inside the same serialization lock, so a second interaction cannot slip
       // past while a human is deciding.
-      const gate = await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
+      const gate =
+        kind === 'wait_for'
+          ? { pin: {}, consequential: false }
+          : await this.gateConsequentialAction(canvasId, session, kind, args, ctx)
       if (gate.refusal) {
         this.emit(canvasId, 'interaction', ctx, {
           phase: 'outcome',
@@ -1215,6 +2020,74 @@ export class CanvasService implements CanvasController {
         })
         return gate.refusal
       }
+      let driveAction:
+        | {
+            leaseId: string
+            reportId: string
+            actionId: string
+            independentVerificationRequired: boolean
+          }
+        | undefined
+      if (kind !== 'wait_for' && session.record.driver === 'web' && this.deps.appDriveLeases) {
+        if (!ctx.chatId || !ctx.runId || !ctx.provider) {
+          return {
+            ok: false,
+            action: kind,
+            found: false,
+            executed: false,
+            verified: 'unknown',
+            refusalReason: 'appdrive_binding_mismatch',
+            message: 'App Drive requires exact chat, run, and provider authority.'
+          }
+        }
+        const lease = this.deps.appDriveLeases.acquireAndConsume({
+          surfaceId: canvasId,
+          surfaceKind: 'web',
+          chatId: ctx.chatId,
+          runId: ctx.runId,
+          provider: ctx.provider,
+          ...(ctx.participantId ? { participantId: ctx.participantId } : {}),
+          verb: kind,
+          independentVerificationRequired:
+            args.requireIndependentVerifier === true ||
+            (gate.consequential && Boolean(ctx.participantId))
+        })
+        if (!lease.ok) {
+          const refusalReason =
+            lease.code === 'expired'
+              ? 'appdrive_lease_expired'
+              : lease.code === 'step-budget-exhausted'
+                ? 'appdrive_step_budget_exhausted'
+                : lease.code === 'binding-mismatch'
+                  ? 'appdrive_binding_mismatch'
+                  : lease.code === 'independent-verifier-required'
+                    ? 'appdrive_independent_verifier_required'
+                    : 'appdrive_lease_required'
+          this.emit(canvasId, 'interaction', ctx, {
+            phase: 'outcome',
+            action: kind,
+            ...targetAudit,
+            outcome: refusalReason,
+            executed: false,
+            verified: 'unknown'
+          })
+          return {
+            ok: false,
+            action: kind,
+            found: false,
+            executed: false,
+            verified: 'unknown',
+            refusalReason,
+            message: lease.error
+          }
+        }
+        driveAction = {
+          leaseId: lease.lease.leaseId,
+          reportId: lease.reportId,
+          actionId: lease.actionId,
+          independentVerificationRequired: lease.independentVerificationRequired
+        }
+      }
       // A synchronous broadcast hook could have begun a clear while the intent
       // was emitted. Re-check before invoking the driver.
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
@@ -1222,6 +2095,20 @@ export class CanvasService implements CanvasController {
       try {
         result = await session.driver.act({ ...args, ...gate.pin, kind })
       } catch (error) {
+        if (driveAction) {
+          this.deps.appDriveLeases?.completeAction({
+            leaseId: driveAction.leaseId,
+            actionId: driveAction.actionId,
+            actor: {
+              runId: ctx.runId!,
+              provider: ctx.provider!,
+              participantId: ctx.participantId ?? null
+            },
+            executed: null,
+            surfaceVerification: 'unknown',
+            refusalCode: 'driver_error'
+          })
+        }
         this.emit(canvasId, 'interaction', ctx, {
           phase: 'outcome',
           action: kind,
@@ -1231,6 +2118,26 @@ export class CanvasService implements CanvasController {
           verified: 'unknown'
         })
         throw error
+      }
+      if (driveAction) {
+        this.deps.appDriveLeases?.completeAction({
+          leaseId: driveAction.leaseId,
+          actionId: driveAction.actionId,
+          actor: {
+            runId: ctx.runId!,
+            provider: ctx.provider!,
+            participantId: ctx.participantId ?? null
+          },
+          executed: result.executed,
+          surfaceVerification: result.verified,
+          ...(result.refusalReason ? { refusalCode: result.refusalReason } : {})
+        })
+        result = {
+          ...result,
+          driveReportId: driveAction.reportId,
+          driveActionId: driveAction.actionId,
+          independentVerificationRequired: driveAction.independentVerificationRequired
+        }
       }
       if (!result.ok || !result.executed || result.verified !== 'changed') {
         this.emit(canvasId, 'interaction', ctx, {
@@ -1246,6 +2153,9 @@ export class CanvasService implements CanvasController {
           ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
         })
       }
+      if (result.refusalReason === 'user_active' || result.refusalReason === 'stale_input_epoch') {
+        this.invalidateSurfaceAuthority(canvasId, session, ctx, 'human-takeover')
+      }
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
       return result
     })
@@ -1256,7 +2166,7 @@ export class CanvasService implements CanvasController {
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    return this.interact(canvasId, 'click', args, ctx)
+    return this.act(canvasId, { ...args, kind: 'click' }, ctx)
   }
 
   async fill(
@@ -1264,7 +2174,15 @@ export class CanvasService implements CanvasController {
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    return this.interact(canvasId, 'fill', args, ctx)
+    return this.act(canvasId, { ...args, kind: 'fill' }, ctx)
+  }
+
+  async act(
+    canvasId: string,
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasActResult> {
+    return this.interact(canvasId, args.kind, args, ctx)
   }
 
   async annotate(
@@ -1435,6 +2353,50 @@ export class CanvasService implements CanvasController {
   }
 
   /**
+   * Floating-window chrome asks main to re-host the Canvas in the app dock.
+   * Placement is not durable authority: preserve the live URL/document, retire
+   * the old host, and reopen through the same chat-owned service path so the
+   * existing `session.opened` presentation event focuses the renderer dock.
+   */
+  private async moveFloatingSurfaceToDock(
+    canvasId: string,
+    generation: number,
+    ctx: CanvasCallContext
+  ): Promise<void> {
+    if (this.dockTransfers.has(canvasId)) return
+    const session = this.require(canvasId, ctx)
+    if (session.generation !== generation || session.presentation === 'dock') return
+    if (session.record.driver !== 'web' && session.record.driver !== 'sketch') {
+      throw new Error('Only Browser and Sketch canvases can move into the dock.')
+    }
+    this.dockTransfers.add(canvasId)
+    try {
+      const viewport = session.record.viewport
+      let url: string | undefined
+      if (session.record.driver === 'web') {
+        const liveUrl = session.driver.navState?.().url || session.record.url
+        if (liveUrl && liveUrl !== 'about:blank') url = liveUrl
+      } else {
+        const document = await session.driver.sketchDocument()
+        this.persistSketchDocument(this.sketchScope(ctx), document)
+      }
+      await this.close(canvasId, ctx)
+      await this.open(
+        {
+          driver: session.record.driver,
+          viewport,
+          embed: true,
+          presentation: 'dock',
+          ...(url ? { url } : {})
+        },
+        ctx
+      )
+    } finally {
+      this.dockTransfers.delete(canvasId)
+    }
+  }
+
+  /**
    * Browser navigation on a web canvas. Serialized with the other page
    * interactions (a navigation mid-click would invalidate the precondition a
    * pending actuation just checked) and charged against the same per-session
@@ -1457,6 +2419,7 @@ export class CanvasService implements CanvasController {
       // The runaway budget exists to stop a hijacked agent, not the human
       // driving their own browser chrome; the renderer IPC opts out.
       if (opts?.chargeInteraction !== false) this.chargeInteraction(session)
+      this.invalidateSurfaceAuthority(canvasId, session, ctx, 'navigation')
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
       const state = await session.driver.navigate(input)
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
@@ -1472,6 +2435,19 @@ export class CanvasService implements CanvasController {
     const session = this.sessions.get(canvasId)
     if (!session || !this.owns(session.record, ctx)) return
     await this.teardown(canvasId, session, ctx)
+  }
+
+  presentInDock(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary {
+    const session = this.require(canvasId, ctx)
+    if (
+      session.record.driver !== 'web' &&
+      session.record.driver !== 'sketch' &&
+      session.record.driver !== 'emulator'
+    ) {
+      throw new Error('Only live Browser, Sketch, and Emulator canvases can return to the dock.')
+    }
+    session.presentation = 'dock'
+    return this.liveSummary(session)
   }
 
   /**
@@ -1567,6 +2543,9 @@ export class CanvasService implements CanvasController {
     session: LiveSession,
     ctx: CanvasCallContext
   ): Promise<void> {
+    this.settlePendingEmulatorDriveAction(session, null, 'driver_error')
+    this.invalidateSurfaceAuthority(canvasId, session, ctx, 'surface-closed')
+    session.emulatorObservation = undefined
     this.sessions.delete(canvasId)
     // Drop the interaction chain with the session so the map cannot grow across
     // a long-lived app run. Anything still queued will fail its own `require`.
@@ -1603,6 +2582,21 @@ export class CanvasService implements CanvasController {
     }
     if (this.canvasGenerations.get(canvasId) === session.generation) {
       this.canvasGenerations.delete(canvasId)
+    }
+  }
+
+  private invalidateSurfaceAuthority(
+    canvasId: string,
+    session: LiveSession,
+    ctx: CanvasCallContext,
+    reason: 'navigation' | 'surface-closed' | 'human-takeover'
+  ): void {
+    if (session.record.driver !== 'web' && session.record.driver !== 'emulator') return
+    try {
+      this.deps.onSurfaceAuthorityInvalidated?.({ canvasId, record: session.record, ctx, reason })
+    } catch {
+      // Lease revocation is idempotent and main-owned; a diagnostic callback
+      // must not change the Canvas lifecycle result.
     }
   }
 

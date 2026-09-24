@@ -9,7 +9,9 @@ import {
   assertProviderId,
   assertLiveProviderId,
   availableProviderIds,
-  selectableProviderIds
+  selectableProviderIds,
+  MIN_INSPECTOR_WIDTH,
+  MAX_INSPECTOR_WIDTH
 } from './MainSanitizers'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../store/types'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
@@ -17,6 +19,11 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  MAX_COMMAND_RULES,
+  MAX_COMMAND_RULES_PER_WORKSPACE
+} from '../command-rules/CommandRuleSchema'
+import { DEFAULT_THEME_ACCENT_COLOR } from '../../shared/themeAccentColor'
 
 describe('normalizeAuditRunIdentity', () => {
   it('accepts a valid audit role identity with optional dimension/findingId', () => {
@@ -865,6 +872,43 @@ describe('MainSanitizers settings patches', () => {
     resetAntigravityGeminiApiKeyConfiguredProbeForTests()
   })
 
+  it('admits ensembleModelIngestChars through the patch lane, clamped and key-checked', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const sanitized = sanitizeSettingsPatch({
+      ensembleModelIngestChars: {
+        'codex:gpt-5.3-codex-spark': 120_000,
+        'ollama:qwen3:4b': 10_000_000,
+        'ollama:gemma4:12b': '40000',
+        'no-colon-key': 30_000,
+        'ollama:bad-value': Number.NaN
+      }
+    })
+    expect(sanitized.ensembleModelIngestChars).toEqual({
+      'codex:gpt-5.3-codex-spark': 120_000,
+      // Clamped to the override slider ceiling.
+      'ollama:qwen3:4b': 256_000,
+      // Numeric strings coerce; junk keys/values are dropped.
+      'ollama:gemma4:12b': 40_000
+    })
+    // Clearing the map serializes as absent, and junk shapes never reach disk.
+    expect(sanitizeSettingsPatch({ ensembleModelIngestChars: null }).ensembleModelIngestChars).toBe(
+      undefined
+    )
+    expect(
+      sanitizeSettingsPatch({ ensembleModelIngestChars: [1, 2, 3] }).ensembleModelIngestChars
+    ).toBe(undefined)
+  })
+
+  it('preserves a wide dragged inspector width instead of re-clamping it at persistence', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    // A canvas-wide dock (Mesh scenes, desktop-style Browser work) must survive
+    // the settings round-trip: a sanitizer ceiling below the renderer's resize
+    // max silently snapped every wide drag back on the next hydrate.
+    expect(sanitizeSettingsPatch({ inspectorWidth: 2000 }).inspectorWidth).toBe(2000)
+    expect(sanitizeSettingsPatch({ inspectorWidth: 9000 }).inspectorWidth).toBe(MAX_INSPECTOR_WIDTH)
+    expect(sanitizeSettingsPatch({ inspectorWidth: 50 }).inspectorWidth).toBe(MIN_INSPECTOR_WIDTH)
+  })
+
   it('preserves active AntiGravity through either admitted settings lane', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(makeSettings({ activeProvider: 'claude' }))
 
@@ -954,6 +998,18 @@ describe('MainSanitizers settings patches', () => {
       },
       mainAuthorityMs: 60_000
     })
+  })
+
+  it('persists the contextual AutoDraft opt-out as a boolean', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    expect(
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: false })
+        .composerContinuationAiEnabled
+    ).toBe(false)
+    expect(
+      sanitizeSettingsPatch({ composerContinuationAiEnabled: true })
+        .composerContinuationAiEnabled
+    ).toBe(true)
   })
 
   it('accepts a valid modelUsagePanelView and drops invalid values', () => {
@@ -1092,6 +1148,66 @@ describe('MainSanitizers settings patches', () => {
     expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'nope' })).toBe(false)
   })
 
+  it('persists defaultTranscriptView (SETTINGS_PATCH_KEYS guard)', () => {
+    // The Appearance transcript-view default rides the same allowlist. Absent
+    // from it, the key is dropped by a bare `continue` with no log and no
+    // throw: the chosen default applies live and is gone on the next restart,
+    // exactly the toolIconAccent/diffStatColors shape above.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ defaultTranscriptView: 'minimal' }).defaultTranscriptView).toBe(
+      'minimal'
+    )
+    expect(sanitizeSettingsPatch({ defaultTranscriptView: 'tools' }).defaultTranscriptView).toBe(
+      'tools'
+    )
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      defaultTranscriptView: 'standard',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.defaultTranscriptView).toBe('standard')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
+  it('persists transcriptTextSize (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop. For a text SCALE the failure reads as
+    // "the app forgets how big I asked for" — it applies live, survives until
+    // the next launch, and nothing logs.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ transcriptTextSize: 'large' }).transcriptTextSize).toBe('large')
+    expect(sanitizeSettingsPatch({ transcriptTextSize: 'small' }).transcriptTextSize).toBe('small')
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      transcriptTextSize: 'default',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.transcriptTextSize).toBe('default')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
+  it('persists transcriptWidth (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop, and for a WIDTH the symptom is worse
+    // than "the app forgets": the column applies live, is dropped on the very
+    // next appearance patch, and on relaunch the virtualiser re-measures a
+    // column the user did not choose.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ transcriptWidth: 'wide' }).transcriptWidth).toBe('wide')
+    expect(sanitizeSettingsPatch({ transcriptWidth: 'narrow' }).transcriptWidth).toBe('narrow')
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      transcriptWidth: 'medium',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.transcriptWidth).toBe('medium')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
   it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
@@ -1105,7 +1221,7 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitizeSettingsPatch({ themeAccentColor: '#12ab34' }).themeAccentColor).toBe('#12AB34')
     expect(sanitizeSettingsPatch({ themeAccentColor: 'f0c' }).themeAccentColor).toBe('#FF00CC')
     expect(sanitizeSettingsPatch({ themeAccentColor: 'not-a-colour' }).themeAccentColor).toBe(
-      '#5A8CFF'
+      DEFAULT_THEME_ACCENT_COLOR
     )
   })
 
@@ -1158,6 +1274,16 @@ describe('MainSanitizers settings patches', () => {
         antigravityOptInAcceptedAt: 'yes' as unknown as number
       }).antigravityOptInAcceptedAt
     ).toBe(null)
+  })
+
+  it('persists+coerces the AntiGravity ACP transport switch (inert, default legacy)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Boolean coercion, mirroring antigravityEnabled.
+    expect(sanitizeSettingsPatch({ antigravityUseAcp: true }).antigravityUseAcp).toBe(true)
+    expect(sanitizeSettingsPatch({ antigravityUseAcp: false }).antigravityUseAcp).toBe(false)
+    // Absent key stays absent — readers treat it as false (legacy agy CLI lane).
+    expect('antigravityUseAcp' in sanitizeSettingsPatch({})).toBe(false)
   })
 
   it('persists only a finite positive Gemini API disclosure timestamp', () => {
@@ -1793,6 +1919,32 @@ describe('MainSanitizers settings patches', () => {
     }
     expect(consolidateAgenticWorkspaceGrants([canvasRow])).toEqual([canvasRow])
   })
+
+  it('persists keepAwakeWhileWorking (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop — and here the drop is invisible in a
+    // way the others are not. The toggle would appear to work for the rest of
+    // the session and then be gone at the next launch, which is exactly when
+    // the overnight round it was meant to protect is running.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ keepAwakeWhileWorking: false }).keepAwakeWhileWorking).toBe(false)
+    expect(sanitizeSettingsPatch({ keepAwakeWhileWorking: true }).keepAwakeWhileWorking).toBe(true)
+    // A non-boolean is coerced rather than dropped, matching its General-tab
+    // neighbours: an absent key and a `false` key mean different things here,
+    // so silently discarding a malformed one would read as "defaults to on".
+    expect(
+      sanitizeSettingsPatch({ keepAwakeWhileWorking: 0 } as unknown as Partial<AppSettings>)
+        .keepAwakeWhileWorking
+    ).toBe(false)
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      keepAwakeWhileWorking: true,
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.keepAwakeWhileWorking).toBe(true)
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
 })
 
 describe('AntiGravity opt-in admission (S0b settings-aware gate)', () => {
@@ -1860,5 +2012,84 @@ describe('AntiGravity Gemini API-key admission (independent of the AGY opt-in la
   it('keeps gemini retired even when a Gemini API key is configured', () => {
     setAntigravityGeminiApiKeyConfiguredProbe(() => true)
     expect(() => assertLiveProviderId('gemini')).toThrow()
+  })
+})
+
+describe('Command rule settings sanitation', () => {
+  const createdAt = '2026-08-31T13:20:00.000Z'
+  const baseRule = {
+    schemaVersion: 1 as const,
+    kind: 'brokered_shell_exact_argv' as const,
+    id: 'rule-1',
+    workspaceId: 'workspace-1',
+    primaryWorkspacePath: '/tmp/taskwraith-command-rule/../workspace',
+    primaryWorkspaceRealPath: '/tmp/taskwraith-command-rule/workspace',
+    cwdRelativePath: 'packages/app',
+    executableRealPath: '/usr/local/bin/npm',
+    executableSha256: 'a'.repeat(64),
+    argv: ['test', '--', '--runInBand'],
+    parserVersion: 'static-shell-argv-v1' as const,
+    fingerprint: 'b'.repeat(64),
+    signatureVersion: 'hmac-sha256-v1' as const,
+    signature: 'c'.repeat(64),
+    riskClass: 'host_exact_unsandboxed' as const,
+    createdAt,
+    updatedAt: createdAt,
+    createdFromApprovalId: 'approval-1'
+  }
+
+  it('keeps only bounded canonical rules and collapses duplicate fingerprints', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const newer = {
+      ...baseRule,
+      id: 'rule-newer',
+      updatedAt: '2026-08-31T13:21:00.000Z'
+    }
+    const invalid = { ...baseRule, id: 'rule-invalid', argv: Array(65).fill('arg') }
+    const malformedSignature = { ...baseRule, id: 'rule-malformed-signature', signature: 'nope' }
+    const duplicateId = { ...baseRule, fingerprint: 'd'.repeat(64) }
+    const pathOnly = { ...baseRule, id: 'rule-path-only', fingerprint: 'e'.repeat(64) }
+    delete (pathOnly as { workspaceId?: string }).workspaceId
+
+    const sanitized = sanitizeSettingsPatch({
+      commandRules: [baseRule, invalid, malformedSignature, duplicateId, pathOnly, newer]
+    })
+    expect(sanitized.commandRules).toEqual([
+      {
+        ...newer,
+        primaryWorkspacePath: resolve('/tmp/taskwraith-command-rule/../workspace'),
+        primaryWorkspaceRealPath: resolve('/tmp/taskwraith-command-rule/workspace'),
+        executableRealPath: resolve('/usr/local/bin/npm')
+      }
+    ])
+  })
+
+  it('caps persisted command rules and drops malformed settings input instead of clearing rules', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings())
+    const rules = Array.from({ length: MAX_COMMAND_RULES + 1 }, (_, index) => ({
+      ...baseRule,
+      id: `rule-${index}`,
+      primaryWorkspacePath: `/tmp/workspace-${index}`,
+      primaryWorkspaceRealPath: `/tmp/workspace-${index}`,
+      fingerprint: index.toString(16).padStart(64, '0')
+    }))
+
+    expect(sanitizeSettingsPatch({ commandRules: rules }).commandRules).toHaveLength(
+      MAX_COMMAND_RULES
+    )
+    const oneWorkspaceRules = Array.from(
+      { length: MAX_COMMAND_RULES_PER_WORKSPACE + 1 },
+      (_, index) => ({
+        ...baseRule,
+        id: `same-workspace-rule-${index}`,
+        fingerprint: (index + 1000).toString(16).padStart(64, '0')
+      })
+    )
+    expect(sanitizeSettingsPatch({ commandRules: oneWorkspaceRules }).commandRules).toHaveLength(
+      MAX_COMMAND_RULES_PER_WORKSPACE
+    )
+    expect(sanitizeSettingsPatch({ commandRules: 'not-an-array' })).not.toHaveProperty(
+      'commandRules'
+    )
   })
 })

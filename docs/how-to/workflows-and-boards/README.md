@@ -12,4 +12,4 @@ Guides for TaskWraith's automated workflows and workspace kanban boards.
 
 ## Cross-links
 
-- [Permission Elevation Sheet](../approvals-and-permissions/permission-elevation-sheet.md) — for unattended elevation settings when creating workflows.
+- [Permission Elevation Sheet](../approvals-and-permissions/permission-elevation-sheet.md) — for unattended elevation settings when creating workflows

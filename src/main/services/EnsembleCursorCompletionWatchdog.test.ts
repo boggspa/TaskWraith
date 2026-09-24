@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS,
   CURSOR_COMPLETION_WATCHDOG_POLL_MS,
+  CURSOR_COMPLETION_WATCHDOG_STARTUP_MS,
   EnsembleCursorCompletionWatchdog,
   cursorTransportLivenessFromRunSession,
   decideCursorCompletionWatchdog
@@ -22,9 +23,15 @@ function runSession(over: Record<string, unknown> = {}): RunSession {
 }
 
 describe('cursorTransportLivenessFromRunSession', () => {
-  it('is conservative for missing or untracked processes', () => {
+  it('is conservative for an untracked session', () => {
     expect(cursorTransportLivenessFromRunSession(undefined)).toBe('unknown')
-    expect(cursorTransportLivenessFromRunSession(runSession())).toBe('unknown')
+  })
+
+  it('separates a tracked session that has not spawned a child from a silent one', () => {
+    expect(cursorTransportLivenessFromRunSession(runSession())).toBe('starting')
+    expect(cursorTransportLivenessFromRunSession(runSession({ status: 'starting' }))).toBe(
+      'starting'
+    )
   })
 
   it('treats an active child as alive until Node reports exit', () => {
@@ -132,6 +139,41 @@ describe('decideCursorCompletionWatchdog', () => {
     ).toEqual({ kind: 'wait', delayMs: CURSOR_COMPLETION_WATCHDOG_POLL_MS })
   })
 
+  it('keeps a seat that has not spawned past the silence deadline', () => {
+    // Measured 2026-09-03: a read-only reviewer seat queued 2m31s on the
+    // workspace-config lease behind a write-posture seat and was killed at 30s.
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: 151_000,
+        transportLiveness: 'starting'
+      })
+    ).toEqual({ kind: 'wait', delayMs: CURSOR_COMPLETION_WATCHDOG_POLL_MS })
+  })
+
+  it('recovers a seat that never started at the bounded startup window', () => {
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: CURSOR_COMPLETION_WATCHDOG_STARTUP_MS,
+        transportLiveness: 'starting'
+      })
+    ).toMatchObject({
+      kind: 'recover_startup',
+      reason: expect.stringContaining('workspace configuration lease')
+    })
+  })
+
+  it('still fails an untracked transport at the silence deadline', () => {
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: 151_000,
+        transportLiveness: 'unknown'
+      })
+    ).toMatchObject({ kind: 'fail', reason: expect.stringContaining('silent') })
+  })
+
   it('waits for the bounded window after recent provider activity', () => {
     expect(
       decideCursorCompletionWatchdog({
@@ -230,6 +272,103 @@ describe('EnsembleCursorCompletionWatchdog', () => {
       watchdog.stop('cursor-run')
       vi.advanceTimersByTime(60_000)
       expect(onMissingTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never fails a queued seat that spawns before the startup window closes', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 0
+      let liveness: 'starting' | 'alive' = 'starting'
+      const onMissingTerminal = vi.fn()
+      const onStartupRecovery = vi.fn()
+      const watchdog = new EnsembleCursorCompletionWatchdog()
+      watchdog.start({
+        runId: 'cursor-run',
+        now: () => now,
+        timeoutMs: 30_000,
+        startupMs: 300_000,
+        pollMs: 1_000,
+        hasActiveToolOrApproval: () => false,
+        transportLiveness: () => liveness,
+        isActive: () => true,
+        onMissingTerminal,
+        onStartupRecovery
+      })
+
+      // The whole 2m31s lease queue, well past the 30s silence deadline.
+      now = 151_000
+      vi.advanceTimersByTime(151_000)
+      expect(onMissingTerminal).not.toHaveBeenCalled()
+      expect(onStartupRecovery).not.toHaveBeenCalled()
+
+      liveness = 'alive'
+      watchdog.touch('cursor-run')
+      now = 180_000
+      vi.advanceTimersByTime(29_000)
+      expect(onMissingTerminal).not.toHaveBeenCalled()
+      expect(watchdog.has('cursor-run')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('invokes startup recovery once without the missing-terminal fail path', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 0
+      const onMissingTerminal = vi.fn()
+      const onStartupRecovery = vi.fn()
+      const watchdog = new EnsembleCursorCompletionWatchdog()
+      watchdog.start({
+        runId: 'cursor-run',
+        now: () => now,
+        timeoutMs: 30_000,
+        startupMs: 120_000,
+        pollMs: 1_000,
+        hasActiveToolOrApproval: () => false,
+        transportLiveness: () => 'starting',
+        isActive: () => true,
+        onMissingTerminal,
+        onStartupRecovery
+      })
+
+      now = 120_000
+      vi.advanceTimersByTime(120_000)
+      expect(onStartupRecovery).toHaveBeenCalledTimes(1)
+      expect(onMissingTerminal).not.toHaveBeenCalled()
+      expect(watchdog.has('cursor-run')).toBe(false)
+      vi.advanceTimersByTime(120_000)
+      expect(onStartupRecovery).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to the fail path for embedders with no startup recovery lane', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 0
+      const onMissingTerminal = vi.fn()
+      const watchdog = new EnsembleCursorCompletionWatchdog()
+      watchdog.start({
+        runId: 'cursor-run',
+        now: () => now,
+        timeoutMs: 30_000,
+        startupMs: 120_000,
+        pollMs: 1_000,
+        hasActiveToolOrApproval: () => false,
+        transportLiveness: () => 'starting',
+        isActive: () => true,
+        onMissingTerminal
+      })
+
+      now = 120_000
+      vi.advanceTimersByTime(120_000)
+      expect(onMissingTerminal).toHaveBeenCalledTimes(1)
+      expect(onMissingTerminal).toHaveBeenCalledWith(expect.stringContaining('did not start'))
     } finally {
       vi.useRealTimers()
     }

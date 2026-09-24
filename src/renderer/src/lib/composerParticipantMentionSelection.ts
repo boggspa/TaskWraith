@@ -19,6 +19,21 @@ export function formatComposerParticipantMention(label: string): string {
   return trimmed ? `@${trimmed} ` : ''
 }
 
+export function acceptedDraftParticipantMentionSelection(input: {
+  value: string
+  participantId: string
+  mentionText: string
+}): ComposerParticipantMentionSelection | null {
+  const mentionText = input.mentionText.trimEnd()
+  if (!mentionText || !input.value.startsWith(mentionText)) return null
+  return {
+    participantId: input.participantId,
+    start: 0,
+    end: mentionText.length,
+    text: mentionText
+  }
+}
+
 /**
  * Keep selections that lie outside a single text edit, shift selections after
  * it, and drop the one the user actively edited. This gives normal textarea

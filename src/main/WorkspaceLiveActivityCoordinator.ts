@@ -9,8 +9,10 @@
  */
 
 import type { RemoteTaskCard } from './RemoteTaskProjection'
+import { summarizeLiveActivitySeats } from '../shared/apns/liveActivityPayload'
 import {
   livePhaseForCardStatus,
+  participantSeatPhase,
   type LiveActivityPushFanout,
   type WorkspaceLiveActivityInput
 } from './LiveActivityPushFanout'
@@ -36,10 +38,6 @@ function count(value: unknown): number {
 function startedAtUnix(card: RemoteTaskCard, fallback: number): number {
   const parsed = card.runStartedAt ? Date.parse(card.runStartedAt) : Number.NaN
   return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : fallback
-}
-
-function seatPhase(status: RemoteTaskCard['status']): string {
-  return livePhaseForCardStatus(status) ?? 'running'
 }
 
 function active(card: RemoteTaskCard): boolean {
@@ -81,6 +79,11 @@ export function projectWorkspaceLiveActivities(
         : 'running'
     const git = gitSnapshots.get(workspaceId)
     const changed = git?.counts?.changed
+    const seats = ordered.map((card) => ({
+      provider: card.chatKind === 'ensemble' ? 'ensemble' : card.provider || 'codex',
+      phase: livePhaseForCardStatus(card.status) ?? 'running'
+    }))
+    const seatSummary = summarizeLiveActivitySeats(seats)
     out.push({
       workspaceId,
       memberThreadIds: ordered.map((card) => card.id),
@@ -96,10 +99,8 @@ export function projectWorkspaceLiveActivities(
         ahead: count(git?.ahead),
         behind: count(git?.behind),
         hasGitSnapshot: git !== undefined,
-        seats: ordered.map((card) => ({
-          provider: card.provider || (card.chatKind === 'ensemble' ? 'ensemble' : 'codex'),
-          phase: seatPhase(card.status)
-        }))
+        ...seatSummary,
+        seats
       }
     })
   }
@@ -110,23 +111,26 @@ function runInput(
   card: RemoteTaskCard,
   nowSeconds: number
 ): Parameters<LiveActivityPushFanout['onTaskCard']>[0] {
+  const seats =
+    card.chatKind === 'ensemble'
+      ? card.ensembleState?.participants?.map((participant) => ({
+          provider: participant.provider,
+          phase: participantSeatPhase(participant.status)
+        }))
+      : undefined
+  const seatSummary = summarizeLiveActivitySeats(seats ?? [])
   return {
     id: card.id,
     status: card.status,
     runId: card.runId,
-    provider: card.provider,
+    provider: card.chatKind === 'ensemble' ? 'ensemble' : card.provider,
     isEnsemble: card.chatKind === 'ensemble',
     startedAtUnix: startedAtUnix(card, nowSeconds),
     filesChanged: card.diffSummary?.filesChanged,
     additions: card.diffSummary?.additions,
     deletions: card.diffSummary?.deletions,
-    seats:
-      card.chatKind === 'ensemble'
-        ? card.ensembleState?.participants?.map((participant) => ({
-            provider: participant.provider,
-            phase: seatPhase(participant.status as RemoteTaskCard['status'])
-          }))
-        : undefined
+    ...seatSummary,
+    seats
   }
 }
 

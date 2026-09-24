@@ -4,6 +4,7 @@ import {
   getKnownModelLabels,
   humaniseModelId,
   humaniseModelIdCompact,
+  humaniseRecordedModelIdCompact,
   humaniseModelIdTableCell
 } from './modelDisplayName'
 import { CURSOR_GROK_46_WIRE_MODEL_IDS } from '../../../shared/grok45Models'
@@ -39,6 +40,8 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('claude', 'claude-fable-5-1m')).toBe('Claude Fable 5 (1M)')
       expect(humaniseModelId('claude', 'claude-mythos-5')).toBe('Claude Mythos 5')
       expect(humaniseModelId('claude', 'claude-sonnet-5')).toBe('Claude Sonnet 5')
+      expect(humaniseModelId('claude', 'claude-opus-5-5')).toBe('Claude Opus 5.5')
+      expect(humaniseModelId('claude', 'claude-opus-5')).toBe('Claude Opus 5')
       expect(humaniseModelId('claude', 'preview:anthropic:claude-sonnet-5')).toBe('Claude Sonnet 5')
       expect(humaniseModelId('claude', 'claude-opus-4-8')).toBe('Claude Opus 4.8')
       expect(humaniseModelId('claude', 'claude-opus-4-8-1m')).toBe('Claude Opus 4.8 (1M)')
@@ -59,6 +62,14 @@ describe('humaniseModelId', () => {
   })
 
   describe('Codex (GPT)', () => {
+    it('uses the Astra catalog label across full, compact, and table displays', () => {
+      expect(humaniseModelId('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelId('codex', 'GPT-6-Astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelIdCompact('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(humaniseModelIdTableCell('codex', 'gpt-6-astra')).toBe('GPT-6-Astra')
+      expect(canonicalModelIdForProvider('codex', 'gpt-6-astra')).toBe('gpt-6-astra')
+    })
+
     it('maps gpt ids preserving the "GPT-X.Y" capitalisation', () => {
       expect(humaniseModelId('codex', 'gpt-5.5')).toBe('GPT-5.5')
       expect(humaniseModelId('codex', 'gpt-5.4')).toBe('GPT-5.4')
@@ -72,13 +83,28 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('codex', 'gpt-5.6-terra')).toBe('GPT-5.6-Terra')
       expect(humaniseModelId('codex', 'gpt-5.6-luna')).toBe('GPT-5.6-Luna')
       expect(humaniseModelId('codex', 'preview:openai:gpt-5.6:sol')).toBe('GPT-5.6-Sol')
+      // GPT-6 Sol and Luna (2026-09-22) follow the same hyphenated Codex
+      // catalog style; the generic fallback would render "GPT-6 Sol".
+      expect(humaniseModelId('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
+      expect(humaniseModelId('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+      expect(humaniseModelIdCompact('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+      expect(humaniseModelIdTableCell('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
     })
   })
 
   describe('Kimi', () => {
     it('maps Kimi ids including the old/new thinking aliases', () => {
-      expect(humaniseModelId('kimi', 'kimi-k3')).toBe('K3')
-      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+      expect(humaniseModelId('kimi', 'kimi-k3')).toBe('K3 (1M)')
+      expect(humaniseModelId('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
+      expect(humaniseModelId('kimi', 'k3-256k')).toBe('K3 (256K)')
+      expect(humaniseModelId('kimi', 'kimi-code/k3-256k')).toBe('K3 (256K)')
+      expect(humaniseModelId('kimi', 'kimi-k2.8-preview')).toBe('K2.8 Preview')
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code-highspeed')).toBe('K2.7 Code Highspeed')
+      // The retired combined id canonicalises onto the route it always
+      // dispatched, exactly as the K3 aliases do, so old rows aggregate with
+      // the row that replaced them instead of splitting the same upstream
+      // route across two entries.
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('K2.8 Preview')
       expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('K2.7 Coding Thinking')
       expect(humaniseModelId('kimi', 'kimi-k2.6')).toBe('Kimi K2.6')
       expect(humaniseModelId('kimi', 'kimi-k2.6-thinking')).toBe('Kimi K2.6 Thinking')
@@ -87,6 +113,13 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('kimi', 'kimi-k2.5')).toBe('Kimi K2.5')
       expect(humaniseModelId('kimi', 'kimi-k2')).toBe('Kimi K2')
       expect(humaniseModelId('kimi', 'kimi-latest')).toBe('Kimi (Latest)')
+    })
+
+    it('keeps the retired K2.7 label only for immutable recorded presentation', () => {
+      expect(humaniseModelIdCompact('kimi', 'kimi-k2.7-code')).toBe('K2.8 Preview')
+      expect(humaniseRecordedModelIdCompact('kimi', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+      expect(humaniseRecordedModelIdCompact('kimi', 'KIMI-K2.7-CODE')).toBe('K2.7 Coding')
+      expect(humaniseRecordedModelIdCompact('kimi', 'kimi-k2.8-preview')).toBe('K2.8 Preview')
     })
 
     it('maps preview / dated Kimi variants', () => {
@@ -101,6 +134,8 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('grok', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       // Grok's CLI models are permanently Fast-mode, so both retained rows
       // carry Fast on the direct Grok seat.
+      expect(humaniseModelId('grok', 'grok-4.7')).toBe('Grok 4.7')
+      expect(humaniseModelId('grok', 'grok-4.7-fast')).toBe('Grok 4.7 Fast')
       expect(humaniseModelId('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')
       expect(canonicalModelIdForProvider('grok', 'Grok 4.6 Fast')).toBe('grok-4.6')
       expect(humaniseModelId('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
@@ -118,6 +153,11 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('antigravity', 'gemini-api:gemini-3.1-pro-preview')).toBe(
         '3.1 Pro Preview'
       )
+      expect(canonicalModelIdForProvider('antigravity', 'gemini-3.8-flash-high')).toBe(
+        'gemini-3.8-flash'
+      )
+      expect(humaniseModelId('antigravity', 'gemini-3.8-flash-medium')).toBe('Gemini 3.8 Flash')
+      expect(humaniseModelIdCompact('antigravity', 'gemini-3.8-flash-low')).toBe('3.8 Flash')
       expect(canonicalModelIdForProvider('antigravity', 'gemini-3.7-flash-high')).toBe(
         'gemini-3.7-flash'
       )
@@ -155,14 +195,16 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('mistral', 'mistral-vibe-cli-latest')).toBe('Mistral Medium 3.5')
     })
 
-    it('resolves the default sentinel to the seat default (devstral-small, not the flagship)', () => {
-      expect(canonicalModelIdForProvider('mistral', 'default')).toBe('devstral-small')
-      expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('devstral-small')
+    it('resolves the default sentinel to the Vibe 2.25 seat default (Medium 3.5)', () => {
+      expect(canonicalModelIdForProvider('mistral', 'default')).toBe('mistral-medium-3.5')
+      expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('mistral-medium-3.5')
     })
 
-    it('drops the redundant brand prefix under the provider header', () => {
-      expect(humaniseModelIdCompact('mistral', 'mistral-medium-3.5')).toBe('Medium 3.5')
-      // Devstral does not repeat the provider, so the strip is a no-op.
+    it('keeps the Mistral brand word, which is part of the product name', () => {
+      // Mistral is deliberately absent from PROVIDER_MODEL_LABEL_PREFIX: its
+      // products canonically carry the vendor word, so stripping it produced
+      // 'Medium 3.5' here while every brand-spoofed surface kept the full name.
+      expect(humaniseModelIdCompact('mistral', 'mistral-medium-3.5')).toBe('Mistral Medium 3.5')
       expect(humaniseModelIdCompact('mistral', 'devstral-small')).toBe('Devstral Small')
     })
 
@@ -177,7 +219,14 @@ describe('humaniseModelId', () => {
 
   describe('Muse', () => {
     it('maps Spark wire ids to a human-readable name', () => {
+      expect(humaniseModelId('muse', 'muse-spark-1.3')).toBe('Muse Spark 1.3')
+      expect(humaniseModelId('muse', 'muse-spark-1.3-contributor')).toBe(
+        'Muse Contributor Spark 1.3'
+      )
       expect(humaniseModelId('muse', 'muse-spark-1.2')).toBe('Muse Spark 1.2')
+      expect(humaniseModelId('muse', 'muse-spark-1.2-contributor')).toBe(
+        'Muse Contributor Spark 1.2'
+      )
       expect(canonicalModelIdForProvider('muse', 'cli-default')).toBe('muse-spark-1.2')
     })
   })
@@ -188,6 +237,27 @@ describe('humaniseModelId', () => {
         'gemini-api:gemini-2.5-flash'
       )
       expect(canonicalModelIdForProvider('pi', 'default')).toBe('deepseek/deepseek-v4-flash')
+    })
+
+    it('maps legacy Devin sentinels to the catalogue default and labels every catalogue row', () => {
+      // The 'cli-default' sentinel was an ambiguous target (whatever the CLI's
+      // own config or the enterprise default said). A stored selection that
+      // still carries it resolves to the explicit seat default, and every
+      // catalogue id renders as the CLI's own label.
+      expect(canonicalModelIdForProvider('devin', 'cli-default')).toBe('swe-1-6-slow')
+      expect(canonicalModelIdForProvider('devin', 'default')).toBe('swe-1-6-slow')
+      expect(humaniseModelId('devin', 'cli-default')).toBe('SWE-1.6 Slow')
+      expect(humaniseModelId('devin', 'swe-1-7')).toBe('SWE-1.7')
+      expect(humaniseModelId('devin', 'claude-opus-5')).toBe('Claude Opus 5')
+      expect(humaniseModelId('devin', 'claude-opus-5-5')).toBe('Claude Opus 5.5')
+      expect(humaniseModelId('devin', 'adaptive')).toBe('Adaptive')
+      // A run records the exact dispatched variant; it collapses onto the
+      // family for the picker and usage rows.
+      expect(canonicalModelIdForProvider('devin', 'claude-opus-5-high')).toBe('claude-opus-5')
+      expect(humaniseModelId('devin', 'claude-opus-5-high')).toBe('Claude Opus 5')
+      expect(canonicalModelIdForProvider('devin', 'claude-opus-5-5-high')).toBe('claude-opus-5-5')
+      expect(humaniseModelId('devin', 'claude-opus-5-5-high')).toBe('Claude Opus 5.5')
+      expect(canonicalModelIdForProvider('devin', 'devin-custom-x')).toBe('devin-custom-x')
     })
   })
 
@@ -210,14 +280,18 @@ describe('humaniseModelId', () => {
 
   describe('Ollama', () => {
     it('maps local Ollama tags to readable model names', () => {
+      expect(humaniseModelId('ollama', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
       expect(humaniseModelId('ollama', 'glm-5.2:cloud')).toBe('GLM 5.2')
-      expect(humaniseModelId('ollama', 'minimax-m3:cloud')).toBe('MiniMax M3')
+      expect(humaniseModelId('ollama', 'minimax-m3:cloud')).toBe('M3')
       expect(humaniseModelId('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
       expect(humaniseModelId('ollama', 'qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')
       expect(humaniseModelId('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+      expect(humaniseModelId('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(
+        'Qwen 3.8 Flash Next (125B-MLX)'
+      )
       expect(humaniseModelId('ollama', 'gemma4:12b')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
       expect(humaniseModelId('ollama', 'gemma4:31b-mlx')).toBe('Gemma 4 (31B-MLX)')
@@ -226,6 +300,8 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
       expect(humaniseModelId('ollama', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
       expect(humaniseModelId('ollama', 'ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
+      expect(humaniseModelId('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
+      expect(humaniseModelId('ollama', 'ornith-1.5:35b-q4_K_M')).toBe('Ornith 1.5 (35B Param)')
       expect(humaniseModelId('ollama', 'laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
       expect(humaniseModelId('ollama', 'gpt-oss')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
@@ -236,6 +312,9 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:3b')).toBe('Granite 4.1 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
+      expect(humaniseModelId('ollama', 'granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
       expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
       expect(humaniseModelId('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
         'Nemotron 3.5 Lightning (30B-MLX)'
@@ -243,10 +322,16 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.5:4b')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')
+      expect(humaniseModelId('ollama', 'mistral-medium-3.5:latest')).toBe(
+        'Mistral Medium 3.5 (128B Param)'
+      )
+      expect(humaniseModelId('ollama', 'mistral-medium-3.5:128b')).toBe(
+        'Mistral Medium 3.5 (128B Param)'
+      )
       expect(humaniseModelId('ollama', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
       expect(humaniseModelId('ollama', 'muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
       expect(humaniseModelId('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
-      expect(humaniseModelId('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+      expect(humaniseModelId('ollama', 'deepseek-r1:8b')).toBe('R1 (8B Param)')
       expect(humaniseModelId('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
       expect(humaniseModelId('ollama', 'glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
       expect(humaniseModelId('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(
@@ -257,7 +342,7 @@ describe('humaniseModelId', () => {
         ['ministral-3:3b', 'Ministral 3 (3B Param)'],
         ['granite4:3b', 'Granite 4.0 (3B Param)'],
         ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
-        ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+        ['deepseek-r1:1.5b', 'R1 (1.5B Param)'],
         ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
         ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
         ['gemma3:4b', 'Gemma 3 (4B Param)']
@@ -298,14 +383,14 @@ describe('humaniseModelId', () => {
     })
 
     it('uses provider context to repair stale Gemini placeholder ids for Grok and Cursor', () => {
-      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-4.6')
+      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-4.7')
       expect(canonicalModelIdForProvider('grok', 'composer-2.5-fast')).toBe(
         'grok-composer-2.5-fast'
       )
       expect(canonicalModelIdForProvider('cursor', 'flash-lite')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5 Fast')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5')).toBe('composer-2.5')
-      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok 4.6 Fast')
+      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok 4.7')
       expect(humaniseModelId('grok', 'composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('cursor', 'gemini-3.1-flash-lite')).toBe('Composer 2.5 Fast')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')
@@ -315,8 +400,8 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-5.5')
       expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-5')
       expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
-      expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.7-code')
-      expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.6')
+      expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
+      expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.7')
       expect(canonicalModelIdForProvider('cursor', 'cli-default')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('ollama', 'cli-default')).toBe('qwen3:4b-instruct')
     })
@@ -347,8 +432,12 @@ describe('humaniseModelId', () => {
       const labels = getKnownModelLabels()
       expect(labels['gemini-3-flash-preview']).toBeDefined()
       expect(labels['claude-opus-4-7']).toBeDefined()
+      expect(labels['claude-opus-5-5']).toBe('Claude Opus 5.5')
+      expect(labels['gpt-6-sol']).toBe('GPT-6-Sol')
+      expect(labels['gpt-6-luna']).toBe('GPT-6-Luna')
       expect(labels['gpt-5.5']).toBeDefined()
       expect(labels['kimi-k3']).toBeDefined()
+      expect(labels['kimi-k3-256k']).toBeDefined()
       expect(labels['kimi-k2.7-code']).toBeDefined()
       expect(labels['kimi-k2.6']).toBeDefined()
       expect(labels['kimi-k2.6-thinking']).toBeDefined()
@@ -366,6 +455,7 @@ describe('humaniseModelId', () => {
       expect(labels['ornith:latest']).toBeDefined()
       expect(labels['ornith:9b']).toBeDefined()
       expect(labels['ornith:35b']).toBeDefined()
+      expect(labels['ornith-1.5:35b']).toBeDefined()
       expect(labels['laguna-xs-2.1:q8_0']).toBeDefined()
       expect(labels['gpt-oss:20b']).toBeDefined()
       expect(labels['lfm2.5:8b']).toBeDefined()
@@ -402,6 +492,7 @@ describe('humaniseModelIdCompact', () => {
     expect(humaniseModelIdCompact('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humaniseModelIdCompact('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')
     expect(humaniseModelIdCompact('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
+    expect(humaniseModelIdCompact('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
     expect(humaniseModelIdCompact('ollama', 'laguna-xs-2.1:q8_0')).toBe(
       'Laguna XS 2.1 (33B-A3B Q8)'
     )

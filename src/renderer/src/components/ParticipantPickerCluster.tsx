@@ -32,6 +32,7 @@ import { isCursorGrokModelId } from '../../../shared/grok45Models'
 import {
   FAST_MODEL_IDS,
   antigravityEffortForModelId,
+  antigravityReasoningLadderOptions,
   antigravityVariantGroupForModel,
   groupAntigravityModelRows
 } from '../../../shared/antigravityAgyModelGrouping'
@@ -66,9 +67,54 @@ export function buildParticipantProviderModelPatch(
   return buildSameProviderModelChangeParticipantPatch(participant, model)
 }
 
+/** Build the lossless participant patch for one reasoning-ladder selection.
+ * AntiGravity carries real effort in its concrete model id, so UltraTask maps
+ * the family to High and keeps the synthetic marker alongside it. */
+export function buildParticipantReasoningSelectionPatch(
+  participant: EnsembleParticipant,
+  selectedModelId: string,
+  value: string,
+  antigravityModels: ReadonlyArray<{ id: string; label?: string }> = []
+): Partial<EnsembleParticipant> {
+  if (participant.provider === 'antigravity') {
+    const variantGroup = antigravityVariantGroupForModel(
+      antigravityModels,
+      selectedModelId
+    )
+    const targetEffort = value === 'ultraTask' ? 'high' : value
+    const target = variantGroup?.variants.find((variant) => variant.effort === targetEffort)
+    if (value === 'ultraTask') {
+      return {
+        ...(target && target.id !== selectedModelId
+          ? buildParticipantProviderModelPatch(participant, 'antigravity', target.id)
+          : {}),
+        reasoningEffort: 'ultraTask'
+      }
+    }
+    if (target && target.id !== selectedModelId) {
+      return {
+        ...buildParticipantProviderModelPatch(participant, 'antigravity', target.id),
+        reasoningEffort: ''
+      }
+    }
+    return participant.reasoningEffort === 'ultraTask' ? { reasoningEffort: '' } : {}
+  }
+  if (participant.provider === 'kimi') {
+    return buildKimiReasoningPickerPatch(selectedModelId, value)
+  }
+  return { reasoningEffort: value }
+}
+
+export type ParticipantPickerConfiguredProviderSnapshot = Omit<
+  ConfiguredProviderSnapshot,
+  'providerIds'
+> & {
+  providerIds: readonly ProviderId[]
+}
+
 interface ParticipantPickerClusterProps {
   participant: EnsembleParticipant
-  configuredProviderSnapshot?: ConfiguredProviderSnapshot
+  configuredProviderSnapshot?: ParticipantPickerConfiguredProviderSnapshot
   composerStyle: ComposerStyle
   agenticServices?: AgenticServicesSettings
   grokAvailable: boolean
@@ -78,6 +124,11 @@ interface ParticipantPickerClusterProps {
    *  edits (model/provider/permissions) persist immediately. */
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   onApplyPermissionsToAll?: (source: EnsembleParticipant) => void
+  /** Keep nested picker portals anchored while this cluster sits in a
+   * scrollable surface such as the compact Ensemble roster popover. */
+  repositionOnScroll?: boolean
+  /** Caller-specific class shared by both body-portaled picker surfaces. */
+  nestedPopoverClassName?: string
 }
 
 export function buildParticipantPickerProviderGroups(
@@ -126,11 +177,17 @@ export function ParticipantPickerCluster({
   cursorAvailable,
   showApplyToAll = false,
   onPatch,
-  onApplyPermissionsToAll
+  onApplyPermissionsToAll,
+  repositionOnScroll = false,
+  nestedPopoverClassName
 }: ParticipantPickerClusterProps): JSX.Element {
+  const mutableProviderSnapshot: ConfiguredProviderSnapshot = {
+    ...configuredProviderSnapshot,
+    providerIds: [...configuredProviderSnapshot.providerIds]
+  }
   const resolved = resolveEnsembleParticipantSettings(participant)
   const defaults = getEnsembleModelDefaults(participant.provider)
-  const antigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []
+  const antigravityModels = mutableProviderSnapshot.modelsByProvider?.antigravity || []
   const modelOptions: CombinedModelPickerModelOption[] =
     participant.provider === 'antigravity'
       ? groupAntigravityModelRows(antigravityModels, participant.model)
@@ -145,7 +202,7 @@ export function ParticipantPickerCluster({
   const providerGroups = buildParticipantPickerProviderGroups(
     grokAvailable,
     cursorAvailable,
-    configuredProviderSnapshot,
+    mutableProviderSnapshot,
     participant.provider,
     selectedModelId
   )
@@ -154,34 +211,42 @@ export function ParticipantPickerCluster({
     onPatch(buildParticipantProviderModelPatch(participant, provider, model))
   }
 
-  const antigravityVariantGroup =
-    participant.provider === 'antigravity'
-      ? antigravityVariantGroupForModel(antigravityModels, selectedModelId)
-      : null
   const selectedReasoning =
     participant.provider === 'antigravity'
-      ? (antigravityEffortForModelId(selectedModelId) ?? '')
+      ? resolved.reasoningEffort === 'ultraTask'
+        ? 'ultraTask'
+        : (antigravityEffortForModelId(selectedModelId) ?? '')
       : participant.provider === 'kimi'
         ? resolveKimiReasoningPickerSelection(selectedModelId, resolved.reasoningEffort)
         : resolved.reasoningEffort
+  const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId)
+  // AntiGravity owns its whole ladder (UltraTask included) in the shared
+  // helper: a variant family lists its variants, and a fixed-reasoning row
+  // (claude-sonnet-4-6, gpt-oss-120b-medium) lists its ONE real stop instead of
+  // the fake Off this used to seed for a model that cannot stop reasoning.
   const reasoningOptions =
     participant.provider === 'antigravity'
-      ? (antigravityVariantGroup?.variants.map((variant) => ({
-          value: variant.effort,
-          label: variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
-        })) ?? [])
-      : getEnsembleReasoningOptions(participant.provider, selectedModelId)
-  const onSelectReasoning = (value: string): void => {
-    if (participant.provider === 'antigravity') {
-      const target = antigravityVariantGroup?.variants.find((variant) => variant.effort === value)
-      if (target && target.id !== selectedModelId) {
-        onSelectProviderModel('antigravity', target.id)
-      }
-    } else if (participant.provider === 'kimi') {
-      onPatch(buildKimiReasoningPickerPatch(selectedModelId, value))
-    } else {
-      onPatch({ reasoningEffort: value })
+      ? antigravityReasoningLadderOptions(
+          antigravityModels,
+          selectedModelId,
+          selectedModelOption?.ultraTaskSupported === true
+        )
+      : [...getEnsembleReasoningOptions(participant.provider, selectedModelId, selectedModelOption)]
+  if (participant.provider !== 'antigravity' && selectedModelOption?.ultraTaskSupported === true) {
+    if (reasoningOptions.length === 0) {
+      reasoningOptions.push({ value: 'off', label: 'Off' })
     }
+    reasoningOptions.push({ value: 'ultraTask', label: 'UltraTask' })
+  }
+  const onSelectReasoning = (value: string): void => {
+    onPatch(
+      buildParticipantReasoningSelectionPatch(
+        participant,
+        selectedModelId,
+        value,
+        antigravityModels
+      )
+    )
   }
 
   const fastModeEnabled =
@@ -271,7 +336,8 @@ export function ParticipantPickerCluster({
         fastModeCapableModelIds={defaults.fastModeCapableModelIds}
         fastModeEnabled={fastModeEnabled}
         onToggleFastMode={onToggleFastMode}
-        repositionOnScroll
+        repositionOnScroll={repositionOnScroll}
+        popoverClassName={nestedPopoverClassName}
       />
       <CombinedPermissionsPicker
         provider={participant.provider}
@@ -288,7 +354,8 @@ export function ParticipantPickerCluster({
             ? () => onApplyPermissionsToAll(participant)
             : undefined
         }
-        repositionOnScroll
+        repositionOnScroll={repositionOnScroll}
+        popoverClassName={nestedPopoverClassName}
       />
     </>
   )

@@ -2,21 +2,11 @@ import type {
   ActiveGoalStatus,
   ChatRecord,
   EnsembleFanoutPolicy,
-  EnsembleOrchestrationMode,
   EnsembleParticipant,
   EnsembleRoundState
 } from '../../../main/store/types'
-import { isOllamaModelInstalled } from '../../../shared/ollamaModelAvailability'
-import {
-  estimateWorstOllamaEnsembleUiPressure,
-  ollamaContextPressureMessage,
-  type OllamaContextPressureSeverity
-} from '../../../main/ollama/OllamaEnsembleContext'
 import { activeEnsembleRoundForComposer } from './chatBusyState'
-import {
-  ensembleFanoutPolicyEnabled,
-  normalizeEnsembleFanoutPolicy
-} from './ensembleFanoutPolicy'
+import { normalizeEnsembleFanoutPolicy } from './ensembleFanoutPolicy'
 import { resolveProviderHueClass } from './ollamaDisplayBrand'
 import { overlayPendingEnsembleSeatSelections } from './pendingEnsembleSeatSelection'
 import { resolveSlashParticipantForChat } from './resolveSlashParticipant'
@@ -26,24 +16,14 @@ export interface MultiviewEnsembleComposerProjection {
   enabledParticipants: EnsembleParticipant[]
   selectedParticipant: EnsembleParticipant | null
   liveRound: EnsembleRoundState | undefined
-  currentOrchestrationMode: EnsembleOrchestrationMode
-  activeOrchestrationMode: EnsembleOrchestrationMode
   currentFanoutPolicy: EnsembleFanoutPolicy
   activeFanoutPolicy: EnsembleFanoutPolicy
-  currentConcurrentMode: boolean
-  activeConcurrentMode: boolean
   continuationHops: number
   maxContinuationHops: number
   isRoundRunning: boolean
   roundStatus: EnsembleRoundState['status'] | undefined
   activeGoalStatus: ActiveGoalStatus | null
   providerBlendStyle: Record<string, string>
-  ollamaContextWarning: {
-    severity: OllamaContextPressureSeverity
-    message: string
-    suggestedChars: number
-    clampContextChars: boolean
-  } | null
 }
 
 export interface MultiviewEnsembleSelectionOwnership {
@@ -223,7 +203,6 @@ export function pruneMultiviewEnsembleSelectionOwnership(
  */
 export function buildMultiviewEnsembleComposerProjection(
   chat: ChatRecord,
-  installedOllamaModels: Array<{ id?: string; contextLength?: number }> = [],
   selectedParticipantId?: string | null,
   pendingParticipantSelections?: Record<string, EnsembleParticipant>
 ): MultiviewEnsembleComposerProjection {
@@ -240,9 +219,6 @@ export function buildMultiviewEnsembleComposerProjection(
     participants.find(
       (participant) => participant.id === (selectedParticipantId || fallbackParticipantId)
     ) || null
-  const currentOrchestrationMode: EnsembleOrchestrationMode =
-    chat.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-  const activeOrchestrationMode = liveRound?.orchestrationMode ?? currentOrchestrationMode
   const currentFanoutPolicy = normalizeEnsembleFanoutPolicy(
     chat.ensemble?.fanoutPolicy,
     chat.ensemble?.concurrentModeEnabled
@@ -251,65 +227,19 @@ export function buildMultiviewEnsembleComposerProjection(
     liveRound?.fanoutPolicy !== undefined || liveRound?.concurrentMode !== undefined
       ? normalizeEnsembleFanoutPolicy(liveRound.fanoutPolicy, liveRound.concurrentMode)
       : currentFanoutPolicy
-  const ollamaParticipants = participants.filter(
-    (participant) => participant.enabled && participant.provider === 'ollama'
-  )
-  const explicitOllamaContextLengths = ollamaParticipants
-    .map(
-      (participant) =>
-        installedOllamaModels.find(
-          (model) => model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-        )?.contextLength
-    )
-    .filter(
-      (contextLength): contextLength is number =>
-        typeof contextLength === 'number' &&
-        Number.isFinite(contextLength) &&
-        contextLength >= 2048
-    )
-  const ollamaPressure =
-    ollamaParticipants.length > 0
-      ? estimateWorstOllamaEnsembleUiPressure({
-          configuredContextChars: chat.ensemble?.ensembleContextChars,
-          participantCount: enabledParticipants.length,
-          ollamaParticipants: ollamaParticipants.map((participant) => ({
-            modelId: participant.model,
-            ollamaContextLength: installedOllamaModels.find(
-              (model) =>
-                model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-            )?.contextLength
-          })),
-          toolsEnabled: chat.scope !== 'global'
-        })
-      : null
-
   return {
     participants,
     enabledParticipants,
     selectedParticipant,
     liveRound,
-    currentOrchestrationMode,
-    activeOrchestrationMode,
     currentFanoutPolicy,
     activeFanoutPolicy,
-    currentConcurrentMode: ensembleFanoutPolicyEnabled(currentFanoutPolicy),
-    activeConcurrentMode: ensembleFanoutPolicyEnabled(activeFanoutPolicy),
     continuationHops: liveRound?.continuationHops ?? 0,
     maxContinuationHops:
       chat.ensemble?.maxContinuationHops ?? liveRound?.maxContinuationHops ?? 6,
     isRoundRunning: Boolean(liveRound),
     roundStatus: liveRound?.status,
     activeGoalStatus: chat.activeGoal?.status ?? null,
-    providerBlendStyle: buildEnsembleProviderBlendStyle(enabledParticipants),
-    ollamaContextWarning: ollamaPressure
-      ? {
-          severity: ollamaPressure.severity,
-          message: ollamaContextPressureMessage(ollamaPressure),
-          suggestedChars: ollamaPressure.effectiveTranscriptChars,
-          clampContextChars: explicitOllamaContextLengths.some(
-            (contextLength) => contextLength < 128 * 1024
-          )
-        }
-      : null
+    providerBlendStyle: buildEnsembleProviderBlendStyle(enabledParticipants)
   }
 }

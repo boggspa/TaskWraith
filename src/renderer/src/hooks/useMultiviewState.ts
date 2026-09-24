@@ -2,6 +2,12 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
 import type { CachedChatScrollState } from '../lib/TranscriptScroll'
 import {
+  applyMultiviewThreadPlacement,
+  planMultiviewThreadPlacement,
+  type MultiviewThreadDropRequest,
+  type MultiviewThreadPlacement
+} from '../lib/multiviewThreadPlacement'
+import {
   DEFAULT_MULTIVIEW_LAYOUT,
   clampFocusedPaneIndex,
   defaultColumnFractions,
@@ -140,35 +146,45 @@ export function isMultiviewFocusOnlyChange(
 export const MULTIVIEW_MIN_PANE_PX = 240
 
 /**
- * Closing a pane downgrades the layout by exactly one pane. Each step reduces
- * paneCount by one: quad(4) -> two-top-one-bottom(3) -> vertical-2(2) ->
- * single(1). The four 3-pane variants all collapse to vertical-2.
+ * Closing a pane selects the next smaller catalogue shape. Eight-way collapses
+ * to six-way and six-way collapses to quad because there are no seven- or
+ * five-pane variants; applyClosePane parks any extra survivor so closing one
+ * pane never discards another pane's state.
  */
 const DOWNGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   single: 'single',
   'vertical-2': 'single',
+  'vertical-3': 'vertical-2',
+  'vertical-4': 'vertical-3',
   'horizontal-2': 'single',
   'two-top-one-bottom': 'vertical-2',
   'one-top-two-bottom': 'vertical-2',
   'one-left-two-right': 'vertical-2',
   'two-left-one-right': 'vertical-2',
-  quad: 'two-top-one-bottom'
+  quad: 'two-top-one-bottom',
+  'six-way': 'quad',
+  'eight-way': 'six-way'
 }
 
 /**
- * Inverse of DOWNGRADE_LAYOUT: grow the layout by exactly one pane
- * (single -> vertical-2 -> two-top-one-bottom -> quad). Used when opening a
- * chat in a new pane and no spare cell is free.
+ * Grow to the next available larger catalogue shape when opening a chat in a
+ * new pane and no spare cell is free. Quad jumps to six-way and six-way jumps
+ * to eight-way because there are no five- or seven-pane variants, leaving one
+ * additional empty cell at either step.
  */
 const UPGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   single: 'vertical-2',
   'vertical-2': 'two-top-one-bottom',
+  'vertical-3': 'vertical-4',
+  'vertical-4': 'six-way',
   'horizontal-2': 'two-top-one-bottom',
   'two-top-one-bottom': 'quad',
   'one-top-two-bottom': 'quad',
   'one-left-two-right': 'quad',
   'two-left-one-right': 'quad',
-  quad: 'quad'
+  quad: 'six-way',
+  'six-way': 'eight-way',
+  'eight-way': 'eight-way'
 }
 
 const PANE_ID_PREFIX = 'pane-'
@@ -501,33 +517,49 @@ export function applyFocusEmptyPane(
 
 /**
  * Close a pane: drop that cell, compact the rest in order (SURVIVING panes keep
- * their ids and settings), and downgrade the layout one step. Focus follows:
+ * their ids and settings), and select the next smaller layout. Focus follows:
  * closing before the focused cell shifts focus left by one; closing the focused
- * cell keeps focus on the same slot index (clamped). A no-op in single layout.
+ * cell keeps focus on the same slot index (clamped). When a layout skips a pane
+ * count on downgrade, applySetLayout parks the extra survivor. A no-op in
+ * single layout.
  */
 export function applyClosePane(state: MultiviewCoreState, index: number): MultiviewCoreState {
   if (state.layout === 'single') return state
   if (index < 0 || index >= state.panes.length) return state
   const nextLayout = DOWNGRADE_LAYOUT[state.layout]
   const remaining = state.panes.filter((_, i) => i !== index)
-  // Downgrade always reduces paneCount by exactly one, so `remaining` already
-  // matches nextLayout's count — clampPanes is a no-op pass-through here.
-  const clamped = clampPanes(remaining, nextLayout, state.nextPaneSeq)
   let nextFocus = state.focusedPaneIndex
   if (index < state.focusedPaneIndex) nextFocus -= 1
-  else if (index === state.focusedPaneIndex) nextFocus = index
-  return {
-    layout: nextLayout,
-    panes: clamped.panes,
-    parkedPanes: state.parkedPanes,
-    focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout),
-    trackSizes: state.trackSizes,
-    paneSettings: pruneSettings(state.paneSettings, [
-      ...clamped.panes,
-      ...state.parkedPanes
-    ]),
-    nextPaneSeq: clamped.nextPaneSeq
+  else if (index === state.focusedPaneIndex) nextFocus = Math.min(index, remaining.length - 1)
+  const withoutClosed: MultiviewCoreState = {
+    ...state,
+    panes: remaining,
+    focusedPaneIndex: Math.max(0, nextFocus),
+    paneSettings: pruneSettings(state.paneSettings, [...remaining, ...state.parkedPanes])
   }
+  return applySetLayout(withoutClosed, nextLayout)
+}
+
+/**
+ * Dismiss a populated pane from its glass-pill X.
+ *
+ * The primary host pane is non-destructive: clearing its chat reveals Thread
+ * Home without changing the layout or disturbing siblings. Other populated
+ * panes keep the ordinary structural close behavior. An already-empty target
+ * is deliberately idempotent so a rapid/replayed primary dismiss cannot turn
+ * into a second close after the first transition cleared its chat; the explicit
+ * X rendered by an empty Thread Home pane still calls `closePane` directly.
+ */
+export function applyDismissPane(
+  state: MultiviewCoreState,
+  index: number,
+  primaryChatId: string | null
+): MultiviewCoreState {
+  const pane = state.panes[index]
+  if (!pane || isPaneEmpty(pane)) return state
+  return primaryChatId && pane.chatId === primaryChatId
+    ? applySetPaneChat(state, index, null)
+    : applyClosePane(state, index)
 }
 
 /**
@@ -554,8 +586,8 @@ export function applyAssignToFocusedPane(
 
 /**
  * Open a chat in a NON-focused pane WITHOUT moving focus — the sidebar
- * "Open in Multiview pane" action. Grows the layout by one pane when there is
- * no spare non-focused cell; once at quad, overwrites a non-focused cell. The
+ * "Open in Multiview pane" action. Grows to the next larger layout when there is
+ * no spare non-focused cell; once at eight-way, overwrites a non-focused cell. The
  * focused (interactive) pane is never disturbed.
  */
 export function applyOpenInNewPane(
@@ -588,8 +620,8 @@ export function applyOpenInNewPane(
  * Detach an audio/video player into a NON-focused pane WITHOUT moving focus — the
  * transcript "pop out to pane" action. The user pops the player out of the message
  * flow but KEEPS TYPING in the current (transcript) pane, so focus is preserved.
- * Clones applyOpenInNewPane: grows the layout by one pane (UPGRADE_LAYOUT) when no
- * spare non-focused EMPTY cell exists; once at quad, overwrites a non-focused cell.
+ * Clones applyOpenInNewPane: grows via UPGRADE_LAYOUT when no
+ * spare non-focused EMPTY cell exists; once at eight-way, overwrites a non-focused cell.
  * "Empty" here means truly empty — no chat, no canvas, no existing media — so an
  * already-detached player or a canvas is never clobbered while a spare exists.
  */
@@ -891,10 +923,14 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** Select an empty pane without allowing singleton state to overwrite pane ownership. */
   focusEmptyPane: (index: number, outgoingVisibleChatId?: string | null) => void
   closePane: (index: number) => void
+  /** Primary chat -> Thread Home; another populated pane -> structural close. */
+  dismissPane: (index: number, primaryChatId: string | null) => void
   /** Place a chat in the focused pane, or focus its existing pane. */
   assignToFocusedPane: (chatId: string) => void
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
+  previewThreadDrop: (request: MultiviewThreadDropRequest) => MultiviewThreadPlacement
+  commitThreadDrop: (placement: MultiviewThreadPlacement) => boolean
   /** Detach an A/V player into a non-focused pane (grows if needed); keeps focus. */
   openMediaInNewPane: (mediaRef: MultiviewPaneMediaRef) => void
   /** Drag a gutter: move `deltaPx` between two adjacent tracks (clamped at min). */
@@ -979,6 +1015,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     (index: number) => commitState((s) => applyClosePane(s, index)),
     [commitState]
   )
+  const dismissPane = useCallback(
+    (index: number, primaryChatId: string | null) =>
+      commitState((s) => applyDismissPane(s, index, primaryChatId)),
+    [commitState]
+  )
   const assignToFocusedPane = useCallback((chatId: string) => {
     commitState((s) => applyAssignToFocusedPane(s, chatId).state)
   }, [commitState])
@@ -990,6 +1031,18 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   )
   const openMediaInNewPane = useCallback((mediaRef: MultiviewPaneMediaRef) => {
     commitState((s) => applyOpenMediaInNewPane(s, mediaRef))
+  }, [commitState])
+  const previewThreadDrop = useCallback((request: MultiviewThreadDropRequest) => {
+    return planMultiviewThreadPlacement(stateRef.current, request)
+  }, [])
+  const commitThreadDrop = useCallback((placement: MultiviewThreadPlacement) => {
+    let applied = false
+    commitState((current) => {
+      const next = applyMultiviewThreadPlacement(current, placement)
+      applied = next !== current
+      return next
+    })
+    return applied
   }, [commitState])
   const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
     commitState((s) => applyResizeTrack(s, args))
@@ -1053,8 +1106,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setFocusedPane,
     focusEmptyPane,
     closePane,
+    dismissPane,
     assignToFocusedPane,
     openInNewPane,
+    previewThreadDrop,
+    commitThreadDrop,
     openMediaInNewPane,
     resizeTrack,
     resetTrackSizes,

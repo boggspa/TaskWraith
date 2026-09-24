@@ -3,17 +3,25 @@ import { GROK_BROKER_MCP_TOOL_NAMESPACE } from './index.constants'
 
 export function taskWraithToolNameForProvider(provider: ProviderId, toolName: string): string {
   if (provider === 'claude') return `mcp__TaskWraith__${toolName}`
+  if (provider === 'kimi') return `mcp__taskwraith__${toolName}`
+  if (provider === 'mistral') return `TaskWraith_${toolName}`
   if (provider === 'cursor') return `taskwraith__${toolName}`
   if (provider === 'grok') return `${GROK_BROKER_MCP_TOOL_NAMESPACE}__${toolName}`
   return `TaskWraith__${toolName}`
 }
 
 export function taskWraithToolNamespaceHint(provider: ProviderId): string {
+  if (provider === 'mistral') {
+    return 'Mistral Vibe currently exposes TaskWraith tools as `TaskWraith_<tool>` (one underscore); a scoped server or older version may use another prefix. Use the exact listed name. Broker attachment is managed by TaskWraith; a missing tool is an availability blocker, not a request to install a second MCP server.'
+  }
+  if (provider === 'kimi') {
+    return 'Kimi Code exposes current TaskWraith tools as `mcp__taskwraith__<tool>`. Older versions may list `TaskWraith__<tool>`; use the exact listed name. An absent tool is an availability blocker, not a reason to substitute a native tool.'
+  }
   if (provider === 'claude') {
     return 'Claude may expose TaskWraith tools as `mcp__TaskWraith__<tool>`.'
   }
   if (provider === 'cursor') {
-    return 'Managed Cursor runs may expose brokered TaskWraith tools as `taskwraith__<tool>` when the TaskWraith gateway is active; native Cursor tools remain provider-owned and sandbox-bounded.'
+    return 'Managed Cursor runs may expose brokered TaskWraith tools as `taskwraith__<tool>` on MCP server `taskwraith-broker` when the TaskWraith gateway is active. Discover them with GetMcpTools on that server — not GetDynamicTools or CallDynamicTool. Native Cursor tools remain provider-owned and sandbox-bounded.'
   }
   if (provider === 'grok') {
     return 'Grok exposes TaskWraith tools as `TaskWraith__<tool>`; ACP may report the read-only scoped alias `taskwraith-grok__<tool>`.'

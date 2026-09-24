@@ -7,10 +7,25 @@ import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravi
 import {
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_46_MODEL_ID,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
   cursorGrokBaseModelId
 } from '../../../shared/grok45Models'
 import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailability'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K27_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_LABEL,
+  canonicalKimiTaskWraithModelId
+} from '../../../shared/kimiModels'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_LABELS,
+  normalizeDevinModelId
+} from '../../../shared/devinModelCatalog'
 
 /**
  * 1.0.5-EW50 — Shared model-id → human-readable display name
@@ -56,6 +71,9 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'flash-lite': 'Gemini Flash Lite',
 
   // ── Codex (GPT) ───────────────────────────────────────────
+  'gpt-6-astra': 'GPT-6-Astra',
+  'gpt-6-sol': 'GPT-6-Sol',
+  'gpt-6-luna': 'GPT-6-Luna',
   'gpt-5.5': 'GPT-5.5',
   'gpt-5.4': 'GPT-5.4',
   'gpt-5.4-mini': 'GPT-5.4 Mini',
@@ -74,11 +92,13 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // ── Claude ────────────────────────────────────────────────
   'claude-sonnet-5': 'Claude Sonnet 5',
   'preview:anthropic:claude-sonnet-5': 'Claude Sonnet 5',
+  'claude-fable-5-1': 'Claude Fable 5.1',
   'claude-fable-5': 'Claude Fable 5',
   'claude-fable-5-1m': 'Claude Fable 5 (1M)',
   'claude-mythos-5': 'Claude Mythos 5',
   'preview:anthropic:claude-fable-5': 'Claude Fable 5',
   'preview:anthropic:claude-mythos-5': 'Claude Mythos 5',
+  'claude-opus-5-5': 'Claude Opus 5.5',
   'claude-opus-5': 'Claude Opus 5',
   'claude-opus-4-8': 'Claude Opus 4.8',
   'claude-opus-4-8-1m': 'Claude Opus 4.8 (1M)',
@@ -98,8 +118,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // mappings; includes the variants visible in the user's
   // Settings → Model usage list). The legacy K2.6 aliases remain
   // readable for historical usage rows; new dispatch defaults to
-  // K2.7 Coding, with K3 selectable alongside it. ─────────────
-  'kimi-k3': 'K3',
+  // K2.8 Preview, with K3 and Highspeed selectable alongside it. ─────────────
+  'kimi-k3': KIMI_K3_MODEL_LABEL,
+  'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
+  'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,
+  'kimi-k2.7-code-highspeed': KIMI_K27_HIGHSPEED_MODEL_LABEL,
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
   'kimi-k2.7-thinking': 'K2.7 Coding Thinking',
@@ -119,6 +142,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // are SHARED with Cursor's base Grok rows (Fast is a toggle there);
   // `humaniseModelId` adds it only when the provider is Grok.
   'grok-composer-2.5-fast': 'Grok Composer 2.5 Fast',
+  'grok-4.7': 'Grok 4.7',
+  'grok-4.7-fast': 'Grok 4.7 Fast',
   'grok-4.6': 'Grok 4.6',
   'grok-4.5': 'Grok 4.5',
   'grok-4.5-latest': 'Grok 4.5 Fast',
@@ -153,6 +178,9 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
+  'glm-5-2': 'GLM-5.2 (Mistral Hosted)',
+  'glm-5-3': 'GLM-5.3 (Mistral Hosted)',
+  'zai-glm-5-3': 'GLM-5.3 (via Mistral)',
   'codestral-2508': 'Codestral (Aug 2025)',
   'mistral-small-2603': 'Mistral Small 4',
   'devstral-2512': 'Devstral 2',
@@ -165,7 +193,10 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ministral-3b-2512': 'Ministral 3 (3B)',
 
   // ── Muse (Meta Muse Code CLI) ─────────────────────────────
+  'muse-spark-1.3': 'Muse Spark 1.3',
+  'muse-spark-1.3-contributor': 'Muse Contributor Spark 1.3',
   'muse-spark-1.2': 'Muse Spark 1.2',
+  'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
 
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
@@ -174,6 +205,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
   'qwen3.6:35b': 'Qwen 3.6 (35B-A3B)',
   'qwen3.8:27b-mlx': 'Qwen 3.8 (27B-MLX)',
+  'qwen3.8-flash-next:125b-mlx': 'Qwen 3.8 Flash Next (125B-MLX)',
   'gemma3:4b': 'Gemma 3 (4B Param)',
   'gemma4:12b': 'Gemma 4 (12B Param)',
   'gemma4:12b-it-qat': 'Gemma 4 (12B Param)',
@@ -189,6 +221,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'ornith:latest': 'Ornith 1.0 (9B Param)',
   'ornith:9b': 'Ornith 1.0 (9B Param)',
   'ornith:35b': 'Ornith 1.0 (35B Param)',
+  'ornith-1.5:9b': 'Ornith 1.5 (9B Param)',
+  'ornith-1.5:35b': 'Ornith 1.5 (35B Param)',
   'laguna-xs-2.1:q8_0': 'Laguna XS 2.1 (33B-A3B Q8)',
   'gpt-oss': 'GPT OSS (20B Param)',
   'gpt-oss:20b': 'GPT OSS (20B Param)',
@@ -201,18 +235,22 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'granite4:3b': 'Granite 4.0 (3B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
+  'granite4.2:3b': 'Granite 4.2 (3B Param)',
+  'granite4.2:8b': 'Granite 4.2 (8B Param)',
+  'granite4.2:30b': 'Granite 4.2 (30B Param)',
   'nemotron-3-nano:4b': 'Nemotron 3 Nano (4B Param)',
   'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
   'nemotron-3.5-lightning:30b-mlx': 'Nemotron 3.5 Lightning (30B-MLX)',
   // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
   // `devstral-small` row above — same brand, different runtime.
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
+  'mistral-medium-3.5:128b': 'Mistral Medium 3.5 (128B Param)',
   'ministral-3:3b': 'Ministral 3 (3B Param)',
   'ministral-3:14b': 'Ministral 3 (14B Param)',
   'muse-glimmer:30b-mlx': 'Muse Glimmer (30B-MLX)',
   'llama3.1:8b': 'Llama 3.1 (8B Param)',
-  'deepseek-r1:1.5b': 'DeepSeek R1 (1.5B Param)',
-  'deepseek-r1:8b': 'DeepSeek R1 (8B Param)',
+  'deepseek-r1:1.5b': 'R1 (1.5B Param)',
+  'deepseek-r1:8b': 'R1 (8B Param)',
   'rnj-1': 'Rnj-1 (8B Param)',
   'rnj-1:latest': 'Rnj-1 (8B Param)',
   'rnj-1:8b': 'Rnj-1 (8B Param)',
@@ -250,18 +288,29 @@ export function canonicalModelIdForProvider(
     if (provider === 'codex') return 'gpt-5.5'
     if (provider === 'claude') return 'claude-sonnet-5'
     if (provider === 'gemini') return 'flash-lite'
-    if (provider === 'kimi') return 'kimi-k2.7-code'
-    if (provider === 'grok') return GROK_46_MODEL_ID
+    if (provider === 'kimi') return 'kimi-k2.8-preview'
+    if (provider === 'grok') return GROK_47_MODEL_ID
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'
     // The three newest seats had no branch here, so a run recorded with the
     // sentinel id surfaced a model row literally labelled "default". Each maps
-    // to that seat's own default — devstral-small for Mistral, NOT the
-    // flagship (see MISTRAL_DEFAULT_MODEL).
+    // to that seat's own default — Medium 3.5 for Mistral (Vibe 2.25).
     if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
     if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
-    if (provider === 'mistral') return 'devstral-small'
+    if (provider === 'mistral') return 'mistral-medium-3.5'
     if (provider === 'muse') return 'muse-spark-1.2'
+    // Devin's legacy 'cli-default' sentinel was an ambiguous target; it now
+    // resolves to the explicit catalogue default like every other sentinel.
+    if (provider === 'devin') return DEVIN_DEFAULT_MODEL_ID
+  }
+  if (provider === 'kimi') {
+    return canonicalKimiTaskWraithModelId(key) || trimmed
+  }
+  if (provider === 'devin') {
+    // A run records the exact dispatched variant (`claude-opus-5-high`); the
+    // picker and usage rows speak the family (`claude-opus-5`), so collapse
+    // variants onto their family here. Custom ids pass through untouched.
+    return normalizeDevinModelId(trimmed)
   }
   if (provider === 'mistral') {
     // Vibe speaks aliases on the ACP surface but its own config stores the
@@ -282,9 +331,9 @@ export function canonicalModelIdForProvider(
     }
   }
   if (provider === 'grok') {
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return GROK_46_MODEL_ID
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return GROK_47_MODEL_ID
     if (!key || key === 'grok') {
-      return GROK_46_MODEL_ID
+      return GROK_47_MODEL_ID
     }
     if (
       key === 'grok composer 2.5 fast' ||
@@ -293,6 +342,12 @@ export function canonicalModelIdForProvider(
       key === 'composer-2.5-fast'
     ) {
       return 'grok-composer-2.5-fast'
+    }
+    if (key === 'grok 4.7' || key === GROK_47_MODEL_ID) {
+      return GROK_47_MODEL_ID
+    }
+    if (key === 'grok 4.7 fast' || key === GROK_47_FAST_MODEL_ID) {
+      return GROK_47_FAST_MODEL_ID
     }
     if (key === 'grok 4.6' || key === 'grok 4.6 fast' || key === GROK_46_MODEL_ID) {
       return GROK_46_MODEL_ID
@@ -349,6 +404,12 @@ export function canonicalModelIdForProvider(
     if (key === 'qwen3.6:35b-a3b') {
       return 'qwen3.6:35b'
     }
+    if (key === 'mistral-medium-3.5' || key === 'mistral-medium-3.5:latest') {
+      return 'mistral-medium-3.5:128b'
+    }
+    if (key === 'granite4.2' || key === 'granite4.2:latest') {
+      return 'granite4.2:8b'
+    }
     if (key === 'ornith' || key === 'ornith:latest') {
       return 'ornith:9b'
     }
@@ -379,6 +440,13 @@ export function humaniseModelId(
   const canonical = canonicalModelIdForProvider(provider, modelId)
   if (!canonical) return ''
   const key = canonical.trim().toLowerCase()
+  // Devin rows carry the CLI's own labels (shared devinModelCatalog.ts); a
+  // custom id the catalogue does not know falls through to the generic
+  // humanisers below rather than being renamed here.
+  if (provider === 'devin') {
+    const devinLabel = DEVIN_MODEL_LABELS[key]
+    if (devinLabel) return devinLabel
+  }
   if (provider === 'ollama') {
     const cloudDisplayName = ollamaCloudModelDisplayName(canonical)
     if (cloudDisplayName) return cloudDisplayName
@@ -397,6 +465,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('qwen3.8:27b-mlx-')) {
     return 'Qwen 3.8 (27B-MLX)'
+  }
+  if (provider === 'ollama' && key.startsWith('qwen3.8-flash-next:125b-mlx-')) {
+    return 'Qwen 3.8 Flash Next (125B-MLX)'
   }
   if (provider === 'ollama' && key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'
@@ -419,6 +490,12 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('ornith:35b-')) {
     return 'Ornith 1.0 (35B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('ornith-1.5:9b-')) {
+    return 'Ornith 1.5 (9B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('ornith-1.5:35b-')) {
+    return 'Ornith 1.5 (35B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('lfm2.5:8b-')) {
     return 'LFM 2.5 (8B-A1B)'
   }
@@ -427,6 +504,15 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('granite4.1:30b-')) {
     return 'Granite 4.1 (30B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4.2:3b-')) {
+    return 'Granite 4.2 (3B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4.2:8b-')) {
+    return 'Granite 4.2 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4.2:30b-')) {
+    return 'Granite 4.2 (30B Param)'
   }
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
@@ -439,6 +525,9 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('mistral-medium-3.5:128b-')) {
+    return 'Mistral Medium 3.5 (128B Param)'
   }
   if (provider === 'ollama' && key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
@@ -453,10 +542,10 @@ export function humaniseModelId(
     return 'Llama 3.1 (8B Param)'
   }
   if (provider === 'ollama' && key.startsWith('deepseek-r1:8b-')) {
-    return 'DeepSeek R1 (8B Param)'
+    return 'R1 (8B Param)'
   }
   if (provider === 'ollama' && key.startsWith('deepseek-r1:1.5b-')) {
-    return 'DeepSeek R1 (1.5B Param)'
+    return 'R1 (1.5B Param)'
   }
   if (provider === 'ollama' && key.startsWith('glm-4.7-flash:q4_k_m-')) {
     return 'GLM-4.7-Flash (30B-A3B Q4)'
@@ -505,10 +594,11 @@ const PROVIDER_MODEL_LABEL_PREFIX: Partial<Record<ProviderId, RegExp>> = {
   claude: /^Claude\s+/i,
   kimi: /^Kimi\s+/i,
   grok: /^Grok\s+/i,
-  antigravity: /^Gemini\s+/i,
-  // 'Mistral Medium 3.5' → 'Medium 3.5'. Devstral keeps its full name: it does
-  // not repeat the provider, so the strip is a no-op there.
-  mistral: /^Mistral\s+/i
+  antigravity: /^Gemini\s+/i
+  // Mistral is deliberately ABSENT. Its product names canonically carry the
+  // vendor word — 'Mistral Large 3', 'Mistral Medium 3.5' — so stripping it
+  // yields 'Large 3' / 'Medium 3.5', and the model tables then disagreed with
+  // every brand-spoofed surface, which keeps the word for the same reason.
 }
 
 /**
@@ -527,6 +617,29 @@ export function humaniseModelIdCompact(
   if (!pattern) return full
   const stripped = full.replace(pattern, '').trim()
   return stripped || full
+}
+
+/**
+ * Humanise an immutable run/snapshot model without rewriting the one retired
+ * Kimi identity whose upstream route later changed names.
+ *
+ * Current selection and usage surfaces must keep using
+ * {@link humaniseModelIdCompact}: there, `kimi-k2.7-code` intentionally folds
+ * into K2.8 Preview. A completed transcript/close-out instead records what the
+ * run or seat called itself at the time, so the exact retired id keeps its
+ * historical label. Every other id delegates to the canonical humaniser.
+ */
+export function humaniseRecordedModelIdCompact(
+  provider: ProviderId | undefined,
+  modelId: string | undefined | null
+): string {
+  const key = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  if (provider === 'kimi' && key === KIMI_K27_MODEL_ID) {
+    return KNOWN_MODEL_LABELS[KIMI_K27_MODEL_ID] || 'K2.7 Coding'
+  }
+  return humaniseModelIdCompact(provider, modelId)
 }
 
 const DATED_CLAUDE_MODEL_ID = /^claude-(haiku|sonnet|opus|fable|mythos)-(\d+)-(\d+)(?:-\d{8})?$/i

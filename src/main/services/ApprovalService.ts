@@ -15,6 +15,7 @@ import type { BridgeApnsTokenStore } from '../BridgeApnsTokenStore'
 import { buildMobileApprovalCard, type MobileApprovalCard } from '../RemoteTaskProjection'
 import { AGENTIC_SERVICE_LABELS } from '../AgenticServiceMessages'
 import { RemoteAttentionApnsFanout } from '../RemoteAttentionApnsFanout'
+import { shouldHoldShellApprovalWithoutTimeoutDeny } from '../EffectiveRunPermissions'
 import {
   isBossApprovalReviewCandidate,
   type BossApprovalReviewCandidate,
@@ -158,6 +159,13 @@ export interface PendingCodexApproval {
   runId?: string
   allowedActions?: AgentApprovalAction[]
   /**
+   * Target surface for a canvas tool (the canvasId). Codex does not pass a
+   * surfaceId through applyApprovalDecision the way the Gemini/Claude path does,
+   * so it is carried here to open the exact-live-surface canvas_eval window on
+   * a human accept (12h across navigation/later turns — Codex gate parity).
+   */
+  surfaceId?: string
+  /**
    * Provider-native Codex tool name for deferred PostToolUse. Set only when
    * PreToolUse already ran at registration and Post was skipped because the
    * ask path returned `deferred`; `resolve` fires Post with ok/deny.
@@ -183,6 +191,19 @@ export interface PendingKimiApproval {
   runId?: string
   allowedActions?: AgentApprovalAction[]
   externalPathDetection?: PendingExternalPathDetection
+}
+
+/**
+ * Does this value look like an `EnsembleRunIdentity` for a CONCURRENT fan-out
+ * lane? `laneId` is only stamped by concurrent lane dispatch; serial rotation
+ * dispatch leaves it undefined (see `ensembleRunIdentity` in
+ * EnsembleOrchestrator). Read defensively — the value crosses the run-state
+ * boundary as plain data.
+ */
+function hasEnsembleFanoutLaneId(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const laneId = (value as { laneId?: unknown }).laneId
+  return typeof laneId === 'string' && laneId.trim().length > 0
 }
 
 function approvalActionResumesExecution(action: AgentApprovalAction): boolean {
@@ -219,6 +240,30 @@ export interface ApprovalRouteLookup {
   appRunId?: string
   appChatId?: string
 }
+
+/**
+ * Exact in-memory card sent to the desktop renderer.
+ *
+ * This is deliberately separate from MobileApprovalCard: remote projections
+ * may truncate or withhold sensitive review material, while a renderer that
+ * reloads after a crash must rebuild the same desktop-only approval surface.
+ * The card is never persisted and is forgotten with the pending approval.
+ */
+export type RendererApprovalRequest = {
+  id: string
+  approvalId?: string
+  provider: ProviderId
+  service?: AgenticServiceId
+  appRunId?: string
+  appChatId?: string
+  method: string
+  title: string
+  body: string
+  preview?: unknown
+  params?: unknown
+  actions: AgentApprovalAction[]
+  holdWithoutTimeoutDeny?: boolean
+} & Record<string, unknown>
 
 export interface ResolveOptions {
   /** Typed user input (Codex elicitation / requestUserInput). */
@@ -362,6 +407,7 @@ export class ApprovalService {
   private pendingCodex = new Map<string, PendingCodexApproval>()
   private pendingKimi = new Map<string, PendingKimiApproval>()
   private pendingHostCommand = new Map<string, PendingHostCommandApproval>()
+  private pendingRendererRequests = new Map<string, RendererApprovalRequest>()
   private bossApprovalReviewAbortControllers = new Map<string, AbortController>()
   private scheduler: ApprovalTimeoutScheduler | null = null
   private readonly remoteAttentionFanout: RemoteAttentionApnsFanout
@@ -550,6 +596,7 @@ export class ApprovalService {
 
   deleteHostCommand(approvalId: string): void {
     this.pendingHostCommand.delete(approvalId)
+    this.pendingRendererRequests.delete(approvalId)
   }
 
   has(approvalId: string): boolean {
@@ -560,6 +607,40 @@ export class ApprovalService {
       this.pendingKimi.has(approvalId) ||
       this.pendingHostCommand.has(approvalId)
     )
+  }
+
+  /**
+   * Remember the exact card at the same boundary that publishes it to the
+   * renderer. Registration must happen first so an orphan card can never be
+   * revived after a rejected or already-settled approval.
+   */
+  publishRendererApprovalRequest(request: RendererApprovalRequest): boolean {
+    const approvalId = request.id.trim()
+    if (!approvalId || !this.has(approvalId)) return false
+    const holdWithoutTimeoutDeny =
+      request.holdWithoutTimeoutDeny === true ||
+      this.shouldHoldShellTimeoutDeny(approvalId, request.service, request.appRunId)
+    if (holdWithoutTimeoutDeny) request.holdWithoutTimeoutDeny = true
+    this.pendingRendererRequests.set(approvalId, {
+      ...request,
+      id: approvalId,
+      actions: [...request.actions],
+      ...(holdWithoutTimeoutDeny ? { holdWithoutTimeoutDeny: true } : {})
+    })
+    return true
+  }
+
+  /** Exact pending desktop cards in publication order, for renderer recovery. */
+  listRendererApprovalRequests(): RendererApprovalRequest[] {
+    const requests: RendererApprovalRequest[] = []
+    for (const [approvalId, request] of this.pendingRendererRequests) {
+      if (!this.has(approvalId)) {
+        this.pendingRendererRequests.delete(approvalId)
+        continue
+      }
+      requests.push({ ...request, actions: [...request.actions] })
+    }
+    return requests
   }
 
   /**
@@ -772,6 +853,95 @@ export class ApprovalService {
     return null
   }
 
+  private pendingTimeoutHoldContext(approvalId: string): {
+    service?: AgenticServiceId
+    runId?: string
+  } {
+    const gemini = this.pendingGeminiTool.get(approvalId)
+    if (gemini) return { service: gemini.service, runId: gemini.runId }
+    const kimi = this.pendingKimi.get(approvalId)
+    if (kimi) return { service: kimi.service, runId: kimi.runId }
+    const codex = this.pendingCodex.get(approvalId)
+    if (codex) return { service: codex.service, runId: codex.runId }
+    const renderer = this.pendingRendererRequests.get(approvalId)
+    if (renderer) return { service: renderer.service, runId: renderer.appRunId }
+    return {}
+  }
+
+  private runIsUnattended(runId?: string): boolean {
+    if (!runId) return false
+    const session = this.deps.runManager.get(runId) as
+      | { scheduledTaskId?: unknown; state?: unknown }
+      | undefined
+    if (!session) return false
+    if (typeof session.scheduledTaskId === 'string' && session.scheduledTaskId.trim()) return true
+    const state = session.state as Record<string, unknown> | undefined
+    if (!state || typeof state !== 'object') return false
+    if (typeof state.scheduledTaskId === 'string' && state.scheduledTaskId.trim()) return true
+    const payload = state.payload as Record<string, unknown> | undefined
+    return typeof payload?.scheduledTaskId === 'string' && Boolean(payload.scheduledTaskId.trim())
+  }
+
+  /**
+   * Is this run a BACKGROUND Ensemble fan-out lane — a seat the Boss dispatched
+   * into its own lane, with no human sitting on its approval modal?
+   *
+   * Deliberately separate from `runIsUnattended`, which answers a different
+   * question ("nobody SCHEDULED this run"): it keys only on `scheduledTaskId`,
+   * which a Boss-dispatched fan-out lane never carries. Widening that method to
+   * cover lanes would collapse two distinct facts — "unattended" also drives
+   * scheduled-run posture clamps and seal evidence — so the lane fact gets its
+   * own derivation and both are fed to the hold predicate.
+   *
+   * The evidence is the run state's `EnsembleRunIdentity`. `laneId` is the
+   * discriminator: only concurrent fan-out dispatch stamps one. A serial
+   * rotation turn in an interactive round carries an `ensembleRun` WITHOUT a
+   * `laneId`, and a human is watching that round, so it keeps the hold.
+   */
+  private runIsBackgroundFanoutLane(runId?: string): boolean {
+    if (!runId) return false
+    const session = this.deps.runManager.get(runId) as
+      | { ensembleRun?: unknown; state?: unknown }
+      | undefined
+    if (!session) return false
+    if (hasEnsembleFanoutLaneId(session.ensembleRun)) return true
+    const state = session.state as Record<string, unknown> | undefined
+    if (!state || typeof state !== 'object') return false
+    if (hasEnsembleFanoutLaneId(state.ensembleRun)) return true
+    const payload = state.payload as Record<string, unknown> | undefined
+    return hasEnsembleFanoutLaneId(payload?.ensembleRun)
+  }
+
+  private runPresetId(runId?: string): string | undefined {
+    if (!runId) return undefined
+    const session = this.deps.runManager.get(runId) as { state?: unknown } | undefined
+    const state = session?.state as
+      | {
+          effectivePermissions?: { presetId?: unknown }
+          payload?: { effectivePermissions?: { presetId?: unknown } }
+        }
+      | undefined
+    const presetId =
+      state?.effectivePermissions?.presetId ?? state?.payload?.effectivePermissions?.presetId
+    return typeof presetId === 'string' ? presetId : undefined
+  }
+
+  shouldHoldShellTimeoutDeny(
+    approvalId: string,
+    service?: AgenticServiceId,
+    runId?: string
+  ): boolean {
+    const pending = this.pendingTimeoutHoldContext(approvalId)
+    const resolvedService = service ?? pending.service
+    const resolvedRunId = runId ?? pending.runId
+    return shouldHoldShellApprovalWithoutTimeoutDeny({
+      presetId: this.runPresetId(resolvedRunId),
+      service: resolvedService,
+      unattended: this.runIsUnattended(resolvedRunId),
+      backgroundFanoutLane: this.runIsBackgroundFanoutLane(resolvedRunId)
+    })
+  }
+
   private projectApprovalCard(
     approvalId: string,
     provider: ProviderId,
@@ -820,6 +990,7 @@ export class ApprovalService {
     }
     const userSettings = this.deps.getApprovalTimeoutSettings()
     if (!userSettings.enabled) return
+    if (this.shouldHoldShellTimeoutDeny(args.approvalId)) return
     this.scheduler.updatePolicy({
       defaultTimeoutsMs: {
         gemini: userSettings.perProviderMs.gemini,
@@ -832,7 +1003,8 @@ export class ApprovalService {
         antigravity: userSettings.perProviderMs.antigravity,
         pi: userSettings.perProviderMs.pi,
         mistral: userSettings.perProviderMs.mistral,
-        muse: userSettings.perProviderMs.muse
+        muse: userSettings.perProviderMs.muse,
+        devin: userSettings.perProviderMs.devin
       },
       mainTimeoutMs: userSettings.mainAuthorityMs
     })
@@ -1252,6 +1424,19 @@ export class ApprovalService {
     this.pendingCodex.delete(requestId)
     this.deps.runManager.clearApproval(requestId)
 
+    // 12h per-canvas eval window: a human accept of a Codex canvas_eval opens the
+    // window for that exact live Canvas across navigation and later turns. Codex
+    // does not thread surfaceId through applyApprovalDecision (as the
+    // Gemini/Claude path does), so record it here from the pending record's stored
+    // surface. Only real accepts open it.
+    if (
+      pending.service === 'canvasEval' &&
+      pending.surfaceId &&
+      this.deps.permissionService.isApprovedAction(action)
+    ) {
+      this.deps.permissionService.recordCanvasEvalWindowGrant(pending.surfaceId, Date.now())
+    }
+
     const deferredHostHookTool =
       typeof pending.hostHookToolName === 'string' ? pending.hostHookToolName.trim() : ''
     const deferredHostHookWorkspace =
@@ -1604,6 +1789,9 @@ export class ApprovalService {
       decisionSource?: 'user' | 'system'
     }
   ): void {
+    if (type === 'approval_resolved') {
+      this.pendingRendererRequests.delete(approvalId)
+    }
     try {
       const session = this.deps.runManager.get(context.appRunId)
       const appRunId = session?.runId ?? context.appRunId
@@ -1713,6 +1901,12 @@ export async function handleApprovalTimeout(
   helpers.log(
     `[ApprovalTimeout] approvalId=${reason.approvalId} auto-deny after ${reason.appliedMs}ms (source=${reason.source})`
   )
+  if (service.shouldHoldShellTimeoutDeny(reason.approvalId)) {
+    helpers.log(
+      `[ApprovalTimeout] holding Ask/Plan shellCommands without deny approvalId=${reason.approvalId}`
+    )
+    return
+  }
   const route = service.lookupRoute(reason.approvalId)
   if (route?.appRunId) {
     try {

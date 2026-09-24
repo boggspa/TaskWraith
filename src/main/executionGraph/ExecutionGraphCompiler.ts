@@ -1069,49 +1069,14 @@ export function executionGraphAuthorityDigest(
 }
 
 /**
- * Fail-closed admission profile for the currently bound desktop executor.
- * Generic compilation stays future-compatible; callers must pass a compiled
- * revision through this check before dispatching it with the V1 coordinator.
+ * Fail-closed admission profile for the currently bound structured desktop
+ * executor. Generic compilation stays future-compatible; this profile records
+ * only semantics the live coordinator still cannot enforce.
  */
 export function validateExecutionGraphV1RuntimeAdmission(
   revision: Pick<ExecutionGraphRevision, 'steps' | 'edges' | 'limits'>
 ): readonly ExecutionGraphCompilationIssue[] {
   const issues: ExecutionGraphCompilationIssue[] = []
-  if (revision.limits.maxConcurrentSteps !== 1) {
-    issues.push(
-      issue(
-        'runtime_concurrency_unsupported',
-        'limits.maxConcurrentSteps',
-        'The V1 bound executor admits only serial graphs with maxConcurrentSteps set to 1.'
-      )
-    )
-  }
-  const incomingControls = new Map<string, number>()
-  const outgoingControls = new Map<string, number>()
-  revision.edges.forEach((edge, index) => {
-    if (edge.kind === 'data') {
-      issues.push(
-        issue(
-          'runtime_data_edge_unsupported',
-          `edges[${index}]`,
-          'The V1 bound executor does not transport structured data between steps.'
-        )
-      )
-      return
-    }
-    incomingControls.set(edge.toStepId, (incomingControls.get(edge.toStepId) ?? 0) + 1)
-    outgoingControls.set(edge.fromStepId, (outgoingControls.get(edge.fromStepId) ?? 0) + 1)
-  })
-  const rootCount = revision.steps.filter((step) => !incomingControls.has(step.id)).length
-  if (rootCount !== 1 || revision.steps.some((step) => (outgoingControls.get(step.id) ?? 0) > 1)) {
-    issues.push(
-      issue(
-        'runtime_parallel_topology_unsupported',
-        'edges',
-        'The V1 bound executor admits only a single serial control chain.'
-      )
-    )
-  }
   if (revision.limits.maxAttempts < revision.steps.length) {
     issues.push(
       issue(
@@ -1162,18 +1127,47 @@ export function validateExecutionGraphV1RuntimeAdmission(
         )
       )
     }
-    for (const side of ['inputs', 'outputs'] as const) {
-      step[side]?.forEach((_port, portIndex) => {
+    if (step.kind === 'solo_agent') {
+      if (!step.agent.runTemplateRef?.trim()) {
         issues.push(
           issue(
-            'runtime_data_port_unsupported',
-            `${path}.${side}[${portIndex}]`,
-            'The V1 bound executor does not bind structured input or output ports.'
+            'runtime_run_template_required',
+            `${path}.agent.runTemplateRef`,
+            'The bound executor requires a persisted run template for every solo-agent step.'
           )
         )
-      })
+      }
+      return
     }
-    if (step.kind !== 'solo_agent') {
+    if (step.kind === 'join') {
+      if (step.join.mode !== 'all') {
+        issues.push(
+          issue(
+            'runtime_join_mode_unsupported',
+            `${path}.join.mode`,
+            'The bound executor currently admits only all-joins.'
+          )
+        )
+      }
+      return
+    }
+    if (step.kind === 'output') {
+      if (step.inputs?.length !== 1 || step.inputs[0]?.required !== true) {
+        issues.push(
+          issue(
+            'runtime_output_shape_unsupported',
+            `${path}.inputs`,
+            'The bound executor requires one required structured input on an output step.'
+          )
+        )
+      }
+      return
+    }
+    if (
+      step.kind === 'deterministic_check' ||
+      step.kind === 'ensemble_round' ||
+      step.kind === 'human_gate'
+    ) {
       issues.push(
         issue(
           'runtime_step_kind_unsupported',

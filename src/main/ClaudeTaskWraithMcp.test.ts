@@ -6,28 +6,36 @@ import {
   buildClaudeTaskWraithAllowedToolNames,
   buildClaudeTaskWraithMcpConfigJson,
   buildClaudeTaskWraithMcpServers,
+  claudeTaskWraithMcpEnabled,
   extendClaudeCliArgsWithTaskWraithMcp
 } from './ClaudeTaskWraithMcp'
+import type { EffectiveRunPermissions } from './store/types'
 import {
   CORE_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
   GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V15_MESH_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V17_MCP_ADVERTISE_TOOLS
+  taskWraithMcpAdvertisedToolNamesForProfile
 } from './mcp/McpToolProfiles'
 import {
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG
 } from './mcp/McpBridgeRuntime'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V4_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
@@ -49,6 +57,30 @@ describe('buildClaudeTaskWraithMcpServers', () => {
 
   it('returns null when disabled so the caller can omit the SDK option entirely', () => {
     expect(buildClaudeTaskWraithMcpServers({ ...fixture, enabled: false })).toBeNull()
+  })
+
+  it('attaches only the TaskWraith broker when signed UltraTask consent is present', () => {
+    const effectivePermissions = {
+      subThreadDelegationAutoAllowSource: 'ultratask'
+    } as EffectiveRunPermissions
+    const input = {
+      ...fixture,
+      enabled: false,
+      bridgeAvailable: true,
+      effectivePermissions,
+      profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    }
+    expect(claudeTaskWraithMcpEnabled(input)).toBe(true)
+    expect(Object.keys(buildClaudeTaskWraithMcpServers(input) || {})).toEqual(['TaskWraith'])
+    expect(claudeTaskWraithMcpEnabled({ ...input, bridgeAvailable: false })).toBe(false)
+    expect(
+      claudeTaskWraithMcpEnabled({
+        ...input,
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultra'
+        } as unknown as EffectiveRunPermissions
+      })
+    ).toBe(false)
   })
 
   it('emits a single TaskWraith stdio entry with the parentProvider env stamp', () => {
@@ -137,6 +169,30 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
   })
 
+  it('adds the direct computer_use selector only for a full-v4 birth', () => {
+    const fullV3 = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID
+    })?.TaskWraith
+    const fullV4 = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_FULL_V4_MCP_PROFILE_ID
+    })?.TaskWraith
+    expect(fullV3?.type).toBe('stdio')
+    expect(fullV4?.type).toBe('stdio')
+    if (fullV3?.type !== 'stdio' || fullV4?.type !== 'stdio') {
+      throw new Error('TaskWraith server missing')
+    }
+    expect(fullV3.args).not.toContain(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
+    expect(fullV4.args).toContain(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
+    expect(buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_FULL_V3_MCP_PROFILE_ID)).not.toContain(
+      'computer_use'
+    )
+    expect(buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_FULL_V4_MCP_PROFILE_ID)).toContain(
+      'computer_use'
+    )
+  })
+
   it('uses the exact gateway profile for both the bridge argv and allowed-tool surface', () => {
     const input = { ...fixture, profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID }
     const servers = buildClaudeTaskWraithMcpServers(input)
@@ -149,9 +205,12 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args).not.toContain('--core-subset')
 
+    const profileTools = taskWraithMcpAdvertisedToolNamesForProfile(
+      TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    )
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V17_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V17_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(profileTools.length * 2)
+    for (const tool of profileTools) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
@@ -170,6 +229,36 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
   })
 
+  it('uses the exact lean solo profile for both bridge argv and allowedTools', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+    })
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args).toContain(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_SOLO_SUBSET_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG)
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
+
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toHaveLength(31)
+    expect(allowed).toHaveLength(62)
+    for (const tool of GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS) {
+      expect(allowed).toContain(tool)
+      expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
+    }
+    expect(allowed).toContain('ensemble_await')
+    expect(allowed).toContain('ensemble_lane_result')
+    expect(allowed).toContain('delegate_wave')
+    expect(allowed).not.toContain('ensemble_roster_edit')
+    expect(allowed).not.toContain('mcp__TaskWraith__ensemble_roster_edit')
+  })
+
   it('adds direct Mesh Canvas tools to the fresh non-denied participant profile', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
@@ -184,9 +273,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args).not.toContain(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
 
-    const allowed = buildClaudeTaskWraithAllowedToolNames(
-      TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
-    )
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID)
     expect(allowed).toHaveLength(GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS.length * 2)
     expect(allowed).toContain('mesh_scene_present')
     expect(allowed).toContain('mcp__TaskWraith__mesh_scene_present')
@@ -237,6 +324,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
         ...fixture.bridgeArgs,
         '--core-subset',
         '--gateway-subset',
+        '--solo-subset',
         '--sketch-direct'
       ]
     })
@@ -245,6 +333,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).not.toContain('--core-subset')
     expect(taskWraith.args).not.toContain('--gateway-subset')
+    expect(taskWraith.args).not.toContain('--solo-subset')
     expect(taskWraith.args).not.toContain('--sketch-direct')
   })
 
@@ -421,7 +510,9 @@ describe('buildClaudeTaskWraithAllowedToolNames', () => {
   })
 
   it('always includes delegate_to_subthread (the headline Phase I tool)', () => {
-    expect(buildClaudeTaskWraithAllowedToolNames()).toContain('mcp__TaskWraith__delegate_to_subthread')
+    expect(buildClaudeTaskWraithAllowedToolNames()).toContain(
+      'mcp__TaskWraith__delegate_to_subthread'
+    )
     expect(buildClaudeTaskWraithAllowedToolNames()).toContain('delegate_to_subthread')
   })
 })
@@ -447,6 +538,24 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(out).not.toBe(baseArgs)
     expect(out).not.toContain('--mcp-config')
     expect(out).not.toContain('--allowedTools')
+  })
+
+  it('pre-approves the UltraTask delegation routes when signed consent enables the broker', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      enabled: false,
+      bridgeAvailable: true,
+      profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+      effectivePermissions: {
+        subThreadDelegationAutoAllowSource: 'ultratask'
+      } as EffectiveRunPermissions
+    })
+    expect(out).toContain('--mcp-config')
+    const allowed = out[out.indexOf('--allowedTools') + 1].split(',')
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(allowed).toContain(toolName)
+      expect(allowed).toContain(`mcp__TaskWraith__${toolName}`)
+    }
   })
 
   it('appends --mcp-config <path> and --allowedTools <comma-joined-names> after the base args', () => {
@@ -490,6 +599,20 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(out[allowedIndex + 1]).toContain('capability_search')
     expect(out[allowedIndex + 1]).toContain('capability_invoke')
     expect(out[allowedIndex + 1]).not.toContain('image_generate')
+  })
+
+  it('uses the exact lean solo allowedTools set when the CLI bridge is solo-filtered', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      profileId: TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID
+    })
+    const allowedIndex = out.indexOf('--allowedTools')
+    expect(allowedIndex).toBeGreaterThan(-1)
+    const allowed = out[allowedIndex + 1].split(',')
+    expect(allowed).toEqual(
+      buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID)
+    )
+    expect(allowed).toHaveLength(62)
   })
 
   it('appends --mcp-config without pre-approving unknown user MCP tools', () => {

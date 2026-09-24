@@ -25,6 +25,51 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'cancel-ensemble-round',
   'cancel-gemini',
   'capture-snapshot',
+  // Canvas utility pop-outs are main-created, chat-owned secondary renderers.
+  // Every payload-bearing handler re-resolves that exact sender/chat binding;
+  // WebContentsView ownership adds a second sender-id check for bounds/close.
+  'canvas:open-popout',
+  'canvas:dock-popout',
+  'canvas:open-embedded',
+  'canvas:open-sketch-embedded',
+  'canvas:adopt-embedded',
+  'canvas:set-bounds',
+  'canvas:set-visible',
+  'canvas:close',
+  'canvas:close-chat',
+  'canvas:navigate-chat',
+  'canvas:list',
+  'canvas:list-chat',
+  'canvas:chart-document',
+  'mesh-scene:list-chat',
+  'mesh-scene:view',
+  'mesh-scene:import-user-model',
+  'mesh-scene:import-user-package',
+  'mesh-scene:close-presentation',
+  'mesh-scene:delete',
+  'simulator-canvas:status',
+  'simulator-canvas:claim-control',
+  'simulator-canvas:release-control',
+  'simulator-canvas:session',
+  'simulator-canvas:open-app',
+  'simulator-canvas:list-devices',
+  'simulator-canvas:boot',
+  'simulator-canvas:pick-app',
+  'simulator-canvas:install',
+  'simulator-canvas:launch',
+  'simulator-canvas:terminate',
+  'simulator-canvas:screenshot',
+  'simulator-canvas:interaction-status',
+  'simulator-canvas:tap',
+  'simulator-canvas:type',
+  'simulator-canvas:scroll',
+  'simulator-canvas:inspect',
+  'simulator-canvas:button',
+  'simulator-canvas:rotate',
+  'simulator-canvas:authorize-pasteboard-intent',
+  'simulator-canvas:clipboard-push',
+  'simulator-canvas:clipboard-pull',
+  'simulator-control:setup-status',
   'changelog-snapshot',
   // Main may operate every Channel; chat renderers are narrowed again by the
   // persisted chat ownership resolved inside registerChannelHandlers.
@@ -45,6 +90,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'clear-blackboard-entries',
   'clear-workspaces',
   'closeout:summarize',
+  'continuation:apply-title',
   'continuation:propose',
   'compact-provider-context',
   'compose-run',
@@ -90,7 +136,11 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-capability-ledger-snapshot',
   'get-chat',
   'get-chat-list',
+  'get-chat-transcript-page',
+  'thread-catalogue:read',
+  'thread-catalogue:status',
   'get-chats',
+  'get-workspace-commit-attributions',
   'unarchive-chat',
   'export-archived-chat',
   'get-claude-auth-status',
@@ -149,6 +199,15 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'git:unpushed-commits',
   'git:workspace-stats',
   'git:work-provenance',
+  // Workspace Stats -> Contributions, alongside the 'git:workspace-stats' read
+  // it is rendered from. The action channel takes the same write scope as
+  // 'git:commit'/'git:push' above and, like them, is narrowed again inside
+  // registerGitHandlers by gitPayloadPath's assertSenderScope on the exact
+  // chat/workspace pair before any contribution is committed, undone, or
+  // recovered.
+  'git:shared-workspace',
+  'git:contribution-preview',
+  'git:contribution-action',
   'git:stage',
   'git:subscribe-snapshot',
   'git:unstage',
@@ -156,6 +215,19 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'work-locks:list',
   'work-locks:subscribe',
   'work-locks:unsubscribe',
+  // Workspace-lock startup health. A popout whose edits are about to fail
+  // closed has as much need to know as the main window, and the payload is
+  // main-owned health only - no paths, chats, or identities.
+  //
+  // The retry is deliberately NOT in the same class as
+  // 'work-locks:force-release-recovery' below. That one takes a lease away
+  // from another owner on a human's say-so; this one re-runs the same
+  // WorkspaceLockRuntime.open the boot path runs, under the same fence, and
+  // concurrent calls coalesce in the supervisor. It cannot release anyone's
+  // lease or bypass fencing, so restricting it would only produce a dead
+  // button in a popout that is already showing the banner.
+  'startup-authority:get',
+  'startup-authority:retry',
   'github:ci-status',
   'github:create-commit-group-pr',
   'github:manage-pr',
@@ -242,6 +314,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'request-ensemble-user-roster-mutation',
   'request-run-queue-job',
   'resize-gemini-session',
+  'get-pending-agent-approvals',
   'respond-agent-approval',
   'rollback-agent-thread',
   'run-agent',
@@ -251,6 +324,8 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'run-gemini',
   'run-workflow-now',
   'save-chat',
+  'patch-chat-composer-selection',
+  'mutate-chat-transcript',
   'save-clipboard-image-attachment',
   'set-chat-git-workflow',
   'save-evidence-pack',
@@ -265,6 +340,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'session-checkpoints:accept',
   'session-checkpoints:dismiss',
   'session-checkpoints:latest',
+  'appearance:get-system-accent-color',
   'set-appearance-mode',
   'set-chat-kind',
   'set-workflow-unattended-elevation',
@@ -312,6 +388,9 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
  * catalogue changes.
  */
 export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
+  // Opens a native picker and creates a process-global archived transcript.
+  // Secondary chat/workspace windows receive no arbitrary local-file import.
+  'import-external-provider-thread',
   // Mid-run steering is coordinated only by the primary App renderer. Both
   // handlers also assert renderer chat scope in main; listing them here records
   // the existing fail-closed boundary without widening secondary access.
@@ -326,9 +405,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'host-projection:command-submit',
   'host-projection:receipt-lookup',
   // Process-wide Host lifecycle is visible and mutable only from the primary
-  // app surface. Popouts never gain an independent start/stop authority.
+  // app surface. Popouts never gain an independent start/stop authority, and
+  // the live inspect (pid, payload, clients) is the same privileged surface.
   'host-lifecycle:status',
   'host-lifecycle:set',
+  'host-lifecycle:inspect',
   // Studio effect-preview state is process-wide and durable. Loading opens a
   // main-owned native file chooser, while clear/state mutate or project that
   // same privileged surface; popouts receive no independent LUT authority.
@@ -375,6 +456,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // billing readings from another local app. Only the primary Model Usage
   // surface may request that account-level telemetry.
   'quota-snapshot-hook:get',
+  // These account-level browser imports capture and mutate encrypted console
+  // credentials. Only the primary Settings/Model Usage surface may use them.
+  'usage-web-session:get-status',
+  'usage-web-session:import',
+  'usage-web-session:clear',
 
   // Declaring the Mistral plan and anchoring the quota meter to a console
   // reading are Settings-level acts that rewrite how every seat's burn is
@@ -398,64 +484,37 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mistral-web-session:import',
   'mistral-web-session:get-status',
   'mistral-web-session:clear',
+  'get-kimi-web-session-status',
+  'import-kimi-web-session',
+  'clear-kimi-web-session',
+  // Writing a captured Kimi console cookie is a credential mutation on the
+  // same footing as the session channels above.
+  'set-kimi-web-session',
 
-  // Canvas WebContentsView state belongs to the primary window. Popouts and
-  // other secondary renderers must not create or reposition an overlay over it.
+  // Terminal sessions spawn host processes scoped to a registered workspace
+  // and stream raw PTY data. Only the primary App renderer may create,
+  // drive, resize, or read them; secondary renderers stay fail-closed.
+  'terminal:create',
+  'terminal:write',
+  'terminal:resize',
+  'terminal:detach',
+  'terminal:kill',
+  'terminal:list',
+  'terminal:getScrollback',
+
+  // Standalone page windows and the app-wide profile reset remain primary-only.
+  // Embedded/dock transfer channels are secondary-safe above because their
+  // handlers bind both the chat and exact renderer-owned WebContentsView.
   'canvas:open-window',
-  'canvas:open-embedded',
+  // Fixed emulator startup is a primary human presentation action; pop-outs
+  // may transfer an existing surface but cannot create a new emulator session.
+  'canvas:open-emulator-embedded',
   'canvas:open-sketch-window',
-  'canvas:open-sketch-embedded',
-  'canvas:adopt-embedded',
-  'canvas:set-bounds',
-  'canvas:set-visible',
-  'canvas:close',
-  'canvas:close-chat',
   'canvas:clear-browser-profile',
-  'canvas:navigate-chat',
-  'canvas:list',
-  'canvas:list-chat',
-  'canvas:chart-document',
-
-  // Mesh Canvas's private asset URLs and human file picker are rendered only
-  // in the main chat window; secondary renderers have no independent surface.
-  'mesh-scene:list-chat',
-  'mesh-scene:view',
-  'mesh-scene:import-user-model',
-  'mesh-scene:import-user-package',
-  'mesh-scene:close-presentation',
-  'mesh-scene:delete',
-
-  // Simulator Canvas dock lives in the main chat window only; secondary
-  // renderers have no independent bezel surface for host simctl actions.
-  'simulator-canvas:status',
-  'simulator-canvas:claim-control',
-  'simulator-canvas:release-control',
-  'simulator-canvas:session',
-  'simulator-canvas:open-app',
-  'simulator-canvas:list-devices',
-  'simulator-canvas:boot',
-  'simulator-canvas:pick-app',
-  'simulator-canvas:install',
-  'simulator-canvas:launch',
-  'simulator-canvas:terminate',
-  'simulator-canvas:screenshot',
-  'simulator-canvas:interaction-status',
-  'simulator-canvas:tap',
-  'simulator-canvas:type',
-  'simulator-canvas:scroll',
-  'simulator-canvas:inspect',
-  'simulator-canvas:button',
-  'simulator-canvas:rotate',
-  'simulator-canvas:authorize-pasteboard-intent',
-  'simulator-canvas:clipboard-push',
-  'simulator-canvas:clipboard-pull',
   // Simulator control can install a local companion, so only the primary
-  // settings/canvas renderer may request its status or begin setup.
-  'simulator-control:setup-status',
+  // settings/canvas renderer may begin setup. Read-only setup status is safe
+  // in a Canvas pop-out and is classified above.
   'simulator-control:setup',
-  'simulator-canvas:claim-control',
-  'simulator-canvas:pick-app',
-  'simulator-canvas:session',
 
   // Office suite documents live in the main window's right dock only; there
   // is no office popout surface, so secondary renderers have no claim on
@@ -493,6 +552,17 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:studio-save',
   'projects:studio-discard',
   'projects:studio-list',
+  // Site logins grant and revoke the authority an agent has over a real
+  // account. Main renderer only; a popout has no business reaching them.
+  'web-login:list',
+  'web-login:add',
+  'web-login:update',
+  'web-login:remove',
+  'web-login:sign-in',
+  'web-login:sign-out',
+  'web-login:migration-candidates',
+  'web-login:migration-dismiss',
+  'web-login:clear-shared-jar',
   'projects:extract-reference',
   'projects:get-reference-extract',
   'projects:revoke-reference-extract',
@@ -510,10 +580,15 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'execution-runs:events',
   'execution-runs:append-stack-step',
   'execution-runs:cancel',
+  'execution-runs:resume',
+  'execution-runs:archive',
+  'execution-graphs:retry-recovery',
   'execution-runs:cancel-step',
   'execution-runs:formalize',
 
   // Global settings, runtime profiles, encrypted secrets, and handoff records.
+  'command-rules:list',
+  'command-rules:remove',
   'update-settings',
   'prompt-cache:get-policy',
   'prompt-cache:get-capabilities',
@@ -638,7 +713,6 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'check-for-updates',
   'download-update',
   'download-update-and-restart',
-  'install-update-on-quit',
   'install-update-now',
   'mark-changelog-seen',
   'export-product-diagnostics',

@@ -1,0 +1,494 @@
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { HostThreadRecordPersistError } from './HostThreadRecordPersistCommand'
+import type {
+  HostThreadRecordPersistInput,
+  HostThreadRecordPersistPort
+} from './HostThreadRecordPersistCommand'
+
+const profiles: string[] = []
+
+afterEach(() => {
+  while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
+})
+
+interface WiredStore {
+  AppStore: typeof import('../store/index').AppStore
+  LegacyStoreWriterGateClosedError: typeof import('../store/LegacyStoreWriterGate').LegacyStoreWriterGateClosedError
+  profilePath: string
+  persistPort: HostThreadRecordPersistPort & {
+    enqueue: ReturnType<typeof vi.fn>
+    drain: ReturnType<typeof vi.fn>
+  }
+  enqueued: HostThreadRecordPersistInput[]
+}
+
+async function importStoreWithHostOwnedGate(options?: {
+  hostOwnGate?: boolean
+}): Promise<WiredStore> {
+  const profilePath = mkdtempSync(join(tmpdir(), 'taskwraith-ensemble-persist-wiring-'))
+  profiles.push(profilePath)
+  vi.resetModules()
+  const { configureHostStoreRuntime, resetHostStoreRuntimeForTests } =
+    await import('../../host-runtime/HostStoreRuntime')
+  resetHostStoreRuntimeForTests()
+  configureHostStoreRuntime({
+    profilePath,
+    secureStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(`node:${plain}`, 'utf8'),
+      decryptString: (encrypted) => encrypted.toString('utf8').replace(/^node:/, '')
+    }
+  })
+  const { AppStore } = await import('../store/index')
+  const { legacyStoreWriterGate, LegacyStoreWriterGateClosedError } =
+    await import('../store/LegacyStoreWriterGate')
+  if (options?.hostOwnGate !== false) {
+    if (!legacyStoreWriterGate.beginDrain()) throw new Error('test gate did not begin draining')
+    const owned = legacyStoreWriterGate.markHostOwned({
+      hostId: 'test-host',
+      generation: 1,
+      cutoverId: 'test-cutover'
+    })
+    if (!owned) throw new Error('test gate did not become host-owned')
+  }
+  const enqueued: HostThreadRecordPersistInput[] = []
+  const persistPort = {
+    persist: vi.fn(),
+    enqueue: vi.fn((input: HostThreadRecordPersistInput) => {
+      enqueued.push(input)
+    }),
+    drain: vi.fn(async () => {}),
+    drainAll: vi.fn(async () => {}),
+    pending: vi.fn(() => 0)
+  }
+  AppStore.setHostThreadRecordPersistPortForTests(persistPort)
+  return { AppStore, LegacyStoreWriterGateClosedError, profilePath, persistPort, enqueued }
+}
+
+function ensembleChatRecord(appChatId: string): Record<string, unknown> {
+  return {
+    appChatId,
+    scope: 'global',
+    chatKind: 'ensemble',
+    provider: 'codex',
+    title: 'New Ensemble',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    workflowMode: 'normal',
+    messages: [
+      {
+        id: 'ensemble-user-round-1',
+        role: 'user',
+        content: 'Ship the cutover fix.',
+        timestamp: '2026-08-27T00:00:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: 'round-1' }
+      }
+    ],
+    runs: [],
+    ensemble: {
+      enabled: true,
+      maxParticipants: 8,
+      orchestrationMode: 'turn_bound',
+      participants: [
+        {
+          id: 'seat-boss',
+          provider: 'codex',
+          enabled: true,
+          role: 'Boss',
+          instructions: 'Coordinate the panel.',
+          order: 1,
+          permissionPresetId: 'default'
+        },
+        {
+          id: 'seat-worker',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Implement the assigned slice.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      ],
+      bossmanParticipantId: 'seat-boss',
+      activeRound: {
+        roundId: 'round-1',
+        status: 'running',
+        startedAt: '2026-08-27T00:00:00.000Z',
+        participants: [
+          { participantId: 'seat-boss', provider: 'codex', role: 'Boss', order: 1, status: 'idle' }
+        ],
+        waves: [{ waveId: 'wave-1', laneIds: ['lane-1'] }]
+      }
+    },
+    unknownDesktopField: { future: 'preserved' }
+  }
+}
+
+/** Mirrors HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT in src/main/store/index.ts. */
+const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 3
+
+describe('HostEnsemblePersistWiring', () => {
+  it('persists an ensemble round-start save through the Host when the gate is Host-owned (the user regression)', async () => {
+    const { AppStore, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const chat = ensembleChatRecord('chat-ensemble-round')
+    // RED-first evidence: before this slice this exact call threw
+    // LegacyStoreWriterGateClosedError (proven against HEAD in this file's
+    // first revision). It must now succeed synchronously and enqueue.
+    let saved: Record<string, unknown> | undefined
+    expect(() => {
+      saved = AppStore.saveChat(chat as never) as unknown as Record<string, unknown>
+    }).not.toThrow()
+    expect(persistPort.enqueue).toHaveBeenCalledTimes(1)
+    const [input] = enqueued
+    expect(input.chatId).toBe('chat-ensemble-round')
+    expect(input.expectedRevision).toBe(0)
+    // The Host owns the next revision; the record is stamped with what the
+    // Host will write for a create (0), keeping the two counters in lockstep.
+    expect((saved as { persistenceRevision?: number }).persistenceRevision).toBe(0)
+    // (d) Desktop-authored ensemble state (roster/round/wave lanes) and an
+    // unknown future field survive the round trip losslessly. toMatchObject:
+    // normalizeChatRecord legitimately enriches the ensemble (updatedAt stamp).
+    const record = input.record as unknown as Record<string, unknown>
+    expect(record.ensemble).toMatchObject(chat.ensemble as Record<string, unknown>)
+    expect(record.unknownDesktopField).toEqual({ future: 'preserved' })
+    // The durability barrier drains exactly this chat.
+    await AppStore.awaitChatRecordPersisted('chat-ensemble-round')
+    expect(persistPort.drain).toHaveBeenCalledWith('chat-ensemble-round')
+  })
+
+  it('records persist_barrier/barrier per waiter without splitting the shared drain', async () => {
+    const { AppStore } = await importStoreWithHostOwnedGate()
+    const { bindMainWorkSpanSink, mainWorkSpanSink } = await import('../perf/mainWorkSpanSink')
+    const { createWorkSpanRecorder } = await import('../perf/WorkSpanRecorder')
+    const previous = mainWorkSpanSink()
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 8 })
+    bindMainWorkSpanSink(recorder)
+    try {
+      const chatId = 'chat-persist-barrier'
+      AppStore.saveChat(ensembleChatRecord(chatId) as never)
+      const first = AppStore.awaitChatRecordPersisted(chatId)
+      const joined = AppStore.awaitChatRecordPersisted(chatId)
+      expect(joined).toBe(first)
+      await first
+      const barriers = recorder.snapshot().spans.filter((span) => span.kind === 'persist_barrier')
+      expect(barriers).toHaveLength(2)
+      expect(barriers).toEqual([
+        expect.objectContaining({
+          kind: 'persist_barrier',
+          reason: 'barrier',
+          chatId,
+          resource: 'host_chain'
+        }),
+        expect.objectContaining({
+          kind: 'persist_barrier',
+          reason: 'barrier',
+          chatId,
+          resource: 'host_chain'
+        })
+      ])
+    } finally {
+      bindMainWorkSpanSink(previous)
+    }
+  })
+
+  it('creates an ensemble chat through the Host path with the create-case revision contract', async () => {
+    const { AppStore, enqueued } = await importStoreWithHostOwnedGate()
+    const chat = AppStore.createEnsembleChat({}, new Set(['codex'] as never))
+    expect(chat.chatKind).toBe('ensemble')
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].chatId).toBe(chat.appChatId)
+    expect(enqueued[0].expectedRevision).toBe(0)
+    expect(
+      (enqueued[0].record as unknown as { persistenceRevision?: number }).persistenceRevision
+    ).toBe(0)
+    // The renderer-facing object carries the same stamp.
+    expect(chat.persistenceRevision).toBe(0)
+    // Settle creation before a later terminal compatibility checkpoint.
+    await AppStore.awaitChatRecordPersisted(chat.appChatId)
+    // A second save builds on the persisted revision (lockstep with the Host).
+    AppStore.saveChat({ ...chat, title: 'Renamed ensemble' })
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].expectedRevision).toBe(0)
+    expect(
+      (enqueued[1].record as unknown as { persistenceRevision?: number }).persistenceRevision
+    ).toBe(1)
+  })
+
+  it('surfaces a Host persist failure at the round-start barrier instead of swallowing it', async () => {
+    const { AppStore, persistPort } = await importStoreWithHostOwnedGate()
+    const failure = new HostThreadRecordPersistError(
+      'host_unavailable',
+      'The Host is not reachable.'
+    )
+    persistPort.drain.mockRejectedValueOnce(failure)
+    const chat = ensembleChatRecord('chat-ensemble-failure')
+    // The synchronous save still cannot throw (86 call sites depend on it).
+    expect(() => AppStore.saveChat(chat as never)).not.toThrow()
+    // ...but the barrier rethrows the typed failure where the user meets it.
+    await expect(AppStore.awaitChatRecordPersisted('chat-ensemble-failure')).rejects.toBe(failure)
+  })
+
+  it('rebases and retries a follow-up save after the Host advances the record', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const recoveryListener = vi.fn()
+    AppStore.setHostPersistConflictRecoveryListener(recoveryListener)
+    // importStoreWithHostOwnedGate resets the module graph; construct the
+    // error with the same class instance imported by that fresh AppStore.
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-revision-conflict'
+    const durable = {
+      ...ensembleChatRecord(chatId),
+      persistenceRevision: 3,
+      updatedAt: 2
+    }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify(durable))
+    chmodSync(chatPath, 0o600)
+
+    const conflict = new CurrentHostThreadRecordPersistError(
+      'revision_conflict',
+      'Host record persistence revision conflicted.',
+      { hostErrorCode: 'thread_record_revision_conflict' }
+    )
+    persistPort.drain.mockRejectedValueOnce(conflict)
+    const optimistic = AppStore.saveChat({ ...durable, title: 'Optimistic update' } as never)
+    expect(optimistic.persistenceRevision).toBe(4)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(3)
+
+    const hostAdvanced = {
+      ...durable,
+      persistenceRevision: 5,
+      updatedAt: 4,
+      messages: [
+        ...((durable as Record<string, unknown>).messages as Array<Record<string, unknown>>),
+        {
+          id: 'host-follow-up-message',
+          role: 'assistant',
+          content: 'Host-only update',
+          timestamp: '2026-08-27T00:00:01.000Z'
+        }
+      ],
+      hostOnlyField: { preserve: true }
+    }
+    writeFileSync(chatPath, JSON.stringify(hostAdvanced))
+    chmodSync(chatPath, 0o600)
+
+    const firstBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    const concurrentBarrier = AppStore.awaitChatRecordPersisted(chatId)
+    expect(concurrentBarrier).toBe(firstBarrier)
+    await expect(firstBarrier).resolves.toBeUndefined()
+
+    expect(persistPort.drain).toHaveBeenCalledTimes(2)
+    expect(enqueued).toHaveLength(2)
+    const retry = enqueued[1]
+    expect(retry.expectedRevision).toBe(5)
+    expect(retry.record.persistenceRevision).toBe(6)
+    expect(retry.record.title).toBe('Optimistic update')
+    expect(retry.record.messages).toContainEqual(
+      expect.objectContaining({ id: 'host-follow-up-message', content: 'Host-only update' })
+    )
+    expect(retry.record).toMatchObject({ hostOnlyField: { preserve: true } })
+    expect(recoveryListener).toHaveBeenCalledWith(retry.record)
+  })
+
+  it('rebases a conflict whose rebase intent an earlier settled barrier dropped', async () => {
+    // The production wedge (2026-08-29): a settled barrier drops the chat's
+    // rebase intent, the optimistic shadow keeps advancing (+1 per save), and
+    // the next conflict has no intent to rebase. Before this slice recovery
+    // returned null there and the conflict was rethrown, so every later save
+    // asked for a revision the Host would never hold — one ensemble thread
+    // stayed pinned at revision 13 across 222 consecutive failed persists.
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-intent-dropped'
+    const durable = { ...ensembleChatRecord(chatId), persistenceRevision: 3, updatedAt: 2 }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify(durable))
+    chmodSync(chatPath, 0o600)
+
+    // A save that the barrier settles: the intent is dropped on the way out.
+    AppStore.saveChat({ ...durable, title: 'First' } as never)
+    await AppStore.awaitChatRecordPersisted(chatId)
+    // The Host never actually landed it — the durable record is still at 3
+    // while the in-memory shadow has advanced to 4.
+    const next = AppStore.saveChat({ ...durable, title: 'Second' } as never)
+    expect(next.persistenceRevision).toBe(5)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(4)
+
+    persistPort.drain.mockRejectedValueOnce(
+      new CurrentHostThreadRecordPersistError(
+        'revision_conflict',
+        'Host record persistence revision conflicted.',
+        { hostErrorCode: 'thread_record_revision_conflict' }
+      )
+    )
+    await expect(AppStore.awaitChatRecordPersisted(chatId)).resolves.toBeUndefined()
+    // Recovery re-anchored onto the Host's own revision instead of giving up,
+    // and carried the Desktop's accumulated intent forward.
+    const retry = enqueued.at(-1)!
+    expect(retry.expectedRevision).toBe(3)
+    expect(retry.record.persistenceRevision).toBe(4)
+    expect(retry.record.title).toBe('Second')
+  })
+
+  it('never blocks a round on an unresolved conflict, and re-anchors the record', async () => {
+    const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const { HostThreadRecordPersistError: CurrentHostThreadRecordPersistError } =
+      await import('./HostThreadRecordPersistCommand')
+    const chatId = 'chat-ensemble-revision-conflict-bound'
+    const durable = {
+      ...ensembleChatRecord(chatId),
+      persistenceRevision: 3,
+      updatedAt: 2
+    }
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    writeFileSync(chatPath, JSON.stringify({ ...durable, persistenceRevision: 5, updatedAt: 4 }))
+    chmodSync(chatPath, 0o600)
+    const conflict = new CurrentHostThreadRecordPersistError(
+      'revision_conflict',
+      'Host record persistence revision conflicted.',
+      { hostErrorCode: 'thread_record_revision_conflict' }
+    )
+    persistPort.drain.mockRejectedValue(conflict)
+    AppStore.saveChat({ ...durable, title: 'Bounded retry' } as never)
+
+    // Bounded, but NOT fatal: a persistence-bookkeeping conflict must never be
+    // the reason an ensemble round refuses to start.
+    await expect(AppStore.awaitChatRecordPersisted(chatId)).resolves.toBeUndefined()
+    expect(persistPort.drain).toHaveBeenCalledTimes(HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT + 1)
+    expect(enqueued).toHaveLength(HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT + 1)
+    // The shadow is re-anchored to the Host's revision (5), so the next save
+    // asks for a revision the Host can satisfy instead of diverging further.
+    persistPort.drain.mockResolvedValue(undefined)
+    AppStore.saveChat({ ...durable, title: 'After the conflict' } as never)
+    expect(enqueued.at(-1)?.expectedRevision).toBe(5)
+    expect(enqueued.at(-1)?.record.persistenceRevision).toBe(6)
+  })
+
+  it('keeps the proven legacy admitted path when the writer gate is open', async () => {
+    const { AppStore, persistPort } = await importStoreWithHostOwnedGate({ hostOwnGate: false })
+    const chat = ensembleChatRecord('chat-ensemble-legacy')
+    expect(() => AppStore.saveChat(chat as never)).not.toThrow()
+    expect(persistPort.enqueue).not.toHaveBeenCalled()
+    const persisted = AppStore.getChat('chat-ensemble-legacy')
+    expect(persisted?.ensemble).toMatchObject({
+      bossmanParticipantId: 'seat-boss',
+      activeRound: { roundId: 'round-1' }
+    })
+  })
+
+  it('heals the in-memory shadow when the Host advances the record (solo-chat interop)', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    // A desktop save through the Host branch leaves a dirty in-memory shadow.
+    AppStore.saveChat({
+      ...ensembleChatRecord('chat-solo-interop'),
+      chatKind: 'single',
+      ensemble: undefined
+    } as never)
+    // While the Host has not landed the file, the shadow is served.
+    expect(AppStore.getChat('chat-solo-interop')).toMatchObject({
+      title: 'Ship the cutover fix.',
+      threadTitle: { source: 'prompt-fallback' }
+    })
+    // The Host then lands the write AND advances the record on its own (solo
+    // run lifecycle / thread.configure): revision 3, newer title.
+    const chatsDir = join(profilePath, 'chats')
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const hostAdvanced = {
+      ...ensembleChatRecord('chat-solo-interop'),
+      chatKind: 'single',
+      ensemble: undefined,
+      title: 'Host-side update',
+      persistenceRevision: 3,
+      updatedAt: 2000
+    }
+    writeFileSync(join(chatsDir, 'chat-solo-interop.json'), JSON.stringify(hostAdvanced))
+    chmodSync(join(chatsDir, 'chat-solo-interop.json'), 0o600)
+    // The shadow heals: reads return the Host's newer record, not the stale
+    // desktop projection, so a transcript cannot freeze on the dirty marker.
+    expect(AppStore.getChat('chat-solo-interop')?.title).toBe('Host-side update')
+    // And the next desktop save builds on the Host's true revision instead of
+    // looping a revision conflict against its own shadow.
+    AppStore.saveChat({ ...hostAdvanced, title: 'Desktop follow-up' } as never)
+    const last = enqueued[enqueued.length - 1]
+    expect(last.expectedRevision).toBe(3)
+    expect((last.record as unknown as { persistenceRevision?: number }).persistenceRevision).toBe(4)
+  })
+  it('does not re-read an unchanged record file while the shadow is ahead of it', async () => {
+    const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-shadow-reread'
+    const chatsDir = join(profilePath, 'chats')
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
+    // A stale landed file behind the shadow the next save produces.
+    writeFileSync(chatPath, JSON.stringify({ ...base, persistenceRevision: 0 }))
+    chmodSync(chatPath, 0o600)
+    // A whole-second mtime survives the utimes round trip below exactly.
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+    utimesSync(chatPath, pinned, pinned)
+    AppStore.saveChat({ ...base, title: 'Shadow' } as never)
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+    // Swap in a caught-up record of IDENTICAL size and mtime. A reconcile that
+    // re-read the file on every getChat would heal to it; the memoized miss
+    // proves the unchanged file is not parsed again.
+    const { size } = statSync(chatPath)
+    const caughtUp = (title: string): string =>
+      JSON.stringify({ ...base, title, persistenceRevision: 99, updatedAt: 3000 })
+    let padded = caughtUp('Landed')
+    padded = caughtUp('Landed' + ' '.repeat(Math.max(0, size - padded.length)))
+    expect(Buffer.byteLength(padded)).toBe(size)
+    writeFileSync(chatPath, padded)
+    utimesSync(chatPath, pinned, pinned)
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+    // Any real landing moves the stat, and the shadow heals on the next read.
+    const later = new Date(pinned.getTime() + 5000)
+    utimesSync(chatPath, later, later)
+    expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
+  })
+  it('releases dispatch on journal durability while the Host write is still draining', async () => {
+    const { AppStore, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-dispatch-durable'
+    // The Host lane never settles: the full-record write is still in flight.
+    persistPort.drain.mockImplementation(() => new Promise<void>(() => {}))
+    AppStore.saveChat({ ...ensembleChatRecord(chatId) } as never)
+
+    const settled = (promise: Promise<void>): Promise<boolean> =>
+      Promise.race([
+        promise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
+      ])
+    const drainsBefore = persistPort.drain.mock.calls.length
+    const enqueuedBefore = enqueued.length
+    expect(await settled(AppStore.awaitChatRecordDispatchDurable(chatId))).toBe(true)
+    // The dispatch edge neither waits on nor FORCES another whole-record Host
+    // write: the save already staged it and armed its own materialization.
+    expect(persistPort.drain.mock.calls.length).toBe(drainsBefore)
+    expect(enqueued.length).toBe(enqueuedBefore)
+    expect(await settled(AppStore.awaitChatRecordPersisted(chatId))).toBe(false)
+  })
+})

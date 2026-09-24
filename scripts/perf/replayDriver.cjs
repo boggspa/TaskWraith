@@ -11,6 +11,7 @@
  * recorded as explicit unsupported — never invented.
  */
 
+/** Replay write batching only. Does not govern measurement tail length (SEEDED_TAIL_MESSAGE_COUNT). */
 const DEFAULT_BATCH_SIZE = 8
 
 /**
@@ -525,5 +526,12 @@ module.exports = {
   createCdpEvaluateAdapter,
   buildMessagePrefixBatches,
   applyReplayEvent,
+  // Additive (M1 A1.2 concurrent replay lanes): the stall-guarded applier,
+  // exported so per-chat lane drivers reuse the exact event semantics.
+  applyReplayEventWithTimeout,
+  // Additive (M1 Wall 1 deterministic replay provider): the tracked save with
+  // exact compare-and-swap semantics, exported so provider-turn drivers reuse
+  // it instead of reimplementing revision advance.
+  performTrackedSave,
   runDeterministicReplay
 }

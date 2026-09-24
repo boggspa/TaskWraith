@@ -1,15 +1,20 @@
-# TaskWraith Studio companion icon
+# TaskWraith companion icons
 
-This directory carries the Studio-only subset of the approved TaskWraith
-companion icon family from source commit
-`63603c538d66c862f64440126a8452b98242471c`. The artwork combines the unchanged
-first-party TaskWraith monoline ghost with the first-party `glyph-timeline`
-catalogue symbol and the Studio violet accent `#C6ADFF`.
+The companion family combines the existing TaskWraith monoline ghost with one
+first-party agent-pool catalogue glyph per product. The ghost paths retain their
+original geometry. The catalogue glyphs keep their geometry, with adjusted colours
+and line weights for the common product badge.
 
-The `studio/` directory contains the editable `app-icon.svg`, a transparent
+| Product      | Catalogue glyph       | Accent           |
+| ------------ | --------------------- | ---------------- |
+| Observatory  | `turbo-telescope`     | Cyan `#6EDBE7`   |
+| Provider Hub | `glyph-fanout-routes` | Orange `#FFB276` |
+| Studio       | `glyph-timeline`      | Violet `#C6ADFF` |
+
+Each product directory contains the editable `app-icon.svg`, a transparent
 1024-pixel `app-icon.png`, and `app-icon.icns` with the complete macOS size ramp
-from 16 pixels to 1024 pixels. `manifest.json` records the source and output
-SHA-256 digests using paths relative to `design-assets/`.
+from 16 pixels to 1024 pixels. `mark.svg` and `mark-on-light.svg` provide standalone
+marks for dark and light surfaces. `preview.png` shows the family and small sizes.
 
 ## Regeneration
 
@@ -20,16 +25,23 @@ From the repository root, on macOS with librsvg's `rsvg-convert` and Apple's
 python3 design-assets/suite-app-icons/build.py
 ```
 
-The generator reads the ghost from `design-assets/ghost/` and the timeline
-glyph from `design-assets/agent-pool-icons/icons/`. It writes only the three
-Studio app-icon assets, `manifest.json`, and temporary iconsets that are removed
-after conversion. It does not build an application. Raster bytes may change
-with the rendering tool version; the SVG master is self-contained.
+The generator reads the ghost from `design-assets/ghost/` and the three glyphs
+from `design-assets/agent-pool-icons/icons/`. It writes only this asset directory
+and temporary iconsets that are removed after conversion. It does not build apps.
+`manifest.json` records the source and output SHA-256 digests; paths are relative
+to `design-assets/`. Raster bytes may change with the rendering tool version.
+
+The SVG masters are self-contained and can be rendered without the catalogue.
+All three marks use first-party artwork.
 
 ## Application integration
 
-`scripts/build-studio-companion.cjs` copies `studio/app-icon.icns` into the
-staging bundle as `TaskWraithStudio.icns`, the name referenced by its
-`Info.plist`. Existing signed release and acceptance artefacts are deliberately
-unchanged. The next separately authorised Studio package build must verify the
-new bundled icon before signing or notarisation.
+- Studio's `scripts/build-studio-companion.cjs` copies the Studio ICNS into its
+  staging bundle as `TaskWraithStudio.icns`.
+- Provider Hub keeps tracked copies of its SVG, PNG and ICNS under `Source/` as
+  `AppIcon.*`, with a provenance record. Its existing build script copies the ICNS.
+- Observatory receives tracked SVG, PNG and ICNS copies as `build/icon.*`. Its
+  normal electron-builder resource discovery uses `build/icon.icns`.
+
+Source updates take effect on the next build of each application. Existing signed
+release artefacts are retained; the release tasks own their rebuilds.

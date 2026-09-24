@@ -12,6 +12,7 @@ import type {
 import type { RunManager } from './RunManager'
 import { resolveAgenticPermission, type AgenticPermissionDecision } from './AgenticPolicy'
 import { AppStore } from './store'
+import { CANVAS_EVAL_APPROVAL_WINDOW_MS } from './canvas/CanvasEvalApprovalWindow'
 
 export interface PermissionServiceOptions {
   runManager: RunManager<any>
@@ -65,10 +66,15 @@ function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
  * thing for a user to say once; it just has to mean that and only that.
  */
 function isSurfaceScopedService(service: AgenticServiceId | undefined): boolean {
-  return service === 'canvasInteraction'
+  return service === 'canvasInteraction' || service === 'simulatorCanvas'
 }
 
 export class PermissionService {
+  // canvasId -> epoch-ms at which its canvas_eval approval window expires.
+  // In-memory only: a window must not survive an app restart, and a fresh
+  // surface (new canvasId) always re-prompts. Pruned lazily on read.
+  private readonly canvasEvalWindowGrants = new Map<string, number>()
+
   constructor(private readonly options: PermissionServiceOptions) {}
 
   private getSettings(): AppSettings {
@@ -205,6 +211,21 @@ export class PermissionService {
     )
   }
 
+  removeSessionGrant(
+    provider: ProviderId,
+    workspacePath: string | undefined,
+    service: AgenticServiceId,
+    runId?: string,
+    surfaceId?: string
+  ): boolean {
+    if (runId && this.options.runManager.get(runId)) {
+      return this.options.runManager.removeSessionGrant(runId, service, surfaceId)
+    }
+    return this.options.sessionGrants.delete(
+      this.sessionGrantKey(provider, workspacePath, service, surfaceId)
+    )
+  }
+
   resolvePermission(
     provider: ProviderId,
     service: AgenticServiceId,
@@ -219,11 +240,11 @@ export class PermissionService {
     surfaceId?: string
   ): AgenticPermissionResolution {
     const policy = this.getServicePolicy(service, settings)
-    // canvasEval (arbitrary eval = RCE) is SIGNED-ELEVATED: non-grantable, so no
-    // session/workspace grant can ever promote it to an automatic allow — every
-    // eval re-prompts. This is the central half of that guarantee (both the
-    // Gemini/Claude gate and the Codex native gate route through here); the YOLO
-    // bypasses are blocked separately, and read-only denies it via the preset.
+    // canvasEval does not accept broad session/workspace grants. Its normal
+    // low-friction path is the separate exact-canvas 12h window: the first
+    // desktop accept opens that window, which then follows the same live Canvas
+    // surface across navigation and later turns. This resolver intentionally
+    // returns ask when no dedicated surface window is consulted by the gate.
     // mediaRecording (future mic/camera capture) is non-grantable for the same
     // reason. externalPublish is grantable, but the run-posture gates clamp it
     // back to per-action approval under read_only / plan.
@@ -237,6 +258,10 @@ export class PermissionService {
     const decision =
       policy === 'deny'
         ? 'deny'
+        : isSurfaceScopedService(service)
+          ? sessionGrantAllowed
+            ? 'allow'
+            : 'ask'
         : workspaceGrantAllowed || sessionGrantAllowed
           ? 'allow'
           : resolveAgenticPermission(policy, false, false)
@@ -275,7 +300,43 @@ export class PermissionService {
         input.surfaceId
       )
     }
+    // Broad grants above do not apply to canvas_eval. A human accept instead
+    // opens the dedicated exact-surface window; the gate may then auto-resolve
+    // later scripts on that live canvas across navigation and later turns.
+    if (input.service === 'canvasEval' && this.isApprovedAction(input.action)) {
+      this.recordCanvasEvalWindowGrant(input.surfaceId, Date.now())
+    }
     return this.isApprovedAction(input.action)
+  }
+
+  /**
+   * Open (or leave unchanged) the per-canvas canvas_eval approval window. Anchored
+   * to the FIRST accept: an auto-approved eval later in the window must not slide
+   * the expiry forward, so a live window is never overwritten. A blank surface is
+   * a no-op — a window can only ever bind to an exact canvasId.
+   */
+  recordCanvasEvalWindowGrant(canvasId: string | undefined, nowMs: number): void {
+    const id = canvasId?.trim()
+    if (!id) return
+    const existing = this.canvasEvalWindowGrants.get(id)
+    if (existing !== undefined && nowMs < existing) return
+    this.canvasEvalWindowGrants.set(id, nowMs + CANVAS_EVAL_APPROVAL_WINDOW_MS)
+  }
+
+  /**
+   * True while a live per-canvas canvas_eval approval window covers this exact
+   * canvasId. Expired windows are pruned on read so a later accept starts fresh.
+   */
+  hasLiveCanvasEvalWindowGrant(canvasId: string | undefined, nowMs: number): boolean {
+    const id = canvasId?.trim()
+    if (!id) return false
+    const expiresAt = this.canvasEvalWindowGrants.get(id)
+    if (expiresAt === undefined) return false
+    if (nowMs >= expiresAt) {
+      this.canvasEvalWindowGrants.delete(id)
+      return false
+    }
+    return true
   }
 
   isApprovedAction(action: AgentApprovalAction): boolean {

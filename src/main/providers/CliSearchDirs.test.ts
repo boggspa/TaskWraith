@@ -1,3 +1,5 @@
+import os from 'os'
+import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getCliSearchDirs, getUserCliSearchDirs, setUserCliSearchDirs } from './CliSearchDirs'
 
@@ -63,6 +65,12 @@ describe('getCliSearchDirs', () => {
     const dirs = getCliSearchDirs(null, { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' })
     expect(dirs).toContain('/opt/homebrew/bin')
     expect(dirs).toContain('/usr/local/bin')
+  })
+
+  it('reaches provider-specific Kimi and Grok install roots under a minimal PATH', () => {
+    const dirs = getCliSearchDirs(null, { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' })
+    expect(dirs).toContain(join(os.homedir(), '.kimi-code', 'bin'))
+    expect(dirs).toContain(join(os.homedir(), '.grok', 'bin'))
   })
 
   it('lets a user directory rescue a CLI that lives outside every known root', () => {

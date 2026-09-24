@@ -1,10 +1,416 @@
 # Changelog
 
-Notable changes to TaskWraith, the local-first desktop workbench for running and
-reviewing AI coding agents. Entries are user-facing highlights; TaskWraith's
-orchestration, local history, and workspace authority stay on your machine,
-while selected cloud providers still receive the prompt and run context needed
-to answer.
+Notable changes to TaskWraith, the desktop workbench for running and reviewing
+AI coding agents from multiple providers. Entries are user-facing highlights;
+TaskWraith's orchestration, local history, and workspace authority stay on your
+machine, while selected cloud providers still receive the prompt and run
+context needed to answer.
+
+## 1.9.8 - 2026-09-15
+
+
+### New Models and Provider Seats
+
+- **Mistral Vibe 2.25 lineup.** Mistral Medium 3.5 is now the Vibe seat default,
+  matching Vibe CLI 2.25. Hosted Devstral Small and Devstral 2 are gone from the
+  picker (API retirement; Vibe no longer lists them). Stale stored ids remap to
+  Medium 3.5 so old threads still launch. GLM-5.2 (Mistral Hosted) stays on the
+  subscription lane. Local Devstral remains Ollama's `devstral-small-2:24b`.
+- **Gemini 3.8 Flash in AntiGravity.** The official `agy` catalogue now offers
+  Gemini 3.8 Flash with Low, Medium, and High reasoning. TaskWraith groups the
+  exact variants under one picker row, retains them in the consent-gated
+  fallback, makes the family the standalone Host's default AntiGravity row,
+  and leads New Additions with it.
+- **Muse Spark 1.3 and Muse Contributor Spark 1.3.** Meta's newest Spark joins
+  the Muse seat in every picker — provider/model/reasoning, Ensemble add
+  participant, the standalone Host, TUI, and iOS offers. Regular Spark 1.3
+  gains Meta's newly public Max tier between Extra High and Ultra; the
+  Contributor route and Spark 1.2 retain their existing ladders. Pricing stays
+  at $1.25/$4.25 per Mtok (Contributor $0.10/$0.20 with the
+  product-improvement data-use notice). Muse Spark 1.2 stays the seat default,
+  and New Additions leads Muse with 1.3.
+
+### Cursor Path-B
+
+- **Solo Cursor file-routing and honest UltraTask names.** A broker-active
+  Path-B write seat now gets the same TaskWraith file-routing envelope as
+  Ensemble, without duplicating it. UltraTask priority names on Ensemble
+  Cursor seats follow the pinned MCP receipt even when the orchestrator
+  omits an explicit listed-tools argument.
+- **Settings can see Cursor elicit and the last broker failure.** Path-B
+  Cursor advertises `ask_user_question` as a TaskWraith bridge capability.
+  An MCP enable, ready-probe, or registry failure stays visible in Settings
+  until the next active-broker launch, without reclassifying Cursor shell
+  or file tools as bridge-backed.
+
+### Updates and Restart
+
+- **A queued restart says what it is waiting for.** Choosing Restart after an
+  update downloads now names the live agent runs, scheduled tasks, workflows,
+  or Host runs holding it, in both the sidebar pill and the update sheet. The
+  wait gives up after 30 minutes instead of silently forever, and a new
+  **Restart anyway** action installs immediately when you decide the work can
+  be interrupted. A Host that TaskWraith adopted from the TUI or another
+  process no longer blocks the restart; it is left running.
+- **Updates never move you backwards.** Version comparison now stays strictly
+  forward even though electron-updater's channel selection re-enables
+  downgrades by default, so a mis-pointed "Latest" release can no longer
+  install an older build. The identity-handoff gate checks the source for it.
+- **Nightly no longer sticks on "Update issue".** When a release publishes no
+  nightly feed, the Nightly channel follows the stable feed for that check and
+  says so, instead of failing every check.
+- **Quitting cannot hang on a stuck save.** The quit-time chat flush is capped
+  at 30 seconds, so an update restart or a plain quit completes even when the
+  disk is full or persistence stalls.
+- Removed the unused install-on-quit updater channel, which electron-updater
+  never honoured.
+
+### Ollama
+
+- **Named Cloud seats are not stopped by the local-model retry ceiling.**
+  GLM 5.3 / 5.3 Flash / 5.1, DeepSeek V4 Flash / V4 Pro, Gemma 4, Mistral
+  Large 3 (675B), GPT OSS (120B), Nemotron 3 Ultra, Kimi K2.6 / K2.7 Code /
+  K3, and MiniMax M2.7 / M3 no longer get finalized with "deferring to the
+  panel" after a handful of reasoning-only turns. Local models and other
+  Cloud rows keep the breaker.
+
+### Muse
+
+- **No more `xcrun` cache warnings from Muse shells.** macOS resolves
+  `/usr/bin/git` through an `xcrun` stub whose lookup cache lives in the
+  per-user temp dir, which Muse's shell sandbox does not allow; Muse seats now
+  get the active developer tools bin first on `PATH`, so `git` resolves to the
+  same binary without the stub or its warning on every call.
+- **The MSP lane is the default Muse transport.** Muse seats now run over
+  `muse serve` with app-managed approvals, resume, images, a live window, and
+  a durable per-chat seat home so a session actually resumes where it left
+  off. An acknowledgment arrives before the working phase, provider reasoning
+  shows in the shared Thinking transcript, and working turns survive a native
+  session resume.
+- **Silent connections explain themselves.** A connection that acknowledges
+  but never speaks now surfaces diagnostics instead of a blank wait; the
+  inactivity deadline widened from 3 to 15 minutes so long tool turns are
+  not cut off. A turn that reaches for a tool unannounced is asked for an
+  opening, an approval decision that failed on a transient fault is retried,
+  the doubled TaskWraith MCP rows on the MSP lane are collapsed, and Max is
+  no longer upgraded to Ultra on MSP.
+
+### Models and provider seats
+
+- **Kimi K2.8 Preview, Ollama DeepSeek V4.1 Flash, and the Sakana Fugu pair**
+  join the pickers; fresh Kimi setups follow the current catalogue, Ensemble
+  panels seed Kimi with K2.8, and a recorded Kimi identity is preserved across
+  model migration.
+- **Devin SWE-2 family.** The Devin seat gains the SWE-2 models on the effort
+  slider alongside SWE-1.6.
+- **Cerebras Gemma 4 and Qwen 3.8** on the Pi lane, priced from the published
+  Developer Tier table; the unserved Gemma 4 31B preview route is dropped
+  (mirrored in the iOS catalogue).
+- **Mercury 2.5 and the Nex-N2.5 Mini/Pro pair** via OpenRouter, admitted at
+  the policy wall and leading New Additions.
+- **Saved custom model IDs.** Settings keeps a per-provider list of custom
+  model IDs, the composer lists them in the model picker, and the custom-ID
+  field is visible in every composer shell.
+- **Ollama thinking.** Qwen 3.8 27B MLX's `thinking` field and inline
+  `<think>` blocks render as reasoning; inline reasoning content is extracted
+  from the answer instead of leaking into it.
+- **Mistral** negotiates guarded HTTP MCP without depending on an app
+  executable, separates the acknowledgment from the working ACP turn, keeps
+  native permission identity correlated, and audits host refusals separately
+  from human decisions.
+- **Kimi** verifies the served tools before ACP work starts and reports the
+  exact run tools it was given; **AntiGravity** records which native `agy`
+  tools actually ran, evidences every denial, restores its permission overlay
+  even when the drain fails, and no longer routes publish commands through
+  `externalPublish`; **Cursor** stops describing TaskWraith's own retired
+  server ids as someone else's.
+- **Rates**: `gpt-6-astra` is priced from the published OpenAI table,
+  DeepSeek from the vendor page (dropping V4 Pro's phantom Low stop), and the
+  fallback rate row is flagged instead of relying on table order.
+
+### Composer and pickers
+
+- **One send, one run.** A send is idempotent and carries a draft revision
+  with a one-shot submit ledger, so a held Enter no longer dispatches a burst
+  of runs into a chat; the latch queues instead of dropping.
+- **Selections stick.** A model, seat, or permission pick is held until its
+  durable write answers, is routed to the slice the picker reads, no longer
+  forces a whole-record save, and an unhydrated catalogue is not treated as
+  evidence against it. A stored reasoning effort is judged by its own
+  provider's ladder, and every rung the pickers offer is accepted.
+- **Seat-navigator rail** in the model and permission pickers; Ensemble rows
+  minimise after the first prompt; the extended-selection overlay is readable
+  again, and the Codex context donut is back in the composer preview.
+
+### Ensemble
+
+- **Muse awaits stay inside Muse's MCP budget.** A Muse seat's `ensemble_await`
+  is capped at 240 s per call (every other provider keeps the 10-minute
+  ceiling) because Muse drops its MCP stdio server when one tool call outlives
+  its own budget; the seat is told to re-invoke instead of losing every later
+  brokered call to "MCP stdio connection is closed".
+- **Yield to the roster spelling.** `ensemble_yield("Muse / Work 2")` lands on
+  that one seat: provider + role is now a mention alias and the slash is a
+  separator, so a shared provider no longer reads as ambiguous.
+- **`ensemble_fanout_all` is described as what it is.** The Boss prompt now says
+  it is discovered through `capability_search` and called through
+  `capability_invoke` rather than "listed", so a seat no longer reports it
+  missing from its tool surface.
+- **Panel edits no longer revert.** Canonical state stops dropping panel
+  edits, a queued preset or unclaimed lanes cannot undo user changes, and a
+  roster Save that fails says so instead of failing silently.
+- **Each fan-out lane gets its own brief** instead of one broadcast; Scout
+  briefs and Blackboard update bursts render as grouped stacks.
+- **Honest mode switching.** A refused mode switch says why, a lost one no
+  longer wedges the toggle, serial order is followed when no explicit handoff
+  resolves, directed-seat admission is restored in auto-continue, and phantom
+  undeletable queued rows are gone.
+
+### Host, persistence, and reliability
+
+- **Pathspec commits carry the seat's lock owner.** `git_commit(mode="pathspec")`
+  now hands git `TASKWRAITH_LOCK_OWNER_ID` exactly as the private-index path
+  already did, so the pre-commit hook matches the seat's own runtime claim
+  instead of blocking the seat on its own marker.
+- **Contribution capture budget raised to 15 s.** The bound on journalling a
+  brokered `write_file` / `replace` was 1.5 s, which a busy round breached and
+  silently turned a reviewable contribution into an unrecorded write; the
+  bound is now one shared constant and still bounded.
+- **Edits that came back are fixed at the source.** Chat-update patches are
+  built from the acknowledged baseline, same-revision invalidations collapse,
+  large checkpoints defer off the save path, a stale save or revision-only
+  reconcile can no longer regress the transcript, and a revision-stale
+  whole-record save no longer deletes a durable goal.
+- **Host-owned runs are first-class.** They appear in Active Runs with a
+  round stop, stay live through the merge gate, keep their lane tool rows,
+  and the live Ensemble state survives the Host and renderer boundary.
+- **Threads recover instead of waiting forever.** A lost recovery reply is
+  reclaimed or expired, an unacknowledged cancel no longer holds a thread's
+  gate, a failed listing resumes, APFS directory-loss and publication
+  retirement races are recovered, and refused sends, blank opens, or stale
+  chips no longer read as success. The Host loop is not wedged by large
+  record persists, and the durable-start poll stops re-reading whole threads.
+- Shared-identity clients no longer narrow the Desktop session for everyone;
+  run-queue changes reach chat pop-outs; the shared-workspace contribution
+  channels are registered in both IPC registries.
+
+### Performance
+
+- **Boot**: pre-window sweeps are bounded by recency, full sweeps defer past
+  first paint, the history recovery drain runs in the worker's background
+  lane, launch-history indexing moved out of the main process, chat journals
+  open lazily, and the parsed chat-record cache is bounded by bytes.
+- **Transcript**: appended rows are pushed rather than pulled, only rows that
+  change are sent, the delivered window is anchored so big threads patch
+  instead of snapshot, the tail lane is routed by interest, and a stall is
+  visible instead of silent. Oversized chats snapshot as a transcript page.
+- **Renderer**: live timecodes advance without re-rendering, the scheduled
+  and goal clocks are extracted leaves, live timers revive on paged threads
+  and summary rows, approval overlays no longer sample the transcript through
+  blur, and CLI stream turns yield past the lag budget.
+- Host loop lag is reported per capture interval, and inventory broadcasts,
+  the welcome dashboard, and first-launch counts are served from projections
+  without reading chat records.
+
+### Transcript and review
+
+- **Exports name Mistral, Muse, and Devin seats.** Markdown transcript exports
+  used a private provider table that predated those seats and printed
+  "Unknown provider / Whizz"; the export now uses the canonical provider labels
+  and fails typecheck if a future provider is left out.
+- **Tool rows brand themselves.** The run model is stamped on solo,
+  bridge-lane, and execution-graph tool rows, and activity rows are branded
+  from store-backed runs rather than the retained chat.
+- Provider mirrors coalesce inside a single tool message, the compat wire's
+  error flag is honoured in the legacy tool lane, the dual-lane skip no longer
+  deletes the assistant answer, a preserved first prompt returns to the head,
+  preserved live rows return to their position, and the inline prompt editor
+  matches the prompt bubble width.
+- **Execution map** gets a theme-true surface with vertical stages and
+  wave-style cards; the provider-failure card survives a stale delivery.
+
+### Outside agents, TUI, and windows
+
+- **`tw threads`, `tw send`, and `tw read`.** An outside agent can list,
+  message, and read threads back through the CLI, and the same verbs are
+  served as MCP tools over `tw mcp`. Prompts arriving over the local-control
+  socket carry a host-authored origin, the transcript names the sender
+  **External Agent** with the tool as a badge, and inter-seat notes name both
+  ends instead of burying the route in prose.
+- TUI usage errors exit 2, control bytes are rejected in profile paths, the
+  root bin wrapper selects the CLI package profile, and the Node runtime
+  policy allows a 60-day-old runtime.
+- **Multiple app windows** with focused native menu actions, contextual chat
+  actions routed from the menu, and a standalone updater page.
+
+### Security and sandbox
+
+- **AntiGravity read tools run on read lanes.** Native `view_file`,
+  `find_by_name`, and the other read-class tools were refused as "denied by a
+  pre-tool hook" because the approval bridge answered them with an empty
+  no-decision reply; it now answers an explicit allow while agy's own settings
+  layer keeps bounding what those tools may touch.
+- The workspace shell sandbox no longer denies keychain reads, and macOS
+  keychain access is grafted into isolated terminal homes.
+- Renderer attachment authorization filters and continues instead of failing
+  the whole batch; a release-authorization lease no longer blocks notarize
+  and push commands; a new tool generation cannot erase broker wiring it never
+  re-proved, and receipts no longer claim closure they never established.
+- Dependency audit findings in Hono, YAML, and Vitest are resolved.
+
+### iOS companion (build 99)
+
+- **Reconnect storms are fixed at the root.** Opening the app from the Home
+  Screen or a notification no longer tears a healthy session down while the
+  Mac is still streaming: the transport credits any authenticated inbound
+  frame as proof of life, and a silent Mac behind a live socket holds the
+  session instead of re-dialling.
+- **Connection log.** Settings → Remote records every reconnect decision,
+  dial, establish, and liveness probe on the device, with Copy for bug
+  reports. Catalogue mirrors track the desktop (K3 route labels, Gemma 4 31B
+  removal).
+
+## 1.9.7 - 2026-09-02
+
+### New Models and Provider Seats
+
+- **Devin Integration Complete.** The Devin provider seat is now fully active for new runs. It authenticates through `WINDSURF_API_KEY` / `DEVIN_API_KEY` or the credentials file, providing access to SWE-1.6 Slow by default.
+- **Claude Fable 5.1.** Added to the Claude picker, with the previous Fable 5 relabeled as Legacy.
+- **GLM-5.2 (Mistral Hosted).** Added as a subscription seat model with full thinking ladder support and 1M context via Mistral.
+
+### Ensemble Orchestration
+
+- **Continuous-only Orchestration.** The mode picker and chars slider have been retired in favor of continuous-only orchestration and an On/Off fan-out row. Ingest budgets are now window-derived per-seat.
+
+### Provider setup and run control
+
+- **Kimi K3 routes are distinct and plan-aware.** K3 now offers the regular
+  plan-dependent route (up to 1M context) and the quota-efficient fixed-256K
+  route as separate model choices. Both retain Low/High/Max thinking and stay
+  independent of K2.7 Coding's Standard/Highspeed Fast toggle; TaskWraith reads
+  the installed Kimi catalog without inspecting provider credentials.
+
+### Emulator Canvas
+
+- **A fixed homebrew demo, not a ROM loader.** Canvas can now host one reviewed
+  packaged homebrew demo in the active chat. Its agent reuses an attached live
+  Canvas when present; otherwise the workflow is `open` → atomic `observe` →
+  bounded `step`. Observations return a safe mapped state and one PNG frame,
+  while steps require the current observation token and report whether every
+  requested frame completed. There is no arbitrary game or ROM input, URL
+  override, raw-RAM interface, or cheat surface.
+- **Control stays on the reviewed surface.** Agent steps require an exact-
+  surface Canvas/AppDrive approval or grant, and direct human play makes the
+  agent stand down rather than taking over the same session. Thread Home opens
+  the fixed demo as its own full pane; for an active Inspector Canvas dock
+  session, **Pop Out** and **Dock** reparent that session instead of restarting
+  it.
+
+### Transcript, export, and review
+
+- **Multiview goes to eight.** Four full-height columns and a 4×2 eight-pane
+  grid join the layout picker; opening more work grows through the new shapes,
+  while closing or shrinking parks surviving panes rather than losing them.
+- **Every thread pane gets a home and an exit.** The top-right glass pill now
+  closes a thread view without deleting its history, draft, or active run.
+  Single-pane closes reveal Thread Home; empty Multiview panes use the same
+  home to reopen visible or running threads and launch independent Charts,
+  Browser, Mesh, Sketch, Media, or Simulator surfaces without changing the
+  inspector dock.
+
+### Authorized site sessions
+
+- **Saved web sessions have a named boundary.** Work → Logins keeps each user-
+  selected site in its own persistent browser partition, with explicit Off,
+  Read only, or Can act access. TaskWraith stores the site catalogue and
+  encrypted browser-managed session state, never a site password.
+- **Sign-in remains human-only.** A dedicated sign-in window keeps credentials
+  outside agent tools, while site-bound Canvas surfaces refuse navigation,
+  snapshots, and actuation outside the user's approved origins. Expired sessions
+  are named in the transcript instead of being retried blindly.
+- **Web-login tools are narrowly scoped.** `web_login_list` and
+  `web_login_open` use the selected site's partition and expiring access lease;
+  read-only sites cannot be turned into actuation by a tool call. Cross-origin
+  subframes are fenced to the site's explicitly allowed origins.
+- **Canvas eval consent follows the live surface.** The first permitted eval on
+  a Canvas shows its exact script on desktop and clearly offers a 12-hour window
+  for that canvas. Accepting lets later scripts on the same live surface proceed
+  across navigation and later turns without repeated prompts; other canvases and
+  app restarts require a new decision. The per-surface eval ceiling now matches the
+  8,000-step Canvas interaction ceiling for long browser-work sessions.
+
+### Approvals, shell, and Blackboard
+
+- **Approvals can name exact commands.** A new allowlist UI approves an exact
+  command rather than a broad pattern, backed by signed exact-command rules
+  enforced at the Host. Permission opportunities surfaced by providers can be
+  redeemed, and run-scoped grants are labelled truthfully about their scope.
+- **Shell inspection stays workspace-bound.** Prompt-free workspace inspection
+  is confined to the workspace, including git reads via `-C`, so agent tooling
+  cannot point shell helpers at arbitrary paths.
+- **Workspace git snapshots have a compiled, auto-running recipe.** The shell
+  recipe that captures a workspace git snapshot is now compiled into the
+  governed command path and dispatched automatically, so a snapshot lands
+  without a per-call approval card while the same workspace-only containment
+  and audit trail still apply.
+- **Detached provider sign-in windows.** The TUI opens a provider's auth flow
+  in a detached window, so long sign-ins no longer block the terminal session.
+- **The TUI names the model a thread actually runs.** Thread rows now carry the
+  thread's own model, reasoning effort, and permission preset instead of
+  borrowing the first inventory row, which had labelled every Mistral thread
+  as Codestral and let a blind Enter reconfigure it for real. Mistral Vibe
+  sessions resume across turns with their memory intact, and a failed run says
+  why on the transcript instead of a bare FAILED.
+- **Kimi MCP waits survive long tool calls.** MCP timeouts use the supported
+  override, and long TaskWraith MCP waits are preserved instead of being cut
+  short.
+- **Blackboard updates arrive as notifications.** Stack Blackboard updates are
+  modelled losslessly, styled by category, and surfaced as notifications so
+  participants see shared-state changes as they land.
+- **UltraTask graphs report honest progress.** Durable graphs run beside their
+  parent thread, dispatch ready roots concurrently, and expose progress without
+  leaking transcripts.
+
+### Durable work and Host startup
+
+- **The terminal client is packageable as a real command.** A thin npm distribution now maps both
+  `taskwraith` and `tw` to the TUI, carries the pure-Node production Host, and uses the installing
+  machine's ordinary Node 22+ runtime without weakening the desktop package's pinned-runtime
+  boundary. Its smoke test performs a disposable global install, renders demo and live Host
+  snapshots, and authenticates a clean Host shutdown. The package is not yet published to
+  npm.
+- **Execution Graphs now have an accountable owner.** Durable graph work binds
+  to its owning thread, pauses instead of dispatching when ownership is absent,
+  and delivers settled results to that thread exactly once. Work exposes the
+  execution list and route to the graph map without treating ordinary chat sends
+  as graph steps.
+- **Startup explains degraded authority.** Workspace-lock checkpoints, WAL
+  recovery, persistence-revision rebasing, and record quarantine keep one bad
+  or oversized chat from disabling the rest of the launch. Startup milestones
+  and the degraded-authority banner identify what the Host could and could not
+  recover.
+- **The Host and Thread Home stay in control.** Host-backed persistence, live
+  mission/round projections, and Thread Home surface the available terminal,
+  Mission Control, and other work surfaces without silently respawning a stopped
+  Host or treating stale records as live work.
+
+### Provider and local-model currency
+
+- **Ollama reports the model it can actually run.** Cloud discovery, remembered
+  CLI sign-in, provider-owned reasoning ladders, capacity admission, and paid
+  cloud spend now stay distinct from local model state; a model that cannot
+  think at a requested level is not promised that control.
+- **The local catalogue grows with its real families.** Qwen 3.8 Flash Next,
+  Granite 4.2, and Mistral Medium 3.5 128B receive model-aware context and
+  reasoning profiles, while Pi's OpenRouter namespace and per-route reasoning
+  metadata are canonicalised before dispatch.
+
+### iOS companion parity
+
+- **The companion follows current Host state.** iOS projection and presentation
+  now reconcile Host liveness, active terminal runs, feedback actions, and
+  recovered transcript state without retaining retired surfaces. This release
+  ships companion build 98 to TestFlight.
 
 ## 1.9.6 - 2026-08-19
 
@@ -1267,7 +1673,7 @@ are culled so your phone hears about state changes that matter.
   owns stack runtime, permission ceilings, terminal joins, and dispatch wiring
   so repository diagnostics and attention stacks stay coherent across
   multi-step work.
-- **PDF text extraction and on-device OCR are brokered tools.** Bundled
+- **PDF text extraction and Apple Vision OCR are brokered tools.** Bundled
   `pdfjs-dist` text-layer extraction plus generalized Vision OCR let agents
   read PDF text and image contents through TaskWraith-hosted tools rather than
   opaque provider-side parsing.
@@ -1737,13 +2143,15 @@ are culled so your phone hears about state changes that matter.
   followed by a divider and the deduped "Earlier in session" list, so you can
   see exactly what an agent just did without scrolling the whole session. Side
   chats, panes, and the run inspector keep the original flat list.
-- **On-device AI close-out summaries.** Run and ensemble-round close-out cards
+- **Close-out summaries from Apple Foundation Models.** Run and ensemble-round
+  close-out cards
   no longer quote the agent's final message verbatim (a plain "ok, done" used to
   become the whole summary). They now show readable prose plus a clear pass/fail
   validation line, and on Macs with Apple Foundation Models available, that
-  prose is generated on-device from a digest of the run — prompt, file changes,
+  prose is generated by Apple Foundation Models on the Mac from a digest of the
+  run — prompt, file changes,
   commits, tool counts, warnings — badged "via Foundation Models." A
-  deterministic summary remains the fallback whenever the on-device model is
+  deterministic summary remains the fallback whenever the framework is
   unavailable.
 - **Codex Multi-agent transcript card.** Codex's native Multi-agent mode — a
   root agent that spawns parallel subagents and synthesizes their results — now
@@ -2314,8 +2722,9 @@ are culled so your phone hears about state changes that matter.
   sheet with an acknowledgement gate — so every permission increase in an
   ensemble thread gets checked. Lowering a preset still applies immediately, and
   Trusted Session keeps its own dedicated confirmation sheet.
-- **Prompt-injection defense for on-device AI summaries.** The on-device AI
-  features that summarize run telemetry (close-out summaries and run analysis)
+- **Prompt-injection defense for Apple Foundation Models summaries.** The
+  features that summarize run telemetry with Apple Foundation Models (close-out
+  summaries and run analysis)
   now run their output through a deterministic echo guard: if the model's
   response verbatim-echoes text drawn from agent/tool output rather than
   composing its own summary, TaskWraith treats it as a hijacked response and
@@ -2624,8 +3033,8 @@ are culled so your phone hears about state changes that matter.
 - **Add selection to composer prompt.** Highlight transcript text and send it
   straight into the composer as quoted context.
 - **Composer voice input.** Pick a microphone source and dictate locally into
-  the composer; on-device transcription fills the prompt without sending audio
-  off-machine.
+  the composer; macOS Speech recognition fills the prompt without sending audio
+  from the Mac.
 - **Ensemble brief presets.** Edit reusable brief presets from Settings and
   update them mid-round via a new `ensemble_brief` MCP tool.
 - **Stacked fan-out working indicators.** Parallel fan-out lanes now show a
@@ -3283,7 +3692,7 @@ published.
   mini pickers now use a 75% background material so their contents stay legible
   across glass-heavy themes.
 - **iOS display scaling.** The companion gained a display-size scaling control for
-  tuning the remote UI density on-device.
+  tuning the remote UI density on the phone.
 
 ### Fixed
 - **Slash routing hardening.** Typed slash commands now route through the shared
@@ -3305,8 +3714,9 @@ published.
   whole lifecycle; collaborator comments are clearly marked as external/untrusted.
 - **A bigger media toolkit for agents.** Agents can now mix multitrack audio and
   encode, overlay and concatenate video natively (VideoToolbox, no ffmpeg),
-  transcribe audio on-device, and inspect audio segments and video frames with an
-  interactive scrubber, an NLE-style filmstrip and a DAW-style waveform player —
+  transcribe audio with macOS Speech without network access, and inspect audio
+  segments and video frames with an interactive scrubber, an NLE-style filmstrip
+  and a DAW-style waveform player —
   all over the un-forgeable trusted-media channel. Producer outputs gain automatic
   posters, badges, an expand-to-view viewer and Finder/copy/save actions, and any
   player can be torn off into its own resizable pane.
@@ -3412,8 +3822,8 @@ published.
   is actively running (desktop + iOS).
 - **iOS — rich completion notifications.** When a task finishes, the phone shows a
   banner with the first line of the final message and a coloured "N files · +A −B"
-  diff summary, composed on-device over the encrypted link (the push itself stays
-  content-free).
+  diff summary, composed by the app on the phone over the encrypted link (the
+  push itself stays content-free).
 - **iOS — inline @mention tinting in the composer.** @mentions now tint by provider
   hue as you type, matching the transcript, via a new text-view-backed composer
   input — in single-provider and guest chats too.
@@ -4430,11 +4840,11 @@ The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 ## 1.0.3
 
 ### Added
-- Local-first desktop workbench for running and reviewing coding-agent CLIs
+- Desktop workbench for running and reviewing coding-agent CLIs
   across multiple providers: workspace trust state, approval modes, activity
   timelines, command-output and status review, and run-scoped diff review.
 
 ---
 
-See [`README.md`](README.md) for setup and [`SAFETY.md`](SAFETY.md) /
+See [`README.md`](README.md) for setup and [`SAFETY.md`](docs/SAFETY.md) /
 [`SECURITY.md`](SECURITY.md) for the safety and security boundaries.

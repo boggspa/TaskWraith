@@ -13,8 +13,8 @@ const {
   validateLinuxUpdateFeedFile,
   validateLinuxUpdateFeedText
 }: {
-  expectedChannel: (version: string) => string
-  resolveFeedFiles: (targets: string[], version: string) => string[]
+  expectedChannel: (version: string, channelOverride?: string) => string
+  resolveFeedFiles: (targets: string[], version: string, channelOverride?: string) => string[]
   validateLinuxReleaseDirectory: (distDir: string, version: string) => string[]
   validateLinuxUpdateFeedFile: (
     filePath: string,
@@ -22,7 +22,7 @@ const {
   ) => { ok: boolean; errors: string[] }
   validateLinuxUpdateFeedText: (
     text: string,
-    options?: { fileName?: string; expectedVersion?: string }
+    options?: { fileName?: string; expectedVersion?: string; expectedChannel?: string }
   ) => {
     ok: boolean
     errors: string[]
@@ -122,6 +122,23 @@ sha512: ${digest}
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('validates the public identity against the isolated release feed', () => {
+    const result = validateLinuxUpdateFeedText(
+      `
+version: 0.1.0
+files:
+  - url: TaskWraith-0.1.0.AppImage
+    sha512: example
+    size: 123
+path: TaskWraith-0.1.0.AppImage
+sha512: example
+`,
+      { fileName: 'release-linux.yml', expectedVersion: '0.1.0', expectedChannel: 'release' }
+    )
+    expect(result.ok).toBe(true)
+    expect(expectedChannel('0.1.0', 'release')).toBe('release')
   })
 
   it('requires versioned AppImage and deb release artifacts', () => {

@@ -15,6 +15,7 @@ export type ContextWindowProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -34,7 +35,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gemini-api:gemini-2.5-flash': 1_048_576,
   'gemini-api:gemini-2.5-flash-lite': 1_048_576,
   'gemini-api:gemini-2.0-flash': 1_048_576,
-  // Pi seat wire ids (`<upstream>/<model>`, pi 0.82.1 bundled catalog).
+  // Pi seat wire ids (`<upstream>/<model>`, pi 0.84.2 bundled catalog).
   'deepseek/deepseek-v4-pro': 1_000_000,
   'deepseek/deepseek-v4-flash': 1_000_000,
   'zai/glm-5.2': 1_000_000,
@@ -42,9 +43,27 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'zai/glm-4.7': 204_800,
   'qwen-token-plan/qwen3.7-max': 1_000_000,
   'qwen-token-plan/qwen3.7-plus': 1_000_000,
+  'qwen-token-plan/qwen3.8-max': 1_000_000,
+  // Historical persisted id; dispatch canonicalizes it to the GA row above.
   'qwen-token-plan/qwen3.8-max-preview': 1_000_000,
   'minimax/MiniMax-M3': 1_000_000,
   'minimax/MiniMax-M2.7': 204_800,
+  // Xiaomi token plan — three regional deployments of the same catalog.
+  'xiaomi-token-plan-cn/mimo-v2-pro': 1_048_576,
+  'xiaomi-token-plan-cn/mimo-v2.5': 1_048_576,
+  'xiaomi-token-plan-cn/mimo-v2.5-pro': 1_048_576,
+  'xiaomi-token-plan-cn/mimo-v2.6-pro': 1_048_576,
+  'xiaomi-token-plan-cn/mimo-v2.6-flash': 1_048_576,
+  'xiaomi-token-plan-sgp/mimo-v2-pro': 1_048_576,
+  'xiaomi-token-plan-sgp/mimo-v2.5': 1_048_576,
+  'xiaomi-token-plan-sgp/mimo-v2.5-pro': 1_048_576,
+  'xiaomi-token-plan-sgp/mimo-v2.6-pro': 1_048_576,
+  'xiaomi-token-plan-sgp/mimo-v2.6-flash': 1_048_576,
+  'xiaomi-token-plan-ams/mimo-v2-pro': 1_048_576,
+  'xiaomi-token-plan-ams/mimo-v2.5': 1_048_576,
+  'xiaomi-token-plan-ams/mimo-v2.5-pro': 1_048_576,
+  'xiaomi-token-plan-ams/mimo-v2.6-pro': 1_048_576,
+  'xiaomi-token-plan-ams/mimo-v2.6-flash': 1_048_576,
   'mistral/zai-glm-5-2': 1_000_000,
   'mistral/mistral-medium-3.5': 262_144,
   'mistral/mistral-medium-latest': 262_144,
@@ -69,6 +88,18 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'devstral-small-latest': 262_144,
   'mistral-large-2512': 262_144,
   'zai-glm-5-2': 1_000_000,
+  'glm-5-2': 1_000_000,
+  // Inherited from the 5.2 deployment, not independently verified. NOTE the
+  // `zai-` prefix is load-bearing: this table is keyed by BARE model id and is
+  // consulted for every provider, so a plain `glm-5-3` row here would also
+  // capture Devin's own GLM-5.3 (devinModelCatalog uses that exact id) and
+  // silently widen it from the 262K devin fallback to 1M.
+  'zai-glm-5-3': 1_000_000,
+  // Bare `glm-5-3` is the Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring
+  // the `glm-5-2` subscription extra. Window carried forward from 5.2. NOTE:
+  // Devin owns the same bare id — PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES keeps
+  // Devin's row at its 262K fallback so this entry cannot widen it.
+  'glm-5-3': 1_000_000,
   'codestral-2508': 131_072,
   'mistral-small-2603': 256_000,
   'devstral-2512': 262_144,
@@ -79,13 +110,43 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'ministral-14b-2512': 262_144,
   'ministral-8b-2512': 262_144,
   'ministral-3b-2512': 262_144,
-  // Muse Code CLI default model (opaque exec seat).
+  // Muse Code CLI models (opaque exec seat).
+  'muse-spark-1.3': 200_000,
+  'muse-spark-1.3-contributor': 200_000,
   'muse-spark-1.2': 200_000,
+  'muse-spark-1.2-contributor': 200_000,
   'groq/openai/gpt-oss-120b': 131_072,
   'groq/qwen/qwen3-32b': 131_072,
   'cerebras/zai-glm-4.7': 131_072,
   'cerebras/gpt-oss-120b': 131_072,
+  'cerebras/qwen-3.8-27b': 131_072,
+  'openrouter/stealth/ox-alpha': 1_048_576,
+  'openrouter/z-ai/glm-5.2': 256_000,
+  // Historical persisted id; dispatch canonicalizes it to the row above.
+  'openrouter/zai/glm-5.2': 256_000,
+  'openrouter/poolside/laguna-s-2.1': 256_000,
+  'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free': 1_000_000,
+  'openrouter/cohere/north-mini-code:free': 256_000,
+  'openrouter/sakana/fugu-max': 1_000_000,
+  'openrouter/sakana/fugu-ultra-v2': 1_000_000,
+  'openrouter/minimax/minimax-m3:free': 1_048_576,
+  'openrouter/thinkingmachines/inkling:free': 1_048_576,
+  'openrouter/thinkingmachines/inkling-small:free': 1_048_576,
+  'openrouter/tencent/hy4-preview': 1_048_576,
+  'openrouter/inception/mercury-2.5-preview': 260_000,
+  'openrouter/inception/mercury-2.5': 260_000,
+  'openrouter/nex-agi/nex-n2.5-mini:free': 262_144,
+  'openrouter/nex-agi/nex-n2.5-pro:free': 262_144,
+  'openrouter/stealth/union-alpha': 262_144,
+  'openrouter/unbiased/pareto': 262_144,
+  'openrouter/typesafe/jev-1.13': 32_000,
+  'openrouter/stealth/space-bunny-alpha': 1_000_000,
   // Codex
+  'gpt-6-astra': 1_050_000,
+  // GPT-6 Sol and Luna (2026-09-22): 1,050,000 raw API window on both official
+  // model pages (developers.openai.com/api/docs/models/gpt-6-sol, -luna).
+  'gpt-6-sol': 1_050_000,
+  'gpt-6-luna': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
   // the CLI working window to match — see CODEX_MODEL_CONTEXT_CONFIGS).
@@ -99,9 +160,11 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gpt-5.3-codex-spark': 200_000,
   'gpt-5.2': 400_000,
   // Claude
+  'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
   'claude-fable-5-1m': 1_000_000,
   'claude-mythos-5': 1_000_000,
+  'claude-opus-5-5': 1_000_000,
   'claude-opus-5': 1_000_000,
   'claude-opus-4-8': 200_000,
   'claude-opus-4-8-1m': 1_000_000,
@@ -116,14 +179,23 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   opus: 200_000,
   haiku: 200_000,
   // Kimi
-  'kimi-k3': 256_000,
-  'kimi-k2.7-code': 256_000,
-  'kimi-k2.6': 256_000,
+  'kimi-k3': 1_048_576,
+  'kimi-k3-256k': 262_144,
+  // K2.8 Preview took the standard `kimi-for-coding` route to 1M on every
+  // membership tier (Kimi Code config.toml, verified 2026-09-11); Highspeed
+  // stayed on K2.7 at 256K.
+  'kimi-k2.8-preview': 1_048_576,
+  'kimi-k2.7-code-highspeed': 262_144,
+  'kimi-k2.7-code': 262_144,
+  'kimi-k2.6': 262_144,
   // Grok
   'grok-composer-2.5-fast': 200_000,
   'grok-4.5': 500_000,
   'grok-4.5-latest': 500_000,
   'grok-4.6': 500_000,
+  // Grok 4.7 / 4.7 Fast (added 2026-09-21): window carried forward from 4.6, re-verify against xAI docs.
+  'grok-4.7': 500_000,
+  'grok-4.7-fast': 500_000,
   'grok-build-latest': 500_000,
   'grok-build': 500_000,
   'grok-build-0.1': 500_000,
@@ -156,6 +228,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'qwen3.6:35b-a3b': 262_144,
   // Official Ollama model config (`max_position_embeddings`), verified 2026-08-14.
   'qwen3.8:27b-mlx': 262_144,
+  'qwen3.8-flash-next:125b-mlx': 262_144,
   'gemma3:4b': 131_072,
   'gemma4:12b': 262_144,
   'gemma4:12b-it-qat': 262_144,
@@ -167,6 +240,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'ornith:latest': 262_144,
   'ornith:9b': 262_144,
   'ornith:35b': 262_144,
+  'ornith-1.5:9b': 262_144,
+  'ornith-1.5:35b': 262_144,
   'laguna-xs-2.1:q8_0': 262_144,
   'gpt-oss': 131_072,
   'gpt-oss:20b': 131_072,
@@ -187,6 +262,11 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'granite4:3b': 131_072,
   'granite4.1:3b': 131_072,
   'granite4.1:30b': 131_072,
+  'granite4.2': 131_072,
+  'granite4.2:latest': 131_072,
+  'granite4.2:3b': 131_072,
+  'granite4.2:8b': 131_072,
+  'granite4.2:30b': 131_072,
   'nemotron-3-nano:4b': 262_144,
   'nemotron3:33b': 131_072,
   // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
@@ -195,6 +275,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // (2026-07-30) rather than assumed from the upstream Mistral API — Devstral
   // Small 2 carries a 384k window locally, 3x what the API tier documents.
   'devstral-small-2:24b': 393_216,
+  'mistral-medium-3.5:latest': 262_144,
+  'mistral-medium-3.5:128b': 262_144,
   'ministral-3:3b': 262_144,
   'ministral-3:14b': 262_144,
   // Official Ollama MLX config (`max_position_embeddings`), verified 2026-08-11.
@@ -218,7 +300,14 @@ const PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES: Readonly<
   Partial<Record<ContextWindowProviderId, Readonly<Record<string, number>>>>
 > = {
   grok: {
-    'grok-4.6': 500_000
+    'grok-4.6': 500_000,
+    'grok-4.7': 500_000,
+    'grok-4.7-fast': 500_000
+  },
+  devin: {
+    // Bare `glm-5-3` is shared with Mistral's Vibe-subscription row (global 1M
+    // above); Devin publishes no per-model window, so keep its fallback.
+    'glm-5-3': 262_144
   },
   cursor: {
     'grok-4.6': 256_000,
@@ -237,7 +326,7 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   gemini: 1_048_576,
   codex: 1_050_000,
   claude: 200_000,
-  kimi: 256_000,
+  kimi: 262_144,
   grok: 500_000,
   cursor: 200_000,
   // Ollama - local models vary by tag, so keep the fallback conservative.
@@ -253,7 +342,9 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   // `mistral-medium-3.5` / `devstral-small` rows above.
   mistral: 262_144,
   // Muse opaque CLI seat — conservative fallback until a measured window lands.
-  muse: 200_000
+  muse: 200_000,
+  // Devin publishes no per-model window; conservative fallback, parity with mistral.
+  devin: 262_144
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(
@@ -283,7 +374,6 @@ export function resolveContextWindow(
     return statsTotalTokenLimit
   }
   if (
-    provider === 'ollama' &&
     typeof liveModelContextLength === 'number' &&
     Number.isFinite(liveModelContextLength) &&
     liveModelContextLength > 0
@@ -302,6 +392,16 @@ export function resolveContextWindow(
     return PROVIDER_FALLBACK_WINDOW[provider]
   }
   return 200_000
+}
+
+/** Catalogue capacity only; an unknown model must not inherit a diagnostic claim. */
+export function knownModelContextWindow(modelId: string): number | undefined {
+  if (['default', 'auto', 'cli-default', 'opus', 'sonnet', 'haiku'].includes(modelId))
+    return undefined
+  const canonical = modelId.replace(/\[1m\]$/i, '-1m')
+  return Object.prototype.hasOwnProperty.call(CONTEXT_WINDOWS_BY_MODEL, canonical)
+    ? CONTEXT_WINDOWS_BY_MODEL[canonical]
+    : undefined
 }
 
 export function contextPercent(used: number, window: number): number {

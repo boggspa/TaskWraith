@@ -89,11 +89,14 @@ function normalizeRosterFanoutPolicy(
   value: unknown,
   legacyEnabled?: boolean
 ): EnsembleFanoutPolicy {
-  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+  const recognized = ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
     ? (value as EnsembleFanoutPolicy)
     : legacyEnabled
-      ? 'read_only'
+      ? 'all'
       : 'off'
+  // Fan-out is On/Off now: On carries the old 'all' semantics, and the
+  // retired 'read_only' / 'locked_writers_*' levels collapse into it.
+  return recognized === 'off' ? 'off' : 'all'
 }
 
 function writeRawPresets(presets: EnsembleRosterPreset[]): void {
@@ -264,22 +267,55 @@ export function deleteEnsembleRosterPreset(id: string): void {
   notifyPresetListeners()
 }
 
+/**
+ * The cap a preset stores for the roster it is snapshotting.
+ *
+ * Mirrors `buildPersistedChat`'s discipline in `EnsembleParticipantsAboveRow`:
+ * a stored cap is preserved only while it is a usable integer in range, and it
+ * is ratcheted UP to the roster actually held, never down. A cap below the
+ * snapshot is the 1.0.5-EW5 failure — the strip shows every seat while the
+ * prompt builder slices at the cap, so the seats past it silently never speak.
+ *
+ * `EnsembleConfig.maxParticipants` is typed required, so nothing upstream
+ * catches a record predating the field or carrying a fractional value. Left
+ * unguarded, `Math.min(MAX, undefined)` is NaN, `isEnsembleRosterPreset`
+ * rejects the preset, and `upsertEnsembleRosterPreset` throws on the one path
+ * that cannot show the user an error.
+ */
+function presetMaxParticipants(stored: unknown, rosterSize: number): number {
+  const preserved =
+    typeof stored === 'number' &&
+    Number.isInteger(stored) &&
+    stored >= MIN_ROSTER_PRESET_PARTICIPANTS &&
+    stored <= MAX_ROSTER_PRESET_PARTICIPANTS
+      ? stored
+      : MAX_ROSTER_PRESET_PARTICIPANTS
+  return Math.max(
+    MIN_ROSTER_PRESET_PARTICIPANTS,
+    Math.min(MAX_ROSTER_PRESET_PARTICIPANTS, Math.max(preserved, rosterSize))
+  )
+}
+
 export function buildEnsembleRosterPresetFromConfig(
   name: string,
   ensemble: EnsembleConfig,
   now = Date.now()
 ): EnsembleRosterPreset {
+  const participants = snapshotParticipantsForPreset(
+    ensemble.participants || [],
+    ensemble.bossmanParticipantId,
+    ensemble.captainParticipantIds,
+    ensemble.secondInCommandParticipantId
+  )
   return {
     id: newPresetId(now),
     name: name.trim(),
     createdAt: now,
     updatedAt: now,
     orchestrationMode:
-      ensemble.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
-    maxParticipants: Math.max(
-      MIN_ROSTER_PRESET_PARTICIPANTS,
-      Math.min(MAX_ROSTER_PRESET_PARTICIPANTS, ensemble.maxParticipants)
-    ),
+      // Continuous-only: presets saved from any chat record as Continuous.
+      'continuous',
+    maxParticipants: presetMaxParticipants(ensemble.maxParticipants, participants.length),
     ...(typeof ensemble.maxContinuationHops === 'number'
       ? { maxContinuationHops: ensemble.maxContinuationHops }
       : {}),
@@ -293,12 +329,7 @@ export function buildEnsembleRosterPresetFromConfig(
     ...(typeof ensemble.ensembleContextChars === 'number'
       ? { ensembleContextChars: ensemble.ensembleContextChars }
       : {}),
-    participants: snapshotParticipantsForPreset(
-      ensemble.participants || [],
-      ensemble.bossmanParticipantId,
-      ensemble.captainParticipantIds,
-      ensemble.secondInCommandParticipantId
-    )
+    participants
   }
 }
 
@@ -581,7 +612,7 @@ export function saveEnsembleRosterPresetFromParticipants(
     name: trimmed,
     createdAt: now,
     updatedAt: now,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxParticipants: Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, snapshots.length),
     participants: snapshots
   }
@@ -625,7 +656,7 @@ export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPre
     name: trimmed,
     createdAt: now,
     updatedAt: now,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxParticipants: DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS,
     participants: snapshotParticipantsForPreset(seeded, boss.id, [captain.id], captain.id)
   }
@@ -683,6 +714,57 @@ export function upsertEnsembleRosterPreset(preset: EnsembleRosterPreset): Ensemb
   writeRawPresets(presets)
   notifyPresetListeners()
   return preset
+}
+
+export type EnsembleRosterPresetSaveOutcome =
+  | { ok: true; preset: EnsembleRosterPreset }
+  | { ok: false; message: string }
+
+function isStorageQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const name = (error as { name?: unknown }).name
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED'
+}
+
+/**
+ * Overwrite `target` with the current roster, REPORTING a refusal rather than
+ * throwing it.
+ *
+ * The popover's two Save affordances (the header row and each saved roster's
+ * own Save) are the only preset writes with no dialog around them: Save As and
+ * Rename already submit through a form that catches and renders the reason.
+ * Left to throw, `upsertEnsembleRosterPreset` escaped the click handler — an
+ * invalid preset or a full localStorage persisted nothing, said nothing, and
+ * left the popover looking like the save had worked.
+ *
+ * Quota is called out by name because it is the one failure the user can act
+ * on, and the one a roster of 20+ seats makes reachable.
+ */
+export function overwriteEnsembleRosterPresetFromConfig(
+  target: Pick<EnsembleRosterPreset, 'id' | 'name' | 'createdAt'>,
+  ensemble: EnsembleConfig,
+  now = Date.now()
+): EnsembleRosterPresetSaveOutcome {
+  try {
+    const next: EnsembleRosterPreset = {
+      ...buildEnsembleRosterPresetFromConfig(target.name, ensemble, now),
+      id: target.id,
+      createdAt: target.createdAt,
+      name: target.name
+    }
+    return { ok: true, preset: upsertEnsembleRosterPreset(next) }
+  } catch (error) {
+    if (isStorageQuotaError(error)) {
+      return {
+        ok: false,
+        message: 'Saved rosters are out of storage space. Delete a saved roster, then save again.'
+      }
+    }
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not save this roster preset.'
+    }
+  }
 }
 
 export function serializeEnsembleRosterPresetsForExport(

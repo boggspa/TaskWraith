@@ -614,4 +614,123 @@ describe('useTranscriptScrollState', () => {
     })
     expect(chatScrollStateByIdRef.current.has('chat-b')).toBe(false)
   })
+
+  it('streaming messages pass reads each scroller geometry getter once, re-reading only the clamped landed scrollTop', () => {
+    // Read-budget regression (perf-transcript-geometry-fix): the follow-mode
+    // messages layout pass used to invoke disengage twice and re-read
+    // scrollTop/scrollHeight/clientHeight through every helper argument list
+    // (5/8/7 getter hits per pass). Scroll geometry cannot change inside one
+    // synchronous pass, so the pass owns ONE read phase: each getter hits the
+    // DOM once, and only the post-snap scrollTop (browser-clamped landing) is
+    // re-read. Behavior must be byte-identical: same single snap write, follow
+    // stays engaged.
+    const reads = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }
+    const writes: number[] = []
+    let scrollTopValue = 800
+    const countingScroller = {
+      scrollTo: vi.fn(),
+      addEventListener: vi.fn((name: string, listener: (event: any) => void) => {
+        hookHarness.listeners.set(name, listener)
+      }),
+      removeEventListener: vi.fn()
+    } as unknown as HTMLElement
+    Object.defineProperty(countingScroller, 'scrollTop', {
+      get: () => {
+        reads.scrollTop += 1
+        return scrollTopValue
+      },
+      set: (value: number) => {
+        writes.push(value)
+        // Browser clamp: the bottom snap writes scrollHeight and lands at
+        // scrollHeight - clientHeight.
+        scrollTopValue = Math.min(value, 1_000 - 200)
+      }
+    })
+    Object.defineProperty(countingScroller, 'scrollHeight', {
+      get: () => {
+        reads.scrollHeight += 1
+        return 1_000
+      }
+    })
+    Object.defineProperty(countingScroller, 'clientHeight', {
+      get: () => {
+        reads.clientHeight += 1
+        return 200
+      }
+    })
+    hookHarness.scroller = countingScroller
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 7)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // Effect 0 binds the scroll listener and seeds the lastNative* samples —
+    // that one-time binding cost is not part of the per-pass budget.
+    hookHarness.effectFactories[0]?.()
+    reads.scrollTop = 0
+    reads.scrollHeight = 0
+    reads.clientHeight = 0
+
+    // The follow-mode messages layout pass: direct disengage + pre-paint pin.
+    hookHarness.layoutEffectFactories[2]?.()
+
+    expect(reads).toEqual({ scrollTop: 2, scrollHeight: 1, clientHeight: 1 })
+    // Behavior: exactly one bottom-snap write of scrollHeight, follow retained.
+    expect(writes).toEqual([1_000])
+    expect(hookHarness.stateSetters[0]).not.toHaveBeenCalled()
+  })
+
+  it('trailing follow-pin frame still evaluates disengage against fresh geometry', () => {
+    // The same-pass proof (disengage already evaluated false) authorizes ONLY
+    // the synchronous pin to skip re-evaluating. The trailing coalesced frame
+    // is a new pass: a native scrollbar drag that lands between the layout
+    // snap and that frame must still release follow instead of re-snapping
+    // the reader to the tail.
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    const rafCallbacks: FrameRequestCallback[] = []
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((cb: FrameRequestCallback) => {
+        rafCallbacks.push(cb)
+        return rafCallbacks.length
+      })
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'streaming-message' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    hookHarness.effectFactories[0]?.()
+    hookHarness.layoutEffectFactories[2]?.()
+    // Snap wrote the bottom; nothing disengaged during the synchronous pass.
+    expect((hookHarness.scroller as unknown as { scrollTop: number }).scrollTop).toBe(1_000)
+    expect(hookHarness.stateSetters[0]).not.toHaveBeenCalled()
+
+    // A native scrollbar move outruns its scroll event before the trailing
+    // frame runs (content and viewport stable — attributable to the reader).
+    // At the live edge the snap's programmatic guard takes its clear branch
+    // (target equals the current scrollTop), so the ONLY pending frame is the
+    // scheduler's trailing pin.
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 300
+    expect(rafCallbacks).toHaveLength(1)
+    const trailing = rafCallbacks[0]
+    expect(trailing).toBeTypeOf('function')
+    trailing?.(32)
+
+    expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
+    // Follow released — the trailing frame must not have re-snapped.
+    expect((hookHarness.scroller as unknown as { scrollTop: number }).scrollTop).toBe(300)
+  })
 })

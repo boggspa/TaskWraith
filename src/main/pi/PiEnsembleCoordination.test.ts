@@ -2,14 +2,25 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
+import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA
+} from '../../shared/ensembleFanoutWriteScopes'
+import {
+  MCP_BROKER_LONG_POLL_TIMEOUT_MS,
+  MCP_BROKER_REQUEST_TIMEOUT_MS
+} from '../mcp/McpBrokerTimeouts'
 import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
   PI_MANAGED_SHELL_TOOL_NAMES,
   PI_MESH_TOOL_NAMES,
+  PI_ULTRATASK_DELEGATION_TOOL_NAMES,
   isPiEnsembleCoordinationToolName,
   isPiTaskWraithToolName,
+  isPiUltraTaskDelegationToolName,
   piEnsembleCoordinationReadyPromptAppendix,
   piEnsembleCoordinationUnavailablePromptAppendix,
   piTaskWraithToolsReadyPromptAppendix,
@@ -54,6 +65,23 @@ function extractRepairForkedToolCalls(
 }
 
 describe('Pi managed Ensemble coordination extension', () => {
+  it('advertises the same writer-map schema as MCP, including its JSON-string compatibility', () => {
+    const prepared = preparePiEnsembleCoordinationExtension({
+      isolatedHomeDir: createCanonicalHome()
+    })
+    const source = readFileSync(prepared.path, 'utf8')
+    const schemaText = /writeScopes: Type\.Optional\(([^\n]+)\),/.exec(source)?.[1]
+    expect(schemaText).toBeDefined()
+    expect(JSON.parse(schemaText!)).toEqual(ENSEMBLE_FANOUT_WRITE_SCOPES_SCHEMA)
+    expect(source).toContain('writeScopes is a writer map')
+    expect(piEnsembleCoordinationReadyPromptAppendix(prepared)).toContain(
+      ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE
+    )
+    expect(piTaskWraithToolsReadyPromptAppendix(prepared)).toContain(
+      ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE
+    )
+  })
+
   it('recognizes only the fixed ensemble coordination broker surface', () => {
     for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
       expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)
@@ -61,6 +89,96 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(isPiEnsembleCoordinationToolName('run_shell_command')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('capability_invoke')).toBe(false)
     expect(isPiEnsembleCoordinationToolName('write_file')).toBe(false)
+    // Delegate tools stay excluded from the ORDINARY coordination surface;
+    // signed UltraTask runs opt into their own fixed list below.
+    expect(isPiEnsembleCoordinationToolName('delegate_wave')).toBe(false)
+    expect(isPiEnsembleCoordinationToolName('delegate_to_subthread')).toBe(false)
+  })
+
+  it('admits the Boss/Captain orchestration parity tools without widening to delegates', () => {
+    const parityTools = [
+      'ensemble_fanout_all',
+      'ensemble_await',
+      'ensemble_lane_result',
+      'ensemble_control',
+      'ensemble_bossman_control',
+      'list_ensemble_participants',
+      'ensemble_propose_goal_complete'
+    ] as const
+    for (const toolName of parityTools) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain(toolName)
+      expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+    }
+    // Every admitted name must exist in the canonical TaskWraith MCP catalog.
+    for (const toolName of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+  })
+
+  it('keeps the signed UltraTask delegated-review surface fixed and separate', () => {
+    expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES).toEqual([
+      'ultra_task',
+      'delegate_wave',
+      'delegate_to_subthread',
+      'ensemble_await',
+      'list_subthreads',
+      'read_subthread_result'
+    ])
+    for (const toolName of PI_ULTRATASK_DELEGATION_TOOL_NAMES) {
+      expect(isPiUltraTaskDelegationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+    // Join is shared with Ensemble; spawn/inspection remain UltraTask-only.
+    expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain('ensemble_await')
+    for (const toolName of [
+      'delegate_wave',
+      'delegate_to_subthread',
+      'list_subthreads',
+      'read_subthread_result'
+    ]) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).not.toContain(toolName)
+    }
+    // Keep cancellation and claim mutation outside the consent-derived transport.
+    for (const outOfScope of ['cancel_subthread', 'claim_fleet_wave']) {
+      expect(PI_ULTRATASK_DELEGATION_TOOL_NAMES as readonly string[]).not.toContain(outOfScope)
+      expect(isPiUltraTaskDelegationToolName(outOfScope)).toBe(false)
+    }
+  })
+
+  it('admits the sketch-canvas trio and browser quartet without widening to the full canvas family', () => {
+    // Pass-2 Boss ruling (boss-canvas-browser-scope-ruling): minimal-plus —
+    // the sketch trio matches Ollama's tier posture and the browser quartet
+    // matches the CORE MCP profile exactly. The wider canvas_* render/chart/
+    // drive family stays out of scope.
+    const parityTools = [
+      'canvas_sketch_open',
+      'canvas_sketch_get',
+      'canvas_sketch_update',
+      'browser_open',
+      'browser_click',
+      'browser_screenshot',
+      'browser_console'
+    ] as const
+    for (const toolName of parityTools) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES).toContain(toolName)
+      expect(isPiEnsembleCoordinationToolName(toolName)).toBe(true)
+      expect(isPiTaskWraithToolName(toolName)).toBe(true)
+      expect(TASKWRAITH_MCP_TOOLS as readonly string[]).toContain(toolName)
+    }
+    for (const outOfScope of [
+      'canvas_open',
+      'canvas_render',
+      'canvas_chart',
+      'canvas_snapshot',
+      'canvas_drive_report',
+      'web_fetch',
+      'web_search'
+    ]) {
+      expect(PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).not.toContain(outOfScope)
+      expect(isPiTaskWraithToolName(outOfScope)).toBe(false)
+    }
   })
 
   it('writes a fixed owner-only extension with exactly the narrow coordination tool set', () => {
@@ -82,11 +200,88 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain('@All remains roster-only')
     expect(source).toContain("case 'blackboard_post'")
     expect(source).toContain('ttlMinutes: Type.Optional(Type.Number())')
+    expect(source).toContain("case 'ensemble_control'")
+    expect(source).toContain("case 'ensemble_bossman_control'")
+    expect(source).toContain("case 'ensemble_await'")
+    expect(source).toContain("case 'ensemble_lane_result'")
+    expect(source).toContain("case 'ensemble_fanout_all'")
+    expect(source).toContain("case 'list_ensemble_participants'")
+    expect(source).toContain("case 'ensemble_propose_goal_complete'")
+    expect(source).toContain("case 'canvas_sketch_open'")
+    expect(source).toContain("case 'canvas_sketch_get'")
+    expect(source).toContain("case 'canvas_sketch_update'")
+    expect(source).toContain("case 'browser_open'")
+    expect(source).toContain("case 'browser_click'")
+    expect(source).toContain("case 'browser_screenshot'")
+    expect(source).toContain("case 'browser_console'")
+    // The generated module contains schema branches for every fixed Pi surface,
+    // but this ordinary Ensemble credential registers exactly the coordination
+    // list and therefore cannot call either delegated-review tool.
+    expect(prepared.toolNames).not.toContain('delegate_wave')
+    expect(prepared.toolNames).not.toContain('delegate_to_subthread')
+    expect(source).not.toContain("'canvas_render'")
+    expect(source).not.toContain("'canvas_drive_report'")
     expect(source).toContain('throw new Error(resultText(result))')
     expect(prepared.toolNames).not.toContain('run_shell_command')
     expect(source).toContain(
       `const TOOL_NAMES = ${JSON.stringify(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)}`
     )
+    expect(piTaskWraithToolsReadyPromptAppendix(prepared)).not.toContain(
+      'UltraTask delegated-review transport is enabled'
+    )
+  })
+
+  it('generates exact UltraTask delegation schemas under its fixed credential allowlist', () => {
+    const home = createCanonicalHome()
+    const prepared = preparePiTaskWraithExtension({
+      isolatedHomeDir: home,
+      toolNames: PI_ULTRATASK_DELEGATION_TOOL_NAMES
+    })
+    const source = readFileSync(prepared.path, 'utf8')
+
+    expect(prepared.toolNames).toEqual(PI_ULTRATASK_DELEGATION_TOOL_NAMES)
+    expect(source).toContain(
+      `const TOOL_NAMES = ${JSON.stringify(PI_ULTRATASK_DELEGATION_TOOL_NAMES)}`
+    )
+    expect(source).toContain("case 'ultra_task'")
+    expect(source).toContain('enableFanout: Type.Optional(Type.Boolean())')
+    expect(source).toContain('enableReview: Type.Optional(Type.Boolean())')
+    expect(source).toContain('maxWorkers: Type.Optional(Type.Number())')
+    expect(source).toContain("case 'delegate_wave'")
+    expect(source).toContain('workers: Type.Array(')
+    expect(source).toContain('{ minItems: 1, maxItems: 64 }')
+    expect(source).toContain('allowMultiProvider: Type.Optional(Type.Boolean())')
+    expect(source).toContain('deadlineMs: Type.Optional(Type.Number())')
+    expect(source).toContain("case 'delegate_to_subthread'")
+    expect(source).toContain('provider: Type.String()')
+    expect(source).toContain('prompt: Type.String()')
+    expect(source).toContain('returnResult: Type.Optional(Type.Boolean())')
+    expect(source).toContain('subThreadId: optionalText()')
+    expect(source).toContain("case 'ensemble_await'")
+    expect(source).toContain('subThreadIds: optionalTextArray()')
+    expect(source).toContain('waveIds: optionalTextArray()')
+    expect(source).toContain('timeoutSeconds: Type.Optional(Type.Number())')
+    expect(source).not.toContain('timeoutMs: Type.Optional(Type.Number())')
+    expect(source).toContain(`const DEFAULT_BROKER_TIMEOUT_MS = ${MCP_BROKER_REQUEST_TIMEOUT_MS}`)
+    expect(source).toContain(
+      `const LONG_POLL_BROKER_TIMEOUT_MS = ${MCP_BROKER_LONG_POLL_TIMEOUT_MS}`
+    )
+    expect(source).toContain(
+      "tool === 'ensemble_await' ? LONG_POLL_BROKER_TIMEOUT_MS : DEFAULT_BROKER_TIMEOUT_MS"
+    )
+    expect(source).not.toContain('\n      130000\n')
+    expect(source).toContain("case 'list_subthreads'")
+    expect(source).toContain('includeArchived: Type.Optional(Type.Boolean())')
+    expect(source).toContain("case 'read_subthread_result'")
+    expect(source).toContain('includeEvents: Type.Optional(Type.Boolean())')
+
+    const prompt = piTaskWraithToolsReadyPromptAppendix(prepared)
+    expect(prompt).toContain('main-signed reasoning-picker consent')
+    expect(prompt).toContain('call `ultra_task` once')
+    expect(prompt).toContain('TaskWraith owns every staged worker and join')
+    expect(prompt).toContain('only when `ultra_task` is unavailable')
+    expect(prompt).toContain('returned `waveIds` or `subThreadIds`')
+    expect(prompt).toContain('does not widen native Pi file, shell, network, or generic MCP access')
   })
 
   it('repairs Pi forked tool-call blocks before the message is dispatched', () => {
@@ -261,6 +456,36 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(prompt).toContain('same meshCanvas permission gate')
   })
 
+  it('generates extension sources compatible with Pi-bundled typebox 1.x', () => {
+    // Pi resolves `typebox` (not `@sinclair/typebox`) from its own runtime.
+    // typebox 1.x removed `Type.OneOf` in favor of `Type.Union`, and any use
+    // of the removed builder throws during module evaluation, which fails the
+    // ENTIRE extension load for the seat. Pin the generated source against
+    // removed builders so this cannot silently regress.
+    const homes = [
+      preparePiEnsembleCoordinationExtension({ isolatedHomeDir: createCanonicalHome() }),
+      preparePiTaskWraithExtension({
+        isolatedHomeDir: createCanonicalHome(),
+        toolNames: [
+          ...PI_EXACT_FILE_TOOL_NAMES,
+          ...PI_MANAGED_SHELL_TOOL_NAMES,
+          ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+          ...PI_MESH_TOOL_NAMES
+        ]
+      }),
+      preparePiTaskWraithExtension({
+        isolatedHomeDir: createCanonicalHome(),
+        toolNames: PI_ULTRATASK_DELEGATION_TOOL_NAMES
+      })
+    ]
+    for (const prepared of homes) {
+      const source = readFileSync(prepared.path, 'utf8')
+      expect(source).toContain("import { Type } from 'typebox'")
+      expect(source).not.toContain('Type.OneOf')
+      expect(source).toContain('Type.Union([Type.String(), Type.Array(Type.String())])')
+    }
+  })
+
   it('does not overwrite an unexpected pre-existing extension file', () => {
     const home = createCanonicalHome()
     preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })
@@ -291,6 +516,7 @@ describe('Pi managed Ensemble coordination extension', () => {
       exactFileToolsExpected: true,
       shellToolsExpected: true,
       coordinationExpected: false,
+      ultraTaskDelegationExpected: true,
       meshToolsExpected: true,
       reason: 'extension readiness timed out'
     })
@@ -299,6 +525,28 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(unavailable).toContain('exact command and cwd')
     expect(unavailable).toContain('extension readiness timed out')
     expect(unavailable).toContain('Mesh Canvas tools were expected')
+    expect(unavailable).toContain('UltraTask delegation tools were expected')
+    expect(unavailable).toContain('`ultra_task` is unavailable')
     expect(unavailable).not.toContain('continuing read-only')
+  })
+
+  it('invariant: repairForkedToolCalls behavior pinned', () => {
+    // Progressive disclosure design mandates that tool call repair behavior for Pi
+    // must not drift: it must merge empty tool calls representing arguments for the
+    // immediately preceding named tool call.
+    const home = createCanonicalHome()
+    const repairOnly = preparePiToolCallRepairExtension({ isolatedHomeDir: home })
+    const repairSource = readFileSync(repairOnly.path, 'utf8')
+    const repair = extractRepairForkedToolCalls(repairSource)
+
+    // Test a pinned matrix of repair scenarios
+    const original = [
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+      { type: 'toolCall', id: 'toolcall0', name: '', arguments: { path: 'a.ts' } }
+    ]
+    const repaired = repair(original)
+    expect(repaired).toEqual([
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }
+    ])
   })
 })

@@ -249,6 +249,20 @@ public struct TWRunActivityState: Codable, Hashable, Sendable {
     /// Distinguishes an unavailable Git observation from a genuinely clean
     /// snapshot. Zero is never allowed to impersonate unavailable.
     public let hasGitSnapshot: Bool
+    /// Seats still working (wire phase `running`). Defaulted so an older Mac
+    /// payload without the field remains useful: missing values are derived
+    /// from `seats`, otherwise 0.
+    public let activeSeats: Int
+    /// Seats that have answered this turn (wire phase `complete`).
+    public let respondedSeats: Int
+    /// Seats with an issue (wire phase `failed`). Cancelled seats are excluded.
+    public let blockedSeats: Int
+
+    enum CodingKeys: String, CodingKey {
+        case phase, startedAtUnix, filesChanged, additions, deletions, seats
+        case activeRuns, ahead, behind, hasGitSnapshot
+        case activeSeats, respondedSeats, blockedSeats
+    }
 
     public init(
         phase: TWRunPhase,
@@ -260,7 +274,10 @@ public struct TWRunActivityState: Codable, Hashable, Sendable {
         activeRuns: Int,
         ahead: Int,
         behind: Int,
-        hasGitSnapshot: Bool
+        hasGitSnapshot: Bool,
+        activeSeats: Int,
+        respondedSeats: Int,
+        blockedSeats: Int
     ) {
         self.phase = phase
         self.startedAtUnix = startedAtUnix
@@ -272,6 +289,9 @@ public struct TWRunActivityState: Codable, Hashable, Sendable {
         self.ahead = ahead
         self.behind = behind
         self.hasGitSnapshot = hasGitSnapshot
+        self.activeSeats = activeSeats
+        self.respondedSeats = respondedSeats
+        self.blockedSeats = blockedSeats
     }
 
     /// ActivityKit can restore content written by an older app build. New
@@ -289,6 +309,19 @@ public struct TWRunActivityState: Codable, Hashable, Sendable {
         ahead = (try? c.decode(Int.self, forKey: .ahead)) ?? 0
         behind = (try? c.decode(Int.self, forKey: .behind)) ?? 0
         hasGitSnapshot = (try? c.decode(Bool.self, forKey: .hasGitSnapshot)) ?? false
+        let derived = seatSummaryCounts(from: seats)
+        activeSeats = Self.decodedCount(c, key: .activeSeats, fallback: derived.active)
+        respondedSeats = Self.decodedCount(c, key: .respondedSeats, fallback: derived.responded)
+        blockedSeats = Self.decodedCount(c, key: .blockedSeats, fallback: derived.blocked)
+    }
+
+    private static func decodedCount(
+        _ c: KeyedDecodingContainer<CodingKeys>, key: CodingKeys, fallback: Int
+    ) -> Int {
+        if let explicit = try? c.decode(Int.self, forKey: key) {
+            return max(0, explicit)
+        }
+        return fallback
     }
 
     /// ONLY set where a real denominator exists — today that is ensemble seats
@@ -407,6 +440,60 @@ public enum TWRunActivityLimits {
     public static let dismissAfter: TimeInterval = 8 * 60
 }
 
+/// Counts from mapped wire seat phases: `running`→active, `complete`→responded,
+/// `failed`→blocked. `cancelled` and the needs-you phases are excluded.
+public func seatSummaryCounts(from seats: [TWSeatState]) -> (
+    active: Int, responded: Int, blocked: Int
+) {
+    var active = 0, responded = 0, blocked = 0
+    for seat in seats {
+        switch seat.phase {
+        case .running: active += 1
+        case .complete: responded += 1
+        case .failed: blocked += 1
+        case .cancelled, .awaitingApproval, .awaitingQuestion: continue
+        }
+    }
+    return (active, responded, blocked)
+}
+
+/// Operational copy for the ensemble Live Activity. Kept in Kit so the wording
+/// is unit-testable without ActivityKit. No titles or identifiers.
+public enum TWRunActivityPresentation {
+    public static func ensembleStatusLabel(
+        phase: TWRunPhase,
+        isStale: Bool,
+        activeSeats: Int,
+        respondedSeats: Int
+    ) -> String {
+        if isStale { return "Out of contact" }
+        switch phase {
+        case .awaitingApproval: return "Needs approval"
+        case .awaitingQuestion: return "Needs you"
+        default:
+            if activeSeats > 0 { return "\(activeSeats) working" }
+            if respondedSeats > 0 { return "Handing off" }
+            return "Preparing"
+        }
+    }
+
+    public static func ensembleDetailLabel(
+        respondedSeats: Int, waitingSeats: Int, blockedSeats: Int
+    ) -> String {
+        var text = "\(respondedSeats) responded · \(waitingSeats) waiting"
+        if blockedSeats > 0 {
+            text += " · \(blockedSeats) \(blockedSeats == 1 ? "issue" : "issues")"
+        }
+        return text
+    }
+
+    public static func ensembleCompactShowsAttention(
+        isStale: Bool, needsUser: Bool, blockedSeats: Int
+    ) -> Bool {
+        isStale || needsUser || blockedSeats > 0
+    }
+}
+
 /// THE ONLY WAY to build a content state. Takes allowlisted primitives, so a
 /// caller physically cannot pass a thread title or a file path through it.
 public func makeContentState(
@@ -419,9 +506,16 @@ public func makeContentState(
     activeRuns: Int = 1,
     ahead: Int = 0,
     behind: Int = 0,
-    hasGitSnapshot: Bool = false
+    hasGitSnapshot: Bool = false,
+    activeSeats: Int? = nil,
+    respondedSeats: Int? = nil,
+    blockedSeats: Int? = nil
 ) -> TWRunActivityState {
-    TWRunActivityState(
+    // Counts are taken from the full seat list BEFORE the payload cap, so an
+    // oversized ensemble still reports how many are working even if only eight
+    // dots travel on the wire.
+    let derived = seatSummaryCounts(from: seats)
+    return TWRunActivityState(
         phase: phase,
         startedAtUnix: Int(startedAt.timeIntervalSince1970.rounded()),
         filesChanged: max(0, filesChanged),
@@ -431,7 +525,10 @@ public func makeContentState(
         activeRuns: max(0, activeRuns),
         ahead: max(0, ahead),
         behind: max(0, behind),
-        hasGitSnapshot: hasGitSnapshot
+        hasGitSnapshot: hasGitSnapshot,
+        activeSeats: max(0, activeSeats ?? derived.active),
+        respondedSeats: max(0, respondedSeats ?? derived.responded),
+        blockedSeats: max(0, blockedSeats ?? derived.blocked)
     )
 }
 

@@ -16,10 +16,17 @@ export type SettingsPanelUpdate = {
   appIconVariant?: AppSettings['appIconVariant']
   promptSurfaceStyle?: AppSettings['promptSurfaceStyle']
   fanoutLaneLayout?: AppSettings['fanoutLaneLayout']
+  /** Settings → Appearance default for the per-chat transcript view. */
+  defaultTranscriptView?: AppSettings['defaultTranscriptView']
+  /** Settings → Appearance size for transcript message text. */
+  transcriptTextSize?: AppSettings['transcriptTextSize']
+  transcriptWidth?: AppSettings['transcriptWidth']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']
   keyCommandBindings?: AppSettings['keyCommandBindings']
+  /** Settings → General behavior for messages submitted while a run is active. */
+  midRunInputBehavior?: AppSettings['midRunInputBehavior']
   funFxEnabled?: boolean
   funFxMode?: AppSettings['funFxMode']
   advancedFx?: AppSettings['advancedFx']
@@ -50,6 +57,7 @@ export type SettingsPanelUpdate = {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+  keepAwakeWhileWorking?: AppSettings['keepAwakeWhileWorking']
   /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
   maxWaveAgents?: AppSettings['maxWaveAgents']
   /** Sidebar Model Usage card view ('plan' quota meters | 'spend' API cost). */
@@ -78,6 +86,7 @@ export type SettingsPanelUpdate = {
   kimiBinaryPath?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
+  devinApiServerUrl?: AppSettings['devinApiServerUrl']
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices?: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy

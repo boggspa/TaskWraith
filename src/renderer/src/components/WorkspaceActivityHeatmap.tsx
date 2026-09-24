@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { WorkspaceActivitySnapshot } from '../../../main/store/types'
 import { HEATMAP_ROWS } from '../lib/UsageHeatmap'
 import {
@@ -9,6 +9,7 @@ import {
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20']
 const WORKSPACE_ACTIVITY_IPC_DEADLINE_MS = 1_000
+const WORKSPACE_ACTIVITY_HEATMAP_GREEN = '#39d353'
 
 type IdleWindow = Window & {
   requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number
@@ -72,11 +73,15 @@ function loadWorkspaceActivityWithoutBlocking(
 }
 
 function WorkspaceActivityCellTile({ cell }: { cell: WorkspaceActivityHeatmapCell }) {
+  const intensityPercent = `${Math.round(cell.intensity * 100)}%`
   const style = cell.active
-    ? {
-        backgroundColor: 'var(--accent)',
-        opacity: cell.intensity
-      }
+    ? ({
+        '--usage-heatmap-cell-color': WORKSPACE_ACTIVITY_HEATMAP_GREEN,
+        '--usage-heatmap-cell-opacity': cell.intensity,
+        '--usage-heatmap-cell-strength': intensityPercent,
+        '--usage-heatmap-cell-rim': `${Math.round(24 + cell.intensity * 64)}%`,
+        '--usage-heatmap-cell-glow': `${Math.round(cell.intensity * 22)}%`
+      } as CSSProperties)
     : undefined
   return (
     <span

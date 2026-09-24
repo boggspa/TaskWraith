@@ -63,6 +63,13 @@ export const SIMULATOR_MUTATING_MCP_TOOL_NAMES = [
   'simulator_scroll'
 ] as const
 
+/** Fixed packaged-emulator surface; no arbitrary ROM, URL, or raw-RAM verbs exist. */
+export const EMULATOR_MCP_TOOL_NAMES = [
+  'emulator_open',
+  'emulator_observe',
+  'emulator_step'
+] as const
+
 export const TASKWRAITH_MCP_TOOLS = [
   'run_shell_command',
   'write_file',
@@ -235,6 +242,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // The tool itself is auto-allowed so a restricted seat can reach the existing
   // approval modal; it performs no target action unless the human accepts.
   'request_tool_permission',
+  // Fresh-profile-only host-issued retry redemption. Unlike the legacy request,
+  // this accepts only an opaque main-minted opportunity id; its target never
+  // travels back through model-authored arguments or failure prose.
+  'redeem_permission_opportunity',
   // Persistent thread goal lifecycle. The user owns objective set/clear via
   // /goal and composer controls; agents may read and update lifecycle only.
   'goal_read',
@@ -252,6 +263,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Full WS Access may skip the card); Ollama excluded like other
   // sub-thread tools.
   'delegate_wave',
+  // Ultra Task - highest reasoning with multi-agent orchestration.
+  // Auto-selects maximum available reasoning tier and encourages delegate wave patterns.
+  'ultra_task',
   // 1.0.4-AK6 — structured brief emitted by a participant at the
   // end of their parallel fan-out lane. Threaded into the
   // serial writer's prompt context so the writer can synthesize
@@ -276,6 +290,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'launch_adopt',
   'launch_stop',
   'launch_status',
+  'computer_use',
   'canvas_open',
   'canvas_render_html',
   'canvas_render_chart',
@@ -286,6 +301,8 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_sketch_update',
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_screenshot',
   'canvas_inspect',
@@ -297,10 +314,20 @@ export const TASKWRAITH_MCP_TOOLS = [
   // annotate overlays numbered Set-of-Mark boxes for the human (gated).
   'canvas_click',
   'canvas_fill',
+  'canvas_key',
+  'canvas_scroll',
+  'canvas_hover',
+  'canvas_select',
+  'canvas_wait_for',
   'canvas_annotate',
-  // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
-  // gated via the canvasEval service (never auto-allowed), egress-cut while running.
+  // P2 arbitrary eval — runs agent-supplied JS in the page. The first desktop
+  // accept opens a 12h exact-live-surface window across navigation/later turns;
+  // every execution remains receipt-bound, audited, and egress-cut while running.
   'canvas_eval',
+  // Fixed first-party Game Boy demo. Open is main-owned and exact-surface;
+  // observation exports only a reviewed state projection plus one PNG; step
+  // accepts bounded controller segments through the AppDrive lease boundary.
+  ...EMULATOR_MCP_TOOL_NAMES,
   // Canvas Browser navigation — goto/back/forward/reload/stop on the chat's
   // sandboxed web canvas, auto-opening one in the chat dock when none is open.
   // Gated by the dedicated webBrowsing service: allowed under Accept Edits+,
@@ -308,6 +335,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // click/fill/eval keep their own stricter services.
   'canvas_navigate',
   'canvas_close',
+
+  // Authorized site sessions (docs/appdrive/authorized-site-sessions.md).
+  'web_login_list',
+  'web_login_open',
   // Mesh Canvas — declarative, provider-agnostic 3D scene construction and
   // presentation. Normal gateway seats discover this specialist surface with
   // capability_search; a fresh mesh-authorised participant can receive it
@@ -331,6 +362,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   // thread/provider/workspace and reads how far it got. Read-only; `find` is
   // NOT auto-allowed and cross-workspace reads are gated by the crossThreadRead
   // approval service. See src/main/mcp/RecallToolExecutors.ts.
+  'tw_history_search',
+  'tw_history_read',
+  'tw_checkpoint',
   'tw_recall_find',
   'tw_recall_read',
   'tw_recall_read_events',
@@ -452,6 +486,7 @@ export type MeshTopologyMcpToolName = (typeof MESH_TOPOLOGY_MCP_TOOL_NAMES)[numb
 export type MeshMcpToolName = (typeof MESH_MCP_TOOL_NAMES)[number]
 export type SimulatorMcpToolName = (typeof SIMULATOR_MCP_TOOL_NAMES)[number]
 export type SimulatorMutatingMcpToolName = (typeof SIMULATOR_MUTATING_MCP_TOOL_NAMES)[number]
+export type EmulatorMcpToolName = (typeof EMULATOR_MCP_TOOL_NAMES)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 
@@ -497,22 +532,130 @@ export function isPortableEnsembleControlToolName(toolName: string): boolean {
 }
 
 /**
- * Lets constrained function-call transports use a small, declared envelope
- * while MCP-capable callers may keep sending the action fields flat. The
- * envelope is deliberately unwrapped before the legacy authority executor,
- * schema preflight, approval, and audit paths run.
+ * BOTH spellings of the one Boss/Captain authority primitive: the portable
+ * `ensemble_control` front door and the canonical `ensemble_bossman_control`.
+ *
+ * Deliberately separate from `isPortableEnsembleControlToolName` above, which
+ * stays narrow because profile-fenced transports use it to REJECT an
+ * unadvertised alias (McpBridgeRuntime `-32601`). Widening that predicate would
+ * start refusing legitimate `ensemble_bossman_control` calls on legacy
+ * profiles. This one is argument SHAPING only and never gates admission.
+ */
+export function isEnsembleControlToolName(toolName: string): boolean {
+  const normalized = normalizeTaskWraithToolName(toolName)
+  return normalized === 'ensemble_control' || normalized === 'ensemble_bossman_control'
+}
+
+/**
+ * The Ensemble tools that share one argument convention. Membership is what
+ * makes the envelope + alias rules discoverable in ONE place instead of being
+ * re-derived per dispatch site (the ad-hoc `write_scopes` / `target_stage`
+ * aliases used to exist at exactly one handler and nowhere else).
+ */
+const ENSEMBLE_ARGUMENT_NORMALIZED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'ensemble_control',
+  'ensemble_bossman_control',
+  'ensemble_fanout',
+  'ensemble_fanout_all',
+  'ensemble_await',
+  'ensemble_lane_result',
+  'ensemble_send',
+  'ensemble_yield',
+  'ensemble_poll_response',
+  'ensemble_propose_goal_complete',
+  'ensemble_brief_update',
+  'ensemble_roster_edit'
+])
+
+/** Strict snake_case only: no leading underscore, no pre-existing capitals. */
+const SNAKE_CASE_ARGUMENT_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function camelCaseFromSnakeCase(key: string): string {
+  return key.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase())
+}
+
+/** Decode the object transport without choosing writers or changing any scope. */
+export function decodeEnsembleFanoutWriteScopes(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trimStart().startsWith('{')) return value
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isPlainRecord(parsed) ? parsed : value
+  } catch {
+    return value
+  }
+}
+
+/**
+ * ADDITIVE alias fold: a snake_case key gains its camelCase twin when the twin
+ * is absent. The original key is kept, so nothing that already reads the
+ * snake spelling changes behaviour, and only the TOP level is folded so nested
+ * strict-schema objects (`ensemble_roster_edit.preset`) are untouched.
+ */
+function foldSnakeCaseArgumentAliases(record: Record<string, unknown>): Record<string, unknown> {
+  let folded: Record<string, unknown> | null = null
+  for (const [key, value] of Object.entries(record)) {
+    if (!SNAKE_CASE_ARGUMENT_KEY.test(key)) continue
+    const camelKey = camelCaseFromSnakeCase(key)
+    if (camelKey === key || record[camelKey] !== undefined) continue
+    if (!folded) folded = { ...record }
+    folded[camelKey] = value
+  }
+  return folded || record
+}
+
+/**
+ * ONE argument convention for every Ensemble dispatch boundary.
+ *
+ * Constrained function-call transports may use the small declared
+ * `{action, params:{…}}` envelope; MCP-capable callers may keep sending the
+ * action fields flat; either may spell a field in snake_case. All three shapes
+ * converge here BEFORE the authority executor, schema preflight, approval, and
+ * audit paths run, on both control tool names.
+ *
+ * MERGE, never replace: a flat field wins over the same field inside the
+ * envelope, but an absent flat value never erases a real enveloped one. The
+ * broker path used to REPLACE the arguments with `params`, which silently
+ * dropped a top-level `action` when the envelope did not repeat it.
+ */
+export function normalizeEnsembleMcpToolArguments(toolName: string, value: unknown): unknown {
+  if (!ENSEMBLE_ARGUMENT_NORMALIZED_TOOL_NAMES.has(normalizeTaskWraithToolName(toolName))) {
+    return value
+  }
+  if (!isPlainRecord(value)) return value
+  let record: Record<string, unknown> = value
+  if (isEnsembleControlToolName(toolName) && isPlainRecord(record.params)) {
+    const { params, ...flat } = record
+    const merged: Record<string, unknown> = { ...(params as Record<string, unknown>) }
+    for (const [key, flatValue] of Object.entries(flat)) {
+      if (flatValue === undefined) continue
+      merged[key] = flatValue
+    }
+    record = merged
+  }
+  record = foldSnakeCaseArgumentAliases(record)
+  if (normalizeTaskWraithToolName(toolName) === 'ensemble_fanout') {
+    // Pi/Qwen can stringify this nested field even after correcting its keys.
+    // Decode before policy/approval/audit at every shared dispatch boundary;
+    // a bare array still needs the caller to name its intended writer.
+    const writeScopes = decodeEnsembleFanoutWriteScopes(record.writeScopes)
+    if (writeScopes !== record.writeScopes) return { ...record, writeScopes }
+  }
+  return record
+}
+
+/**
+ * Back-compatible alias for the portable-envelope call sites that predate the
+ * shared convention above. Prefer `normalizeEnsembleMcpToolArguments`.
  */
 export function normalizePortableEnsembleControlArguments(
   toolName: string,
   value: unknown
 ): unknown {
-  if (!isPortableEnsembleControlToolName(toolName)) return value
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const outer = value as Record<string, unknown>
-  const params = outer.params
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return value
-  const { params: _params, ...flat } = outer
-  return { ...(params as Record<string, unknown>), ...flat }
+  return normalizeEnsembleMcpToolArguments(toolName, value)
 }
 
 export function canonicalTaskWraithToolName(toolName: string): string {

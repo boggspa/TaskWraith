@@ -65,9 +65,8 @@ export class OllamaLocalAdmissionGate {
    * Model id -> the live tickets sharing that model's slot.
    *
    * Identity tokens rather than a count, because this gate is a counter that
-   * dispatch increments and completion decrements — exactly the shape
-   * `EnsembleFanoutConcurrency` refuses for the wave cap, and for the same
-   * reason: it has to be right on every cancel, failure, timeout and restart
+   * dispatch increments and completion decrements. It has to be right on
+   * every cancel, failure, timeout and restart
    * path, and a leaked slot wedges the round shut for good. `reconcile()` is
    * the answer, and it only works if a ticket can be told apart from its
    * slot. With a bare refcount a late release from a dead holder would

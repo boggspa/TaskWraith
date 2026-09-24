@@ -2,7 +2,7 @@ import type { EffectiveRunPermissions } from './store/types'
 
 /**
  * Recon-seat detection — spike 1 of
- * `docs/ensemble-posture-fanout-preamble-design.md`.
+ * staged fan-out design.
  *
  * `read_only` (Recon) and `plan` share the same `approvalMode: 'plan'`
  * WIRE value and both carry `readOnly: true`, so provider adapters that

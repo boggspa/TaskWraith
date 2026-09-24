@@ -9,8 +9,8 @@ orchestration.
 
 Measured from the source tree on 2026-07-18:
 
-- `src/main/index.ts` is 39,095 lines.
-- This directory contains 49 non-test `*Handlers.ts` modules, each with one
+- `src/main/index.ts` is 63,184 lines.
+- This directory contains 98 non-test `*Handlers.ts` modules, each with one
   exported `register*Handlers` registrar.
 - All 49 modules have a matching `*Handlers.test.ts` file.
 - The extracted modules contain 298 direct `ipcMain.handle` / `ipcMain.on` call

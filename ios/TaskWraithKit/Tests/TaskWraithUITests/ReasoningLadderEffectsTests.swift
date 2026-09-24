@@ -44,15 +44,28 @@ struct ReasoningLadderEffectsTests {
         #expect(twLadderIndex(for: "medium", provider: "muse") == 2)
         #expect(twLadderIndex(for: "high", provider: "muse") == 3)
         #expect(twLadderIndex(for: "xhigh", provider: "muse") == 4)
+        #expect(twLadderIndex(for: "max", provider: "muse") == 5)
         #expect(twLadderIndex(for: "ultra", provider: "muse") == 6)
         // Muse-scoped: other providers must not treat minimal as Off.
         #expect(twLadderIndex(for: "minimal", provider: "codex") == nil)
-        #expect(twLadderIndex(for: "minimal", provider: "pi") == nil)
+    }
+
+    @Test func piEffortsRetainTheirNativeSevenStopOrdering() {
+        let efforts = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+        #expect(efforts.enumerated().allSatisfy { index, effort in
+            twLadderIndex(for: effort, provider: "pi") == index
+        })
+        #expect(efforts.indices.allSatisfy { index in
+            twLadderWireEffort(index: index, provider: "pi") == efforts[index]
+        })
     }
 
     @Test func museMetaEffortDisplayLabelsMatchDesktop() {
         #expect(twReasoningDisplayLabel("minimal", provider: "muse") == "Minimal")
         #expect(twReasoningDisplayLabel("xhigh", provider: "muse") == "Extra High")
+        #expect(twReasoningDisplayLabel("max", provider: "muse") == "Max")
+        #expect(twReasoningDisplayLabel("xhigh", provider: "pi") == "Extra High")
         #expect(twReasoningDisplayLabel("ultra", provider: "muse") == "Ultra")
         #expect(twReasoningDisplayLabel("ultracode", provider: "muse") == "Ultra")
         #expect(twReasoningDisplayLabel("xhigh", provider: "claude") == "Extra")
@@ -60,6 +73,7 @@ struct ReasoningLadderEffectsTests {
 
     @Test func museMetaWireTokensStayOnSharedFloorAndCeiling() {
         #expect(twLadderWireEffort(index: 0, provider: "muse") == "minimal")
+        #expect(twLadderWireEffort(index: 5, provider: "muse") == "max")
         #expect(twLadderWireEffort(index: 6, provider: "muse") == "ultra")
         #expect(twLadderWireEffort(index: 0, provider: "codex") == "off")
         #expect(twLadderWireEffort(index: 6, provider: "codex") == "ultracode")

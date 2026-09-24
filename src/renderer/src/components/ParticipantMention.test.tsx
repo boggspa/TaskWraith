@@ -52,15 +52,16 @@ describe('ParticipantMention', () => {
     expect(html).toContain('@nobody')
   })
 
-  it('renders roster-group mentions with the neutral user accent', () => {
-    for (const word of ['All', 'Scouts', 'Workers', 'Reviewers', 'BG']) {
+  it('renders roster-group mentions with the OS-following accent', () => {
+    for (const word of ['All', 'Captains', 'Management', 'Scouts', 'Workers', 'Reviewers', 'BG']) {
       const html = renderToStaticMarkup(
         <AgentIdentityContext.Provider value={reviewerChat}>
           <ParticipantMention reference={word}>@{word}</ParticipantMention>
         </AgentIdentityContext.Provider>
       )
       expect(html).toContain('participant-mention--group')
-      expect(html).toContain('--user-bubble-base')
+      expect(html).toContain('var(--accent)')
+      expect(html).not.toContain('--user-bubble-base')
       expect(html).toContain(`@${word}`)
       expect(html).not.toContain('--provider-claude-color')
     }

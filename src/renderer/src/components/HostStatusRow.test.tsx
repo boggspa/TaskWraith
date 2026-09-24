@@ -225,7 +225,7 @@ describe('HostStatusRow · rendered output', () => {
     expect(markup).toContain('TaskWraith Host')
   })
 
-  it('keeps Desktop Mission Control on the same authoritative Host projection', async () => {
+  it('keeps Mission Control out of the compact approvals popover', async () => {
     const store = new HostProjectionStore({
       fetchSnapshot: async () =>
         snapshot({
@@ -242,9 +242,10 @@ describe('HostStatusRow · rendered output', () => {
     await store.refresh()
 
     const markup = renderRow(store)
-    expect(markup).toContain('Mission Control')
-    expect(markup).toContain('Desktop parity')
-    expect(markup).toContain('Generation 3 · Cursor 42')
+    expect(markup).not.toContain('Mission Control')
+    expect(markup).not.toContain('Desktop parity')
+    expect(markup).not.toContain('Generation 3 · Cursor 42')
+    expect(markup).toContain('TaskWraith Host')
   })
 
   it('shows Connected with a lit LED when Host answered', async () => {
@@ -398,6 +399,67 @@ describe('describeHostProviders · unavailable is not zero, cached is not live',
 })
 
 describe('HostStatusRow · Desktop actually reads providers from Host', () => {
+  it('keeps counts through validated delta polls without promoting cached command authority', async () => {
+    const source = snapshot({
+      recovery: { reopenStatus: 'unknown' },
+      providers: [
+        { providerId: 'codex', displayProvider: 'Codex', shortCode: 'CX', available: true }
+      ]
+    })
+    const fetchSnapshot = vi.fn(async () => source)
+    const store = new HostProjectionStore({
+      fetchSnapshot,
+      fetchDeltas: async () => ({
+        kind: 'deltas',
+        generation: 3,
+        fromCursor: 42,
+        toCursor: 43,
+        deltas: [
+          {
+            protocolVersion: HOST_PROTOCOL_VERSION,
+            projectionVersion: HOST_PROJECTION_VERSION,
+            generation: 3,
+            cursor: 43,
+            previousCursor: 42,
+            kind: 'upsert',
+            family: 'thread',
+            entityId: 'thread',
+            payload: {
+              id: 'thread',
+              workspaceId: null,
+              title: 'Streaming',
+              chatKind: 'single',
+              archived: false,
+              pinned: false,
+              updatedAt: 2,
+              messageCount: 10
+            },
+            at: '2026-08-06T12:00:01.000Z'
+          }
+        ]
+      })
+    })
+    await store.refresh()
+    const providers = describeHostProviders(store.getState())
+    const approvals = describeHostAwaitingApprovals(store.getState())
+    expect(providers.label).toBe('1 of 1 configured')
+    expect(approvals.label).toBe('None awaiting')
+
+    await store.catchUp()
+    expect(fetchSnapshot).toHaveBeenCalledOnce()
+    expect(store.getState().projection?.freshness).toBe('cached')
+    expect(store.getState().liveBaselineContinuity).toBe(true)
+    expect(describeHostProviders(store.getState())).toEqual(providers)
+    expect(describeHostAwaitingApprovals(store.getState())).toEqual(approvals)
+
+    await store.refresh()
+    expect(describeHostProviders(store.getState())).toEqual(providers)
+    fetchSnapshot.mockRejectedValueOnce(new Error('disconnected'))
+    await store.refresh()
+    expect(describeHostProviders(store.getState()).label).toBe('Unknown')
+    expect(describeHostAwaitingApprovals(store.getState()).label).toBe('Unknown')
+  })
+
   it('shows a live provider count in the row', async () => {
     const store = new HostProjectionStore({
       fetchSnapshot: async () =>

@@ -5,6 +5,7 @@ import {
   executionStackStepTitle,
   mergeExecutionRunProjection,
   shouldAppendBusySendToExecutionStack,
+  liveOwnedExecutionThreadIds,
   sortExecutionRunHistory
 } from './executionGraphLiveState'
 
@@ -90,5 +91,49 @@ describe('executionGraphLiveState', () => {
       executionAppendSubmissionKey(command)
     )
     expect(executionAppendSubmissionKey(command)).not.toContain('private task text')
+  })
+})
+
+describe('liveOwnedExecutionThreadIds', () => {
+  const owned = (
+    executionId: string,
+    state: ExecutionRunProjection['state'],
+    threadId?: string
+  ): ExecutionRunProjection => ({
+    ...run(executionId, state, 1, '2026-08-29T00:00:00.000Z'),
+    ...(threadId ? { owner: { threadId, seatId: 'antigravity:gemini-3.1-pro' } } : {})
+  })
+
+  it('reports threads whose graph has not settled', () => {
+    const ids = liveOwnedExecutionThreadIds({
+      a: owned('a', 'running', 'chat-one'),
+      b: owned('b', 'succeeded', 'chat-two')
+    })
+    expect([...ids]).toEqual(['chat-one'])
+  })
+
+  // A paused graph is unfinished work the thread still answers for, so its
+  // thread has not completed its task even with no provider run going.
+  it('counts a paused graph as live', () => {
+    const ids = liveOwnedExecutionThreadIds({
+      a: owned('a', 'requires_action', 'chat-one')
+    })
+    expect(ids.has('chat-one')).toBe(true)
+  })
+
+  // A legacy unowned graph is permanently stuck by design. Letting it suppress
+  // a thread's close-out forever would be a bug, not caution.
+  it('ignores an unowned graph rather than blocking a thread indefinitely', () => {
+    const ids = liveOwnedExecutionThreadIds({ a: owned('a', 'requires_action') })
+    expect(ids.size).toBe(0)
+  })
+
+  it('is keyed on the accountable owner, not mere association', () => {
+    const projection = {
+      ...owned('a', 'running', 'owner-thread'),
+      rootChatId: 'some-other-thread'
+    } as ExecutionRunProjection
+    const ids = liveOwnedExecutionThreadIds({ a: projection })
+    expect([...ids]).toEqual(['owner-thread'])
   })
 })

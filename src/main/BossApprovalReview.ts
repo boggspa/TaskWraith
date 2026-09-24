@@ -1,4 +1,5 @@
 import type { AgentApprovalAction, AgenticServiceId, ProviderId } from './store/types'
+import type { EnsembleAuthorityRole } from '../shared/ensembleAuthority'
 
 const BOSS_APPROVAL_REVIEW_MAX_DETAIL_CHARS = 16_000
 
@@ -47,7 +48,7 @@ export interface BossApprovalReviewDecision {
     bossApprovalReview: {
       pollId: string
       authorityParticipantId: string
-      authorityRole: 'boss' | 'captain'
+      authorityRole: EnsembleAuthorityRole
       requesterParticipantId: string
       rationale?: string
       decision: 'approve' | 'deny'

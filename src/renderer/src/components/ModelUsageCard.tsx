@@ -2,7 +2,7 @@
  * ModelUsageCard — Phase L6 slice 1 extraction.
  *
  * The "Model Usage" card that lives in the TaskWraith sidebar
- * (provider stack with per-window progress bars and reset times).
+ * (period groups with per-window progress bars and reset times).
  * Extracted from `Sidebar.tsx`'s inline JSX so the redesign work
  * (L6 slices 2-6) lands here without growing the already-large
  * Sidebar file further.
@@ -25,6 +25,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent
@@ -54,6 +55,13 @@ import {
   type OllamaMemoryWindowTotals
 } from '../lib/ollamaMemoryAggregation'
 import { computeQuotaPace } from '../lib/QuotaPace'
+import { quotaSegmentCount } from '../lib/quotaSegments'
+import {
+  QUOTA_PERIODS,
+  quotaPeriodForWindow,
+  quotaPeriodRowLabel,
+  type QuotaPeriod
+} from '../lib/quotaPeriods'
 import { loadRendererUsageRecords } from '../lib/usageRecordsCache'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
@@ -96,6 +104,13 @@ export interface ModelUsageApiSpendOptions extends ApiSpendCurrencyOptions {
   providerRates?: RendererProviderRates
   /** Persisted view ('plan' | 'spend'). Defaults to 'plan'. */
   view?: ModelUsagePanelView
+  /**
+   * True while the first plan/quota hydration is unresolved. A persisted Plan
+   * selection remains provisionally available during that window so the card
+   * does not transiently mount API Spend and fetch the complete chat list.
+   * Explicit Spend/Context selections remain authoritative.
+   */
+  planAvailabilityPending?: boolean
   /** Persist a new view selection (writes `settings.modelUsagePanelView`). */
   onViewChange?: (view: ModelUsagePanelView) => void
   /**
@@ -145,6 +160,7 @@ const COMPACT_QUOTA_PROVIDER_ORDER: ModelUsageProviderId[] = [
   'deepseek',
   'cerebras',
   'meta',
+  'muse',
   'pi'
 ]
 
@@ -163,12 +179,16 @@ export const EXPANDED_USAGE_PROVIDER_ORDER: readonly ModelUsageProviderId[] = [
   'antigravity',
   'ollama',
   'mistral',
+  'mimo',
+  'qwen',
+  'meta',
   'deepseek',
   'cerebras',
-  'meta',
+  'openrouter',
   'gemini',
   'pi',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 /**
@@ -193,7 +213,10 @@ export const API_SPEND_RENDER_ORDER: ProviderId[] = [
   // renders its spend section (Mistral shipped in exactly that state, the same
   // way Pi once did in the other direction).
   'mistral',
-  'muse'
+  'muse',
+  // Devin bills in ACUs, so its spend row reads zero by design; it is listed
+  // here only because the two rosters must stay in lockstep.
+  'devin'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520
@@ -221,9 +244,13 @@ export const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId,
   antigravity: 'AGY',
   mistral: 'Mistral',
   muse: 'Muse',
+  devin: 'Devin',
   deepseek: 'DeepSeek',
   cerebras: 'Cerebras',
-  meta: 'Meta'
+  openrouter: 'OpenRouter',
+  meta: 'Meta',
+  mimo: 'MiMo',
+  qwen: 'Qwen'
 }
 const COMPACT_USAGE_ROWS = [
   { key: 'fiveHour', label: '5H' },
@@ -309,7 +336,10 @@ function ProviderLabel({
 function modelUsageProviderName(provider?: ModelUsageProviderId): string {
   if (provider === 'deepseek') return 'DeepSeek'
   if (provider === 'cerebras') return 'Cerebras'
+  if (provider === 'openrouter') return 'OpenRouter'
   if (provider === 'meta') return 'Meta API'
+  if (provider === 'mimo') return 'MiMo Token Plan'
+  if (provider === 'qwen') return 'Qwen Token Plan'
   return getProviderName(provider)
 }
 
@@ -393,6 +423,10 @@ function isWeeklyWindow(text: string): boolean {
   return text.includes('weekly') || text.includes('7 day') || text.includes('seven day')
 }
 
+function isMonthlyWindow(text: string): boolean {
+  return text.includes('monthly') || text.includes('month')
+}
+
 function isThirdPartyAgyWindow(text: string): boolean {
   return text.includes('agy') && (text.includes('3p') || text.includes('claude/gpt'))
 }
@@ -435,6 +469,27 @@ function isCodexSparkWindow(text: string): boolean {
 
 function isClaudeExtraWindow(text: string): boolean {
   return text.includes('fable') || text.includes('sonnet') || text.includes('design')
+}
+
+/**
+ * Display-only glyph for the branded meters (Codex Spark ⚡ / Luna Reserve 🌙,
+ * Claude Fable 🪶). Provider-gated so e.g. Muse's "Spark 1.2" window never
+ * borrows the Codex bolt, and matched on the same normalised id+label text the
+ * compact-grid predicates use ('gpt reserve' still moons a pre-rename cached
+ * snapshot label). Decoration only: the aggregate's label and the row tooltip
+ * stay clean for QuotaPace, dedupe identities, and the iOS remote payload.
+ */
+function usageWindowGlyph(
+  provider: ModelUsageProviderId,
+  windowEntry: UsageWindowAggregate
+): string | null {
+  const text = normaliseQuotaWindowText(windowEntry)
+  if (provider === 'codex') {
+    if (text.includes('spark')) return '⚡'
+    if (text.includes('luna') || text.includes('gpt reserve')) return '🌙'
+  }
+  if (provider === 'claude' && text.includes('fable')) return '🪶'
+  return null
 }
 
 /**
@@ -510,6 +565,7 @@ function compactCellsForEntry(
   if (provider === 'kimi') {
     assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
     assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    assign('extraOne', findCompactWindow(entry, isMonthlyWindow))
     return cells
   }
 
@@ -517,6 +573,18 @@ function compactCellsForEntry(
     // 'Session usage' matches the 5H predicate, 'Weekly usage' the weekly one
     // — the same shape Limit Counter renders from ollama.com/settings.
     assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
+    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
+    return cells
+  }
+
+  if (provider === 'muse') {
+    // The imported dev.meta.ai/usage subscription meters: 'Current usage'
+    // rides the short-window row and 'Weekly limit' the weekly one — the same
+    // placement the Ollama Session/Weekly import uses.
+    assign(
+      'fiveHour',
+      findCompactWindow(entry, (text) => text.includes('current') || isFiveHourWindow(text))
+    )
     assign('weekly', findCompactWindow(entry, isWeeklyWindow))
     return cells
   }
@@ -541,7 +609,15 @@ function compactCellsForEntry(
     return cells
   }
 
-  if (provider === 'deepseek' || provider === 'cerebras' || provider === 'meta') {
+  if (
+    provider === 'deepseek' ||
+    provider === 'cerebras' ||
+    provider === 'openrouter' ||
+    provider === 'meta' ||
+    provider === 'mimo' ||
+    provider === 'qwen' ||
+    provider === 'devin'
+  ) {
     assign('extraOne', entry?.windows?.[0])
     assign('extraTwo', entry?.windows?.[1])
   }
@@ -682,9 +758,14 @@ export function CompactModelUsageGrid({
     ...(hasOllamaCells || ollamaReason ? (['ollama'] as const) : []),
     ...(hasAntigravityCells || antigravityReason ? (['antigravity'] as const) : []),
     ...(mistralCell ? (['mistral'] as const) : []),
+    ...(entriesByProvider.has('mimo') ? (['mimo'] as const) : []),
+    ...(entriesByProvider.has('qwen') ? (['qwen'] as const) : []),
+    ...(entriesByProvider.has('meta') ? (['meta'] as const) : []),
+    ...(entriesByProvider.has('muse') ? (['muse'] as const) : []),
     ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
     ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : []),
-    ...(entriesByProvider.has('meta') ? (['meta'] as const) : [])
+    ...(entriesByProvider.has('openrouter') ? (['openrouter'] as const) : []),
+    ...(entriesByProvider.has('devin') ? (['devin'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(
@@ -761,25 +842,58 @@ export function CompactModelUsageGrid({
 
 function UsageWindowRow({
   provider,
-  windowEntry
+  windowEntry,
+  inlineProvider = false,
+  planName
 }: {
   provider: ModelUsageProviderId
   windowEntry: UsageWindowAggregate
+  inlineProvider?: boolean
+  planName?: string
 }) {
   const fraction = fillFractionForWindow(windowEntry)
   const percentText = `${Math.round(fraction * 100)}%`
   const windowReset = formatResetShort({ resetAt: windowEntry.resetAt })
-  const title = `${windowEntry.label}: ${windowEntry.limitLabel}${
+  const providerTitle = inlineProvider
+    ? `${modelUsageProviderName(provider)}${planName ? ` (${planName})` : ''} `
+    : ''
+  const title = `${providerTitle}${windowEntry.label}: ${windowEntry.limitLabel}${
     windowReset ? ` · resets ${windowReset}` : ''
   }`
   // Phase L6 slice 2 — accent picks up the provider colour token so
   // each provider's bars read in their own brand colour. The CSS
   // variable name matches the token set defined in theme.css.
   const accent = `var(--provider-${provider}-color)`
+  const glyph = usageWindowGlyph(provider, windowEntry)
+  const label = (
+    <>
+      {glyph ? (
+        <span className="model-usage-window-glyph" aria-hidden="true">{`${glyph} `}</span>
+      ) : null}
+      {windowEntry.label}
+    </>
+  )
   return (
     <div key={`${provider}-${windowEntry.id}`} className="model-usage-window" title={title}>
       <div className="model-usage-window-row">
-        <span className="model-usage-window-label">{windowEntry.label}</span>
+        <span className="model-usage-window-label">
+          {inlineProvider ? (
+            <>
+              <ProviderLogoTile provider={provider} size={12} />
+              <span className="model-usage-period-label-text">
+                {glyph ? (
+                  <>
+                    {modelUsageProviderName(provider)} {label}
+                  </>
+                ) : (
+                  quotaPeriodRowLabel(modelUsageProviderName(provider), windowEntry.label)
+                )}
+              </span>
+            </>
+          ) : (
+            label
+          )}
+        </span>
         {windowReset && <span className="model-usage-window-reset">resets {windowReset}</span>}
         <span className="model-usage-window-percent">{windowEntry.valueText || percentText}</span>
       </div>
@@ -790,10 +904,140 @@ function UsageWindowRow({
          * `null` for on-track / unmeasurable windows and the bar
          * paints no tick in that case. */
         pace={computeQuotaPace(windowEntry)}
+        /* Division markers. `quotaSegmentCount` returns `null` for any
+         * window whose period we cannot name (the bar then paints no
+         * ticks), so an unrecognised provider/window degrades to today's
+         * plain bar rather than a wrong division count. */
+        segmentCount={quotaSegmentCount(provider, windowEntry)}
       />
       <div className="model-usage-window-meta">
         <span>{windowEntry.limitLabel}</span>
       </div>
+    </div>
+  )
+}
+
+/** Expanded sidebar only; Settings keeps its provider headings. Bespoke meters
+ * reuse their existing views so amount provenance and loading states survive. */
+export function PeriodicModelUsageList({
+  quotaEntries,
+  grokUsage,
+  mistralQuota,
+  currency,
+  locale
+}: {
+  quotaEntries: ModelUsageAggregate[]
+  grokUsage?: GrokCreditsMeterViewProps
+  mistralQuota?: MistralQuotaMeterViewProps
+  currency?: DisplayCurrency
+  locale?: string
+}) {
+  type Row = { key: string; content: ReactNode; meterCount: number }
+  const rows = new Map<QuotaPeriod, Row[]>(QUOTA_PERIODS.map(({ id }) => [id, []]))
+  const idle: Row[] = []
+  const providers = orderExpandedUsageProviders([
+    ...quotaEntries.map((entry) => entry.provider),
+    ...(grokUsage ? (['grok'] as const) : []),
+    ...(mistralQuota?.snapshot ? (['mistral'] as const) : [])
+  ])
+  for (const provider of providers) {
+    for (const [entryIndex, entry] of quotaEntries.entries()) {
+      if (entry.provider !== provider) continue
+      if (!entry.windows?.length) {
+        idle.push({
+          key: `${provider}-${entryIndex}-unavailable`,
+          meterCount: 0,
+          content: (
+            <div
+              className="model-usage-period-unavailable"
+              role="status"
+              title={[modelUsageProviderName(provider), entry.planName, entry.quotaError]
+                .filter(Boolean)
+                .join(' · ')}
+            >
+              <ProviderLabel provider={provider} planName={entry.planName} />
+              <span>No data</span>
+            </div>
+          )
+        })
+      }
+      for (const windowEntry of entry.windows ?? []) {
+        rows.get(quotaPeriodForWindow(provider, windowEntry))!.push({
+          key: `${provider}-${entryIndex}-${windowEntry.id}`,
+          meterCount: 1,
+          content: (
+            <div
+              className={`model-usage-period-row provider-${provider}`}
+              style={
+                {
+                  '--model-usage-provider-glow': `var(--provider-${provider}-color)`
+                } as CSSProperties
+              }
+            >
+              <UsageWindowRow
+                provider={provider}
+                windowEntry={windowEntry}
+                planName={entry.planName}
+                inlineProvider
+              />
+            </div>
+          )
+        })
+      }
+    }
+    if (provider === 'grok' && grokUsage) {
+      const row = {
+        key: 'grok-credits',
+        content: <GrokCreditsMeterView {...grokUsage} inlineProvider />,
+        meterCount: 1
+      }
+      if (grokUsage.snapshot?.confidence === 'observed') {
+        rows
+          .get(grokUsage.snapshot.usageKind === 'weekly_limit' ? 'weekly' : 'monthlyAndApi')!
+          .push(row)
+      } else idle.push({ ...row, meterCount: 0 })
+    }
+    if (provider === 'mistral' && mistralQuota?.snapshot) {
+      rows.get('monthlyAndApi')!.push({
+        key: 'mistral-quota',
+        content: (
+          <MistralQuotaMeterView
+            {...mistralQuota}
+            currency={currency}
+            locale={locale}
+            inlineProvider
+          />
+        ),
+        meterCount: mistralQuota.snapshot.estimate.apiUsage ? 2 : 1
+      })
+    }
+  }
+  const sections = QUOTA_PERIODS.filter(({ id }) => rows.get(id)!.length > 0)
+  if (idle.length > 0) {
+    if (sections.length === 0) sections.push(QUOTA_PERIODS[3])
+    rows.get(sections[sections.length - 1].id)!.push(...idle)
+  }
+  return (
+    <div className="model-usage-period-list">
+      {sections.map(({ id, label }) => {
+        const sectionRows = rows.get(id)!
+        const count = sectionRows.reduce((total, row) => total + row.meterCount, 0)
+        return (
+          <section key={id} className="model-usage-period-section" aria-label={`${label} usage`}>
+            <div className="model-usage-period-heading">
+              <h3>{label}</h3>
+              <span>
+                {count} {count === 1 ? 'meter' : 'meters'}
+              </span>
+            </div>
+            <div className="model-usage-period-rows">
+              {sectionRows.map((row) => (
+                <Fragment key={row.key}>{row.content}</Fragment>
+              ))}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -1132,11 +1376,7 @@ export function ContextLengthsView() {
                 </span>
                 <span
                   className="model-usage-context-window"
-                  title={
-                    m.maxContextWindow
-                      ? `${m.contextWindow.toLocaleString()}–${m.maxContextWindow.toLocaleString()} tokens (plan-dependent)`
-                      : `${m.contextWindow.toLocaleString()} tokens`
-                  }
+                  title={`${m.contextWindow.toLocaleString()} tokens`}
                 >
                   {m.formatted}
                 </span>
@@ -1173,7 +1413,9 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     // derives from — no need to ship every chat's full transcript.
     const chatsPromise =
       typeof window.api?.getChatList === 'function'
-        ? window.api.getChatList().catch(() => [] as ChatListItem[])
+        ? (window.api.getChatRunSummaries?.() ?? window.api.getChatList()).catch(
+            () => [] as ChatListItem[]
+          )
         : Promise.resolve([] as ChatListItem[])
     void Promise.all([usagePromise, chatsPromise]).then(([latestUsage, latestChats]) => {
       if (cancelled) return
@@ -1377,7 +1619,9 @@ export function ModelUsageCard({
   // A plan-side meter exists when there are quota entries, the gated Grok
   // credit meter, or Mistral's estimated band. Only then is the Plan ⇄ Spend
   // choice meaningful.
-  const planViewAvailable = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
+  const hasPlanMeters = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
+  const planViewAvailable =
+    hasPlanMeters || (apiSpend?.planAvailabilityPending === true && view === 'plan')
   const isSidebarVariant = variant === 'sidebar'
   // Render when there's a plan-side meter OR the API-spend view is available (so
   // a user on API keys with no plan meters can still reach their spend).
@@ -1626,6 +1870,14 @@ export function ModelUsageCard({
               <ApiSpendView options={apiSpend} />
             ) : effectiveView === 'context' ? (
               <ContextLengthsView />
+            ) : isSidebarVariant ? (
+              <PeriodicModelUsageList
+                quotaEntries={quotaEntries}
+                grokUsage={grokAvailable ? grokUsage : undefined}
+                mistralQuota={mistralQuotaAvailable ? mistralQuota : undefined}
+                currency={apiSpend?.currency}
+                locale={apiSpend?.locale}
+              />
             ) : (
               <div className="model-usage-list">
                 {expandedUsageProviders.map((provider) => (

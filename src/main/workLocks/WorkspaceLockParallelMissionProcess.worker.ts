@@ -2,22 +2,43 @@
  * Cross-process worker for WorkspaceLockParallelMission.process.integration.test.
  *
  * Runnable via `child_process.fork` with argv:
- *   --role=holder|contender
+ *   --role=holder|contender|lease-holder|reclaimer
  *   --userDataRoot=...
  *   --workspacePath=...
  *   --targetPath=...
  *   --runId=...
  *   --lockOwnerId=...
  *   --holdMs=200          (holder only; fail-closed parent-signal deadline)
- *   --retryTimeoutMs=5000 (contender only)
- *   --identityRegistry=...  shared JSON map pid → processBirthIdentity
+ *   --retryTimeoutMs=5000 (contender and reclaimer)
+ *   --identity=registry|production (default registry)
+ *   --identityRegistry=...  shared JSON map pid → processBirthIdentity (registry only)
+ *   --heartbeatIntervalMs, --heartbeatTtlMs, --reclaimGraceMs, --scanIntervalMs,
+ *   --suspendGapMs        (lease-holder and reclaimer: holder-lease timings)
+ *   --holdCommitFence=1   (lease-holder only: stop the way an executor mid-commit
+ *                          does: fence every partition of the ADMISSION claim,
+ *                          create the target if it is absent, then replace the
+ *                          lease with fresh claims. A target absent at admission
+ *                          moves its object partition from planned to dev:ino,
+ *                          out of the fenced set; only its location partition
+ *                          stays shared.)
  *
- * Uses production WorkspaceLockAuthority + NodeWorkspaceLockPersistence and a
- * production-equivalent observeProcess: exact birth identities are published to
- * a shared registry (stand-in for OS-level process-birth observation across
- * processes). Unknown live PIDs remain identity_unavailable; ESRCH is dead.
+ * `holder`/`contender` use production WorkspaceLockAuthority +
+ * NodeWorkspaceLockPersistence with a registry stand-in for process-birth
+ * observation: exact birth identities are published to a shared JSON file.
+ * Unknown live PIDs remain identity_unavailable; ESRCH is dead.
  *
- * IPC (worker → parent): ready | acquired | conflict | released | error | done
+ * `lease-holder`/`reclaimer` observe processes through the production
+ * WorkspaceLockProcessIdentityService (the Swift bridge's proc_bsdinfo on
+ * darwin, boot id + /proc start ticks on linux), so a holder the parent
+ * SIGKILLs or SIGSTOPs is dead or lapsed by the operating system's account,
+ * not by an injected observation. Both read the real commit-fence records
+ * through the runtime's own port. The reclaimer boots first and never reopens: the
+ * holder's lease is then `held` by the holder's own incarnation (no boot
+ * relabel ever touches it), and only the periodic reclaim-only pass can free it.
+ *
+ * IPC (worker → parent): ready | opened | acquired | conflict | released | verified |
+ *   scanned | error | done
+ * IPC (parent → lease-holder): verify | exit;  (parent → reclaimer): contend | scan | exit
  */
 
 import { randomBytes } from 'node:crypto'
@@ -28,16 +49,24 @@ import {
   resolveCanonicalWorkspaceLockPath,
   verifyCanonicalWorkspaceLockPath
 } from './CanonicalWorkspaceLockPath'
+import { WorkspaceLockProcessIdentityService } from '../WorkspaceLockProcessIdentity'
+import { listCommitFenceOwners, mutationFencePartitionKeys } from '../WorkspaceLockRuntime'
 import { NodeWorkspaceLockPersistence } from './NodeWorkspaceLockPersistence'
-import { WorkspaceLockAuthority } from './WorkspaceLockAuthority'
+import {
+  WorkspaceLockAuthority,
+  type WorkspaceLockHolderLeaseOptions,
+  type WorkspaceLockPeriodicRecoveryOutcome
+} from './WorkspaceLockAuthority'
+import { WorkspaceMutationCommitFence } from './WorkspaceMutationCommitFence'
 import type {
   WorkspaceLockAcquireResult,
   WorkspaceLockAuthorityDependencies,
   WorkspaceLockOwner,
-  WorkspaceLockProcessObservation
+  WorkspaceLockProcessObservation,
+  WorkspaceLockSnapshot
 } from './WorkspaceLockTypes'
 
-type Role = 'holder' | 'contender'
+type Role = 'holder' | 'contender' | 'lease-holder' | 'reclaimer'
 
 interface WorkerArgs {
   role: Role
@@ -50,11 +79,23 @@ interface WorkerArgs {
   retryTimeoutMs: number
   laneId: string
   displayName: string
+  identity: 'registry' | 'production'
   identityRegistry: string
+  holderLease: WorkspaceLockHolderLeaseOptions
+  holdCommitFence: boolean
 }
 
 interface WorkerMessage {
-  type: 'ready' | 'acquired' | 'conflict' | 'released' | 'error' | 'done'
+  type:
+    | 'ready'
+    | 'opened'
+    | 'acquired'
+    | 'conflict'
+    | 'released'
+    | 'verified'
+    | 'scanned'
+    | 'error'
+    | 'done'
   role?: Role
   runId?: string
   pid?: number
@@ -62,9 +103,30 @@ interface WorkerMessage {
   reason?: string
   holderRunIds?: string[]
   transitionId?: string
+  instanceId?: string
+  leaseId?: string
+  fenceHeld?: boolean
+  /** Partitions the holder's commit fence was taken on (the admission claim's). */
+  fencePartitions?: string[]
+  /** Partitions the holder's current lease claim maps to, after any replace. */
+  leasePartitions?: string[]
+  /** Worker wall clock when the reported event happened. */
+  atMs?: number
+  /** One periodic pass run on request (the timer runs the same pass). */
+  outcome?: WorkspaceLockPeriodicRecoveryOutcome
+  holderLiveness?: WorkspaceLockSnapshot['holderLiveness']
+  leases?: Array<{ leaseId: string; status: string }>
   message?: string
   status?: 'ok' | 'failed'
 }
+
+const HOLDER_LEASE_ARGS = [
+  'heartbeatIntervalMs',
+  'heartbeatTtlMs',
+  'reclaimGraceMs',
+  'scanIntervalMs',
+  'suspendGapMs'
+] as const
 
 function parseArgs(argv: string[]): WorkerArgs {
   const map = new Map<string, string>()
@@ -75,19 +137,31 @@ function parseArgs(argv: string[]): WorkerArgs {
     map.set(token.slice(2, eq), token.slice(eq + 1))
   }
   const role = map.get('role')
-  if (role !== 'holder' && role !== 'contender') {
-    throw new Error(`Worker requires --role=holder|contender (got ${role ?? 'missing'})`)
+  if (
+    role !== 'holder' &&
+    role !== 'contender' &&
+    role !== 'lease-holder' &&
+    role !== 'reclaimer'
+  ) {
+    throw new Error(
+      `Worker requires --role=holder|contender|lease-holder|reclaimer (got ${role ?? 'missing'})`
+    )
   }
-  const required = [
-    'userDataRoot',
-    'workspacePath',
-    'targetPath',
-    'runId',
-    'lockOwnerId',
-    'identityRegistry'
-  ] as const
+  const identity = map.get('identity') || 'registry'
+  if (identity !== 'registry' && identity !== 'production') {
+    throw new Error(`Worker requires --identity=registry|production (got ${identity})`)
+  }
+  const required = ['userDataRoot', 'workspacePath', 'targetPath', 'runId', 'lockOwnerId'] as const
   for (const key of required) {
     if (!map.get(key)) throw new Error(`Worker requires --${key}=...`)
+  }
+  if (identity === 'registry' && !map.get('identityRegistry')) {
+    throw new Error('Worker requires --identityRegistry=... for registry identity')
+  }
+  const holderLease: WorkspaceLockHolderLeaseOptions = {}
+  for (const key of HOLDER_LEASE_ARGS) {
+    const raw = map.get(key)
+    if (raw !== undefined) holderLease[key] = Number(raw)
   }
   return {
     role,
@@ -100,7 +174,10 @@ function parseArgs(argv: string[]): WorkerArgs {
     retryTimeoutMs: Number(map.get('retryTimeoutMs') || '8000'),
     laneId: map.get('laneId') || `lane-${role}`,
     displayName: map.get('displayName') || `process-${role}`,
-    identityRegistry: map.get('identityRegistry')!
+    identity,
+    identityRegistry: map.get('identityRegistry') || '',
+    holderLease,
+    holdCommitFence: map.get('holdCommitFence') === '1'
   }
 }
 
@@ -142,18 +219,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 function waitForParentRelease(holdMs: number): Promise<void> {
+  return waitForParentSignal('holder', 'release', holdMs)
+}
+
+function waitForParentSignal(role: Role, type: string, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => {
         cleanup()
-        reject(new Error(`holder timed out waiting for parent release signal (${holdMs}ms)`))
+        reject(new Error(`${role} timed out waiting for parent ${type} signal (${timeoutMs}ms)`))
       },
-      Math.max(50, holdMs)
+      Math.max(50, timeoutMs)
     )
 
     const onMessage = (raw: unknown) => {
       const message = raw as { type?: string }
-      if (message && message.type === 'release') {
+      if (message && message.type === type) {
         cleanup()
         resolve()
       }
@@ -220,6 +301,56 @@ function createProcessDependencies(
       processBirthIdentity
     }
   }
+}
+
+/**
+ * Production process-birth observation and the runtime's own read-only fence
+ * port, over the same root the authority uses: no registry, no injected verdict.
+ */
+function createProductionDependencies(
+  args: WorkerArgs,
+  instanceId: string,
+  processBirthIdentity: string,
+  identity: WorkspaceLockProcessIdentityService
+): WorkspaceLockAuthorityDependencies {
+  return {
+    // The registry path is never read: observeProcess is replaced below.
+    ...createProcessDependencies(instanceId, processBirthIdentity, ''),
+    observeProcess: (pid) => identity.observe(pid),
+    readCommitFenceOwners: () => listCommitFenceOwners(args.userDataRoot)
+  }
+}
+
+/** What a production-identity worker must let go of, newest first. */
+const disposers: Array<() => void> = []
+
+function disposeAll(): void {
+  for (const dispose of disposers.splice(0).reverse()) dispose()
+}
+
+/**
+ * A lease-holder or reclaimer outlives nothing: when its parent goes away
+ * (crash, timeout, a missed cleanup) the IPC channel closes and it exits, so
+ * the Swift identity daemon it owns cannot keep it running as an orphan.
+ */
+function exitWithParent(): void {
+  process.once('disconnect', () => {
+    try {
+      disposeAll()
+    } finally {
+      process.exit(0)
+    }
+  })
+}
+
+function createCommitFence(
+  args: WorkerArgs,
+  identity: WorkspaceLockProcessIdentityService
+): WorkspaceMutationCommitFence {
+  return new WorkspaceMutationCommitFence({
+    userDataRoot: args.userDataRoot,
+    observeProcess: (pid) => identity.observe(pid)
+  })
 }
 
 function ownerFromArgs(args: WorkerArgs, processBirthIdentity: string): WorkspaceLockOwner {
@@ -451,8 +582,224 @@ async function runContender(args: WorkerArgs, processBirthIdentity: string): Pro
   }
 }
 
+/**
+ * Acquires one lease and keeps it, heartbeating, until the parent kills,
+ * stops, or dismisses the process. `verify` answers with the owner's own
+ * mutation verification, which is how a resumed holder learns its lease went.
+ */
+async function runLeaseHolder(
+  args: WorkerArgs,
+  processBirthIdentity: string,
+  identity: WorkspaceLockProcessIdentityService
+): Promise<void> {
+  const persistence = new NodeWorkspaceLockPersistence({ userDataRoot: args.userDataRoot })
+  const instanceId = `lease-holder-instance-${process.pid}`
+  const authority = await WorkspaceLockAuthority.open({
+    persistence,
+    dependencies: createProductionDependencies(args, instanceId, processBirthIdentity, identity),
+    holderLease: args.holderLease
+  })
+  disposers.push(() => authority.dispose())
+  const owner = ownerFromArgs(args, processBirthIdentity)
+  const request = {
+    workspacePath: args.workspacePath,
+    kind: 'file' as const,
+    targetPath: args.targetPath
+  }
+  const admitted = await authority.acquire(owner, request, {
+    transitionId: `lease-holder-acquire-${args.runId}`
+  })
+  if (!admitted.ok) {
+    throw new Error(`lease-holder acquire failed: ${admitted.reason} ${admitted.message}`)
+  }
+  let current = admitted
+  let fencePartitions: readonly string[] | undefined
+  if (args.holdCommitFence) {
+    // The executor's order (WorkspaceLockMcpExecutionCoordinator): fence every
+    // partition of the ADMISSION claims, then replace the lease with fresh
+    // claims, then commit. A target that appears in between keeps the fence on
+    // its planned object partition while the replaced lease's object partition
+    // is the dev:ino one; only the location partition is shared.
+    fencePartitions = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))
+    const commitFence = createCommitFence(args, identity)
+    for (const partition of fencePartitions) {
+      await commitFence.acquire(
+        {
+          lockOwnerId: owner.lockOwnerId,
+          runId: owner.runId,
+          pid: owner.pid,
+          processBirthIdentity
+        },
+        partition
+      )
+    }
+    if (!fs.existsSync(args.targetPath)) fs.writeFileSync(args.targetPath, 'written mid-commit\n')
+    const replaced = await authority.replaceAcquisition(owner, admitted.transitionId, [request], {
+      transitionId: `lease-holder-replace-${args.runId}`
+    })
+    if (!replaced.ok) {
+      throw new Error(`lease-holder replace failed: ${replaced.reason} ${replaced.message}`)
+    }
+    current = replaced
+  }
+  const held = current
+  process.on('message', (raw: unknown) => {
+    const message = raw as { type?: string }
+    if (message?.type === 'verify') {
+      void authority.verifyAcquisitionForMutation(owner, held.transitionId).then(
+        (verified) => {
+          send({
+            type: 'verified',
+            role: 'lease-holder',
+            runId: args.runId,
+            pid: process.pid,
+            ok: verified.ok,
+            reason: verified.ok ? 'ok' : verified.reason,
+            atMs: Date.now()
+          })
+        },
+        (error: unknown) => {
+          send({ type: 'error', role: 'lease-holder', message: String(error), status: 'failed' })
+        }
+      )
+    }
+    if (message?.type === 'exit') process.disconnect?.()
+  })
+  send({
+    type: 'acquired',
+    role: 'lease-holder',
+    runId: args.runId,
+    pid: process.pid,
+    ok: true,
+    transitionId: held.transitionId,
+    instanceId,
+    leaseId: held.leases[0].leaseId,
+    fenceHeld: args.holdCommitFence,
+    ...(fencePartitions ? { fencePartitions: [...fencePartitions] } : {}),
+    leasePartitions: [...mutationFencePartitionKeys(held.leases.map((lease) => lease.claim))],
+    atMs: Date.now()
+  })
+}
+
+/**
+ * Opens its authority exactly once, waits for the parent to say the holder
+ * has its lease, proves it contends, then retries the same claim until the
+ * periodic pass frees it. It never reopens: a boot-time recovery would be a
+ * second, unrelated path to the lease.
+ */
+async function runReclaimer(
+  args: WorkerArgs,
+  processBirthIdentity: string,
+  identity: WorkspaceLockProcessIdentityService
+): Promise<void> {
+  const persistence = new NodeWorkspaceLockPersistence({ userDataRoot: args.userDataRoot })
+  const instanceId = `reclaimer-instance-${process.pid}`
+  const authority = await WorkspaceLockAuthority.open({
+    persistence,
+    dependencies: createProductionDependencies(args, instanceId, processBirthIdentity, identity),
+    holderLease: args.holderLease
+  })
+  disposers.push(() => authority.dispose())
+  process.on('message', (raw: unknown) => {
+    const message = raw as { type?: string }
+    if (message?.type === 'scan') {
+      void authority.runPeriodicRecovery().then(
+        (outcome) => {
+          const snapshot = authority.snapshot()
+          send({
+            type: 'scanned',
+            role: 'reclaimer',
+            pid: process.pid,
+            outcome,
+            holderLiveness: snapshot.holderLiveness,
+            leases: snapshot.leases.map((lease) => ({
+              leaseId: lease.leaseId,
+              status: lease.status
+            })),
+            atMs: Date.now()
+          })
+        },
+        (error: unknown) => {
+          send({ type: 'error', role: 'reclaimer', message: String(error), status: 'failed' })
+        }
+      )
+    }
+    if (message?.type === 'exit') process.disconnect?.()
+  })
+  send({ type: 'opened', role: 'reclaimer', pid: process.pid, instanceId, atMs: Date.now() })
+  await waitForParentSignal('reclaimer', 'contend', args.retryTimeoutMs)
+  const owner = ownerFromArgs(args, processBirthIdentity)
+  const request = {
+    workspacePath: args.workspacePath,
+    kind: 'file' as const,
+    targetPath: args.targetPath
+  }
+  const deadline = Date.now() + Math.max(500, args.retryTimeoutMs)
+  let reportedConflict = false
+  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+    const result = await authority.acquire(owner, request, {
+      transitionId: `reclaimer-acquire-${args.runId}-${attempt}`
+    })
+    if (result.ok) {
+      if (!reportedConflict) {
+        throw new Error('reclaimer acquired without ever seeing the holder contend')
+      }
+      send({
+        type: 'acquired',
+        role: 'reclaimer',
+        runId: args.runId,
+        pid: process.pid,
+        ok: true,
+        transitionId: result.transitionId,
+        instanceId,
+        atMs: Date.now()
+      })
+      return
+    }
+    if (result.reason === 'conflict' && !reportedConflict) {
+      reportedConflict = true
+      send({
+        type: 'conflict',
+        role: 'reclaimer',
+        runId: args.runId,
+        pid: process.pid,
+        ok: false,
+        reason: 'conflict',
+        holderRunIds: conflictHolderRunIds(result),
+        instanceId,
+        atMs: Date.now()
+      })
+    } else if (result.reason !== 'conflict' && result.reason !== 'authority_busy') {
+      throw new Error(`reclaimer acquire failed: ${result.reason} ${result.message}`)
+    }
+    await sleep(25)
+  }
+  throw new Error(`reclaimer timed out after ${args.retryTimeoutMs}ms without the lease`)
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
+  if (args.identity === 'production') {
+    exitWithParent()
+    const identity = new WorkspaceLockProcessIdentityService()
+    disposers.push(() => identity.dispose())
+    try {
+      const processBirthIdentity = await identity.initialize()
+      send({ type: 'ready', role: args.role, runId: args.runId, pid: process.pid })
+      if (args.role === 'lease-holder') {
+        await runLeaseHolder(args, processBirthIdentity, identity)
+      } else if (args.role === 'reclaimer') {
+        await runReclaimer(args, processBirthIdentity, identity)
+      } else {
+        throw new Error(`role ${args.role} does not support production identity`)
+      }
+    } catch (error) {
+      disposeAll()
+      throw error
+    }
+    return
+  }
+
   const processBirthIdentity = randomBytes(32).toString('hex')
   // Publish before authority open so peer recover/observe sees exact live identity.
   publishIdentity(args.identityRegistry, process.pid, processBirthIdentity)
@@ -466,8 +813,10 @@ async function main(): Promise<void> {
 
   if (args.role === 'holder') {
     await runHolder(args, processBirthIdentity)
-  } else {
+  } else if (args.role === 'contender') {
     await runContender(args, processBirthIdentity)
+  } else {
+    throw new Error(`role ${args.role} requires --identity=production`)
   }
 }
 

@@ -21,6 +21,15 @@
  */
 
 import type { ChatMessage } from '../../../main/store/types'
+import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
+import {
+  DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+  transcriptLayoutEpochKeySuffix,
+  transcriptLayoutLaneTracks,
+  transcriptLayoutScales,
+  transcriptLayoutWidthInvariantContentScale
+} from './transcriptLayoutEpoch'
+import { nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
@@ -58,12 +67,13 @@ export interface VirtualRow {
    *  `rowKey` for React keys / DOM-element + measurement maps; `id` is for
    *  content/measurement-cache identity only. */
   id: string
-  /** Collision-proof row key: `${id}#${index}`. The index disambiguates
-   *  duplicate message ids so React keys, the `blockElsRef` element map, and
-   *  the `data-vrow-id` lookups can never collide — a duplicate id would
-   *  otherwise make multiple rows share one DOM node + one measurement slot,
-   *  scrambling render order and heights (the "System rows pinned to top" /
-   *  load-unload bug). Stable for a given message list. */
+  /** Collision-proof row key: `${id}#${occurrence}` (see `transcriptRowKey`).
+   *  The occurrence ordinal disambiguates duplicate message ids so React keys,
+   *  the `blockElsRef` element map, and the `data-vrow-id` lookups can never
+   *  collide — a duplicate id would otherwise make multiple rows share one DOM
+   *  node + one measurement slot, scrambling render order and heights (the
+   *  "System rows pinned to top" / load-unload bug). Unlike the list index it
+   *  replaced, it stays stable when older history is prepended above the row. */
   rowKey: string
   /** Position in the source `visibleMessages` list. */
   index: number
@@ -275,6 +285,18 @@ const CONTENT_SCALED_TYPES: ReadonlySet<VirtualRowType> = new Set([
 const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 
 /**
+ * Content-scaled row types whose content term is a COUNT, not a text length, so
+ * the column-width half of the layout epoch must not touch them.
+ *
+ * Exactly `tool` today. See the `contentScale` note in `estimatedHeightFor` for
+ * why, and `TOOL_ACTIVITY_ESTIMATE_CHARS` just above for where the count enters
+ * the estimate. Membership here is only meaningful for a type that is also in
+ * `CONTENT_SCALED_TYPES`; a type outside that set takes `base` and never reads a
+ * content scale at all.
+ */
+const WIDTH_INVARIANT_CONTENT_TYPES: ReadonlySet<VirtualRowType> = new Set(['tool'])
+
+/**
  * Tighter scale ceiling for row types whose ENTIRE body renders inside a single
  * height-clamped `LiveActivityViewport`, so their off-screen (collapsed) height
  * is bounded no matter how much content accumulates.
@@ -334,39 +356,150 @@ export function estimatedHeightFor(
   contentLength = 0,
   /** True while the `paired` fan-out lane layout is active — see the halving
    * note below. */
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /**
+   * The layout the estimate is being made FOR — column width bucket + text
+   * scale. Every constant above was measured at one width and one text size,
+   * so without this the whole estimate layer is frozen at that one layout (see
+   * `transcriptLayoutEpoch.ts`). Defaults to identity: at
+   * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` both scales are exactly 1, `x * 1` is
+   * exact in IEEE-754 and `Math.round(n) === n` for the integer bases and caps,
+   * so every number this returns is byte-identical to the pre-epoch estimator.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): number {
-  const base = ESTIMATED_ROW_HEIGHT_PX[rowType]
+  const scales = transcriptLayoutScales(epoch, WIDTH_BUCKET_PX)
+  const base = Math.round(ESTIMATED_ROW_HEIGHT_PX[rowType] * scales.chrome)
+  /*
+   * `VIEWPORT_CLAMPED_ESTIMATE_CAP_PX` does NOT take the CONTENT scale, and
+   * that is the load-bearing half of this seam. The clamped types' bodies sit
+   * behind a CSS px `max-height`, which does not grow with text size or shrink
+   * with column width — only their identity header wraps. Scaling that ceiling
+   * alongside the content rate would inflate those rows by roughly the content
+   * scale, which is the phantom-bottom-spacer / auto-follow lurch this very
+   * constant was created to prevent.
+   *
+   * It is floored at `base` all the same. The ceiling bounds the BODY; `base`
+   * is the row's own furniture, which does scale with text size. Left as a
+   * bare 360 the two invert: `fanoutResult` scales past it at fontScale 1.125
+   * (320 * 1.125 = 360), `threadMessage` at 1.2 and `return` at ~1.286, after
+   * which `Math.min(360, Math.max(base, ...))` returns exactly 360 at EVERY
+   * content length — chrome scaling silently dead, and the estimate pinned
+   * BELOW the row's own header. Flooring keeps the ceiling above the furniture
+   * without ever letting content push past it. All three bases (280/300/320)
+   * sit under 360, so at identity this is the bare constant, unchanged.
+   */
+  /*
+   * The content scale this row type actually obeys.
+   *
+   * `tool` is the exception, and it is one the constants above already state:
+   * "Tool rows keep the flat estimate (their height is driven by activity
+   * count, not text length)" — and `projectRow` honours that by synthesising
+   * their `contentLength` from `activities.length * TOOL_ACTIVITY_ESTIMATE_CHARS`
+   * plus a per-activity CAPPED output sum. That number is an activity COUNT in
+   * disguise, and an activity count does not re-wrap when the column widens: one
+   * activity is one line at 640px and one line at 2400px. The width term is
+   * therefore wrong for it in both directions — at a 2156px Wide column it
+   * shrinks the estimate ~2.5x against a height that barely moves, and at Narrow
+   * it inflates it ~1.36x, which is the bottom-spacer direction this module
+   * calls the dangerous one.
+   *
+   * The TEXT term still applies: an ActivityStack's rows are text, and they get
+   * taller with the text size. So `tool` takes the width-INVARIANT content
+   * scale, which is the same number as `scales.content` at every bucket 0 —
+   * i.e. at Medium, at first paint, and in every `renderToStaticMarkup` suite.
+   */
+  const contentScale = WIDTH_INVARIANT_CONTENT_TYPES.has(rowType)
+    ? transcriptLayoutWidthInvariantContentScale(epoch)
+    : scales.content
+  /*
+   * BOTH ceilings are floored at `base`, for the same reason, and the second
+   * floor is the one Transcript Width made reachable.
+   *
+   * The clamped branch has floored since the text axis landed: `base` scales
+   * with text size while the 360px body ceiling does not, so without the floor
+   * the two invert and `Math.min(360, Math.max(base, …))` pins the row BELOW its
+   * own furniture. The generic branch has exactly the same inversion on the
+   * WIDTH axis, and it is no longer hypothetical: `CONTENT_SCALE_CAP_PX *
+   * content` falls under `base` once the column passes ~5300px at Small text —
+   * a 6K display at Wide. Computed: a 5488px column buckets to 68, whose upper
+   * edge 5520 gives a width term of 0.1775, so `content` is 0.1283 and the cap
+   * lands at 180 against an `assistant` base of 187. The estimate would be
+   * pinned at 180 for EVERY content length, under the row's own chrome, with the
+   * content scale silently dead — the precise failure the clamped branch already
+   * documents.
+   *
+   * Flooring the CEILING is the right repair rather than restoring a floor under
+   * `scales.content` itself. A floor on the scale returns MORE than physics asks
+   * for on a wide column — the over-estimate direction — for every content-scaled
+   * row; a floor on the ceiling only ever stops the ceiling from cutting below
+   * the furniture, and is inert at every width where the cap is doing real work.
+   * At identity `content` is 1, the cap is 1400 and every `base` is under 320, so
+   * this changes nothing there.
+   */
   const scaleCap = VIEWPORT_CLAMPED_TYPES.has(rowType)
-    ? VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
-    : CONTENT_SCALE_CAP_PX
+    ? Math.max(VIEWPORT_CLAMPED_ESTIMATE_CAP_PX, base)
+    : Math.max(base, Math.round(CONTENT_SCALE_CAP_PX * contentScale))
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
-    ? Math.min(scaleCap, Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR)))
+    ? Math.min(
+        scaleCap,
+        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR * contentScale))
+      )
     : base
   /*
-   * Paired lanes share a grid row, so two of them cost ONE row's height. The
-   * estimate is halved for EVERY fan-out / return lane row rather than only for
-   * the paired ones, and that is deliberate: pairing depends on a row's
-   * NEIGHBOURS, and `useProjectedRows` reuses row objects for an unchanged
-   * prefix — so a neighbour-sensitive estimate would go stale the moment an
-   * appended lane turned the previous `solo` into a `lead`. Halving
-   * unconditionally keeps the estimate a pure function of the row itself, at
-   * the cost of under-estimating an unpaired lane by half a row.
+   * Lane cards share a grid row, so N of them cost ONE row's height. The
+   * estimate is divided for EVERY fan-out / return lane row rather than only
+   * for the ones that actually share a row, and that is deliberate: which cells
+   * share a row depends on a row's NEIGHBOURS, and `useProjectedTranscriptRows`
+   * reuses row objects for an unchanged prefix — so a neighbour-sensitive
+   * estimate would go stale the moment an appended lane turned the previous
+   * `solo` into a `lead`. Dividing unconditionally keeps the estimate a pure
+   * function of (this row, the layout epoch), at the cost of under-estimating a
+   * lane that ends up spanning the column.
+   *
+   * N IS DERIVED FROM THE EPOCH, which is what keeps that purity while the
+   * count stops being 2. The epoch is a global, per-render value every row is
+   * already estimated under, and `useProjectedTranscriptRows` already compares
+   * it BY VALUE before trusting its cache — so this adds no neighbour
+   * dependency, no new projection-cache leg and no new `useMemo` dependency. A
+   * track count taken from anywhere else would need all three.
    *
    * Under-estimating is the safe direction here. An OVER-estimate inflates the
    * bottom spacer, `scrollHeight` balloons, and auto-follow's snap lurches into
    * empty overscan — the exact defect VIEWPORT_CLAMPED_ESTIMATE_CAP_PX exists to
    * prevent. An under-estimate is absorbed by the anchor-correction pass on the
-   * first measurement.
+   * first measurement. `transcriptLayoutLaneTracks` is never SMALLER than the
+   * count CSS lays out (the bucket resolves to its upper edge), so this division
+   * can only err in the safe direction — see the direction argument there.
+   *
+   * At the default epoch this is exactly `Math.round(scaled / 2)`, the value
+   * expression it replaces: Medium gates the width bucket to 0, bucket 0
+   * resolves to the 980px calibration width, and 980px fits two 360px tracks.
+   * `transcriptEstimateGoldens.test.ts` holds the literal pre-seam numbers.
    *
    * `return` mirrors `fanoutResult` once pairing admits return slots into the
-   * shared grid (same `pairFanoutLanes` gate).
+   * shared grid (same `pairFanoutLanes` gate). `fleetWave` cards pair in the
+   * grid but have no `VirtualRowType` of their own — they classify as `system`
+   * — so they are NOT divided, today or here. That disagreement between pairing
+   * and estimation predates this slice: bringing them in needs a row type,
+   * which is a projection change, not an estimate one.
+   *
+   * KNOWN, AND THIS SLICE MAKES IT WORSE. N of them share one grid row while N
+   * undivided estimates are summed, so a Fleet run OVER-estimates by the track
+   * count — the inflated-bottom-spacer / auto-follow-lurch direction this
+   * module's constants exist to prevent. Before this slice the two-track
+   * containment pinned that error at a fixed 2x; removing the containment lets
+   * it scale with the column — 5x at a 2156px Wide column, ~14x at 6K. It is
+   * bounded (the spacer is over-long, never negative) and it self-corrects on
+   * measurement, but it is a regression in magnitude, not a neutral carry-over,
+   * and the honest fix is the row type.
    */
+  const laneTracks = transcriptLayoutLaneTracks(epoch)
   const laid =
     pairFanoutLanes && (rowType === 'fanoutResult' || rowType === 'return')
-      ? Math.round(scaled / 2)
+      ? Math.round(scaled / laneTracks)
       : scaled
-  return laid + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
+  return laid + (hasRunBoundary ? Math.round(RUN_BOUNDARY_HEIGHT_PX * scales.chrome) : 0)
 }
 
 /**
@@ -383,16 +516,114 @@ export function projectRows(
   messages: ChatMessage[],
   runBoundaryIds?: ReadonlySet<string> | null,
   unboundedActivityBodies = false,
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /** See `estimatedHeightFor`. Must match the epoch passed to
+   * `projectRowsAfterSharedPrefix`, or a full re-projection and a streaming
+   * re-projection would disagree about every row's height. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow[] {
   if (!Array.isArray(messages)) return []
   const rows: VirtualRow[] = []
+  const occurrences = new Map<string, number>()
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]
-    const row = projectRow(message, index, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
+    const row = projectRow(
+      message,
+      index,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      nextRowOccurrence(occurrences, message?.id),
+      epoch
+    )
     if (row) rows.push(row)
   }
   return rows
+}
+
+// Row identity lives in `./transcriptRowKey` so that every producer — this
+// projector, fan-out lane pairing, jump targets and in-chat search — mints keys
+// from one walk. Re-exported here because this module was the original home and
+// is still where most callers reach for it.
+export { buildTranscriptRowKeys, nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
+
+/**
+ * Re-project a list that shares an unchanged PREFIX with an earlier projection
+ * — the common streaming shape, where only the tail changed. Prefix rows are
+ * reused by reference so row lookup, windowing and render caching do not churn
+ * through stable transcript history.
+ *
+ * The occurrence counts of the reused prefix are carried into the tail walk.
+ * Without that, a duplicate message id whose first sighting sits in the prefix
+ * would be re-keyed as a first sighting again, and the two rows would collide
+ * on one measurement slot and one DOM element — the 1.0.7 bug, reintroduced
+ * only for lists that stream.
+ *
+ * Pure and exported because the caller is a `useRef` cache inside a hook: no
+ * server-rendered test can reach that branch, so this is where it becomes
+ * provable.
+ */
+export function projectRowsAfterSharedPrefix(
+  cachedRows: readonly VirtualRow[],
+  messages: readonly ChatMessage[],
+  sharedPrefix: number,
+  runBoundaryIds?: ReadonlySet<string> | null,
+  unboundedActivityBodies = false,
+  pairFanoutLanes = false,
+  /**
+   * See `estimatedHeightFor`. This function REUSES prefix row objects by
+   * reference, so it cannot re-estimate them: the caller must discard its cache
+   * whole when the epoch changes rather than reusing a prefix built at the old
+   * layout. A global layout input is not per-row, so there is no
+   * `hasRunBoundary`-style per-row break that could rescue it here.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
+): VirtualRow[] {
+  const rows = cachedRows.filter((row) => row.index < sharedPrefix)
+  const occurrences = new Map<string, number>()
+  for (const row of rows) nextRowOccurrence(occurrences, row.id)
+  for (let index = sharedPrefix; index < messages.length; index += 1) {
+    const row = projectRow(
+      messages[index],
+      index,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      nextRowOccurrence(occurrences, messages[index]?.id),
+      epoch
+    )
+    if (row) rows.push(row)
+  }
+  return rows
+}
+
+/**
+ * Scroll correction for an accumulated-infinite-scroll PREPEND.
+ *
+ * Older history lands ABOVE the viewport, so everything the reader was looking
+ * at is pushed down by exactly the height that was inserted. Adding that
+ * growth to `scrollTop` before paint makes the extension invisible. Returns the
+ * corrected `scrollTop`, or null when no correction is due: the window head did
+ * not move earlier (an append or a same-window update), it moved LATER (a
+ * wholesale replace / jump / return-to-latest is meant to move the reader), no
+ * height had been measured yet (first paint), or the list has not grown yet.
+ *
+ * Pure and exported for the same reason as `projectRowsAfterSharedPrefix`: the
+ * caller is a layout effect that no server-rendered test can run, so the
+ * arithmetic is proven here and only the wiring stays manual.
+ */
+export function headExtensionScrollTop(input: {
+  previousWindowStart: number
+  windowStart: number
+  previousScrollHeight: number
+  scrollHeight: number
+  scrollTop: number
+}): number | null {
+  if (input.windowStart >= input.previousWindowStart) return null
+  if (input.previousScrollHeight <= 0) return null
+  const grewBy = input.scrollHeight - input.previousScrollHeight
+  if (grewBy === 0) return null
+  return input.scrollTop + grewBy
 }
 
 export function projectRow(
@@ -405,7 +636,12 @@ export function projectRow(
    * (the generic CONTENT_SCALE_CAP_PX still bounds the estimate). */
   unboundedActivityBodies = false,
   /** True while the `paired` fan-out lane layout is active. */
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /** This message id's ordinal within the list — see `transcriptRowKey`. */
+  occurrence = 0,
+  /** See `estimatedHeightFor`. The only production entry point into the whole
+   * estimate calibration is this function, so the epoch has to arrive here. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow | null {
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
@@ -437,19 +673,27 @@ export function projectRow(
       : Math.max((message.content || '').length, activityEstimate)
   return {
     id: message.id,
-    rowKey: `${message.id}#${index}`,
+    rowKey: transcriptRowKey(message.id, occurrence),
     index,
     rowType,
     contentVersion: contentVersion(message),
-    estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength, pairFanoutLanes),
+    estimatedHeight: estimatedHeightFor(
+      rowType,
+      hasRunBoundary,
+      contentLength,
+      pairFanoutLanes,
+      epoch
+    ),
     hasRunBoundary
   }
 }
 
 /**
  * Cache key for a row's measured height. Combines a collision-proof ROW KEY
- * (`rowKey = ${id}#${index}`, NOT the bare message id — duplicate message ids
- * would otherwise share one measurement slot), the content token, the width
+ * (`rowKey = ${id}#${occurrence}`, NOT the bare message id — duplicate message
+ * ids would otherwise share one measurement slot, and NOT the list index, which
+ * every prepend would invalidate; see `transcriptRowKey`), the content token,
+ * the width
  * bucket, and the expansion bit so a cached measurement is reused ONLY when the
  * geometry is comparable. A streamed token (new contentVersion), a width reflow
  * (new bucket), or an expand/collapse (new bit) each yields a fresh key → fresh
@@ -459,9 +703,27 @@ export function measurementKey(
   rowKey: string,
   rowContentVersion: string,
   bucket: number,
-  expanded: boolean
+  expanded: boolean,
+  /**
+   * The layout the measurement was taken UNDER.
+   *
+   * `bucket` and `epoch.widthBucket` ARE the same number as of Transcript
+   * Width, and that is enforced rather than assumed: `TranscriptPanel` holds
+   * the transcript's only `widthBucket(` call and passes
+   * `layoutEpoch.widthBucket` to this argument. They were NOT the same before
+   * it — the argument was sampled in a scroll handler while the epoch was
+   * minted in render, at ~10 and 0 respectively — so the suffix still carries
+   * both of the epoch's axes rather than trusting the caller. That redundancy
+   * is deliberate; see `transcriptLayoutEpochKeySuffix`.
+   *
+   * The text axis is the one nothing else can see at all: a text-size change
+   * does not move the column, so without it every cached height would be reused
+   * at the wrong size. The suffix is EMPTY at the default epoch, so this key is
+   * byte-identical to the pre-epoch one.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): string {
-  return `${rowKey}|${rowContentVersion}|${bucket}|${expanded ? 1 : 0}`
+  return `${rowKey}|${rowContentVersion}|${bucket}|${expanded ? 1 : 0}${transcriptLayoutEpochKeySuffix(epoch)}`
 }
 
 /**
@@ -527,8 +789,17 @@ export function isActiveLiveRowKey(rowKey: string, activeLiveRowKeys?: ActiveLiv
  * WITHOUT the content version. The "last height this row measured at this
  * geometry" fallback lives under it (see getRowHeight).
  */
-export function geometryKey(rowKey: string, bucket: number, expanded: boolean): string {
-  return `${rowKey}|${bucket}|${expanded ? 1 : 0}`
+export function geometryKey(
+  rowKey: string,
+  bucket: number,
+  expanded: boolean,
+  /** See `measurementKey`. This map is the WORSE of the two to serve stale: it
+   * has no content version, so without the epoch it keeps returning heights
+   * measured at the old text scale even for rows whose content has since
+   * changed. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
+): string {
+  return `${rowKey}|${bucket}|${expanded ? 1 : 0}${transcriptLayoutEpochKeySuffix(epoch)}`
 }
 
 /**
@@ -552,11 +823,17 @@ export function getRowHeight(
   bucket: number,
   expanded: boolean,
   rowContentVersion: string = row.contentVersion,
-  geometryHeights?: ReadonlyMap<string, number>
+  geometryHeights?: ReadonlyMap<string, number>,
+  /** See `measurementKey`. Both cache lookups are keyed under it, so tier 3
+   * (`row.estimatedHeight`) is what a layout change correctly falls through to
+   * — and that estimate must have been projected at the SAME epoch. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): number {
-  const measured = measurements.get(measurementKey(row.rowKey, rowContentVersion, bucket, expanded))
+  const measured = measurements.get(
+    measurementKey(row.rowKey, rowContentVersion, bucket, expanded, epoch)
+  )
   if (typeof measured === 'number' && Number.isFinite(measured) && measured >= 0) return measured
-  const lastAtGeometry = geometryHeights?.get(geometryKey(row.rowKey, bucket, expanded))
+  const lastAtGeometry = geometryHeights?.get(geometryKey(row.rowKey, bucket, expanded, epoch))
   if (
     typeof lastAtGeometry === 'number' &&
     Number.isFinite(lastAtGeometry) &&
@@ -768,6 +1045,53 @@ export function selectWindowBand(input: SelectWindowInput): VirtualWindowBand {
       typeof input.forceIndex === 'number' && Number.isInteger(input.forceIndex)
         ? input.forceIndex
         : null
+  }
+}
+
+export interface ScrollerBoxRefreshInput {
+  /** Whether the scroller has reported a real scroll position yet. */
+  hasScrolled: boolean
+  /** The width bucket crossed a boundary — cached measurements are stale. */
+  bucketChanged: boolean
+  /** The viewport (clientHeight) read a different value than last time. */
+  viewportChanged: boolean
+  /** The mounted band re-selected against the held heights would differ. */
+  bandChanged: boolean
+}
+
+export interface ScrollerBoxRefreshDecision {
+  /** Publish measureTick (re-key + re-measure mounted rows). */
+  remeasure: boolean
+  /** Re-capture the scroll anchor at the current position (and publish spy). */
+  rebaselineAnchor: boolean
+  /** Publish scrollTick so the window re-selects from fresh metrics. */
+  reselectWindow: boolean
+}
+
+/**
+ * Refresh policy for a SCROLLER-BOX resize (ResizeObserver), as opposed to a
+ * window resize or scroll event. A Multiview divider drag, a pane layout
+ * switch, or the pane composer's chrome collapsing at run end resizes the
+ * pane's scroller with neither of the two signals the virtualizer otherwise
+ * listens to — the stale viewport/bucket then under-covers the viewport with
+ * mounted rows and the reader sees blank spacer until a manual scroll.
+ *
+ * Differences from the scroll/window-resize path, both deliberate:
+ * - `hasScrolled` is never flipped here. The observer fires once at observe
+ *   time (not a scroll), and the forced-bottom-on-load window depends on the
+ *   flag staying false until the snap-to-bottom lands. Pre-scroll, a viewport
+ *   change still re-selects so the forced-bottom position uses the real size.
+ * - The anchor is re-baselined only when the box actually changed, so the
+ *   initial observe fire and sub-pixel no-ops touch nothing.
+ */
+export function decideScrollerBoxRefresh(
+  input: ScrollerBoxRefreshInput
+): ScrollerBoxRefreshDecision {
+  const boxChanged = input.viewportChanged || input.bucketChanged
+  return {
+    remeasure: input.bucketChanged,
+    rebaselineAnchor: input.hasScrolled && boxChanged,
+    reselectWindow: input.hasScrolled ? input.bandChanged : input.viewportChanged
   }
 }
 

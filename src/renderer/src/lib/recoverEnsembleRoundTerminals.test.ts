@@ -245,3 +245,33 @@ describe('applyRecoveryRecordsToEnsembleRounds', () => {
     })
   })
 })
+
+describe('thread-catalogue summary rows', () => {
+  // Startup recovery runs over the chat LIST, which under the thread-catalogue
+  // mirror is bounded projections: `ThreadCatalogueChrome` whitelists the
+  // round's scalars and drops its `participants`/`lanes`, while
+  // `catalogueChatListItem` spreads that chrome onto a `ChatListItem` that
+  // `extends ChatRecord`. A force-quit leaves `status: 'running'`, so the
+  // early return above does not cover it and the roster read is reached.
+  it('leaves a projected round untouched instead of throwing', () => {
+    const projected = makeChat({
+      appChatId: 'chat-1',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          startedAt: '2026-06-30T11:55:00.000Z',
+          activeParticipantId: 'p1'
+        }
+      }
+    } as unknown as Partial<ChatRecord> & Pick<ChatRecord, 'appChatId'>)
+    const records = [makeRecord({ runId: 'run-1', chatId: 'chat-1' })]
+
+    expect(() => applyRecoveryRecordsToEnsembleRounds(records, [projected])).not.toThrow()
+    expect(applyRecoveryRecordsToEnsembleRounds(records, [projected])).toEqual([projected])
+  })
+})

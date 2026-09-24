@@ -33,6 +33,30 @@ struct PiBrandTableTests {
         #expect(PiBrandTable.brand(forWireModelId: "minimax/MiniMax-M3")?.label == "MiniMax")
     }
 
+    @Test("OpenRouter additions resolve to their original brands")
+    func resolvesOpenRouterBrands() {
+        let expected = [
+            (wireId: "openrouter/cohere/north-mini-code:free", label: "Cohere", hue: "cohere"),
+            (wireId: "openrouter/minimax/minimax-m3:free", label: "MiniMax", hue: "minimax"),
+            (
+                wireId: "openrouter/thinkingmachines/inkling:free",
+                label: "Thinking Machines",
+                hue: "thinkingmachines"
+            ),
+            (
+                wireId: "openrouter/thinkingmachines/inkling-small:free",
+                label: "Thinking Machines",
+                hue: "thinkingmachines"
+            ),
+        ]
+
+        for entry in expected {
+            let brand = PiBrandTable.brand(forWireModelId: entry.wireId)
+            #expect(brand?.label == entry.label)
+            #expect(brand?.hueClass == entry.hue)
+        }
+    }
+
     @Test("maps qwen-token-plan to the EXISTING qwen hue, not a new one")
     func qwenSharesHue() {
         // Qwen must read identically whether it arrives via Ollama or via Pi.
@@ -53,7 +77,68 @@ struct PiBrandTableTests {
         #expect(PiBrandTable.modelLabel(forWireModelId: "mistral/zai-glm-5-2") == "GLM-5.2 (via Mistral)")
         #expect(
             PiBrandTable.modelLabel(forWireModelId: "deepseek/deepseek-v4-flash")
-                == "DeepSeek V4 Flash")
+                == "V4 Flash")
+    }
+
+    @Test("humanises new OpenRouter model ids")
+    func humanisesOpenRouterModels() {
+        let expected = [
+            "openrouter/cohere/north-mini-code:free": "North Mini Code",
+            "openrouter/minimax/minimax-m3:free": "M3 (OpenRouter)",
+            "openrouter/thinkingmachines/inkling:free": "Inkling",
+            "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
+        ]
+
+        for (wireId, label) in expected {
+            #expect(PiBrandTable.modelLabel(forWireModelId: wireId) == label)
+        }
+    }
+
+    @Test("labels the Xiaomi token-plan catalogue on every region")
+    func xiaomiTokenPlanLabelsPerRegion() {
+        // Hand-listed: there is no codegen across the platform boundary, and a
+        // dropped row does not read as nil here — an uncatalogued wire id
+        // humanises to its bare model id (see `uncataloguedModel`), so the phone
+        // would quietly render "mimo-v2.6-pro" where the desktop shows
+        // "MiMo V2.6 Pro (CN)". V2.5 and V2.5 Pro stay until Xiaomi's 2026-10-21
+        // sunset; the V2.6 pair (2026-09-22) is the current catalogue. Mirrors
+        // PI_MODEL_LABELS in src/shared/piBrandTable.ts.
+        let expected = [
+            (wireId: "xiaomi-token-plan-cn/mimo-v2.5", label: "MiMo V2.5 (CN)"),
+            (wireId: "xiaomi-token-plan-cn/mimo-v2.5-pro", label: "MiMo V2.5 Pro (CN)"),
+            (wireId: "xiaomi-token-plan-cn/mimo-v2.6-pro", label: "MiMo V2.6 Pro (CN)"),
+            (wireId: "xiaomi-token-plan-cn/mimo-v2.6-flash", label: "MiMo V2.6 Flash (CN)"),
+            (wireId: "xiaomi-token-plan-sgp/mimo-v2.5", label: "MiMo V2.5 (SGP)"),
+            (wireId: "xiaomi-token-plan-sgp/mimo-v2.5-pro", label: "MiMo V2.5 Pro (SGP)"),
+            (wireId: "xiaomi-token-plan-sgp/mimo-v2.6-pro", label: "MiMo V2.6 Pro (SGP)"),
+            (wireId: "xiaomi-token-plan-sgp/mimo-v2.6-flash", label: "MiMo V2.6 Flash (SGP)"),
+            (wireId: "xiaomi-token-plan-ams/mimo-v2.5", label: "MiMo V2.5 (AMS)"),
+            (wireId: "xiaomi-token-plan-ams/mimo-v2.5-pro", label: "MiMo V2.5 Pro (AMS)"),
+            (wireId: "xiaomi-token-plan-ams/mimo-v2.6-pro", label: "MiMo V2.6 Pro (AMS)"),
+            (wireId: "xiaomi-token-plan-ams/mimo-v2.6-flash", label: "MiMo V2.6 Flash (AMS)"),
+        ]
+        #expect(expected.count == 12)
+        for entry in expected {
+            #expect(
+                PiBrandTable.modelLabels[entry.wireId] == entry.label,
+                "missing or drifted label row for \(entry.wireId)")
+            #expect(PiBrandTable.modelLabel(forWireModelId: entry.wireId) == entry.label)
+            #expect(PiBrandTable.brand(forWireModelId: entry.wireId)?.label == "Xiaomi")
+        }
+    }
+
+    @Test("labels Space Bunny Alpha and dresses it in the stealth brand")
+    func spaceBunnyAlphaLabelAndBrand() {
+        // A dropped label row does not read as nil: the uncatalogued fallback
+        // renders the bare "stealth/space-bunny-alpha" where the desktop shows
+        // "Space Bunny Alpha". The brand comes from the `openrouter/stealth`
+        // override, never the generic OpenRouter one. Mirrors PI_MODEL_LABELS
+        // and PI_UPSTREAM_BRANDS in src/shared/piBrandTable.ts.
+        let wireId = "openrouter/stealth/space-bunny-alpha"
+        #expect(PiBrandTable.modelLabels[wireId] == "Space Bunny Alpha")
+        #expect(PiBrandTable.modelLabel(forWireModelId: wireId) == "Space Bunny Alpha")
+        #expect(PiBrandTable.brand(forWireModelId: wireId)?.label == "Stealth")
+        #expect(PiBrandTable.brand(forWireModelId: wireId)?.hueClass == "stealth")
     }
 
     @Test("keeps the disambiguating suffix on models two upstreams both serve")

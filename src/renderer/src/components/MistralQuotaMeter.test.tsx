@@ -56,6 +56,17 @@ function anchoredSnapshot(localAfterReadingUsd = 0): MistralQuotaSnapshot {
   }
 }
 
+/** A reading that carried the console's SECOND bar, so both monthly bars render.
+ *  The API-usage bar only appears once an allowance exists to divide by. */
+function apiUsageSnapshot(): MistralQuotaSnapshot {
+  const cycle = applyReport(startCycle(T0), {
+    spentUsd: 3.27,
+    fetchedAt: '2026-07-27T12:00:00.000Z',
+    apiUsage: { spentUsd: 5, allowanceUsd: 20 }
+  })
+  return { estimate: estimateQuota(cycle, 'pro', T0), plan: 'pro', turns: 0, totalTokens: 0 }
+}
+
 /** The Admin API's shape: real spend, no entitlement, so the ceiling stays seeded. */
 function reportedSpendOnlySnapshot(): MistralQuotaSnapshot {
   const cycle = applyReport(startCycle(T0), {
@@ -87,6 +98,13 @@ function render(props: {
  *  anything, so the "no bare percentage" rule has to be checked on text. */
 function visibleText(html: string): string {
   return html.replace(/<[^>]*>/g, ' ')
+}
+
+/** How many dash-division ticks the bars actually painted. Counted, never just
+ *  probed with `toContain`: a presence check passes on a SINGLE tick and so
+ *  cannot tell a correct 4-week division from a wrong mapping. */
+function segmentTicks(html: string): number {
+  return (html.match(/quota-segment-tick/g) ?? []).length
 }
 
 describe('MistralQuotaMeterView — the gate', () => {
@@ -229,5 +247,25 @@ describe('MistralQuotaMeterView — sibling shape', () => {
     const reset = formatResetShort({ resetAt: snap.estimate.cycleResetsAt })
     expect(reset).toBeTruthy()
     expect(render({ snapshot: snap })).toContain(`resets ${reset}`)
+  })
+
+  it('divides the monthly Vibe Code bar into 4 week segments — 3 ticks', () => {
+    // Mistral Vibe Code Usage (4W/31D) => one dash per week division => 4
+    // segments => 4-1 ticks, at quarter points.
+    const html = render({ snapshot: snapshot(4) })
+    expect(segmentTicks(html)).toBe(3)
+    expect(html).toContain('left:25.00%')
+    expect(html).toContain('left:50.00%')
+    expect(html).toContain('left:75.00%')
+    // `count` ticks instead of `count-1` would draw one at the bar's own end.
+    expect(html).not.toContain('left:100.00%')
+  })
+
+  it('divides the console API-usage bar the same way — two monthly bars, 3 ticks each', () => {
+    // The second bar is a separate call site; it must not be left undashed just
+    // because it renders conditionally. 4 + 4 segments => 3 + 3 ticks.
+    const html = render({ snapshot: apiUsageSnapshot() })
+    expect(html).toContain('API usage')
+    expect(segmentTicks(html)).toBe(6)
   })
 })

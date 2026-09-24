@@ -83,6 +83,7 @@ function inferWindowDurationSeconds(label: string): number | null {
   ) {
     return 5 * 60 * 60
   }
+
   if (
     descriptor.includes('24h') ||
     descriptor.includes('24-hour') ||
@@ -97,6 +98,14 @@ function inferWindowDurationSeconds(label: string): number | null {
     descriptor.includes('week')
   ) {
     return 7 * 24 * 60 * 60
+  }
+  if (
+    descriptor.includes('monthly') ||
+    descriptor.includes('credit') ||
+    descriptor.includes('plan') ||
+    descriptor.includes('month')
+  ) {
+    return 30 * 24 * 60 * 60
   }
   return null
 }

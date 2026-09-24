@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EnsembleParticipant, ExternalPathGrant } from '../../../main/store/types'
+import type { EnsembleAuthorityRole } from '../../../shared/ensembleAuthority'
 
 // Map-backed fake window/localStorage installed BEFORE the modules under test
 // import (mirrors ensembleRosterPresets.test.ts). Both the pool store and the
@@ -427,7 +428,7 @@ describe('storage bridge', () => {
 describe('linked propagation to presets', () => {
   function presetWithLinkedParticipant(
     agentId: string,
-    authority: 'boss' | 'captain' = 'boss'
+    authority: EnsembleAuthorityRole = 'boss'
   ): EnsembleRosterPreset {
     const linked: EnsembleRosterParticipantSnapshot = {
       provider: 'claude',

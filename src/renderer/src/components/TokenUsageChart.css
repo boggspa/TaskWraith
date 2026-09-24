@@ -58,7 +58,10 @@
 }
 
 .token-usage-chart-bar {
-  fill: color-mix(in srgb, var(--accent-color, var(--accent)) 82%, transparent);
+  fill: var(
+    --token-usage-bar-color,
+    color-mix(in srgb, var(--accent-color, var(--accent)) 82%, transparent)
+  );
   opacity: 0.82;
   transition:
     fill 160ms ease,
@@ -94,6 +97,24 @@
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.token-usage-chart--welcome .token-usage-chart-title {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.token-usage-chart--welcome .token-usage-chart-bar {
+  stroke: color-mix(in srgb, var(--token-usage-bar-color, var(--accent)) 78%, var(--text-primary));
+  stroke-width: 0.6px;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(
+    0 0 1px color-mix(in srgb, var(--token-usage-bar-color, var(--accent)) 22%, transparent)
+  );
+  opacity: 0.88;
+}
+
+.token-usage-chart--welcome .token-usage-chart-axis {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
 }
 
 .token-usage-chart--settings {

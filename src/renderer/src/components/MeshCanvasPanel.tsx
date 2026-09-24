@@ -3,7 +3,15 @@
  * plus token-gated twmesh:// asset URLs; it never receives vault/source paths
  * and never evaluates provider-supplied scene code.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ForwardedRef
+} from 'react'
 import {
   MESH_CANVAS_NEEDS_SAVED_CHAT,
   hasMeshCanvasChatAuthority,
@@ -459,6 +467,32 @@ export interface MeshCanvasPanelProps {
   onDismiss: () => void
 }
 
+export interface MeshCanvasPanelHandle {
+  dismiss: () => Promise<void>
+}
+
+export async function dismissMeshCanvasView(input: {
+  chatId: string
+  sceneId: string | null
+  isPresented: boolean
+  closePresentation?: (chatId: string, sceneId: string) => Promise<unknown>
+  refresh: () => Promise<void>
+  onIssue: (message: string) => void
+  onDismiss: () => void
+}): Promise<void> {
+  if (input.isPresented) {
+    if (!input.closePresentation || !input.sceneId) return
+    try {
+      await input.closePresentation(input.chatId, input.sceneId)
+      await input.refresh()
+    } catch (error) {
+      input.onIssue(meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.'))
+      return
+    }
+  }
+  input.onDismiss()
+}
+
 export interface MeshCanvasPanelStatusProps {
   hasView: boolean
   hasScenes: boolean
@@ -483,7 +517,10 @@ export function MeshCanvasPanelStatus({ hasView, hasScenes, issue }: MeshCanvasP
   )
 }
 
-export function MeshCanvasPanel({ chatId, onDismiss }: MeshCanvasPanelProps) {
+function MeshCanvasPanelInner(
+  { chatId, onDismiss }: MeshCanvasPanelProps,
+  ref: ForwardedRef<MeshCanvasPanelHandle>
+) {
   const [scenes, setScenes] = useState<readonly MeshSceneSummary[]>([])
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null)
   const [view, setView] = useState<MeshSceneView | null>(null)
@@ -618,20 +655,22 @@ export function MeshCanvasPanel({ chatId, onDismiss }: MeshCanvasPanelProps) {
     }
   }
 
-  const dismiss = async (): Promise<void> => {
-    if (view?.presentation) {
-      const api = window.api?.meshCanvas
-      if (!api || !activeSceneId) return
-      try {
-        await api.closePresentation(chatId, activeSceneId)
-        await refresh()
-      } catch (error) {
-        setIssue(meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.'))
-        return
-      }
-    }
-    onDismiss()
-  }
+  const dismiss = useCallback(async (): Promise<void> => {
+    const api = window.api?.meshCanvas
+    await dismissMeshCanvasView({
+      chatId,
+      sceneId: activeSceneId,
+      isPresented: Boolean(view?.presentation),
+      closePresentation: api
+        ? (targetChatId, sceneId) => api.closePresentation(targetChatId, sceneId)
+        : undefined,
+      refresh,
+      onIssue: setIssue,
+      onDismiss
+    })
+  }, [activeSceneId, chatId, onDismiss, refresh, view?.presentation])
+
+  useImperativeHandle(ref, () => ({ dismiss }), [dismiss])
 
   const toggleTopologyDisplay = (key: keyof MeshTopologyDisplayOptions): void => {
     setTopologyDisplay((current) => ({ ...current, [key]: !current[key] }))
@@ -741,3 +780,5 @@ export function MeshCanvasPanel({ chatId, onDismiss }: MeshCanvasPanelProps) {
     </section>
   )
 }
+
+export const MeshCanvasPanel = forwardRef(MeshCanvasPanelInner)

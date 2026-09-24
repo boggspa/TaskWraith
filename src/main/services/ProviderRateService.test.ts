@@ -130,9 +130,13 @@ describe('BAKED_IN_RATES', () => {
       }
     )
 
-    it('keeps the pi default model as the models[0] fallback', () => {
-      expect(piRows[0]?.modelId).toBe(PI_DEFAULT_MODEL_WIRE_ID)
-      expect(piRows[0]?.notes).toMatch(/fallback/i)
+    it('flags the pi default model as the table fallback', () => {
+      // Pinned by the FLAG, not by position: `resolveModelRate` prefers the
+      // flagged row, so reordering this table can no longer silently reprice
+      // every unmatched pi model.
+      const flagged = piRows.filter((entry) => entry.isFallback)
+      expect(flagged.map((entry) => entry.modelId)).toEqual([PI_DEFAULT_MODEL_WIRE_ID])
+      expect(flagged[0]?.notes).toMatch(/fallback/i)
     })
 
     it('prices the subscription lanes at zero rather than a foreign rate', () => {
@@ -147,6 +151,24 @@ describe('BAKED_IN_RATES', () => {
 
     it('carries the Groq two-slash wire id verbatim as the rate key', () => {
       expect(piRows.some((r) => r.modelId === 'groq/openai/gpt-oss-120b')).toBe(true)
+    })
+
+    it('records every new OpenRouter free route at zero cost', () => {
+      for (const modelId of [
+        'openrouter/cohere/north-mini-code:free',
+        'openrouter/minimax/minimax-m3:free',
+        'openrouter/thinkingmachines/inkling:free',
+        'openrouter/thinkingmachines/inkling-small:free'
+      ]) {
+        expect(
+          piRows.find((row) => row.modelId === modelId),
+          modelId
+        ).toMatchObject({
+          inputUsdPerMillion: 0,
+          outputUsdPerMillion: 0,
+          freeModel: true
+        })
+      }
     })
 
     it('has no duplicate model ids', () => {
@@ -170,10 +192,69 @@ describe('BAKED_IN_RATES', () => {
     expect(cursorComposer).toBeDefined()
   })
 
-  it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
+  it('records GPT-6 Sol and Luna at their launch-day rates with the published long-context tier', () => {
+    const codexRows = BAKED_IN_RATES.codex.models
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-sol')).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.2,
+      outputUsdPerMillion: 10,
+      longContextThresholdTokens: 272_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 0.4,
+      longContextOutputUsdPerMillion: 15,
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing'
+    })
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-luna')).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      cachedInputUsdPerMillion: 0.01,
+      outputUsdPerMillion: 0.5,
+      longContextThresholdTokens: 272_000,
+      longContextInputUsdPerMillion: 0.2,
+      longContextCachedInputUsdPerMillion: 0.02,
+      longContextOutputUsdPerMillion: 0.75,
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing'
+    })
+    // Astra keeps its own $10/$50 row: the three GPT-6 ids never share a rate
+    // by prefix.
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-astra')).toMatchObject({
+      inputUsdPerMillion: 10,
+      outputUsdPerMillion: 50
+    })
+  })
+
+  it('records Claude Opus 5.5 at its launch-day $4/$20 rate with $0.20 cache reads', () => {
+    const claudeRows = BAKED_IN_RATES.claude.models
+    expect(claudeRows.find((model) => model.modelId === 'claude-opus-5-5')).toMatchObject({
+      inputUsdPerMillion: 4,
+      outputUsdPerMillion: 20,
+      cachedInputUsdPerMillion: 0.2,
+      sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing'
+    })
+    // Opus 5 keeps its own $5/$25 row: the two ids must never share a rate by prefix.
+    expect(claudeRows.find((model) => model.modelId === 'claude-opus-5')).toMatchObject({
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 25
+    })
+  })
+
+  it('records exact Grok 4.7 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
-    expect(RATE_TABLE_VERSION).toBe('2026-08-16')
-    expect(BAKED_IN_RATES.grok.models[0]?.modelId).toBe('grok-4.6')
+    expect(RATE_TABLE_VERSION).toBe('2026-09-02')
+    expect(BAKED_IN_RATES.grok.models.filter((model) => model.isFallback)).toHaveLength(1)
+    expect(BAKED_IN_RATES.grok.models.find((model) => model.isFallback)?.modelId).toBe('grok-4.7')
+    expect(
+      BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.7')
+    ).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 12,
+      sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+      lastVerified: RATE_TABLE_VERSION
+    })
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
       cachedInputUsdPerMillion: 0.5,
@@ -204,6 +285,53 @@ describe('BAKED_IN_RATES', () => {
       sourceUrl: 'https://cursor.com/docs/models/grok-4-6',
       lastVerified: RATE_TABLE_VERSION
     })
+  })
+
+  it('prices both Muse Spark 1.3 routes exactly, leaving 1.2 flagged as the fallback', () => {
+    expect(BAKED_IN_RATES.muse.models.filter((model) => model.isFallback)).toHaveLength(1)
+    expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(
+      'muse-spark-1.2'
+    )
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3')
+    ).toMatchObject({
+      inputUsdPerMillion: 1.25,
+      outputUsdPerMillion: 4.25,
+      cachedInputUsdPerMillion: 0.15,
+      sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3-contributor')
+    ).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.2,
+      cachedInputUsdPerMillion: 0.002,
+      sourceUrl: 'https://developer.meta.com/ai/products/meta-model-api/',
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.3-contributor')
+        ?.notes
+    ).toMatch(/content.*product improvement/i)
+  })
+
+  it('records Muse Contributor Spark discounted rates without changing the standard fallback', () => {
+    expect(BAKED_IN_RATES.muse.models.find((model) => model.isFallback)?.modelId).toBe(
+      'muse-spark-1.2'
+    )
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.2-contributor')
+    ).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.2,
+      cachedInputUsdPerMillion: 0.002,
+      lastVerified: RATE_TABLE_VERSION
+    })
+    expect(
+      BAKED_IN_RATES.muse.models.find((model) => model.modelId === 'muse-spark-1.2-contributor')
+        ?.notes
+    ).toMatch(/content.*product improvement/i)
   })
 
   it('does not change the existing Grok 4.5 pricing row', () => {
@@ -271,15 +399,20 @@ describe('BAKED_IN_RATES', () => {
       outputUsdPerMillion: 4
     })
     expect(
-      BAKED_IN_RATES.kimi.models.find(
-        (model) => model.modelId === 'kimi-k2.7-code-highspeed'
-      )
+      BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.7-code-highspeed')
     ).toMatchObject({
       inputUsdPerMillion: 1.9,
       cachedInputUsdPerMillion: 0.38,
       outputUsdPerMillion: 8
     })
     expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k3')).toMatchObject({
+      inputUsdPerMillion: 3,
+      cachedInputUsdPerMillion: 0.3,
+      outputUsdPerMillion: 15
+    })
+    expect(
+      BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k3-256k')
+    ).toMatchObject({
       inputUsdPerMillion: 3,
       cachedInputUsdPerMillion: 0.3,
       outputUsdPerMillion: 15
@@ -300,6 +433,14 @@ describe('BAKED_IN_RATES', () => {
         }
       )
     }
+    // Fable 5.1: same per-token rate as Fable 5, cache reads a quarter of it.
+    expect(
+      BAKED_IN_RATES.claude.models.find((model) => model.modelId === 'claude-fable-5-1')
+    ).toMatchObject({
+      inputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 0.25,
+      outputUsdPerMillion: 50
+    })
     expect(
       BAKED_IN_RATES.gemini.models.find((model) => model.modelId === 'gemini-3.1-pro-preview')
     ).toMatchObject({
@@ -341,6 +482,15 @@ describe('BAKED_IN_RATES', () => {
           expect(model.inputUsdPerMillion).toBe(0)
           expect(model.outputUsdPerMillion).toBe(0)
           expect(model.notes, `${model.modelId} must document why it is free`).toMatch(/free/i)
+        } else if (model.pricingPending) {
+          // A "coming soon" route with no published price. Zero is a neutral
+          // placeholder, not a free-route claim — and the row must say where
+          // the real price gets verified at launch.
+          expect(model.inputUsdPerMillion).toBe(0)
+          expect(model.outputUsdPerMillion).toBe(0)
+          expect(model.notes, `${model.modelId} must document the pending price`).toMatch(
+            /re-verify/i
+          )
         } else {
           expect(model.inputUsdPerMillion).toBeGreaterThan(0)
           expect(model.outputUsdPerMillion).toBeGreaterThan(0)
@@ -413,18 +563,25 @@ describe('BAKED_IN_RATES', () => {
         'deepseek-r1:1.5b',
         'qwen3.6:35b',
         'qwen3.8:27b-mlx',
+        'qwen3.8-flash-next:125b-mlx',
         'ornith',
         'ornith:latest',
         'ornith:9b',
         'ornith:35b',
+        'ornith-1.5:9b',
+        'ornith-1.5:35b',
         'laguna-xs-2.1:q8_0',
         'minicpm-v4.5:8b',
         'granite4.1:3b',
         'granite4.1:30b',
+        'granite4.2:3b',
+        'granite4.2:8b',
+        'granite4.2:30b',
         'nemotron3:33b',
         'nemotron-3.5-lightning:30b-mlx',
         'qwen3.5:4b',
         'devstral-small-2:24b',
+        'mistral-medium-3.5:128b',
         'ministral-3:14b',
         'muse-glimmer:30b-mlx',
         'llama3.1:8b',

@@ -1,6 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../../../main/mainSourceProbe.testutil'
+import { getEnsembleReasoningOptions } from '../lib/ensembleProviderDefaults'
 import {
   CombinedModelPicker,
   ReasoningLadderSlider,
@@ -22,6 +24,7 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('codex', 'xhigh')).toBe(4)
     expect(ladderIndexForOption('codex', 'max')).toBe(5)
     expect(ladderIndexForOption('codex', 'ultracode')).toBe(6)
+    expect(ladderIndexForOption('codex', 'ultraTask')).toBe(7)
   })
 
   it('coalesces provider synonyms (extra→xhigh, light→low)', () => {
@@ -29,58 +32,122 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('claude', 'Light')).toBe(1)
   })
 
-  it('maps Kimi fixed On plus K3 Low/High/Max onto the shared ladder', () => {
+  it('maps Kimi and Ollama boolean On plus level efforts onto the shared ladder', () => {
     expect(ladderIndexForOption('kimi', 'off')).toBe(0)
     expect(ladderIndexForOption('kimi', 'on')).toBe(1)
     expect(ladderIndexForOption('kimi', 'low')).toBe(1)
     expect(ladderIndexForOption('kimi', 'high')).toBe(3)
     expect(ladderIndexForOption('kimi', 'max')).toBe(5)
+    expect(ladderIndexForOption('ollama', 'off')).toBe(0)
+    expect(ladderIndexForOption('ollama', 'on')).toBe(1)
+  })
+
+  it('does not rewrite DeepSeek V4 Cloud Max to Low when boolean On shares the Light stop', () => {
+    const modelId = 'deepseek-v4-pro:cloud'
+    const ladder = buildLadderModel('ollama', getEnsembleReasoningOptions('ollama', modelId))
+    expect(ladder.valueByIndex[1]).toBe('low')
+    expect(ladder.valueByIndex[5]).toBe('max')
+    expect(clampedLadderIndex('ollama', 'max', ladder, modelId)).toBe(5)
+    expect(ladder.valueByIndex[clampedLadderIndex('ollama', 'max', ladder, modelId)]).toBe('max')
+    // Boolean `on` occupies the same shared-ladder index as `low`. Parking
+    // there rewrote a Max chip (composer fallback) into a Low transcript stamp.
+    expect(ladder.valueByIndex[clampedLadderIndex('ollama', 'on', ladder, modelId)]).toBe('high')
+    expect(clampedLadderIndex('ollama', 'on', ladder, modelId)).not.toBe(1)
   })
 
   it('returns null for values off the ladder', () => {
     expect(ladderIndexForOption('codex', 'turbo')).toBeNull()
   })
 
-  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→ultra)', () => {
-    // Muse's CLI ladder is minimal|low|medium|high|xhigh|ultra. Minimal parks
-    // at Off (0); ultra parks at the Ultracode stop (6) with value "ultra"
-    // (not Codex's "ultracode"); xhigh must not be dropped.
+  it('maps Muse Meta /effort onto the shared ladder (minimal→xhigh→max→ultra→ultraTask)', () => {
+    // Muse's CLI ladder is minimal|low|medium|high|xhigh|max|ultra. Minimal
+    // parks at Off (0); Max keeps its distinct stop (5); ultra parks at the
+    // Ultracode stop (6) with value "ultra" (not Codex's "ultracode");
+    // ultraTask parks at UltraTask stop (7). Neither xhigh nor max may drop.
     expect(ladderIndexForOption('muse', 'minimal')).toBe(0)
     expect(ladderIndexForOption('muse', 'low')).toBe(1)
     expect(ladderIndexForOption('muse', 'medium')).toBe(2)
     expect(ladderIndexForOption('muse', 'high')).toBe(3)
     expect(ladderIndexForOption('muse', 'xhigh')).toBe(4)
+    expect(ladderIndexForOption('muse', 'max')).toBe(5)
     expect(ladderIndexForOption('muse', 'ultra')).toBe(6)
+    expect(ladderIndexForOption('muse', 'ultraTask')).toBe(7)
     // Muse-scoped synonyms must not remap a foreign provider's minimal/ultra.
     expect(ladderIndexForOption('codex', 'minimal')).toBeNull()
-    expect(ladderIndexForOption('pi', 'minimal')).toBeNull()
+  })
+
+  it('keeps Pi Off and Minimal distinct across its full seven-stop vocabulary', () => {
+    expect(ladderIndexForOption('pi', 'off')).toBe(0)
+    expect(ladderIndexForOption('pi', 'minimal')).toBe(1)
+    expect(ladderIndexForOption('pi', 'low')).toBe(2)
+    expect(ladderIndexForOption('pi', 'medium')).toBe(3)
+    expect(ladderIndexForOption('pi', 'high')).toBe(4)
+    expect(ladderIndexForOption('pi', 'xhigh')).toBe(5)
+    expect(ladderIndexForOption('pi', 'max')).toBe(6)
+    expect(ladderIndexForOption('pi', 'ultraTask')).toBe(7)
   })
 })
 
 describe('buildLadderModel', () => {
-  it('enables Muse minimal/low/medium/high/xhigh/ultra on stops [0,1,2,3,4,6]', () => {
+  it.each([
+    ['max', 5, 'Max'],
+    ['ultracode', 6, 'Ultra']
+  ] as const)(
+    'keeps Astra %s selectable without snapping down to Extra High',
+    (effort, index, label) => {
+      const ladder = buildLadderModel('codex', getEnsembleReasoningOptions('codex', 'gpt-6-astra'))
+      expect(nearestEnabledLadderIndex(index, ladder.enabledIndices)).toBe(index)
+      expect(ladder.valueByIndex[index]).toBe(effort)
+      expect(clampedLadderIndex('codex', effort, ladder)).toBe(index)
+      const markup = renderToStaticMarkup(
+        createElement(ReasoningLadderSlider, {
+          provider: 'codex',
+          ladder,
+          selectedReasoning: effort,
+          onSelectReasoning: () => undefined,
+          onInteract: () => undefined
+        })
+      )
+      expect(markup).toContain(`aria-valuenow="${index}"`)
+      expect(markup).toContain(`aria-valuetext="${label}"`)
+      expect(markup).not.toContain('aria-disabled="true"')
+    }
+  )
+
+  it('keeps GPT-6 Sol Max selectable on its max-topped ladder without an Ultra stop', () => {
+    const ladder = buildLadderModel('codex', getEnsembleReasoningOptions('codex', 'gpt-6-sol'))
+    expect(ladder.enabledIndices).toContain(5)
+    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(5)
+    expect(ladder.valueByIndex[5]).toBe('max')
+    expect(clampedLadderIndex('codex', 'max', ladder)).toBe(5)
+    // No `ultra` is documented for GPT-6 Sol, so the Ultra stop stays disabled.
+    expect(ladder.enabledIndices).not.toContain(6)
+  })
+
+  it('enables every Muse tier from minimal through ultra on stops [0,1,2,3,4,5,6]', () => {
     const ladder = buildLadderModel('muse', [
       { value: 'minimal', label: 'Minimal' },
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
       { value: 'xhigh', label: 'Extra High' },
+      { value: 'max', label: 'Max' },
       { value: 'ultra', label: 'Ultra' }
     ])
-    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 6])
+    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 5, 6])
     expect(ladder.valueByIndex).toEqual({
       0: 'minimal',
       1: 'low',
       2: 'medium',
       3: 'high',
       4: 'xhigh',
+      5: 'max',
       6: 'ultra'
     })
     expect(ladder.valueByIndex[6]).toBe('ultra')
     expect(ladder.valueByIndex[6]).not.toBe('ultracode')
-    // Intentional Max hole: drag/clamp near index 5 snaps to Ultra (tie→higher).
-    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(6)
-    expect(clampedLadderIndex('muse', 'max', ladder)).toBe(6)
+    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(5)
+    expect(clampedLadderIndex('muse', 'max', ladder)).toBe(5)
     expect(clampedLadderIndex('muse', 'ultracode', ladder)).toBe(6)
   })
 
@@ -128,6 +195,75 @@ describe('buildLadderModel', () => {
     expect(ladder.valueByIndex[0]).toBe('off')
     expect(ladder.valueByIndex[1]).toBe('on')
     expect(ladder.labelByIndex[1]).toBe('Thinking on')
+  })
+
+  it('builds Inkling with separate Off and Minimal stops and no fake Extra High', () => {
+    const ladder = buildLadderModel('pi', [
+      { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(ladder.enabledIndices).toEqual([0, 1, 2, 3, 4, 6])
+    expect(ladder.valueByIndex).toEqual({
+      0: 'off',
+      1: 'minimal',
+      2: 'low',
+      3: 'medium',
+      4: 'high',
+      6: 'max'
+    })
+    expect(ladder.enabledSet.has(5)).toBe(false)
+  })
+})
+
+describe('antigravity ladder', () => {
+  // Ground truth: `agy models` prints one bare wire id per reasoning variant
+  // for the Gemini families, and a single fixed-reasoning id for the Claude /
+  // GPT-OSS rows (labels "… (Thinking)" / "… (Medium)").
+  const GEMINI_OPTIONS = [
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'ultraTask', label: 'UltraTask' }
+  ]
+  const THINKING_OPTIONS = [
+    { value: 'on', label: 'Thinking' },
+    { value: 'ultraTask', label: 'UltraTask' }
+  ]
+
+  it("places AntiGravity's fixed `on` stop on the ladder", () => {
+    // Without this the Thinking stop resolved to NO index, was dropped by
+    // buildLadderModel, and left UltraTask as the ladder's only stop.
+    expect(ladderIndexForOption('antigravity', 'on')).toBe(1)
+    expect(ladderIndexForOption('antigravity', 'low')).toBe(1)
+    expect(ladderIndexForOption('antigravity', 'medium')).toBe(2)
+    expect(ladderIndexForOption('antigravity', 'high')).toBe(3)
+    expect(ladderIndexForOption('antigravity', 'ultraTask')).toBe(7)
+  })
+
+  it('keeps a fixed-Thinking model movable between Thinking and UltraTask', () => {
+    const ladder = buildLadderModel('antigravity', THINKING_OPTIONS)
+    expect(ladder.enabledIndices).toEqual([1, 7])
+    expect(ladder.labelByIndex[1]).toBe('Thinking')
+    // Two stops = a real slider. One stop is the locked/inert presentation,
+    // which is what claude-sonnet-4-6 and claude-opus-4-6-thinking shipped as.
+    expect(
+      resolveReasoningLadderAvailability('antigravity', 'claude-sonnet-4-6', ladder).mutable
+    ).toBe(true)
+    expect(clampedLadderIndex('antigravity', 'on', ladder)).toBe(1)
+    expect(clampedLadderIndex('antigravity', 'ultraTask', ladder)).toBe(7)
+  })
+
+  it('keeps UltraTask reachable at the top of a Gemini family ladder', () => {
+    const ladder = buildLadderModel('antigravity', GEMINI_OPTIONS)
+    expect(ladder.enabledIndices).toEqual([1, 2, 3, 7])
+    expect(ladder.valueByIndex[7]).toBe('ultraTask')
+    expect(
+      resolveReasoningLadderAvailability('antigravity', 'gemini-3.8-flash-high', ladder).mutable
+    ).toBe(true)
   })
 })
 
@@ -184,7 +320,7 @@ describe('unavailable reasoning presentation', () => {
       ['cursor', 'unknown-cursor-model'],
       ['grok', 'grok-composer-2.5-fast'],
       ['gemini', 'gemini-3.1-pro'],
-      ['ollama', 'qwen3.5:9b']
+      ['ollama', 'gemma3:4b']
     ] as const) {
       expect(resolveReasoningLadderAvailability(provider, modelId, emptyLadder)).toMatchObject({
         mutable: false,
@@ -221,6 +357,24 @@ describe('unavailable reasoning presentation', () => {
     expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
       mutable: true
     })
+    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3-256k', kimiMutable)).toEqual({
+      mutable: true
+    })
+    const ollamaToggle = buildLadderModel('ollama', [
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On' }
+    ])
+    const gptOssLevels = buildLadderModel('ollama', [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' }
+    ])
+    expect(resolveReasoningLadderAvailability('ollama', 'ornith-1.5:35b', ollamaToggle)).toEqual({
+      mutable: true
+    })
+    expect(resolveReasoningLadderAvailability('ollama', 'gpt-oss:20b', gptOssLevels)).toEqual({
+      mutable: true
+    })
 
     const markup = renderToStaticMarkup(
       createElement(ReasoningLadderSlider, {
@@ -241,7 +395,7 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuenow="1"')
     expect(markup).toContain('--ladder-accent:var(--provider-kimi-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(2)
   })
 
   it('enables configurable reasoning for Devstral Small and Mistral Medium 3.5', () => {
@@ -290,9 +444,9 @@ describe('unavailable reasoning presentation', () => {
     expect(markup).toContain('aria-valuetext="High"')
     expect(markup).toContain('--ladder-accent:var(--provider-mistral-color, var(--accent))')
     expect(markup).toContain('data-fx-active="true"')
-    expect(markup).toContain('--ladder-fx-strength:0.5')
+    expect(markup).toContain('--ladder-fx-strength:0.42857142857142855')
     expect(markup).toContain('composer-combined-picker-ladder-sparkles')
-    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(8)
+    expect(markup.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(7)
     expect(markup).not.toContain('data-disabled="true"')
     expect(markup).toContain('composer-combined-picker-ladder-shimmer-band')
   })
@@ -313,7 +467,7 @@ describe('unavailable reasoning presentation', () => {
       )
     }
 
-    const generic = renderUnavailable('ollama', 'qwen3.5:9b')
+    const generic = renderUnavailable('ollama', 'gemma3:4b')
     expect(generic).toContain('data-disabled="true"')
     expect(generic).toContain('aria-disabled="true"')
     expect(generic).toContain('tabindex="-1"')
@@ -339,11 +493,11 @@ describe('unavailable reasoning presentation', () => {
 describe('reasoning ladder visual taper', () => {
   it('ramps intensity and density from Low/Thinking through Ultra', () => {
     expect(
-      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).sparkleCount)
-    ).toEqual([0, 3, 5, 8, 11, 13, 16])
+      Array.from({ length: 8 }, (_, index) => reasoningLadderFxProfile(index).sparkleCount)
+    ).toEqual([0, 2, 5, 7, 9, 11, 14, 16])
     expect(
-      Array.from({ length: 7 }, (_, index) => reasoningLadderFxProfile(index).shimmerBandCount)
-    ).toEqual([0, 1, 1, 2, 2, 3, 3])
+      Array.from({ length: 8 }, (_, index) => reasoningLadderFxProfile(index).shimmerBandCount)
+    ).toEqual([0, 1, 1, 1, 2, 2, 3, 3])
     expect(reasoningLadderFxProfile(0)).toEqual({
       active: false,
       strength: 0,
@@ -352,20 +506,20 @@ describe('reasoning ladder visual taper', () => {
     })
     expect(reasoningLadderFxProfile(1)).toEqual({
       active: true,
-      strength: 1 / 6,
-      sparkleCount: 3,
+      strength: 1 / 7,
+      sparkleCount: 2,
       shimmerBandCount: 1
     })
     expect(reasoningLadderFxProfile(3)).toEqual({
       active: true,
-      strength: 1 / 2,
-      sparkleCount: 8,
-      shimmerBandCount: 2
+      strength: 3 / 7,
+      sparkleCount: 7,
+      shimmerBandCount: 1
     })
     expect(reasoningLadderFxProfile(6)).toEqual({
       active: true,
-      strength: 1,
-      sparkleCount: 16,
+      strength: 6 / 7,
+      sparkleCount: 14,
       shimmerBandCount: 3
     })
   })
@@ -400,7 +554,7 @@ describe('reasoning ladder visual taper', () => {
     expect(low).toContain('data-fx-active="true"')
     expect(low).toContain('--ladder-fill-height:calc(')
     expect(low).toContain('composer-combined-picker-ladder-pulse')
-    expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
+    expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(2)
     expect(low.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
   })
 
@@ -421,6 +575,115 @@ describe('reasoning ladder visual taper', () => {
     )
 
     expect(html).toContain('--ladder-accent:var(--provider-deepseek-color, var(--accent))')
+  })
+})
+
+describe('reasoning ladder stop marks', () => {
+  const markAt = (markup: string, stop: number): string =>
+    markup.match(
+      new RegExp(`<span class="composer-combined-picker-ladder-mark" data-stop="${stop}"[^>]*>`)
+    )?.[0] ?? ''
+
+  it('ticks every stop the model offers and dots every level it skips', () => {
+    // A gapped ladder (Kimi K3 style): Off, Light, High, Max.
+    const ladder = buildLadderModel('kimi', [
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(ladder.enabledIndices).toEqual([0, 1, 3, 5])
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'kimi',
+        ladder,
+        selectedReasoning: 'high',
+        onSelectReasoning: () => undefined,
+        onInteract: () => undefined
+      })
+    )
+
+    expect(markup.match(/class="composer-combined-picker-ladder-mark"/g)).toHaveLength(8)
+    for (const stop of [0, 1, 3, 5]) {
+      expect(markAt(markup, stop)).toContain('data-enabled="true"')
+    }
+    for (const stop of [2, 4, 6, 7]) {
+      expect(markAt(markup, stop)).toContain('data-enabled="false"')
+      expect(markAt(markup, stop)).not.toContain('data-reached')
+    }
+    // The fill has passed Off and Light; the thumb sits on High.
+    expect(markAt(markup, 0)).toContain('data-reached="true"')
+    expect(markAt(markup, 1)).toContain('data-reached="true"')
+    expect(markAt(markup, 3)).toContain('data-current="true"')
+    expect(markAt(markup, 3)).not.toContain('data-reached')
+    expect(markAt(markup, 5)).not.toContain('data-reached')
+    expect(markup.match(/data-current="true"/g)).toHaveLength(1)
+    // Each mark sits exactly on its stop, the same geometry as the thumb.
+    expect(markAt(markup, 3)).toContain('bottom:calc(11px + (100% - 22px) * 0.42857142857142855)')
+    // No hover target without a pointer.
+    expect(markup).not.toContain('data-target')
+    // Marks are decoration; the slider's value is announced once, by the track.
+    expect(markup).toContain(
+      '<div class="composer-combined-picker-ladder-marks" aria-hidden="true">'
+    )
+  })
+
+  it('draws no marks on the neutral rail of a model without configurable reasoning', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'codex',
+        ladder: buildLadderModel('codex', []),
+        selectedReasoning: '',
+        onSelectReasoning: () => undefined,
+        onInteract: () => undefined
+      })
+    )
+
+    expect(markup).toContain('data-disabled="true"')
+    expect(markup).not.toContain('composer-combined-picker-ladder-mark')
+  })
+})
+
+// A pointer drag cannot run under renderToStaticMarkup (no events, no effects),
+// so the slider's commit contract is pinned structurally. The drag arithmetic
+// itself is covered against real inputs in lib/reasoningLadderPointer.test.ts.
+describe('reasoning ladder drag commit', () => {
+  const probe = new MainSourceProbe(
+    'CombinedModelPicker.tsx',
+    new URL('./CombinedModelPicker.tsx', import.meta.url)
+  )
+  const slider = probe.fn('ReasoningLadderSlider')
+
+  it('holds the released stop until the new value lands and never reverts on a timer', () => {
+    const holds = probe.callsTo(slider, 'setHeldIndex')
+    expect(holds.map((call) => probe.argText(call, 0)).sort()).toEqual(['commitIndex', 'null'])
+
+    // The hold goes up BEFORE the parent hears the value, so a slow
+    // authoritative round trip (a live ensemble seat) never flashes the old stop.
+    const hold = holds.find((call) => probe.argText(call, 0) === 'commitIndex')!
+    const commits = probe.callsTo(slider, 'onSelectReasoning')
+    expect(commits).toHaveLength(1)
+    expect(probe.argText(commits[0]!, 0)).toBe('value')
+    expect(hold.getStart()).toBeLessThan(commits[0]!.getStart())
+
+    // The user's choice always resolves: the hold ends only when the value (or
+    // the model it belongs to) changes, never on a clock back to the old stop.
+    const release = probe
+      .callsTo(slider, 'useEffect')
+      .filter((effect) => probe.text(effect).includes('setHeldIndex(null)'))
+    expect(release).toHaveLength(1)
+    expect(probe.argText(release[0]!, 1)).toBe('[selectedReasoning, provider, modelId]')
+    for (const timer of ['setTimeout', 'setInterval', 'requestAnimationFrame']) {
+      expect(probe.callsTo(slider, timer)).toEqual([])
+    }
+  })
+
+  it('commits the stop on screen at release without re-reading the pointer', () => {
+    const releases = probe
+      .callsTo(slider, 'stepLadderDrag')
+      .filter((call) => probe.argText(call, 1) === "{ type: 'release' }")
+    expect(releases).toHaveLength(1)
+    expect(probe.argText(releases[0]!, 0)).toBe('dragIndexRef.current')
   })
 })
 
@@ -490,8 +753,10 @@ describe('trigger chip fast-mode rendering', () => {
   const cursorFastProps = {
     provider: 'cursor' as const,
     composerStyle: 'taskwraith' as never,
-    modelOptions: [{ id: 'grok-4.5', label: 'Cursor Grok 4.5' }],
-    selectedModelId: 'grok-4.5',
+    // Cursor's live Grok family is 4.6 — 4.5 was retired upstream and carries
+    // no Cursor reasoning ladder, so it cannot exercise the suffix hue here.
+    modelOptions: [{ id: 'grok-4.6', label: 'Cursor Grok 4.6' }],
+    selectedModelId: 'grok-4.6',
     onSelectModel: () => {},
     reasoningOptions: [
       { value: 'low', label: 'Low' },
@@ -501,7 +766,7 @@ describe('trigger chip fast-mode rendering', () => {
     selectedReasoning: 'high',
     onSelectReasoning: () => {},
     cursorReasoningEffort: 'high',
-    fastModeCapableModelIds: new Set(['grok-4.5']),
+    fastModeCapableModelIds: new Set(['grok-4.6']),
     fastModeEnabled: true,
     onToggleFastMode: () => {}
   }
@@ -516,7 +781,7 @@ describe('trigger chip fast-mode rendering', () => {
     expect(html).toMatch(/composer-combined-picker-trigger-fast[^-][^>]*>Fast</)
     // Cursor needs its Fast tail to retain a visible gap after the reasoning suffix.
     expect(html).toContain('style="margin-left:0"')
-    expect(html).toMatch(/composer-combined-picker-trigger-primary[^>]*>Grok 4\.5</)
+    expect(html).toMatch(/composer-combined-picker-trigger-primary[^>]*>Grok 4\.6</)
     expect(html).toContain('data-selected-reasoning="high"')
   })
 

@@ -1,5 +1,13 @@
 import { matchOllamaBrand } from './ollamaBrandTable'
+import { ollamaCloudModelDisplayName } from './ollamaModelAvailability'
 import { cursorGrokBaseModelId, isGrokReasoningModelId } from './grok45Models'
+import { DEVIN_MODEL_LABELS } from './devinModelCatalog'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_LABEL
+} from './kimiModels'
 import { resolvePiModelLabel, resolvePiUpstreamBrand } from './piBrandTable'
 import type { TaskWraithControlProviderPresentation } from './taskWraithControlProtocol'
 
@@ -15,12 +23,13 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   kimi: '#0073E6',
   grok: '#757575',
   cursor: '#8C7508',
-  ollama: '#1A8562',
+  ollama: '#976C52',
   antigravity: '#308713',
   pi: '#68768C',
   muse: '#1671EA',
   ensemble: '#986781',
   mistral: '#D44404',
+  xiaomi: '#008844',
   alibaba: '#8C52EF',
   'deep-reinforce': '#BE5809',
   ibm: '#3079BC',
@@ -35,7 +44,16 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   zai: '#177DAA',
   minimax: '#C044A4',
   cerebras: '#BB584A',
-  groq: '#088482'
+  groq: '#088482',
+  openrouter: '#E02948',
+  // TaskWraith token. It was derived from Inkling's official #0155BF model-card
+  // blue and shipped as #016EF6, which turned out to be CIEDE2000 dE 1.73 from
+  // meta/muse above and dE 1.88 from gemini — the same colour on a chip strip.
+  // The blue band is full, so Inkling wears a rose of its own, held clear of
+  // liquid (dE 9.28) and of the openrouter fallback (dE 9.50) at the palette's
+  // equal-contrast luminance. Thinking Machines does not publish either value
+  // as a corporate brand colour.
+  thinkingmachines: '#C24E68'
 } as const
 
 export const TASKWRAITH_PROVIDER_ACCENT_ALIASES = {
@@ -57,10 +75,13 @@ const PROVIDER_LABELS: Record<string, string> = {
   pi: 'Pi',
   muse: 'Muse',
   mistral: 'Mistral',
+  devin: 'Devin',
   ensemble: 'Ensemble',
   meta: 'Meta',
   cohere: 'Cohere',
-  essential: 'Essential AI'
+  essential: 'Essential AI',
+  openrouter: 'OpenRouter',
+  thinkingmachines: 'Thinking Machines'
 }
 
 const PROVIDER_SHORT_CODES: Record<string, string> = {
@@ -75,6 +96,7 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   pi: 'PI',
   muse: 'MUS',
   mistral: 'MST',
+  devin: 'DEV',
   ensemble: 'ENS',
   alibaba: 'QWN',
   'deep-reinforce': 'DRF',
@@ -93,7 +115,9 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   qwen: 'QWN',
   minimax: 'MMX',
   cerebras: 'CBR',
-  groq: 'GRQ'
+  groq: 'GRQ',
+  openrouter: 'ORR',
+  thinkingmachines: 'TML'
 }
 
 type ProviderAccentKey = keyof typeof TASKWRAITH_PROVIDER_ACCENTS
@@ -108,13 +132,18 @@ function canonicalAccentKey(value: string): ProviderAccentKey | null {
 }
 
 const KNOWN_MODEL_LABELS: Record<string, string> = {
+  'gpt-6-sol': 'GPT-6-Sol',
+  'gpt-6-luna': 'GPT-6-Luna',
   'gpt-5.6-sol': 'GPT-5.6-Sol',
   'gpt-5.6-terra': 'GPT-5.6-Terra',
   'gpt-5.6-luna': 'GPT-5.6-Luna',
   'preview:openai:gpt-5.6:sol': 'GPT-5.6-Sol',
   'preview:openai:gpt-5.6:terra': 'GPT-5.6-Terra',
   'preview:openai:gpt-5.6:luna': 'GPT-5.6-Luna',
-  'kimi-k3': 'K3',
+  'kimi-k3': KIMI_K3_MODEL_LABEL,
+  'kimi-k3-256k': KIMI_K3_256K_MODEL_LABEL,
+  'kimi-k2.8-preview': KIMI_K28_MODEL_LABEL,
+  'kimi-k2.7-code-highspeed': KIMI_K27_HIGHSPEED_MODEL_LABEL,
   'kimi-k2.7-code': 'K2.7 Coding',
   'kimi-k2.7-code-thinking': 'K2.7 Coding Thinking',
   'grok-4.6': 'Grok 4.6',
@@ -125,10 +154,14 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'composer-2.5-fast': 'Composer 2.5 Fast',
   'mistral-medium-3.5': 'Mistral Medium 3.5',
   'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
+  'muse-spark-1.3': 'Muse Spark 1.3',
+  'muse-spark-1.3-contributor': 'Muse Contributor Spark 1.3',
   'muse-spark-1.2': 'Muse Spark 1.2',
+  'muse-spark-1.2-contributor': 'Muse Contributor Spark 1.2',
   'devstral-small': 'Devstral Small',
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
+  'glm-5-2': 'GLM-5.2 (Mistral Hosted)',
   'codestral-2508': 'Codestral (Aug 2025)',
   'mistral-small-2603': 'Mistral Small 4',
   'devstral-2512': 'Devstral 2',
@@ -150,8 +183,11 @@ function titleWords(value: string): string {
 }
 
 function ollamaModelLabel(model: string): string | undefined {
+  const cloudLabel = ollamaCloudModelDisplayName(model)
+  if (cloudLabel) return cloudLabel
   const key = model.trim().toLowerCase()
   const known: Array<[RegExp, string]> = [
+    [/^qwen3\.8-flash-next:125b-mlx(?:-|$)/, 'Qwen 3.8 Flash Next (125B-MLX)'],
     [/^qwen3\.8:27b-mlx(?:-|$)/, 'Qwen 3.8 (27B-MLX)'],
     [/^qwen3\.6:35b(?:-|$)/, 'Qwen 3.6 (35B-A3B)'],
     [/^qwen3\.5:9b(?:-|$)/, 'Qwen 3.5 (9B Param)'],
@@ -161,6 +197,7 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^gemma3:4b(?:-|$)/, 'Gemma 3 (4B Param)'],
     [/^gemma4:12b(?:-|$)/, 'Gemma 4 (12B Param)'],
     [/^gemma4:31b-mlx(?:-|$)/, 'Gemma 4 (31B-MLX)'],
+    [/^ornith-1\.5:35b(?:-|$)/, 'Ornith 1.5 (35B Param)'],
     [/^ornith(?::(?:latest|9b))?(?:-|$)/, 'Ornith 1.0 (9B Param)'],
     [/^ornith:35b(?:-|$)/, 'Ornith 1.0 (35B Param)'],
     [/^lfm2\.5-thinking:1\.2b(?:-|$)/, 'LFM 2.5 Thinking (1.2B Param)'],
@@ -169,18 +206,22 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^minicpm-v4\.5:8b(?:-|$)/, 'MiniCPM-V 4.5 (8B Param)'],
     [/^granite4\.1:3b(?:-|$)/, 'Granite 4.1 (3B Param)'],
     [/^granite4\.1:30b(?:-|$)/, 'Granite 4.1 (30B Param)'],
+    [/^granite4\.2:3b(?:-|$)/, 'Granite 4.2 (3B Param)'],
+    [/^granite4\.2(?::(?:latest|8b))?(?:-|$)/, 'Granite 4.2 (8B Param)'],
+    [/^granite4\.2:30b(?:-|$)/, 'Granite 4.2 (30B Param)'],
     [/^granite4:3b(?:-|$)/, 'Granite 4.0 (3B Param)'],
     [/^nemotron-3-nano:4b(?:-|$)/, 'Nemotron 3 Nano (4B Param)'],
     [/^nemotron3:33b(?:-|$)/, 'Nemotron 3 Nano Omni (33B Param)'],
     [/^nemotron-3\.5-lightning:30b-mlx(?:-|$)/, 'Nemotron 3.5 Lightning (30B-MLX)'],
     [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)'],
     [/^devstral-small-2:24b(?:-|$)/, 'Devstral Small 2 (24B Param)'],
+    [/^mistral-medium-3\.5(?::(?:latest|128b))?(?:-|$)/, 'Mistral Medium 3.5 (128B Param)'],
     [/^ministral-3:3b(?:-|$)/, 'Ministral 3 (3B Param)'],
     [/^ministral-3:14b(?:-|$)/, 'Ministral 3 (14B Param)'],
     [/^muse-glimmer:30b-mlx(?:-|$)/, 'Muse Glimmer (30B-MLX)'],
     [/^llama3\.1:8b(?:-|$)/, 'Llama 3.1 (8B Param)'],
-    [/^deepseek-r1:1\.5b(?:-|$)/, 'DeepSeek R1 (1.5B Param)'],
-    [/^deepseek-r1:8b(?:-|$)/, 'DeepSeek R1 (8B Param)'],
+    [/^deepseek-r1:1\.5b(?:-|$)/, 'R1 (1.5B Param)'],
+    [/^deepseek-r1:8b(?:-|$)/, 'R1 (8B Param)'],
     [/^rnj-1(?::(?:latest|8b))?(?:-|$)/, 'Rnj-1 (8B Param)'],
     [/^glm-4\.7-flash:q4_k_m(?:-|$)/, 'GLM-4.7-Flash (30B-A3B Q4)'],
     [/^north-mini-code-1\.0:q4_k_m(?:-|$)/, 'North Mini Code 1.0 (30B-A3B Q4)'],
@@ -207,6 +248,13 @@ export function taskWraithModelLabel(
   }
   if (runtimeProvider === 'grok' && isGrokReasoningModelId(key)) {
     return key === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
+  }
+  if (runtimeProvider === 'devin') {
+    // Devin ids can collide with other seats' ids in the flat table below
+    // (`glm-5-2` is also Mistral's hosted GLM), so they resolve first and
+    // only through their own catalogue.
+    const devinLabel = DEVIN_MODEL_LABELS[key]
+    if (devinLabel) return devinLabel
   }
   if (KNOWN_MODEL_LABELS[key]) return KNOWN_MODEL_LABELS[key]
   const claude = key

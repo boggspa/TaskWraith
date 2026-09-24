@@ -1,4 +1,5 @@
 import { ollamaGptOssFewShotTrajectories } from './OllamaModelProtocol'
+import { ollamaSmallLocalModelPromptLines } from './OllamaSmallLocalModelProfile'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 import type { OllamaPromptIntent } from './OllamaPromptIntent'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
@@ -50,6 +51,12 @@ export function ollamaModelFamilyPromptLines(
         'Search before reading unfamiliar files, keep tool payloads focused, and preserve supplied thinking across turns.',
         'For release-critical edits, make verification gaps explicit before landing changes.'
       ]
+    case 'qwen3_8_flash_next_125b':
+      return [
+        'Model profile (Qwen 3.8 Flash Next 125B): sparse multimodal long-context agent model with native tools and configurable thinking.',
+        'Search before reading unfamiliar files, keep tool payloads focused, and preserve supplied thinking across turns.',
+        'For release-critical edits, make verification gaps explicit before landing changes.'
+      ]
     case 'qwen3_4b':
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
@@ -75,6 +82,12 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Devstral Small 2 24B): agentic coding model; search for the target, read it, then make a focused edit with explicit verification notes.',
         'Keep tool payloads compact and ground each call in what you actually need next.'
+      ]
+    case 'mistral_medium_3_5_128b':
+      return [
+        'Model profile (Mistral Medium 3.5 128B): flagship multimodal reasoning and coding model with native tools and configurable thinking.',
+        'Use its long context for grounded repository work, keep tool calls concrete, and preserve supplied thinking across turns.',
+        'For consequential edits, make verification gaps explicit before landing changes.'
       ]
     case 'ministral_3_3b':
       return [
@@ -154,7 +167,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'ornith_35b':
       return [
-        'Model profile (Ornith 1.0 35B): agentic coding model; use its larger coding context for deeper review and focused implementation.',
+        `Model profile (${modelId.trim().toLowerCase().startsWith('ornith-1.5:') ? 'Ornith 1.5 35B' : 'Ornith 1.0 35B'}): agentic coding model; use its larger coding context for deeper review and focused implementation.`,
         'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
         'Stay local: work the task the user asked for rather than deferring it to another provider.'
       ]
@@ -192,6 +205,13 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Granite 4.1 30B): strong for local review, RAG-style search, and structured tool use.',
         'Read targeted files before editing and make any assumptions explicit.'
+      ]
+    case 'granite4_2_3b':
+    case 'granite4_2_8b':
+    case 'granite4_2_30b':
+      return [
+        'Model profile (Granite 4.2): local coding, retrieval, structured tool use, and configurable thinking.',
+        'Search/read the relevant files, keep each tool call concrete, and verify the changes the task needs.'
       ]
     case 'nemotron3_nano_4b':
       return [
@@ -254,7 +274,9 @@ const OLLAMA_PREAMBLE_DETAILED_TOOLS = new Set<OllamaToolName>([
   'workspace_search',
   'write_file',
   'replace',
-  'run_shell_command'
+  'run_shell_command',
+  'delegate_to_subthread',
+  'delegate_wave'
 ])
 
 function describeTool(toolName: OllamaToolName): string | null {
@@ -269,7 +291,8 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'workspace_symbols') {
     return '- workspace_symbols: {"query":"symbol or function name","path":"src"} — language-aware symbol lookup for definitions before reading or editing.'
   }
-  if (toolName === 'git_status') return '- git_status: {} — inspect current git state without changing files.'
+  if (toolName === 'git_status')
+    return '- git_status: {} — inspect current git state without changing files.'
   if (toolName === 'git_diff') {
     return '- git_diff: {"path":"relative/path.txt"} — inspect unstaged changes or a focused path diff without changing files.'
   }
@@ -339,6 +362,12 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'run_task') {
     return '- run_task: {"task":"test","intent":"verify the focused change"} — run a configured task/test through TaskWraith policy.'
   }
+  if (toolName === 'delegate_to_subthread') {
+    return '- delegate_to_subthread: {"provider":"codex","prompt":"Inspect one focused area and report findings.","returnResult":true} — spawn one isolated worker, then call ensemble_await with its returned subThreadId.'
+  }
+  if (toolName === 'delegate_wave') {
+    return '- delegate_wave: {"lifecycle":"ephemeral","workers":[{"role":"scout","prompt":"Inspect area A."},{"role":"reviewer","prompt":"Review area B."}]} — spawn an isolated fleet, then call ensemble_await with its returned waveId.'
+  }
   if (toolName === 'get_diagnostics') {
     return '- get_diagnostics: {"source":"typescript","path":"src","intent":"check focused diagnostics"} — run fixed workspace diagnostics through TaskWraith policy.'
   }
@@ -360,7 +389,11 @@ export function ollamaLocalToolSystemPrompt(
     networkAccess?: string | null
     readOnly?: boolean
     plan?: boolean
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+    /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+    smallLocalModel?: boolean
   } = {}
 ): string {
   const intent = options.intent ?? 'workspace'
@@ -373,7 +406,9 @@ export function ollamaLocalToolSystemPrompt(
     networkAccess: options.networkAccess,
     readOnly: options.readOnly,
     plan: options.plan,
-    taskWraithMcpProfileId: options.taskWraithMcpProfileId
+    ultraTaskDelegationAutoAllow: options.ultraTaskDelegationAutoAllow,
+    taskWraithMcpProfileId: options.taskWraithMcpProfileId,
+    smallLocalModel: options.smallLocalModel
   })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
@@ -408,15 +443,24 @@ export function ollamaLocalToolSystemPrompt(
         ]
       : []),
     ...familyLines,
+    // The small-model directive is workspace-only: the conversational branch
+    // above already tells the model to answer without tools, and a working
+    // directive on top of that just contradicts it.
+    ...(options.smallLocalModel && intent !== 'conversational'
+      ? ollamaSmallLocalModelPromptLines()
+      : []),
     'Common tools:',
     ...detailed,
-    ...(named.length
-      ? [`Also ready (same JSON shape): ${named.join(', ')}.`]
-      : [])
+    ...(named.length ? [`Also ready (same JSON shape): ${named.join(', ')}.`] : [])
   ]
   if (hasWebTools) {
     lines.push(
       'For current events, weather, prices, or anything outside your knowledge: web_search to find sources, then web_fetch a chosen URL and summarize its readable text.'
+    )
+  }
+  if (options.ultraTaskDelegationAutoAllow) {
+    lines.push(
+      'ULTRATASK DELEGATION IS AUTO-ALLOWED FOR THIS RUN because the user selected UltraTask. Use ultra_task for a full staged graph (scouts, worker, review, synthesis), delegate_wave for parallel scouts/workers/reviewers, or delegate_to_subthread for one focused worker; TaskWraith still validates route, budget, provider, and workspace constraints. Whichever you use, immediately call ensemble_await with the returned executionId, waveId, or subThreadId, then read the returned result before concluding. Your thread stays accountable for the work until its result reaches you.'
     )
   }
   lines.push(
@@ -425,9 +469,9 @@ export function ollamaLocalToolSystemPrompt(
     'Path contract: tool paths are workspace-relative. Copy paths exactly from search/list results; do not prepend the absolute workspace path. Use "." only when a directory or search tool explicitly needs the workspace root.',
     options.readOnly
       ? options.plan
-        ? 'This run is PLAN-scoped: general file edits, shell, and publishing are unavailable. Listed visual/media instruments may pause for a user approval modal; request them only when they advance the plan.'
-        : 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'
-      : 'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
+        ? 'This run is PLAN-scoped: general file edits and publishing are unavailable. Listed visual/media instruments and shell may pause for a user approval modal; request them only when they advance the plan.'
+        : 'This run is READ-ONLY: file edits and publishing are unavailable. Shell via run_shell_command may pause for a user approval modal. Do not attempt file writes — read, search, and answer, and say plainly if the task would require a write you cannot make.'
+      : "File edits, shell, and publishing are governed by the run's permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.",
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',
     'After a tool result returns, answer normally or request one more tool with the same JSON shape. Do not invent file contents or workspace facts when a tool result is needed.'
   )
@@ -444,7 +488,7 @@ export function ollamaLocalToolSystemPrompt(
  *   - 'recon' — findings-shaped hint: search/read, then report findings in
  *     place. Correct for Ask posture, which is review posture,
  *     not plan ownership (spike 2 of
- *     docs/ensemble-posture-fanout-preamble-design.md — the plan-drafting
+ *     staged fan-out design — the plan-drafting
  *     hint on read-only tiers was TaskWraith's own self-inflicted source of
  *     plan-shaped recon output for local models).
  *
@@ -499,6 +543,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'qwen3_5_9b' ||
     family === 'qwen3_6_35b' ||
     family === 'qwen3_8_27b' ||
+    family === 'qwen3_8_flash_next_125b' ||
     family === 'qwen3_4b' ||
     family === 'qwen3_5_2b' ||
     family === 'minicpm_v45_8b' ||
@@ -512,11 +557,15 @@ export function ollamaTierAwareWorkflowHint(
     family === 'granite4_3b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
+    family === 'granite4_2_3b' ||
+    family === 'granite4_2_8b' ||
+    family === 'granite4_2_30b' ||
     family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
     family === 'nemotron3_5_lightning_30b' ||
     family === 'qwen3_5_4b' ||
     family === 'devstral_small_2_24b' ||
+    family === 'mistral_medium_3_5_128b' ||
     family === 'ministral_3_3b' ||
     family === 'ministral_3_14b' ||
     family === 'muse_glimmer_30b' ||

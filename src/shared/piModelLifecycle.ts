@@ -9,7 +9,31 @@
 export const PI_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.freeze({
   // Cerebras public model catalogue, verified 2026-07-29:
   // https://inference-docs.cerebras.ai/models/overview
-  'cerebras/zai-glm-4.7': '2026-08-17'
+  'cerebras/zai-glm-4.7': '2026-08-17',
+  // OpenRouter withdrew this route; the user approved its retirement on 2026-08-28.
+  'openrouter/stealth/ox-alpha': '2026-08-28',
+  // Xiaomi sunset MiMo V2 Pro across all three token-plan regions in favor of
+  // MiMo V2.5 and MiMo V2.5 Pro.
+  'xiaomi-token-plan-cn/mimo-v2-pro': '2026-08-30',
+  'xiaomi-token-plan-sgp/mimo-v2-pro': '2026-08-30',
+  'xiaomi-token-plan-ams/mimo-v2-pro': '2026-08-30',
+  // Xiaomi's Token Plan pricing page (https://mimo.mi.com/docs/en-US/price/token-plan,
+  // read 2026-09-22) lists V2.5 and V2.5 Pro as legacy behind the V2.6 pair and
+  // says both "will be officially taken offline at 10:00 on October 21, 2026
+  // Beijing Time" — 02:00 UTC. The date-only convention drops the rows from the
+  // start of that local calendar day, a few hours ahead of the cutoff.
+  'xiaomi-token-plan-cn/mimo-v2.5': '2026-10-21',
+  'xiaomi-token-plan-cn/mimo-v2.5-pro': '2026-10-21',
+  'xiaomi-token-plan-sgp/mimo-v2.5': '2026-10-21',
+  'xiaomi-token-plan-sgp/mimo-v2.5-pro': '2026-10-21',
+  'xiaomi-token-plan-ams/mimo-v2.5': '2026-10-21',
+  'xiaomi-token-plan-ams/mimo-v2.5-pro': '2026-10-21',
+  // Stealth preview listed 2026-09-16. OpenRouter publishes no sunset for it
+  // (the Models API carries a 2098 placeholder), so this was the seven-day
+  // window the user approved on 2026-09-16, not a vendor date. The user ended
+  // that window early on 2026-09-18, so the date moved in from 2026-09-23 and
+  // the row is retired as of today. Saved chats keep the label.
+  'openrouter/stealth/union-alpha': '2026-09-18'
 })
 
 const ISO_CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/

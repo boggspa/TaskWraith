@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ConcurrentLane } from '../../../main/store/types'
 import { buildFanoutLaneJumpTargets } from './fanoutLaneJumpTargets'
 
 function lane(id: string, participantId: string): ChatMessage {
@@ -23,7 +23,7 @@ function other(id: string): ChatMessage {
 describe('buildFanoutLaneJumpTargets', () => {
   it('maps a seat to its lane card, carrying the collision-proof row key', () => {
     const targets = buildFanoutLaneJumpTargets([other('intro'), lane('m1', 'seat-a')])
-    expect(targets.get('seat-a')).toEqual({ messageId: 'm1', rowKey: 'm1#1' })
+    expect(targets.get('seat-a')).toEqual({ messageId: 'm1', rowKey: 'm1#0' })
   })
 
   it('points a seat at its LATEST lane card, not the first', () => {
@@ -35,7 +35,38 @@ describe('buildFanoutLaneJumpTargets', () => {
       other('boss'),
       lane('round2', 'seat-a')
     ])
-    expect(targets.get('seat-a')).toEqual({ messageId: 'round2', rowKey: 'round2#2' })
+    expect(targets.get('seat-a')).toEqual({ messageId: 'round2', rowKey: 'round2#0' })
+  })
+
+  it('does not reuse a historical card while the current lane awaits first output', () => {
+    const currentLane = {
+      laneId: 'lane-current',
+      participantId: 'seat-a',
+      provider: 'codex',
+      status: 'running',
+      intent: 'read',
+      startedAt: '2026-08-28T16:01:00.000Z'
+    } as ConcurrentLane
+    const previousLane = {
+      ...currentLane,
+      laneId: 'lane-previous',
+      startedAt: '2026-08-28T16:00:00.000Z'
+    }
+
+    expect(buildFanoutLaneJumpTargets([lane('previous', 'seat-a')], []).size).toBe(0)
+    expect(buildFanoutLaneJumpTargets([lane('previous', 'seat-a')], [currentLane]).size).toBe(0)
+    expect(
+      buildFanoutLaneJumpTargets(
+        [lane('previous', 'seat-a'), lane('current', 'seat-a')],
+        [currentLane]
+      ).get('seat-a')
+    ).toEqual({ messageId: 'current', rowKey: 'current#0' })
+    expect(
+      buildFanoutLaneJumpTargets(
+        [lane('current', 'seat-a'), lane('previous', 'seat-a')],
+        [previousLane, currentLane]
+      ).get('seat-a')
+    ).toEqual({ messageId: 'current', rowKey: 'current#0' })
   })
 
   it('keeps each seat on its own card', () => {

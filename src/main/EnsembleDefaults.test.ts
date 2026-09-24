@@ -106,11 +106,11 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     }
   })
 
-  it('seeds a Grok panel with the current Grok 4.6 default', () => {
+  it('seeds a Grok panel with the current Grok 4.7 default', () => {
     const grok = createDefaultEnsembleConfig('grok').participants.find(
       (participant) => participant.provider === 'grok'
     )
-    expect(grok?.model).toBe('grok-4.6')
+    expect(grok?.model).toBe('grok-4.7')
   })
 
   it('keeps exported config constants stable', () => {
@@ -123,7 +123,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     // the next cap raise (this assertion sat at 18 after the 18 → 20
     // bump for exactly that reason).
     expect(config.maxParticipants).toBe(MAX_ENSEMBLE_PARTICIPANTS)
-    expect(config.orchestrationMode).toBe('turn_bound')
+    expect(config.orchestrationMode).toBe('continuous')
     expect(config.maxContinuationHops).toBe(6)
     expect(typeof config.updatedAt).toBe('string')
     expect(Number.isNaN(Date.parse(config.updatedAt ?? ''))).toBe(false)

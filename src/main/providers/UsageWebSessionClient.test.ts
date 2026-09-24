@@ -1,0 +1,338 @@
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import { parseUsageWebSessionReading, readUsageWebSessionReading, mergeUsageWebSessionCookieHeader } from './UsageWebSessionClient'
+import { configureUsageWebSessionStores, usageWebSessionStore } from './UsageWebSessionStore'
+
+const CAPTURED_AT = '2026-08-25T20:00:00.000Z'
+
+describe('parseUsageWebSessionReading', () => {
+  it('parses a Meta billing balance and billing-period spend', () => {
+    expect(
+      parseUsageWebSessionReading(
+        'meta',
+        '<div>Current balance</div><strong>£15.00</strong><div>Spend this billing period £0.42</div>',
+        CAPTURED_AT
+      )
+    ).toEqual({ balance: 15, spend: 0.42, currency: 'GBP', capturedAt: CAPTURED_AT })
+  })
+
+  it('parses a Cerebras current balance without inventing spend', () => {
+    expect(
+      parseUsageWebSessionReading(
+        'cerebras',
+        'Billing\nAvailable credit USD 11.56\nInvoices',
+        CAPTURED_AT
+      )
+    ).toEqual({ balance: 11.56, currency: 'USD', capturedAt: CAPTURED_AT })
+  })
+
+  it('parses Qwen rendered zero usage', () => {
+    expect(
+      parseUsageWebSessionReading(
+        'qwen',
+        'Plan Quota\nLast Updated: 2026-08-25 17:31:03\n7-Day Quota\n0% Used\n0% 50% 90% 100%',
+        CAPTURED_AT
+      )
+    ).toEqual({ quotaUsedPercent: 0, capturedAt: CAPTURED_AT })
+  })
+
+  it('parses MiMo plan, usage, and UTC validity', () => {
+    expect(
+      parseUsageWebSessionReading(
+        'mimo',
+        [
+          'Plan usage',
+          'Lite Monthly Plan',
+          'Auto-Renewal Monthly',
+          'Valid until 2026-09-25 23:59:59 (UTC)',
+          'Current plan usage',
+          '0 / 4,100,000,000 Used 0.0%'
+        ].join('\n'),
+        CAPTURED_AT
+      )
+    ).toEqual({
+      quotaUsedPercent: 0,
+      planName: 'Lite Monthly Plan',
+      resetAt: '2026-09-25T23:59:59.000Z',
+      capturedAt: CAPTURED_AT
+    })
+  })
+
+  it('parses the Muse Code subscription meters, weekly reset, and plan name', () => {
+    const capturedAt = '2026-09-01T09:00:00.000Z'
+    expect(
+      parseUsageWebSessionReading(
+        'muse',
+        [
+          'Usage',
+          'Muse Code High Usage subscription',
+          'Last updated at 10:14',
+          'Current usage',
+          '37% used',
+          'Weekly limit',
+          '82% used',
+          'Resets 7 Sep at 01:00',
+          'Pay as you go',
+          'Spend (GBP) £3.84'
+        ].join('\n'),
+        capturedAt
+      )
+    ).toEqual({
+      currentUsedPercent: 37,
+      weeklyUsedPercent: 82,
+      planName: 'Muse Code High Usage',
+      resetAt: new Date(2026, 8, 7, 1, 0).toISOString(),
+      capturedAt
+    })
+  })
+
+  it('reads zero-percent Muse meters as real readings, not absences', () => {
+    const capturedAt = '2026-09-01T09:00:00.000Z'
+    expect(
+      parseUsageWebSessionReading(
+        'muse',
+        'Current usage\n0% used\nWeekly limit\n0% used\nResets 7 Sep at 01:00',
+        capturedAt
+      )
+    ).toEqual({
+      currentUsedPercent: 0,
+      weeklyUsedPercent: 0,
+      resetAt: new Date(2026, 8, 7, 1, 0).toISOString(),
+      capturedAt
+    })
+  })
+
+  it('rolls a Muse weekly reset without a year across the Dec→Jan boundary', () => {
+    const capturedAt = new Date(2026, 11, 30, 12, 0).toISOString()
+    const reading = parseUsageWebSessionReading(
+      'muse',
+      'Weekly limit\n12% used\nResets 3 Jan at 01:00',
+      capturedAt
+    )
+    expect(reading).toEqual({
+      weeklyUsedPercent: 12,
+      resetAt: new Date(2027, 0, 3, 1, 0).toISOString(),
+      capturedAt
+    })
+  })
+
+  it('accepts a month-first Muse reset and a meter without any reset', () => {
+    const capturedAt = '2026-09-01T09:00:00.000Z'
+    expect(
+      parseUsageWebSessionReading(
+        'muse',
+        'Weekly limit\n5% used\nResets Sep 7 at 01:00',
+        capturedAt
+      )
+    ).toEqual({
+      weeklyUsedPercent: 5,
+      resetAt: new Date(2026, 8, 7, 1, 0).toISOString(),
+      capturedAt
+    })
+    expect(parseUsageWebSessionReading('muse', 'Current usage\n64% used', capturedAt)).toEqual({
+      currentUsedPercent: 64,
+      capturedAt
+    })
+  })
+
+  it('rejects signed-out or unpopulated pages', () => {
+    expect(parseUsageWebSessionReading('meta', 'Sign in to continue', CAPTURED_AT)).toBeNull()
+    expect(parseUsageWebSessionReading('qwen', 'Token Plan loading…', CAPTURED_AT)).toBeNull()
+    expect(parseUsageWebSessionReading('muse', 'Log in to continue', CAPTURED_AT)).toBeNull()
+    expect(
+      parseUsageWebSessionReading(
+        'muse',
+        'Muse Code High Usage subscription\nLoading…',
+        CAPTURED_AT
+      )
+    ).toBeNull()
+  })
+})
+
+const NOW = Date.parse('2026-09-01T12:00:00.000Z')
+const FRESH_MUSE_PAGE =
+  'Muse Code High Usage subscription\nCurrent usage\n41% used\nWeekly limit\n77% used\nResets 7 Sep at 01:00'
+
+function htmlResponse(body: string, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-length' ? `${body.length}` : null)
+    },
+    text: async () => body
+  } as unknown as Response
+}
+
+/** Each case seeds a distinct cookie so the module-level refresh gate resets. */
+async function seedMuseSession(cookieHeader: string, capturedAt: string): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'taskwraith-usage-web-'))
+  configureUsageWebSessionStores({
+    userDataPath: root,
+    safeStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value) => Buffer.from(value, 'utf8'),
+      decryptString: (value) => value.toString('utf8'),
+      // On Linux the store demands an ENCRYPTED safeStorage backend and fails
+      // closed otherwise; name one so the seed asserts the class, not the
+      // runner's keyring.
+      getSelectedStorageBackend: () => 'gnome_libsecret'
+    }
+  })
+  const result = usageWebSessionStore('muse')?.setSession({
+    cookieHeader,
+    reading: { currentUsedPercent: 10, weeklyUsedPercent: 20, capturedAt }
+  })
+  expect(result?.ok).toBe(true)
+}
+
+describe('readUsageWebSessionReading refresh throttle', () => {
+  it('refreshes an aged Muse session once, then serves the cached reading inside the TTL', async () => {
+    await seedMuseSession('muse=throttle-aged', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(async () => htmlResponse(FRESH_MUSE_PAGE))
+    const first = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(first).toMatchObject({ currentUsedPercent: 41, weeklyUsedPercent: 77 })
+    const second = await readUsageWebSessionReading('muse', {
+      fetchImpl,
+      now: () => NOW + 60_000
+    })
+    expect(second).toMatchObject({ currentUsedPercent: 41 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 16 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves a freshly imported session alone until its TTL elapses', async () => {
+    await seedMuseSession('muse=throttle-fresh', new Date(NOW).toISOString())
+    const fetchImpl = vi.fn()
+    const reading = await readUsageWebSessionReading('muse', {
+      fetchImpl: fetchImpl as never,
+      now: () => NOW + 60_000
+    })
+    expect(reading).toMatchObject({ currentUsedPercent: 10, weeklyUsedPercent: 20 })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('backs off for an hour after a 429 without dropping the stored reading', async () => {
+    await seedMuseSession('muse=throttle-blocked', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(async () => htmlResponse('Too many requests', 429))
+    const first = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(first).toMatchObject({ currentUsedPercent: 10 })
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 30 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW + 61 * 60 * 1000 })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares one in-flight refresh between concurrent callers', async () => {
+    await seedMuseSession('muse=throttle-flight', new Date(NOW - 60 * 60 * 1000).toISOString())
+    let release: ((value: Response) => void) | undefined
+    const fetchImpl = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve
+        })
+    )
+    const firstCall = readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    const secondCall = readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    release?.(htmlResponse(FRESH_MUSE_PAGE))
+    const [first, second] = await Promise.all([firstCall, secondCall])
+    expect(first).toMatchObject({ currentUsedPercent: 41 })
+    expect(second).toMatchObject({ currentUsedPercent: 41 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('parseUsageWebSessionReading fallbacks', () => {
+  it('reads a Muse meter rendered above its label (value-before-label DOM order)', () => {
+    expect(parseUsageWebSessionReading('muse', '37% used\nCurrent usage', CAPTURED_AT)).toEqual({
+      currentUsedPercent: 37,
+      capturedAt: CAPTURED_AT
+    })
+  })
+
+  it('reads a billing balance rendered above its label', () => {
+    expect(
+      parseUsageWebSessionReading('meta', '<div>£15.00</div><div>Current balance</div>', CAPTURED_AT)
+    ).toEqual({ balance: 15, currency: 'GBP', capturedAt: CAPTURED_AT })
+  })
+
+  it('reads Muse meters from an RSC flight payload when nothing is server-rendered', () => {
+    const html =
+      '<div>Loading…</div><script>self.__next_f.push(["Current\\u0020usage 37%\\u0020used","Weekly\\u0020limit 82%\\u0020used"]);</script>'
+    expect(parseUsageWebSessionReading('muse', html, CAPTURED_AT)).toMatchObject({
+      currentUsedPercent: 37,
+      weeklyUsedPercent: 82
+    })
+  })
+})
+
+describe('mergeUsageWebSessionCookieHeader', () => {
+  const META_URL = 'https://dev.meta.ai/usage/'
+
+  it('replaces a rotated value while preserving order', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader('a=1; b=2', ['b=3; Path=/'], META_URL, ['meta.ai'], NOW)
+    ).toBe('a=1; b=3')
+  })
+
+  it('appends a new session cookie scoped to an allowed domain', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader(
+        'a=1',
+        ['sess=xyz; Path=/; Domain=meta.ai'],
+        META_URL,
+        ['meta.ai'],
+        NOW
+      )
+    ).toBe('a=1; sess=xyz')
+  })
+
+  it('rejects cookies from foreign domains', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader('a=1', ['x=1; Domain=evil.com'], META_URL, ['meta.ai'], NOW)
+    ).toBeNull()
+  })
+
+  it('deletes an expired cookie', () => {
+    expect(
+      mergeUsageWebSessionCookieHeader(
+        'a=1; b=2',
+        ['b=gone; Expires=Thu, 01 Jan 1970 00:00:00 GMT'],
+        META_URL,
+        ['meta.ai'],
+        NOW
+      )
+    ).toBe('a=1')
+  })
+
+  it('returns null when there is nothing to merge', () => {
+    expect(mergeUsageWebSessionCookieHeader('a=1', [], META_URL, ['meta.ai'], NOW)).toBeNull()
+  })
+})
+
+describe('readUsageWebSessionReading cookie rotation', () => {
+  it('persists server-rotated cookies alongside the refreshed reading', async () => {
+    await seedMuseSession('muse=rotation-persist', new Date(NOW - 60 * 60 * 1000).toISOString())
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === 'content-length' ? `${FRESH_MUSE_PAGE.length}` : null,
+            getSetCookie: () => ['muse_session=rotated456; Path=/; Domain=meta.ai']
+          },
+          text: async () => FRESH_MUSE_PAGE
+        }) as unknown as Response
+    )
+    const reading = await readUsageWebSessionReading('muse', { fetchImpl, now: () => NOW })
+    expect(reading).toMatchObject({ currentUsedPercent: 41 })
+    expect(usageWebSessionStore('muse')?.loadSession()?.cookieHeader).toContain(
+      'muse_session=rotated456'
+    )
+  })
+})

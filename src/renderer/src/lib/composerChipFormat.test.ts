@@ -7,6 +7,7 @@ import {
 } from './composerChipFormat'
 import { CURSOR_GROK_46_WIRE_MODEL_IDS } from '../../../shared/grok45Models'
 import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
+import type { OllamaReasoningEffort } from '../../../shared/ollamaReasoning'
 
 describe('shortModelName', () => {
   it('extracts Codex version digit + capitalised suffix', () => {
@@ -40,7 +41,9 @@ describe('shortModelName', () => {
     expect(shortModelName('kimi', 'K2.7 Coding Thinking', 'kimi-k2.7-code-thinking')).toBe(
       'K2.7 Coding'
     )
-    expect(shortModelName('kimi', 'K3', 'kimi-k3')).toBe('K3')
+    expect(shortModelName('kimi', 'K3 (1M)', 'kimi-k3')).toBe('K3 (1M)')
+    expect(shortModelName('kimi', 'K3 (plan-capped 256K)', 'kimi-k3')).toBe('K3 256K cap')
+    expect(shortModelName('kimi', 'K3 (256K)', 'kimi-k3-256k')).toBe('K3 (256K)')
     expect(shortModelName('kimi', 'Kimi K2.6 Thinking', 'kimi-k2.6-thinking')).toBe('K2.6')
   })
 
@@ -56,6 +59,7 @@ describe('shortModelName', () => {
   it('renders Cursor Composer model ids as human labels', () => {
     expect(shortModelName('cursor', '', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(shortModelName('cursor', '', 'composer-2.5')).toBe('Composer 2.5')
+    // Retired upstream: a historical row still reads from its stored label.
     expect(shortModelName('cursor', 'Cursor Grok 4.5', 'grok-4.5')).toBe('Grok 4.5')
     expect(shortModelName('cursor', 'Cursor Grok 4.6', 'grok-4.6')).toBe('Grok 4.6')
     for (const modelId of CURSOR_GROK_46_WIRE_MODEL_IDS) {
@@ -70,6 +74,13 @@ describe('shortModelName', () => {
     expect(shortModelName('grok', '', 'grok-4.5')).toBe('Grok 4.5 Fast')
   })
 
+  it('keeps Muse Contributor Spark distinct from the standard Spark route', () => {
+    expect(shortModelName('muse', '', 'muse-spark-1.3')).toBe('Spark 1.3')
+    expect(shortModelName('muse', '', 'muse-spark-1.3-contributor')).toBe('Contributor Spark 1.3')
+    expect(shortModelName('muse', '', 'muse-spark-1.2')).toBe('Spark 1.2')
+    expect(shortModelName('muse', '', 'muse-spark-1.2-contributor')).toBe('Contributor Spark 1.2')
+  })
+
   it('renders local Ollama tags as model names', () => {
     expect(shortModelName('ollama', '', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(shortModelName('ollama', '', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
@@ -82,6 +93,7 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'ornith:latest')).toBe('Ornith 1.0 (9B Param)')
     expect(shortModelName('ollama', '', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(shortModelName('ollama', '', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
+    expect(shortModelName('ollama', '', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
     expect(shortModelName('ollama', '', 'laguna-xs-2.1:q8_0')).toBe(
       'Laguna XS 2.1 (33B-A3B Q8)'
     )
@@ -99,8 +111,9 @@ describe('shortModelName', () => {
     )
     expect(shortModelName('ollama', '', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
     expect(shortModelName('ollama', '', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
-    expect(shortModelName('ollama', '', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(shortModelName('ollama', '', 'deepseek-r1:8b')).toBe('R1 (8B Param)')
     expect(shortModelName('ollama', '', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
+    expect(shortModelName('ollama', '', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
     expect(shortModelName('ollama', '', 'glm-4.7-flash:q4_K_M')).toBe(
       'GLM-4.7-Flash (30B-A3B Q4)'
     )
@@ -115,7 +128,7 @@ describe('shortModelName', () => {
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],
       ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
-      ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+      ['deepseek-r1:1.5b', 'R1 (1.5B Param)'],
       ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
       ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
       ['gemma3:4b', 'Gemma 3 (4B Param)']
@@ -147,15 +160,60 @@ describe('shortModelName', () => {
   it("resolves the cli-default sentinel to each provider's real default", () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
-    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Coding')
+    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.8 Preview')
     expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.6 Fast')
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
     expect(shortModelName('ollama', '', 'cli-default')).toBe('Qwen 3 (4B Param)')
+    expect(shortModelName('ollama', '', 'qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
+    expect(shortModelName('ollama', '', 'mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(shortModelName('ollama', '', 'granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
   })
 })
 
 describe('reasoningDisplayLabel', () => {
+  it('uses Thinking for Ollama On and level labels for GPT-OSS', () => {
+    const base = {
+      provider: 'ollama' as const,
+      composerStyle: 'default' as const,
+      modelId: 'ornith-1.5:35b',
+      modelLabel: 'Ornith 1.5 (35B Param)'
+    }
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'on' })).toBe('Thinking')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'off' })).toBe('')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'low' })).toBe('Low')
+    expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: 'high' })).toBe('High')
+  })
+
+  it('labels every stop the Ollama ladder can select, Max included', () => {
+    // `max` is the top stop of the GLM 5.3 and DeepSeek V4 ladders, and the
+    // stop the composer falls back to when a persisted effort is not on the
+    // model's ladder — so it was the most reachable value the chip rendered
+    // as an empty suffix. Keyed by OllamaReasoningEffort so a new stop added
+    // to the vocabulary cannot reach the chip without a label again.
+    const base = {
+      provider: 'ollama' as const,
+      composerStyle: 'default' as const,
+      modelId: 'glm-5.3:cloud',
+      modelLabel: 'GLM 5.3'
+    }
+    const expected: Record<OllamaReasoningEffort, string> = {
+      off: '',
+      on: 'Thinking',
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      max: 'Max'
+    }
+    for (const [effort, label] of Object.entries(expected)) {
+      expect(reasoningDisplayLabel({ ...base, ollamaReasoningEffort: effort })).toBe(label)
+    }
+  })
+
   it('Codex xhigh becomes Extra High', () => {
     expect(
       reasoningDisplayLabel({
@@ -206,7 +264,7 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('High')
   })
 
-  it('Muse Meta /effort labels match the slider ladder (including xhigh)', () => {
+  it('Muse Meta /effort labels match the slider ladder (including xhigh and max)', () => {
     const base = {
       provider: 'muse' as const,
       composerStyle: 'codex' as const,
@@ -216,6 +274,7 @@ describe('reasoningDisplayLabel', () => {
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'minimal' })).toBe('Minimal')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'low' })).toBe('Low')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'xhigh' })).toBe('Extra High')
+    expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'max' })).toBe('Max')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'ultra' })).toBe('Ultra')
     expect(reasoningDisplayLabel({ ...base, museReasoningEffort: 'none' })).toBe('')
   })
@@ -253,16 +312,27 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('')
   })
 
-  it('Kimi maps fixed K2.7 thinking to Thinking and K3 effort to its tier', () => {
+  it('Kimi maps fixed Highspeed thinking to Thinking and a ladder to its tier', () => {
+    // Highspeed is the one managed route whose thinking is a flag rather than
+    // an effort; K2.8 and both K3 routes render the selected tier instead.
     expect(
       reasoningDisplayLabel({
         provider: 'kimi',
         composerStyle: 'kimi',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
     ).toBe('Thinking')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k2.8-preview',
+        modelLabel: 'K2.8 Preview',
+        kimiReasoningEffort: 'high'
+      })
+    ).toBe('High')
     expect(
       reasoningDisplayLabel({
         provider: 'kimi',
@@ -282,6 +352,16 @@ describe('reasoningDisplayLabel', () => {
         kimiThinkingEnabled: true
       })
     ).toBe('Max')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3-256k',
+        modelLabel: 'K3 (256K)',
+        kimiReasoningEffort: 'high',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('High')
   })
 
   it('Gemini returns empty (no reasoning concept yet)', () => {
@@ -323,12 +403,23 @@ describe('reasoningDisplayLabel', () => {
         grokReasoningEffort: 'high'
       })
     ).toBe('')
+    // Cursor's Grok 4.5 resale is retired, so it carries no reasoning ladder;
+    // a historical row keeps its name but shows no effort. 4.6 is the live one.
     expect(
       reasoningDisplayLabel({
         provider: 'cursor',
         composerStyle: 'cursor',
         modelId: 'grok-4.5',
         modelLabel: 'Cursor Grok 4.5',
+        cursorReasoningEffort: 'medium'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'grok-4.6',
+        modelLabel: 'Cursor Grok 4.6',
         cursorReasoningEffort: 'medium'
       })
     ).toBe('Medium')
@@ -362,6 +453,18 @@ describe('reasoningDisplayLabel', () => {
         mistralReasoningEffort: 'medium'
       })
     ).toBe('Medium')
+    // A Pi seat stores its effort in piReasoningEffort. The chip used to read
+    // mistralReasoningEffort for Pi-Mistral ids — a field only the Mistral seat
+    // ever sets — so these three models rendered no reasoning suffix at all.
+    expect(
+      reasoningDisplayLabel({
+        provider: 'pi',
+        composerStyle: 'claude',
+        modelId: 'mistral/mistral-medium-3.5',
+        modelLabel: 'Mistral Medium 3.5',
+        piReasoningEffort: 'high'
+      })
+    ).toBe('High')
     expect(
       reasoningDisplayLabel({
         provider: 'pi',
@@ -370,7 +473,7 @@ describe('reasoningDisplayLabel', () => {
         modelLabel: 'Mistral Medium 3.5',
         mistralReasoningEffort: 'high'
       })
-    ).toBe('High')
+    ).toBe('')
     expect(
       reasoningDisplayLabel({
         provider: 'mistral',
@@ -387,6 +490,84 @@ describe('reasoningDisplayLabel', () => {
         modelId: 'devstral-small',
         modelLabel: 'Devstral Small',
         mistralReasoningEffort: 'off'
+      })
+    ).toBe('')
+  })
+
+  it('UltraTask displays as UltraTask for all providers', () => {
+    const base = {
+      provider: 'codex' as const,
+      composerStyle: 'codex' as const,
+      modelId: 'gpt-5.6-terra',
+      modelLabel: 'GPT-5.6 Terra'
+    }
+    expect(
+      reasoningDisplayLabel({ ...base, codexReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'claude', claudeReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'kimi', modelId: 'kimi-k3', kimiReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({
+        ...base,
+        provider: 'kimi',
+        modelId: 'kimi-k2.7-code',
+        kimiReasoningEffort: 'ultraTask',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'grok', modelId: 'grok-4.6', grokReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'mistral', modelId: 'devstral-small', mistralReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'cursor', modelId: 'cursor-grok-4.6-low', cursorReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'ollama', ollamaReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'pi', piReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+    expect(
+      reasoningDisplayLabel({ ...base, provider: 'muse', museReasoningEffort: 'ultratask' })
+    ).toBe('UltraTask')
+  })
+
+  it('does not leak leftover UltraTask from another provider onto the chip', () => {
+    expect(
+      reasoningDisplayLabel({
+        provider: 'gemini',
+        composerStyle: 'gemini',
+        modelId: 'gemini-2.5-pro',
+        modelLabel: 'Gemini 2.5 Pro',
+        kimiReasoningEffort: 'ultraTask',
+        kimiThinkingEnabled: true,
+        codexReasoningEffort: 'ultraTask'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'cursor',
+        composerStyle: 'cursor',
+        modelId: 'composer-2.5-fast',
+        modelLabel: 'Composer 2.5 Fast',
+        kimiReasoningEffort: 'ultraTask',
+        cursorReasoningEffort: 'ultraTask'
+      })
+    ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'grok',
+        composerStyle: 'grok',
+        modelId: 'grok-composer-2.5-fast',
+        modelLabel: 'Grok Composer 2.5 Fast',
+        grokReasoningEffort: 'ultraTask'
       })
     ).toBe('')
   })
@@ -519,29 +700,39 @@ describe('formatComposerModelChip', () => {
     ).toBe('Opus 4.8 1M · Ultracode')
   })
 
-  it('Kimi shell + kimi provider + on → "K2.7 Coding Thinking"', () => {
+  it('Kimi shell + kimi provider + on → "K2.7 Code Highspeed Thinking"', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
-    ).toBe('K2.7 Coding Thinking')
+    ).toBe('K2.7 Code Highspeed Thinking')
   })
 
-  it('Kimi shell + K3 shows its selected always-on effort', () => {
+  it('Kimi shell distinguishes both K3 routes and shows their selected effort', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k3',
-        modelLabel: 'K3',
+        modelLabel: 'K3 (1M)',
         kimiReasoningEffort: 'high',
         kimiThinkingEnabled: true
       })
-    ).toBe('K3 High')
+    ).toBe('K3 (1M) High')
+    expect(
+      formatComposerModelChip({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3-256k',
+        modelLabel: 'K3 (256K)',
+        kimiReasoningEffort: 'low',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('K3 (256K) Low')
   })
 
   it('TaskWraith native shell + codex provider falls back to "GPT-5.5 · High"', () => {
@@ -561,12 +752,12 @@ describe('formatComposerModelChip', () => {
       formatComposerModelChip({
         provider: 'cursor',
         composerStyle: 'default',
-        modelId: 'grok-4.5',
-        modelLabel: 'Cursor Grok 4.5',
+        modelId: 'grok-4.6',
+        modelLabel: 'Cursor Grok 4.6',
         cursorReasoningEffort: 'high',
         shellFastModeActive: true
       })
-    ).toBe('Grok 4.5 · High Fast')
+    ).toBe('Grok 4.6 · High Fast')
 
     expect(
       formatComposerModelChip({
@@ -609,10 +800,34 @@ describe('formatComposerModelChip', () => {
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'terminal',
-        modelId: 'kimi-k2.7-code',
-        modelLabel: 'K2.7 Coding',
+        modelId: 'kimi-k2.7-code-highspeed',
+        modelLabel: 'K2.7 Code Highspeed',
         kimiThinkingEnabled: true
       })
-    ).toBe('K2.7 Coding · Thinking')
+    ).toBe('K2.7 Code Highspeed · Thinking')
+  })
+})
+
+describe('Pi reasoning display label', () => {
+  const base = { provider: 'pi' as const, composerStyle: 'terminal' as const, modelId: 'some-model', modelLabel: 'Some Model' }
+
+  it('maps pi thinking levels to display labels', () => {
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'low' })).toBe('Low')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'medium' })).toBe('Medium')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'high' })).toBe('High')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'xhigh' })).toBe('Extra High')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'max' })).toBe('Max')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'minimal' })).toBe('Minimal')
+  })
+
+  it('omits the suffix when unset or off', () => {
+    expect(reasoningDisplayLabel({ ...base })).toBe('')
+    expect(reasoningDisplayLabel({ ...base, piReasoningEffort: 'off' })).toBe('')
+  })
+
+  it('renders in the composer chip', () => {
+    expect(
+      formatComposerModelChip({ ...base, composerStyle: 'claude', piReasoningEffort: 'high' })
+    ).toBe('Some Model · High')
   })
 })

@@ -12,12 +12,28 @@ import {
   projectWorkspaceLockMarkers,
   workspaceLockRuntimeMarkerFilename
 } from './WorkspaceLockMarkerProjection'
+import {
+  WORKSPACE_LOCK_HEARTBEAT_INTERVAL_MS,
+  WORKSPACE_LOCK_HEARTBEAT_SCHEMA,
+  WORKSPACE_LOCK_HEARTBEAT_TTL_MS,
+  WORKSPACE_LOCK_HOLDER_SWEEP_MS,
+  WORKSPACE_LOCK_RECLAIM_AUDIT_SCHEMA,
+  WORKSPACE_LOCK_RECLAIM_GRACE_MS,
+  WORKSPACE_LOCK_RECOVERY_SCAN_MS,
+  WORKSPACE_LOCK_SCAN_SUSPEND_GAP_SCANS,
+  WorkspaceLockHolderLapseTracker,
+  workspaceLockHolderKey,
+  type WorkspaceLockHolderHeartbeat,
+  type WorkspaceLockHolderKey,
+  type WorkspaceLockHolderLapseVerdict
+} from './WorkspaceLockHolderHeartbeat'
 import type {
   CanonicalWorkspaceLockClaim,
   WorkspaceLockAcquireResult,
   WorkspaceLockAuthorityDependencies,
   WorkspaceLockAuthorityFence,
   WorkspaceLockClaimRequest,
+  WorkspaceLockHolderLiveness,
   WorkspaceLockLease,
   WorkspaceLockMutationCapability,
   WorkspaceLockMutationVerificationResult,
@@ -42,6 +58,14 @@ import {
   type WorkspaceLockWalRecoveryDecision,
   type WorkspaceLockWalState
 } from './WorkspaceLockWal'
+import {
+  decodeWorkspaceLockWalCheckpoint,
+  planWorkspaceLockWalCompaction,
+  resolveWorkspaceLockWalState,
+  WORKSPACE_LOCK_WAL_CHECKPOINT_BYTE_THRESHOLD,
+  WORKSPACE_LOCK_WAL_RETAINED_TAIL_EVENTS,
+  type WorkspaceLockWalCheckpoint
+} from './WorkspaceLockWalCheckpoint'
 
 export interface WorkspaceLockAuthorityOptions {
   persistence: Pick<
@@ -57,12 +81,44 @@ export interface WorkspaceLockAuthorityOptions {
     | 'writeDerivedMarker'
     | 'removeDerivedMarker'
   > &
-    Partial<Pick<NodeWorkspaceLockPersistence, 'readEventsRevision'>>
+    Partial<
+      Pick<
+        NodeWorkspaceLockPersistence,
+        | 'readEventsRevision'
+        | 'readCheckpointRevision'
+        | 'readCheckpointDocument'
+        | 'writeArchiveSegment'
+        | 'writeCheckpointDocument'
+        | 'truncateEventsToSuffix'
+        | 'writeHolderHeartbeat'
+        | 'readHolderHeartbeats'
+        | 'removeHolderHeartbeat'
+        | 'appendHolderReclaimAudit'
+      >
+    >
   dependencies: WorkspaceLockAuthorityDependencies
-  /** Renewable derived-marker lifetime. Durable leases themselves do not expire. */
+  /**
+   * Renewable derived-marker lifetime. Durable leases themselves do not
+   * expire; a holder that stops heartbeating loses them only through the
+   * periodic reclaim-only pass (`holderLease`).
+   */
   markerLifetimeMs?: number
   /** Bounded UI/audit visibility; the WAL remains the durable history. */
   recoveredVisibilityMs?: number
+  /** Heartbeat and reclaim cadence; production uses the defaults. */
+  holderLease?: WorkspaceLockHolderLeaseOptions
+}
+
+export interface WorkspaceLockHolderLeaseOptions {
+  /** False disables the sidecar and the periodic pass entirely (tests only). */
+  enabled?: boolean
+  heartbeatIntervalMs?: number
+  heartbeatTtlMs?: number
+  reclaimGraceMs?: number
+  scanIntervalMs?: number
+  suspendGapMs?: number
+  /** Cadence of the sweep that removes conclusively dead holders' sidecars. */
+  sweepIntervalMs?: number
 }
 
 export interface WorkspaceLockAcquireOptions {
@@ -76,9 +132,97 @@ export interface WorkspaceLockReleaseOptions {
   forceOrphaned?: boolean
 }
 
+export interface WorkspaceLockCompactionOptions {
+  byteThreshold?: number
+  retainedTailEvents?: number
+}
+
+export type WorkspaceLockCompactionOutcome =
+  | {
+      compacted: true
+      boundarySequence: number
+      sealedFrameCount: number
+      retainedFrameCount: number
+      beforeByteLength: number
+      afterByteLength: number
+      archiveFilename: string
+    }
+  | {
+      compacted: false
+      reason: 'unsupported' | 'below_threshold' | 'nothing_to_seal'
+      byteLength?: number
+      byteThreshold?: number
+    }
+
 export interface WorkspaceLockRecoveryResult {
   transitionId?: string
   decisions: WorkspaceLockWalRecoveryDecision[]
+}
+
+/**
+ * Why the periodic pass retired a lease. `lease_lapsed` is written to the WAL
+ * as `recovered/owner_dead` in this release: a new WAL recovery reason would
+ * fail every older build on the shared root closed, so the honest label lives
+ * only in the audit sidecar until a reader for it has shipped.
+ */
+export type WorkspaceLockReclaimEvidence = 'owner_dead' | 'pid_reused' | 'lease_lapsed'
+
+/** One line of `holders/reclaims.jsonl`: why the periodic pass retired a lease. */
+export interface WorkspaceLockReclaimAuditRecord {
+  schema: typeof WORKSPACE_LOCK_RECLAIM_AUDIT_SCHEMA
+  reclaimedAt: string
+  transitionId: string
+  leaseId: string
+  ownerRunId: string
+  ownerPid: number
+  ownerProcessBirthIdentity: string
+  holderInstanceId: string
+  holderGeneration: number
+  evidence: WorkspaceLockReclaimEvidence
+  walStatus: 'recovered'
+  walReason: 'owner_dead' | 'pid_reused'
+  beatSeq?: number
+  beatAt?: string
+  heartbeatAgeMs?: number
+  graceObservedMs?: number
+  reclaimerInstanceId: string
+  reclaimerGeneration: number
+}
+
+export type WorkspaceLockPeriodicRecoveryOutcome =
+  | {
+      skipped: true
+      reason: 'disabled' | 'no_active_leases' | 'no_candidates' | 'authority_busy'
+    }
+  | {
+      skipped: false
+      transitionId?: string
+      decisions: WorkspaceLockWalRecoveryDecision[]
+      /** Lapsed holders left alone because they still own their commit-fence partition. */
+      deferred: string[]
+      reclaimed: WorkspaceLockReclaimAuditRecord[]
+    }
+
+export interface WorkspaceLockHolderLeaseTimings {
+  enabled: boolean
+  heartbeatIntervalMs: number
+  heartbeatTtlMs: number
+  reclaimGraceMs: number
+  scanIntervalMs: number
+  suspendGapMs: number
+  sweepIntervalMs: number
+}
+
+/** A periodic decision can only retire a lease; it has no way to relabel one. */
+interface PeriodicRecoveryDecision extends WorkspaceLockWalRecoveryDecision {
+  status: 'recovered'
+  reason: 'owner_dead' | 'pid_reused'
+}
+
+interface PeriodicRecoveryCandidate {
+  decision: PeriodicRecoveryDecision
+  evidence: WorkspaceLockReclaimEvidence
+  verdict?: Extract<WorkspaceLockHolderLapseVerdict, { state: 'lapsed' }>
 }
 
 export type WorkspaceLockAuthorityListener = (snapshot: WorkspaceLockSnapshot) => void
@@ -134,13 +278,39 @@ export class WorkspaceLockAuthority {
   private bootFence: WorkspaceLockAuthorityFence | null = null
   private state: WorkspaceLockWalState = decodeWorkspaceLockWal('')
   private walRevision: string | null = null
+  private walByteLength = 0
+  private checkpoint: WorkspaceLockWalCheckpoint | null = null
+  private checkpointRevision: string | null = null
+  private lastReplaySource: 'legacy' | 'checkpoint' | 'checkpoint-superseded' = 'legacy'
   private markerRenewalTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly holderLease: WorkspaceLockHolderLeaseTimings
+  private readonly lapseTracker: WorkspaceLockHolderLapseTracker
+  private disposed = false
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatSeq = 0
+  private heartbeatWrite: Promise<void> | null = null
+  private lastSidecarSweepMonotonicMs: number | null = null
+  private periodicTimer: ReturnType<typeof setTimeout> | null = null
+  private periodicRun: Promise<WorkspaceLockPeriodicRecoveryOutcome> | null = null
+  private sidecarErrors: string[] = []
+  private lastHeartbeatReadErrors: string[] = []
+  private lastHolderVerdicts = new Map<string, WorkspaceLockHolderLapseVerdict>()
+  private lastHolderObservations = new Map<number, WorkspaceLockProcessObservation>()
 
   private constructor(options: WorkspaceLockAuthorityOptions) {
     this.persistence = options.persistence
     this.dependencies = options.dependencies
     this.markerLifetimeMs = options.markerLifetimeMs ?? DEFAULT_MARKER_LIFETIME_MS
     this.recoveredVisibilityMs = options.recoveredVisibilityMs ?? DEFAULT_RECOVERED_VISIBILITY_MS
+    this.holderLease = resolveHolderLeaseOptions(options.holderLease)
+    this.lapseTracker = new WorkspaceLockHolderLapseTracker(
+      {
+        ttlMs: this.holderLease.heartbeatTtlMs,
+        graceMs: this.holderLease.reclaimGraceMs,
+        suspendGapMs: this.holderLease.suspendGapMs
+      },
+      () => this.monotonicNowMs()
+    )
     if (!Number.isSafeInteger(this.markerLifetimeMs) || this.markerLifetimeMs <= 0) {
       throw new Error('Workspace-lock marker lifetime must be a positive integer.')
     }
@@ -164,6 +334,11 @@ export class WorkspaceLockAuthority {
     await authority.recoverStaleClaims()
     await authority.renewDerivedMarkers()
     authority.startMarkerRenewal()
+    // The sidecar and the reclaim-only pass start last: nothing here can fail
+    // the boot, and a leftover heartbeat from a boot that threw is inert.
+    await authority.writeHolderHeartbeat()
+    authority.startHolderHeartbeat()
+    authority.startPeriodicRecovery()
     return authority
   }
 
@@ -1303,8 +1478,13 @@ export class WorkspaceLockAuthority {
   }
 
   /**
-   * Truth table: dead/reused => recovered; exact live => retained (orphan when
-   * issued elsewhere); identity unavailable => recovery_blocked.
+   * Boot-time truth table: dead/reused => recovered; exact live => retained
+   * (orphan when issued elsewhere); identity unavailable => recovery_blocked.
+   *
+   * Runs from `open()` only. The `orphan_live` relabel it emits fails a live
+   * peer's in-flight `verifyAcquisitionForMutation` (which requires `held`),
+   * which is tolerable once per boot and never from a timer: the periodic
+   * pass is `runPeriodicRecovery`, which emits no relabel.
    */
   async recoverStaleClaims(): Promise<WorkspaceLockRecoveryResult> {
     const observed = this.readWal(false).state.activeLeases
@@ -1356,11 +1536,118 @@ export class WorkspaceLockAuthority {
     return committed.value
   }
 
-  snapshot(): WorkspaceLockSnapshot {
-    const revision = this.persistence.readEventsRevision?.()
-    if (!revision || revision !== this.walRevision) {
-      this.state = this.readWal(false).state
+  /**
+   * Reclaim-only recovery, run every `scanIntervalMs` and callable directly.
+   *
+   * It can only retire a lease (`recovered/owner_dead`, `recovered/pid_reused`)
+   * and has no way to relabel one. Boot's `orphan_live` relabel would fail a
+   * live owner's next `verifyAcquisitionForMutation` (which requires `held`)
+   * while freeing nothing; from a timer that would be every healthy peer's
+   * mutations, constantly. A `recovery_blocked` quarantine of a lapsed owner it
+   * cannot observe would do the same to that owner and still free nothing: the
+   * human release path accepts only child acquisitions
+   * (`WorkspaceLockRuntime.recoveryBlockedAcquisition`).
+   *
+   * A holder that is dead, or whose pid now names another process, loses its
+   * leases at the next scan. A holder alive by exact birth identity loses a
+   * `held`/`orphan_live` lease only when its heartbeat has been wall-stale for
+   * the TTL, this reclaimer has observed that same `beatSeq` for the monotonic
+   * grace, and no commit-fence record names the holder in ANY partition. A
+   * holder this reclaimer cannot observe, and one that never wrote a heartbeat
+   * (every build that predates the sidecar), is never reclaimed by lapse.
+   * Neither is this process: it is alive by construction, and its own beats
+   * not landing (a stalled or full disk) is never evidence against it.
+   *
+   * The transition mutex is taken only when the fence-free pre-check found a
+   * candidate; idle instances never contend.
+   */
+  async runPeriodicRecovery(): Promise<WorkspaceLockPeriodicRecoveryOutcome> {
+    if (this.periodicRun) return this.periodicRun
+    this.periodicRun = this.runPeriodicRecoveryOnce().finally(() => {
+      this.periodicRun = null
+    })
+    return this.periodicRun
+  }
+
+  /** Writes this holder's sidecar once; the timer does the same on its cadence. */
+  async writeHolderHeartbeat(): Promise<void> {
+    if (!this.holderLease.enabled || this.disposed || !this.persistence.writeHolderHeartbeat) {
+      return
     }
+    if (this.heartbeatWrite) return this.heartbeatWrite
+    this.heartbeatSeq += 1
+    const record: WorkspaceLockHolderHeartbeat = {
+      schema: WORKSPACE_LOCK_HEARTBEAT_SCHEMA,
+      ...this.holderKey(),
+      generation: this.generation,
+      beatSeq: this.heartbeatSeq,
+      monotonicMs: this.monotonicNowMs(),
+      beatAt: this.nowIso()
+    }
+    this.heartbeatWrite = this.persistence
+      .writeHolderHeartbeat(record)
+      .then(
+        () => {
+          this.sidecarErrors = this.sidecarErrors.filter(
+            (message) => !message.startsWith('holder heartbeat:')
+          )
+          // A beat that was in flight when dispose() removed the sidecar must
+          // not leave it behind for a process that has shut its authority.
+          if (this.disposed) this.removeOwnHeartbeat()
+        },
+        (error) => {
+          this.recordSidecarError(`holder heartbeat: ${errorMessage(error)}`)
+        }
+      )
+      .finally(() => {
+        this.heartbeatWrite = null
+      })
+    return this.heartbeatWrite
+  }
+
+  /**
+   * Removes the sidecars of holders that are conclusively gone: dead, or their
+   * pid now names another process. A crashed holder cannot remove its own
+   * file, and without this sweep every crash would add one more file to every
+   * later scan. A holder this process cannot observe keeps its file.
+   */
+  async sweepDeadHolderHeartbeats(): Promise<number> {
+    if (!this.holderLease.enabled || !this.persistence.removeHolderHeartbeat) return 0
+    this.lastSidecarSweepMonotonicMs = this.monotonicNowMs()
+    const own = workspaceLockHolderKey(this.holderKey())
+    const foreign = this.readHolderHeartbeats().heartbeats.filter(
+      (heartbeat) => workspaceLockHolderKey(heartbeat) !== own
+    )
+    const observations = new Map<number, WorkspaceLockProcessObservation>()
+    await Promise.all(
+      [...new Set(foreign.map((heartbeat) => heartbeat.pid))].map(async (pid) => {
+        observations.set(pid, await this.dependencies.observeProcess(pid))
+      })
+    )
+    let removed = 0
+    for (const heartbeat of foreign) {
+      const observation = observations.get(heartbeat.pid)
+      const gone =
+        observation?.state === 'dead' ||
+        (observation?.state === 'live' &&
+          observation.processBirthIdentity !== heartbeat.processBirthIdentity)
+      if (!gone) continue
+      try {
+        if (this.persistence.removeHolderHeartbeat(heartbeat)) removed += 1
+      } catch (error) {
+        this.recordSidecarError(`dead holder heartbeat cleanup: ${errorMessage(error)}`)
+      }
+    }
+    return removed
+  }
+
+  /** Effective heartbeat and reclaim cadence, for diagnostics and tests. */
+  holderLeaseTimings(): Readonly<WorkspaceLockHolderLeaseTimings> {
+    return { ...this.holderLease }
+  }
+
+  snapshot(): WorkspaceLockSnapshot {
+    this.readWal(false)
     return this.snapshotFromState()
   }
 
@@ -1386,10 +1673,440 @@ export class WorkspaceLockAuthority {
     }
   }
 
+  /**
+   * Seals history the boot path no longer has to replay.
+   *
+   * Deliberately not part of `open()`: the first compaction still has to read
+   * the whole journal once, and the boot path is the one place that must not
+   * pay for it. Callers run this after the window exists. The protocol, its
+   * crash table, and what stops being replayable are in
+   * `docs/performance/workspace-lock-wal-checkpoint.md`.
+   */
+  async compactIfNeeded(
+    options: WorkspaceLockCompactionOptions = {}
+  ): Promise<WorkspaceLockCompactionOutcome> {
+    if (
+      !this.persistence.writeArchiveSegment ||
+      !this.persistence.writeCheckpointDocument ||
+      !this.persistence.truncateEventsToSuffix
+    ) {
+      return { compacted: false, reason: 'unsupported' }
+    }
+    const byteThreshold = options.byteThreshold ?? WORKSPACE_LOCK_WAL_CHECKPOINT_BYTE_THRESHOLD
+    const retainedTailEvents = options.retainedTailEvents ?? WORKSPACE_LOCK_WAL_RETAINED_TAIL_EVENTS
+    if (!Number.isSafeInteger(byteThreshold) || byteThreshold < 0) {
+      throw new Error('Workspace-lock compaction byte threshold must be a non-negative integer.')
+    }
+
+    const fence = this.newFence(this.generation)
+    await this.acquireTransitionFence(fence)
+    let released = false
+    try {
+      const current = this.readWal(true)
+      if (current.byteLength < byteThreshold) {
+        released = this.persistence.releaseInstanceFence(fence.fenceId)
+        if (!released) {
+          throw new Error('Workspace-lock compaction fence was replaced before release.')
+        }
+        return {
+          compacted: false,
+          reason: 'below_threshold',
+          byteLength: current.byteLength,
+          byteThreshold
+        }
+      }
+      const plan = planWorkspaceLockWalCompaction({
+        state: current.state,
+        rawTail: this.persistence.readEvents().raw,
+        createdAt: this.nowIso(),
+        authority: this.walAuthority(),
+        previousCheckpoint: this.checkpoint,
+        retainedTailEvents
+      })
+      if (!plan) {
+        released = this.persistence.releaseInstanceFence(fence.fenceId)
+        if (!released) {
+          throw new Error('Workspace-lock compaction fence was replaced before release.')
+        }
+        return { compacted: false, reason: 'nothing_to_seal', byteLength: current.byteLength }
+      }
+
+      // Order is load-bearing: seal, publish, truncate. A crash between any two
+      // steps leaves a state that still replays to exactly the same history.
+      this.persistence.writeArchiveSegment(plan.archiveFilename, plan.archivedFrames)
+      this.persistence.writeCheckpointDocument(plan.serializedCheckpoint)
+      this.checkpointRevision = null
+      const afterByteLength = this.persistence.truncateEventsToSuffix(
+        current.byteLength,
+        plan.retainedFrames
+      )
+      this.walRevision = null
+      const reread = this.readWal(false)
+      if (reread.state.sequence !== current.state.sequence) {
+        throw new Error('Workspace-lock compaction changed the replayed sequence.')
+      }
+      released = this.persistence.releaseInstanceFence(fence.fenceId)
+      if (!released) {
+        throw new Error('Workspace-lock compaction fence was replaced before release.')
+      }
+      return {
+        compacted: true,
+        boundarySequence: plan.boundarySequence,
+        sealedFrameCount: plan.sealedFrameCount,
+        retainedFrameCount: plan.retainedFrameCount,
+        beforeByteLength: current.byteLength,
+        afterByteLength,
+        archiveFilename: plan.archiveFilename
+      }
+    } finally {
+      if (!released) this.persistence.releaseInstanceFence(fence.fenceId)
+    }
+  }
+
+  /** How the current in-memory state was reconstructed, for startup diagnostics. */
+  replaySource(): 'legacy' | 'checkpoint' | 'checkpoint-superseded' {
+    return this.lastReplaySource
+  }
+
   dispose(): void {
+    this.disposed = true
     if (this.markerRenewalTimer) clearTimeout(this.markerRenewalTimer)
     this.markerRenewalTimer = null
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
+    this.heartbeatTimer = null
+    if (this.periodicTimer) clearTimeout(this.periodicTimer)
+    this.periodicTimer = null
     this.listeners.clear()
+    this.removeOwnHeartbeat()
+  }
+
+  private async runPeriodicRecoveryOnce(): Promise<WorkspaceLockPeriodicRecoveryOutcome> {
+    if (!this.holderLease.enabled || this.disposed) return { skipped: true, reason: 'disabled' }
+    if (
+      this.lastSidecarSweepMonotonicMs === null ||
+      this.monotonicNowMs() - this.lastSidecarSweepMonotonicMs >= this.holderLease.sweepIntervalMs
+    ) {
+      await this.sweepDeadHolderHeartbeats()
+    }
+    // Never candidates: child lifecycles, whose liveness is a launching or
+    // spawned process the human recovery path owns, not a heartbeating main;
+    // and this process's own leases, whatever became of its own beats.
+    const self = this.dependencies.instance
+    const eligible = this.readWal(false).state.activeLeases.filter(
+      (lease) =>
+        lease.owner.lifecycle !== 'launching-child' &&
+        lease.owner.lifecycle !== 'child' &&
+        !(
+          lease.owner.pid === self.pid &&
+          lease.owner.processBirthIdentity === self.processBirthIdentity
+        )
+    )
+    if (!eligible.length) {
+      this.lapseTracker.reset()
+      this.lastHolderVerdicts = new Map()
+      this.lastHolderObservations = new Map()
+      this.lastHeartbeatReadErrors = []
+      return { skipped: true, reason: 'no_active_leases' }
+    }
+
+    const nowIso = this.nowIso()
+    const heartbeats = this.readHolderHeartbeats()
+    const verdicts = this.lapseTracker.observe({
+      nowIso,
+      heartbeats: heartbeats.heartbeats,
+      holders: eligible.map(holderKeyOfLease)
+    })
+    const observations = new Map<number, WorkspaceLockProcessObservation>()
+    await Promise.all(
+      [...new Set(eligible.map((lease) => lease.owner.pid))].map(async (pid) => {
+        observations.set(pid, await this.dependencies.observeProcess(pid))
+      })
+    )
+    this.lastHolderVerdicts = verdicts
+    this.lastHolderObservations = observations
+    this.lastHeartbeatReadErrors = heartbeats.errors
+
+    const candidates = eligible
+      .map((lease) =>
+        periodicRecoveryDecision(
+          lease,
+          observations.get(lease.owner.pid) || { state: 'identity_unavailable' },
+          verdicts.get(workspaceLockHolderKey(holderKeyOfLease(lease)))
+        )
+      )
+      .filter((candidate): candidate is PeriodicRecoveryCandidate => Boolean(candidate))
+    if (!candidates.length) return { skipped: true, reason: 'no_candidates' }
+
+    const deferred: string[] = []
+    const reclaimed: WorkspaceLockReclaimAuditRecord[] = []
+    let committed: DurableTransition<WorkspaceLockRecoveryResult>
+    try {
+      committed = await this.commitUnderFence<WorkspaceLockRecoveryResult>((state, byteLength) => {
+        const active = new Map(state.activeLeases.map((lease) => [lease.leaseId, lease]))
+        // Re-read the sidecars under the mutex: a beat that landed since the
+        // pre-check means the holder is alive and keeps its lease.
+        const fresh = new Map(
+          this.readHolderHeartbeats().heartbeats.map((heartbeat) => [
+            workspaceLockHolderKey(heartbeat),
+            heartbeat
+          ])
+        )
+        const decisions: PeriodicRecoveryDecision[] = []
+        const audits: Omit<WorkspaceLockReclaimAuditRecord, 'transitionId' | 'reclaimedAt'>[] = []
+        for (const candidate of candidates) {
+          const lease = active.get(candidate.decision.leaseId)
+          if (!lease) continue
+          if (candidate.verdict) {
+            // Lapse retires only held/orphan_live. The pre-check read the lease
+            // before its await; a peer's boot may have quarantined it as
+            // recovery_blocked since, and that one is left for a human.
+            if (lease.status !== 'held' && lease.status !== 'orphan_live') continue
+            const current = fresh.get(workspaceLockHolderKey(holderKeyOfLease(lease)))
+            if (!current || current.beatSeq !== candidate.verdict.beatSeq) continue
+            // A lapsed holder still inside its commit critical section is left
+            // to finish or fail on its own; the next scan decides again.
+            if (this.holderOwnsCommitFence(lease)) {
+              deferred.push(lease.leaseId)
+              continue
+            }
+          }
+          decisions.push(candidate.decision)
+          audits.push({
+            schema: WORKSPACE_LOCK_RECLAIM_AUDIT_SCHEMA,
+            leaseId: lease.leaseId,
+            ownerRunId: lease.owner.runId,
+            ownerPid: lease.owner.pid,
+            ownerProcessBirthIdentity: lease.owner.processBirthIdentity,
+            holderInstanceId: lease.authorityInstanceId,
+            holderGeneration: lease.authorityGeneration,
+            evidence: candidate.evidence,
+            walStatus: candidate.decision.status,
+            walReason: candidate.decision.reason,
+            ...(candidate.verdict
+              ? {
+                  beatSeq: candidate.verdict.beatSeq,
+                  beatAt: candidate.verdict.beatAt,
+                  heartbeatAgeMs: candidate.verdict.ageMs,
+                  graceObservedMs: candidate.verdict.graceObservedMs
+                }
+              : {}),
+            reclaimerInstanceId: this.dependencies.instance.instanceId,
+            reclaimerGeneration: this.generation
+          })
+        }
+        decisions.sort((left, right) => left.leaseId.localeCompare(right.leaseId))
+        if (!decisions.length) return { value: { decisions: [] }, previous: state, next: state }
+        const transitionId = this.nextId('transition')
+        const timestamp = this.nowIso()
+        const appended = appendWorkspaceLockWalEvent(state, {
+          transitionId,
+          timestamp,
+          authority: this.walAuthority(),
+          kind: 'recover',
+          payload: { decisions }
+        })
+        this.appendWalEvent(appended.line, byteLength)
+        for (const audit of audits) {
+          reclaimed.push({ ...audit, transitionId, reclaimedAt: timestamp })
+        }
+        return { value: { transitionId, decisions }, previous: state, next: appended.nextState }
+      })
+    } catch (error) {
+      // A reclaim that reached the WAL before a later step (marker sync) threw
+      // is durable; its audit line must not be lost with the error.
+      this.recordReclaimAudit(reclaimed)
+      if (error instanceof WorkspaceLockAuthorityBusyError) {
+        return { skipped: true, reason: 'authority_busy' }
+      }
+      throw error
+    }
+    this.afterTransition(committed)
+    this.recordReclaimAudit(reclaimed)
+    return { skipped: false, ...committed.value, deferred, reclaimed }
+  }
+
+  /**
+   * True while any commit-fence record names the holder's exact incarnation.
+   * ANY partition, not the one the lease's current claim maps to: the
+   * executor takes its partitions from the admission claims and replaces the
+   * lease with fresh ones before it commits, so a target created in between
+   * leaves the holder inside the planned partition while its lease names the
+   * dev:ino one. Read under the transition mutex, which replace also needs, so
+   * a holder that entered a fence before this read is always seen.
+   */
+  private holderOwnsCommitFence(lease: WorkspaceLockLease): boolean {
+    // Without the fence port nothing shows the holder is outside its commit
+    // critical section, so a lapsed but live holder keeps its lease.
+    if (!this.dependencies.readCommitFenceOwners) return true
+    try {
+      return this.dependencies
+        .readCommitFenceOwners()
+        .some(
+          (owner) =>
+            owner.pid === lease.owner.pid &&
+            owner.processBirthIdentity === lease.owner.processBirthIdentity
+        )
+    } catch (error) {
+      // An unreadable fence is not evidence the holder left it. Defer.
+      this.recordSidecarError(`commit fence read: ${errorMessage(error)}`)
+      return true
+    }
+  }
+
+  private recordReclaimAudit(records: readonly WorkspaceLockReclaimAuditRecord[]): void {
+    for (const record of records) {
+      if (record.evidence === 'owner_dead' || record.evidence === 'pid_reused') {
+        try {
+          this.persistence.removeHolderHeartbeat?.({
+            instanceId: record.holderInstanceId,
+            pid: record.ownerPid,
+            processBirthIdentity: record.ownerProcessBirthIdentity
+          })
+        } catch (error) {
+          this.recordSidecarError(`dead holder heartbeat cleanup: ${errorMessage(error)}`)
+        }
+      }
+      if (!this.persistence.appendHolderReclaimAudit) continue
+      void this.persistence
+        .appendHolderReclaimAudit(`${JSON.stringify(record)}\n`)
+        .catch((error) => {
+          this.recordSidecarError(`reclaim audit: ${errorMessage(error)}`)
+        })
+    }
+  }
+
+  private readHolderHeartbeats(): { heartbeats: WorkspaceLockHolderHeartbeat[]; errors: string[] } {
+    if (!this.persistence.readHolderHeartbeats) {
+      return {
+        heartbeats: [],
+        errors: ['holder heartbeats are unreadable: unsupported persistence']
+      }
+    }
+    try {
+      return this.persistence.readHolderHeartbeats()
+    } catch (error) {
+      return { heartbeats: [], errors: [`holder heartbeats: ${errorMessage(error)}`] }
+    }
+  }
+
+  private startHolderHeartbeat(): void {
+    if (!this.holderLease.enabled || !this.persistence.writeHolderHeartbeat) return
+    const schedule = (): void => {
+      this.heartbeatTimer = setTimeout(() => {
+        this.heartbeatTimer = null
+        if (this.disposed) return
+        // A beat that fails, however it fails, must never end the cadence.
+        void this.writeHolderHeartbeat()
+          .catch((error: unknown) => {
+            this.recordSidecarError(`holder heartbeat: ${errorMessage(error)}`)
+          })
+          .then(() => {
+            if (!this.disposed) schedule()
+          })
+      }, this.holderLease.heartbeatIntervalMs)
+      this.heartbeatTimer.unref?.()
+    }
+    schedule()
+  }
+
+  private startPeriodicRecovery(): void {
+    if (!this.holderLease.enabled) return
+    const schedule = (): void => {
+      this.periodicTimer = setTimeout(() => {
+        this.periodicTimer = null
+        if (this.disposed) return
+        void this.runPeriodicRecovery().then(
+          () => {
+            if (!this.disposed) schedule()
+          },
+          (error) => {
+            this.recordSidecarError(`periodic recovery: ${errorMessage(error)}`)
+            if (!this.disposed) schedule()
+          }
+        )
+      }, this.holderLease.scanIntervalMs)
+      this.periodicTimer.unref?.()
+    }
+    schedule()
+  }
+
+  private removeOwnHeartbeat(): void {
+    if (!this.holderLease.enabled) return
+    try {
+      this.persistence.removeHolderHeartbeat?.(this.holderKey())
+    } catch (error) {
+      this.recordSidecarError(`holder heartbeat removal: ${errorMessage(error)}`)
+    }
+  }
+
+  private recordSidecarError(message: string): void {
+    this.sidecarErrors = [
+      ...this.sidecarErrors.filter((entry) => entry !== message),
+      message
+    ].slice(-8)
+  }
+
+  private holderKey(): WorkspaceLockHolderKey {
+    return {
+      instanceId: this.dependencies.instance.instanceId,
+      pid: this.dependencies.instance.pid,
+      processBirthIdentity: this.dependencies.instance.processBirthIdentity
+    }
+  }
+
+  private monotonicNowMs(): number {
+    const value = this.dependencies.monotonicNowMs
+      ? this.dependencies.monotonicNowMs()
+      : defaultMonotonicNowMs()
+    if (!Number.isFinite(value)) {
+      throw new Error('Workspace-lock monotonic clock must return a finite number.')
+    }
+    return value
+  }
+
+  /**
+   * Holder liveness as of the last periodic scan, and deliberately stable
+   * between scans: the runtime re-projects every second while a renderer
+   * subscribes and compares snapshots by value, so an age computed at read
+   * time would push an update every second for as long as any lease is held.
+   */
+  private holderLivenessFromLastScan(): Record<string, WorkspaceLockHolderLiveness> {
+    const result: Record<string, WorkspaceLockHolderLiveness> = {}
+    for (const lease of this.state.activeLeases) {
+      if (
+        lease.authorityInstanceId === this.dependencies.instance.instanceId &&
+        lease.authorityGeneration === this.generation
+      ) {
+        // Issued by this running authority, which is alive by construction.
+        result[lease.leaseId] = {
+          instanceScope: 'this',
+          liveness: 'live',
+          generation: lease.authorityGeneration
+        }
+        continue
+      }
+      const observation = this.lastHolderObservations.get(lease.owner.pid)
+      const verdict = this.lastHolderVerdicts.get(workspaceLockHolderKey(holderKeyOfLease(lease)))
+      let liveness: WorkspaceLockHolderLiveness['liveness'] = 'unknown'
+      if (
+        observation?.state === 'dead' ||
+        (observation?.state === 'live' &&
+          observation.processBirthIdentity !== lease.owner.processBirthIdentity)
+      ) {
+        liveness = 'dead'
+      } else if (verdict?.state === 'stale' || verdict?.state === 'lapsed') {
+        liveness = 'lapsed'
+      } else if (observation?.state === 'live') {
+        liveness = 'live'
+      }
+      result[lease.leaseId] = {
+        instanceScope: 'other',
+        liveness,
+        generation: lease.authorityGeneration,
+        ...(verdict && verdict.state !== 'absent' ? { heartbeatAgeMs: verdict.ageMs } : {})
+      }
+    }
+    return result
   }
 
   private async boot(): Promise<void> {
@@ -1493,14 +2210,24 @@ export class WorkspaceLockAuthority {
     state: WorkspaceLockWalState
     byteLength: number
   } {
+    const observedRevision = this.persistence.readEventsRevision?.()
+    if (observedRevision && observedRevision === this.walRevision) {
+      return { state: this.state, byteLength: this.walByteLength }
+    }
+    const checkpoint = this.readCheckpoint()
     let snapshot = this.persistence.readEvents()
     if (snapshot.raw && !snapshot.raw.endsWith('\n')) {
       const lastNewline = snapshot.raw.lastIndexOf('\n')
       const prefix = lastNewline < 0 ? '' : snapshot.raw.slice(0, lastNewline + 1)
-      const state = decodeWorkspaceLockWal(prefix)
+      const resolved = resolveWorkspaceLockWalState(prefix, checkpoint)
       if (!repairTail) {
-        this.walRevision = snapshot.revision
-        return { state, byteLength: snapshot.byteLength }
+        // Do not cache an unrepaired torn tail: a later fenced read must see
+        // and truncate it even when the file metadata has not changed.
+        this.state = resolved.state
+        this.lastReplaySource = resolved.source
+        this.walByteLength = snapshot.byteLength
+        this.walRevision = null
+        return { state: resolved.state, byteLength: snapshot.byteLength }
       }
       const repairedLength = this.persistence.repairTornEventTail(snapshot.byteLength, prefix)
       snapshot = this.persistence.readEvents()
@@ -1508,16 +2235,38 @@ export class WorkspaceLockAuthority {
         throw new Error('Workspace-lock WAL changed during torn-tail repair.')
       }
     }
+    const resolved = resolveWorkspaceLockWalState(snapshot.raw, checkpoint)
+    this.state = resolved.state
+    this.lastReplaySource = resolved.source
+    this.walByteLength = snapshot.byteLength
     this.walRevision = snapshot.revision
-    return { state: decodeWorkspaceLockWal(snapshot.raw), byteLength: snapshot.byteLength }
+    return { state: resolved.state, byteLength: snapshot.byteLength }
+  }
+
+  /**
+   * Reads the checkpoint only when its own file revision changed. Re-validating
+   * the complete id sets on every fenced transition would give back much of what
+   * checkpointing is for.
+   */
+  private readCheckpoint(): WorkspaceLockWalCheckpoint | null {
+    if (!this.persistence.readCheckpointDocument) return null
+    const observedRevision = this.persistence.readCheckpointRevision?.()
+    if (observedRevision && observedRevision === this.checkpointRevision) return this.checkpoint
+    const raw = this.persistence.readCheckpointDocument()
+    if (raw === null) {
+      this.checkpoint = null
+      this.checkpointRevision = observedRevision ?? null
+      return null
+    }
+    this.checkpoint = decodeWorkspaceLockWalCheckpoint(raw)
+    this.checkpointRevision = observedRevision ?? null
+    return this.checkpoint
   }
 
   private appendWalEvent(serializedLineWithNewline: string, expectedByteLength: number): number {
     try {
-      const byteLength = this.persistence.appendEvent(
-        serializedLineWithNewline,
-        expectedByteLength
-      )
+      const byteLength = this.persistence.appendEvent(serializedLineWithNewline, expectedByteLength)
+      this.walByteLength = byteLength
       this.walRevision = this.persistence.readEventsRevision?.() ?? null
       return byteLength
     } catch (error) {
@@ -1841,7 +2590,12 @@ export class WorkspaceLockAuthority {
             lease.status !== 'recovered' || Date.parse(lease.statusChangedAt) >= recoveredCutoff
         )
         .map(cloneLease),
-      projectionErrors: [...this.projectionErrors]
+      projectionErrors: [
+        ...this.projectionErrors,
+        ...this.sidecarErrors,
+        ...this.lastHeartbeatReadErrors
+      ],
+      ...(this.holderLease.enabled ? { holderLiveness: this.holderLivenessFromLastScan() } : {})
     }
   }
 
@@ -2198,6 +2952,85 @@ function recoveryDecision(
   const desired = issuedHere ? 'held' : 'orphan_live'
   if (desired === 'held' || lease.status === desired) return null
   return { leaseId: lease.leaseId, status: desired }
+}
+
+/**
+ * Periodic-mode truth table over an ELIGIBLE lease (the pass has already left
+ * out child lifecycles and this process's own leases; that one filter is the
+ * only place either rule lives). Conclusive death or PID reuse retires the
+ * lease exactly as boot does. A live owner with a matching birth loses only a
+ * `held`/`orphan_live` lease, and only on lapse evidence. Everything else,
+ * including an owner this reclaimer cannot observe, is left exactly as it is.
+ * The decision type admits no status but `recovered`, so neither boot's
+ * `orphan_live` relabel nor a `recovery_blocked` quarantine is expressible.
+ */
+function periodicRecoveryDecision(
+  lease: WorkspaceLockLease,
+  observation: WorkspaceLockProcessObservation,
+  verdict: WorkspaceLockHolderLapseVerdict | undefined
+): PeriodicRecoveryCandidate | null {
+  if (lease.status === 'recovered') return null
+  if (observation.state === 'identity_unavailable') return null
+  if (observation.state === 'dead') {
+    return {
+      decision: { leaseId: lease.leaseId, status: 'recovered', reason: 'owner_dead' },
+      evidence: 'owner_dead'
+    }
+  }
+  if (observation.processBirthIdentity !== lease.owner.processBirthIdentity) {
+    return {
+      decision: { leaseId: lease.leaseId, status: 'recovered', reason: 'pid_reused' },
+      evidence: 'pid_reused'
+    }
+  }
+  if (verdict?.state !== 'lapsed') return null
+  if (lease.status !== 'held' && lease.status !== 'orphan_live') return null
+  // Phase-compatible label: every build on the shared root replays
+  // `owner_dead`; the honest `lease_lapsed` stays in the audit sidecar.
+  return {
+    decision: { leaseId: lease.leaseId, status: 'recovered', reason: 'owner_dead' },
+    evidence: 'lease_lapsed',
+    verdict
+  }
+}
+
+function holderKeyOfLease(lease: WorkspaceLockLease): WorkspaceLockHolderKey {
+  return {
+    instanceId: lease.authorityInstanceId,
+    pid: lease.owner.pid,
+    processBirthIdentity: lease.owner.processBirthIdentity
+  }
+}
+
+function resolveHolderLeaseOptions(
+  options: WorkspaceLockHolderLeaseOptions | undefined
+): WorkspaceLockHolderLeaseTimings {
+  const scanIntervalMs = options?.scanIntervalMs ?? WORKSPACE_LOCK_RECOVERY_SCAN_MS
+  const resolved: WorkspaceLockHolderLeaseTimings = {
+    enabled: options?.enabled ?? true,
+    heartbeatIntervalMs: options?.heartbeatIntervalMs ?? WORKSPACE_LOCK_HEARTBEAT_INTERVAL_MS,
+    heartbeatTtlMs: options?.heartbeatTtlMs ?? WORKSPACE_LOCK_HEARTBEAT_TTL_MS,
+    reclaimGraceMs: options?.reclaimGraceMs ?? WORKSPACE_LOCK_RECLAIM_GRACE_MS,
+    scanIntervalMs,
+    suspendGapMs: options?.suspendGapMs ?? WORKSPACE_LOCK_SCAN_SUSPEND_GAP_SCANS * scanIntervalMs,
+    sweepIntervalMs: options?.sweepIntervalMs ?? WORKSPACE_LOCK_HOLDER_SWEEP_MS
+  }
+  for (const [label, value] of Object.entries(resolved)) {
+    if (label === 'enabled') continue
+    if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+      throw new Error(`Workspace-lock holder lease ${label} must be a positive integer.`)
+    }
+  }
+  // A gap no wider than one scan would restart every grace window at every
+  // scan, and a lapsed holder would then never be reclaimed at all.
+  if (resolved.suspendGapMs <= resolved.scanIntervalMs) {
+    throw new Error('Workspace-lock holder lease suspendGapMs must exceed scanIntervalMs.')
+  }
+  return resolved
+}
+
+function defaultMonotonicNowMs(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n)
 }
 
 function markersForLeases(leases: readonly WorkspaceLockLease[]): WorkspaceLockWalMarker[] {

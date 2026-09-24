@@ -3,7 +3,10 @@ import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import {
   ChatByteLru,
   demoteChatToSummary,
+  estimateChatMessageBytes,
+  estimateChatMessagesBytes,
   estimateChatRecordBytes,
+  estimateJsonishBytes,
   retainChatsWithinByteBudget
 } from './chatByteLru'
 import { isChatSummaryRecord } from './chatRecordMerge'
@@ -150,5 +153,49 @@ describe('chatByteLru', () => {
     expect(lru.isPinned('deleted')).toBe(false)
     expect(lru.isPinned('visible')).toBe(true)
     expect(lru.pinnedIds()).toEqual(new Set(['visible']))
+  })
+})
+
+describe('estimateChatMessageBytes memoisation', () => {
+  it('agrees with the shared walker on a first measurement', () => {
+    const row = message('m-1', 'x'.repeat(500))
+    expect(estimateChatMessageBytes(row)).toBe(estimateJsonishBytes(row))
+  })
+
+  it('measures a given message object exactly ONCE', () => {
+    // The O(new rows) claim, observed directly. A row is measured, then grown
+    // in place — something the renderer never does, which is precisely why
+    // identity is a sound key. Getting the ORIGINAL size back is proof that no
+    // second walk ran; a re-walk would return the new, much larger number.
+    const row = message('m-1', 'small')
+    const first = estimateChatMessageBytes(row)
+    ;(row as { content: string }).content = 'x'.repeat(100_000)
+    expect(estimateChatMessageBytes(row)).toBe(first)
+    expect(estimateJsonishBytes(row)).toBeGreaterThan(first * 100)
+  })
+
+  it('re-measures a REPLACED row, which is how the renderer changes one', () => {
+    // `applyChatTranscriptOps` assigns a new object for an `update`, so a
+    // changed row is a cache miss and gets the right size.
+    const before = message('m-1', 'small')
+    const measured = estimateChatMessageBytes(before)
+    const after = { ...before, content: 'x'.repeat(10_000) }
+    expect(estimateChatMessageBytes(after)).toBeGreaterThan(measured * 10)
+    expect(estimateChatMessageBytes(after)).toBe(estimateJsonishBytes(after))
+  })
+
+  it('answers 0 for a row that is not an object instead of throwing', () => {
+    // A WeakMap.set on a non-object throws; the shared walker answers 0. Paged
+    // and summary records carry holes, so this path is reachable.
+    expect(estimateChatMessageBytes(null as unknown as ChatMessage)).toBe(0)
+    expect(estimateChatMessageBytes(undefined as unknown as ChatMessage)).toBe(0)
+  })
+
+  it('totals an array identically to walking the array whole', () => {
+    const rows = Array.from({ length: 50 }, (_, index) =>
+      message(`m-${index}`, `row ${index} `.repeat(index + 1))
+    )
+    expect(estimateChatMessagesBytes(rows)).toBe(estimateJsonishBytes(rows))
+    expect(estimateChatMessagesBytes([])).toBe(estimateJsonishBytes([]))
   })
 })

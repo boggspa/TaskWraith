@@ -186,7 +186,7 @@ describe('projectSidebarTerminalOutcome', () => {
     ).toMatchObject({ source: 'round', tone: 'success' })
   })
 
-  it('does not paint a round Green when synthesis remains unresolved', () => {
+  it('does not paint a round Red when synthesis remains unresolved', () => {
     const ensembleChat = chat({
       chatKind: 'ensemble',
       ensemble: {
@@ -220,7 +220,7 @@ describe('projectSidebarTerminalOutcome', () => {
 
     expect(projectSidebarTerminalOutcome(ensembleChat)).toMatchObject({
       source: 'round',
-      tone: 'failure'
+      tone: 'success'
     })
   })
 })

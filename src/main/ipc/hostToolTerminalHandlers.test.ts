@@ -123,6 +123,26 @@ describe('registerHostToolTerminalHandlers', () => {
     expect(deps.opened).toEqual([join('/userdata', 'login', 'hosttool-gh-install.command')])
   })
 
+  it('never assigns to the zsh read-only `status` parameter in the install script', async () => {
+    // zsh reserves `status` as a read-only alias of `$?`; `status=$?` aborts a
+    // `#!/bin/zsh` script with "read-only variable: status".
+    const deps = makeDeps()
+    registerHostToolTerminalHandlers(deps)
+    await expect(handlerFor(HOST_TOOL_INSTALL_TERMINAL_CHANNEL)({}, 'gh')).resolves.toMatchObject({
+      ok: true
+    })
+    const script = String(
+      deps.written.get(join('/userdata', 'login', 'hosttool-gh-install.command')) || ''
+    )
+    // @portability-ok: deps.getPlatform() is pinned to 'darwin', so the
+    // generated script is the zsh .command on every host runner.
+    expect(script).toContain('#!/bin/zsh')
+    expect(script).toContain('exit_code=$?')
+    expect(script).toContain('(exit $exit_code)')
+    expect(script).not.toMatch(/^status=/m)
+    expect(script).not.toContain('$status')
+  })
+
   it('drops the presence cache so the next probe sees a fresh install', async () => {
     const invalidateHostToolCache = vi.fn()
     registerHostToolTerminalHandlers(makeDeps({ invalidateHostToolCache }))

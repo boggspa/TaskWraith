@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
 import { ollamaAdvertisedToolNames } from './OllamaToolTiers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
@@ -34,6 +37,7 @@ import {
   ollamaRepeatedToolCallNudge,
   ollamaCompactedRepeatToolCallPreamble,
   type OllamaToolCallSignatureEntry,
+  type OllamaToolExecutionRequest,
   isOllamaNoActiveGoalToolResult,
   ollamaNoActiveGoalToolNudge,
   ollamaGoalLifecycleStopContent,
@@ -60,6 +64,10 @@ import {
   extractOllamaShowContextLength,
   fetchOllamaModelCatalog,
   getOllamaStatusSnapshot,
+  loadOllamaImageAttachmentBase64,
+  readBoundedOllamaImageAttachment,
+  OLLAMA_IMAGE_MAX_ATTACHMENTS,
+  OLLAMA_IMAGE_MAX_BYTES,
   ollamaUsageStats,
   validateOllamaToolArguments,
   type OllamaProviderDeps
@@ -281,6 +289,73 @@ function makeProviderDeps(
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('loadOllamaImageAttachmentBase64', () => {
+  it('enforces the existing attachment count before reading any path', async () => {
+    const readImageAttachment = vi.fn(async () => Buffer.from('image'))
+
+    await expect(
+      loadOllamaImageAttachmentBase64(
+        Array.from(
+          { length: OLLAMA_IMAGE_MAX_ATTACHMENTS + 1 },
+          (_, index) => `/authorized/${index}.png`
+        ),
+        readImageAttachment
+      )
+    ).rejects.toThrow(`${OLLAMA_IMAGE_MAX_ATTACHMENTS}-image limit`)
+    expect(readImageAttachment).not.toHaveBeenCalled()
+  })
+
+  it('rejects an oversized item instead of returning a partial encoded batch', async () => {
+    const readImageAttachment = vi
+      .fn<(imagePath: string) => Promise<Buffer>>()
+      .mockResolvedValueOnce(Buffer.from('first'))
+      .mockResolvedValueOnce(Buffer.alloc(OLLAMA_IMAGE_MAX_BYTES + 1))
+
+    await expect(
+      loadOllamaImageAttachmentBase64(
+        ['/authorized/first.png', '/authorized/oversized.png'],
+        readImageAttachment
+      )
+    ).rejects.toThrow('not dispatched with a partial image set')
+  })
+
+  it('rejects a terminal symlink instead of following it outside attachment authority', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-ollama-image-'))
+    try {
+      const target = join(directory, 'target.png')
+      const link = join(directory, 'link.png')
+      writeFileSync(target, 'secret target')
+      symlinkSync(target, link)
+
+      await expect(readBoundedOllamaImageAttachment(link)).rejects.toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('reads only the opened descriptor when the pathname is replaced after open', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'taskwraith-ollama-image-'))
+    try {
+      const selected = join(directory, 'selected.png')
+      const replacement = join(directory, 'replacement.png')
+      const original = join(directory, 'opened-original.png')
+      writeFileSync(selected, 'authorized bytes')
+      writeFileSync(replacement, 'replacement bytes')
+
+      const bytes = await readBoundedOllamaImageAttachment(selected, {
+        afterOpen: () => {
+          renameSync(selected, original)
+          renameSync(replacement, selected)
+        }
+      })
+
+      expect(bytes.toString()).toBe('authorized bytes')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('ollamaUsageStats', () => {
@@ -515,6 +590,351 @@ describe('runOllamaProvider streaming', () => {
     expect(requestSignals.get('/api/show')).toBe(attachedController?.signal)
     expect(requestSignals.get('/api/chat')).toBe(attachedController?.signal)
     expect(deps.runManager.canAdmitTransport).toHaveBeenCalledWith('run-ollama-1', true)
+  })
+
+  it('sends the full ordered image array when the exact model show advertises vision', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'llava:latest',
+              digest: 'digest-vision',
+              details: { family: 'llava' },
+              capabilities: ['completion']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({
+          details: { family: 'llava' },
+          capabilities: ['completion', 'VISION']
+        })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'I see all three.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 5 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits, lines } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'llava:latest' }
+    })
+    const imageBytes = new Map([
+      ['/authorized/one.png', Buffer.from('first image')],
+      ['/authorized/two.jpg', Buffer.from('second image')],
+      ['/authorized/three.webp', Buffer.from('third image')]
+    ])
+    const readImageAttachment = vi.fn(async (imagePath: string) => {
+      const bytes = imageBytes.get(imagePath)
+      if (!bytes) throw new Error(`unexpected image ${imagePath}`)
+      return bytes
+    })
+    deps.readImageAttachment = readImageAttachment
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'llava:latest',
+        imagePaths: [...imageBytes.keys()]
+      },
+      baseRoute
+    )
+
+    expect(readImageAttachment.mock.calls.map(([imagePath]) => imagePath)).toEqual([
+      '/authorized/one.png',
+      '/authorized/two.jpg',
+      '/authorized/three.webp'
+    ])
+    expect(chatBodies).toHaveLength(1)
+    const userMessages = chatBodies[0].messages.filter(
+      (message: { role?: string }) => message.role === 'user'
+    )
+    expect(userMessages[0].images).toEqual(
+      [...imageBytes.values()].map((bytes) => bytes.toString('base64'))
+    )
+    expect(userMessages.slice(1).every((message: { images?: string[] }) => !message.images)).toBe(
+      true
+    )
+    expect(
+      lines.filter((line) => line.payload.id === 'ollama-image-attachments-no-vision')
+    ).toEqual([])
+    expect(errors).toEqual([])
+    expect(exits.at(-1)?.code).toBe(0)
+  })
+
+  it.each([
+    { protocolMode: 'native_first', vision: true, measured: true },
+    { protocolMode: 'json_only', vision: true, measured: true },
+    { protocolMode: 'native_first', vision: false, measured: true },
+    { protocolMode: 'json_only', vision: false, measured: true },
+    { protocolMode: 'native_first', vision: true, measured: false }
+  ] as const)(
+    'delivers fresh tool images with $protocolMode using exact vision=$vision and measured context=$measured',
+    async ({ protocolMode, vision, measured }) => {
+      const chatBodies: Array<Record<string, any>> = []
+      const images = Array.from({ length: 8 }, (_, index) =>
+        Buffer.from(`tool image ${index}`).toString('base64')
+      )
+      const initialImage = Buffer.from('initial user attachment')
+      const metadata = 'Screen dimensions: 1200 x 800 pixels; coordinates are image pixels.'
+      const args = { name: 'canvas_screenshot', arguments: { canvasId: 'canvas-1' } }
+      const executeTool = vi.fn(async () => {
+        const offset = (executeTool.mock.calls.length - 1) * 2
+        return {
+          ok: true,
+          output: metadata,
+          images: [
+            { type: 'image' as const, mimeType: 'image/png', data: images[offset] },
+            { type: 'image' as const, mimeType: 'image/jpeg', data: images[offset + 1] }
+          ]
+        }
+      })
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname
+        if (path === '/api/tags') {
+          return jsonResponse({
+            models: [
+              {
+                name: 'screen-model:latest',
+                digest: 'digest-screen',
+                details: { family: 'qwen' },
+                capabilities: ['tools', 'vision']
+              }
+            ]
+          })
+        }
+        if (path === '/api/show') {
+          return jsonResponse({
+            details: { family: 'qwen', ...(measured ? { context_length: 131_072 } : {}) },
+            capabilities: vision ? ['tools', 'vision'] : ['tools']
+          })
+        }
+        if (path === '/api/chat') {
+          chatBodies.push(JSON.parse(String(init?.body || '{}')))
+          const message =
+            chatBodies.length > 4
+              ? { role: 'assistant', content: 'Finished inspecting the tool output.' }
+              : protocolMode === 'native_first'
+                ? {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [{ function: { name: 'capability_invoke', arguments: args } }]
+                  }
+                : {
+                    role: 'assistant',
+                    content: JSON.stringify({
+                      taskwraith_tool: { name: 'capability_invoke', arguments: args }
+                    })
+                  }
+          return ollamaStreamResponse([
+            JSON.stringify({ message }),
+            JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 5 })
+          ])
+        }
+        throw new Error(`unexpected fetch ${url}`)
+      })
+      const { deps, errors, lines, exits } = makeProviderDeps({
+        fetchMock,
+        executeTool,
+        settings: {
+          ollamaDefaultModel: 'screen-model:latest',
+          ollamaRunProfiles: { 'screen-model:latest': { protocolMode } }
+        }
+      })
+      deps.readImageAttachment = vi.fn(async () => initialImage)
+
+      await runOllamaProvider(
+        deps,
+        stubEvent,
+        {
+          ...basePayload,
+          model: 'screen-model:latest',
+          imagePaths: ['/authorized/initial.png']
+        },
+        baseRoute
+      )
+
+      expect(errors).toEqual([])
+      expect(exits.at(-1)?.code).toBe(0)
+      expect(executeTool).toHaveBeenCalledTimes(4)
+      expect(chatBodies).toHaveLength(5)
+      for (let round = 1; round <= 4; round += 1) {
+        const resultMessage = chatBodies[round].messages.at(-1)
+        expect(resultMessage.role).toBe(protocolMode === 'native_first' ? 'tool' : 'user')
+        expect(resultMessage.content).toContain(metadata)
+        expect(resultMessage.images).toEqual(
+          vision ? images.slice((round - 1) * 2, round * 2) : undefined
+        )
+        if (!vision) expect(resultMessage.content).toContain('exact /api/show')
+        const initialUserMessage = chatBodies[round].messages.find(
+          (message: { role: string }) => message.role === 'user'
+        )
+        expect(initialUserMessage.images).toEqual(
+          vision ? [initialImage.toString('base64')] : undefined
+        )
+        const resultMessages = chatBodies[round].messages.filter(
+          (message: { role: string; content: string }) =>
+            message.role === (protocolMode === 'native_first' ? 'tool' : 'user') &&
+            message.content.includes(metadata)
+        )
+        const compressedTurns = !measured && round >= 3 ? 2 : 0
+        expect(resultMessages).toHaveLength(round - compressedTurns)
+        for (const [index, message] of resultMessages.entries()) {
+          const imageIndex = index + compressedTurns
+          expect(message.images).toEqual(
+            vision && imageIndex >= round - 2
+              ? images.slice(imageIndex * 2, imageIndex * 2 + 2)
+              : undefined
+          )
+        }
+        if (protocolMode === 'native_first') {
+          const toolCallMessages = chatBodies[round].messages.filter(
+            (message: { tool_calls?: unknown[] }) => message.tool_calls?.length
+          )
+          expect(toolCallMessages).toHaveLength(resultMessages.length)
+          for (const [index, message] of toolCallMessages.entries()) {
+            expect(message.tool_calls[0].function.name).toBe(resultMessages[index].tool_name)
+          }
+        }
+        for (const message of chatBodies[round].messages) {
+          for (const image of images) expect(message.content).not.toContain(image)
+        }
+      }
+      expect(
+        lines.filter((line) => line.payload.id === 'ollama-tool-images-no-vision')
+      ).toHaveLength(vision ? 0 : 1)
+      expect(deps.saveOllamaSessionMemory).toHaveBeenCalledOnce()
+      const memory = (deps.saveOllamaSessionMemory as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      for (const image of images) {
+        expect(JSON.stringify(memory)).not.toContain(image)
+        expect(JSON.stringify(lines)).not.toContain(image)
+        if (!vision) expect(JSON.stringify(chatBodies)).not.toContain(image)
+      }
+    }
+  )
+
+  it('warns once and continues text-only when the exact model show lacks vision', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'qwen3:4b-instruct',
+              digest: 'digest-no-vision',
+              details: { family: 'qwen' },
+              capabilities: ['vision']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['completion', 'tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Text-only answer.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 3 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, errors, exits } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'qwen3:4b-instruct' }
+    })
+    const readImageAttachment = vi.fn(async () => Buffer.from('must not be read'))
+    deps.readImageAttachment = readImageAttachment
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'qwen3:4b-instruct',
+        imagePaths: ['/authorized/a.png', '/authorized/b.png']
+      },
+      baseRoute
+    )
+
+    expect(readImageAttachment).not.toHaveBeenCalled()
+    expect(chatBodies).toHaveLength(1)
+    expect(chatBodies[0].messages.every((message: { images?: string[] }) => !message.images)).toBe(
+      true
+    )
+    const warnings = lines.filter(
+      (line) => line.payload.id === 'ollama-image-attachments-no-vision'
+    )
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0].payload.message).toContain(
+      'exact /api/show response did not advertise the vision capability'
+    )
+    expect(warnings[0].payload.message).toContain('2 attached images')
+    expect(warnings[0].payload.message).toContain('Continuing with the text request only')
+    expect(errors).toEqual([])
+    expect(exits.at(-1)?.code).toBe(0)
+  })
+
+  it('fails before chat instead of partially sending a vision model batch when one read fails', async () => {
+    const requestPaths: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      requestPaths.push(path)
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'llava:latest',
+              digest: 'digest-vision-read-failure',
+              details: { family: 'llava' },
+              capabilities: ['vision']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'llava' }, capabilities: ['vision'] })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits } = makeProviderDeps({
+      fetchMock,
+      settings: { ollamaDefaultModel: 'llava:latest' }
+    })
+    deps.readImageAttachment = vi.fn(async (imagePath: string) => {
+      if (imagePath.endsWith('two.png')) throw new Error('permission revoked')
+      return Buffer.from('first image')
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'llava:latest',
+        imagePaths: ['/authorized/one.png', '/authorized/two.png']
+      },
+      baseRoute
+    )
+
+    expect(requestPaths).toContain('/api/show')
+    expect(requestPaths).not.toContain('/api/chat')
+    expect(errors).toHaveLength(1)
+    expect(errors[0].error).toContain('permission revoked')
+    expect(errors[0].error).toContain('not dispatched with a partial image set')
+    expect(exits.at(-1)?.code).toBe(1)
   })
 
   it('does not launch model show or chat after the run gains a terminal claim', async () => {
@@ -2364,7 +2784,9 @@ describe('runOllamaProvider streaming', () => {
     expect(rawToolResults).toEqual([
       '{"ok":false,"tool":"update_goal","error":"No active TaskWraith goal is set for this chat."}'
     ])
-    expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call update_goal')
+    expect(JSON.stringify(chatBodies[1].messages)).toContain(
+      'Do NOT call goal_complete or goal_blocked'
+    )
     expect(JSON.stringify(chatBodies[1].messages)).toContain('not todo lists')
     expect(
       lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
@@ -2464,7 +2886,7 @@ describe('runOllamaProvider streaming', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1)
     expect(chatBodies).toHaveLength(2)
-    expect(chatBodies[1]).toContain('Do NOT call update_goal')
+    expect(chatBodies[1]).toContain('Do NOT call goal_complete or goal_blocked')
     expect(chatBodies[1]).toContain('assigned ensemble slice')
     expect(chatBodies[1]).toContain('role / authority boundary from the capsule')
     expect(
@@ -2705,6 +3127,88 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts[0]).toContain('stopping instead of looping')
     expect(contentTexts.join('\n')).not.toContain('Workspace coding task')
     expect(lines.some((line) => line.payload.type === 'provider_warning')).toBe(false)
+  })
+
+  it('does not finalize a named Ollama Cloud ensemble seat at the local-model retry ceiling', async () => {
+    // K2.7 Code (and the other named Cloud seats) can emit several reasoning-only
+    // turns while still making progress. The local-model retry ceiling used to
+    // stop that as "deferring to the panel" even with no tool error.
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      const parsed = new URL(String(url))
+      if (parsed.origin !== 'https://ollama.com') {
+        throw new Error('local daemon is offline')
+      }
+      if (parsed.pathname === '/api/tags') {
+        return jsonResponse({ models: [{ model: 'kimi-k2.7-code' }] })
+      }
+      if (parsed.pathname === '/api/show') {
+        return jsonResponse({
+          details: { family: 'kimi', context_length: 262_144 },
+          capabilities: ['completion', 'tools']
+        })
+      }
+      if (parsed.pathname === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls <= 4) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                thinking: 'Inspecting the assigned slice before I answer.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 10 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'Slice complete: the coordinator owns persistence.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      cloudApiKey: 'ollama-secret',
+      settings: {
+        ollamaDefaultModel: 'kimi-k2.7-code:cloud',
+        ollamaModelPreflightAt: {}
+      },
+      executeTool: async () => ({ ok: true, output: '' })
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        model: 'kimi-k2.7-code:cloud',
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'participant-ollama',
+          provider: 'ollama',
+          role: 'SliceWorker',
+          order: 9,
+          ensembleContextChars: 24000,
+          ensembleContextTurns: 8
+        }
+      },
+      baseRoute
+    )
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(chatCalls).toBe(5)
+    expect(contentTexts.join('\n')).toContain('Slice complete: the coordinator owns persistence.')
+    expect(contentTexts.join('\n')).not.toContain('deferring to the panel')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
   })
 
   it('lets a model read straight away now that retrieval-first is retired', async () => {
@@ -2966,6 +3470,231 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
   }, 10000)
 
+  it('keeps crediting DIFFERENT calls that fail with identical output (no-match greps)', async () => {
+    let chatCalls = 0
+    const commands: string[] = []
+    // Six DISTINCT searches, every one a legitimate no-match. `Exit code: 1` is
+    // the whole output a silent non-zero shell command produces, so keying the
+    // identical-failure streak on the output head alone made six different
+    // greps one streak and finalized the run before the model could answer.
+    // The arguments are what tells them apart.
+    const executeTool = vi.fn(async (request: { arguments?: Record<string, unknown> }) => {
+      commands.push(String(request.arguments?.command || ''))
+      return { ok: false, output: 'Exit code: 1' }
+    })
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 7) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'All six searches came back empty.' }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"grep -rn symbol${chatCalls} src/"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(6)
+    // Guard against a vacuous pass: the six calls really were distinct.
+    expect(new Set(commands).size).toBe(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('All six searches came back empty.')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  }, 10000)
+
+  it('still finalizes a run whose calls all fail with ever-changing arguments', async () => {
+    let chatCalls = 0
+    // Backstop for the discriminator above: keying the identical streak on the
+    // arguments means a model that varies them never repeats a key, so the
+    // identical streak alone can no longer bound a run that only ever fails.
+    // Seven failures stay credited, the eighth stops counting, and the ceiling
+    // finalizes four non-productive turns later.
+    const executeTool = vi.fn(async () => ({ ok: false, output: 'Exit code: 1' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        // Fail loudly rather than hanging if the backstop ever goes missing.
+        if (chatCalls > 40) throw new Error('runaway loop: backstop did not finalize the run')
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"probe${chatCalls}"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // 7 credited failures, then 4 non-productive turns -> ceiling on the 12th.
+    expect(chatCalls).toBe(11)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('stopping instead of looping')
+  }, 10000)
+
+  it('trips the breaker on a repeated failing command whose intent is reworded', async () => {
+    let chatCalls = 0
+    // `intent` is REQUIRED free prose on every shell/edit tool, so it is
+    // narration, not call identity. If it counted toward the failure key a
+    // model could reword it each turn and re-issue the same broken command
+    // forever without ever tripping the breaker.
+    const executeTool = vi.fn(async () => ({ ok: false, output: 'Exit code: 1' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls > 40) throw new Error('runaway loop: reworded intent evaded the breaker')
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: `{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"npm run build","intent":"attempt ${chatCalls}: trying the build once more"}}}`
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // Identical call: 2 credited, streak breaks on the 3rd, ceiling on the 7th.
+    // Counting the reworded intent would defer this to the backstop at 11.
+    expect(chatCalls).toBe(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('stopping instead of looping')
+  }, 10000)
+
+  it('does not charge a budget-truncated turn to the retry ceiling', async () => {
+    let chatCalls = 0
+    // `done_reason: 'length'` with nothing emitted is OUR per-turn generation
+    // budget running out inside the think stream, not the model failing to
+    // converge. Charging those to the ceiling is how a coherent max-effort
+    // reasoner was finalized as a "success" before it ever answered.
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 5) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'Finished once the budget allowed it.' }
+            }),
+            JSON.stringify({ done: true, done_reason: 'stop', prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        // Whole budget spent thinking: no content, no tool call, cut off.
+        return ollamaStreamResponse([
+          JSON.stringify({
+            done: true,
+            done_reason: 'length',
+            prompt_eval_count: 8,
+            eval_count: 4096
+          })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    // 2 forgiven, 2 charged, then the answer lands. Charging all four would
+    // have hit the ceiling at the top of turn 5 and never dispatched it.
+    expect(chatCalls).toBe(5)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('Finished once the budget allowed it.')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  }, 10000)
+
   it('stops a model that re-reads the same unchanged file instead of acting (repeat is not progress)', async () => {
     let chatCalls = 0
     const chatBodies: string[] = []
@@ -3091,6 +3820,91 @@ describe('runOllamaProvider streaming', () => {
     expect(enumNames).not.toContain('skill_read')
   })
 
+  it('derives the local delegation request flag from signed UltraTask posture', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    let chatCall = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-ultratask',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        chatCall += 1
+        if (chatCall === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'delegate_wave',
+                      arguments: {
+                        lifecycle: 'ephemeral',
+                        workers: [{ role: 'reviewer', prompt: 'Review the focused change.' }]
+                      }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Review wave returned.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 3 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'wave-1 spawned' }))
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: 'Delegate an independent review of the focused change.',
+        model: 'gpt_oss_20b',
+        effectivePermissions: {
+          readOnly: true,
+          presetId: 'read_only',
+          networkAccess: 'deny',
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        } as any
+      },
+      baseRoute
+    )
+
+    expect(chatBodies).toHaveLength(2)
+    const firstToolNames = (chatBodies[0].tools || []).map((tool: any) => tool.function?.name)
+    expect(firstToolNames).toContain('delegate_to_subthread')
+    expect(firstToolNames).toContain('delegate_wave')
+    expect(firstToolNames).toContain('ultra_task')
+    expect(chatBodies[0].messages?.[0]?.content).toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+    expect(executeTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'delegate_wave',
+        ultraTaskDelegationAutoAllow: true
+      })
+    )
+  })
+
   it('does not advertise edit/shell native tools to a read-only seat', async () => {
     const chatBodies: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -3139,7 +3953,7 @@ describe('runOllamaProvider streaming', () => {
     expect(toolNames).toContain('tool_help')
     expect(toolNames).not.toContain('write_file')
     expect(toolNames).not.toContain('replace')
-    expect(toolNames).not.toContain('run_shell_command')
+    expect(toolNames).toContain('run_shell_command')
     expect(toolNames).not.toContain('run_task')
   })
 
@@ -3465,6 +4279,181 @@ describe('normalizeOllamaModels', () => {
     expect(JSON.stringify(status)).not.toContain('not-exposed@example.com')
   })
 
+  // A cold daemon answers /api/status and its recommendations long before its
+  // account round trip completes. Without the remembered sign-in that gap read
+  // as "Cloud sign-in optional" and disabled every Cloud row on every launch.
+  it('answers an unreachable account probe from the remembered CLI sign-in', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) throw new Error('socket hang up')
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaDefaultModel: 'glm-5.3:cloud',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.cloud).toMatchObject({
+      supported: true,
+      authenticated: true,
+      plan: 'pro',
+      authenticatedFromMemory: true
+    })
+    expect(status.cloudModels?.[0]).toMatchObject({
+      id: 'glm-5.3:cloud',
+      label: 'GLM 5.3',
+      disabled: false
+    })
+    expect(status.modelCount).toBe(1)
+  })
+
+  it('does not claim a Cloud account when the daemon itself is unreachable', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.available).toBe(false)
+    expect(status.cloud).toMatchObject({ supported: false, authenticated: null })
+  })
+
+  // The relaunch window: main is parsing a large chat, so every cloud request
+  // armed on this event loop is refused or cut off mid-stall while `/api/tags`
+  // already proved the daemon is up. That used to score as "no daemon" and
+  // disabled every Cloud row until the next probe.
+  it('repairs the account from memory when the daemon lists models but every cloud endpoint is silent', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags'))
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      throw new TypeError('fetch failed')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.available).toBe(true)
+    expect(status.localAvailable).toBe(true)
+    expect(status.cloud).toMatchObject({
+      supported: false,
+      authenticated: true,
+      plan: 'pro',
+      authenticatedFromMemory: true,
+      accountProbe: 'refused'
+    })
+  })
+
+  it('repairs the account from memory when its own /api/tags deadline fires, without claiming the daemon', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<never>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            )
+          })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+
+      const pending = getOllamaStatusSnapshot({
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      await vi.advanceTimersByTimeAsync(3_000)
+      const status = await pending
+
+      expect(status.available).toBe(false)
+      expect(status.localAvailable).toBe(false)
+      expect(status.error).toContain('timed out')
+      expect(status.cloud).toMatchObject({
+        supported: false,
+        authenticated: true,
+        plan: 'pro',
+        authenticatedFromMemory: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one daemon round trip between concurrent catalog readers and hands each its own rows', async () => {
+    const paths: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      paths.push(new URL(String(url)).pathname)
+      if (String(url).endsWith('/api/tags'))
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      if (String(url).endsWith('/api/status')) return jsonResponse({ cloud: { disabled: false } })
+      if (String(url).endsWith('/api/me')) return jsonResponse({ plan: 'pro' })
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      if (String(url).endsWith('/api/show')) return jsonResponse({})
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const settings = { ollamaBaseUrl: 'http://127.0.0.1:11434' }
+
+    const [first, second] = await Promise.all([
+      fetchOllamaModelCatalog(settings),
+      fetchOllamaModelCatalog(settings)
+    ])
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(1)
+    expect(paths.filter((path) => path === '/api/me')).toHaveLength(1)
+    expect(second).toEqual(first)
+    expect(second.models).not.toBe(first.models)
+    expect(second.models[0]).not.toBe(first.models[0])
+    expect(second.cloud.models[0]).not.toBe(first.cloud.models[0])
+
+    // Status readers ride the same flight, and a later read is a fresh probe.
+    await Promise.all([getOllamaStatusSnapshot(settings), getOllamaStatusSnapshot(settings)])
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(2)
+    expect(paths.filter((path) => path === '/api/me')).toHaveLength(2)
+    await getOllamaStatusSnapshot(settings)
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(3)
+  })
+
+  it('lets a live signed-out answer beat the remembered sign-in', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
+      if (String(url).endsWith('/api/status')) {
+        return jsonResponse({ cloud: { disabled: false, source: 'none' } })
+      }
+      if (String(url).endsWith('/api/me')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'unauthorized' }) }
+      }
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.cloud).toMatchObject({ authenticated: false })
+    expect(status.cloudModels?.[0]?.disabled).toBe(true)
+  })
+
   it('lists signed-out Cloud rows as disabled without treating them as pullable models', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })
@@ -3489,7 +4478,7 @@ describe('normalizeOllamaModels', () => {
     expect(catalog.models).toEqual([
       expect.objectContaining({
         id: 'minimax-m3:cloud',
-        label: 'MiniMax M3',
+        label: 'M3',
         source: 'cloud',
         disabled: true,
         disabledReason: expect.stringContaining('ollama signin')
@@ -3498,16 +4487,20 @@ describe('normalizeOllamaModels', () => {
   })
 
   it('maps common local model ids to human-readable labels', () => {
+    expect(humanizeOllamaModelId('glm-5.3-flash')).toBe('GLM 5.3 Flash')
     expect(humanizeOllamaModelId('glm-5.2')).toBe('GLM 5.2')
-    expect(humanizeOllamaModelId('minimax-m3')).toBe('MiniMax M3')
-    expect(humanizeOllamaModelId('kimi-k2.7-code:cloud')).toBe('Kimi K2.7 Code')
+    expect(humanizeOllamaModelId('minimax-m3')).toBe('M3')
+    expect(humanizeOllamaModelId('kimi-k2.7-code:cloud')).toBe('K2.7 Code')
     expect(humanizeOllamaModelId('mistral-large-3:675b:cloud')).toBe('Mistral Large 3 (675B Param)')
-    expect(humanizeOllamaModelId('deepseek-v4-pro:preview:cloud')).toBe('DeepSeek V4 Pro (Preview)')
+    expect(humanizeOllamaModelId('deepseek-v4-pro:preview:cloud')).toBe('V4 Pro (Preview)')
     expect(humanizeOllamaModelId('qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(humanizeOllamaModelId('qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
     expect(humanizeOllamaModelId('qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+    expect(humanizeOllamaModelId('qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
     expect(humanizeOllamaModelId('gemma4:12b')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('ornith')).toBe('Ornith 1.0 (9B Param)')
@@ -3515,18 +4508,23 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('ornith:9b')).toBe('Ornith 1.0 (9B Param)')
     expect(humanizeOllamaModelId('ornith:35b')).toBe('Ornith 1.0 (35B Param)')
     expect(humanizeOllamaModelId('ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
+    expect(humanizeOllamaModelId('ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
+    expect(humanizeOllamaModelId('ornith-1.5:35b-q4_K_M')).toBe('Ornith 1.5 (35B Param)')
     expect(humanizeOllamaModelId('laguna-xs-2.1:q8_0')).toBe('Laguna XS 2.1 (33B-A3B Q8)')
     expect(humanizeOllamaModelId('gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:20b')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:latest')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
     expect(humanizeOllamaModelId('granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
+    expect(humanizeOllamaModelId('granite4.2:3b')).toBe('Granite 4.2 (3B Param)')
+    expect(humanizeOllamaModelId('granite4.2:latest')).toBe('Granite 4.2 (8B Param)')
+    expect(humanizeOllamaModelId('granite4.2:30b')).toBe('Granite 4.2 (30B Param)')
     expect(humanizeOllamaModelId('nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
     expect(humanizeOllamaModelId('nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'
     )
     expect(humanizeOllamaModelId('llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
-    expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('R1 (8B Param)')
     expect(humanizeOllamaModelId('rnj-1:latest')).toBe('Rnj-1 (8B Param)')
     expect(humanizeOllamaModelId('glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
     expect(humanizeOllamaModelId('north-mini-code-1.0:q4_K_M')).toBe(
@@ -3534,11 +4532,17 @@ describe('normalizeOllamaModels', () => {
     )
     expect(humanizeOllamaModelId('muse-glimmer:30b-mlx')).toBe('Muse Glimmer (30B-MLX)')
     expect(humanizeOllamaModelId('llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
+    expect(humanizeOllamaModelId('mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(humanizeOllamaModelId('mistral-medium-3.5:128b')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
     for (const [modelId, label] of [
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],
       ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
-      ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+      ['deepseek-r1:1.5b', 'R1 (1.5B Param)'],
       ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
       ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
       ['gemma3:4b', 'Gemma 3 (4B Param)']
@@ -3681,6 +4685,191 @@ describe('normalizeOllamaModels', () => {
       'gpt-oss'
     )
     expect(models.find((model) => model.id === 'gpt-oss:latest')?.isDefault).toBe(true)
+  })
+})
+
+// Concurrent catalog readers share one daemon round trip only when nothing
+// about the answer can differ between them. Every reader below starts while
+// the other is provably in flight, so each exclusion, if lost, hands one
+// reader the other's answer.
+describe('fetchOllamaModelCatalog shared flights', () => {
+  const settings = { ollamaBaseUrl: 'http://127.0.0.1:11434' }
+  const remembered = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+
+  /** A daemon whose every answer waits for `release()`, unless its own signal aborts first. */
+  function gatedDaemon(answer: (url: string, init?: RequestInit) => unknown): {
+    release: () => void
+  } {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (url: string, init?: RequestInit) =>
+          new Promise((resolve, reject) => {
+            const abort = (): void =>
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            if (init?.signal?.aborted) return abort()
+            init?.signal?.addEventListener('abort', abort, { once: true })
+            void gate.then(() => {
+              try {
+                resolve(answer(String(url), init))
+              } catch (error) {
+                reject(error)
+              }
+            })
+          })
+      )
+    )
+    return { release }
+  }
+
+  /** A signed-in daemon with one installed model. */
+  function signedInDaemon(url: string): unknown {
+    if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+    if (url.endsWith('/api/status')) return jsonResponse({ cloud: { disabled: false } })
+    if (url.endsWith('/api/me')) return jsonResponse({ plan: 'pro' })
+    return jsonResponse({ recommendations: [] })
+  }
+
+  const unprobedCloud = { supported: false, enabled: true, authenticated: null, models: [] }
+  const answeredCloud = { authenticated: true, accountProbe: 'answered' }
+
+  it('keys a flight on the remembered sign-in', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      throw new TypeError('fetch failed')
+    })
+    const withMemory = fetchOllamaModelCatalog({ ...settings, ollamaCliSignIn: remembered })
+    const withoutMemory = fetchOllamaModelCatalog(settings)
+    daemon.release()
+
+    expect((await withMemory).cloud).toMatchObject({
+      authenticated: true,
+      authenticatedFromMemory: true
+    })
+    expect((await withoutMemory).cloud.authenticated).toBeNull()
+  })
+
+  it('keys a flight on the daemon base URL', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      }
+      if (url === 'http://127.0.0.1:11500/api/tags') {
+        return jsonResponse({ models: [{ model: 'llama3.2:3b' }] })
+      }
+      throw new TypeError('fetch failed')
+    })
+    const first = fetchOllamaModelCatalog({ ollamaBaseUrl: 'http://127.0.0.1:11434' })
+    const second = fetchOllamaModelCatalog({ ollamaBaseUrl: 'http://127.0.0.1:11500' })
+    daemon.release()
+
+    expect((await first).localModels.map((model) => model.id)).toEqual(['qwen3.5:9b'])
+    expect((await second).localModels.map((model) => model.id)).toEqual(['llama3.2:3b'])
+  })
+
+  it('keys a flight on the configured default model', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url.endsWith('/api/tags')) {
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }, { model: 'llama3.2:3b' }] })
+      }
+      throw new TypeError('fetch failed')
+    })
+    const qwen = fetchOllamaModelCatalog({ ...settings, ollamaDefaultModel: 'qwen3.5:9b' })
+    const llama = fetchOllamaModelCatalog({ ...settings, ollamaDefaultModel: 'llama3.2:3b' })
+    daemon.release()
+
+    expect((await qwen).models.find((model) => model.isDefault)?.id).toBe('qwen3.5:9b')
+    expect((await llama).models.find((model) => model.isDefault)?.id).toBe('llama3.2:3b')
+  })
+
+  // The user replaces a stored key while a read opened with the old one is
+  // still waiting on a slow daemon. The refresh that follows must list the new
+  // key's Cloud models, not join the old flight and show the old key's.
+  it('never shares a read that carries a Cloud API key', async () => {
+    const daemon = gatedDaemon((url, init) => {
+      if (url === 'https://ollama.com/api/tags') {
+        const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization
+        return jsonResponse({
+          models: [{ name: authorization === 'Bearer old-key' ? 'kimi-k3' : 'minimax-m3' }]
+        })
+      }
+      if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      if (url.endsWith('/api/me')) return { ok: false, status: 401, json: async () => ({}) }
+      throw new TypeError('fetch failed')
+    })
+    const oldKey = fetchOllamaModelCatalog(settings, { cloudApiKey: 'old-key' })
+    const newKey = fetchOllamaModelCatalog(settings, { cloudApiKey: 'new-key' })
+    const noKey = fetchOllamaModelCatalog(settings)
+    daemon.release()
+
+    expect((await oldKey).cloudModels.map((model) => model.id)).toEqual(['kimi-k3:cloud'])
+    expect((await newKey).cloudModels.map((model) => model.id)).toEqual(['minimax-m3:cloud'])
+    const keyless = await noKey
+    expect(keyless.cloud.authenticated).toBe(false)
+    expect(keyless.cloudModels).toEqual([])
+  })
+
+  it('never lets a cancelled run take down a plain read started beside it', async () => {
+    const daemon = gatedDaemon(signedInDaemon)
+    const run = new AbortController()
+    const cancelled = fetchOllamaModelCatalog(settings, { signal: run.signal })
+    const statusCard = fetchOllamaModelCatalog(settings)
+    run.abort()
+    daemon.release()
+
+    await expect(cancelled).rejects.toThrow('aborted')
+    expect((await statusCard).cloud).toMatchObject(answeredCloud)
+  })
+
+  it('keeps a run started beside a plain read cancellable', async () => {
+    const daemon = gatedDaemon(signedInDaemon)
+    const statusCard = fetchOllamaModelCatalog(settings)
+    const run = new AbortController()
+    const cancelled = fetchOllamaModelCatalog(settings, { signal: run.signal })
+    run.abort()
+    daemon.release()
+
+    await expect(cancelled).rejects.toThrow('aborted')
+    expect((await statusCard).cloud).toMatchObject(answeredCloud)
+  })
+
+  it('never shares a probe with a caller that brings a launch authority, in either order', async () => {
+    const refusedLaunch = { launchAuthorized: () => false }
+
+    let daemon = gatedDaemon(signedInDaemon)
+    const launchFirst = fetchOllamaModelCatalog(settings, refusedLaunch)
+    const cardSecond = fetchOllamaModelCatalog(settings)
+    daemon.release()
+    expect((await launchFirst).cloud).toEqual(unprobedCloud)
+    expect((await cardSecond).cloud).toMatchObject(answeredCloud)
+
+    daemon = gatedDaemon(signedInDaemon)
+    const cardFirst = fetchOllamaModelCatalog(settings)
+    const launchSecond = fetchOllamaModelCatalog(settings, refusedLaunch)
+    daemon.release()
+    expect((await cardFirst).cloud).toMatchObject(answeredCloud)
+    expect((await launchSecond).cloud).toEqual(unprobedCloud)
+  })
+
+  it('never shares a probe with a caller that brings its own deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const daemon = gatedDaemon(signedInDaemon)
+      const bounded = fetchOllamaModelCatalog(settings, { timeoutMs: 50 })
+      const statusCard = fetchOllamaModelCatalog(settings)
+      const boundedOutcome = expect(bounded).rejects.toThrow('timed out after 50 ms')
+      await vi.advanceTimersByTimeAsync(50)
+      await boundedOutcome
+      daemon.release()
+
+      expect((await statusCard).cloud).toMatchObject(answeredCloud)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -4062,6 +5251,71 @@ describe('parseOllamaToolRequest', () => {
     expect(validateOllamaToolArguments('blackboard_read', {})).toEqual({ ok: true })
   })
 
+  it('adds example arguments when a required field is missing', () => {
+    const missingContent = validateOllamaToolArguments('write_file', { path: 'a.ts', intent: 'write' })
+    expect(missingContent.ok).toBe(false)
+    if (!missingContent.ok) {
+      expect(missingContent.message).toContain('missing required argument: content')
+      expect(missingContent.message).toContain('(e.g. {"content": "example"})')
+    }
+  })
+
+  it('suggests the nearest real argument name for misspelled/unknown keys', () => {
+    // A genuine typo, not a separator variant. `start_line` normalizes onto
+    // `startLine` at distance ZERO and is now an accepted alias — see
+    // 'accepts the documented paging vocabulary'. Keeping a real misspelling
+    // here is what stops the near-miss suggester rotting unnoticed.
+    const misspelled = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      maxLine: 1,
+      intent: 'read'
+    })
+    expect(misspelled.ok).toBe(false)
+    if (!misspelled.ok) {
+      expect(misspelled.message).toContain('unknown argument "maxLine"')
+      expect(misspelled.message).toContain('Did you mean "maxLines"?')
+    }
+  })
+
+  it('accepts the documented paging vocabulary instead of dropping it', () => {
+    // tool_help and resources/Tools.md both promise offset/limit. Unaliased,
+    // `offset` passed validation and was then discarded by the executor, so
+    // every page returned lines 1-N and the repeat guard ended the round.
+    const paged = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      offset: 201,
+      limit: 200
+    })
+    expect(paged.ok).toBe(true)
+    expect(canonicalizeOllamaToolArguments('read_file', { path: 'a.ts', offset: 201, limit: 200 }))
+      .toMatchObject({ startLine: 201, maxLines: 200 })
+
+    // snake_case normalizes onto its camelCase twin at distance zero, yet was
+    // rejected one key per turn — three of the four ceiling turns for one call.
+    const snake = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      start_line: 1,
+      end_line: 40,
+      max_lines: 40
+    })
+    expect(snake.ok).toBe(true)
+    expect(
+      canonicalizeOllamaToolArguments('read_file', { path: 'a.ts', start_line: 7, max_lines: 40 })
+    ).toMatchObject({ startLine: 7, maxLines: 40 })
+
+    // The narrow-table guard still holds: a cross-tool alias stays rejected.
+    expect(validateOllamaToolArguments('read_file', { directory: 'src' }).ok).toBe(false)
+  })
+
+  it('silently ignores unknown arguments that are not close to any real arguments', () => {
+    const unknown = validateOllamaToolArguments('read_file', {
+      path: 'a.ts',
+      completely_unrelated: 'foo',
+      intent: 'read'
+    })
+    expect(unknown).toEqual({ ok: true })
+  })
+
   it('voices the retry-ceiling finalize differently for solo vs ensemble runs', () => {
     const solo = ollamaCeilingFinalizeContent()
     expect(solo).toContain('stopping instead of looping')
@@ -4361,6 +5615,54 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(names).not.toContain('skill_list')
     expect(names).not.toContain('skill_read')
     expect(names.slice(direct.length)).toEqual([...CAPABILITY_GATEWAY_TOOL_NAMES, 'tool_help'])
+  })
+
+  it('adds delegation definitions with real schemas only for signed UltraTask auto-allow', () => {
+    const ordinaryNames = ollamaNativeToolDefinitions('read_only', { readOnly: true }).map(
+      (definition) => definition.function.name
+    )
+    expect(ordinaryNames).not.toContain('delegate_to_subthread')
+    expect(ordinaryNames).not.toContain('delegate_wave')
+    expect(ordinaryNames).not.toContain('ultra_task')
+
+    const definitions = ollamaNativeToolDefinitions('read_only', {
+      readOnly: true,
+      ultraTaskDelegationAutoAllow: true
+    })
+    const names = definitions.map((definition) => definition.function.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'delegate_to_subthread',
+        'delegate_wave',
+        'ultra_task',
+        'list_subthreads',
+        'read_subthread_result',
+        'cancel_subthread'
+      ])
+    )
+    expect(
+      definitions.find((definition) => definition.function.name === 'delegate_to_subthread')
+        ?.function.parameters
+    ).toMatchObject({
+      required: ['provider', 'prompt'],
+      properties: {
+        provider: { type: 'string' },
+        prompt: { type: 'string' },
+        subThreadId: { type: 'string' }
+      }
+    })
+    expect(
+      definitions.find((definition) => definition.function.name === 'delegate_wave')?.function
+        .parameters
+    ).toMatchObject({
+      required: ['workers'],
+      properties: {
+        workers: {
+          type: 'array',
+          items: { required: ['prompt'] }
+        }
+      }
+    })
   })
 
   it('declares a compact action-plus-params shape for portable Ensemble control', () => {
@@ -4766,7 +6068,11 @@ describe('repeated-tool-call guard', () => {
     expect(isOllamaNoActiveGoalToolResult('goal_update', result)).toBe(true)
     expect(isOllamaNoActiveGoalToolResult('read_file', result)).toBe(false)
     const nudge = ollamaNoActiveGoalToolNudge('goal_update')
-    expect(nudge).toContain('Do NOT call update_goal')
+    // update_goal is the REMEDY, not part of the ban: it creates the missing
+    // goal. Only the two lifecycle-only tools are told to stand down.
+    expect(nudge).toContain('Do NOT call goal_complete or goal_blocked')
+    expect(nudge).not.toContain('Do NOT call update_goal')
+    expect(nudge).toContain('call update_goal once WITH an objective')
     expect(nudge).toContain('not todo lists')
     expect(ollamaNoActiveGoalToolNudge('goal_update', { repeated: true })).toContain(
       'already retried'
@@ -4880,8 +6186,143 @@ describe('shouldReleaseOllamaContentDelta — streaming cadence gate', () => {
 })
 
 describe('runOllamaProvider mid-turn steering', () => {
-  it('delivers drained steer text as a framed user message in the next model request, never in turn 0', async () => {
+  it('stops before the next model request only after the exact run completes its full tool batch', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const executeTool = vi.fn(async (request: OllamaToolExecutionRequest) => ({
+      ok: true,
+      output: `${request.toolName} complete`
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'ornith:9b',
+              digest: 'digest-batch-boundary',
+              details: { family: 'ornith' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'ornith' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'read_file',
+                    arguments: { path: 'README.md' }
+                  }
+                },
+                {
+                  function: {
+                    name: 'workspace_search',
+                    arguments: { query: 'boundary', path: '.', maxResults: 5 }
+                  }
+                }
+              ]
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const prepared = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      settings: { ollamaDefaultModel: 'ornith:9b' }
+    })
+    const { deps, lines } = prepared
+    const onToolBatchBoundary = vi.fn(async (appRunId: string) => {
+      expect(appRunId).toBe('run-ollama-1')
+      expect(executeTool).toHaveBeenCalledTimes(2)
+      expect(lines.filter((line) => line.payload.type === 'tool_result')).toHaveLength(2)
+      expect(chatBodies).toHaveLength(1)
+      return true
+    })
+    deps.onToolBatchBoundary = onToolBatchBoundary
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'ornith:9b' }, baseRoute)
+
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+    expect(onToolBatchBoundary).toHaveBeenCalledWith('run-ollama-1')
+    expect(executeTool).toHaveBeenCalledTimes(2)
+    expect(chatBodies).toHaveLength(1)
+  })
+
+  it('preserves the next model iteration when the exact boundary callback is not armed', async () => {
+    const chatBodies: Array<Record<string, any>> = []
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-unarmed-boundary',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatBodies.length === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'read_file',
+                      arguments: { path: 'README.md' }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Finished normally.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    const onToolBatchBoundary = vi.fn(async () => false)
+    deps.onToolBatchBoundary = onToolBatchBoundary
+
+    await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
+
+    expect(onToolBatchBoundary).toHaveBeenCalledTimes(1)
+    expect(onToolBatchBoundary).toHaveBeenCalledWith('run-ollama-1')
+    expect(chatBodies).toHaveLength(2)
+    expect(JSON.stringify(chatBodies[1].messages)).toContain('README result')
+  })
+
+  it('commits reserved steer text only after the carrying model request succeeds, never in turn 0', async () => {
     const chatBodies: string[] = []
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
     const executeTool = vi.fn(async () => ({
       ok: true,
       output: 'src/main/EnsemblePrompt.ts:1: steering probe'
@@ -4917,6 +6358,7 @@ describe('runOllamaProvider mid-turn steering', () => {
             JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
           ])
         }
+        expect(commit).not.toHaveBeenCalled()
         return ollamaStreamResponse([
           JSON.stringify({
             message: { role: 'assistant', content: 'Focusing on the tests now.' }
@@ -4926,12 +6368,14 @@ describe('runOllamaProvider mid-turn steering', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const drainPendingSteerText = vi
-      .fn<(appRunId: string) => string | null>()
-      .mockReturnValueOnce('Actually focus on the tests first.')
-      .mockReturnValue(null)
+    const reservePendingSteerText = vi.fn().mockReturnValueOnce({
+      text: 'Actually focus on the tests first.',
+      commit,
+      rollback,
+      ambiguous
+    })
     const { deps } = makeProviderDeps({ fetchMock, executeTool })
-    deps.drainPendingSteerText = drainPendingSteerText
+    deps.reservePendingSteerText = reservePendingSteerText
 
     await runOllamaProvider(deps, stubEvent, { ...basePayload, model: 'gpt_oss_20b' }, baseRoute)
 
@@ -4939,8 +6383,8 @@ describe('runOllamaProvider mid-turn steering', () => {
     // Turn 0 rides the pre-resolved launch-plan request; a drain there would
     // fire delivery evidence for text the request body cannot carry.
     expect(chatBodies[0]).not.toContain('[TaskWraith Steering]')
-    expect(drainPendingSteerText).toHaveBeenCalledTimes(1)
-    expect(drainPendingSteerText).toHaveBeenCalledWith('run-ollama-1')
+    expect(reservePendingSteerText).toHaveBeenCalledTimes(1)
+    expect(reservePendingSteerText).toHaveBeenCalledWith('run-ollama-1')
     expect(chatBodies[1]).toContain('[TaskWraith Steering]')
     expect(chatBodies[1]).toContain('Actually focus on the tests first.')
     const secondRequest = JSON.parse(chatBodies[1]) as {
@@ -4954,5 +6398,247 @@ describe('runOllamaProvider mid-turn steering', () => {
       String(message.content || '').includes('steering probe')
     )
     expect(secondRequest.messages.indexOf(steerMessage!)).toBeGreaterThan(toolResultIndex)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('marks a reserved steer ambiguous when the carrying HTTP request fails after launch', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        throw new TypeError('connection failed after request launch')
+      }
+      if (path === '/api/generate') {
+        return jsonResponse({})
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn().mockReturnValueOnce({
+      text: 'Use the tests as the source of truth.',
+      commit,
+      rollback,
+      ambiguous
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).toHaveBeenCalledOnce()
+    expect(ambiguous).toHaveBeenCalledWith(expect.stringContaining('admission became uncertain'))
+    expect(chatCalls).toBe(2)
+  })
+
+  it('rolls a reserved steer back when exact run authority is revoked before HTTP launch', async () => {
+    let admitTransport = true
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      canAdmitTransport: () => admitTransport
+    })
+    deps.reservePendingSteerText = vi.fn(() => {
+      admitTransport = false
+      return {
+        text: 'Do not launch the next request yet.',
+        commit,
+        rollback,
+        ambiguous
+      }
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(1)
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('commits a reserved steer on first valid output even when the stream later ends before done', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'I received the steer.' } })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn(() => ({
+      text: 'Carry this only on a complete turn.',
+      commit,
+      rollback,
+      ambiguous
+    }))
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(2)
+    expect(commit).toHaveBeenCalledOnce()
+    expect(rollback).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
+  })
+
+  it('rolls a reserved steer back after an explicit HTTP request rejection', async () => {
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'README result' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'gpt_oss_20b',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [{ function: { name: 'read_file', arguments: { path: 'README.md' } } }]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+          ])
+        }
+        return {
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ error: 'invalid request' })
+        }
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const commit = vi.fn()
+    const rollback = vi.fn()
+    const ambiguous = vi.fn()
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+    deps.reservePendingSteerText = vi.fn(() => ({
+      text: 'Retry this only after request repair.',
+      commit,
+      rollback,
+      ambiguous
+    }))
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(2)
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
+    expect(ambiguous).not.toHaveBeenCalled()
   })
 })

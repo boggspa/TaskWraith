@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   resolveThreadMessageSenderSeat,
   seatFromParticipant,
-  seatFromSoloChat
+  seatFromSoloChat,
+  seatFromSoloChatRun
 } from './ThreadMessageSeatCapture'
 
 const PARTICIPANT = {
@@ -97,6 +98,96 @@ describe('seatFromSoloChat', () => {
 
   it('is null when the chat has no provider', () => {
     expect(seatFromSoloChat({ requestedModel: 'gpt-5.6' })).toBeNull()
+  })
+})
+
+describe('seatFromSoloChatRun', () => {
+  it('captures the exact UltraTask run controls rather than mutable chat configuration', () => {
+    const chat = {
+      provider: 'codex',
+      lastActualModel: 'gpt-5.6-terra-after-recall',
+      requestedModel: 'gpt-5.6-terra-after-recall',
+      runs: [
+        {
+          runId: 'ultratask-run',
+          provider: 'codex',
+          requestedModel: 'gpt-5.6-terra',
+          actualModel: 'gpt-5.6-terra',
+          providerMetadata: {
+            codexReasoningEffort: 'ultracode',
+            reasoningEffort: 'low'
+          }
+        }
+      ]
+    }
+
+    expect(seatFromSoloChatRun(chat, 'ultratask-run')).toEqual({
+      provider: 'codex',
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'ultracode'
+    })
+  })
+
+  it('carries the child run Kimi reasoning and thinking state', () => {
+    expect(
+      seatFromSoloChatRun(
+        {
+          provider: 'kimi',
+          runs: [
+            {
+              runId: 'kimi-run',
+              provider: 'kimi',
+              actualModel: 'kimi-k3',
+              providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true }
+            }
+          ]
+        },
+        'kimi-run'
+      )
+    ).toEqual({
+      provider: 'kimi',
+      model: 'kimi-k3',
+      reasoningEffort: 'max',
+      thinkingEnabled: true
+    })
+  })
+
+  it.each([
+    ['muse', 'muse-spark-1.2', 'museReasoningEffort', 'ultra'],
+    ['ollama', 'qwen3:32b', 'ollamaReasoningEffort', 'on']
+  ] as const)(
+    'carries persisted %s effort through the run snapshot',
+    (provider, model, key, effort) => {
+      expect(
+        seatFromSoloChatRun(
+          {
+            runs: [
+              {
+                runId: `${provider}-run`,
+                provider,
+                actualModel: model,
+                providerMetadata: { [key]: effort }
+              }
+            ]
+          },
+          `${provider}-run`
+        )
+      ).toEqual({ provider, model, reasoningEffort: effort })
+    }
+  )
+
+  it('refuses to invent a return seat when the exact source run is unavailable', () => {
+    expect(
+      seatFromSoloChatRun(
+        {
+          provider: 'codex',
+          lastActualModel: 'gpt-5.6-terra',
+          requestedModel: 'gpt-5.6-terra',
+          runs: []
+        },
+        'missing-run'
+      )
+    ).toBeNull()
   })
 })
 

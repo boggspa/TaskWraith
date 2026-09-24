@@ -1,16 +1,139 @@
 import { describe, expect, it } from 'vitest'
+import {
+  createEmptyHostSnapshot,
+  type HostParticipantProjection,
+  type HostThreadGoalProjection
+} from '../shared/hostProtocol'
 import { Ansi, stripAnsi, visibleWidth } from './ansi'
+import {
+  GHOST_BANNER_COLUMNS,
+  GHOST_BANNER_ROWS,
+  ghostBannerArt,
+  resolveGhostBanner
+} from './ghostBanner'
 import { renderTaskWraithTui } from './render'
-import { createTaskWraithTuiDemoState } from './state'
+import { TUI_SLASH_COMMANDS } from './slashCommands'
+import { resolveTuiTheme } from './palette'
+import {
+  createTaskWraithTuiDemoState,
+  type TaskWraithTuiState,
+  type TuiConnectionState,
+  type TuiHostPanel
+} from './state'
+import { TUI_GLYPHS_ASCII, TUI_GLYPHS_UNICODE } from './theme'
+
+/**
+ * The home screen renders when no thread is selected, so it cannot be reached
+ * from the demo state (which always carries one).
+ */
+function homeState(connection: TuiConnectionState): TaskWraithTuiState {
+  return {
+    connection,
+    input: '',
+    inputCursor: 0,
+    overlay: 'none',
+    overlayIndex: 0,
+    scrollOffset: 0,
+    missionFilter: 'active'
+  } as unknown as TaskWraithTuiState
+}
+
+function loadedHomeState(connection: TuiConnectionState = 'connected'): TaskWraithTuiState {
+  const state = homeState(connection)
+  state.snapshot = {
+    generatedAt: new Date(0).toISOString(),
+    sequence: 1,
+    workspaces: [
+      {
+        id: 'workspace',
+        name: 'AGBench',
+        path: '/Users/chrisizatt/Documents/AGBench',
+        pinned: true,
+        updatedAt: 1
+      }
+    ],
+    threads: []
+  }
+  state.activeWorkspaceId = 'workspace'
+  state.homeTune = {
+    providers: [
+      {
+        status: { providerId: 'codex', status: 'ready', label: 'Codex' },
+        offers: {
+          providerId: 'codex',
+          offerRevision: 'offer-1',
+          models: [
+            {
+              modelId: 'gpt-5.6-terra',
+              label: 'GPT-5.6-Terra',
+              available: true,
+              default: true,
+              reasoning: [{ reasoningId: 'ultra', label: 'Ultra', available: true }]
+            }
+          ],
+          postures: [
+            {
+              postureId: 'default',
+              label: 'Accept Edits',
+              available: true,
+              requiresExplicitConsent: false,
+              ceiling: 'workspace_write'
+            },
+            {
+              postureId: 'workspace_write',
+              label: 'Full WS Access',
+              available: true,
+              requiresExplicitConsent: true,
+              ceiling: 'workspace_write'
+            }
+          ]
+        }
+      }
+    ],
+    providerIndex: 0,
+    modelIndex: 0,
+    reasoningIndex: 0
+  }
+  return state
+}
+
+function renderedHome(
+  width: number,
+  height: number,
+  connection: TuiConnectionState = 'connecting',
+  glyphs = TUI_GLYPHS_UNICODE
+): string[] {
+  return renderTaskWraithTui(homeState(connection), {
+    width,
+    height,
+    ansi: new Ansi('none'),
+    animationEnabled: false,
+    glyphs
+  }).split('\n')
+}
 
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'missions' | 'help' | 'tune' = 'none'
+  overlay:
+    | 'none'
+    | 'context'
+    | 'threads'
+    | 'missions'
+    | 'help'
+    | 'tune'
+    | 'setup'
+    | 'git'
+    | 'seats' = 'none',
+  git?: TaskWraithTuiState['git']
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
   const state = createTaskWraithTuiDemoState(now)
   state.overlay = overlay
+  if (git) {
+    state.connection = 'connected'
+    state.git = git
+  }
   return renderTaskWraithTui(state, {
     width,
     height,
@@ -21,24 +144,320 @@ function renderedLines(
 }
 
 describe('TaskWraith TUI renderer', () => {
-  it('uses exactly 80x24 with a transcript canvas and three-row ensemble footer', () => {
+  it('renders a guided setup overlay and keeps the composer unavailable', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStart = {
+      kind: 'configure',
+      workspaceId: 'workspace-1',
+      providerId: 'provider-1',
+      threadId: 'thread-1',
+      acknowledgedPostureIds: [],
+      offers: {
+        providerId: 'provider-1',
+        offerRevision: 'offer-revision-1',
+        models: [
+          {
+            modelId: 'model-1',
+            label: 'Model One',
+            available: true,
+            reasoning: [
+              { reasoningId: 'reasoning-low', label: 'Low', available: true },
+              { reasoningId: 'reasoning-high', label: 'High', available: true }
+            ]
+          },
+          { modelId: 'model-2', label: 'Model Two', available: true, reasoning: [] }
+        ],
+        postures: [
+          {
+            postureId: 'plan',
+            label: 'Plan',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'read_only',
+            label: 'Ask',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: false,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access',
+            detail: 'Unavailable in the standalone Host.'
+          }
+        ]
+      }
+    }
+    state.coldStartModelIndex = 0
+    state.coldStartReasoningIndex = 0
+    state.coldStartPostureIndex = 2
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('Host setup')
+    expect(output).toContain('Model One')
+    expect(output).toContain('Model Two')
+    expect(output).toContain('Low')
+    expect(output).toContain('Plan')
+    expect(output).toContain('Ask')
+    expect(output).toContain('Accept Edits')
+    expect(output).toContain('Full WS Access · consent required · Space')
+    expect(output).toContain('Full Access (YOLO) · unavailable')
+    expect(output).toContain('Complete Host setup to compose')
+  })
+
+  it('renders posture rows in the exact theme-adaptive permission colors', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStart = {
+      kind: 'configure',
+      providerId: 'codex',
+      threadId: 'thread-1',
+      acknowledgedPostureIds: [],
+      offers: {
+        providerId: 'codex',
+        offerRevision: 'revision',
+        models: [{ modelId: 'model', label: 'Model', available: true, reasoning: [] }],
+        postures: [
+          {
+            postureId: 'plan',
+            label: 'Plan',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'read_only',
+            label: 'Ask',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'read'
+          },
+          {
+            postureId: 'default',
+            label: 'Accept Edits',
+            available: true,
+            requiresExplicitConsent: false,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'workspace_write',
+            label: 'Full WS Access',
+            available: true,
+            requiresExplicitConsent: true,
+            ceiling: 'workspace_write'
+          },
+          {
+            postureId: 'full_access',
+            label: 'Full Access (YOLO)',
+            available: false,
+            requiresExplicitConsent: true,
+            ceiling: 'full_access'
+          }
+        ]
+      }
+    }
+    state.coldStartPostureIndex = 2
+    const dark = renderTaskWraithTui(state, {
+      width: 120,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      theme: resolveTuiTheme('wraith-night'),
+      animationEnabled: false
+    })
+    expect(dark).toContain('\u001b[38;2;111;182;255mPlan')
+    expect(dark).toContain('\u001b[38;2;255;255;255mAccept Edits')
+    expect(dark).toContain('\u001b[38;2;245;158;11mFull WS Access')
+    expect(dark).toContain('\u001b[38;2;220;38;38mFull Access (YOLO)')
+    const light = renderTaskWraithTui(state, {
+      width: 120,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      theme: resolveTuiTheme('wraith-day'),
+      animationEnabled: false
+    })
+    expect(light).toContain('\u001b[38;2;25;118;210mPlan')
+    expect(light).toContain('\u001b[38;2;29;29;31mAccept Edits')
+    expect(light).toContain('\u001b[38;2;217;119;6mFull WS Access')
+    expect(light).toContain('\u001b[38;2;153;27;27mFull Access (YOLO)')
+  })
+
+  it('titles a cancellable /new flow as a new solo thread', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 24, 4, 0, 0))
+    state.overlay = 'setup'
+    state.coldStartIntent = 'new-thread'
+    state.coldStart = {
+      kind: 'workspace',
+      workspaceId: 'demo-workspace'
+    }
+    state.coldStartProviderChoices = [
+      { providerId: 'claude', status: 'ready', label: 'Claude' },
+      { providerId: 'kimi', status: 'auth_required', label: 'Kimi' }
+    ]
+    state.coldStartProviderIndex = 0
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('New solo thread')
+    expect(output).toContain('Esc cancels')
+    expect(output).toContain('Claude · ready')
+    expect(output).toContain('Kimi · auth required')
+    expect(output).toContain('Choose a provider')
+  })
+
+  it('uses exactly 80x24 with a transcript canvas and permission-framed composer', () => {
     const lines = renderedLines(80, 24)
     expect(lines).toHaveLength(24)
     expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
-    expect(lines.join('\n')).toContain('Claude · Lead · Opus 4.8 1M · Ultracode')
+    expect(lines.join('\n')).toContain('Claude · Opus 4.8 1M · Ultracode')
     expect(lines.join('\n')).toContain('ᜊ Working…  2s · ≈386 tokens')
-    expect(lines.at(-3)?.trimStart()).toMatch(/^ENS Build \+ Review/)
-    expect(lines.at(-2)).toContain('AGBench W+1')
-    expect(lines.at(-1)?.trimStart()).toMatch(/^› ▏ Ask TaskWraith…/)
+    expect(lines.join('\n')).not.toContain('ENS')
+    expect(lines.join('\n')).not.toMatch(/ENSEMBLE/)
+    expect(lines.at(-1)).toContain('AGBench W+1')
+    expect(lines.at(-3)?.trimStart()).toMatch(/^› ▏ Ask TaskWraith…/)
+    expect(lines.at(-4)).toContain('Full WS Access')
+    expect(stripAnsi(lines.at(-2) ?? '')).toMatch(/^─+$/)
+  })
+
+  it('advertises permission cycling for a connected thread or ready Home model', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.thread!.thread.status = 'idle'
+    state.hostProjection!.rounds = []
+
+    const render = (candidate: TaskWraithTuiState) =>
+      stripAnsi(
+        renderTaskWraithTui(candidate, {
+          width: 110,
+          height: 24,
+          ansi: new Ansi('none'),
+          now,
+          animationEnabled: false
+        })
+      )
+
+    expect(render(state)).toContain('Shift+Tab permissions')
+    const home = loadedHomeState()
+    expect(render(home)).toContain('Shift+Tab permissions')
+    home.homePermission = { providerId: 'codex', postureId: 'workspace_write' }
+    expect(render(home)).toContain('Full WS Access')
+    expect(render(homeState('connected'))).not.toContain('Shift+Tab permissions')
+    state.connection = 'demo'
+    expect(render(state)).not.toContain('Shift+Tab permissions')
+  })
+
+  it('never paints a permission tier the Host has withdrawn', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const home = loadedHomeState()
+    // The remembered Shift+Tab pick has lapsed since it was made. Naming any
+    // tier now is a claim the next send cannot honour, and `default` is the
+    // worst of them: it paints "Accept Edits" on a provider that has just
+    // stopped offering the tier the user actually chose.
+    home.homePermission = { providerId: 'codex', postureId: 'workspace_write' }
+    const tune = home.homeTune!
+    home.homeTune = {
+      ...tune,
+      providers: [
+        {
+          ...tune.providers[0],
+          offers: {
+            ...tune.providers[0].offers,
+            postures: tune.providers[0].offers.postures.map((posture) =>
+              posture.postureId === 'workspace_write' ? { ...posture, available: false } : posture
+            )
+          }
+        }
+      ]
+    }
+    const rendered = stripAnsi(
+      renderTaskWraithTui(home, {
+        width: 110,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    // Anchors the two negatives below against a Home frame that really drew.
+    expect(rendered).toContain('Shift+Tab permissions')
+    expect(rendered).not.toContain('Full WS Access')
+    expect(rendered).not.toContain('Accept Edits')
+  })
+
+  it('paints both composer rules and the permission label with the resolved tier colour', () => {
+    const dark = resolveTuiTheme('wraith-night')
+    const light = resolveTuiTheme('wraith-day')
+    const cases = [
+      ['plan', 'Plan', '38;2;111;182;255', '38;2;25;118;210'],
+      ['read_only', 'Ask', '38;2;111;182;255', '38;2;25;118;210'],
+      ['default', 'Accept Edits', '38;2;255;255;255', '38;2;29;29;31'],
+      ['workspace_write', 'Full WS Access', '38;2;245;158;11', '38;2;217;119;6'],
+      ['full_access', 'Full Access (YOLO)', '38;2;220;38;38', '38;2;153;27;27']
+    ] as const
+
+    for (const [permission, label, darkCode, lightCode] of cases) {
+      const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+      if (!state.thread) throw new Error('Demo state is incomplete')
+      state.thread.context.permission = permission
+      for (const [theme, code] of [
+        [dark, darkCode],
+        [light, lightCode]
+      ] as const) {
+        const lines = renderTaskWraithTui(state, {
+          width: 80,
+          height: 24,
+          ansi: new Ansi('truecolor'),
+          animationEnabled: false,
+          theme
+        }).split('\n')
+        expect(stripAnsi(lines.at(-4) ?? '')).toContain(label)
+        expect(lines.at(-4)).toContain(code)
+        expect(lines.at(-2)).toContain(code)
+      }
+    }
   })
 
   it('keeps the same semantic checksum inside a tall, narrow terminal', () => {
     const lines = renderedLines(64, 30)
     expect(lines).toHaveLength(30)
     expect(lines.every((line) => visibleWidth(line) === 64)).toBe(true)
-    expect(lines.at(-3)).toContain('ENS')
-    expect(lines.at(-2)).toContain('AGBench')
-    expect(lines.at(-1)).toContain('↵ send')
+    expect(lines.join('\n')).not.toContain('ENS')
+    expect(lines.at(-1)).toContain('AGBench')
+    expect(lines.at(-3)).toContain('↵ queue')
+    expect(lines.at(-3)).toContain('Esc steer')
   })
 
   it('moves full workspace and roster detail into one context lens', () => {
@@ -46,13 +465,13 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Context lens')
     expect(output).toContain('PRIMARY  AGBench  [write]')
     expect(output).toContain('SECONDARY  design-system  [write]')
-    expect(output).toContain('Build + Review · Continuous · fan-out Off · 0/32')
-    expect(output).toContain('Claude · Lead · Opus 4.8 1M')
-    expect(output).toContain('Kimi · Review · K3 · BG')
+    expect(output).toContain('Claude · Opus 4.8 1M')
+    expect(output).not.toContain('fan-out')
+    expect(output).not.toContain('Build + Review')
     expect(output).toContain('Esc close · Ctrl+O toggle')
   })
 
-  it('renders live and historical Host missions with distinct round, routing, and seat state', () => {
+  it('renders live and historical Host missions without ensemble roster chrome', () => {
     const activeLines = renderedLines(80, 24, 'missions')
     expect(activeLines).toHaveLength(24)
     expect(activeLines.every((line) => visibleWidth(line) === 80)).toBe(true)
@@ -61,9 +480,9 @@ describe('TaskWraith TUI renderer', () => {
     expect(active).toContain('LIVE · generation 1 · cursor 7')
     expect(active).toContain('Complete the TaskWraith TUI')
     expect(active).toContain('demo-round · running')
-    expect(active).toContain('continuous · fan-out off · 0/32')
+    expect(active).not.toContain('fan-out')
+    expect(active).not.toContain('CLA · Lead')
     expect(active).toContain('answered · 11111111-1111-4111-8111-111111111111')
-    expect(active).toContain('CLA · Lead · running')
     expect(active).not.toContain('Prove Host protocol foundations')
 
     const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
@@ -82,23 +501,69 @@ describe('TaskWraith TUI renderer', () => {
     expect(historical).not.toContain('Complete the TaskWraith TUI')
   })
 
-  it('renders the seat lens for ensembles and the model lens for solo threads', () => {
-    const seatLens = renderedLines(80, 24, 'tune')
-    expect(seatLens.every((line) => visibleWidth(line) === 80)).toBe(true)
-    const seatOutput = seatLens.join('\n')
-    expect(seatOutput).toContain('Seats (preview)')
-    expect(seatOutput).toContain('Claude · Lead')
-    expect(seatOutput).toContain('↑↓ seat · Enter toggle · applies immediately · Esc close')
+  it('names why a provider run failed instead of a bare provider:failed', () => {
+    // "models and turns randomly fail when there's nothing evidently wrong" —
+    // the overlay used to print `claude:failed` and stop there, because the
+    // reason never crossed the projection wire.
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+    state.overlay = 'missions'
+    const projection = state.hostProjection!
+    projection.runs.push({
+      runId: 'run-failed-1',
+      threadId: state.thread!.thread.id,
+      providerId: 'claude',
+      providerOutcome: 'failed',
+      errorCode: 'provider_failed',
+      failureReason: 'Provider running state recovered after Host restart.'
+    })
+    projection.rounds[0]!.providerRunIds = ['run-failed-1']
 
+    const rendered = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 120,
+        height: 30,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(rendered).toContain('claude:failed')
+    expect(rendered).toContain('Provider running state recovered after Host restart.')
+  })
+
+  it('does not print a dangling separator when a run carries no reason', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 6, 27, 4, 55, 37))
+    state.overlay = 'missions'
+    const projection = state.hostProjection!
+    projection.runs.push({
+      runId: 'run-failed-2',
+      threadId: state.thread!.thread.id,
+      providerId: 'claude',
+      providerOutcome: 'failed'
+    })
+    projection.rounds[0]!.providerRunIds = ['run-failed-2']
+
+    const rendered = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 120,
+        height: 30,
+        ansi: new Ansi('none'),
+        animationEnabled: false
+      })
+    )
+
+    expect(rendered).toContain('claude:failed')
+    expect(rendered).not.toContain('claude:failed ·')
+  })
+
+  it('renders the model lens for solo threads and Host-projected ensembles', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const solo = createTaskWraithTuiDemoState(now)
     solo.overlay = 'tune'
-    const { ensemble: _ensemble, ...soloThread } = solo.thread!.thread
-    solo.thread = { ...solo.thread!, thread: { ...soloThread, chatKind: 'single' } }
     solo.tuneEffortIndex = 1
     solo.offers = {
-      threadId: soloThread.id,
-      provider: soloThread.provider,
+      threadId: solo.thread!.thread.id,
+      provider: solo.thread!.thread.provider,
       currentModel: 'claude-opus-4-8-1m',
       currentReasoningEffort: 'medium',
       models: [
@@ -133,13 +598,58 @@ describe('TaskWraith TUI renderer', () => {
     expect(modelOutput).toContain('Fable 5 (retires 2027-01-01)')
     expect(modelOutput).toContain('low · [medium] · high')
     expect(modelOutput).toContain('↑↓ model · ←→ reasoning · Enter apply on next send · Esc close')
+
+    const ensemble = createTaskWraithTuiDemoState(now)
+    ensemble.overlay = 'tune'
+    ensemble.thread = {
+      ...ensemble.thread!,
+      thread: {
+        ...ensemble.thread!.thread,
+        chatKind: 'ensemble',
+        ensemble: {
+          preset: 'Build + Review',
+          mode: 'continuous',
+          fanout: 'off',
+          continuationHops: 0,
+          maxContinuationHops: 32,
+          backgroundCount: 0,
+          participants: [
+            {
+              id: 'lead',
+              provider: 'claude',
+              displayProvider: 'Claude',
+              hueKey: 'claude',
+              accent: '#d97757',
+              shortCode: 'CLD',
+              role: 'Lead',
+              order: 1,
+              stage: 'worker',
+              status: 'running',
+              active: true,
+              next: false,
+              enabled: true
+            }
+          ]
+        }
+      }
+    }
+    ensemble.offers = solo.offers
+    const ensembleTune = stripAnsi(
+      renderTaskWraithTui(ensemble, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(ensembleTune).toContain('Model (preview)')
+    expect(ensembleTune).not.toContain('Seats (preview)')
   })
 
   it('shows a staged model selection beside the HUD identity until it is sent', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)
-    const { ensemble: _ensemble, ...soloThread } = state.thread!.thread
-    state.thread = { ...state.thread!, thread: { ...soloThread, chatKind: 'single' } }
     state.notice = undefined
     state.pendingSelection = { model: 'claude-fable-5', label: 'Fable 5', reasoningEffort: 'high' }
     const output = renderTaskWraithTui(state, {
@@ -150,6 +660,140 @@ describe('TaskWraith TUI renderer', () => {
       animationEnabled: false
     })
     expect(stripAnsi(output)).toContain('→ Fable 5 high')
+  })
+
+  it('renders file-edit activity with the file path and colored line counts', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.notice = undefined
+    state.thread!.rows.push({
+      id: 'edit-row',
+      role: 'assistant',
+      kind: 'host-history',
+      speaker: 'Claude',
+      provider: state.thread!.thread.provider,
+      model: state.thread!.thread.provider.modelLabel,
+      reasoning: state.thread!.thread.reasoning,
+      text: 'Updated the requested file.',
+      timestamp: new Date(now).toISOString(),
+      truncated: false,
+      tools: [
+        {
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          file: 'src/example.ts',
+          additions: 4,
+          deletions: 2
+        }
+      ]
+    })
+    const output = renderTaskWraithTui(state, {
+      width: 100,
+      height: 24,
+      ansi: new Ansi('truecolor'),
+      now,
+      animationEnabled: false
+    })
+    expect(stripAnsi(output)).toContain('Edit File · src/example.ts  +4 -2')
+    // eslint-disable-next-line no-control-regex -- assert the intentional ANSI color prefix.
+    expect(output).toMatch(/\u001b\[38;2;[^m]+m\+4/)
+    // eslint-disable-next-line no-control-regex -- assert the intentional ANSI color prefix.
+    expect(output).toMatch(/\u001b\[38;2;[^m]+m-2/)
+  })
+
+  it('renders bounded inline diff hunks and command cards inside the transcript', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.notice = undefined
+    state.thread!.rows = [
+      {
+        id: 'rich-activity-row',
+        role: 'assistant',
+        kind: 'host-history',
+        speaker: 'Kimi',
+        provider: {
+          ...state.thread!.thread.provider,
+          runtimeProvider: 'kimi',
+          model: 'kimi-k3',
+          modelLabel: 'K3 (1M)'
+        },
+        text: 'I updated the requested file and ran the tests.',
+        timestamp: new Date(now).toISOString(),
+        truncated: false,
+        tools: [
+          {
+            name: 'Edit File',
+            category: 'write',
+            status: 'success',
+            file: 'src/example.ts',
+            additions: 2,
+            deletions: 1,
+            diff: {
+              hunks: [
+                {
+                  header: '@@ -18,2 +18,3 @@',
+                  lines: [
+                    { type: 'context', text: 'one', oldLine: 18, newLine: 18 },
+                    { type: 'del', text: 'two', oldLine: 19 },
+                    { type: 'add', text: 'three', newLine: 19 },
+                    { type: 'add', text: 'four', newLine: 20 }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            name: 'run_shell_command',
+            category: 'shell',
+            status: 'success',
+            command: {
+              command: 'npm test -- --runInBand',
+              output: '203 tests passed\n7 files passed',
+              exitCode: 0
+            }
+          }
+        ]
+      }
+    ]
+    state.thread!.thread = {
+      ...state.thread!.thread,
+      provider: {
+        ...state.thread!.thread.provider,
+        runtimeProvider: 'kimi',
+        model: 'kimi-k3',
+        modelLabel: 'K3 (1M)'
+      },
+      tokenEstimate: 220_000
+    }
+    const baseline = renderTaskWraithTui(state, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    }).split('\n')
+    expect(baseline).toHaveLength(24)
+    expect(baseline.every((line) => visibleWidth(line) === 80)).toBe(true)
+    expect(baseline.at(-1)).toContain('AGBench W+1')
+    expect(baseline.at(-1)).toContain('ctx 21%')
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 30,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('Edit File · src/example.ts  +2 -1')
+    expect(output).toContain('@@ -18,2 +18,3 @@')
+    expect(output).toContain('-two')
+    expect(output).toContain('+three')
+    expect(output).toContain('Ran a command')
+    expect(output).toContain('$ npm test -- --runInBand')
+    expect(output).toContain('exit 0')
+    expect(output).toContain('context: 21% (≈220k/1M)')
   })
 
   it('turns selected-thread approvals and questions into actionable footer states', () => {
@@ -217,7 +861,7 @@ describe('TaskWraith TUI renderer', () => {
         now
       })
         .split('\n')
-        .at(-1) ?? ''
+        .at(-3) ?? ''
     )
     expect(line).toContain('live insertion point▏')
     expect(line).not.toContain('the beginning')
@@ -236,7 +880,7 @@ describe('TaskWraith TUI renderer', () => {
         now
       })
         .split('\n')
-        .at(-1) ?? ''
+        .at(-3) ?? ''
     )
     expect(line).toContain('first line↵second line▏')
     expect(line).not.toContain('\n')
@@ -308,7 +952,7 @@ describe('TaskWraith TUI renderer', () => {
     const state = createTaskWraithTuiDemoState(now)
     if (!state.thread || !state.snapshot) throw new Error('Demo state is incomplete')
     state.thread.rows[0].speaker = 'You\u001b[2J'
-    state.thread.rows[2].tools![0].name = 'Read\u009b2J'
+    state.thread.rows[1].tools![0].name = 'Read\u009b2J'
     state.snapshot.workspaces[0].name = 'AGBench\u001b[?25h'
     state.hostProjection!.missions[0].title = 'Mission\u001b[2J'
     state.notice = { text: 'Saved\u001b[H', tone: 'good' }
@@ -337,5 +981,859 @@ describe('TaskWraith TUI renderer', () => {
     })
     expect(missionOutput).not.toContain('\u001b[2J')
     expect(stripAnsi(missionOutput)).toContain('Mission[2J')
+  })
+
+  it('keeps every ghost banner row a column-exact line of printable characters', () => {
+    // The Home renderer treats the banner as one compact left-aligned block, so
+    // every row must retain the same visible width.
+    for (const variant of ['unicode', 'ascii'] as const) {
+      const art = ghostBannerArt(variant)
+      expect(art).toHaveLength(GHOST_BANNER_ROWS)
+      for (const row of art) {
+        expect(visibleWidth(row)).toBe(GHOST_BANNER_COLUMNS)
+        const control = [...row].filter((character) => {
+          const codePoint = character.codePointAt(0) ?? 0
+          return codePoint < 32 || codePoint === 127
+        })
+        expect(control).toEqual([])
+      }
+    }
+  })
+
+  it('draws the Monoline Ghost banner and Host-accurate copy on the home screen', () => {
+    const lines = renderedHome(80, 24, 'connecting')
+    const output = lines.join('\n')
+
+    expect(lines).toHaveLength(24)
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('unicode')) {
+      expect(output).toContain(row.trim())
+    }
+    expect(output).toContain('TaskWraith')
+    expect(output).toContain('Looking for the TaskWraith Host')
+    expect(output).toContain('Type /help for commands')
+    // The TUI has spawned an ordinary Node Host since the pure-Node cutover.
+    expect(output).not.toContain('Electron')
+    expect(output).not.toContain('retrying locally')
+  })
+
+  it('keeps the ghost static while a special Home effort shimmers in provider hue', () => {
+    const swept = (frame: number) =>
+      renderTaskWraithTui(
+        { ...loadedHomeState(), animationFrame: frame },
+        {
+          width: 80,
+          height: 24,
+          ansi: new Ansi('truecolor'),
+          animationEnabled: true,
+          glyphs: TUI_GLYPHS_UNICODE
+        }
+      ).split('\n')
+
+    const first = swept(0)
+    expect(first.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('unicode')) {
+      expect(stripAnsi(first.join('\n'))).toContain(row.trim())
+    }
+    expect(stripAnsi(first.join('\n'))).toContain('Codex GPT-5.6-Terra · ULTRA · AGBench')
+    expect(stripAnsi(first.join('\n'))).toContain('connected · workspace ready · no active run')
+    expect(swept(1)).not.toEqual(first)
+    expect(stripAnsi(swept(1).join('\n'))).toBe(stripAnsi(first.join('\n')))
+  })
+
+  it('marks a provider that can never modify files, at the point of selection', () => {
+    // Otherwise a user picks it, asks for an edit, and gets only a failure —
+    // the reported "turns fail with nothing evidently wrong". Disclose, never
+    // hide: a hidden provider reads as a missing feature.
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+    state.homeTune!.providers = [
+      {
+        status: { providerId: 'antigravity', status: 'ready', label: 'AntiGravity' },
+        offers: {
+          providerId: 'antigravity',
+          offerRevision: 'agy-offer',
+          models: [{ modelId: 'agy-1', label: 'Gemini', available: true, reasoning: [] }],
+          postures: [
+            {
+              postureId: 'plan',
+              label: 'Plan',
+              available: true,
+              requiresExplicitConsent: false,
+              ceiling: 'read'
+            },
+            {
+              postureId: 'default',
+              label: 'Accept Edits',
+              available: false,
+              requiresExplicitConsent: false,
+              ceiling: 'workspace_write',
+              detail: 'The standalone Host has not yet proved the agy write-approval bridge.'
+            }
+          ]
+        }
+      }
+    ]
+    state.homeTune!.modelIndex = 0
+
+    // Wide enough that the Host's own reason is not elided by line fitting —
+    // the point is that we forward it, not that it survives every width.
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 160,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('read-only')
+    expect(output).toContain('AntiGravity cannot modify files')
+    expect(output).toContain('agy write-approval bridge')
+  })
+
+  it('does not brand a genuinely write-capable provider read-only', () => {
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).not.toContain('cannot modify files')
+  })
+
+  it('says when two offered permission tiers share one authority ceiling', () => {
+    // The user reported permissions are "switchable but I worry it doesn't work
+    // properly". For Claude both editing tiers reach the CLI as acceptEdits —
+    // deliberate and documented — so the honest fix is to say so, not re-map it.
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 100,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+
+    expect(output).toContain('share one authority ceiling')
+  })
+
+  it('renders every provider model in one combined picker without a provider submenu', () => {
+    const state = loadedHomeState()
+    state.overlay = 'tune'
+    state.homeTune!.providers.push({
+      status: { providerId: 'claude', status: 'ready', label: 'Claude' },
+      offers: {
+        providerId: 'claude',
+        offerRevision: 'claude-offer',
+        models: [
+          {
+            modelId: 'claude-opus-5',
+            label: 'Opus 5',
+            available: true,
+            reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+          }
+        ],
+        postures: []
+      }
+    })
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('Codex GPT-5.6-Terra')
+    expect(output).toContain('Claude Opus 5')
+    expect(output).not.toContain('Tab provider')
+  })
+
+  it('keeps the landed Home hero above a thread created from that canvas', () => {
+    const state = createTaskWraithTuiDemoState(Date.UTC(2026, 7, 30, 12, 0, 0))
+    state.homeContinuationThreadId = state.thread!.thread.id
+    state.thread = {
+      ...state.thread!,
+      rows: [
+        {
+          id: 'continued-row',
+          role: 'assistant',
+          kind: 'host-history',
+          speaker: 'Claude',
+          provider: state.thread!.thread.provider,
+          model: state.thread!.thread.provider.modelLabel,
+          reasoning: state.thread!.thread.reasoning,
+          text: 'The transcript continues beneath Home.',
+          timestamp: new Date(0).toISOString(),
+          truncated: false
+        }
+      ]
+    }
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('truecolor'),
+        animationEnabled: false
+      })
+    )
+    expect(output).toContain('TaskWraith')
+    expect(output).toContain('The transcript continues beneath Home.')
+  })
+
+  it('degrades the ghost banner to pure ASCII without changing its geometry', () => {
+    const lines = renderedHome(80, 24, 'offline', TUI_GLYPHS_ASCII)
+    const output = lines.join('\n')
+
+    expect(lines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    for (const row of ghostBannerArt('ascii')) {
+      expect(output).toContain(row.trim())
+    }
+    expect(output).toContain('Host offline')
+    // Nothing Unicode may survive `--ascii` — banner, separators, or status.
+    const nonAscii = [...output].filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint !== 10 && (codePoint < 32 || codePoint > 126)
+    })
+    expect(nonAscii).toEqual([])
+  })
+
+  it('falls back to the single ghost mark when the terminal cannot hold the banner', () => {
+    const eyes = ghostBannerArt('unicode')[4].trim()
+
+    const narrow = renderedHome(24, 24).join('\n')
+    expect(narrow).toContain(eyes)
+
+    const short = renderedHome(80, 12).join('\n')
+    expect(short).not.toContain(eyes)
+    expect(short).toContain(TUI_GLYPHS_UNICODE.ghost)
+
+    expect(
+      resolveGhostBanner({ width: 15, height: 24, variant: 'unicode', markGlyph: 'x' })
+    ).toEqual({ kind: 'mark', lines: ['x'], width: 1 })
+    expect(
+      resolveGhostBanner({ width: 80, height: 24, variant: 'unicode', markGlyph: 'x' }).kind
+    ).toBe('full')
+  })
+
+  it('names the Host rather than the App while the composer is offline', () => {
+    const output = renderedHome(80, 24, 'offline').join('\n')
+    expect(output).toContain('Waiting for the TaskWraith Host')
+    expect(output).not.toContain('Start TaskWraith to compose')
+  })
+
+  it('renders the slash-command registry as a bounded selectable palette', () => {
+    const lines = renderedLines(80, 30, 'help')
+    const output = lines.join('\n')
+
+    for (const entry of [
+      '/model [id]',
+      '/m',
+      '/think [level]',
+      '/reasoning',
+      '/new',
+      '/provider',
+      '/login',
+      '/status',
+      '/clear',
+      '/threads',
+      '/tune',
+      '/missions',
+      '/seats',
+      '/cancel'
+    ]) {
+      expect(output).toContain(entry)
+    }
+    // The overlay must stay inside the canvas: a clipped bottom border reads as
+    // a broken frame, and the two-row footer leaves the least room.
+    expect(output).toContain('the TaskWraith Host owns thread state')
+    expect(lines.some((line) => line.startsWith('└'))).toBe(true)
+    expect(output).not.toContain('Electron')
+    expect(output).not.toContain('sidecar')
+  })
+
+  it('filters and scrolls the command palette to its final destructive rows', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const filtered = createTaskWraithTuiDemoState(now)
+    filtered.overlay = 'help'
+    filtered.input = '/mo'
+    filtered.inputCursor = filtered.input.length
+    const filteredOutput = stripAnsi(
+      renderTaskWraithTui(filtered, {
+        width: 80,
+        height: 16,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+    expect(filteredOutput).toContain('/model [id]')
+    expect(filteredOutput).not.toContain('/workspace [path]')
+
+    const scrolled = createTaskWraithTuiDemoState(now)
+    scrolled.overlay = 'help'
+    // The second-to-last command, wherever the registry now ends.
+    scrolled.overlayIndex = TUI_SLASH_COMMANDS.length - 2
+    const scrolledLines = renderTaskWraithTui(scrolled, {
+      width: 80,
+      height: 12,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    }).split('\n')
+    const scrolledOutput = stripAnsi(scrolledLines.join('\n'))
+    expect(scrolledOutput).toContain('/quit')
+    expect(scrolledOutput).toContain('confirm after completion')
+    expect(scrolledLines).toHaveLength(12)
+    expect(scrolledLines.every((line) => visibleWidth(line) <= 80)).toBe(true)
+  })
+
+  it('renders the git overlay status rows, branch and scope tabs within 80 columns', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          files: [
+            {
+              path: 'src/tui/render.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            },
+            {
+              path: 'src/tui/new-file.ts',
+              index: 'A',
+              workingTree: 'A',
+              kind: 'created',
+              staged: true,
+              unstaged: false
+            },
+            {
+              path: 'notes.txt',
+              index: '?',
+              workingTree: '?',
+              kind: 'untracked',
+              staged: false,
+              unstaged: false
+            }
+          ]
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('main')
+    expect(output).toContain('0123456')
+    expect(output).toContain('src/tui/render.ts')
+    expect(output).toContain('staged 1')
+    expect(output).toContain('untracked 1')
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
+  })
+
+  it('banners a Host-truncated diff plainly and never presents it as complete', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'diff',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'diff',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: true,
+          text: 'diff --git a/big.ts b/big.ts\n@@ -1 +1 @@\n+partial'
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('truncated')
+    expect(output).toContain('partial view')
+  })
+
+  it('banners a truncated status result too — a partial tree must never read as complete', () => {
+    const lines = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: true,
+          files: [
+            {
+              path: 'src/tui/render.ts',
+              index: 'M',
+              workingTree: 'M',
+              kind: 'modified',
+              staged: false,
+              unstaged: true
+            }
+          ]
+        }
+      }
+    })
+    const output = lines.join('\n')
+    expect(output).toContain('truncated')
+    expect(output).toContain('partial view')
+    expect(output).toContain('src/tui/render.ts')
+  })
+
+  it('renders capability-unavailable calmly, and degrades to ASCII without the unicode branch glyph', () => {
+    const unavailable = renderedLines(80, 24, 'git', {
+      scope: 'status',
+      outcome: { available: false, reason: 'capability-unavailable' }
+    }).join('\n')
+    expect(unavailable).toContain('git is unavailable on this Host')
+    expect(unavailable).not.toContain('failed')
+
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.overlay = 'git'
+    state.git = {
+      scope: 'status',
+      outcome: {
+        available: true,
+        result: {
+          scope: 'status',
+          branch: 'main',
+          head: '0123456789abcdef0123456789abcdef01234567',
+          truncated: false,
+          files: []
+        }
+      }
+    }
+    const ascii = renderTaskWraithTui(state, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false,
+      glyphs: TUI_GLYPHS_ASCII
+    })
+    expect(ascii).not.toContain(TUI_GLYPHS_UNICODE.gitBranch)
+    expect(ascii).toContain(TUI_GLYPHS_ASCII.gitBranch)
+  })
+
+  /**
+   * The /seats lens rendered from an injected coherent projection. The demo
+   * state's providers family carries claude/grok, so provider display names
+   * resolve exactly as they do for the live lens.
+   */
+  function renderedSeatsLens(
+    width: number,
+    height: number,
+    seats: TaskWraithTuiState['seats'],
+    options: {
+      ascii?: boolean
+      chatKind?: 'single' | 'ensemble'
+      participants?: HostParticipantProjection[]
+    } = {}
+  ): string[] {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.connection = 'connected'
+    state.overlay = 'seats'
+    state.selectedThreadId = 'ens-thread'
+    const projection = state.hostProjection
+    if (!projection) throw new Error('demo state must carry a host projection')
+    projection.threads = [
+      {
+        id: 'ens-thread',
+        workspaceId: 'demo-workspace',
+        title: 'Ensemble thread',
+        chatKind: options.chatKind ?? 'ensemble',
+        archived: false,
+        pinned: false,
+        updatedAt: now,
+        messageCount: 3,
+        providerId: 'claude'
+      }
+    ]
+    projection.participants = options.participants ?? []
+    state.seats = seats
+    return renderTaskWraithTui(state, {
+      width,
+      height,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false,
+      glyphs: options.ascii ? TUI_GLYPHS_ASCII : TUI_GLYPHS_UNICODE
+    }).split('\n')
+  }
+
+  function lensParticipant(
+    id: string,
+    order: number,
+    enabled: boolean,
+    overrides: Partial<HostParticipantProjection> = {}
+  ): HostParticipantProjection {
+    return {
+      id,
+      threadId: 'ens-thread',
+      providerId: order % 2 === 0 ? 'claude' : 'grok',
+      role: order % 2 === 0 ? 'Captain' : 'Reviewer',
+      order,
+      enabled,
+      active: false,
+      ...overrides
+    }
+  }
+
+  it('renders the seats lens rows, seat glyphs and the desktop-only label within 80 columns', () => {
+    const lines = renderedSeatsLens(
+      80,
+      24,
+      { threadId: 'ens-thread' },
+      {
+        participants: [
+          lensParticipant('p1', 0, true, {
+            modelId: 'claude-opus-5',
+            stage: 'worker'
+          }),
+          lensParticipant('p2', 1, false, {
+            modelId: 'grok-4.6',
+            stage: 'reviewer'
+          })
+        ]
+      }
+    )
+    const output = lines.join('\n')
+    expect(output).toContain('Seats')
+    expect(output).toContain('Ensemble thread')
+    expect(output).toContain('Captain')
+    expect(output).toContain('Claude')
+    expect(output).toContain('claude-opus-5')
+    expect(output).toContain('worker')
+    expect(output).toContain('Grok')
+    expect(output).toContain('reviewer')
+    expect(output).toContain('enabled')
+    expect(output).toContain('disabled')
+    expect(output).toContain(TUI_GLYPHS_UNICODE.seatEnabled)
+    expect(output).toContain(TUI_GLYPHS_UNICODE.seatDisabled)
+    expect(output).toContain('2 seats')
+    // Round execution stays desktop-only; the lens says so where a
+    // seat-toggling user would look.
+    expect(output).toContain('rounds run in the desktop app')
+    expect(output).toContain('Enter/Space toggle')
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
+  })
+
+  it('degrades the seats lens to ASCII glyphs and carries no color codes under NO_COLOR', () => {
+    const lines = renderedSeatsLens(
+      80,
+      24,
+      { threadId: 'ens-thread' },
+      {
+        ascii: true,
+        participants: [lensParticipant('p1', 0, true), lensParticipant('p2', 1, false)]
+      }
+    )
+    const output = lines.join('\n')
+    expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatEnabled)
+    expect(output).not.toContain(TUI_GLYPHS_UNICODE.seatDisabled)
+    // NO_COLOR: the renderer was given Ansi('none'), so no escape may appear.
+    expect(output).not.toContain('\u001b')
+    // The overlay region (box-bordered lines at column 0) is pure ASCII:
+    // every separator and glyph came from the ASCII ladder.
+    const overlayLines = lines.filter((line) => line.startsWith('+') || line.startsWith('|'))
+    expect(overlayLines.length).toBeGreaterThan(2)
+    for (const line of overlayLines) {
+      const nonAscii = [...line].filter((character) => {
+        const codePoint = character.codePointAt(0) ?? 0
+        return codePoint < 32 || codePoint > 126
+      })
+      expect(nonAscii).toEqual([])
+    }
+  })
+
+  it('renders capability-unavailable and solo-thread states calmly, never as failures', () => {
+    const unavailable = renderedSeatsLens(80, 24, {
+      threadId: 'ens-thread',
+      unavailable: 'seat control is unavailable on this Host'
+    }).join('\n')
+    expect(unavailable).toContain('seat control is unavailable on this Host')
+    expect(unavailable).toContain('does not advertise the ensemble capability')
+    expect(unavailable).not.toContain('failed')
+
+    const solo = renderedSeatsLens(80, 24, { threadId: 'ens-thread' }, { chatKind: 'single' }).join(
+      '\n'
+    )
+    expect(solo).toContain('seats exist on ensemble threads')
+    expect(solo).not.toContain('failed')
+    expect(solo).not.toContain('rounds run in the desktop app')
+  })
+
+  it('renders the Host refusal in the lens, not only as a fading notice', () => {
+    const output = renderedSeatsLens(
+      80,
+      24,
+      {
+        threadId: 'ens-thread',
+        actionError: 'Host refused · an ensemble thread keeps at least one enabled seat'
+      },
+      { participants: [lensParticipant('p1', 0, true)] }
+    ).join('\n')
+    expect(output).toContain('at least one enabled seat')
+    // A refused seat shows its pre-toggle state: still enabled.
+    expect(output).toContain('enabled')
+  })
+
+  it('windows a long roster and banners the hidden seats', () => {
+    const participants = Array.from({ length: 30 }, (_, index) =>
+      lensParticipant(`p${index}`, index, index % 3 !== 0)
+    )
+    const lines = renderedSeatsLens(80, 24, { threadId: 'ens-thread' }, { participants })
+    const output = lines.join('\n')
+    expect(output).toContain('more')
+    expect(output).toContain('30 seats')
+    expect(lines.length).toBeLessThanOrEqual(24)
+    for (const line of lines) {
+      expect(visibleWidth(stripAnsi(line))).toBeLessThanOrEqual(80)
+    }
+  })
+  it('names the Host, not the App, while the tune lens is fetching offers', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'tune'
+    state.offersLoading = true
+    state.offers = undefined
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    // The standalone Node Host serves this catalogue itself — there is no App
+    // in the loop, and saying otherwise sends a solo-CLI user hunting for one.
+    expect(frame).toContain('Fetching offers from the Host')
+    expect(frame).not.toContain('from the App')
+  })
+  it('marks the workspace new threads will land in inside the /workspace picker', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'workspaces'
+    state.activeWorkspaceId = 'ws-2'
+    state.snapshot = {
+      ...state.snapshot!,
+      workspaces: [
+        { id: 'ws-1', name: 'GUIGemini', path: '/tmp/guigemini', pinned: false, updatedAt: 0 },
+        { id: 'ws-2', name: 'AGBench', path: '/tmp/agbench', pinned: true, updatedAt: 0 }
+      ]
+    }
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    // The marker must sit on the PICKED workspace, never the first registered
+    // one -- naming the wrong target is the failure this lens exists to prevent.
+    const marked = frame.split('\n').find((line) => line.includes('new threads land here'))
+    expect(marked).toContain('AGBench')
+    expect(marked).not.toContain('GUIGemini')
+  })
+  it('shows the thread goal read-only and flags a Host-truncated objective', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const goal: HostThreadGoalProjection = {
+      id: 'goal-1',
+      objective: 'Ship the standalone goal lens.',
+      status: 'blocked',
+      mode: 'taskwraith_steered',
+      blockedReason: 'waiting on review',
+      acceptanceCriteria: ['The TUI shows the objective.'],
+      wallMs: 94_440_000,
+      activeMs: 94_440_000,
+      objectiveTruncated: true
+    }
+    const state = createTaskWraithTuiDemoState(now)
+    state.overlay = 'goal'
+    state.selectedThreadId = 'thread-goal'
+    state.hostProjection = {
+      ...createEmptyHostSnapshot({
+        generation: 1,
+        cursor: 1,
+        freshness: 'live',
+        generatedAt: new Date(0).toISOString()
+      }),
+      threads: [
+        {
+          id: 'thread-goal',
+          workspaceId: null,
+          title: 'Goal thread',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 0,
+          messageCount: 0,
+          goal
+        }
+      ]
+    }
+    const frame = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    expect(frame).toContain('Ship the standalone goal lens.')
+    expect(frame).toContain('waiting on review')
+    expect(frame).toContain('The TUI shows the objective.')
+    expect(frame).toContain('Guided by TaskWraith')
+    // Ledgers span days, so hours must never roll up into a bare minute count.
+    expect(frame).toContain('26h 14m')
+    // A clipped objective must never read as the whole objective.
+    expect(frame).toContain('truncated by the Host')
+    // The App authors goals; the lens must not imply the CLI can steer one.
+    expect(frame).toContain('read-only')
+
+    state.hostProjection.threads[0] = { ...state.hostProjection.threads[0], goal: undefined }
+    const empty = renderTaskWraithTui(state, {
+      width: 110,
+      height: 34,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    expect(empty).toContain('no durable goal')
+    expect(empty).not.toContain('Ship the standalone goal lens.')
+  })
+
+  describe('the /host lens', () => {
+    const DEEP_PROFILE =
+      '/Users/someone/Library/Application Support/TaskWraith/profiles/very/deep/nesting/that/goes/on/profiles/zeta'
+
+    function renderedHostLens(
+      width: number,
+      height: number,
+      panel: TuiHostPanel | undefined,
+      glyphs = TUI_GLYPHS_UNICODE
+    ): string[] {
+      const now = Date.UTC(2026, 8, 23, 18, 0, 0)
+      const state = createTaskWraithTuiDemoState(now)
+      state.overlay = 'host'
+      state.hostPanel = panel
+      return renderTaskWraithTui(state, {
+        width,
+        height,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false,
+        glyphs
+      })
+        .split('\n')
+        .map(stripAnsi)
+    }
+
+    function stopPanel(count: number): TuiHostPanel {
+      return {
+        title: 'Stop Hosts',
+        fields: [{ label: 'scope', value: 'every Host (--all)' }],
+        hostsHeading: `Stops ${count} Hosts`,
+        hosts: Array.from({ length: count }, (_, index) => ({
+          pid: `pid ${101 + index}`,
+          holders: 'holders 1+0',
+          profile: index === 0 ? DEEP_PROFILE : `/profiles/p${index}`
+        })),
+        notes: ['1 other Host outside this scope keeps running.'],
+        prompt: `y stops all ${count} Hosts · any other key cancels`,
+        hint: 'Nothing is stopped unless you press y.'
+      }
+    }
+
+    it('draws Host rows with pid and holders whole and a long profile cut in the middle', () => {
+      const lines = renderedHostLens(60, 24, stopPanel(2))
+      const output = lines.join('\n')
+      expect(output).toContain('Stop Hosts')
+      expect(output).toContain('Stops 2 Hosts')
+      const deep = lines.find((line) => line.includes('pid 101'))
+      expect(deep).toBeDefined()
+      expect(deep).toContain('pid 101  holders 1+0  /Users')
+      expect(deep).toContain('…')
+      expect(deep).toContain('profiles/zeta')
+      expect(output).toContain('pid 102  holders 1+0  /profiles/p1')
+      expect(output).toContain('y stops all 2 Hosts · any other key cancels')
+      for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(60)
+    })
+
+    it('counts the Host rows past the viewport and keeps the prompt that states the total', () => {
+      const lines = renderedHostLens(80, 16, stopPanel(30))
+      const output = lines.join('\n')
+      const drawn = lines.filter((line) => /pid 1\d\d {2}holders/.test(line)).length
+      expect(drawn).toBeGreaterThan(0)
+      expect(drawn).toBeLessThan(30)
+      expect(output).toContain(`+${30 - drawn} more, not shown`)
+      expect(output).toContain('y stops all 30 Hosts · any other key cancels')
+      expect(output).toContain('Nothing is stopped unless you press y.')
+      expect(lines.length).toBeLessThanOrEqual(16)
+    })
+
+    it('keeps an armed prompt on screen at the smallest terminal, dropping notes first', () => {
+      const panel = stopPanel(30)
+      const lines = renderedHostLens(80, 8, {
+        ...panel,
+        notes: [
+          '1 registry entry could not be read.',
+          '2 other Hosts outside this scope keep running.',
+          "This TUI's own Host is included; the TUI stays offline until /host restart."
+        ]
+      })
+      const output = lines.join('\n')
+      expect(output).toContain('y stops all 30 Hosts · any other key cancels')
+      expect(output).toMatch(/\+\d+ more, not shown/)
+    })
+
+    it('never lets a long note take more than half of a Host row from the profile', () => {
+      const panel = stopPanel(1)
+      const lines = renderedHostLens(80, 24, {
+        ...panel,
+        hosts: panel.hosts?.map((host) => ({
+          ...host,
+          note: 'inconsistent (a record naming the pid is not contradicted by the process now at it)'
+        }))
+      })
+      const row = lines.find((line) => line.includes('pid 101'))
+      expect(row).toContain('pid 101  holders 1+0  ')
+      expect(row).toContain('profiles/zeta')
+      expect(row).toContain('inconsistent')
+    })
+
+    it('degrades to ASCII under --ascii, separators and ellipses included', () => {
+      const lines = renderedHostLens(60, 24, stopPanel(2), TUI_GLYPHS_ASCII)
+      const lens = lines.filter((line) => line.startsWith('+') || line.startsWith('|'))
+      expect(lens.join('\n')).toContain('y stops all 2 Hosts . any other key cancels')
+      for (const line of lens) {
+        expect([...line].filter((character) => (character.codePointAt(0) ?? 0) > 126)).toEqual([])
+      }
+    })
+
+    it('says it is reading the Host until a panel arrives', () => {
+      const output = renderedHostLens(80, 24, undefined).join('\n')
+      expect(output).toContain('Reading the Host…')
+      expect(output).not.toContain('y stops')
+    })
   })
 })

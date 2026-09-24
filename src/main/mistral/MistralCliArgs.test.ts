@@ -4,10 +4,15 @@ import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_DEVSTRAL_SMALL,
   MISTRAL_MODEL_MEDIUM,
+  MISTRAL_READ_ONLY_PROMPT_PREAMBLE,
+  MISTRAL_SEAT_MODELS,
+  MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS,
   MISTRAL_UNGATED_SESSION_MODES,
+  MISTRAL_WRITE_MODE_PROMPT_PREAMBLE,
   applyMistralPromptPreamble,
   buildMistralAcpCliArgs,
   mistralCredentialEnvScrubbed,
+  mistralSessionModeFallbacksForSeat,
   mistralSessionModeForSeat,
   mistralSessionModeIsGated,
   mistralWriteCapable,
@@ -16,6 +21,10 @@ import {
   normalizeMistralThinkingLevel,
   scrubMistralCredentialEnv
 } from './MistralCliArgs'
+import {
+  AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
+  noToolsOverrideClause
+} from '../providers/NoToolsOverrideClause'
 
 describe('mistral binary + argv', () => {
   it('targets vibe-acp, never the interactive TUI', () => {
@@ -54,9 +63,11 @@ describe('mistralWriteCapable', () => {
 })
 
 describe('session mode selection', () => {
-  it('maps a read-only seat to plan and a write seat to default', () => {
+  it('maps a read-only seat to plan and a write seat to ask with a legacy fallback', () => {
     expect(mistralSessionModeForSeat(true)).toBe('plan')
-    expect(mistralSessionModeForSeat(false)).toBe('default')
+    expect(mistralSessionModeFallbacksForSeat(true)).toEqual([])
+    expect(mistralSessionModeForSeat(false)).toBe('ask')
+    expect(mistralSessionModeFallbacksForSeat(false)).toEqual(['default'])
   })
 
   it('never selects a mode that bypasses the host approval gate', () => {
@@ -73,24 +84,43 @@ describe('session mode selection', () => {
   it('classifies the ungated modes as ungated', () => {
     expect(mistralSessionModeIsGated('auto-approve')).toBe(false)
     expect(mistralSessionModeIsGated('accept-edits')).toBe(false)
+    expect(mistralSessionModeIsGated('ask')).toBe(true)
+    expect(mistralSessionModeIsGated('default')).toBe(true)
     expect(mistralSessionModeIsGated('chat')).toBe(true)
   })
 })
 
 describe('normalizeMistralModel', () => {
-  it('defaults to devstral-small', () => {
-    expect(MISTRAL_DEFAULT_MODEL).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel('')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel(null)).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel(undefined)).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
+  it('defaults to Mistral Medium 3.5, matching Vibe 2.25 DEFAULT_MODELS', () => {
+    // Vibe 2.25.0 shipped Medium 3.5 as the only cloud default (replacing
+    // Devstral 2 / Devstral Small). Offering the retired hosted ids would
+    // fail session/set_config_option on current vibe-acp.
+    expect(MISTRAL_DEFAULT_MODEL).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel(null)).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel(undefined)).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('does not offer sunset hosted Devstral ids on the Vibe seat', () => {
+    expect(MISTRAL_SEAT_MODELS).not.toContain(MISTRAL_MODEL_DEVSTRAL_SMALL)
+    expect(MISTRAL_SEAT_MODELS).not.toContain('devstral-2512')
+    expect(MISTRAL_SEAT_MODELS).toContain(MISTRAL_MODEL_MEDIUM)
+    expect(MISTRAL_SEAT_MODELS).toContain('glm-5-2')
+    expect([...MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS]).toEqual(
+      expect.arrayContaining(['devstral-small', 'devstral-small-latest', 'devstral-2512'])
+    )
   })
 
   it('accepts both the ACP alias and the canonical Vibe name', () => {
     expect(normalizeMistralModel('mistral-medium-3.5')).toBe(MISTRAL_MODEL_MEDIUM)
     expect(normalizeMistralModel('mistral-vibe-cli-latest')).toBe(MISTRAL_MODEL_MEDIUM)
-    expect(normalizeMistralModel('devstral-small')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
-    expect(normalizeMistralModel('devstral-small-latest')).toBe(MISTRAL_MODEL_DEVSTRAL_SMALL)
     expect(normalizeMistralModel('  MISTRAL-MEDIUM-3.5  ')).toBe(MISTRAL_MODEL_MEDIUM)
+  })
+
+  it('remaps sunset hosted Devstral ids to Medium 3.5 so stale threads still launch', () => {
+    expect(normalizeMistralModel('devstral-small')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('devstral-small-latest')).toBe(MISTRAL_MODEL_MEDIUM)
+    expect(normalizeMistralModel('devstral-2512')).toBe(MISTRAL_MODEL_MEDIUM)
   })
 
   it('accepts bare Mistral API models', () => {
@@ -100,6 +130,12 @@ describe('normalizeMistralModel', () => {
     expect(normalizeMistralModel('ministral-14b-2512')).toBe('ministral-14b-2512')
     expect(normalizeMistralModel('ministral-8b-2512')).toBe('ministral-8b-2512')
     expect(normalizeMistralModel('ministral-3b-2512')).toBe('ministral-3b-2512')
+  })
+
+  it('accepts the hosted GLM-5.2 subscription alias', () => {
+    // `glm-5-2` runs on the Vibe subscription (distinct from the API `zai-glm-5-2`).
+    // It must be in MISTRAL_SEAT_MODELS or it silently clamps to the default at launch.
+    expect(normalizeMistralModel('glm-5-2')).toBe('glm-5-2')
   })
 
   it('never forwards a Pi upstream wire id', () => {
@@ -192,6 +228,22 @@ describe('prompt preamble', () => {
     // steer is preventive UX, and the host gate remains the actual safety floor.
     expect(applyMistralPromptPreamble('x', false)).toContain('do NOT end your turn')
   })
+
+  it('names the broker edit route and attributes native refusals without promising human approval', () => {
+    const prompt = applyMistralPromptPreamble('x', true)
+    expect(prompt).toContain('TaskWraith_replace')
+    expect(prompt).toContain('do not open a human approval card')
+    expect(prompt).toContain('same refusal repeats without new evidence')
+    // The finish-the-lane consequent must not be reachable before the seat has
+    // tried anything; unprefixed, it arrived 32 sentences in and read as an
+    // instruction to describe the work instead of doing it.
+    expect(prompt).toContain('Only after you have attempted the route')
+    // approval_status is a broker tool; this preamble cannot know one is listed.
+    expect(prompt).not.toContain('approval_status')
+    expect(prompt).not.toContain('expect an approval round-trip')
+    expect(prompt).not.toContain('use your edit tools')
+    expect(applyMistralPromptPreamble('x', false)).toContain('within your assigned workspace scope')
+  })
 })
 
 describe('normalizeMistralPlanId', () => {
@@ -208,5 +260,22 @@ describe('normalizeMistralPlanId', () => {
     expect(normalizeMistralPlanId('enterprise')).toBe('unknown')
     expect(normalizeMistralPlanId('')).toBe('unknown')
     expect(normalizeMistralPlanId(null)).toBe('unknown')
+  })
+})
+
+describe('no-tools clause in the Mistral preambles', () => {
+  it('embeds the conditional clause, not the phrasing a seat misread as a ban', () => {
+    expect(MISTRAL_READ_ONLY_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('read, shell, file, or any other tool')
+    )
+    expect(MISTRAL_WRITE_MODE_PROMPT_PREAMBLE).toContain(
+      noToolsOverrideClause('shell, file, or any other tool')
+    )
+    for (const preamble of [
+      MISTRAL_READ_ONLY_PROMPT_PREAMBLE,
+      MISTRAL_WRITE_MODE_PROMPT_PREAMBLE
+    ]) {
+      expect(preamble).not.toContain(AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE)
+    }
   })
 })

@@ -9,24 +9,43 @@ import Foundation
 import SwiftUI
 
 /// Compact thumbs-up / thumbs-down strip with optional poor-reason sheet.
-struct AssistantMessageFeedbackBar: View {
+/// `leadingContent` lets the transcript place its ordinary message actions in
+/// the SAME row while this view keeps ownership of the expandable reason UI.
+struct AssistantMessageFeedbackBar<LeadingContent: View>: View {
     let item: AssistantMessageFeedbackItem
     /// When true, tapping thumbs-down expands the six desktop reason codes.
-    var showsReasonPicker: Bool = true
+    let showsReasonPicker: Bool
     let onFeedback: (AssistantMessageFeedbackRequest) -> Void
+    let leadingContent: LeadingContent
 
     @State private var showsReasons = false
     @State private var noteDraft = ""
+
+    init(
+        item: AssistantMessageFeedbackItem,
+        showsReasonPicker: Bool = true,
+        onFeedback: @escaping (AssistantMessageFeedbackRequest) -> Void,
+        @ViewBuilder leadingContent: () -> LeadingContent
+    ) {
+        self.item = item
+        self.showsReasonPicker = showsReasonPicker
+        self.onFeedback = onFeedback
+        self.leadingContent = leadingContent()
+    }
 
     var body: some View {
         if AssistantMessageFeedbackModel.canRate(item) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 2) {
-                    voteButton(for: .up)
-                    voteButton(for: .down)
+                    leadingContent
+                    HStack(spacing: 2) {
+                        voteButton(for: .up)
+                        voteButton(for: .down)
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Assistant message feedback")
+                    Spacer(minLength: 0)
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Assistant message feedback")
 
                 if showsReasonPicker, showsReasons || item.current?.vote == .down {
                     reasonPicker
@@ -46,9 +65,9 @@ struct AssistantMessageFeedbackBar: View {
                     selected: selected
                 )
             )
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(selected ? selectedColor(for: vote) : TWTheme.textMuted)
-            .frame(width: 28, height: 24)
+            .frame(width: 26, height: 24)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -150,6 +169,21 @@ struct AssistantMessageFeedbackBar: View {
         case .up: return TWTheme.statusSuccess
         case .down: return TWTheme.statusFailed
         }
+    }
+}
+
+extension AssistantMessageFeedbackBar where LeadingContent == EmptyView {
+    init(
+        item: AssistantMessageFeedbackItem,
+        showsReasonPicker: Bool = true,
+        onFeedback: @escaping (AssistantMessageFeedbackRequest) -> Void
+    ) {
+        self.init(
+            item: item,
+            showsReasonPicker: showsReasonPicker,
+            onFeedback: onFeedback,
+            leadingContent: { EmptyView() }
+        )
     }
 }
 

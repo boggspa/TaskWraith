@@ -20,6 +20,7 @@ describe('buildRendererDiagnosticClientSample', () => {
       },
       activeChatId: 'chat-1',
       activeChatMessageCount: 11_574,
+      domNodeCount: 98765.9,
       chatUpdates: counters
     })
 
@@ -29,6 +30,7 @@ describe('buildRendererDiagnosticClientSample', () => {
       v8HeapUsedBytes: 101,
       v8HeapTotalBytes: 202,
       v8HeapLimitBytes: 303,
+      domNodeCount: 98765,
       chatUpdates: counters
     })
     expect(sample.chatUpdates).not.toBe(counters)

@@ -6,7 +6,7 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { buildSync } from 'esbuild'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
@@ -20,13 +20,16 @@ import {
   canonicalBridgeLogDirectory,
   clearBridgeSubprocessLogHistory,
   endBridgeSubprocessLogHistoryClear,
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
+  GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   McpBridgeRuntime,
   brokerRequest,
   handleMcpJsonRpcMessage,
@@ -36,9 +39,55 @@ import {
   writeMcpFrame,
   writeMcpPayload
 } from './McpBridgeRuntime'
-import { GATEWAY_V13_ADDED_TOOL_NAMES } from './McpToolProfiles'
+import {
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_V13_ADDED_TOOL_NAMES
+} from './McpToolProfiles'
 
 const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
+
+/**
+ * The in-process McpBridgeRuntime cases log through `bridgeLog`, which (with
+ * no socket-bound location, as in Electron main) resolves the canonical
+ * `canonicalBridgeLogDirectory()` under os.homedir(): ~/Library/Logs/TaskWraith
+ * on darwin. So the whole file runs with HOME, USERPROFILE (win32's
+ * os.homedir()) and the XDG roots in a temporary directory, pinned before the
+ * first log line resolves and caches that location, and restored after all
+ * cases. The spawned bridge processes below pin their own homes.
+ */
+const HERMETIC_HOME_VARIABLES = [
+  'HOME',
+  'USERPROFILE',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME'
+] as const
+const realHomeEnvironment = new Map<string, string | undefined>()
+let hermeticHome = ''
+beforeAll(() => {
+  hermeticHome = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'mcp-bridge-safe-write-home-')))
+  const values: Record<(typeof HERMETIC_HOME_VARIABLES)[number], string> = {
+    HOME: hermeticHome,
+    USERPROFILE: hermeticHome,
+    XDG_CONFIG_HOME: join(hermeticHome, '.config'),
+    XDG_CACHE_HOME: join(hermeticHome, '.cache'),
+    XDG_DATA_HOME: join(hermeticHome, '.local', 'share'),
+    XDG_STATE_HOME: join(hermeticHome, '.local', 'state')
+  }
+  for (const name of HERMETIC_HOME_VARIABLES) {
+    realHomeEnvironment.set(name, process.env[name])
+    process.env[name] = values[name]
+  }
+})
+afterAll(() => {
+  for (const [name, value] of realHomeEnvironment) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  fs.rmSync(hermeticHome, { recursive: true, force: true })
+})
 
 function privateBridgeTestDirectory(prefix: string): string {
   const path = fs.mkdtempSync(join(tmpdir(), prefix))
@@ -1532,6 +1581,256 @@ describe('MCP bridge stream writes', () => {
     ])
   })
 
+  it('advertises the exact lean solo direct set and compacts its v13/v17 transport', () => {
+    const chunks: string[] = []
+    const names = [
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      'ensemble_send',
+      'ensemble_control',
+      'scout_brief',
+      'canvas_sketch_update',
+      'mesh_scene_present',
+      'mesh_topology_edit'
+    ]
+    const definitions = [...new Set(names)].map((name) => ({
+      name,
+      description: `Canonical ${name} transport prose.`
+    }))
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => SOCKET_PATH,
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => definitions,
+        env: {
+          TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+          TASKWRAITH_MCP_SOLO_SUBSET: '1',
+          TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
+          TASKWRAITH_MCP_MESH_DIRECT: '1',
+          TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '1',
+          TASKWRAITH_MCP_SKETCH_DIRECT: '1',
+          TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '1'
+        },
+        stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+      },
+      SOCKET_PATH,
+      'token-1',
+      { jsonrpc: '2.0', id: 161, method: 'tools/list' },
+      'line'
+    )
+
+    const response = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string; description?: string }> }
+    }
+    expect(response.result.tools.map((tool) => tool.name)).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      'capability_search',
+      'capability_invoke'
+    ])
+    expect(response.result.tools.find((tool) => tool.name === 'ensemble_await')?.description).toBe(
+      'JOIN wait: lanes/subthreads/waves/executions; graph progress+result; default45s,max600s.'
+    )
+    expect(response.result.tools.find((tool) => tool.name === 'image_view')?.description).toBe(
+      'View up to 8 existing workspace/chat raster images. Read-only.'
+    )
+
+    chunks.length = 0
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => SOCKET_PATH,
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => definitions,
+        env: { TASKWRAITH_MCP_SOLO_SUBSET: '1' },
+        stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+      },
+      SOCKET_PATH,
+      'token-1',
+      { jsonrpc: '2.0', id: 163, method: 'tools/list' },
+      'line'
+    )
+    const soloOnlyResponse = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(soloOnlyResponse.result.tools.map((tool) => tool.name)).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      'capability_search',
+      'capability_invoke'
+    ])
+  })
+
+  it('exposes direct opportunity redemption only with the v18 selector on tools/list and tools/call', async () => {
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [
+            { name: 'read_file' },
+            { name: 'redeem_permission_opportunity' }
+          ],
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        { jsonrpc: '2.0', id: 164, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
+    }
+
+    const legacy = list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacy).not.toContain('redeem_permission_opportunity')
+    const legacyFull = list({})
+    expect(legacyFull).not.toContain('redeem_permission_opportunity')
+    const v18 = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(v18).toContain('redeem_permission_opportunity')
+    const soloV2 = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_SOLO_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(soloV2).toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS).toContain('redeem_permission_opportunity')
+
+    const call = async (env: Record<string, string>) => {
+      const chunks: string[] = []
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'redeemed' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 165,
+          method: 'tools/call',
+          params: {
+            name: 'redeem_permission_opportunity',
+            arguments: { permissionOpportunityId: `twp_${'a'.repeat(43)}` }
+          }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return {
+        brokerRequest,
+        response: JSON.parse(chunks.join('').trim()) as Record<string, unknown>
+      }
+    }
+
+    const legacyCall = await call({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacyCall.brokerRequest).not.toHaveBeenCalled()
+    expect(legacyCall.response).toMatchObject({ error: { code: -32601 } })
+    const legacyFullCall = await call({})
+    expect(legacyFullCall.brokerRequest).not.toHaveBeenCalled()
+    expect(legacyFullCall.response).toMatchObject({ error: { code: -32601 } })
+    const v18Call = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '1'
+    })
+    expect(v18Call.brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'redeem_permission_opportunity' })
+    )
+  })
+
+  it('rejects demoted solo direct calls but preserves them behind capability_invoke', async () => {
+    const invoke = async (name: string, args: Record<string, unknown>, gatewaySubset = true) => {
+      const chunks: string[] = []
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'accepted' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env: {
+            ...(gatewaySubset ? { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' } : {}),
+            TASKWRAITH_MCP_SOLO_SUBSET: '1',
+            TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
+            TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '1'
+          },
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 162,
+          method: 'tools/call',
+          params: { name, arguments: args }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return {
+        brokerRequest,
+        response: JSON.parse(chunks.join('').trim()) as Record<string, unknown>
+      }
+    }
+
+    const directAllowed = await invoke('read_file', { path: 'README.md' })
+    expect(directAllowed.brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'read_file' })
+    )
+
+    const directDemoted = await invoke('ensemble_send', {
+      recipients: ['Reviewer'],
+      message: 'Please check this.'
+    })
+    expect(directDemoted.brokerRequest).not.toHaveBeenCalled()
+    expect(directDemoted.response).toMatchObject({
+      error: { code: -32601, message: expect.stringContaining('solo gateway MCP profile') }
+    })
+
+    const soloOnlyDemoted = await invoke(
+      'ensemble_send',
+      { recipients: ['Reviewer'], message: 'Please check this.' },
+      false
+    )
+    expect(soloOnlyDemoted.brokerRequest).not.toHaveBeenCalled()
+    expect(soloOnlyDemoted.response).toMatchObject({ error: { code: -32601 } })
+
+    const invokedDemoted = await invoke('capability_invoke', {
+      name: 'ensemble_send',
+      arguments: { recipients: ['Reviewer'], message: 'Please check this.' }
+    })
+    expect(invokedDemoted.brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({
+        tool: 'capability_invoke',
+        arguments: {
+          name: 'ensemble_send',
+          arguments: { recipients: ['Reviewer'], message: 'Please check this.' }
+        }
+      })
+    )
+
+    const portableControl = await invoke('capability_invoke', {
+      name: 'ensemble_control',
+      arguments: { action: 'status' }
+    })
+    expect(portableControl.brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'capability_invoke' })
+    )
+  })
+
   it('keeps frozen Mesh scene direct and adds topology only with the v15 receipt flag', () => {
     const tools = [
       { name: 'read_file' },
@@ -1723,7 +2022,8 @@ describe('MCP bridge stream writes', () => {
         name: 'delegate_wave',
         description: 'Canonical delegate_wave prose kept for non-v13 seats.'
       },
-      { name: 'ensemble_roster_edit' }
+      { name: 'ensemble_roster_edit' },
+      { name: 'ultra_task', description: 'Canonical ultra_task prose kept for non-v13 seats.' }
     ]
     const list = (env: Record<string, string>) => {
       const chunks: string[] = []
@@ -2301,6 +2601,38 @@ describe('MCP bridge stream writes', () => {
     expect(args[args.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
   })
 
+  it('carries the solo profile atomically beside the gateway profile', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+
+    const args = runtime.taskwraithMcpBridgeArgs(
+      SOCKET_PATH,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    )
+
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_SOLO_SUBSET_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_SOLO_SUBSET_ARG)
+
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_GATEWAY_SUBSET).toBe('1')
+    expect(env.TASKWRAITH_MCP_SOLO_SUBSET).toBe('1')
+  })
+
   it('carries the mesh-direct catalogue receipt atomically beside the gateway profile', () => {
     const runtime = new McpBridgeRuntime({
       getGeminiMcpSocketPath: () => SOCKET_PATH,
@@ -2404,17 +2736,50 @@ describe('MCP bridge stream writes', () => {
     expect(env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT).toBe('1')
   })
 
+  it('carries direct opportunity redemption only in the final v18 selector slot', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      SOCKET_PATH,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    )
+
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT).toBe('1')
+  })
+
   it('translates the gateway argv receipt into the child catalogue guard', () => {
     const explicitFullProfile = {
       TASKWRAITH_MCP_SAFE_SUBSET: '0',
       TASKWRAITH_MCP_PLAN_SUBSET: '0',
       TASKWRAITH_MCP_CORE_SUBSET: '0',
       TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
+      TASKWRAITH_MCP_SOLO_SUBSET: '0',
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
       TASKWRAITH_MCP_MESH_DIRECT: '0',
       TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '0',
       TASKWRAITH_MCP_SKETCH_DIRECT: '0',
       TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '0',
+      TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '0',
+      TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '0',
       TASKWRAITH_MCP_AUDIT: '0'
     }
     const gatewayEnv: Record<string, string | undefined> = {}
@@ -2427,6 +2792,73 @@ describe('MCP bridge stream writes', () => {
     const fullEnv: Record<string, string | undefined> = {}
     applyMcpBridgeProfileArgvToEnv(['taskwraith'], fullEnv)
     expect(fullEnv).toEqual(explicitFullProfile)
+
+    const fullV4Env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(
+      ['taskwraith', GEMINI_MCP_COMPUTER_USE_DIRECT_ARG],
+      fullV4Env
+    )
+    expect(fullV4Env).toEqual({
+      ...explicitFullProfile,
+      TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1'
+    })
+  })
+
+  it('keeps computer_use out of an older full receipt in actual tools/list and tools/call', async () => {
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [{ name: 'read_file' }, { name: 'computer_use' }],
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        { jsonrpc: '2.0', id: 41, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
+    }
+    expect(list({})).toEqual(['read_file'])
+    expect(list({ TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1' })).toEqual([
+      'read_file',
+      'computer_use'
+    ])
+
+    const call = async (env: Record<string, string>) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'listed' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [{ name: 'computer_use' }],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn(() => true) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 42,
+          method: 'tools/call',
+          params: { name: 'computer_use', arguments: { action: 'list' } }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return brokerRequest
+    }
+    expect(await call({})).not.toHaveBeenCalled()
+    expect(await call({ TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1' })).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'computer_use', arguments: { action: 'list' } })
+    )
   })
 
   it('rejects retired Kimi global MCP registration without invoking the provider CLI', async () => {

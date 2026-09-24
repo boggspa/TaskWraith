@@ -18,6 +18,7 @@ export {
   MESH_MCP_TOOL_NAMES,
   SIMULATOR_MCP_TOOL_NAMES,
   SIMULATOR_MUTATING_MCP_TOOL_NAMES,
+  EMULATOR_MCP_TOOL_NAMES,
   MEDIA_EDITING_TOOL_NAMES,
   MEDIA_EDITING_TOOLS
 } from '../shared/taskWraithMcpCatalog'
@@ -28,5 +29,6 @@ export type {
   MeshTopologyMcpToolName,
   MeshMcpToolName,
   SimulatorMcpToolName,
-  SimulatorMutatingMcpToolName
+  SimulatorMutatingMcpToolName,
+  EmulatorMcpToolName
 } from '../shared/taskWraithMcpCatalog'

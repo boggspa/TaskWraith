@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   activeAppNotifications,
@@ -13,6 +20,11 @@ import {
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { LiveActivityViewport } from './LiveActivityViewport'
+import {
+  readDynamicAppNotifications,
+  subscribeDynamicAppNotifications,
+  type DynamicAppNotification
+} from '../lib/dynamicAppNotifications'
 
 /**
  * Reusable notification zone — the app/dev "notification area" on the welcome /
@@ -25,6 +37,10 @@ import { LiveActivityViewport } from './LiveActivityViewport'
  *
  * Dismissal persists in localStorage (renderer-only), shared across both
  * surfaces — matching the bespoke banner it replaces.
+ *
+ * Session notices published through lib/dynamicAppNotifications (execution-
+ * graph diagnostics today) are merged ahead of the registry cards; they carry
+ * action buttons and dismiss through the same key as every other notice.
  */
 
 const SWIPE_MS = 320
@@ -56,7 +72,9 @@ const KIND_ICON: Record<AppNotificationKind, string> = {
   deprecation: 'ⓘ',
   addition: '✦',
   feature: '★',
-  info: 'ⓘ'
+  info: 'ⓘ',
+  warning: '⚠',
+  error: '⚠'
 }
 
 function readDismissed(notifications: readonly AppNotification[]): Set<string> {
@@ -143,7 +161,7 @@ function NotificationCard({
   notification,
   onDismiss
 }: {
-  notification: AppNotification
+  notification: DynamicAppNotification
   onDismiss: (id: string) => void
 }): React.JSX.Element {
   const tone = appNotificationTone(notification.kind)
@@ -189,6 +207,32 @@ function NotificationCard({
             <NotificationGroups groups={groups} />
           )}
         </div>
+      ) : notification.actions && notification.actions.length > 0 ? (
+        <div className="notification-card-text">
+          <p className="notification-card-copy">
+            <strong>{notification.title}</strong> {notification.body}
+          </p>
+          <div className="notification-card-actions" data-swipe-ignore="true">
+            {notification.actions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className={`notification-card-action${
+                  action.tone === 'danger' ? ' notification-card-action--danger' : ''
+                }`}
+                data-swipe-ignore="true"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  notification.onAction?.(action.id)
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
       ) : (
         <p className="notification-card-text">
           <strong>{notification.title}</strong> {notification.body}
@@ -223,8 +267,18 @@ export function NotificationZone({
   notifications?: readonly AppNotification[]
   now?: number
 }): React.JSX.Element | null {
+  const dynamicNotifications = useSyncExternalStore(
+    subscribeDynamicAppNotifications,
+    readDynamicAppNotifications,
+    readDynamicAppNotifications
+  )
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() =>
-    readDismissed(notifications ?? resolveAppNotifications(nowOverride ?? Date.now()))
+    readDismissed(
+      notifications ?? [
+        ...dynamicNotifications,
+        ...resolveAppNotifications(nowOverride ?? Date.now())
+      ]
+    )
   )
   const [activeIndex, setActiveIndex] = useState(0)
   const [outgoingIndex, setOutgoingIndex] = useState<number | null>(null)
@@ -234,8 +288,8 @@ export function NotificationZone({
   const dragStateRef = useRef<NotificationDragState | null>(null)
 
   const resolvedNotifications = useMemo(
-    () => notifications ?? resolveAppNotifications(now),
-    [notifications, now]
+    () => notifications ?? [...dynamicNotifications, ...resolveAppNotifications(now)],
+    [notifications, dynamicNotifications, now]
   )
 
   useEffect(() => {

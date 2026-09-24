@@ -1,0 +1,1567 @@
+import {
+  THREAD_CATALOGUE_WIRE_MAX_BYTES,
+  type ThreadCatalogueReadQuery,
+  type ThreadCatalogueMaintenanceQuery
+} from '../shared/threadCatalogueProtocol'
+/**
+ * Host Arc v2 authenticated local server (Wave 3.3).
+ *
+ * Purpose: the authenticated v2 listener per PIN W3-P1/P3.  The SAME module
+ * must run unchanged in main during migration and in the dedicated Host child
+ * later, so imports are ONLY the listed dependencies — zero AppStore, Bridge,
+ * provider, store, resolver, or pipeline imports (W3-P3 seam).
+ *
+ * Auth reuses the shipped v1 pattern VERBATIM (PIN W3-P1):
+ *   - randomBytes(32) hex token
+ *   - 0700 private directory, 0600 socket / token / discovery
+ *   - timingSafeEqual token comparison
+ *   - 5s handshake timer
+ *   - discovery file { protocolVersion, socketPath, tokenPath, pid, startedAt }
+ *
+ * Transport: JSON-line frames validated through the 3.2 transport codecs
+ * (hostProtocolTransport).  This matches the v1 line-delimited pattern;
+ * Host Local Transport Version 1 is carried in every frame envelope.
+ *
+ * Worker only — staging refused in-lane.  Captain serial adoption after
+ * validated handoff (evidence table + live marker with adopter-window expiry).
+ */
+
+import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { realpathSync, unlinkSync } from 'node:fs'
+import { chmod, mkdir, rm, rmdir } from 'node:fs/promises'
+import { createConnection, createServer, type Server, type Socket } from 'node:net'
+import { dirname } from 'node:path'
+
+import {
+  taskWraithHostDiscoveryPath,
+  taskWraithHostSocketPath,
+  taskWraithHostTokenPath,
+  type TaskWraithHostDiscovery
+} from '../shared/taskWraithHostPaths.node'
+import {
+  publishPrivateLocalControlArtifact,
+  removeOwnedPrivateLocalControlArtifact,
+  type HostLocalControlArtifactOwnership
+} from '../shared/hostLocalControlArtifacts.node'
+import {
+  HOST_LOCAL_TRANSPORT_VERSION,
+  decodeHostLocalTransportClientFrame,
+  type HostLocalTransportClientFrame,
+  type HostLocalTransportError,
+  type HostLocalTransportHostFrame,
+  type HostLocalTransportLeaseParams,
+  type HostLocalTransportReceiptLookupParams,
+  type HostLocalTransportSuccessResult,
+  type HostWorkspaceGitReadParams
+} from '../shared/hostProtocolTransport'
+import {
+  HOST_PROTOCOL_VERSION,
+  HOST_STATUS_MAX_CLIENTS,
+  decodeHostStatusProjection,
+  isBootEpoch,
+  type HostCommand,
+  type HostCursorPosition,
+  type HostDeltaEnvelope,
+  type HostStatusClientProjection,
+  type HostStatusProjection
+} from '../shared/hostProtocol'
+import { HostLeaseRegistry, type HostLeaseSummary } from './HostLeaseRegistry'
+import type {
+  HostHistorySinceRequest,
+  HostThreadHistoryRequest
+} from '../shared/hostHistoryProtocol'
+import type { HostCapability } from '../shared/hostProtocol'
+import type { HostLocalTransportRequestKind } from '../shared/hostProtocolTransport'
+import type { HostSession, HostSessionBindRequest, HostSessionBinding } from './HostSession'
+import {
+  type HostAuthority,
+  type HostAuthorityCallContext,
+  parseHostAuthorityReceiptLookup
+} from './HostAuthority'
+import { parseSetupMutationCommandName } from './HostCommandRouting'
+import { isHostPayloadVersion } from './HostPayloadIdentity'
+import { TW_MISSION_MAX_BUNDLE_BYTES } from '../host-shared/twmission'
+
+const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, HostCapability>> = {
+  'thread.offers': 'model-offers',
+  'provider.status': 'provider-catalog',
+  'provider.offers': 'provider-catalog',
+  'provider.auth.flows': 'provider-auth',
+  'provider.auth.status': 'provider-auth',
+  'thread.history': 'history',
+  'thread.catalogue': 'history',
+  'thread.catalogue.maintenance': 'commands',
+  'workspace.git.read': 'workspace-git',
+  'history.since': 'history',
+  'host.status': 'health'
+}
+
+/**
+ * Commands a draining Host refuses with `shutting_down`. Only work that starts
+ * a provider run: cancels, answers and decisions must keep flowing so the
+ * in-flight runs the drain exists for can actually finish.
+ */
+const RUN_STARTING_COMMAND_NAMES: ReadonlySet<string> = new Set(['composer.send'])
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const HANDSHAKE_TIMEOUT_MS = 5_000
+/**
+ * Overshoot past a handshake deadline that means the Host stalled rather than
+ * the client going quiet. libuv runs the timers phase BEFORE the poll phase,
+ * so after a long blocking pass this deadline fires before the hello that
+ * arrived during that pass is ever delivered — the connection is killed for
+ * the Host's own fault, the client retries, and the retry becomes a storm.
+ */
+const HANDSHAKE_STALL_GRACE_MS = 1_000
+/** Bounded, so a genuinely silent client is still dropped rather than held. */
+const MAX_HANDSHAKE_STALL_EXTENSIONS = 2
+/**
+ * One desk legitimately runs the app, a dev instance, several TUIs and one
+ * paired iOS gateway per device against a single Host. At six the seventh was
+ * refused, and because that refusal was a bare socket close the client could
+ * not tell it apart from a Host that died mid-welcome — so it reconnected
+ * immediately and held the server at capacity. Each client costs a socket and
+ * a write backlog already bounded by MAX_SOCKET_WRITE_BACKLOG_BYTES.
+ */
+const MAX_CLIENTS_DEFAULT = 32
+/**
+ * The default bound on each of stop()'s three drains, run one after another:
+ * the in-flight requests, the clients closing after `host.closing`, and the
+ * clients left after a forced close. A production Host's lifetime-stop
+ * deadline is summed from it (HOST_LIFETIME_STOP_DEADLINE_MS).
+ */
+export const HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS = 1_000
+const MAX_LINE_BYTES = 256_000
+// Snapshot collections are independently bounded by the Host protocol, but a
+// coherent snapshot can legitimately exceed the ordinary request/response
+// line ceiling once a profile contains hundreds of threads, runs, or Ensemble
+// participants. The projection client already accepts this same bounded large
+// response envelope for snapshots and compact exports.
+const MAX_LARGE_RESPONSE_LINE_BYTES = TW_MISSION_MAX_BUNDLE_BYTES + 65_536
+// Drain ceiling for ONE client socket. It is deliberately a property of the
+// socket rather than of whichever frame is next in line: the per-frame line
+// budget bounds a single message, but the write backlog is shared by every
+// message the server has already chosen to send. Deriving the ceiling from the
+// frame being written let a ~1.7 KB delta event — budgeted at MAX_LINE_BYTES —
+// judge a backlog that a legal multi-megabyte `snapshot.get` response had just
+// created, and evict a reader that was draining perfectly well. Measured on a
+// live profile: a 725 KB snapshot poll plus the next routine delta killed the
+// TUI's connection every few seconds, forever.
+const MAX_SOCKET_WRITE_BACKLOG_BYTES = MAX_LARGE_RESPONSE_LINE_BYTES * 2
+
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
+export interface HostLocalServerOptions {
+  runCommand?: (
+    command: HostCommand,
+    execute: () => ReturnType<HostAuthority['command']>
+  ) => ReturnType<HostAuthority['command']>
+  /** Injected base directory for path construction (testable). */
+  userDataPath: string
+  /** Host identity — carried into the welcome frame via HostSession. */
+  hostId: string
+  /** Host version string — carried into the welcome frame via HostSession. */
+  hostVersion: string
+  /** Exact static payload identity — discovery-only, never Host identity. */
+  payloadVersion?: string
+  /**
+   * Opaque per-incarnation boot epoch minted by the composition, attached to
+   * the welcome frame on the way out. A client compares it for EQUALITY only:
+   * it encodes no time, no counter and no ordering, so it cannot be
+   * differenced, sorted, or read as a clock. Absent means "legacy Host", which
+   * is why an invalid value is refused at construction rather than dropped —
+   * a dropped epoch is indistinguishable downstream from a Host too old to
+   * mint one, so it would silently disarm the client's reconnect check.
+   *
+   * SECURITY: never pass the transport auth token here. Both this and
+   * `this.token` are `randomBytes(32).toString('hex')`, so the two are
+   * indistinguishable by inspection and a swap would hand the credential to
+   * every peer that completes a handshake — the welcome is public to any
+   * authenticated client. `HostLocalServer boot epoch` pins that they differ.
+   */
+  bootEpoch?: string
+  /** Authenticated session binder. */
+  session: HostSession
+  /** Transport-neutral Authority facade for request routing.
+   *  HostMainComposition extends HostAuthority with optional exportTwMission
+   *  (Wave 5 AC9); the server gates on typeof === 'function'. */
+  authority: HostAuthority & {
+    exportTwMission?: (
+      context: HostAuthorityCallContext,
+      options?: { readonly exportedAt?: string; readonly redactionNotes?: readonly string[] }
+    ) => Promise<{ ok: boolean; error?: string; bundle?: unknown; bytes?: Uint8Array }>
+  }
+  /** Platform for path construction; defaults to process.platform. */
+  platform?: NodeJS.Platform
+  /** Maximum concurrent client connections; defaults to 32. */
+  maxClients?: number
+  /** Deadline for a connected socket to send its hello; defaults to 5s. */
+  handshakeTimeoutMs?: number
+  /** Bounded grace for in-flight dispatch and client socket drain during stop. */
+  shutdownDrainTimeoutMs?: number
+  /** Optional diagnostic logger. */
+  log?: (line: string) => void
+  /** Injectable clock for tests. */
+  now?: () => number
+  /**
+   * Optional post-commit feed from the sole Host delta journal. The server
+   * owns subscription lifetime and exposes only protocol envelopes, never the
+   * store itself.
+   */
+  subscribeDeltas?: (listener: (delta: HostDeltaEnvelope) => void) => () => void
+  onAuthenticatedShutdown?: () => Promise<void> | void
+  /**
+   * Client lease registry (Host-lifetime programme). The production Host
+   * injects one wired to its own stop; a server built without one still
+   * answers `host.lease` and `host.status` from a registry that never asks
+   * anyone to exit, so an in-process or diagnostic Host keeps its lifetime.
+   * Leases are per socket: a lease is released the instant its socket drops.
+   */
+  leases?: HostLeaseRegistry
+  /**
+   * Test-only legacy-Host simulation (`TASKWRAITH_HOST_LEASE_DISABLED`):
+   * `disabled` answers `host.lease` and `host.status` exactly as a pre-lease
+   * Host's decoder does — `unknown_request_kind` on an authenticated
+   * connection it keeps, a destroyed socket before authentication.
+   */
+  leaseProtocol?: 'enabled' | 'disabled'
+}
+
+// ---------------------------------------------------------------------------
+// Per-connection state
+// ---------------------------------------------------------------------------
+
+interface ClientState {
+  socket: Socket
+  authenticated: boolean
+  binding: HostSessionBinding | null
+  buffer: string
+  handshakeTimer: ReturnType<typeof setTimeout>
+  /** Deadlines already forgiven as Host stalls rather than client silence. */
+  handshakeStallExtensions: number
+  /** Lease registry key — one per socket, never reused within a listener. */
+  connectionId: number
+  /** Host monotonic ms at accept, for `host.status` `connectedForMs`. */
+  connectedAtMs: number
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function safeTokenEquals(expected: string, received: string): boolean {
+  const a = Buffer.from(expected)
+  const b = Buffer.from(received)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+function socketWrite(
+  socket: Socket,
+  frame: HostLocalTransportHostFrame,
+  callback?: (error?: Error | null) => void
+): boolean {
+  if (socket.destroyed || !socket.writable) return false
+  let line = `${JSON.stringify(frame)}\n`
+  let bytes = Buffer.byteLength(line, 'utf8')
+  const lineBudget =
+    frame.type === 'response' &&
+    frame.ok &&
+    (frame.result.kind === 'thread.catalogue' ||
+      frame.result.kind === 'thread.catalogue.maintenance')
+      ? THREAD_CATALOGUE_WIRE_MAX_BYTES
+      : frame.type === 'response' &&
+          frame.ok &&
+          (frame.result.kind === 'snapshot.get' || frame.result.kind === 'twmission.export')
+        ? MAX_LARGE_RESPONSE_LINE_BYTES
+        : MAX_LINE_BYTES
+  if (bytes > lineBudget) {
+    // Response too large for the transport.  Send a body-free error frame
+    // with the same id when the frame carried one, then destroy.
+    if (frame.type === 'response' && frame.ok === true) {
+      line = `${JSON.stringify({
+        type: 'response' as const,
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: frame.id,
+        ok: false,
+        error: { code: 'host_unavailable' as const }
+      })}\n`
+      bytes = Buffer.byteLength(line, 'utf8')
+    } else {
+      return false
+    }
+  }
+  if (socket.writableLength + bytes > MAX_SOCKET_WRITE_BACKLOG_BYTES) {
+    socket.destroy(new Error('Host local client is not draining responses.'))
+    return false
+  }
+  socket.write(line, callback)
+  return true
+}
+
+async function socketIsLive(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath)
+    let deadline: ReturnType<typeof setTimeout> | null = null
+    const settle = (value: boolean) => {
+      if (deadline) clearTimeout(deadline)
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(value)
+    }
+    deadline = setTimeout(() => settle(false), 350)
+    deadline.unref?.()
+    socket.once('connect', () => settle(true))
+    socket.once('error', () => settle(false))
+  })
+}
+
+function errorFrame(id: string, error: HostLocalTransportError): HostLocalTransportHostFrame {
+  return {
+    type: 'response',
+    transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+    id,
+    ok: false,
+    error
+  }
+}
+
+async function settleCleanup(tasks: readonly (() => Promise<unknown> | unknown)[]): Promise<void> {
+  const results = await Promise.allSettled(tasks.map((task) => Promise.resolve().then(task)))
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  )
+  if (failure) throw failure.reason
+}
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    void promise.then(
+      () => finish(true),
+      () => finish(true)
+    )
+  })
+}
+
+/** Map HostAuthority operational error codes to closed transport error codes. */
+function authorityErrorToTransportCode(
+  code: 'host_unavailable' | 'shutting_down' | 'invalid_lookup'
+): HostLocalTransportError['code'] {
+  switch (code) {
+    case 'host_unavailable':
+      return 'host_unavailable'
+    case 'shutting_down':
+      return 'shutting_down'
+    case 'invalid_lookup':
+      return 'invalid_payload'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HostLocalServer
+// ---------------------------------------------------------------------------
+
+export class HostLocalServer {
+  private readonly options: Required<
+    Pick<
+      HostLocalServerOptions,
+      'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs' | 'handshakeTimeoutMs'
+    >
+  > &
+    Omit<
+      HostLocalServerOptions,
+      'maxClients' | 'now' | 'platform' | 'shutdownDrainTimeoutMs' | 'handshakeTimeoutMs'
+    >
+  private readonly token: string
+  private readonly clients = new Set<ClientState>()
+  private readonly leases: HostLeaseRegistry
+  private readonly canonicalUserDataPath: string
+  private connectionSequence = 0
+  private listenerStartedAt: string | null = null
+  private server: Server | null = null
+  private ownsSocket = false
+  private stopPromise: Promise<void> | null = null
+  private readonly inFlightDispatches = new Set<Promise<void>>()
+  private started = false
+  private eventSequence = 0
+  private deltaUnsubscribe: (() => void) | null = null
+  private shutdownState: 'running' | 'stopping' | 'stopped' = 'running'
+  private tokenArtifact: HostLocalControlArtifactOwnership | null = null
+  private discoveryArtifact: HostLocalControlArtifactOwnership | null = null
+
+  readonly socketPath: string
+  readonly tokenPath: string
+  readonly discoveryPath: string
+
+  constructor(options: HostLocalServerOptions) {
+    this.options = {
+      ...options,
+      platform: options.platform ?? process.platform,
+      maxClients: options.maxClients ?? MAX_CLIENTS_DEFAULT,
+      shutdownDrainTimeoutMs:
+        options.shutdownDrainTimeoutMs ?? HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS,
+      handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
+      now: options.now ?? (() => Date.now())
+    }
+    if (
+      !Number.isSafeInteger(this.options.shutdownDrainTimeoutMs) ||
+      this.options.shutdownDrainTimeoutMs < 1
+    ) {
+      throw new Error('Host local shutdown drain timeout is invalid.')
+    }
+    if (
+      !Number.isSafeInteger(this.options.handshakeTimeoutMs) ||
+      this.options.handshakeTimeoutMs < 1
+    ) {
+      throw new Error('Host local handshake timeout is invalid.')
+    }
+    if (
+      this.options.payloadVersion !== undefined &&
+      !isHostPayloadVersion(this.options.payloadVersion)
+    ) {
+      throw new Error('Host local payload identity is invalid.')
+    }
+    if (this.options.bootEpoch !== undefined && !isBootEpoch(this.options.bootEpoch)) {
+      throw new Error('Host local boot epoch is invalid.')
+    }
+    this.token = randomBytes(32).toString('hex')
+    this.leases = options.leases ?? new HostLeaseRegistry()
+    const canonicalUserDataPath = realpathSync(options.userDataPath)
+    this.canonicalUserDataPath = canonicalUserDataPath
+    this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath, this.options.platform)
+    this.tokenPath = taskWraithHostTokenPath(canonicalUserDataPath)
+    this.discoveryPath = taskWraithHostDiscoveryPath(canonicalUserDataPath)
+  }
+
+  // -----------------------------------------------------------------------
+  // Lifecycle
+  // -----------------------------------------------------------------------
+
+  /**
+   * Start the authenticated v2 listener.
+   *
+   * Creates the private directory + socket with 0700 / 0600 permissions,
+   * writes the token + discovery files, and begins accepting connections.
+   * Refuses to start when a LIVE socket already exists at the target path
+   * (v1 "already owned" guard semantics).
+   */
+  async start(): Promise<void> {
+    if (this.server) return
+    if (this.shutdownState !== 'running' || this.stopPromise) {
+      throw new Error('Host local server is one-shot after shutdown.')
+    }
+
+    await mkdir(this.options.userDataPath, { recursive: true, mode: 0o700 })
+    if (this.options.platform !== 'win32') {
+      await mkdir(dirname(this.socketPath), { recursive: true, mode: 0o700 })
+      await chmod(dirname(this.socketPath), 0o700).catch(() => {})
+      const live = await socketIsLive(this.socketPath)
+      if (live) {
+        throw new Error('Host local-control socket is already owned by a live host.')
+      }
+      await rm(this.socketPath, { force: true })
+    }
+
+    const server = createServer((socket) => this.accept(socket))
+    this.server = server
+    let ownsSocket = false
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off('listening', onListening)
+          reject(error)
+        }
+        const onListening = () => {
+          server.off('error', onError)
+          resolve()
+        }
+        server.once('error', onError)
+        server.once('listening', onListening)
+        server.listen(this.socketPath)
+      })
+      ownsSocket = true
+      this.ownsSocket = true
+      if (this.options.platform !== 'win32') {
+        await chmod(this.socketPath, 0o600)
+      }
+
+      this.tokenArtifact = publishPrivateLocalControlArtifact(
+        this.tokenPath,
+        `${this.token}\n`,
+        4_096
+      )
+
+      const discovery: TaskWraithHostDiscovery = {
+        protocolVersion: 2,
+        socketPath: this.socketPath,
+        tokenPath: this.tokenPath,
+        pid: process.pid,
+        startedAt: new Date(this.options.now()).toISOString(),
+        hostId: this.options.hostId,
+        hostVersion: this.options.hostVersion,
+        ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {})
+      }
+      // Discovery is the readiness flag and is published only after token.
+      this.discoveryArtifact = publishPrivateLocalControlArtifact(
+        this.discoveryPath,
+        `${JSON.stringify(discovery)}\n`,
+        16 * 1024
+      )
+
+      if (this.options.subscribeDeltas) {
+        this.deltaUnsubscribe = this.options.subscribeDeltas((delta) => {
+          this.broadcastDelta(delta)
+        })
+      }
+
+      this.started = true
+      this.listenerStartedAt = discovery.startedAt
+      // Ticking begins with zero holders, so a Host nobody attaches to is on
+      // its grace clock from the moment it is reachable.
+      this.leases.start()
+      this.options.log?.(`[host-local-server] listening at ${this.socketPath}`)
+    } catch (error) {
+      this.server = null
+      this.clearDeltaSubscription()
+      for (const client of this.clients) {
+        clearTimeout(client.handshakeTimer)
+        client.socket.destroy()
+      }
+      this.clients.clear()
+      if (server.listening) {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }
+      if (ownsSocket) {
+        await settleCleanup([
+          () => removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact),
+          () => removeOwnedPrivateLocalControlArtifact(this.tokenArtifact),
+          () =>
+            this.options.platform === 'win32' ? undefined : rm(this.socketPath, { force: true })
+        ])
+        if (this.options.platform !== 'win32') {
+          await rmdir(dirname(this.socketPath)).catch(() => {})
+        }
+      }
+      this.ownsSocket = false
+      throw error
+    }
+  }
+
+  /**
+   * Graceful async stop.  Emits host.closing to every connected client,
+   * closes the listener, and unlinks socket / token / discovery artifacts.
+   * Idempotent when already stopped.
+   */
+  async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    this.shutdownState = 'stopping'
+    const operation = this.stopOnce()
+    this.stopPromise = operation
+    try {
+      await operation
+    } catch (error) {
+      if (this.stopPromise === operation) this.stopPromise = null
+      throw error
+    }
+  }
+
+  private async stopOnce(): Promise<void> {
+    const server = this.server
+    this.server = null
+    const closePromise = server?.listening
+      ? new Promise<void>((resolve) => server.close(() => resolve()))
+      : Promise.resolve()
+    // Register the listener close callback before closing active clients. This
+    // ordering matters for Windows named pipes, where closing the last
+    // connection can otherwise race the close callback and leave stop() pending.
+    this.clearDeltaSubscription()
+    this.leases.stop()
+    await this.drainInFlightDispatches()
+    await this.disconnectClients()
+    await closePromise
+    await settleCleanup([
+      () => removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact),
+      () => removeOwnedPrivateLocalControlArtifact(this.tokenArtifact),
+      () =>
+        this.options.platform === 'win32' || !this.ownsSocket
+          ? undefined
+          : rm(this.socketPath, { force: true })
+    ])
+    if (this.options.platform !== 'win32' && this.ownsSocket) {
+      await rmdir(dirname(this.socketPath)).catch(() => {})
+    }
+    this.started = false
+    this.shutdownState = 'stopped'
+    this.ownsSocket = false
+    this.discoveryArtifact = null
+    this.tokenArtifact = null
+  }
+
+  /**
+   * Synchronous stop safe for `will-quit` / `exit` hooks (v1 pattern verbatim).
+   *
+   * Electron cannot await work from `will-quit`, so this variant removes only
+   * the three exact control artifacts synchronously after disconnecting clients
+   * and closing the listener.  Idempotent; missing/stale artifacts are already
+   * the desired state and do not throw.
+   */
+  stopSync(): void {
+    this.shutdownState = 'stopping'
+    this.clearDeltaSubscription()
+    this.leases.stop()
+    this.disconnectClientsSync()
+    const server = this.server
+    this.server = null
+    if (server?.listening) server.close()
+    try {
+      removeOwnedPrivateLocalControlArtifact(this.discoveryArtifact)
+      removeOwnedPrivateLocalControlArtifact(this.tokenArtifact)
+    } catch (error) {
+      this.options.log?.(
+        `[host-local-server] synchronous artifact cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+    for (const path of this.options.platform === 'win32' || !this.ownsSocket
+      ? []
+      : [this.socketPath]) {
+      try {
+        unlinkSync(path)
+      } catch {
+        // Missing/stale artifacts are already the desired state.
+      }
+    }
+    if (this.options.platform !== 'win32' && this.ownsSocket) {
+      try {
+        unlinkSync(dirname(this.socketPath))
+      } catch {
+        // Leave a non-empty or concurrently recreated private directory alone.
+      }
+    }
+    this.started = false
+    this.shutdownState = 'stopped'
+    this.ownsSocket = false
+    this.discoveryArtifact = null
+    this.tokenArtifact = null
+  }
+
+  /** True after start() succeeds and before stop()/stopSync(). */
+  get isStarted(): boolean {
+    return this.started
+  }
+
+  /** The discovery record's `startedAt` (listener start), once listening. */
+  get startedAt(): string | null {
+    return this.listenerStartedAt
+  }
+
+  /** Number of live connections (test / diagnostics only). */
+  clientCount(): number {
+    return this.clients.size
+  }
+
+  /** Holder counts and lifetime phase from the lease registry (test / diagnostics only). */
+  leaseSummary(): HostLeaseSummary {
+    return this.leases.summary()
+  }
+
+  // -----------------------------------------------------------------------
+  // Connection handling
+  // -----------------------------------------------------------------------
+
+  private async drainInFlightDispatches(): Promise<void> {
+    if (this.inFlightDispatches.size === 0) return
+    const drained = await settlesWithin(
+      Promise.allSettled([...this.inFlightDispatches]),
+      this.options.shutdownDrainTimeoutMs
+    )
+    if (!drained) {
+      this.options.log?.('[host-local-server] timed out draining in-flight requests')
+    }
+  }
+
+  private async disconnectClients(): Promise<void> {
+    const clients = [...this.clients]
+    const sequence = this.nextEventSequence()
+    const closed = clients.map(
+      (client) =>
+        new Promise<void>((resolve) => {
+          if (client.socket.destroyed) resolve()
+          else client.socket.once('close', () => resolve())
+        })
+    )
+    for (const client of clients) {
+      const event: HostLocalTransportHostFrame = {
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        event: 'host.closing',
+        sequence
+      }
+      const wroteClosingEvent = socketWrite(client.socket, event)
+      clearTimeout(client.handshakeTimer)
+      if (wroteClosingEvent) client.socket.end()
+      else client.socket.destroy()
+    }
+    if (!(await settlesWithin(Promise.all(closed), this.options.shutdownDrainTimeoutMs))) {
+      for (const client of clients) {
+        if (!client.socket.destroyed) client.socket.destroy()
+      }
+      await settlesWithin(Promise.all(closed), this.options.shutdownDrainTimeoutMs)
+    }
+    this.clients.clear()
+  }
+
+  private disconnectClientsSync(): void {
+    const sequence = this.nextEventSequence()
+    for (const client of this.clients) {
+      const event: HostLocalTransportHostFrame = {
+        type: 'event',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        event: 'host.closing',
+        sequence
+      }
+      socketWrite(client.socket, event)
+      clearTimeout(client.handshakeTimer)
+      client.socket.destroy()
+    }
+    this.clients.clear()
+  }
+
+  private clearDeltaSubscription(): void {
+    const unsubscribe = this.deltaUnsubscribe
+    this.deltaUnsubscribe = null
+    if (!unsubscribe) return
+    try {
+      unsubscribe()
+    } catch (error) {
+      this.options.log?.(`[host-local-server] delta unsubscribe failed: ${String(error)}`)
+    }
+  }
+
+  private nextEventSequence(): number {
+    this.eventSequence += 1
+    return this.eventSequence
+  }
+
+  /** Broadcast one already-durable envelope to delta-capable clients only. */
+  private broadcastDelta(delta: HostDeltaEnvelope): void {
+    const sequence = this.nextEventSequence()
+    const frame: HostLocalTransportHostFrame = {
+      type: 'event',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      event: 'deltas',
+      sequence,
+      payload: {
+        type: 'host.deltas',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        result: {
+          kind: 'deltas',
+          generation: delta.generation,
+          fromCursor: delta.previousCursor,
+          toCursor: delta.cursor,
+          deltas: [delta]
+        }
+      }
+    }
+
+    for (const client of this.clients) {
+      if (!client.authenticated || !client.binding?.welcome.capabilities.includes('deltas')) {
+        continue
+      }
+      if (!socketWrite(client.socket, frame)) {
+        client.socket.destroy()
+      }
+    }
+  }
+
+  /**
+   * Arm (or re-arm) the hello deadline for one unauthenticated socket.
+   *
+   * A deadline that fires long after it was due did not measure the client: it
+   * measured this process being unable to run anything, which means the hello
+   * may already be sitting unread in the socket buffer. Forgive that, boundedly
+   * — a silent client still gets dropped, it just takes a few windows longer.
+   */
+  private armHandshakeDeadline(state: ClientState): void {
+    const dueAt = this.options.now() + this.options.handshakeTimeoutMs
+    state.handshakeTimer = setTimeout(() => {
+      if (
+        this.options.now() - dueAt > HANDSHAKE_STALL_GRACE_MS &&
+        state.handshakeStallExtensions < MAX_HANDSHAKE_STALL_EXTENSIONS
+      ) {
+        state.handshakeStallExtensions += 1
+        this.armHandshakeDeadline(state)
+        return
+      }
+      socketWrite(state.socket, errorFrame('', { code: 'unauthorized' }))
+      state.socket.destroy()
+    }, this.options.handshakeTimeoutMs)
+    state.handshakeTimer.unref?.()
+  }
+
+  private accept(socket: Socket): void {
+    if (this.clients.size >= this.options.maxClients) {
+      // A bare end() is indistinguishable from a Host that died mid-welcome,
+      // so the client reconnects at once and holds the server at capacity.
+      // Name the reason and the client can back off instead.
+      socketWrite(socket, errorFrame('', { code: 'host_unavailable' }))
+      socket.end()
+      return
+    }
+    socket.setEncoding('utf8')
+    socket.setNoDelay(true)
+    this.connectionSequence += 1
+    const state: ClientState = {
+      socket,
+      authenticated: false,
+      binding: null,
+      buffer: '',
+      handshakeTimer: setTimeout(() => undefined, 0),
+      handshakeStallExtensions: 0,
+      connectionId: this.connectionSequence,
+      connectedAtMs: this.leases.nowMs()
+    }
+    clearTimeout(state.handshakeTimer)
+    this.armHandshakeDeadline(state)
+    this.clients.add(state)
+    socket.on('data', (chunk: string) => this.onData(state, chunk))
+    socket.on('error', () => this.drop(state))
+    socket.on('close', () => this.drop(state))
+  }
+
+  private drop(state: ClientState): void {
+    clearTimeout(state.handshakeTimer)
+    this.clients.delete(state)
+    // A crashed peer is a kernel close; its lease goes with the socket, so
+    // the heartbeat only has to cover the wedged-but-alive client.
+    this.leases.closed(state.connectionId)
+  }
+
+  private onData(state: ClientState, chunk: string): void {
+    state.buffer += chunk
+    if (Buffer.byteLength(state.buffer, 'utf8') > MAX_LINE_BYTES) {
+      state.socket.destroy()
+      return
+    }
+    let newline = state.buffer.indexOf('\n')
+    while (newline >= 0) {
+      const line = state.buffer.slice(0, newline).trim()
+      state.buffer = state.buffer.slice(newline + 1)
+      if (line) void this.onLine(state, line)
+      newline = state.buffer.indexOf('\n')
+    }
+  }
+
+  private async onLine(state: ClientState, line: string): Promise<void> {
+    let raw: unknown
+    try {
+      raw = JSON.parse(line)
+    } catch {
+      state.socket.destroy()
+      return
+    }
+
+    const decoded = decodeHostLocalTransportClientFrame(raw)
+    if (!decoded.ok) {
+      if (state.authenticated && raw && typeof raw === 'object' && 'id' in raw) {
+        socketWrite(
+          state.socket,
+          errorFrame(String((raw as { id?: unknown }).id ?? ''), decoded.error)
+        )
+      } else {
+        state.socket.destroy()
+      }
+      return
+    }
+
+    if (
+      this.options.leaseProtocol === 'disabled' &&
+      decoded.value.type === 'request' &&
+      (decoded.value.kind === 'host.lease' || decoded.value.kind === 'host.status')
+    ) {
+      // The branch above, as a decoder that predates both kinds takes it.
+      if (state.authenticated) {
+        socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'unknown_request_kind' }))
+      } else {
+        state.socket.destroy()
+      }
+      return
+    }
+
+    if (!state.authenticated) {
+      this.authenticate(state, decoded.value)
+      return
+    }
+
+    if (decoded.value.type === 'hello') {
+      // Already authenticated — second hello is a protocol error.
+      socketWrite(state.socket, errorFrame('', { code: 'unauthorized' }))
+      state.socket.destroy()
+      return
+    }
+
+    if (decoded.value.kind === 'host.shutdown') {
+      const client = state.binding?.authenticatedClient
+      if (
+        client?.clientClass !== 'host-cli' ||
+        client.clientId !== 'taskwraith-host-cli' ||
+        !state.binding?.welcome.capabilities.includes('host-lifecycle') ||
+        typeof this.options.onAuthenticatedShutdown !== 'function'
+      ) {
+        socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'unauthorized' }))
+        return
+      }
+      const stateName = this.shutdownState === 'running' ? 'stopping' : 'already_stopping'
+      this.shutdownState = 'stopping'
+      const wrote = socketWrite(
+        state.socket,
+        {
+          type: 'response',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          id: decoded.value.id,
+          ok: true,
+          result: { kind: 'host.shutdown', state: stateName }
+        },
+        (error) => {
+          if (stateName !== 'stopping') return
+          if (error) {
+            this.shutdownState = 'running'
+            this.options.log?.(
+              `[host-local-server] shutdown acknowledgement failed: ${String(error)}`
+            )
+            return
+          }
+          void Promise.resolve()
+            .then(() => this.options.onAuthenticatedShutdown?.())
+            .catch((error) => {
+              this.options.log?.(
+                `[host-local-server] authenticated shutdown failed: ${String(error)}`
+              )
+            })
+        }
+      )
+      if (!wrote && stateName === 'stopping') this.shutdownState = 'running'
+      return
+    }
+    if (this.shutdownState !== 'running') {
+      socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'shutting_down' }))
+      return
+    }
+
+    const operation = this.dispatch(state, decoded.value)
+    this.inFlightDispatches.add(operation)
+    try {
+      await operation
+    } finally {
+      this.inFlightDispatches.delete(operation)
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Authentication
+  // -----------------------------------------------------------------------
+
+  /**
+   * Authenticate the first client frame.  Must be a hello with a valid token.
+   * On success constructs a HostTransportVerifiedClientContext from the
+   * VERIFIED transport identity only, binds through HostSession, and sends
+   * the welcome frame.
+   */
+  private authenticate(state: ClientState, frame: HostLocalTransportClientFrame): void {
+    if (frame.type !== 'hello' || !safeTokenEquals(this.token, frame.token)) {
+      socketWrite(
+        state.socket,
+        errorFrame('', { code: frame.type === 'hello' ? 'unauthorized' : 'invalid_frame' })
+      )
+      state.socket.destroy()
+      return
+    }
+
+    state.authenticated = true
+    clearTimeout(state.handshakeTimer)
+
+    const hello = frame.hello
+    const verifiedContext = {
+      clientClass: hello.client.clientClass,
+      clientId: hello.client.clientId,
+      actorId: hello.client.clientId,
+      ...(hello.client.subjectId !== undefined ? { subjectId: hello.client.subjectId } : {})
+    }
+
+    const bindRequest: HostSessionBindRequest = {
+      verifiedContext,
+      authenticatedClient: hello.client,
+      clientCapabilityRequest: hello.capabilities
+    }
+
+    const bindResult = this.options.session.bind(bindRequest)
+    if (!bindResult.ok) {
+      socketWrite(state.socket, errorFrame('', { code: 'unauthorized' }))
+      state.socket.destroy()
+      return
+    }
+
+    state.binding = bindResult.value
+    // Authenticated and silent about leases is an implicit holder (an older
+    // client build); its first `host.lease` frame converts it.
+    this.leases.authenticated(state.connectionId)
+
+    // The epoch is attached here rather than inside the binding because the
+    // session owns capability negotiation, not process identity. `binding`
+    // therefore keeps the session's own welcome; only the wire frame carries
+    // the epoch. Nothing reads `binding.welcome` for identity, so the two
+    // cannot disagree in a way any caller can observe.
+    const welcome: HostLocalTransportHostFrame = {
+      type: 'welcome',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      welcome:
+        this.options.bootEpoch === undefined
+          ? bindResult.value.welcome
+          : { ...bindResult.value.welcome, bootEpoch: this.options.bootEpoch }
+    }
+    socketWrite(state.socket, welcome)
+  }
+
+  // -----------------------------------------------------------------------
+  // Request dispatch
+  // -----------------------------------------------------------------------
+
+  /**
+   * Route an authenticated client request to the HostAuthority facade.
+   * The call context is built from the session binding, never from the wire.
+   * Unknown request kinds reject with a closed error frame.
+   */
+  private async dispatch(
+    state: ClientState,
+    frame: Extract<HostLocalTransportClientFrame, { type: 'request' }>
+  ): Promise<void> {
+    const binding = state.binding
+    if (!binding) {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
+      return
+    }
+
+    const context: HostAuthorityCallContext = {
+      actor: binding.actor,
+      client: binding.authenticatedClient
+    }
+
+    const requiredCapability = REQUIRED_READ_CAPABILITY[frame.kind]
+    if (requiredCapability && !binding.welcome.capabilities.includes(requiredCapability)) {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
+      return
+    }
+    if (
+      frame.kind === 'command.submit' &&
+      parseSetupMutationCommandName(frame.params.name) !== null &&
+      (!binding.welcome.capabilities.includes('commands') ||
+        !binding.welcome.capabilities.includes('setup'))
+    ) {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
+      return
+    }
+    if (
+      frame.kind === 'command.submit' &&
+      RUN_STARTING_COMMAND_NAMES.has(frame.params.name) &&
+      this.leases.lifetimePhase === 'draining'
+    ) {
+      // Past its last-lease grace with runs still live: those finish, nothing
+      // new starts. Reads and run-continuing commands keep flowing.
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'shutting_down' }))
+      return
+    }
+
+    try {
+      const result = await this.executeRequest(state, context, frame)
+      if (result === null) {
+        socketWrite(state.socket, errorFrame(frame.id, { code: 'unknown_request_kind' }))
+        return
+      }
+      socketWrite(state.socket, result)
+    } catch {
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'host_unavailable' }))
+    }
+  }
+
+  private async executeRequest(
+    state: ClientState,
+    context: HostAuthorityCallContext,
+    frame: Extract<HostLocalTransportClientFrame, { type: 'request' }>
+  ): Promise<HostLocalTransportHostFrame | null> {
+    switch (frame.kind) {
+      case 'host.lease':
+        return this.handleLease(state, frame.id, frame.params)
+      case 'host.status':
+        return this.handleStatus(frame.id)
+      case 'snapshot.get':
+        return this.handleSnapshot(context, frame.id)
+      case 'deltas.since':
+        return this.handleDeltas(context, frame.id, frame.params)
+      case 'thread.offers':
+        return this.handleThreadOffers(context, frame.id, frame.params.threadId)
+      case 'provider.status':
+        return this.handleProviderStatuses(context, frame.id)
+      case 'provider.offers':
+        return this.handleProviderOffers(context, frame.id, frame.params.providerId)
+      case 'provider.auth.flows':
+        return this.handleProviderAuthFlows(context, frame.id, frame.params.providerId)
+      case 'provider.auth.status':
+        return this.handleProviderAuthStatus(context, frame.id, frame.params.providerId)
+      case 'thread.catalogue':
+        return this.handleThreadCatalogue(
+          context,
+          frame.id,
+          frame.params,
+          frame.priority === 'background' ? { priority: 'background' } : undefined
+        )
+      case 'thread.catalogue.maintenance':
+        return this.handleThreadCatalogueMaintenance(context, frame.id, frame.params)
+      case 'thread.history':
+        return this.handleThreadHistory(context, frame.id, frame.params)
+      case 'workspace.git.read':
+        return this.handleWorkspaceGitRead(context, frame.id, frame.params)
+      case 'history.since':
+        return this.handleHistorySince(context, frame.id, frame.params)
+      case 'receipt.lookup':
+        return this.handleReceiptLookup(context, frame.id, frame.params)
+      case 'health.get':
+        return this.handleHealth(context, frame.id)
+      case 'command.submit':
+        return this.handleCommand(context, frame.id, frame.params)
+      case 'twmission.export':
+        return this.handleTwMissionExport(context, frame.id)
+      default:
+        return null
+    }
+  }
+
+  private async handleSnapshot(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const result = await this.options.authority.snapshot(context)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'snapshot.get',
+      frame: {
+        type: 'host.snapshot',
+        protocolVersion: 2,
+        snapshot: result.value
+      }
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleDeltas(
+    context: HostAuthorityCallContext,
+    id: string,
+    params: HostCursorPosition
+  ): Promise<HostLocalTransportHostFrame> {
+    const result = await this.options.authority.deltas(context, params)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'deltas.since',
+      frame: {
+        type: 'host.deltas',
+        protocolVersion: 2,
+        result: result.value
+      }
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleReceiptLookup(
+    context: HostAuthorityCallContext,
+    id: string,
+    params: HostLocalTransportReceiptLookupParams
+  ): Promise<HostLocalTransportHostFrame> {
+    const lookup = parseHostAuthorityReceiptLookup(params)
+    if (!lookup) {
+      return errorFrame(id, { code: authorityErrorToTransportCode('invalid_lookup') })
+    }
+    const result = await this.options.authority.receipt(context, lookup)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    if (result.outcome === 'found') {
+      const success: HostLocalTransportSuccessResult = {
+        kind: 'receipt.lookup',
+        receipt: result.receipt
+      }
+      return {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: success
+      }
+    }
+    // not_found / actor_mismatch / incomplete → body-free error
+    return errorFrame(id, { code: authorityErrorToTransportCode('invalid_lookup') })
+  }
+
+  private async handleThreadOffers(
+    context: HostAuthorityCallContext,
+    id: string,
+    threadId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadOffers
+    if (typeof provider !== 'function') {
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    const result = await provider.call(this.options.authority, context, threadId)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'thread.offers',
+      offers: result.value
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleHealth(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const result = await this.options.authority.health(context)
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'health.get',
+      frame: {
+        type: 'host.health',
+        protocolVersion: 2,
+        health: result.value
+      }
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleProviderStatuses(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerStatuses
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.status', statuses: result.value })
+  }
+
+  private async handleProviderOffers(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerOffers
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.offers', offers: result.value })
+  }
+
+  private async handleProviderAuthFlows(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerAuthFlows
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.auth.flows', flows: result.value })
+  }
+
+  private async handleProviderAuthStatus(
+    context: HostAuthorityCallContext,
+    id: string,
+    providerId: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.providerAuthStatus
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, providerId)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'provider.auth.status', status: result.value })
+  }
+
+  private async handleThreadHistory(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostThreadHistoryRequest
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadHistory
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.history', page: result.value })
+  }
+
+  private async handleThreadCatalogue(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: ThreadCatalogueReadQuery,
+    options?: { priority: 'background' }
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadCatalogue
+    if (!provider) return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request, options)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.catalogue', reply: result.value })
+  }
+
+  private async handleThreadCatalogueMaintenance(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: ThreadCatalogueMaintenanceQuery
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.threadCatalogueMaintenance
+    if (!provider) return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'thread.catalogue.maintenance', reply: result.value })
+  }
+
+  private async handleWorkspaceGitRead(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostWorkspaceGitReadParams
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.gitRead
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'workspace.git.read', result: result.value })
+  }
+
+  private async handleHistorySince(
+    context: HostAuthorityCallContext,
+    id: string,
+    request: HostHistorySinceRequest
+  ): Promise<HostLocalTransportHostFrame> {
+    const provider = this.options.authority.historySince
+    if (typeof provider !== 'function') return errorFrame(id, { code: 'host_unavailable' })
+    const result = await provider.call(this.options.authority, context, request)
+    if (!result.ok) return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    return this.success(id, { kind: 'history.since', result: result.value })
+  }
+
+  private success(
+    id: string,
+    result: HostLocalTransportSuccessResult
+  ): HostLocalTransportHostFrame {
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result
+    }
+  }
+
+  /**
+   * `host.lease` needs authentication only. Leases are keyed by the socket, so
+   * a foreign or stale lease id is `invalid_payload`; a registry that is no
+   * longer ticking answers `shutting_down`.
+   */
+  private handleLease(
+    state: ClientState,
+    id: string,
+    params: HostLocalTransportLeaseParams
+  ): HostLocalTransportHostFrame {
+    switch (params.action) {
+      case 'acquire': {
+        const acquired = this.leases.acquire(state.connectionId)
+        if (!acquired) return errorFrame(id, { code: 'shutting_down' })
+        // Field by field: the result shape is a closed wire union, not
+        // whatever the registry's return type grows into.
+        return this.success(id, {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: acquired.leaseId,
+          heartbeatMs: acquired.heartbeatMs,
+          ttlMs: acquired.ttlMs,
+          hostNowMs: acquired.hostNowMs
+        })
+      }
+      case 'renew': {
+        const renewed = this.leases.renew(state.connectionId, params.leaseId)
+        if (!renewed) return errorFrame(id, { code: 'invalid_payload' })
+        return this.success(id, {
+          kind: 'host.lease',
+          action: 'renew',
+          leaseId: renewed.leaseId,
+          expiresInMs: renewed.expiresInMs,
+          hostNowMs: renewed.hostNowMs
+        })
+      }
+      case 'release':
+        if (!this.leases.release(state.connectionId, params.leaseId)) {
+          return errorFrame(id, { code: 'invalid_payload' })
+        }
+        return this.success(id, { kind: 'host.lease', action: 'release', released: true })
+      case 'decline':
+        if (!this.leases.decline(state.connectionId)) {
+          return errorFrame(id, { code: 'shutting_down' })
+        }
+        return this.success(id, { kind: 'host.lease', action: 'decline', declined: true })
+    }
+  }
+
+  private handleStatus(id: string): HostLocalTransportHostFrame {
+    const summary = this.leases.summary()
+    const nowMs = this.leases.nowMs()
+    const clients: HostStatusClientProjection[] = []
+    for (const client of this.clients) {
+      if (!client.authenticated || !client.binding) continue
+      if (clients.length >= HOST_STATUS_MAX_CLIENTS) break
+      const identity = client.binding.authenticatedClient
+      clients.push({
+        clientClass: identity.clientClass,
+        // A paired phone's clientId is its pair id and its subjectId its
+        // device key; neither is for the other clients to see.
+        ...(identity.clientClass === 'ios' ? {} : { clientId: identity.clientId }),
+        ...(identity.displayName !== undefined ? { displayName: identity.displayName } : {}),
+        connectedForMs: Math.max(0, nowMs - client.connectedAtMs),
+        lease: this.leases.stateOf(client.connectionId),
+        capabilities: [...client.binding.welcome.capabilities]
+      })
+    }
+    const status: HostStatusProjection = {
+      pid: process.pid,
+      startedAt: this.listenerStartedAt ?? new Date(this.options.now()).toISOString(),
+      // The Host's own monotonic clock, never a client's Date.now() arithmetic.
+      uptimeMs: Math.round(process.uptime() * 1000),
+      hostId: this.options.hostId,
+      ...(this.options.bootEpoch === undefined ? {} : { bootEpoch: this.options.bootEpoch }),
+      ...(this.options.payloadVersion === undefined
+        ? {}
+        : { payloadVersion: this.options.payloadVersion }),
+      profilePath: this.canonicalUserDataPath,
+      persist: summary.persist,
+      lifetime: {
+        phase: summary.phase,
+        ...(summary.graceRemainingMs === undefined
+          ? {}
+          : { graceRemainingMs: summary.graceRemainingMs }),
+        holders: summary.holders,
+        implicitHolders: summary.implicitHolders,
+        declined: summary.declined
+      },
+      liveWork: { runs: this.leases.liveRuns() },
+      clients
+    }
+    // Assembled from free-form identity fields, so it is decoded before it
+    // goes out: a status this Host would refuse to read is not sent.
+    const decoded = decodeHostStatusProjection(status)
+    if (!decoded.ok) {
+      this.options.log?.(`[host-local-server] status projection is invalid: ${decoded.error}`)
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    return this.success(id, { kind: 'host.status', status: decoded.value })
+  }
+
+  private async handleCommand(
+    context: HostAuthorityCallContext,
+    id: string,
+    params: HostCommand
+  ): Promise<HostLocalTransportHostFrame> {
+    const execute = () => this.options.authority.command(context, params)
+    const result = await (this.options.runCommand
+      ? this.options.runCommand(params, execute)
+      : execute())
+    if (!result.ok) {
+      return errorFrame(id, { code: authorityErrorToTransportCode(result.error) })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'command.submit',
+      receipt: result.value
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+
+  private async handleTwMissionExport(
+    context: HostAuthorityCallContext,
+    id: string
+  ): Promise<HostLocalTransportHostFrame> {
+    const exportTwMission = this.options.authority.exportTwMission as
+      | ((
+          ctx: HostAuthorityCallContext,
+          opts?: { readonly exportedAt?: string; readonly redactionNotes?: readonly string[] }
+        ) => Promise<{ ok: boolean; error?: unknown; bundle?: unknown; bytes?: unknown }>)
+      | undefined
+    if (typeof exportTwMission !== 'function') {
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    const result = await exportTwMission(context)
+    if (!result.ok) {
+      return errorFrame(id, {
+        code: authorityErrorToTransportCode(
+          typeof result.error === 'string' ? 'host_unavailable' : 'host_unavailable'
+        )
+      })
+    }
+    const success: HostLocalTransportSuccessResult = {
+      kind: 'twmission.export',
+      // Bytes are deterministically reconstructed and integrity-verified by
+      // the client. Sending both bundle and Uint8Array would double the wire
+      // payload and JSON-encode bytes as an object with numeric keys.
+      result: { bundle: result.bundle }
+    }
+    return {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id,
+      ok: true,
+      result: success
+    }
+  }
+}

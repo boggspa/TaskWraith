@@ -5,21 +5,21 @@ import {
 } from './ensembleFanoutPolicy'
 
 describe('ensembleFanoutPolicy', () => {
-  it('accepts known fanout policies', () => {
-    for (const policy of [
-      'off',
+  it('collapses every enabled policy to all (fan-out is On/Off now)', () => {
+    expect(normalizeEnsembleFanoutPolicy('off')).toBe('off')
+    for (const legacy of [
       'read_only',
       'all',
       'locked_writers_with_boss',
       'locked_writers_user_preflight'
     ] as const) {
-      expect(normalizeEnsembleFanoutPolicy(policy)).toBe(policy)
+      expect(normalizeEnsembleFanoutPolicy(legacy)).toBe('all')
     }
   })
 
-  it('falls back to read_only when legacy concurrent mode is enabled', () => {
-    expect(normalizeEnsembleFanoutPolicy(undefined, true)).toBe('read_only')
-    expect(normalizeEnsembleFanoutPolicy('bogus', true)).toBe('read_only')
+  it('maps the legacy concurrent boolean to all when enabled', () => {
+    expect(normalizeEnsembleFanoutPolicy(undefined, true)).toBe('all')
+    expect(normalizeEnsembleFanoutPolicy('bogus', true)).toBe('all')
   })
 
   it('falls back to off when legacy concurrent mode is disabled', () => {

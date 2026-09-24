@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRunEventRecord } from '../RunEventStore'
-import { runManualIntrospection } from './IntrospectionRunService'
+import { runManualIntrospection, runScheduledIntrospection } from './IntrospectionRunService'
 import type {
   ApprovalLedgerRecord,
   ChatRecord,
@@ -127,6 +127,19 @@ describe('IntrospectionRunService', () => {
     expect(result.pack.evidenceItemCount).toBe(result.evidenceCount)
     expect(store.createIntrospectionRun).toHaveBeenCalled()
     expect(store.saveMemoryProposalPack).toHaveBeenCalled()
+  })
+
+  it('claims the scheduled run before awaiting history and never uses the full-chat getter', async () => {
+    const store = makeFakeStore({})
+    store.getChats.mockImplementation(() => { throw new Error('full corpus trap') })
+    let finish!: (items: []) => void
+    const pending = new Promise<[]>((resolve) => { finish = resolve })
+    const running = runScheduledIntrospection({ store, now: () => '2026-07-05T13:00:00Z', uuid: () => 'scheduled', getChatEvidence: () => pending }, { windowStart: '2026-07-05T00:00:00Z', windowEnd: '2026-07-05T23:59:59Z' })
+    expect(store.runs[0]).toMatchObject({ status: 'collecting', trigger: 'scheduled' })
+    expect(store.saveMemoryProposalPack).not.toHaveBeenCalled()
+    finish([])
+    expect((await running).run.status).toBe('review_pending')
+    expect(store.getChats).not.toHaveBeenCalled()
   })
 
   it('returns an empty pack for a window with no evidence', () => {

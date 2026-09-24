@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">TaskWraith Observatory</title>
+  <desc id="desc">TaskWraith monoline ghost with the turbo telescope catalogue glyph.</desc>
+
+  <defs>
+    <mask id="symbol-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="726" cy="716" r="169" fill="#000000"/>
+    </mask>
+  </defs>
+  <g mask="url(#symbol-clearance)">
+    <g transform="translate(-18 -8) scale(7.45)" fill="none" stroke="#202A38" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round">
+      <path xmlns="http://www.w3.org/2000/svg" d="M56 30H80L92 36L98 48V84H92L86 90L80 84L74 96L68 84L56 96L50 84H38V48L44 36Z" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M50 84V104" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M68 84V104" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M86 90V104" />
+    <rect xmlns="http://www.w3.org/2000/svg" x="51" y="54" width="10" height="14" />
+    <rect xmlns="http://www.w3.org/2000/svg" x="75" y="54" width="10" height="14" />
+
+    </g>
+  </g>
+
+  <g transform="translate(551 541) scale(0.5833333333)">
+    <path xmlns="http://www.w3.org/2000/svg" d="M144 286 404 158l52 104-260 128Z" fill="none" stroke="#202A38" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M406 158l74-36 52 104-76 36" fill="none" stroke="#202A38" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M244 340l62 142M306 482h-118M306 482h118" fill="none" stroke="#202A38" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M142 204l-74-32M166 158l-58-54M482 338l58 54" fill="none" stroke="#202A38" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+  <circle xmlns="http://www.w3.org/2000/svg" cx="480" cy="122" r="14" fill="#202A38" />
+  <circle xmlns="http://www.w3.org/2000/svg" cx="532" cy="226" r="14" fill="#202A38" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M198 246l204-100" fill="none" stroke="#202A38" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+
+  </g>
+</svg>

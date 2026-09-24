@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { parseTaskWraithTuiArgs, taskWraithTuiUsage } from './cliOptions'
+import { TuiUsageError } from './tuiUsageError'
 
 describe('TaskWraith TUI CLI options', () => {
   it('parses machine JSON, compact export, and detached replay paths', () => {
@@ -39,6 +40,17 @@ describe('TaskWraith TUI CLI options', () => {
       startHost: true,
       hostLaunchProfile: 'package-smoke'
     })
+    expect(parseTaskWraithTuiArgs([], { TASKWRAITH_CLI_PACKAGE: '1' })).toMatchObject({
+      startHost: true,
+      hostLaunchProfile: 'node-package'
+    })
+    // An explicit profile keeps the existing connect-only safety boundary,
+    // even when the CLI itself came from npm.
+    expect(
+      parseTaskWraithTuiArgs(['--user-data', './private-profile'], {
+        TASKWRAITH_CLI_PACKAGE: '1'
+      })
+    ).toMatchObject({ hostLaunchProfile: 'custom' })
   })
 
   it('rejects ambiguous or state-mutating replay combinations', () => {
@@ -48,13 +60,42 @@ describe('TaskWraith TUI CLI options', () => {
     expect(() => parseTaskWraithTuiArgs(['--force'])).toThrow(/only valid with --export/)
   })
 
+  it('reports malformed invocations as usage errors for the exit-code contract', () => {
+    expect(() => parseTaskWraithTuiArgs(['--nope'])).toThrow(TuiUsageError)
+    expect(() => parseTaskWraithTuiArgs(['--json', '--snapshot'])).toThrow(TuiUsageError)
+    expect(() => parseTaskWraithTuiArgs(['--width', 'lots'])).toThrow(TuiUsageError)
+  })
+
   it('documents mission control, JSON, export, and replay', () => {
     const usage = taskWraithTuiUsage('test')
     expect(usage).toContain('--json')
     expect(usage).toContain('--export <file>')
     expect(usage).toContain('--replay <file>')
     expect(usage).toContain('--no-start-host')
+    expect(usage).toContain('standalone Node Host profile')
+    expect(usage).toContain('do not launch a Node Host')
+    expect(usage).toContain('pure-Node TaskWraith Host')
+    expect(usage).toContain('starts that Host when offline')
+    expect(usage).not.toContain('sidecar')
+    expect(usage).not.toContain('Host v2 socket')
     expect(usage).toContain('Ctrl+R missions')
     expect(usage).toContain('detached replay')
+  })
+  it('takes a theme from the flag, either spelling, and from the environment', () => {
+    expect(parseTaskWraithTuiArgs(['--theme', 'tokyo-night'])).toMatchObject({
+      themeName: 'tokyo-night'
+    })
+    expect(parseTaskWraithTuiArgs(['--theme=rosepine'])).toMatchObject({ themeName: 'rosepine' })
+    expect(parseTaskWraithTuiArgs([], { TASKWRAITH_TUI_THEME: 'wraith-day' })).toMatchObject({
+      themeName: 'wraith-day'
+    })
+    // Unspecified is not the same as "no theme": it means the default theme,
+    // which is resolved downstream. Carrying `undefined` here keeps the flag
+    // and the environment able to disagree without one of them inventing a name.
+    expect(parseTaskWraithTuiArgs([]).themeName).toBeUndefined()
+  })
+
+  it('advertises the theme flag in the usage text', () => {
+    expect(taskWraithTuiUsage('1.0.0')).toContain('--theme')
   })
 })

@@ -1,4 +1,5 @@
 import type { AgyModel } from './AntigravityCli'
+import { ANTIGRAVITY_AGY_STATIC_MODEL_IDS as STATIC_AGY_MODEL_IDS } from '../../shared/antigravityStaticModelIds'
 
 /**
  * Offer rows for the ban-risk official `agy` CLI lane when consent is recorded
@@ -23,7 +24,7 @@ import type { AgyModel } from './AntigravityCli'
  * disappearance is worse than an offer row that fails loudly at dispatch.
  *
  * Ids are the offerable Gemini rows from the verbatim `agy models` catalogue,
- * refreshed 2026-08-13 after Gemini 3.7 Flash became live. Floor labels equal
+ * refreshed 2026-09-02 after Gemini 3.8 Flash became live. Floor labels equal
  * ids deliberately: the shared picker grouping derives the same family label
  * and effort ladder that the richer live labels produce.
  *
@@ -31,30 +32,6 @@ import type { AgyModel } from './AntigravityCli'
  * stale id fails at dispatch with agy's own model error rather than silently
  * hiding the provider.
  */
-const STATIC_AGY_MODEL_IDS: readonly string[] = [
-  'gemini-3.7-flash-high',
-  'gemini-3.7-flash-medium',
-  'gemini-3.7-flash-low',
-  'gemini-3.6-flash-high',
-  'gemini-3.6-flash-medium',
-  'gemini-3.6-flash-low',
-  'gemini-3.5-flash-high',
-  'gemini-3.5-flash-medium',
-  'gemini-3.5-flash-low',
-  'gemini-3.1-pro-high',
-  'gemini-3.1-pro-low',
-  'flash-3.7',
-  'flash-3.6',
-  'flash-3.5',
-  // The CLI availability panel includes a mixed Claude/GPT pool; this floor
-  // keeps the picker and CLI fallback usable when discovery is offline.
-  'claude-opus-4-6',
-  'claude-opus-4-8',
-  'claude-sonnet-4-6',
-  'claude-sonnet-4-5',
-  'gpt-oss-120b-medium'
-]
-
 /**
  * Keep a narrow historical escape hatch: all model ids that pass through
  * `agy models` are now treated as offerable unless they are malformed.
@@ -75,4 +52,4 @@ export function antigravityAgyStaticModels(): AgyModel[] {
   return STATIC_AGY_MODEL_IDS.map((id) => ({ id, label: id }))
 }
 
-export const ANTIGRAVITY_AGY_STATIC_MODEL_IDS = STATIC_AGY_MODEL_IDS
+export { STATIC_AGY_MODEL_IDS as ANTIGRAVITY_AGY_STATIC_MODEL_IDS }

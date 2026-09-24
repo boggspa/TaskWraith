@@ -5,6 +5,7 @@ import {
   overlayPendingEnsembleSeatSelections,
   queuePendingEnsembleSeatSelection,
   reconcilePendingEnsembleSeatSelections,
+  replacePendingEnsembleSeatSelectionIfCurrent,
   setPendingEnsembleSeatSelection,
   type PendingEnsembleSeatSelections
 } from './pendingEnsembleSeatSelection'
@@ -23,6 +24,60 @@ function participant(patch: Partial<EnsembleParticipant> = {}): EnsembleParticip
 }
 
 describe('pendingEnsembleSeatSelection', () => {
+  it('retains an idle selection while its authoritative write is outstanding', () => {
+    const current = participant()
+    const pending = queuePendingEnsembleSeatSelection({}, 'chat-1', current, {
+      reasoningEffort: 'high'
+    })
+    expect(
+      reconcilePendingEnsembleSeatSelections(pending.selections, {
+        chatId: 'chat-1',
+        participants: [current],
+        roundLive: false,
+        writesPending: true
+      })
+    ).toBe(pending.selections)
+    expect(
+      replacePendingEnsembleSeatSelectionIfCurrent(
+        pending.selections,
+        'chat-1',
+        pending.participant,
+        undefined
+      )
+    ).toEqual({})
+  })
+
+  it('does not let an older acknowledgement or rollback clear a later A → B → A choice', () => {
+    const current = participant()
+    const first = queuePendingEnsembleSeatSelection({}, 'chat-1', current, {
+      reasoningEffort: 'high'
+    })
+    const second = queuePendingEnsembleSeatSelection(first.selections, 'chat-1', current, {
+      reasoningEffort: 'low'
+    })
+    const latest = queuePendingEnsembleSeatSelection(second.selections, 'chat-1', current, {
+      reasoningEffort: 'high'
+    })
+    for (const replacement of [undefined, current]) {
+      expect(
+        replacePendingEnsembleSeatSelectionIfCurrent(
+          latest.selections,
+          'chat-1',
+          first.participant,
+          replacement
+        )
+      ).toBe(latest.selections)
+    }
+    expect(
+      replacePendingEnsembleSeatSelectionIfCurrent(
+        latest.selections,
+        'chat-1',
+        latest.participant,
+        undefined
+      )
+    ).toEqual({})
+  })
+
   it('composes rapid provider/model and reasoning edits on the visible pending target', () => {
     const first = queuePendingEnsembleSeatSelection({}, 'chat-1', participant(), {
       provider: 'codex',

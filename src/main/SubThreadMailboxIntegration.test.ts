@@ -63,9 +63,11 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     expect(timer).toContain('ensureSubThreadJoinDeadlineEvent(parentChatId, current)')
     expect(timer).toContain('failHungEphemeralFleetWorkersOnJoinDeadline(parentChatId, groupId)')
 
+    // Sweep-budget args (perf-boot 04989a0e2): recovery signatures take a
+    // budget now, so markers pin the 'name(' prefix rather than 'name()'.
     const reaper = sourceBetween(
       'async function failHungEphemeralFleetWorkersOnJoinDeadline(',
-      'function recoverSubThreadControlPlane()'
+      'function recoverSubThreadControlPlane('
     )
     expect(reaper).toContain('selectHungEphemeralFleetWorkers(')
     // Stamp `cancelled` on the persisted row BEFORE aborting (flusher contract).
@@ -75,15 +77,64 @@ describe('sub-thread return main-process integration (ledger + projection, no au
 
     // Startup recovery keeps its orphan-run settle + worker-queue + join-timer
     // legs (renamed — the old name advertised the deleted drain leg).
-    expect(indexSource).toContain('recoverSubThreadControlPlane()')
+    expect(indexSource).toContain('recoverSubThreadControlPlane(')
     expect(indexSource).not.toContain('recoverPendingSubThreadMailboxes')
     const recovery = sourceBetween(
-      'function recoverSubThreadControlPlane()',
+      'function recoverSubThreadControlPlane(',
       '/**\n * Surface a sub-thread-dispatch failure'
     )
-    expect(recovery).toContain('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
-    expect(recovery).toContain('recoverSubThreadWorkerQueues()')
+    // Perf-boot 04989a0e2 threads a budget through the call; the no-age-floor
+    // settle (minAgeMs: 0 in both arms) is the load-bearing half of this pin.
+    expect(recovery).toContain('reconcileStaleChatRunsProjection(')
+    expect(recovery).toContain('{ minAgeMs: 0')
+    expect(recovery).toContain('recoverSubThreadWorkerQueues(')
     expect(recovery).toContain('scheduleSubThreadJoinEvaluation(')
+  })
+
+  it('cascades only explicit ephemeral workers and finalizes a resultless child after exit', () => {
+    const cascade = sourceBetween(
+      'async function cascadeWaveChildrenOnParentTerminal(',
+      'function isChatRunLive('
+    )
+    const exit = sourceBetween(
+      'function sendAgentCompatExit(',
+      'function codexApprovalPolicyForMode('
+    )
+
+    expect(cascade).toContain("delegationContext?.lifecycle === 'ephemeral'")
+    expect(cascade).not.toContain("delegationContext?.lifecycle !== 'durable'")
+    // Cancelling is only an abort request. The confirmed exit boundary owns
+    // the final background flush so a late normal result cannot be raced.
+    expect(cascade).not.toContain('finalizeBackgroundSubThreadTranscript(')
+    expect(cascade).toContain('backgroundState.cancellationRequested')
+    expect(cascade).toContain('backgroundSubThreadDispatchMayStart(runId)')
+    expect(exit).toContain('const backgroundSubThreadState = backgroundSubThreadTranscripts.get(')
+    expect(exit).toContain('finalizeBackgroundSubThreadTranscript(')
+    expect(exit).toContain('before the provider emitted a terminal result')
+    expect(exit).toContain("graphTerminalStatus === 'cancelled'\n            ? 'cancelled'")
+    const materializer = sourceBetween(
+      'function materializeBackgroundSubThreadProviderOutput(',
+      'function emitRunEventsChanged('
+    )
+    expect(materializer).toContain("payload.status === 'cancelled'")
+    expect(materializer).toContain('runManager.getClaimedTerminalStatus(runId)')
+    const finalizer = sourceBetween(
+      'function finalizeBackgroundSubThreadTranscript(',
+      'function saveSubThreadWorkerControl('
+    )
+    expect(finalizer).toContain("status: 'success' | 'failed' | 'cancelled'")
+    expect(finalizer).toContain('state.finalized = false')
+    expect(finalizer).toContain('backgroundSubThreadDispatchMayStart')
+    expect(finalizer).toContain('providerAdapterRunsInFlight.has(runId)')
+    expect(finalizer).toContain('providerTransportOperations.get(runId)')
+    // d6fb8f4a7 added three fail-closed seat-execution gate checks to the two
+    // terminal-exit sites; every occurrence stays a dispatch gate, never a leg.
+    expect(
+      indexSource.match(/backgroundSubThreadDispatchMayStart\(subThreadRunId\)/g)
+    ).toHaveLength(5)
+    expect(exit.indexOf('finalizeBackgroundSubThreadTranscript(')).toBeGreaterThan(
+      exit.indexOf('finalizeBridgeRunTranscript(')
+    )
   })
 
   it('broadcasts the parent in the same synchronous turn as its save (wave-return ordering)', () => {
@@ -154,6 +205,37 @@ describe('sub-thread return main-process integration (ledger + projection, no au
     // The facade wrapper survives for its history-clear gate and solo-wakeup
     // cancel; only its mailbox attachment tail is gone (absence pinned above).
     expect(indexSource).toContain('createRunDispatchFacade(runDispatchFacadeDeps)')
-    expect(indexSource).toContain('return baseDispatchRunWithProviderPause(payload, event, observer)')
+    expect(indexSource).toContain(
+      'return baseDispatchRunWithProviderPause(payload, event, observer)'
+    )
+  })
+
+  it('hydrates each cascaded child from its shell before resolving a run row or saving', () => {
+    // Stage 4 regression. The cascade discovers wave children through
+    // getChats({ listShells: true }); a shell is a summaryOnly row whose
+    // messages/runs are EMPTY arrays. Fed straight into the body, the persisted
+    // run-row fallback resolved nothing and the cancelled stamp spread the shell
+    // into saveAndBroadcastChat, where saveChat's summary-only fence threw
+    // BEFORE cancelProviderRun — so no wave child was ever cancelled.
+    const cascade = sourceBetween(
+      'async function cascadeWaveChildrenOnParentTerminal(',
+      'function isChatRunLive('
+    )
+    const sweep = cascade.indexOf('AppStore.getChats(undefined, { listShells: true })')
+    const hydrate = cascade.indexOf('const child = AppStore.getChat(shell.appChatId)')
+    const runRow = cascade.indexOf('(child.runs || []).at(-1)')
+    const save = cascade.indexOf('saveAndBroadcastChat({')
+    expect(sweep).toBeGreaterThanOrEqual(0)
+    expect(hydrate).toBeGreaterThan(sweep)
+    expect(runRow).toBeGreaterThan(hydrate)
+    expect(save).toBeGreaterThan(runRow)
+    // A child deleted between the sweep and its read is skipped, never saved.
+    expect(cascade.slice(hydrate, runRow)).toContain('if (!child) continue')
+    // The shell is discovery-only: after hydration the body spreads the full
+    // record and never reads the shell again.
+    const body = cascade.slice(hydrate)
+    expect(body).toContain('...child,')
+    expect(body).not.toContain('...shell')
+    expect(body).not.toContain('shell.runs')
   })
 })

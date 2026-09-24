@@ -111,8 +111,7 @@ const TERMINAL_RUN_STATUSES = new Set([
 const FAILURE_BLOCKER_KINDS = new Set([
   'looping',
   'stuck',
-  'tool-error-cluster',
-  'disagreement-unresolved'
+  'tool-error-cluster'
 ])
 
 function latestSidebarRun(chat: ChatRecord): ChatRun | undefined {

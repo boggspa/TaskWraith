@@ -173,9 +173,11 @@ async function openHostToolTerminal(
         `echo "> ${command}"`,
         'echo ""',
         command,
-        'status=$?',
+        // zsh treats `status` as a read-only alias of `$?`; assigning to it
+        // aborts the script, so the POSIX branch captures into `exit_code`.
+        'exit_code=$?',
         'echo ""',
-        `echo "${actionLabel} finished (exit $status). Close this window and return to TaskWraith."`
+        `echo "${actionLabel} finished (exit $exit_code). Close this window and return to TaskWraith."`
       ].join('\n') + '\n'
     const file = join(dir, `hosttool-${rawId}-${action}.command`)
     deps.writeFileSync(file, script, { mode: 0o755 })

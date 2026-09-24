@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { UsageRecord } from '../../../main/store/types'
+import type { ChatRecord, UsageRecord } from '../../../main/store/types'
+import {
+  emptyMessageActivity,
+  messageActivityDayKey,
+  messageActivityFromChats
+} from '../../../shared/messageActivityAggregate'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 
 import {
@@ -8,8 +13,12 @@ import {
   HEATMAP_HOUR_COUNT,
   WELCOME_USAGE_PROVIDER_IDS,
   buildWelcomeUsageDashboardData,
+  buildWelcomeUsageDashboardDataFromActivity,
   formatDashboardDuration,
-  mixProviderColors
+  mixProviderColors,
+  welcomeUsageMessageActivityRequest,
+  type WelcomeUsageDashboardData,
+  type WelcomeUsageRange
 } from './welcomeUsageDashboard'
 
 const baseRecord = (overrides: Partial<UsageRecord>): UsageRecord => ({
@@ -438,7 +447,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     expect(data.totalTokens).toBeGreaterThan(5_000)
   })
 
-  it('keeps canonical K2.7 Coding and K3 plus legacy K2.6 variants and relabels them', () => {
+  it('keeps K2.8 Preview, both K3 routes, and legacy K2.6 variants with distinct labels', () => {
     const records: UsageRecord[] = [
       baseRecord({
         id: 'k3',
@@ -446,6 +455,13 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
         provider: 'kimi',
         model: 'kimi-k3',
         totalTokens: 3_000
+      }),
+      baseRecord({
+        id: 'k3-256k',
+        timestamp: NOW - 20_000,
+        provider: 'kimi',
+        model: 'kimi-k3-256k',
+        totalTokens: 2_500
       }),
       baseRecord({
         id: 'k27',
@@ -476,6 +492,13 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
         totalTokens: 1_000
       }),
       baseRecord({
+        id: 'f',
+        timestamp: NOW - 125_000,
+        provider: 'kimi',
+        model: 'kimi-k2.7-code-highspeed',
+        totalTokens: 1_000
+      }),
+      baseRecord({
         id: 'd',
         timestamp: NOW - 150_000,
         provider: 'kimi',
@@ -491,10 +514,15 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
       })
     ]
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+    // `kimi-k2.7-code` canonicalises onto K2.8 Preview — the same upstream
+    // route under its current name — so its usage joins that row rather than
+    // splitting one route across two entries.
     expect(data.modelBreakdown.map((m) => m.label)).toEqual([
-      'K3',
-      'K2.7 Coding',
+      'K3 (1M)',
+      'K3 (256K)',
+      'K2.8 Preview',
       'Kimi K2.6',
+      'K2.7 Code Highspeed',
       'Kimi K2.6 Thinking'
     ])
   })
@@ -543,7 +571,8 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
 
     expect(data.modelBreakdown.map((m) => [m.provider, m.model, m.label, m.totalTokens])).toEqual([
       ['cursor', 'composer-2.5-fast', 'Composer 2.5 Fast', 4_500],
-      ['grok', 'grok-4.6', 'Grok 4.6 Fast', 450]
+      ['grok', 'grok-4.6', 'Grok 4.6 Fast', 300],
+      ['grok', 'grok-4.7', 'Grok 4.7', 150]
     ])
   })
 
@@ -699,6 +728,12 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
     const byModel = new Map(data.modelBreakdown.map((entry) => [entry.model, entry.colorClass]))
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(byModel.get(modelId!)).toBe(`provider-${brand.hueClass}`)
     }
@@ -906,17 +941,18 @@ describe('mixProviderColors', () => {
     kimi: '#0073E6',
     grok: '#757575',
     cursor: '#8C7508',
-    ollama: '#1A8562',
+    ollama: '#976C52',
     antigravity: '#308713',
     pi: '#68768C',
     mistral: '#D44404',
-    muse: '#1671EA'
+    muse: '#1671EA',
+    devin: '#4878AE'
   } as const
 
   it('returns empty string when no provider has weight', () => {
     expect(
       mixProviderColors(
-        { gemini: 0, codex: 0, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
+        { gemini: 0, codex: 0, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0, devin: 0 },
         palette
       )
     ).toBe('')
@@ -925,7 +961,7 @@ describe('mixProviderColors', () => {
   it('returns the single provider color when only one contributes', () => {
     expect(
       mixProviderColors(
-        { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
+        { gemini: 0, codex: 50, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0, devin: 0 },
         palette
       )
     ).toBe('#705AFF')
@@ -933,7 +969,7 @@ describe('mixProviderColors', () => {
 
   it('builds a nested color-mix() expression that references both providers when two contribute', () => {
     const result = mixProviderColors(
-      { gemini: 30, codex: 70, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
+      { gemini: 30, codex: 70, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0, devin: 0 },
       palette
     )
     expect(result).toContain('color-mix(in srgb,')
@@ -943,7 +979,7 @@ describe('mixProviderColors', () => {
 
   it('weights the dominant provider with a higher percentage in the color-mix expression', () => {
     const dominantCodex = mixProviderColors(
-      { gemini: 10, codex: 90, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0 },
+      { gemini: 10, codex: 90, claude: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0, pi: 0, mistral: 0, muse: 0, devin: 0 },
       palette
     )
     // color-mix(in srgb, <gemini> 10%, <codex> 90%) → codex weight should appear with a high number.
@@ -1446,15 +1482,16 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
   const HOUR = 60 * 60 * 1000
   const DAY = 24 * HOUR
 
-  it('always emits all 11 stable provider identities, even with no records', () => {
+  it('always emits all 12 stable provider identities, even with no records', () => {
     const data = buildWelcomeUsageDashboardData([], [], '30d', NOW)
-    expect(data.providerCostBreakdown).toHaveLength(11)
+    expect(data.providerCostBreakdown).toHaveLength(12)
     const providers = data.providerCostBreakdown.map((entry) => entry.provider).sort()
     expect(providers).toEqual([
       'antigravity',
       'claude',
       'codex',
       'cursor',
+      'devin',
       'gemini',
       'grok',
       'kimi',
@@ -1475,7 +1512,8 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
       'antigravity',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
     // Zero-token / zero-cost providers still appear with the canonical
     // display name and 0 share so the card list is a stable roster.
@@ -1725,5 +1763,303 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
       expect(entry.tokens).toBe(0)
       expect(entry.costUsd).toBe(0)
     }
+  })
+})
+
+describe('buildWelcomeUsageDashboardData <-> message-activity aggregate (B13)', () => {
+  // The fixture the golden values below were captured from, run through the
+  // pre-aggregate implementation that walked full records inline. Every
+  // timestamp sits hours away from local midnight, so the day keys are the
+  // same in whatever timezone the suite runs in.
+  const NOW = new Date(2026, 4, 22, 12, 0).getTime()
+  const DAY = 86_400_000
+  const HOUR = 3_600_000
+  const MINUTE = 60_000
+  const ago = (ms: number): string => new Date(NOW - ms).toISOString()
+  const chat = (appChatId: string, timestamps: string[]): ChatRecord =>
+    ({
+      appChatId,
+      title: appChatId,
+      scope: 'workspace',
+      provider: 'codex',
+      workspaceId: 'ws-1',
+      createdAt: NOW - 100 * DAY,
+      updatedAt: NOW,
+      archived: false,
+      messages: timestamps.map((timestamp, index) => ({
+        id: `${appChatId}-${index}`,
+        role: index % 2 ? 'assistant' : 'user',
+        content: 'm',
+        timestamp
+      })),
+      runs: []
+    }) as unknown as ChatRecord
+  const CHATS: ChatRecord[] = [
+    chat('alpha', [
+      ago(70 * DAY),
+      ago(40 * DAY + HOUR),
+      ago(30 * DAY - MINUTE),
+      ago(30 * DAY + MINUTE),
+      ago(7 * DAY),
+      ago(2 * HOUR),
+      'not a date',
+      ''
+    ]),
+    chat('beta', [ago(6 * DAY), ago(6 * DAY - 1000), ago(25 * HOUR)]),
+    chat('gamma', [ago(100 * DAY), ago(99 * DAY)]),
+    { ...chat('delta', []), summaryOnly: true, messageCount: 4, runCount: 0 } as ChatRecord,
+    chat('epsilon', []),
+    chat('zeta', [ago(DAY), ago(0)])
+  ]
+  const rec = (id: string, timestamp: number, chatId: string): UsageRecord =>
+    baseRecord({ id, timestamp, chatId, runId: `${id}-run` })
+  const RECORDS = [
+    rec('r1', NOW - 3 * DAY, 'beta'),
+    rec('r2', NOW - 3 * DAY + HOUR, 'eta'),
+    rec('r3', NOW - 45 * DAY, 'theta'),
+    rec('r4', NOW - 30 * MINUTE, 'zeta')
+  ]
+  const WORKSPACES = [{ id: 'ws-1', displayName: 'Alpha' }]
+  const CASES: Array<[WelcomeUsageRange, number, string]> = [
+    ['all', 0, 'all:0'],
+    ['30d', 0, '30d:0'],
+    ['7d', 0, '7d:0'],
+    ['24h', 0, '24h:0'],
+    ['30d', NOW - 50 * DAY, '30d:72000m'],
+    ['all', NOW - 50 * DAY, 'all:72000m'],
+    ['all', NOW - 1000, 'all:0m'],
+    ['7d', NOW - 6 * DAY - 500, '7d:8640m']
+  ]
+  const FIELDS = [
+    'hasActivity',
+    'lifetimeHasActivity',
+    'sessions',
+    'messages',
+    'activeDays',
+    'currentStreak',
+    'longestStreak',
+    'avgSessionMs',
+    'tokensPerSession',
+    'comparisonText',
+    'peakHour',
+    'totalTokens'
+  ] as const
+  const pick = (data: WelcomeUsageDashboardData): Record<string, unknown> =>
+    Object.fromEntries(FIELDS.map((field) => [field, data[field]]))
+  const GOLDEN: Record<string, Record<string, unknown>> = {
+    'all:0': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 6,
+      messages: 13,
+      activeDays: 11,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 667,
+      tokensPerSession: 200,
+      comparisonText: "You've tracked 1.2k tokens across 1 provider.",
+      peakHour: '12 PM',
+      totalTokens: 1200
+    },
+    '30d:0': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 4,
+      messages: 8,
+      activeDays: 6,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 1000,
+      tokensPerSession: 225,
+      comparisonText: "You've tracked 900 tokens across 1 provider.",
+      peakHour: '11 AM',
+      totalTokens: 900
+    },
+    '7d:0': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 4,
+      messages: 7,
+      activeDays: 5,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 1000,
+      tokensPerSession: 225,
+      comparisonText: "You've tracked 900 tokens across 1 provider.",
+      peakHour: '11 AM',
+      totalTokens: 900
+    },
+    '24h:0': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 2,
+      messages: 3,
+      activeDays: 2,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 2000,
+      tokensPerSession: 150,
+      comparisonText: "You've tracked 300 tokens across 1 provider.",
+      peakHour: '11 AM',
+      totalTokens: 300
+    },
+    '30d:72000m': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 4,
+      messages: 8,
+      activeDays: 6,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 1000,
+      tokensPerSession: 225,
+      comparisonText: "You've tracked 900 tokens across 1 provider.",
+      peakHour: '11 AM',
+      totalTokens: 900
+    },
+    'all:72000m': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 5,
+      messages: 10,
+      activeDays: 8,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 800,
+      tokensPerSession: 240,
+      comparisonText: "You've tracked 1.2k tokens across 1 provider.",
+      peakHour: '12 PM',
+      totalTokens: 1200
+    },
+    'all:0m': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 1,
+      messages: 1,
+      activeDays: 1,
+      currentStreak: 1,
+      longestStreak: 1,
+      avgSessionMs: 0,
+      tokensPerSession: 0,
+      comparisonText: "You've tracked 0 tokens across 1 provider.",
+      peakHour: 'n/a',
+      totalTokens: 0
+    },
+    '7d:8640m': {
+      hasActivity: true,
+      lifetimeHasActivity: true,
+      sessions: 4,
+      messages: 6,
+      activeDays: 4,
+      currentStreak: 2,
+      longestStreak: 2,
+      avgSessionMs: 750,
+      tokensPerSession: 225,
+      comparisonText: "You've tracked 900 tokens across 1 provider.",
+      peakHour: '11 AM',
+      totalTokens: 900
+    }
+  }
+
+  it('reproduces the pre-aggregate full-record dashboard for every range and reset', () => {
+    for (const [range, reset, key] of CASES) {
+      const data = buildWelcomeUsageDashboardData(RECORDS, CHATS, range, NOW, WORKSPACES, reset)
+      expect(pick(data), key).toEqual(GOLDEN[key])
+    }
+    // Same full-fixture walk as the aggregate case below (~0.4 s locally);
+    // the loaded macOS-Intel runner overran 5 s on run 34984996288.
+  }, 60_000)
+
+  it('builds the identical dashboard from a pre-computed aggregate', () => {
+    for (const [range, reset, key] of CASES) {
+      const activity = messageActivityFromChats(
+        CHATS,
+        welcomeUsageMessageActivityRequest(range, NOW, reset)
+      )
+      expect(
+        buildWelcomeUsageDashboardDataFromActivity(
+          RECORDS,
+          activity,
+          range,
+          NOW,
+          WORKSPACES,
+          reset
+        ),
+        key
+      ).toEqual(buildWelcomeUsageDashboardData(RECORDS, CHATS, range, NOW, WORKSPACES, reset))
+    }
+    // Every range x reset case builds the dashboard twice over the full
+    // fixture: ~0.9 s locally, and the loaded macOS-Intel runner overran the
+    // 5 s default (run 34972722507). Equivalence, not speed, is the pin.
+  }, 60_000)
+
+  it('sends a backend the same cutoffs the full-record walk applies', () => {
+    expect(welcomeUsageMessageActivityRequest('30d', NOW, 0)).toEqual({
+      resetAt: 0,
+      rangeStart: NOW - 30 * DAY
+    })
+    expect(welcomeUsageMessageActivityRequest('7d', NOW, -5)).toEqual({
+      resetAt: 0,
+      rangeStart: NOW - 7 * DAY
+    })
+    expect(welcomeUsageMessageActivityRequest('24h', NOW, 123)).toEqual({
+      resetAt: 123,
+      rangeStart: NOW - DAY
+    })
+    expect(welcomeUsageMessageActivityRequest('all', NOW, Number.NaN)).toEqual({
+      resetAt: 0,
+      rangeStart: 0
+    })
+  })
+
+  it('unions aggregate chat ids with usage-record chat ids for sessions', () => {
+    const activity = {
+      ...emptyMessageActivity(),
+      lifetimeDayKeys: [messageActivityDayKey(NOW)],
+      rangeMessageCount: 2,
+      rangeDayKeys: [messageActivityDayKey(NOW)],
+      rangeChatIds: ['beta', 'omega'],
+      hasAnyMessage: true
+    }
+    // In-range records name beta (shared), eta and zeta; theta is 45 days out.
+    const data = buildWelcomeUsageDashboardDataFromActivity(
+      RECORDS,
+      activity,
+      '30d',
+      NOW,
+      WORKSPACES,
+      0
+    )
+    expect(data.sessions).toBe(4)
+    expect(data.messages).toBe(2)
+    expect(data.activeDays).toBe(2)
+  })
+
+  it('falls back to two messages per run record when the aggregate has none', () => {
+    const data = buildWelcomeUsageDashboardDataFromActivity(
+      RECORDS,
+      emptyMessageActivity(),
+      '30d',
+      NOW,
+      WORKSPACES,
+      0
+    )
+    expect(data.messages).toBe(6)
+    expect(data.hasActivity).toBe(true)
+    expect(data.sessions).toBe(3)
+  })
+
+  it('reads the lifetime calendar and lifetimeHasActivity from the aggregate alone', () => {
+    const activity = {
+      ...emptyMessageActivity(),
+      lifetimeDayKeys: [messageActivityDayKey(NOW - DAY), messageActivityDayKey(NOW)],
+      hasAnyMessage: true
+    }
+    const data = buildWelcomeUsageDashboardDataFromActivity([], activity, '24h', NOW, [], 0)
+    expect(data.currentStreak).toBe(2)
+    expect(data.longestStreak).toBe(2)
+    expect(data.lifetimeHasActivity).toBe(true)
+    expect(data.hasActivity).toBe(false)
+    expect(data.activeDays).toBe(0)
   })
 })

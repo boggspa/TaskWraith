@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1020" viewBox="0 0 1560 1020">
+<rect width="1560" height="1020" fill="#0D1016"/>
+<text x="68" y="76" fill="#A9B6C6" font-family="Helvetica, sans-serif" font-size="17" letter-spacing="4">TASKWRAITH / COMPANION ICONS</text>
+<text x="68" y="129" fill="#EDF3FA" font-family="Helvetica, sans-serif" font-size="35" font-weight="600">One ghost. Three disciplines.</text>
+<image href="observatory/app-icon.svg" x="62" y="174" width="420" height="420"/>
+<text x="100" y="623" fill="#F1F5FA" font-family="Helvetica, sans-serif" font-size="24" font-weight="600">TaskWraith Observatory</text>
+<text x="100" y="655" fill="#6EDBE7" font-family="Helvetica, sans-serif" font-size="12" letter-spacing="2">TELESCOPE / OBSERVE</text>
+<rect x="86" y="700" width="388" height="112" rx="18" fill="#ECEFF4"/>
+<text x="104" y="724" fill="#546176" font-family="Helvetica, sans-serif" font-size="10" letter-spacing="1.5">DOCK SIZES</text>
+<image href="observatory/app-icon.svg" x="106" y="746.0" width="64" height="64"/>
+<image href="observatory/app-icon.svg" x="202" y="754.0" width="48" height="48"/>
+<image href="observatory/app-icon.svg" x="292" y="762.0" width="32" height="32"/>
+<image href="observatory/app-icon.svg" x="372" y="770.0" width="16" height="16"/>
+<image href="observatory/mark.svg" x="92" y="848" width="108" height="108"/>
+<text x="217" y="897" fill="#B6C1CF" font-family="Helvetica, sans-serif" font-size="14">Standalone vector mark</text>
+<text x="217" y="920" fill="#738198" font-family="Helvetica, sans-serif" font-size="12">SVG · PNG · macOS ICNS</text>
+<image href="provider-hub/app-icon.svg" x="572" y="174" width="420" height="420"/>
+<text x="610" y="623" fill="#F1F5FA" font-family="Helvetica, sans-serif" font-size="24" font-weight="600">Provider Hub</text>
+<text x="610" y="655" fill="#FFB276" font-family="Helvetica, sans-serif" font-size="12" letter-spacing="2">FANOUT / CONNECT</text>
+<rect x="596" y="700" width="388" height="112" rx="18" fill="#ECEFF4"/>
+<text x="614" y="724" fill="#546176" font-family="Helvetica, sans-serif" font-size="10" letter-spacing="1.5">DOCK SIZES</text>
+<image href="provider-hub/app-icon.svg" x="616" y="746.0" width="64" height="64"/>
+<image href="provider-hub/app-icon.svg" x="712" y="754.0" width="48" height="48"/>
+<image href="provider-hub/app-icon.svg" x="802" y="762.0" width="32" height="32"/>
+<image href="provider-hub/app-icon.svg" x="882" y="770.0" width="16" height="16"/>
+<image href="provider-hub/mark.svg" x="602" y="848" width="108" height="108"/>
+<text x="727" y="897" fill="#B6C1CF" font-family="Helvetica, sans-serif" font-size="14">Standalone vector mark</text>
+<text x="727" y="920" fill="#738198" font-family="Helvetica, sans-serif" font-size="12">SVG · PNG · macOS ICNS</text>
+<image href="studio/app-icon.svg" x="1082" y="174" width="420" height="420"/>
+<text x="1120" y="623" fill="#F1F5FA" font-family="Helvetica, sans-serif" font-size="24" font-weight="600">TaskWraith Studio</text>
+<text x="1120" y="655" fill="#C6ADFF" font-family="Helvetica, sans-serif" font-size="12" letter-spacing="2">TIMELINE / CREATE</text>
+<rect x="1106" y="700" width="388" height="112" rx="18" fill="#ECEFF4"/>
+<text x="1124" y="724" fill="#546176" font-family="Helvetica, sans-serif" font-size="10" letter-spacing="1.5">DOCK SIZES</text>
+<image href="studio/app-icon.svg" x="1126" y="746.0" width="64" height="64"/>
+<image href="studio/app-icon.svg" x="1222" y="754.0" width="48" height="48"/>
+<image href="studio/app-icon.svg" x="1312" y="762.0" width="32" height="32"/>
+<image href="studio/app-icon.svg" x="1392" y="770.0" width="16" height="16"/>
+<image href="studio/mark.svg" x="1112" y="848" width="108" height="108"/>
+<text x="1237" y="897" fill="#B6C1CF" font-family="Helvetica, sans-serif" font-size="14">Standalone vector mark</text>
+<text x="1237" y="920" fill="#738198" font-family="Helvetica, sans-serif" font-size="12">SVG · PNG · macOS ICNS</text>
+</svg>

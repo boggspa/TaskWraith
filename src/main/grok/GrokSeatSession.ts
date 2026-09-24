@@ -1,4 +1,4 @@
-// Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — persistent
+// Spike 7 (the staged fan-out design) — persistent
 // per-seat Grok ACP session. The single-turn client (GrokAcpClient) opens a
 // fresh `session/new` every turn and SIGINT-kills the process at turn end, so
 // an ensemble Grok seat has ZERO provider-native memory across its turns —

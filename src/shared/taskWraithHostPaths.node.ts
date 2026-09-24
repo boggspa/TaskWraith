@@ -41,6 +41,8 @@ import { join } from 'node:path'
 export const TASKWRAITH_HOST_DISCOVERY_FILE = 'taskwraith-host-v2.json'
 export const TASKWRAITH_HOST_TOKEN_FILE = 'taskwraith-host-v2.token'
 export const TASKWRAITH_HOST_SOCKET_FILE = 'taskwraith-host-v2.sock'
+/** Profile authority artifact used by production Host ownership. */
+export const TASKWRAITH_HOST_AUTHORITY_LEASE_FILE = 'taskwraith-host-authority-v1.json'
 
 // ---------------------------------------------------------------------------
 // Discovery payload
@@ -64,6 +66,12 @@ export interface TaskWraithHostDiscovery {
   pid: number
   /** ISO-8601 timestamp of when the server started. */
   startedAt: string
+  /** Stable Host identity; absent only in legacy diagnostic discovery. */
+  hostId?: string
+  /** Stable Host version; absent only in legacy diagnostic discovery. */
+  hostVersion?: string
+  /** Exact static Host payload identity; absent on Hosts predating upgrade handoff. */
+  payloadVersion?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +87,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isNonEmptyString(value: unknown, max = 16_000): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= max
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= max &&
+    value.trim() === value &&
+    // eslint-disable-next-line no-control-regex -- discovery metadata is control-free.
+    !/[\u0000-\u001f\u007f]/.test(value)
+  )
+}
+
+function isCanonicalIso(value: unknown): value is string {
+  if (!isNonEmptyString(value, 100)) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
 }
 
 /**
@@ -105,8 +126,21 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
     return { ok: false, error: 'pid must be a positive integer' }
   }
 
-  if (!isNonEmptyString(value.startedAt, 100)) {
-    return { ok: false, error: 'startedAt must be a non-empty bounded string' }
+  if (!isCanonicalIso(value.startedAt)) {
+    return { ok: false, error: 'startedAt must be a canonical ISO timestamp' }
+  }
+  if (value.hostId !== undefined && !isNonEmptyString(value.hostId, 512)) {
+    return { ok: false, error: 'hostId must be a non-empty bounded string' }
+  }
+  if (value.hostVersion !== undefined && !isNonEmptyString(value.hostVersion, 80)) {
+    return { ok: false, error: 'hostVersion must be a non-empty bounded string' }
+  }
+  if (
+    value.payloadVersion !== undefined &&
+    (typeof value.payloadVersion !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.payloadVersion))
+  ) {
+    return { ok: false, error: 'payloadVersion must be a SHA-256 identity' }
   }
 
   return {
@@ -116,7 +150,12 @@ export function decodeTaskWraithHostDiscovery(value: unknown): TaskWraithHostDis
       socketPath: value.socketPath as string,
       tokenPath: value.tokenPath as string,
       pid: value.pid as number,
-      startedAt: value.startedAt as string
+      startedAt: value.startedAt as string,
+      ...(value.hostId !== undefined ? { hostId: value.hostId as string } : {}),
+      ...(value.hostVersion !== undefined ? { hostVersion: value.hostVersion as string } : {}),
+      ...(value.payloadVersion !== undefined
+        ? { payloadVersion: value.payloadVersion as string }
+        : {})
     }
   }
 }
@@ -140,6 +179,11 @@ export function taskWraithHostDiscoveryPath(userDataPath: string): string {
  */
 export function taskWraithHostTokenPath(userDataPath: string): string {
   return join(userDataPath, TASKWRAITH_HOST_TOKEN_FILE)
+}
+
+/** Absolute profile-authority lease path alongside Host discovery/token. */
+export function taskWraithHostAuthorityLeasePath(userDataPath: string): string {
+  return join(userDataPath, TASKWRAITH_HOST_AUTHORITY_LEASE_FILE)
 }
 
 /**

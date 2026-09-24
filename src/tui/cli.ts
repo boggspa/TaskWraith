@@ -1,16 +1,41 @@
 #!/usr/bin/env node
 
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
-import { HostProjectionClient } from '../main/host/HostProjectionClient'
+import { HostProjectionClient } from '../host-client/HostProjectionClient'
 import {
   TW_MISSION_MAX_BUNDLE_BYTES,
   importTwMissionBundleBytes,
   type TwMissionManifest
-} from '../main/host/twmission'
+} from '../host-shared/twmission'
 import type { HostSnapshot } from '../shared/hostProtocol'
 import { Ansi } from './ansi'
+import { createTuiEscapedErrorHandler } from './escapedErrorPolicy'
+import {
+  isAutoThemeName,
+  resolveAutoTheme,
+  resolveTuiTheme,
+  tuiThemeForColorMode,
+  type TuiTheme
+} from './palette'
+import { resolveTuiAppearance, type TuiAppearanceProbeIo } from './appearance'
+import {
+  readTuiProfileSettings,
+  readTuiSettings,
+  writeTuiProfileSettings,
+  writeTuiSettings
+} from './settings'
 import { TaskWraithTui } from './TaskWraithTui'
+import { TaskWraithControlClient } from './client/TaskWraithControlClient'
+import {
+  parseOutsideCommand,
+  type OutsideCommand,
+  type OutsideSocketCommand
+} from './outsideCommand'
+import { runOutsideCommand, type OutsideCommandIo } from './outsideClientRunner'
+import { serveTaskWraithMcp } from './mcpServer'
+import { resolveSenderIdentity } from './senderIdentity'
 import {
   parseTaskWraithTuiArgs,
   taskWraithTuiUsage,
@@ -24,10 +49,18 @@ import {
   buildTaskWraithTuiJsonProjection,
   type TaskWraithTuiJsonProjectionSource
 } from './jsonProjection'
-import { ensureTuiHostAvailable } from './hostProcessManager'
+import {
+  ensureTuiHostAvailable,
+  planTuiHostStopAll,
+  restartTuiHost,
+  runTuiHostStopAll,
+  type EnsureTuiHostAvailableResult,
+  type TuiHostControl
+} from './hostProcessManager'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import { TuiUsageError } from './tuiUsageError'
 
 const TUI_VERSION = '0.2.0'
 
@@ -43,6 +76,107 @@ function pickThread(
 
 function resolveCliGlyphs(options: TaskWraithTuiCliOptions): TuiGlyphSet {
   return resolveTuiGlyphs(options.ascii ? false : detectTuiUnicode())
+}
+
+/**
+ * The theme this run paints in.
+ *
+ * Two steps, and the second is the one that matters: the named theme is chosen
+ * first, then reconciled with what the terminal can actually render. A theme
+ * whose depth needs 24-bit colour gives its ground up on a 256-colour terminal
+ * rather than painting three surfaces that quantise to the same flat block.
+ */
+/**
+ * Terminal I/O for the OSC 11 probe, or `undefined` when there is no tty to ask.
+ *
+ * Deliberately built fresh and used exactly once, at startup, before the
+ * interactive TUI attaches its own input handling. Raw mode and the resume/pause
+ * pair below would fight the TUI's reader if this ran any later.
+ */
+function nodeAppearanceProbe(): TuiAppearanceProbeIo | undefined {
+  const input = process.stdin
+  const output = process.stdout
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') return undefined
+  return {
+    isTty: true,
+    hasPendingInput: () => input.readableLength > 0,
+    setRawMode: (raw) => {
+      input.setRawMode(raw)
+    },
+    write: (data) => {
+      output.write(data)
+    },
+    read: (timeoutMs) =>
+      new Promise((resolve) => {
+        let buffer = ''
+        const finish = (): void => {
+          clearTimeout(timer)
+          input.off('data', onData)
+          input.pause()
+          resolve(buffer)
+        }
+        const onData = (chunk: Buffer): void => {
+          // latin1 keeps every byte addressable: the reply is ASCII, but a
+          // multi-byte decode would mangle any keystroke that arrives with it.
+          buffer += chunk.toString('latin1')
+          if (buffer.includes(OSC_REPLY_BEL) || buffer.includes(OSC_REPLY_ST)) finish()
+        }
+        const timer = setTimeout(finish, timeoutMs)
+        input.on('data', onData)
+        input.resume()
+      })
+  }
+}
+
+const OSC_REPLY_BEL = String.fromCharCode(7)
+const OSC_REPLY_ST = `${String.fromCharCode(27)}\\`
+
+/**
+ * The theme this run paints in.
+ *
+ * Three steps, and the last is the one that matters: `auto` is measured, the
+ * named theme is looked up, and either way the result is reconciled with what
+ * the terminal can actually render. A theme whose depth needs 24-bit colour
+ * gives its ground up on a 256-colour terminal rather than painting three
+ * surfaces that quantise to the same flat block.
+ */
+async function resolveCliTheme(options: TaskWraithTuiCliOptions): Promise<TuiTheme> {
+  const requested = resolveCliThemeName(options)
+  let chosen: TuiTheme
+  if (isAutoThemeName(requested)) {
+    const probe = nodeAppearanceProbe()
+    chosen = resolveAutoTheme(
+      await resolveTuiAppearance({
+        env: process.env,
+        platform: process.platform,
+        run: runForStdout,
+        ...(probe ? { probe } : {})
+      })
+    )
+  } else {
+    chosen = resolveTuiTheme(requested)
+  }
+  return tuiThemeForColorMode(chosen, options.colorMode)
+}
+
+/**
+ * Which theme this run was asked for: flag, then environment, then the saved
+ * preference, then nothing — which downstream reads as "the default theme".
+ *
+ * The saved preference sits below the environment on purpose. `TASKWRAITH_TUI_THEME`
+ * is how a script or a terminal profile states what it needs, and a preference
+ * saved from an interactive session should not override the environment the
+ * next session is launched into.
+ */
+function resolveCliThemeName(options: TaskWraithTuiCliOptions): string | undefined {
+  return options.themeName ?? readTuiSettings().theme
+}
+
+/** Runs a probe command, treating any failure as "this source has no answer". */
+function runForStdout(command: string, args: string[]): string | undefined {
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 1000 })
+  if (result.error || result.status !== 0) return undefined
+  return result.stdout
 }
 
 function stateFromHostSnapshot(
@@ -128,13 +262,18 @@ async function loadReplay(
   }
 }
 
-function renderSnapshotState(state: TaskWraithTuiState, options: TaskWraithTuiCliOptions): void {
+function renderSnapshotState(
+  state: TaskWraithTuiState,
+  options: TaskWraithTuiCliOptions,
+  theme: TuiTheme
+): void {
   const output = renderTaskWraithTui(state, {
     width: options.width,
     height: options.height,
     ansi: new Ansi(options.colorMode),
     animationEnabled: options.animationEnabled,
-    glyphs: resolveCliGlyphs(options)
+    glyphs: resolveCliGlyphs(options),
+    theme
   })
   process.stdout.write(`${output}\n`)
 }
@@ -182,7 +321,133 @@ async function exportTwMission(options: TaskWraithTuiCliOptions): Promise<void> 
 
 let activeTui: TaskWraithTui | null = null
 
+async function readAllStdin(): Promise<string> {
+  // A terminal with nothing piped would block forever waiting for EOF, so a
+  // missing prompt is reported as usage rather than as a hang.
+  if (process.stdin.isTTY) return ''
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * The non-interactive verbs (`tw threads`, `tw send`) run over the v1
+ * local-control socket: it is the only transport that reaches a live Ensemble
+ * round today, and it is where the host stamps the sender onto the row.
+ */
+function outsideClientIo(
+  command: OutsideSocketCommand
+): Pick<OutsideCommandIo, 'identity' | 'openClient'> {
+  const identity = resolveSenderIdentity(
+    process.env,
+    process.pid,
+    command.kind === 'send' ? command.from : undefined
+  )
+  return {
+    identity,
+    openClient: async (resolved) =>
+      new TaskWraithControlClient({
+        clientVersion: TUI_VERSION,
+        // Compose only, even for a read: `thread.select` answers on request
+        // either way, and asking for `snapshot`/`transcript` would put the
+        // host on a whole-profile poll for the life of this connection and
+        // push a fresh snapshot after every change.
+        capabilities: ['compose'],
+        clientPid: resolved.pid,
+        ...(resolved.label ? { clientLabel: resolved.label } : {})
+      })
+  }
+}
+
+async function runOutsideVerb(command: OutsideSocketCommand): Promise<number> {
+  return runOutsideCommand(command, {
+    ...outsideClientIo(command),
+    write: (line) => process.stdout.write(`${line}\n`),
+    writeError: (line) => process.stderr.write(`${line}\n`),
+    readStdin: readAllStdin
+  })
+}
+
+/**
+ * Serve the MCP tools on stdio. Output is captured rather than written:
+ * stdout IS the JSON-RPC transport here, so a stray line desynchronises the
+ * client. stdin is the transport too, which is why a tool call can never read
+ * a prompt from it.
+ */
+function serveMcp(command: Extract<OutsideCommand, { kind: 'mcp' }>): void {
+  serveTaskWraithMcp({
+    stdin: process.stdin,
+    stdout: { write: (chunk: string) => process.stdout.write(chunk) },
+    exit: (code) => process.exit(code ?? 0),
+    deps: {
+      serverVersion: TUI_VERSION,
+      defaultCwd: command.cwd,
+      runCommand: async (inner) => {
+        const out: string[] = []
+        const err: string[] = []
+        const code = await runOutsideCommand(inner, {
+          ...outsideClientIo(inner),
+          write: (line) => out.push(line),
+          writeError: (line) => err.push(line),
+          readStdin: async () => ''
+        })
+        return { code, out, err }
+      }
+    }
+  })
+}
+
+/**
+ * `/host restart` and `/host stop-all`. Restart relaunches, so it exists only
+ * where this TUI would launch a Host anyway; stop-all only stops, so a
+ * connect-only session keeps it.
+ */
+function tuiHostControl(options: TaskWraithTuiCliOptions, userDataPath: string): TuiHostControl {
+  const restartUnavailable = !options.startHost
+    ? 'This TUI was started with --no-start-host and never launches a Host, so it cannot restart one.'
+    : options.hostLaunchProfile === 'custom'
+      ? 'This TUI never launches a Host for an explicit --user-data profile, so it cannot restart one.'
+      : undefined
+  return {
+    ...(restartUnavailable
+      ? { restartUnavailable }
+      : {
+          restart: (pid: number | null) =>
+            restartTuiHost({
+              userDataPath,
+              profile: options.hostLaunchProfile,
+              enableFullAccessPresence: true,
+              pid
+            })
+        }),
+    planStopAll: (request) => planTuiHostStopAll(request),
+    runStopAll: (plan) => runTuiHostStopAll(plan)
+  }
+}
+
+function hostStartupNotice(launch: EnsureTuiHostAvailableResult | undefined): string | undefined {
+  if (launch?.kind === 'launched' && launch.replacedPid !== undefined) {
+    return `Restarted the TaskWraith Host (pid ${launch.replacedPid}) so it runs the current build`
+  }
+  if (launch?.kind === 'existing' && launch.staleHost) {
+    return (
+      `The TaskWraith Host (pid ${launch.staleHost.pid}) runs an older build and was not ` +
+      `replaced (${launch.staleHost.refusal}) · /host restart tries again`
+    )
+  }
+  return undefined
+}
+
 async function main(): Promise<void> {
+  const outside = parseOutsideCommand(process.argv.slice(2), { cwd: process.cwd() })
+  if (outside) {
+    if (outside.kind === 'mcp') {
+      serveMcp(outside)
+      return
+    }
+    process.exitCode = await runOutsideVerb(outside)
+    return
+  }
   const options = parseTaskWraithTuiArgs(process.argv.slice(2))
   if (options.help) {
     process.stdout.write(`${taskWraithTuiUsage(TUI_VERSION)}\n`)
@@ -195,7 +460,7 @@ async function main(): Promise<void> {
   if (options.replayPath) {
     const replay = await loadReplay(options)
     if (options.json) printJsonProjection(replay.state, 'twmission-replay', replay.manifest)
-    else renderSnapshotState(replay.state, options)
+    else renderSnapshotState(replay.state, options, await resolveCliTheme(options))
     return
   }
   const interactive = !options.exportPath && !options.json && !options.snapshot
@@ -204,11 +469,13 @@ async function main(): Promise<void> {
       'Interactive mode requires a terminal. Use --snapshot, --json, --export, or --replay for redirected output.'
     )
   }
+  let initialHostLaunch: EnsureTuiHostAvailableResult | undefined
   if (!options.demo && options.startHost) {
     if (!options.userDataPath) throw new Error('TaskWraith Host userData path is unavailable.')
-    await ensureTuiHostAvailable({
+    initialHostLaunch = await ensureTuiHostAvailable({
       userDataPath: options.userDataPath,
-      profile: options.hostLaunchProfile
+      profile: options.hostLaunchProfile,
+      enableFullAccessPresence: interactive
     })
   }
   if (options.exportPath) {
@@ -222,17 +489,45 @@ async function main(): Promise<void> {
   }
   if (options.snapshot) {
     const state = options.demo ? createTaskWraithTuiDemoState() : await connectedSnapshot(options)
-    renderSnapshotState(state, options)
+    renderSnapshotState(state, options, await resolveCliTheme(options))
     return
   }
+  const startupNotice = hostStartupNotice(initialHostLaunch)
   activeTui = new TaskWraithTui({
     clientVersion: TUI_VERSION,
     demo: options.demo,
     colorMode: options.colorMode,
     animationEnabled: options.animationEnabled,
     glyphs: resolveCliGlyphs(options),
+    theme: await resolveCliTheme(options),
+    ...(resolveCliThemeName(options) ? { themeName: resolveCliThemeName(options) as string } : {}),
+    persistTheme: (name: string) => writeTuiSettings({ theme: name }),
+    ...(options.userDataPath
+      ? {
+          profileSettings: readTuiProfileSettings(options.userDataPath),
+          persistProfileSettings: (changes) =>
+            writeTuiProfileSettings(options.userDataPath as string, changes)
+        }
+      : {}),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
-    ...(options.userDataPath ? { userDataPath: options.userDataPath } : {})
+    ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
+    ...(startupNotice ? { startupNotice } : {}),
+    ...(!options.demo && options.userDataPath
+      ? { hostControl: tuiHostControl(options, options.userDataPath) }
+      : {}),
+    ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.fullAccessPresence
+      ? { fullAccessPresence: initialHostLaunch.fullAccessPresence }
+      : {}),
+    ...(!options.demo && options.startHost && options.userDataPath
+      ? {
+          reviveHost: () =>
+            ensureTuiHostAvailable({
+              userDataPath: options.userDataPath as string,
+              profile: options.hostLaunchProfile,
+              enableFullAccessPresence: true
+            })
+        }
+      : {})
   })
   await activeTui.start()
 }
@@ -250,21 +545,23 @@ process.once('SIGHUP', () => {
   process.exitCode = 129
 })
 // A last line of defence: an escaped exception anywhere in the run loop must
-// still restore raw mode / the alternate screen before the process ends.
-process.once('uncaughtException', (error) => {
-  activeTui?.stop()
-  process.stderr.write(
-    `TaskWraith TUI: unexpected error — ${error instanceof Error ? error.message : String(error)}\n`
-  )
-  process.exitCode = 1
+// still restore raw mode / the alternate screen before the process ends. What
+// changed is only which errors earn that teardown — a dropped Host socket does
+// not, because stop() latches `stopped` and would switch off the reconnect loop
+// that already recovers from it and already warns the user. Registered with
+// `on` rather than `once` so absorbing one blip cannot leave the next genuine
+// fault to Node's default hard crash.
+const handleEscapedTuiError = createTuiEscapedErrorHandler({
+  stopTui: () => activeTui?.stop(),
+  writeStderr: (line) => {
+    process.stderr.write(line)
+  },
+  setExitCode: (code) => {
+    process.exitCode = code
+  }
 })
-process.once('unhandledRejection', (reason) => {
-  activeTui?.stop()
-  process.stderr.write(
-    `TaskWraith TUI: unexpected rejection — ${reason instanceof Error ? reason.message : String(reason)}\n`
-  )
-  process.exitCode = 1
-})
+process.on('uncaughtException', (error) => handleEscapedTuiError('exception', error))
+process.on('unhandledRejection', (reason) => handleEscapedTuiError('rejection', reason))
 process.on('exit', () => {
   activeTui?.stop()
 })
@@ -274,5 +571,5 @@ void main().catch((error) => {
   process.stderr.write(
     `TaskWraith TUI: ${error instanceof Error ? error.message : String(error)}\n`
   )
-  process.exitCode = 1
+  process.exitCode = error instanceof TuiUsageError ? 2 : 1
 })

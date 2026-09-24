@@ -101,6 +101,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // never mints a standing grant. Auto-allowing the outer elicitation is what
   // lets read-only/plan seats ask the human to override their posture once.
   'request_tool_permission',
+  // The fresh opaque redemption path only asks Electron main to redeem a
+  // server-issued opportunity. It cannot supply a target or execute one until
+  // the subsequent main-authority review accepts it.
+  'redeem_permission_opportunity',
   // Persistent goal lifecycle is host UI coordination only. Tool schemas
   // prevent agents from replacing or clearing the user-owned objective.
   'goal_read',
@@ -115,6 +119,9 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // entries nobody can prune (the author has moved on) is worse than the
   // counter-intuitive-deletion risk, which is recoverable — delete receipts
   // (createBlackboardDeleteReceipt) trace every removal.
+  'tw_history_search',
+  'tw_history_read',
+  'tw_checkpoint',
   'blackboard_post',
   // Blackboard reads are bounded, chat-local, and only mutate the per-entry
   // seenBy marker for the calling participant so slim prompts can omit it.
@@ -184,12 +191,15 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // its elements. Web canvas_open / screenshot / resize / close stay gated.
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_inspect',
   'canvas_sketch_open',
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',
+  'canvas_wait_for',
   // Simulator Canvas capability probe + truncated AX dump (observation only).
   // Mutating simulator_* verbs stay gated on simulatorCanvas.
   'simulator_status',
@@ -269,11 +279,17 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
     (tool) =>
+      // Reachable wrapper, never auto-allowed. Its canonical subcalls enforce
+      // the seat's existing navigation, capture and interaction permissions.
+      tool === 'computer_use' ||
       tool === 'canvas_navigate' ||
       tool === 'canvas_render_chart' ||
+      tool === 'emulator_open' ||
       tool === 'delegate_to_subthread' ||
       tool === 'delegate_wave' ||
+      tool === 'ultra_task' ||
       tool === 'cancel_subthread' ||
+      tool === 'run_shell_command' ||
       (MESH_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       (SIMULATOR_MUTATING_MCP_TOOL_NAMES as readonly string[]).includes(tool)
   )
@@ -283,10 +299,11 @@ export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNa
  * Tools advertised to a READ-ONLY / plan seat: (TASKWRAITH_MCP_TOOLS ∩
  * MCP_AUTO_ALLOWED_TOOLS) — the advertised universe narrowed to read/search
  * plus coordination-state updates — PLUS the recon-tier gated instruments
- * above. DERIVED, never hand-listed, so a mutating workspace/shell/destructive
- * app tool can never appear here unless it is also wrongly added to
- * MCP_AUTO_ALLOWED_TOOLS (SAFETY INVARIANT test) or wrongly promoted to the
- * recon instrument tier (its own invariant test). The Gemini read-only
+ * above. DERIVED, never hand-listed. Workspace writes and destructive app tools
+ * stay out unless wrongly added to MCP_AUTO_ALLOWED_TOOLS (SAFETY INVARIANT) or
+ * wrongly promoted to the recon instrument tier (its own invariant). Brokered
+ * `run_shell_command` is a recon instrument: advertised and host-gated, never
+ * auto-run. The Gemini read-only
  * --allowed-tools allowlist, the Grok and Cursor read-only safe-subset
  * bridges, the Mistral safe-tool gate, and the Ollama read_only tool tier are
  * all built from this set, so every read-only seat advertises an identical
@@ -300,9 +317,10 @@ export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName>
 /**
  * Is this bare tool name in the read-only advertise subset? The bridge uses this
  * to scope BOTH tools/list and tools/call for a read-only seat (notably Grok,
- * which auto-runs MCP tools with NO host gate — so the advertised list AND the
- * tools/call reject are the entire safety boundary). Unknown / mutating tools
- * return false.
+ * which auto-runs MCP tools with NO provider permission RPC — the advertised
+ * list plus the tools/call reject are the transport boundary; host-gated recon
+ * instruments such as `run_shell_command` still hit requestAgenticServiceApproval).
+ * Unknown / mutating write tools return false.
  */
 export function isReadOnlyAdvertisedTool(name: string): boolean {
   return (READ_ONLY_MCP_ADVERTISE_TOOLS as readonly string[]).includes(name)
@@ -329,6 +347,11 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
     (tool) =>
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
+      tool === 'canvas_key' ||
+      tool === 'canvas_scroll' ||
+      tool === 'canvas_hover' ||
+      tool === 'canvas_select' ||
+      tool === 'emulator_step' ||
       tool === 'canvas_sketch_update' ||
       // Shared with Ask's recon tier (explicit overlap keeps Plan bridge complete).
       tool === 'canvas_render_chart' ||

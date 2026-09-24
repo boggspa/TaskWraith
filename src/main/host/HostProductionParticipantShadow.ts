@@ -9,8 +9,9 @@
  * BOUNDARIES:
  * - zero electron / AppStore / EnsembleParticipant value imports;
  * - constructs allowlisted HostParticipantProjection fields only;
- * - never forwards instructions, permission presets, session tokens,
- *   compaction summaries, or other seat-private bodies onto the wire;
+ * - forwards only display-safe reasoning / approval-tier labels alongside the
+ *   roster identity; never instructions, permission overrides, session tokens,
+ *   compaction summaries, or other seat-private bodies;
  * - never invents participant id or providerId (bad rows are skipped).
  *
  * HONESTY:
@@ -38,7 +39,7 @@ const KNOWN_STAGES = new Set<NonNullable<HostParticipantProjection['stage']>>([
 
 /**
  * Thin ensemble-seat shape the composition root adapts from AppStore.
- * Deliberately narrow — no instructions / permission / session fields.
+ * Deliberately narrow — no instructions / permission overrides / session fields.
  */
 export interface HostParticipantShadowEntry {
   readonly id: string
@@ -50,6 +51,9 @@ export interface HostParticipantShadowEntry {
   /** Currently dispatched / speaking when known. */
   readonly active: boolean
   readonly modelId?: string
+  readonly reasoningEffort?: string
+  readonly thinkingEnabled?: boolean
+  readonly permissionPresetId?: string
   readonly stage?: string
   readonly status?: string
 }
@@ -118,6 +122,24 @@ export function mapParticipantShadowsToHostParticipants(
 
     if (isUsableId(entry.modelId) && entry.modelId.length <= HOST_PARTICIPANT_ID_MAX) {
       row.modelId = entry.modelId
+    }
+
+    if (
+      isUsableId(entry.reasoningEffort) &&
+      entry.reasoningEffort.length <= HOST_PARTICIPANT_ID_MAX
+    ) {
+      row.reasoningEffort = entry.reasoningEffort
+    }
+
+    if (typeof entry.thinkingEnabled === 'boolean') {
+      row.thinkingEnabled = entry.thinkingEnabled
+    }
+
+    if (
+      isUsableId(entry.permissionPresetId) &&
+      entry.permissionPresetId.length <= HOST_PARTICIPANT_ID_MAX
+    ) {
+      row.permissionPresetId = entry.permissionPresetId
     }
 
     const stage = mapStage(entry.stage)

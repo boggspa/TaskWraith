@@ -33,9 +33,43 @@ public enum PiBrandTable {
         "zai": Brand(label: "Z.ai", hueClass: "zai"),
         "qwen-token-plan": Brand(label: "Qwen", hueClass: "qwen"),
         "minimax": Brand(label: "MiniMax", hueClass: "minimax"),
+        // The three Xiaomi token-plan regions share one brand hue; the region
+        // rides in the model label suffix, not a separate colour.
+        "xiaomi-token-plan-cn": Brand(label: "Xiaomi", hueClass: "xiaomi"),
+        "xiaomi-token-plan-sgp": Brand(label: "Xiaomi", hueClass: "xiaomi"),
+        "xiaomi-token-plan-ams": Brand(label: "Xiaomi", hueClass: "xiaomi"),
         "mistral": Brand(label: "Mistral", hueClass: "mistral"),
         "groq": Brand(label: "Groq", hueClass: "groq"),
         "cerebras": Brand(label: "Cerebras", hueClass: "cerebras"),
+        "openrouter": Brand(label: "OpenRouter", hueClass: "openrouter"),
+        // OpenRouter-specific overrides for models that should display with their original brand
+        "openrouter/z-ai": Brand(label: "Z.ai", hueClass: "zai"),
+        "openrouter/poolside": Brand(label: "Poolside", hueClass: "poolside"),
+        "openrouter/nvidia": Brand(label: "NVIDIA", hueClass: "nvidia"),
+        "openrouter/cohere": Brand(label: "Cohere", hueClass: "cohere"),
+        "openrouter/minimax": Brand(label: "MiniMax", hueClass: "minimax"),
+        "openrouter/thinkingmachines": Brand(
+            label: "Thinking Machines", hueClass: "thinkingmachines"),
+        "openrouter/tencent": Brand(
+            label: "Tencent", hueClass: "tencent"),
+        "openrouter/inception": Brand(
+            label: "Inception", hueClass: "inception"),
+        "openrouter/nex-agi": Brand(
+            label: "Nex AGI", hueClass: "nexagi"),
+        "openrouter/sakana": Brand(
+            label: "Sakana", hueClass: "sakana"),
+        // `stealth` is OpenRouter's anonymous preview slot, not a vendor. It
+        // still overrides, so a stealth row does not wear the generic
+        // OpenRouter red. Covers the retired Ox Alpha too.
+        "openrouter/stealth": Brand(
+            label: "Stealth", hueClass: "stealth"),
+        // Unbiased (Pareto) and TypeSafe (Jev): both vendor reds sit in the
+        // palette's most crowded band, so each wears a TaskWraith design
+        // token instead — see Theme.swift / theme.css for the derivation.
+        "openrouter/unbiased": Brand(
+            label: "Unbiased", hueClass: "unbiased"),
+        "openrouter/typesafe": Brand(
+            label: "TypeSafe", hueClass: "typesafe"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -49,16 +83,31 @@ public enum PiBrandTable {
     /// open-weights model is served by two upstreams and the rows would
     /// otherwise be indistinguishable.
     public static let modelLabels: [String: String] = [
-        "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
-        "deepseek/deepseek-v4-flash": "DeepSeek V4 Flash",
+        "deepseek/deepseek-v4-pro": "V4 Pro",
+        "deepseek/deepseek-v4-flash": "V4 Flash",
         "zai/glm-5.2": "GLM-5.2",
         "zai/glm-5.1": "GLM-5.1",
         "zai/glm-4.7": "GLM-4.7",
         "qwen-token-plan/qwen3.7-max": "Qwen3.7 Max",
         "qwen-token-plan/qwen3.7-plus": "Qwen3.7 Plus",
-        "qwen-token-plan/qwen3.8-max-preview": "Qwen3.8 Max Preview",
-        "minimax/MiniMax-M3": "MiniMax M3",
-        "minimax/MiniMax-M2.7": "MiniMax M2.7",
+        "qwen-token-plan/qwen3.8-max": "Qwen3.8 Max",
+        "minimax/MiniMax-M3": "M3",
+        "minimax/MiniMax-M2.7": "M2.7",
+        "xiaomi-token-plan-cn/mimo-v2-pro": "MiMo V2 Pro (CN)",
+        "xiaomi-token-plan-cn/mimo-v2.5": "MiMo V2.5 (CN)",
+        "xiaomi-token-plan-cn/mimo-v2.5-pro": "MiMo V2.5 Pro (CN)",
+        "xiaomi-token-plan-cn/mimo-v2.6-pro": "MiMo V2.6 Pro (CN)",
+        "xiaomi-token-plan-cn/mimo-v2.6-flash": "MiMo V2.6 Flash (CN)",
+        "xiaomi-token-plan-sgp/mimo-v2-pro": "MiMo V2 Pro (SGP)",
+        "xiaomi-token-plan-sgp/mimo-v2.5": "MiMo V2.5 (SGP)",
+        "xiaomi-token-plan-sgp/mimo-v2.5-pro": "MiMo V2.5 Pro (SGP)",
+        "xiaomi-token-plan-sgp/mimo-v2.6-pro": "MiMo V2.6 Pro (SGP)",
+        "xiaomi-token-plan-sgp/mimo-v2.6-flash": "MiMo V2.6 Flash (SGP)",
+        "xiaomi-token-plan-ams/mimo-v2-pro": "MiMo V2 Pro (AMS)",
+        "xiaomi-token-plan-ams/mimo-v2.5": "MiMo V2.5 (AMS)",
+        "xiaomi-token-plan-ams/mimo-v2.5-pro": "MiMo V2.5 Pro (AMS)",
+        "xiaomi-token-plan-ams/mimo-v2.6-pro": "MiMo V2.6 Pro (AMS)",
+        "xiaomi-token-plan-ams/mimo-v2.6-flash": "MiMo V2.6 Flash (AMS)",
         "mistral/zai-glm-5-2": "GLM-5.2 (via Mistral)",
         "mistral/mistral-medium-3.5": "Mistral Medium 3.5",
         "mistral/mistral-medium-latest": "Mistral Medium (Latest)",
@@ -76,6 +125,26 @@ public enum PiBrandTable {
         "groq/qwen/qwen3-32b": "Qwen3 32B (Groq)",
         "cerebras/zai-glm-4.7": "GLM-4.7 (Cerebras)",
         "cerebras/gpt-oss-120b": "GPT-OSS 120B (Cerebras)",
+        "cerebras/qwen-3.8-27b": "Qwen 3.8 27B (Cerebras)",
+        "openrouter/stealth/ox-alpha": "Ox Alpha",
+        "openrouter/z-ai/glm-5.2": "GLM 5.2",
+        "openrouter/poolside/laguna-s-2.1": "Laguna S 2.1",
+        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra",
+        "openrouter/cohere/north-mini-code:free": "North Mini Code",
+        "openrouter/minimax/minimax-m3:free": "M3 (OpenRouter)",
+        "openrouter/thinkingmachines/inkling:free": "Inkling",
+        "openrouter/thinkingmachines/inkling-small:free": "Inkling Small",
+        "openrouter/tencent/hy4-preview": "Hy4 Preview",
+        "openrouter/inception/mercury-2.5-preview": "Mercury 2.5 Preview",
+        "openrouter/inception/mercury-2.5": "Mercury 2.5",
+        "openrouter/nex-agi/nex-n2.5-mini:free": "Nex-N2.5-Mini",
+        "openrouter/nex-agi/nex-n2.5-pro:free": "Nex-N2.5-Pro",
+        "openrouter/sakana/fugu-max": "Fugu Max",
+        "openrouter/sakana/fugu-ultra-v2": "Fugu Ultra v2",
+        "openrouter/stealth/union-alpha": "Union Alpha",
+        "openrouter/unbiased/pareto": "Pareto",
+        "openrouter/typesafe/jev-1.13": "Jev 1.13",
+        "openrouter/stealth/space-bunny-alpha": "Space Bunny Alpha",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.
@@ -95,8 +164,23 @@ public enum PiBrandTable {
     /// an upstream this build does not surface. Callers fall back to the plain
     /// `pi` hue and the "Pi" seat name, so an unknown upstream degrades to the
     /// seat rather than guessing.
+    ///
+    /// Special case: OpenRouter models that are resold from other providers (e.g.,
+    /// `openrouter/z-ai/glm-5.2`) should display with the original provider's brand
+    /// rather than the generic OpenRouter brand.
     public static func brand(forWireModelId wireId: String?) -> Brand? {
         guard let split = splitWireModelId(wireId) else { return nil }
+
+        // Special case: OpenRouter resold models use original brand
+        if split.upstream == "openrouter" {
+            if let nestedSplit = splitWireModelId(split.modelId) {
+                let openRouterBrandKey = "openrouter/\(nestedSplit.upstream)"
+                if let overrideBrand = upstreams[openRouterBrandKey] {
+                    return overrideBrand
+                }
+            }
+        }
+
         return upstreams[split.upstream]
     }
 
@@ -110,6 +194,9 @@ public enum PiBrandTable {
     public static func modelLabel(forWireModelId wireId: String?) -> String? {
         let wire = (wireId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wire.isEmpty else { return nil }
+        // The Token Plan preview graduated to this GA id. Keep old transcripts
+        // readable without putting the retired preview back in modelLabels.
+        if wire == "qwen-token-plan/qwen3.8-max-preview" { return "Qwen3.8 Max" }
         if let known = modelLabels[wire] { return known }
         guard let split = splitWireModelId(wire), upstreams[split.upstream] != nil else {
             return nil

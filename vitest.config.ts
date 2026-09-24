@@ -1,4 +1,5 @@
 import { defineConfig, configDefaults } from 'vitest/config'
+import { availableParallelism } from 'node:os'
 
 const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 
@@ -6,15 +7,40 @@ const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 // worktrees. The Swift package is exercised by `swift test`; the live
 // Swift<->Node driver is opt-in via RUN_SWIFT_INTEROP.
 export default defineConfig({
+  // Align the test transform with the app's JSX runtime. tsconfig.web.json sets
+  // "jsx": "react-jsx" (automatic), but esbuild only honors a *nearest*
+  // tsconfig.json — it does not follow project references from the root
+  // solution file, so without this explicit setting .tsx tests are transformed
+  // with the classic runtime and any JSX evaluated without `import React`
+  // throws "ReferenceError: React is not defined".
+  esbuild: { jsx: 'automatic' },
   test: {
+    // Host/SQLite/Git suites create their own workers and durable transactions.
+    // Nine top-level forks made unrelated imports and cursor checks miss their
+    // deadlines; three passed the complete suite with those deadlines intact.
+    // Keep Vitest's run default on smaller hosts and cap larger test machines.
+    maxWorkers: Math.min(3, Math.max(availableParallelism() - 1, 1)),
     // The Windows CI runner is materially slower than the other legs -- the same
     // suite takes ~505s there against ~150s elsewhere -- and tests that are
     // nowhere near the limit locally intermittently blow vitest's 5s default.
     // Six unrelated files timed out in a single run, all on timing rather than
-    // on any assertion, which is noise that reads as a red matrix. Raised for
-    // win32 only, so a genuine hang on the platforms we develop on still fails
-    // fast rather than being masked.
-    testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
+    // on any assertion, which is noise that reads as a red matrix. The hosted
+    // macOS-Intel runner reached the same state on 2026-09-15 (import phase
+    // 357 s -> 656 s across four runs; runs 34984996288 and 34988795763 each
+    // timed out a different file that is nowhere near 5 s locally), so the
+    // raised default now covers every hosted runner (`CI`). Local runs keep
+    // 5 s, so a genuine hang on the platforms we develop on still fails fast
+    // rather than being masked.
+    testTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 5_000,
+    // Hooks get the same hosted-runner headroom: a `beforeEach` that opens a
+    // SQLite database in a fresh temp dir overran vitest's 10 s hook default on
+    // the loaded Windows runner (ThreadCatalogueDatabase, run 35018002768).
+    hookTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 10_000,
+    // Every run publishes Host registry entries into its own temporary root
+    // (TASKWRAITH_HOST_REGISTRY_ROOT, inherited by every worker and every Host
+    // they spawn), and the run fails if anything writes into the real
+    // ~/.taskwraith/hosts. See the module header.
+    globalSetup: ['./scripts/vitest/hostRegistryIsolation.ts'],
     // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
     // records a measured baseline without imposing a threshold or PR ratchet.
     coverage: {

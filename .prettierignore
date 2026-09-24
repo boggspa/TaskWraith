@@ -15,5 +15,9 @@ AGENTS.md
 # second, differently on every pass. Formatting them is corruption, not cleanup.
 src/main/BridgeActionExecutor.test.ts
 src/renderer/src/assets/css/04-settings-controls.css
+
+# Pinned Emscripten output. Its exact hash is part of the reviewed emulator
+# receipt; formatting would both change the shipped bytes and break reproducibility.
+resources/emulator/**/twgb.mjs
 tsconfig.json
 tsconfig.*.json

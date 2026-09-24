@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ApprovalService,
+  handleApprovalTimeout,
   type ApprovalServiceDeps,
   type PendingMainApproval,
   type PendingGeminiToolApproval,
@@ -45,8 +46,11 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
     permissionService: {
       applyApprovalDecision: ReturnType<typeof vi.fn>
       isApprovedAction: ReturnType<typeof vi.fn>
+      recordCanvasEvalWindowGrant: ReturnType<typeof vi.fn>
     }
-    appendDurableRunEventForRoute: ReturnType<typeof vi.fn>
+    appendDurableRunEventForRoute: ReturnType<
+      typeof vi.fn<ApprovalServiceDeps['appendDurableRunEventForRoute']>
+    >
     resolveApprovalLedger: ReturnType<typeof vi.fn>
     codexClient: {
       respond: ReturnType<typeof vi.fn>
@@ -59,7 +63,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
     workspaceIdForPath: ReturnType<typeof vi.fn>
     publishApprovalRunEvent: ReturnType<typeof vi.fn>
     getApprovalTimeoutSettings: ReturnType<typeof vi.fn>
-    log: ReturnType<typeof vi.fn>
+    log: ReturnType<typeof vi.fn<ApprovalServiceDeps['log']>>
   }
 } {
   const codexClient = {
@@ -90,9 +94,10 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
       ),
       isApprovedAction: vi.fn(
         (action: string) => action === 'accept' || action === 'acceptForSession'
-      )
+      ),
+      recordCanvasEvalWindowGrant: vi.fn()
     },
-    appendDurableRunEventForRoute: vi.fn(),
+    appendDurableRunEventForRoute: vi.fn<ApprovalServiceDeps['appendDurableRunEventForRoute']>(),
     resolveApprovalLedger: vi.fn(),
     codexClient,
     sendAgentCompatLine: vi.fn(),
@@ -114,11 +119,12 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
         antigravity: 85_000,
         pi: 85_000,
         mistral: 85_000,
-        muse: 85_000
+        muse: 85_000,
+        devin: 85_000
       },
       mainAuthorityMs: 60_000
     })),
-    log: vi.fn()
+    log: vi.fn<ApprovalServiceDeps['log']>()
   }
   return {
     spies,
@@ -505,6 +511,67 @@ describe('ApprovalService — registries', () => {
         title: 'Run host command'
       })
     ])
+  })
+
+  it('retains an exact renderer card only while its approval is pending', async () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+    svc.registerMain('renderer-1', {
+      provider: 'grok',
+      runId: 'r-1',
+      appChatId: 'ensemble-1',
+      resolve
+    })
+    const preview = {
+      toolName: 'canvas_interact',
+      ensembleParticipant: { participantId: 'work-2', role: 'Work2' }
+    }
+
+    expect(
+      svc.publishRendererApprovalRequest({
+        id: 'renderer-1',
+        approvalId: 'renderer-1',
+        provider: 'grok',
+        service: 'canvasInteraction',
+        appRunId: 'r-1',
+        appChatId: 'ensemble-1',
+        method: 'mcp/canvas_interact',
+        title: 'Work2: Approve Grok canvas interaction',
+        body: 'Review the exact canvas interaction.',
+        preview,
+        actions: ['accept', 'decline', 'cancel']
+      })
+    ).toBe(true)
+    expect(svc.listRendererApprovalRequests()).toEqual([
+      expect.objectContaining({
+        id: 'renderer-1',
+        appChatId: 'ensemble-1',
+        preview,
+        actions: ['accept', 'decline', 'cancel']
+      })
+    ])
+
+    expect(await svc.resolve('renderer-1', 'decline')).toBe(true)
+    expect(resolve).toHaveBeenCalledWith(false)
+    expect(svc.listRendererApprovalRequests()).toEqual([])
+  })
+
+  it('refuses to publish a renderer card without a live approval authority', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+
+    expect(
+      svc.publishRendererApprovalRequest({
+        id: 'orphan',
+        provider: 'grok',
+        method: 'mcp/canvas_interact',
+        title: 'Orphan approval',
+        body: 'Must not be recoverable.',
+        actions: ['accept', 'decline']
+      })
+    ).toBe(false)
+    expect(svc.listRendererApprovalRequests()).toEqual([])
   })
 
   it('listProjectionCards projects non-default allowed actions', () => {
@@ -991,6 +1058,243 @@ describe('ApprovalService — scheduleTimeout', () => {
 
     expect(scheduledMs).toEqual([75_000, 80_000, 85_000])
   })
+
+  it('does not arm a timer for Ask shellCommands when Settings timeouts are enabled', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'ask-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([])
+  })
+
+  it('arms and auto-denies Ask fileChanges when Settings are enabled', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('ask-files', {
+      provider: 'codex',
+      service: 'fileChanges',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'ask-files', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+  })
+
+  it('background fan-out lane shellCommands still arms the timer (no scheduledTaskId)', () => {
+    // The lane is not a scheduled occurrence, so `runIsUnattended` is false and
+    // the interactive Ask/Plan hold would otherwise apply. Nobody is watching
+    // this lane's modal, so it must fail closed on the timer instead of hanging
+    // on the transport backstop.
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: {
+        effectivePermissions: { presetId: 'read_only' },
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'p-1',
+          laneId: 'lane-round-1-p-1-1',
+          provider: 'codex',
+          role: 'Worker',
+          order: 1
+        }
+      }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('lane-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'lane-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+    expect(svc.shouldHoldShellTimeoutDeny('lane-shell')).toBe(false)
+  })
+
+  it('an attended serial Ensemble turn (ensembleRun without laneId) keeps the hold', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: {
+        effectivePermissions: { presetId: 'read_only' },
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'p-1',
+          provider: 'codex',
+          role: 'Reviewer',
+          order: 1
+        }
+      }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('serial-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'serial-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([])
+    expect(svc.shouldHoldShellTimeoutDeny('serial-shell')).toBe(true)
+  })
+
+  it('unattended Plan shellCommands still auto-denies on timeout', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'plan' }, scheduledTaskId: 'task-1' }
+    })
+    const svc = new ApprovalService(deps)
+    const scheduledMs: number[] = []
+    const scheduler = new ApprovalTimeoutScheduler(DEFAULT_APPROVAL_TIMEOUT_POLICY, vi.fn(), {
+      setTimeoutFn: ((_cb, ms) => {
+        scheduledMs.push(ms)
+        return { __timeout: scheduledMs.length } as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn()
+    })
+    svc.setScheduler(scheduler)
+    svc.registerGeminiTool('plan-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: vi.fn()
+    })
+    svc.scheduleTimeout({ approvalId: 'plan-shell', provider: 'codex' })
+    expect(scheduledMs).toEqual([30_000])
+  })
+})
+
+describe('ApprovalService — Ask shell timeout hold', () => {
+  it('handleApprovalTimeout does not resolve decline or write autoDeny for Ask shellCommands', async () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: resolveFn
+    })
+    await handleApprovalTimeout(
+      svc,
+      {
+        approvalId: 'ask-shell',
+        appliedMs: 60_000,
+        source: 'providerDefault'
+      },
+      {
+        appendDurableRunEventForRoute: spies.appendDurableRunEventForRoute,
+        log: spies.log,
+        sendTimeoutToRenderer: vi.fn()
+      }
+    )
+    expect(resolveFn).not.toHaveBeenCalled()
+    expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+    expect(svc.has('ask-shell')).toBe(true)
+  })
+
+  it('Ask shellCommands stays pending after the provider window; user decline still denies', async () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-1',
+      appChatId: 'c-1',
+      status: 'running',
+      state: { effectivePermissions: { presetId: 'read_only' } }
+    })
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('ask-shell', {
+      provider: 'codex',
+      service: 'shellCommands',
+      runId: 'r-1',
+      resolve: resolveFn
+    })
+    await handleApprovalTimeout(
+      svc,
+      {
+        approvalId: 'ask-shell',
+        appliedMs: 60_000,
+        source: 'providerDefault'
+      },
+      {
+        appendDurableRunEventForRoute: spies.appendDurableRunEventForRoute,
+        log: spies.log,
+        sendTimeoutToRenderer: vi.fn()
+      }
+    )
+    expect(svc.has('ask-shell')).toBe(true)
+    const ok = await svc.resolve('ask-shell', 'decline')
+    expect(ok).toBe(true)
+    expect(resolveFn).toHaveBeenCalledWith(false)
+    expect(spies.resolveApprovalLedger).toHaveBeenCalledWith('ask-shell', 'decline', 'user', {})
+  })
 })
 
 describe('ApprovalService — resolve dispatch', () => {
@@ -1131,6 +1435,45 @@ describe('ApprovalService — resolve dispatch', () => {
       resume.mock.invocationCallOrder[0]
     )
     expect(svc.has('canvas-strict-1')).toBe(false)
+  })
+
+  it('opens the 12h exact-live-surface window on a desktop accept of a Codex canvas_eval', async () => {
+    const resolveStrict = vi.fn()
+    const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('codex-eval-window', {
+      rpcId: 7,
+      method: 'item/permissions/requestApproval',
+      params: { toolName: 'canvas_eval', script: 'x', canvasId: 'canvas-Z' },
+      service: 'canvasEval',
+      surfaceId: 'canvas-Z',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    expect(await svc.resolve('codex-eval-window', 'accept')).toBe(true)
+    // The human accept opens the per-canvas window for exactly that surface —
+    // Codex reaches parity with the Gemini/Claude gate.
+    expect(spies.permissionService.recordCanvasEvalWindowGrant).toHaveBeenCalledWith(
+      'canvas-Z',
+      expect.any(Number)
+    )
+  })
+
+  it('does NOT open the window when a Codex canvas_eval is declined', async () => {
+    const resolveStrict = vi.fn()
+    const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+    const svc = new ApprovalService(deps)
+    svc.registerCodex('codex-eval-decline', {
+      rpcId: 8,
+      method: 'item/permissions/requestApproval',
+      params: { toolName: 'canvas_eval', canvasId: 'canvas-Z' },
+      service: 'canvasEval',
+      surfaceId: 'canvas-Z',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    await svc.resolve('codex-eval-decline', 'decline')
+    expect(spies.permissionService.recordCanvasEvalWindowGrant).not.toHaveBeenCalled()
   })
 
   it.each([

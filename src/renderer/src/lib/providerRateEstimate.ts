@@ -29,6 +29,7 @@
  */
 
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
+import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 
 /**
  * Minimal renderer-side mirror of `ProviderRateService`'s `ModelRateEntry`.
@@ -37,6 +38,14 @@ import type { ProviderId, UsageRecord } from '../../../main/store/types'
  * stay defensive about everything else.
  */
 export interface RendererModelRate {
+  /**
+   * Marks the row `resolveModelRate` uses when nothing matches. Explicit,
+   * because the fallback used to be implicit in ARRAY ORDER (`table[0]`) and
+   * that coupling shipped a wrong price once already: gemini-2.0-flash had no
+   * row, fell through to `models[0]` and billed at 2.5 Flash rates. Providers
+   * that have not been annotated keep the positional behaviour.
+   */
+  isFallback?: true
   modelId: string
   inputUsdPerMillion: number
   outputUsdPerMillion: number
@@ -149,6 +158,7 @@ export function normalizeProviderRates(raw: unknown): RendererProviderRates {
           inputUsdPerMillion: m.inputUsdPerMillion,
           outputUsdPerMillion: m.outputUsdPerMillion
         }
+        if (m.isFallback === true) entry.isFallback = true
         if (
           isFiniteNonNeg(m.cachedInputUsdPerMillion) &&
           m.cachedInputUsdPerMillion < m.inputUsdPerMillion
@@ -180,8 +190,9 @@ export function normalizeProviderRates(raw: unknown): RendererProviderRates {
  * Resolve a rate entry for a (provider, model) pair. Matches the model id
  * exactly first, then by case-insensitive prefix (CLIs sometimes report
  * `gpt-5.5-2026-xx` where the table keys `gpt-5.5`), then falls back to the
- * provider's first/cheapest-listed model so a known provider still yields a
- * ballpark rather than nothing. Returns `null` when the provider is unknown
+ * row the provider FLAGS as its fallback so a known provider still yields a
+ * ballpark rather than nothing. A provider with no flagged row keeps the
+ * historical positional fallback (`table[0]`). Returns `null` when the provider is unknown
  * or has no rates (e.g. Cursor's empty list).
  */
 export function resolveModelRate(
@@ -193,6 +204,28 @@ export function resolveModelRate(
   const table = rates[provider]
   if (!table || table.length === 0) return null
   const wanted = canonicalRateModelId(provider, model).toLowerCase()
+
+  // Ollama's table is entirely LOCAL models priced at $0 ("TaskWraith does not
+  // charge per token for local inference"). ollama.com CLOUD models are a paid
+  // service with no rows, so the ordinary fallbacks below would resolve real
+  // spend to a free local row and report $0 — either via `table[0]` or via the
+  // reverse prefix match, the exact hazard `isKnownLocalOllamaModel` documents
+  // and deliberately avoids.
+  //
+  // A cloud id therefore matches cloud rows only, and never falls through. With
+  // no cloud rows present it returns null, so callers render the cost blank
+  // rather than a confident and wrong zero. Add a real row and it prices
+  // normally.
+  if (provider === 'ollama' && isOllamaCloudModelId(wanted)) {
+    if (!wanted) return null
+    const cloudRows = table.filter((r) => isOllamaCloudModelId(r.modelId))
+    const exactCloud = cloudRows.find((r) => r.modelId.toLowerCase() === wanted)
+    if (exactCloud) return exactCloud
+    // Forward-only: a tag may EXTEND a cloud row, but a shorter id must never
+    // adopt a longer row's price.
+    return cloudRows.find((r) => wanted.startsWith(r.modelId.toLowerCase())) ?? null
+  }
+
   if (wanted) {
     const exact = table.find((r) => r.modelId.toLowerCase() === wanted)
     if (exact) return exact
@@ -202,7 +235,8 @@ export function resolveModelRate(
     )
     if (prefix) return prefix
   }
-  return table[0]
+  // Explicit flag first; `table[0]` only for tables nobody has annotated yet.
+  return table.find((r) => r.isFallback) ?? table[0]
 }
 
 /**

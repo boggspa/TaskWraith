@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ChatRecord } from '../main/store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../main/store/types'
+import { projectThreadRunWallMs } from './threadRunWallTime'
 import {
   CHAT_UPDATE_PROTOCOL_V1,
   CHAT_UPDATE_PROTOCOL_V2,
@@ -12,10 +13,14 @@ import {
   computeChatSubRevisions,
   composeChatUpdateProducerDeltas,
   estimateChatRecordBytes,
+  hasUniqueChatMessageIds,
   isChatUpdateDelivery,
   normalizeChatUpdateAck,
+  projectChatUpdateWindow,
+  utf8ByteLength,
   type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES, estimateJsonishBytes } from './transcriptPage'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -59,6 +64,7 @@ function producerDelta(before: ChatRecord, after: ChatRecord): ChatUpdateProduce
         return count + 1
       }, 0) ?? after.messages.length,
     retainedBytes: estimateChatRecordBytes(after),
+    transcriptIdsUnique: hasUniqueChatMessageIds(after.messages),
     ...sub
   }
 }
@@ -91,8 +97,140 @@ describe('chat update transport', () => {
     expect(delivery.kind).toBe('patch')
     expect(delivery.protocolVersion).toBe(CHAT_UPDATE_PROTOCOL_V1)
     const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
-    expect(applied).toEqual({ ok: true, baseline: { revision: 2, chat: next } })
+    expect(applied).toMatchObject({ ok: true, baseline: { revision: 2, chat: next } })
+    if (!applied.ok) throw new Error('apply failed')
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
   })
+
+  it('fingerprints the applied chat instead of echoing the delivery hash', () => {
+    const first = chat(1, [message('a', 'A')])
+    const next = chat(2, [message('a', 'A'), message('b', 'B')])
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'echo',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    const lied = { ...delivery, recordHash: 'deadbeef' }
+    const applied = applyChatUpdateDelivery(lied, { revision: 1, chat: first })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error('apply failed')
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+    expect(applied.baseline.recordHash).not.toBe('deadbeef')
+  })
+
+  it('repairs an incomplete producer record mask from the acknowledged baseline', () => {
+    const first = chat(1, [message('a', 'A')], {
+      providerMetadata: { selectedModelType: 'gpt-5.6-luna' }
+    })
+    const next = chat(2, [message('a', 'A'), message('b', 'B')], {
+      providerMetadata: {
+        selectedModelType: 'gpt-5.6-luna',
+        codexGoalNativeAvailable: true
+      }
+    })
+    const authored = producerDelta(first, next)
+    const incomplete: ChatUpdateProducerDelta = {
+      ...authored,
+      recordMask: ['updatedAt', 'persistenceRevision'],
+      recordDelta: {
+        updatedAt: next.updatedAt,
+        persistenceRevision: next.persistenceRevision
+      },
+      recordCleared: []
+    }
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'incomplete-record-mask',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      producerDelta: incomplete,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.recordMask).toContain('providerMetadata')
+
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat).toEqual(next)
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
+  })
+
+  it('nacks a patch whose transcript integrity chain does not match its accepted base', () => {
+    const first = chat(1, [message('a', 'A')])
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'digest-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    expect(seeded.ok).toBe(true)
+    if (!seeded.ok) throw new Error(seeded.reason)
+
+    const next = chat(2, [message('a', 'A'), message('b', 'B')])
+    const patch = buildChatUpdateDelivery({
+      deliveryId: 'digest-patch',
+      revision: 2,
+      chat: next,
+      baseline: seeded.baseline,
+      producerDelta: producerDelta(first, next),
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(patch.kind).toBe('patch')
+    if (patch.kind !== 'patch' || patch.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(patch.baseTranscriptHash).toBe(seeded.baseline.transcriptHash)
+    expect(patch.transcriptHash).toBeTruthy()
+    expect(
+      applyChatUpdateDelivery({ ...patch, transcriptHash: 'deadbeef' }, seeded.baseline)
+    ).toEqual({ ok: false, reason: 'Patch transcript hash does not match its baseline.' })
+    expect(applyChatUpdateDelivery(patch, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
+  })
+
+  it.each([CHAT_UPDATE_PROTOCOL_V1, CHAT_UPDATE_PROTOCOL_V2])(
+    'carries the transcript chain through a %i snapshot-to-patch recovery path',
+    (protocolVersion) => {
+      const first = chat(1, [message('a', 'A')])
+      const snapshot = buildChatUpdateDelivery({
+        deliveryId: `chain-seed-${protocolVersion}`,
+        revision: 1,
+        chat: first,
+        protocolVersion
+      })
+      const seeded = applyChatUpdateDelivery(snapshot)
+      if (!seeded.ok) throw new Error(seeded.reason)
+
+      const next = chat(2, [message('a', 'A'), message('b', 'B')])
+      const patch = buildChatUpdateDelivery({
+        deliveryId: `chain-patch-${protocolVersion}`,
+        revision: 2,
+        chat: next,
+        baseline: seeded.baseline,
+        producerDelta: producerDelta(first, next),
+        protocolVersion
+      })
+      expect(patch.kind).toBe('patch')
+      expect(applyChatUpdateDelivery(patch, seeded.baseline)).toMatchObject({
+        ok: true,
+        baseline: { chat: next }
+      })
+    }
+  )
 
   it('rejects a patch against the wrong baseline so the sender can resync with a snapshot', () => {
     const first = chat(1, [message('a', 'A')])
@@ -128,6 +266,51 @@ describe('chat update transport', () => {
     ).toBe('snapshot')
   })
 
+  it.each([CHAT_UPDATE_PROTOCOL_V1, CHAT_UPDATE_PROTOCOL_V2])(
+    'uses a snapshot recovery boundary for duplicate or blank transcript ids (%i)',
+    (protocolVersion) => {
+      const first = chat(1, [message('a', 'A')])
+      const duplicate = chat(2, [message('a', 'A'), message('a', 'duplicate')])
+      const blank = chat(3, [message('', 'blank')])
+
+      expect(hasUniqueChatMessageIds(first.messages)).toBe(true)
+      expect(hasUniqueChatMessageIds(duplicate.messages)).toBe(false)
+      expect(hasUniqueChatMessageIds(blank.messages)).toBe(false)
+
+      const duplicateRecovery = buildChatUpdateDelivery({
+        deliveryId: `duplicate-${protocolVersion}`,
+        revision: 2,
+        chat: duplicate,
+        baseline: { revision: 1, chat: first },
+        producerDelta: producerDelta(first, duplicate),
+        protocolVersion
+      })
+      expect(duplicateRecovery.kind).toBe('snapshot')
+      if (duplicateRecovery.kind !== 'snapshot') throw new Error('expected snapshot recovery')
+      expect(duplicateRecovery.transcriptIdsUnique).toBe(false)
+      expect(applyChatUpdateDelivery(duplicateRecovery)).toMatchObject({
+        ok: true,
+        baseline: { chat: duplicate, transcriptIdsUnique: false }
+      })
+
+      const duplicateBaseline = applyChatUpdateDelivery(duplicateRecovery)
+      if (!duplicateBaseline.ok) throw new Error(duplicateBaseline.reason)
+
+      const baselineRecovery = buildChatUpdateDelivery({
+        deliveryId: `blank-baseline-${protocolVersion}`,
+        revision: 4,
+        chat: first,
+        baseline: duplicateBaseline.baseline,
+        protocolVersion
+      })
+      expect(baselineRecovery.kind).toBe('snapshot')
+      expect(applyChatUpdateDelivery(baselineRecovery)).toMatchObject({
+        ok: true,
+        baseline: { chat: first }
+      })
+    }
+  )
+
   it('keeps an append-sized update small for a multi-megabyte transcript', () => {
     const largeMessages = Array.from({ length: 700 }, (_, index) =>
       message(`message-${index}`, `${index}:${'x'.repeat(2_500)}`)
@@ -143,7 +326,7 @@ describe('chat update transport', () => {
 
     expect(delivery.kind).toBe('patch')
     expect(JSON.stringify(delivery).length).toBeLessThan(JSON.stringify(next).length * 0.02)
-    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toEqual({
+    expect(applyChatUpdateDelivery(delivery, { revision: 1, chat: first })).toMatchObject({
       ok: true,
       baseline: { revision: 2, chat: next }
     })
@@ -161,13 +344,23 @@ describe('chat update transport', () => {
         deliveryId: 'delivery-1',
         applied: true,
         revision: 9,
-        recordHash: 'deadbeef'
+        recordHash: 'deadbeef',
+        transcriptHash: 'feedbeef',
+        deliveryEpoch: 4,
+        rendererEpoch: 'renderer-epoch',
+        phase: 'rendered',
+        chatId: 'chat-1'
       })
     ).toEqual({
       deliveryId: 'delivery-1',
       applied: true,
       revision: 9,
-      recordHash: 'deadbeef'
+      recordHash: 'deadbeef',
+      transcriptHash: 'feedbeef',
+      deliveryEpoch: 4,
+      rendererEpoch: 'renderer-epoch',
+      phase: 'rendered',
+      chatId: 'chat-1'
     })
   })
 
@@ -254,6 +447,73 @@ describe('chat update transport', () => {
       ok: true,
       baseline: { revision: 2, chat: next }
     })
+  })
+
+  it('round-trips a main-authored identity-anchored middle insertion as v2 ops', () => {
+    const first = chat(1, [message('a', 'A'), message('c', 'C')])
+    const next = chat(2, [message('a', 'A'), message('b', 'B'), message('c', 'C')])
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'insert-before-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    if (!seeded.ok) throw new Error(seeded.reason)
+    const delta: ChatUpdateProducerDelta = {
+      ...producerDelta(first, next),
+      transcriptOps: [{ op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] }],
+      changedMessageCount: 1
+    }
+
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'insert-before-patch',
+      revision: 2,
+      chat: next,
+      baseline: seeded.baseline,
+      producerDelta: delta,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+
+    expect(delivery.kind).toBe('patch')
+    if (delivery.kind !== 'patch' || delivery.protocolVersion !== CHAT_UPDATE_PROTOCOL_V2) {
+      throw new Error('expected v2 patch')
+    }
+    expect(delivery.transcriptOps).toEqual(delta.transcriptOps)
+    expect(delivery.messages).toBeUndefined()
+    expect(applyChatUpdateDelivery(delivery, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: next }
+    })
+  })
+
+  it('rejects an identity-anchored insertion with an invalid anchor or message identity', () => {
+    const messages = [message('a', 'A'), message('c', 'C')]
+
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: 'missing', messages: [message('b', 'B')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: '', messages: [message('b', 'B')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        { op: 'insertBefore', beforeId: 'c', messages: [message('a', 'collision')] }
+      ])
+    ).toBeNull()
+    expect(
+      applyChatTranscriptOps(messages, [
+        {
+          op: 'insertBefore',
+          beforeId: 'c',
+          messages: [message('b', 'B'), message('b', 'duplicate')]
+        }
+      ])
+    ).toBeNull()
   })
 
   it('preserves transcript identity for metadata-only v2 patches', () => {
@@ -359,8 +619,64 @@ describe('chat update transport', () => {
     })
   })
 
+  it('composes append, insertBefore, and update operations in producer order', () => {
+    const first = chat(1, [message('a', 'A'), message('c', 'C')])
+    const second = chat(2, [message('a', 'A'), message('c', 'C'), message('d', 'D')])
+    const third = chat(3, [
+      message('a', 'A'),
+      message('b', 'B'),
+      message('c', 'C'),
+      message('d', 'D')
+    ])
+    const fourth = chat(4, [
+      message('a', 'A'),
+      message('b', 'B2'),
+      message('c', 'C'),
+      message('d', 'D')
+    ])
+    const insertion: ChatUpdateProducerDelta = {
+      ...producerDelta(second, third),
+      transcriptOps: [{ op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] }],
+      changedMessageCount: 1
+    }
+    const firstComposition = composeChatUpdateProducerDeltas(
+      producerDelta(first, second),
+      insertion
+    )
+    if (!firstComposition) throw new Error('expected first composition')
+    const composed = composeChatUpdateProducerDeltas(firstComposition, producerDelta(third, fourth))
+    if (!composed) throw new Error('expected complete composition')
+
+    expect(composed.transcriptOps).toEqual([
+      { op: 'append', messages: [message('d', 'D')] },
+      { op: 'insertBefore', beforeId: 'c', messages: [message('b', 'B')] },
+      { op: 'update', id: 'b', message: message('b', 'B2') }
+    ])
+    expect(composed.transcriptIdsUnique).toBe(true)
+
+    const snapshot = buildChatUpdateDelivery({
+      deliveryId: 'composed-insert-seed',
+      revision: 1,
+      chat: first,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    const seeded = applyChatUpdateDelivery(snapshot)
+    if (!seeded.ok) throw new Error(seeded.reason)
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'composed-insert-patch',
+      revision: 2,
+      chat: fourth,
+      baseline: seeded.baseline,
+      producerDelta: composed,
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(applyChatUpdateDelivery(delivery, seeded.baseline)).toMatchObject({
+      ok: true,
+      baseline: { chat: fourth }
+    })
+  })
+
   it('owes a snapshot only when there is no baseline to recover the change from', () => {
-    const first = chat(1, [message('a', 'A')])
     const next = chat(2, [message('a', 'B')])
 
     // No baseline: nothing to diff against, so the whole record is genuinely owed.
@@ -480,11 +796,11 @@ describe('chat update transport', () => {
       status: 'done' as const
     }))
     const first = chat(1, [message('a', 'A')], {
-      runs: bulkyRuns as ChatRecord['runs'],
+      runs: bulkyRuns as unknown as ChatRecord['runs'],
       title: 'Same title'
     })
     const next = chat(2, [message('a', 'A'), message('b', 'B')], {
-      runs: bulkyRuns as ChatRecord['runs'],
+      runs: bulkyRuns as unknown as ChatRecord['runs'],
       title: 'Same title'
     })
     const { messages: _m1, ...prevRecord } = first
@@ -523,6 +839,28 @@ describe('chat update transport', () => {
     expect(Number.isSafeInteger(again.runsRevision)).toBe(true)
   })
 
+  it('reports the exact byte inputs used for sub-revisions without changing them', () => {
+    const sample = chat(3, [message('a', 'é🙂')], {
+      ensemble: { participants: [{ id: 'p1' }] } as ChatRecord['ensemble']
+    })
+    const bytes = { ensemble: 0, runs: 0, nonMessageRecord: 0 }
+
+    expect(computeChatSubRevisions(sample, bytes)).toEqual(computeChatSubRevisions(sample))
+    expect(bytes).toMatchObject({
+      ensemble: expect.any(Number),
+      runs: expect.any(Number),
+      nonMessageRecord: expect.any(Number)
+    })
+    expect(bytes.ensemble).toBeGreaterThan(0)
+    expect(bytes.runs).toBeGreaterThan(0)
+    expect(bytes.nonMessageRecord).toBeGreaterThan(bytes.ensemble)
+  })
+
+  it('measures UTF-8 text without allocating a Node-only Buffer', () => {
+    expect(utf8ByteLength('Aé🙂')).toBe(7)
+    expect(utf8ByteLength('')).toBe(0)
+  })
+
   it('rejects unknown protocol versions while accepting both dual-read versions', () => {
     expect(
       isChatUpdateDelivery({
@@ -551,5 +889,313 @@ describe('chat update transport', () => {
     const large = chat(2, [message('a', 'x'.repeat(10_000))])
     expect(estimateChatRecordBytes(large)).toBeGreaterThan(estimateChatRecordBytes(small))
     expect(estimateChatRecordBytes(large)).toBeGreaterThan(10_000)
+  })
+
+  it('snapshots an oversized chat as a bounded page instead of cloning the full transcript', () => {
+    const messages = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 },
+      (_, index) => message(`m-${index}`, `row ${index}`)
+    )
+    const oversized = chat(9, messages)
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'snap-page-1',
+      revision: 9,
+      chat: oversized
+    })
+
+    expect(delivery.kind).toBe('snapshot')
+    if (delivery.kind !== 'snapshot') throw new Error('expected snapshot')
+    expect(delivery.chat.messages.length).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES)
+    expect(delivery.chat.messages.length).toBeLessThan(messages.length)
+    expect(delivery.chat.messages).not.toBe(messages)
+    expect((delivery.chat as { summaryOnly?: boolean }).summaryOnly).toBe(true)
+    expect((delivery.chat as { transcriptPaged?: boolean }).transcriptPaged).toBe(true)
+    expect(delivery.page?.hasOlder).toBe(true)
+    expect(delivery.page?.totalMessageCount).toBe(messages.length)
+    expect(delivery.chat.messages.map((entry) => entry.id)).toEqual(
+      messages.slice(-delivery.chat.messages.length).map((entry) => entry.id)
+    )
+    const applied = applyChatUpdateDelivery(delivery)
+    expect(applied.ok).toBe(true)
+    if (!applied.ok) throw new Error(applied.reason)
+    expect(applied.baseline.chat.messages).toHaveLength(delivery.chat.messages.length)
+  })
+})
+
+describe('projectChatUpdateWindow', () => {
+  const rows = (count: number, offset = 0): ChatMessage[] =>
+    Array.from({ length: count }, (_, index) => message(`m-${offset + index}`, `row ${offset + index}`))
+
+  /** The markers a shell carries; none are declared on `ChatRecord`. */
+  const markers = (record: ChatRecord): Record<string, unknown> => {
+    const shell = record as ChatRecord & {
+      summaryOnly?: boolean
+      transcriptPaged?: boolean
+      messageCount?: number
+      runCount?: number
+      runWallMs?: number
+    }
+    return {
+      summaryOnly: shell.summaryOnly,
+      transcriptPaged: shell.transcriptPaged,
+      messageCount: shell.messageCount,
+      runCount: shell.runCount,
+      runWallMs: shell.runWallMs
+    }
+  }
+
+  it('leaves a small chat completely alone', () => {
+    const small = chat(1, rows(10))
+    const projection = projectChatUpdateWindow(small)
+    expect(projection.windowed).toBe(false)
+    expect(projection.chat).toBe(small)
+    expect(projection.page).toBeUndefined()
+    expect(projection.anchorMessageId).toBeNull()
+    expect(projection.reanchored).toBe(false)
+  })
+
+  it('windows a large chat onto its tail and reports the anchor', () => {
+    const messages = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const projection = projectChatUpdateWindow(chat(1, messages))
+    expect(projection.windowed).toBe(true)
+    expect(projection.page?.hasOlder).toBe(true)
+    expect(projection.page?.windowEnd).toBe(messages.length)
+    expect(projection.chat.messages.length).toBeLessThan(messages.length)
+    expect(projection.anchorMessageId).toBe(projection.chat.messages[0]?.id)
+    // A FIRST projection gave nothing up, so it is not a re-anchor: counting it
+    // as one would make the "patching is broken" signal fire on every new chat.
+    expect(projection.reanchored).toBe(false)
+  })
+
+  it('holds the anchor still while the tail grows, so appends stay a pure suffix', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const first = projectChatUpdateWindow(chat(1, base))
+    const anchor = first.anchorMessageId
+    expect(anchor).toBeTruthy()
+
+    const grown = [...base, ...rows(40, base.length)]
+    const second = projectChatUpdateWindow(chat(2, grown), anchor)
+    expect(second.reanchored).toBe(false)
+    expect(second.anchorMessageId).toBe(anchor)
+    expect(second.chat.messages[0]?.id).toBe(anchor)
+    expect(second.chat.messages).toHaveLength(first.chat.messages.length + 40)
+    // Every row the target already held is still there, at the same index.
+    expect(second.chat.messages.slice(0, first.chat.messages.length)).toEqual(first.chat.messages)
+    expect(second.page?.windowStart).toBe(first.page?.windowStart)
+    expect(second.page?.windowEnd).toBe(grown.length)
+    // An anchored window always runs to the newest row.
+    expect(second.page?.hasNewer).toBe(false)
+  })
+
+  it('the window is always an exact tail slice of the canonical transcript', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(120, base.length)]
+    const projection = projectChatUpdateWindow(chat(2, grown), anchor)
+    const window = projection.chat.messages
+    expect(window).toEqual(grown.slice(grown.length - window.length))
+  })
+
+  it('re-anchors when the held anchor is no longer in the transcript', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const projection = projectChatUpdateWindow(chat(2, base), 'm-compacted-away')
+    expect(projection.reanchored).toBe(true)
+    expect(projection.windowed).toBe(true)
+    expect(projection.anchorMessageId).toBe(projection.chat.messages[0]?.id)
+    expect(projection.anchorMessageId).not.toBe('m-compacted-away')
+  })
+
+  it('re-anchors once the window has grown past its ceiling', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const held = projectChatUpdateWindow(chat(2, base), anchor)
+    expect(held.reanchored).toBe(false)
+
+    const grown = [...base, ...rows(4_000, base.length)]
+    const projection = projectChatUpdateWindow(chat(3, grown), anchor)
+    expect(projection.reanchored).toBe(true)
+    expect(projection.anchorMessageId).not.toBe(anchor)
+    expect(projection.chat.messages.length).toBeLessThanOrEqual(
+      DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES
+    )
+  })
+
+  it('honours a caller-supplied growth ceiling', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(10, base.length)]
+    expect(projectChatUpdateWindow(chat(2, grown), anchor, { maxGrowthRows: 4 }).reanchored).toBe(
+      true
+    )
+    expect(
+      projectChatUpdateWindow(chat(2, grown), anchor, { maxGrowthRows: 100_000 }).reanchored
+    ).toBe(false)
+  })
+
+  it('carries IDENTICAL shell markers whether anchored or re-anchored', () => {
+    // The two paths build the record separately. If their marker sets ever
+    // drift, a re-anchor changes non-message fields and so changes the record
+    // hash for a reason the renderer cannot see — the exact baseline-drop class
+    // this windowing exists to end.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const canonical = chat(2, base, { runs: [] })
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const anchored = projectChatUpdateWindow(canonical, anchor)
+    const reanchored = projectChatUpdateWindow(canonical, 'gone')
+    expect(anchored.reanchored).toBe(false)
+    expect(reanchored.reanchored).toBe(true)
+    expect(Object.keys(markers(anchored.chat)).sort()).toEqual(
+      Object.keys(markers(reanchored.chat)).sort()
+    )
+    expect(markers(anchored.chat)).toEqual(markers(reanchored.chat))
+  })
+
+  it('reports the canonical totals, never the window totals', () => {
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const anchor = projectChatUpdateWindow(chat(1, base)).anchorMessageId
+    const grown = [...base, ...rows(7, base.length)]
+    const projection = projectChatUpdateWindow(chat(2, grown), anchor)
+    expect(markers(projection.chat).messageCount).toBe(grown.length)
+    expect(projection.page?.totalMessageCount).toBe(grown.length)
+    expect(projection.chat.messages.length).toBeLessThan(grown.length)
+  })
+
+  it('keeps metering byte-exact across steady-state re-projections and re-meters only replaced rows', () => {
+    // Steady state on a large thread: the tail streams, every OTHER row keeps
+    // its object identity. Re-metering the whole anchored window each tick was
+    // an O(window) deep walk for zero changed bytes; the memo must reproduce
+    // the previous estimate exactly, then price a replaced row precisely.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const first = projectChatUpdateWindow(chat(1, base))
+    const anchor = first.anchorMessageId
+    expect(anchor).toBeTruthy()
+
+    const steady = projectChatUpdateWindow(chat(2, [...base]), anchor)
+    expect(steady.reanchored).toBe(false)
+    expect(steady.page?.estimatedBytes).toBe(first.page?.estimatedBytes)
+    // Untouched rows are the same OBJECTS in both projections — the meter memo
+    // keys on exactly the identity that already decides splice prefix equality.
+    expect(
+      steady.chat.messages
+        .slice(0, first.chat.messages.length)
+        .every((row, index) => row === first.chat.messages[index])
+    ).toBe(true)
+
+    // Replace one mid-window row with a new object (identity change is how a
+    // content change presents; an in-place edit would already be invisible to
+    // the splice machinery). The memo must not serve the removed row's number
+    // for its replacement.
+    const rowIndex = Math.floor(first.chat.messages.length / 2)
+    const removedRow = first.chat.messages[rowIndex]
+    const replacementRow = {
+      ...removedRow,
+      content: `${removedRow.content} [edited with a much longer body of text]`
+    }
+    const edited = base.map((row) => (row === removedRow ? replacementRow : row))
+    const second = projectChatUpdateWindow(chat(3, edited), anchor)
+    expect(second.reanchored).toBe(false)
+    expect(second.page?.estimatedBytes).toBe(
+      (first.page?.estimatedBytes ?? 0) -
+        estimateJsonishBytes(removedRow) +
+        estimateJsonishBytes(replacementRow)
+    )
+  })
+
+  it('carries the exact thread wall-time projection and re-projects when its run inputs move', () => {
+    // The shell ships `runWallMs` computed over the COMPLETE run history before
+    // the page drops it. Computing it used to parse every startedAt/endedAt and
+    // sort the intervals on every cadence tick; the memo must be an exact view
+    // of the direct projection, including after the inputs genuinely change.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const runs = [
+      {
+        runId: 'r-1',
+        startedAt: '2026-09-01T10:00:00.000Z',
+        endedAt: '2026-09-01T10:05:00.000Z'
+      },
+      {
+        runId: 'r-2',
+        startedAt: '2026-09-01T10:10:00.000Z',
+        endedAt: '2026-09-01T10:20:00.000Z'
+      }
+    ] as ChatRun[]
+    const first = projectChatUpdateWindow(chat(1, base, { runs }))
+    expect(first.windowed).toBe(true)
+    expect(markers(first.chat).runWallMs).toBe(projectThreadRunWallMs(runs))
+
+    // Same run array back-to-back: identical inputs, identical scalar.
+    const steady = projectChatUpdateWindow(chat(2, [...base], { runs }), first.anchorMessageId)
+    expect(steady.reanchored).toBe(false)
+    expect(markers(steady.chat).runWallMs).toBe(projectThreadRunWallMs(runs))
+
+    // A completed run window moving under the same ids must evict by identity —
+    // a stale shell wall time would hash differently into the same record lane.
+    const longerRuns = runs.map((run) =>
+      run.runId === 'r-2' ? { ...run, endedAt: '2026-09-01T10:25:00.000Z' } : run
+    )
+    const moved = projectChatUpdateWindow(
+      chat(3, [...base], { runs: longerRuns }),
+      first.anchorMessageId
+    )
+    expect(moved.reanchored).toBe(false)
+    expect(markers(moved.chat).runWallMs).toBe(projectThreadRunWallMs(longerRuns))
+    expect(markers(moved.chat).runWallMs).not.toBe(markers(steady.chat).runWallMs)
+  })
+})
+
+describe('a top-level key that appears with an undefined value', () => {
+  // `{ ...chat, field: condition ? value : undefined }` is the ordinary spread
+  // idiom across the chat writers, and it makes `field` an OWN key whose value
+  // is undefined. `buildChatRecordDelta` checked hasOwnProperty only for the
+  // DELETION direction, then compared values — and `plainDataEqual(undefined,
+  // undefined)` is true, so the appearing key was conveyed as nothing at all
+  // while `stableStringify` still hashed it in. The renderer applied cleanly,
+  // every guard matched, and only `recordHash` diverged: a NACK, a dropped
+  // baseline, and a full canonical snapshot over the user's own edit.
+
+  it('is carried by the record delta', () => {
+    const previous = { appChatId: 'chat-1', title: 'New Chat' } as unknown as ChatRecord
+    const next = {
+      appChatId: 'chat-1',
+      title: 'New Chat',
+      activeGoal: undefined
+    } as unknown as ChatRecord
+
+    const delta = buildChatRecordDelta(previous, next)
+
+    expect([...delta.recordMask, ...delta.recordCleared]).toContain('activeGoal')
+  })
+
+  it('hashes the same as the key being absent', () => {
+    const absent = chat(1, [])
+    const present = chat(1, [], { activeGoal: undefined } as Partial<ChatRecord>)
+
+    expect(Object.prototype.hasOwnProperty.call(present, 'activeGoal')).toBe(true)
+    expect(computeChatSubRevisions(present).recordHash).toBe(
+      computeChatSubRevisions(absent).recordHash
+    )
+  })
+
+  it('survives a patch round-trip with the hash main sent', () => {
+    const first = chat(1, [message('m-1', 'one')])
+    const next = chat(2, [message('m-1', 'one')], {
+      activeGoal: undefined
+    } as Partial<ChatRecord>)
+
+    // v2 is what ships: a field-mask patch, not v1's whole-record copy.
+    const delivery = buildChatUpdateDelivery({
+      deliveryId: 'undefined-key',
+      revision: 2,
+      chat: next,
+      baseline: { revision: 1, chat: first },
+      producerDelta: producerDelta(first, next),
+      protocolVersion: CHAT_UPDATE_PROTOCOL_V2
+    })
+    expect(delivery.kind).toBe('patch')
+    const applied = applyChatUpdateDelivery(delivery, { revision: 1, chat: first })
+    if (!applied.ok) throw new Error('apply failed')
+
+    // What main compares the ACK against is its hash of the record it SENT.
+    expect(applied.baseline.recordHash).toBe(computeChatSubRevisions(next).recordHash)
   })
 })

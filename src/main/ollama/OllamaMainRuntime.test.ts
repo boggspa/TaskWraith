@@ -1,4 +1,6 @@
-import { resolve } from 'path'
+import { join, resolve } from 'path'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { describe, expect, it, vi } from 'vitest'
 import { RunManager } from '../RunManager'
 import type { AppSettings } from '../store/types'
@@ -90,7 +92,46 @@ describe('createOllamaMainRuntime', () => {
     )
   })
 
-  it('hard-denies sub-thread tools on the local loop, including capability_invoke', async () => {
+  it.each(['canvas_screenshot', 'capability_invoke'] as const)(
+    'preserves image content on the canonical %s execution route',
+    async (toolName) => {
+      const images = [
+        { type: 'image' as const, mimeType: 'image/png', data: 'c2NyZWVu' },
+        { type: 'image' as const, mimeType: 'image/jpeg', data: 'ZGV0YWls' }
+      ]
+      const metadata = { width: 1200, height: 800, coordinateSpace: 'image-pixels' }
+      const text = JSON.stringify(metadata)
+      const deps = dependencies({
+        executeMcpTool: vi.fn(async () => ({
+          text,
+          structuredContent: metadata,
+          content: [{ type: 'text' as const, text }, ...images]
+        }))
+      })
+      const args =
+        toolName === 'canvas_screenshot'
+          ? { canvasId: 'canvas-1' }
+          : { name: 'canvas_screenshot', arguments: { canvasId: 'canvas-1' } }
+
+      const result = await createOllamaMainRuntime(deps).executeLocalTool({
+        toolName,
+        arguments: args,
+        workspacePath: '/repo',
+        appRunId: 'run-screen',
+        appChatId: 'chat-screen'
+      })
+
+      expect(result).toMatchObject({ ok: true, output: text, images, structuredContent: metadata })
+      expect(deps.executeMcpTool).toHaveBeenCalledWith(
+        toolName,
+        args,
+        { appRunId: 'run-screen', appChatId: 'chat-screen' },
+        'ollama'
+      )
+    }
+  )
+
+  it('denies sub-thread tools without UltraTask consent, including capability_invoke', async () => {
     const deps = dependencies()
     const runtime = createOllamaMainRuntime(deps)
 
@@ -102,7 +143,7 @@ describe('createOllamaMainRuntime', () => {
       appChatId: 'chat-1'
     })
     expect(direct.ok).toBe(false)
-    expect(direct.output).toMatch(/cannot use TaskWraith sub-thread tools/i)
+    expect(direct.output).toMatch(/only when this run was started from the UltraTask/i)
     expect(deps.executeMcpTool).not.toHaveBeenCalled()
 
     const viaInvoke = await runtime.executeLocalTool({
@@ -116,8 +157,54 @@ describe('createOllamaMainRuntime', () => {
       appChatId: 'chat-1'
     })
     expect(viaInvoke.ok).toBe(false)
-    expect(viaInvoke.output).toMatch(/cannot invoke TaskWraith sub-thread tools/i)
+    expect(viaInvoke.output).toMatch(/unless this run was started from the UltraTask/i)
     expect(deps.executeMcpTool).not.toHaveBeenCalled()
+  })
+
+  it('routes direct and capability-invoked delegation with UltraTask auto-allow', async () => {
+    const deps = dependencies()
+    const runtime = createOllamaMainRuntime(deps)
+
+    const direct = await runtime.executeLocalTool({
+      toolName: 'delegate_wave',
+      arguments: {
+        lifecycle: 'ephemeral',
+        workers: [{ role: 'reviewer', prompt: 'Review the focused change.' }]
+      },
+      workspacePath: '/repo',
+      appRunId: 'run-ultratask',
+      appChatId: 'chat-ultratask',
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(direct.ok).toBe(true)
+    expect(deps.executeMcpTool).toHaveBeenCalledWith(
+      'delegate_wave',
+      expect.objectContaining({ workers: expect.any(Array) }),
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      'ollama'
+    )
+
+    const viaInvoke = await runtime.executeLocalTool({
+      toolName: 'capability_invoke',
+      arguments: {
+        name: 'delegate_to_subthread',
+        arguments: { provider: 'codex', prompt: 'Inspect one focused area.' }
+      },
+      workspacePath: '/repo',
+      appRunId: 'run-ultratask',
+      appChatId: 'chat-ultratask',
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(viaInvoke.ok).toBe(true)
+    expect(deps.executeMcpTool).toHaveBeenCalledWith(
+      'capability_invoke',
+      {
+        name: 'delegate_to_subthread',
+        arguments: { provider: 'codex', prompt: 'Inspect one focused area.' }
+      },
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      'ollama'
+    )
   })
 
   it('formats workspace search results without bypassing the scoped executor', async () => {
@@ -154,6 +241,104 @@ describe('createOllamaMainRuntime', () => {
     expect(executeWorkspaceSearch).toHaveBeenCalledWith(
       { query: 'needle' },
       expect.objectContaining({ workspacePath }),
+      workspacePath
+    )
+  })
+
+  it('pages read_file by the documented offset/limit and labels the window', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'ollama-read-window-'))
+    try {
+      writeFileSync(
+        join(workspacePath, 'big.ts'),
+        Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n'),
+        'utf8'
+      )
+      const runtime = createOllamaMainRuntime(dependencies())
+
+      // offset/limit is the vocabulary tool_help and resources/Tools.md promise.
+      // It used to pass validation and then be discarded, so every page
+      // returned lines 1-N and the repeat guard ended the round.
+      const windowed = await runtime.executeLocalTool({
+        toolName: 'read_file',
+        arguments: { path: 'big.ts', offset: 11, limit: 5 },
+        workspacePath
+      })
+
+      expect(windowed).toMatchObject({ ok: true })
+      // The header is what lets summarizeReadFileOutput continue from the
+      // window instead of restarting its count at 1 and prescribing the same
+      // next offset forever.
+      expect(String(windowed.output).split('\n')[0]).toBe('[read_file: lines 11-15 of 40]')
+      expect(windowed.output).toContain('line 11')
+      expect(windowed.output).toContain('line 15')
+      expect(windowed.output).not.toContain('line 16')
+      expect(windowed.output).not.toContain('line 10')
+
+      // A plain whole-file read stays headerless and byte-identical.
+      const whole = await runtime.executeLocalTool({
+        toolName: 'read_file',
+        arguments: { path: 'big.ts' },
+        workspacePath
+      })
+      expect(String(whole.output).startsWith('line 1\n')).toBe(true)
+      expect(whole.output).not.toContain('[read_file: lines')
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true })
+    }
+  })
+
+  it('applies small-local-model argument economy at the pre-execution hook', async () => {
+    const executeWorkspaceSearch = vi.fn(async () => ({ matches: [], count: 0, exitCode: 0 }))
+    const deps = dependencies({
+      workspaceToolExecutors: {
+        ...dependencies().workspaceToolExecutors,
+        executeWorkspaceSearch
+      }
+    })
+    const runtime = createOllamaMainRuntime(deps)
+    const workspacePath = resolve('/repo')
+
+    await runtime.executeLocalTool({
+      toolName: 'workspace_search',
+      arguments: { query: 'needle' },
+      workspacePath,
+      smallLocalModel: true
+    })
+
+    // The compact native schema omits maxResults/contextLines entirely, so a
+    // small model cannot ask for them; the hook supplies them instead.
+    expect(executeWorkspaceSearch).toHaveBeenCalledWith(
+      { query: 'needle', maxResults: 20, contextLines: 2 },
+      expect.objectContaining({ workspacePath }),
+      workspacePath
+    )
+  })
+
+  it('clamps rather than refuses a runaway small-model argument', async () => {
+    const executeWorkspaceSearch = vi.fn(async () => ({ matches: [], count: 0, exitCode: 0 }))
+    const deps = dependencies({
+      workspaceToolExecutors: {
+        ...dependencies().workspaceToolExecutors,
+        executeWorkspaceSearch
+      }
+    })
+    const runtime = createOllamaMainRuntime(deps)
+    const workspacePath = resolve('/repo')
+
+    const result = await runtime.executeLocalTool({
+      toolName: 'workspace_search',
+      arguments: { query: 'needle', maxResults: 5000 },
+      workspacePath,
+      smallLocalModel: true
+    })
+
+    // A clamp still returns the tool's real result. The retired retrieval-first
+    // gate refused instead, which cost the model a turn and taught it nothing.
+    expect(result).toMatchObject({ ok: true })
+    expect(result.validationError).toBeUndefined()
+    expect(executeWorkspaceSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ maxResults: 50 }),
+      expect.anything(),
       workspacePath
     )
   })
@@ -245,6 +430,36 @@ describe('createOllamaMainRuntime', () => {
       appRunId: 'run-1',
       appChatId: 'chat-1'
     })
+  })
+
+  it('records the signed UltraTask delegation source as local run context', async () => {
+    const registerRunSession = vi.fn(() => ({}))
+    const runProvider = vi.fn<OllamaMainRuntimeDependencies['runProvider']>(async () => {})
+    const runtime = createOllamaMainRuntime(dependencies({ registerRunSession, runProvider }))
+
+    await runtime.runProviderAdapter(
+      { sender: {} as Electron.WebContents } as Electron.IpcMainInvokeEvent,
+      {
+        provider: 'ollama',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'Delegate an independent review.',
+        appRunId: 'run-ultratask',
+        appChatId: 'chat-ultratask',
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultratask'
+        } as any
+      }
+    )
+
+    expect(registerRunSession).toHaveBeenCalledWith(
+      'ollama',
+      expect.anything(),
+      { appRunId: 'run-ultratask', appChatId: 'chat-ultratask' },
+      '/repo',
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+    expect(runProvider).toHaveBeenCalledOnce()
   })
 
   it('does not start transport when run-session registration is refused', async () => {

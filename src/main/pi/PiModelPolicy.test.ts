@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import {
   PI_ALLOWED_UPSTREAMS,
+  PI_OPENROUTER_ALLOWED_MODEL_IDS,
   PI_UPSTREAM_KEY_ENV,
+  XIAOMI_TOKEN_PLAN_UPSTREAMS,
   buildPiCredentialEnv,
   isPiUpstreamAllowed,
   piModelPolicyVerdict
@@ -10,13 +12,12 @@ import {
 import { PI_STATIC_MODELS, piModelsForConfiguredUpstreams, splitPiWireModelId } from './PiModels'
 
 describe('piModelPolicyVerdict', () => {
-  it('refuses every hosted/first-party upstream by name', () => {
+  it('refuses every hosted/first-party upstream except the scoped OpenRouter lane', () => {
     for (const upstream of [
       'anthropic',
       'openai',
       'google',
       'xai',
-      'openrouter',
       'github-copilot',
       'kimi-coding',
       'radius',
@@ -27,6 +28,44 @@ describe('piModelPolicyVerdict', () => {
       expect(verdict.allowed, upstream).toBe(false)
       expect(verdict.reason).toContain('allowlist')
     }
+  })
+
+  it('allows only specific active custom models from OpenRouter', () => {
+    expect(piModelPolicyVerdict('openrouter', 'stealth/ox-alpha')).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('2026-08-28')
+    })
+    for (const modelId of [
+      'openrouter/auto',
+      'anthropic/claude-opus-5',
+      'openai/gpt-5.6-terra',
+      'stealth/ox-alpha:free',
+      'stealth/another-model'
+    ]) {
+      const verdict = piModelPolicyVerdict('openrouter', modelId)
+      expect(verdict.allowed, modelId).toBe(false)
+      expect(verdict.reason).toMatch(/GLM|North Mini Code|Inkling/)
+    }
+    expect(PI_OPENROUTER_ALLOWED_MODEL_IDS).toEqual([
+      'z-ai/glm-5.2',
+      'poolside/laguna-s-2.1',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free',
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free',
+      'inception/mercury-2.5-preview',
+      'tencent/hy4-preview',
+      'inception/mercury-2.5',
+      'nex-agi/nex-n2.5-mini:free',
+      'nex-agi/nex-n2.5-pro:free',
+      'sakana/fugu-max',
+      'sakana/fugu-ultra-v2',
+      'stealth/union-alpha',
+      'unbiased/pareto',
+      'typesafe/jev-1.13',
+      'stealth/space-bunny-alpha'
+    ])
   })
 
   it('refuses resold hosted models inside allowed upstreams (kimi on qwen)', () => {
@@ -41,6 +80,22 @@ describe('piModelPolicyVerdict', () => {
     expect(piModelPolicyVerdict('deepseek', 'deepseek-v4-pro').allowed).toBe(true)
     expect(piModelPolicyVerdict('zai', 'glm-5.2').allowed).toBe(true)
     expect(piModelPolicyVerdict('groq', 'openai/gpt-oss-120b').allowed).toBe(true)
+    expect(piModelPolicyVerdict('openrouter', 'z-ai/glm-5.2').allowed).toBe(true)
+    for (const modelId of [
+      'cohere/north-mini-code:free',
+      'minimax/minimax-m3:free',
+      'thinkingmachines/inkling:free',
+      'thinkingmachines/inkling-small:free',
+      'inception/mercury-2.5-preview',
+      'tencent/hy4-preview',
+      'inception/mercury-2.5',
+      'nex-agi/nex-n2.5-mini:free',
+      'nex-agi/nex-n2.5-pro:free'
+    ]) {
+      expect(piModelPolicyVerdict('openrouter', modelId).allowed, modelId).toBe(true)
+    }
+    // The unhyphenated namespace does not exist on OpenRouter.
+    expect(piModelPolicyVerdict('openrouter', 'zai/glm-5.2').allowed).toBe(false)
   })
 
   it('refuses Cerebras GLM-4.7 from its sunset without affecting Z.ai or GPT-OSS', () => {
@@ -62,9 +117,42 @@ describe('piModelPolicyVerdict', () => {
 })
 
 describe('catalog/policy lockstep', () => {
-  it('every static model passes the policy wall', () => {
+  it('offers the new Cerebras model beside GPT-OSS with exact context and policy support', () => {
+    const offered = piModelsForConfiguredUpstreams(new Set(['cerebras']))
+    expect(offered.map((model) => model.wireId)).toEqual([
+      'cerebras/gpt-oss-120b',
+      'cerebras/qwen-3.8-27b'
+    ])
+    for (const model of offered) {
+      expect(piModelPolicyVerdict(model.upstream, model.modelId).allowed).toBe(true)
+      expect(resolveContextWindow('pi', model.wireId)).toBe(131_072)
+    }
+  })
+
+  it('keeps retired Ox Alpha metadata while the policy refuses only a new run', () => {
+    expect(
+      PI_STATIC_MODELS.find((model) => model.wireId === 'openrouter/stealth/ox-alpha')
+    ).toMatchObject({
+      label: 'Ox Alpha',
+      contextWindow: 1_048_576
+    })
+    expect(
+      piModelPolicyVerdict('openrouter', 'stealth/ox-alpha', new Date(2026, 7, 28))
+    ).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('2026-08-28')
+    })
+  })
+
+  it('every active static model passes the policy wall', () => {
     for (const model of PI_STATIC_MODELS) {
-      const verdict = piModelPolicyVerdict(model.upstream, model.modelId, new Date(2026, 6, 29))
+      if (
+        model.wireId === 'cerebras/zai-glm-4.7' ||
+        model.wireId === 'openrouter/stealth/ox-alpha'
+      ) {
+        continue
+      }
+      const verdict = piModelPolicyVerdict(model.upstream, model.modelId, new Date(2026, 7, 28))
       expect(verdict.allowed, model.wireId).toBe(true)
     }
   })
@@ -73,10 +161,73 @@ describe('catalog/policy lockstep', () => {
     const configured = new Set(['cerebras'])
     expect(
       piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 16)).map((model) => model.wireId)
-    ).toEqual(['cerebras/zai-glm-4.7', 'cerebras/gpt-oss-120b'])
+    ).toEqual(['cerebras/zai-glm-4.7', 'cerebras/gpt-oss-120b', 'cerebras/qwen-3.8-27b'])
     expect(
       piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 17)).map((model) => model.wireId)
-    ).toEqual(['cerebras/gpt-oss-120b'])
+    ).toEqual(['cerebras/gpt-oss-120b', 'cerebras/qwen-3.8-27b'])
+
+    const openRouterConfigured = new Set(['openrouter'])
+    expect(
+      piModelsForConfiguredUpstreams(openRouterConfigured, new Date(2026, 7, 28)).map(
+        (model) => model.wireId
+      )
+    ).toEqual([
+      'openrouter/z-ai/glm-5.2',
+      'openrouter/poolside/laguna-s-2.1',
+      'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free',
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free',
+      'openrouter/inception/mercury-2.5-preview',
+      'openrouter/tencent/hy4-preview',
+      'openrouter/inception/mercury-2.5',
+      'openrouter/nex-agi/nex-n2.5-mini:free',
+      'openrouter/nex-agi/nex-n2.5-pro:free',
+      'openrouter/sakana/fugu-max',
+      'openrouter/sakana/fugu-ultra-v2',
+      'openrouter/stealth/union-alpha',
+      'openrouter/unbiased/pareto',
+      'openrouter/typesafe/jev-1.13',
+      'openrouter/stealth/space-bunny-alpha'
+    ])
+  })
+
+  it('offers the Xiaomi V2.6 pair on every region and retires the V2.5 pair on 2026-10-21', () => {
+    const lastDay = new Date(2026, 9, 20, 23, 59)
+    const retired = new Date(2026, 9, 21, 0, 0)
+    for (const upstream of XIAOMI_TOKEN_PLAN_UPSTREAMS) {
+      const configured = new Set([upstream])
+      expect(
+        piModelsForConfiguredUpstreams(configured, lastDay).map((model) => model.wireId),
+        upstream
+      ).toEqual([
+        `${upstream}/mimo-v2.5`,
+        `${upstream}/mimo-v2.5-pro`,
+        `${upstream}/mimo-v2.6-pro`,
+        `${upstream}/mimo-v2.6-flash`
+      ])
+      const offered = piModelsForConfiguredUpstreams(configured, retired)
+      expect(
+        offered.map((model) => model.wireId),
+        upstream
+      ).toEqual([`${upstream}/mimo-v2.6-pro`, `${upstream}/mimo-v2.6-flash`])
+      for (const model of offered) {
+        expect(piModelPolicyVerdict(model.upstream, model.modelId, retired).allowed).toBe(true)
+        expect(model).toMatchObject({
+          contextWindow: 1_048_576,
+          maxOutputTokens: 131_072,
+          thinking: true,
+          images: true
+        })
+        expect(resolveContextWindow('pi', model.wireId)).toBe(1_048_576)
+      }
+      expect(piModelPolicyVerdict(upstream, 'mimo-v2.5-pro', lastDay).allowed).toBe(true)
+      expect(piModelPolicyVerdict(upstream, 'mimo-v2.5-pro', retired)).toMatchObject({
+        allowed: false,
+        reason: expect.stringContaining('2026-10-21')
+      })
+    }
   })
 
   it('every static wire id round-trips through splitPiWireModelId', () => {
@@ -145,5 +296,13 @@ describe('buildPiCredentialEnv (the env firewall)', () => {
   it('ignores blank configured keys', () => {
     const env = buildPiCredentialEnv({}, { deepseek: '   ' })
     expect(env.DEEPSEEK_API_KEY).toBeUndefined()
+  })
+
+  it('injects the configured OpenRouter key while stripping a parent-shell value', () => {
+    const env = buildPiCredentialEnv(
+      { OPENROUTER_API_KEY: 'parent-shell-value' },
+      { openrouter: 'configured-openrouter-key' }
+    )
+    expect(env.OPENROUTER_API_KEY).toBe('configured-openrouter-key')
   })
 })

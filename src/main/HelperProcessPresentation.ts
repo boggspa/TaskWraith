@@ -1,10 +1,12 @@
+import { isPeopleMigrationHelper } from './startup/PeopleMigrationHelperProtocol'
 import { GEMINI_MCP_BRIDGE_ARG_SUFFIX, GEMINI_MCP_BRIDGE_ENV } from './geminiMcpConstants'
+import { isTuiHeadlessHostLaunchRequest } from './TuiHeadlessHostSession'
 
 export function isTaskWraithHelperProcess(
   argv: readonly string[] = process.argv,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
-  return argv.some((arg) => arg.endsWith(GEMINI_MCP_BRIDGE_ARG_SUFFIX)) || env[GEMINI_MCP_BRIDGE_ENV] === '1'
+  return isPeopleMigrationHelper(argv) || argv.some((arg) => arg.endsWith(GEMINI_MCP_BRIDGE_ARG_SUFFIX)) || env[GEMINI_MCP_BRIDGE_ENV] === '1'
 }
 
 export function shouldSuppressMacAppPresentation(
@@ -12,5 +14,8 @@ export function shouldSuppressMacAppPresentation(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  return platform === 'darwin' && isTaskWraithHelperProcess(argv, env)
+  return (
+    platform === 'darwin' &&
+    (isTaskWraithHelperProcess(argv, env) || isTuiHeadlessHostLaunchRequest(argv))
+  )
 }

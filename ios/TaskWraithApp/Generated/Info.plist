@@ -31,6 +31,10 @@
 	<string>TaskWraith uses the camera to scan the pairing QR code shown on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TaskWraith connects to the pairing relay on your local network to reach your Mac.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TaskWraith uses the microphone for composer-local dictation. Audio is transcribed on-device and never sent to TaskWraith or your Mac as audio.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>TaskWraith uses on-device speech recognition for composer dictation. Transcripts are processed locally and only the final text is sent to your Mac as a message.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

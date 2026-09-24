@@ -154,6 +154,36 @@ describe('resolveModelRate', () => {
     expect(resolveModelRate(RATES, 'codex', 'totally-unknown')?.modelId).toBe('gpt-5.5')
   })
 
+  // The fallback was implicit in ARRAY ORDER (`table[0]`), and that coupling has
+  // already shipped one wrong price: gemini-2.0-flash had no row of its own,
+  // fell through to models[0] and billed at 2.5 Flash rates (recorded in
+  // ProviderRateService.ts). An explicit flag names the fallback row so
+  // reordering a provider's table cannot silently reprice it.
+  it('falls back to the row flagged isFallback rather than to array position', () => {
+    const rates = normalizeProviderRates({
+      baseline: {
+        grok: {
+          models: [
+            { modelId: 'grok-premium', inputUsdPerMillion: 100, outputUsdPerMillion: 200 },
+            {
+              modelId: 'grok-4.6',
+              inputUsdPerMillion: 1,
+              outputUsdPerMillion: 2,
+              isFallback: true
+            }
+          ]
+        }
+      }
+    })
+    expect(resolveModelRate(rates, 'grok', 'grok-unknown-9')?.modelId).toBe('grok-4.6')
+  })
+
+  it('still falls back to the first row when no row is flagged', () => {
+    // Back-compat, so the flag can land provider-by-provider rather than as one
+    // sweep over every baked-in table.
+    expect(resolveModelRate(RATES, 'codex', 'totally-unknown')?.modelId).toBe('gpt-5.5')
+  })
+
   it('resolves default sentinels before falling back to the first rate entry', () => {
     const rates: RendererProviderRates = {
       claude: [
@@ -447,6 +477,59 @@ describe('isKnownLocalOllamaModel', () => {
       ]
     }
     expect(isKnownLocalOllamaModel(withDevstral, 'devstral-small')).toBe(false)
+  })
+})
+
+// Ollama's rate table is entirely local models at $0 with a
+// `pricingUrl: 'local://ollama'` note. ollama.com CLOUD models are a paid
+// service and have no rows at all, so every one of them used to resolve to a
+// free local row - either through `table[0]` or through the reverse prefix
+// match - and TaskWraith reported real spend as $0.
+describe('ollama cloud models never inherit a local free rate', () => {
+  const rates: RendererProviderRates = {
+    ollama: [
+      { modelId: 'qwen3:4b-instruct', inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      { modelId: 'devstral-small-2:24b', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }
+    ]
+  }
+
+  it('returns no rate for an unpriced cloud model instead of table[0]', () => {
+    expect(resolveModelRate(rates, 'ollama', 'glm-5.3:cloud')).toBeNull()
+    expect(resolveModelRate(rates, 'ollama', 'qwen3-coder:480b-cloud')).toBeNull()
+  })
+
+  // The hazard isKnownLocalOllamaModel already documents, still live here: a
+  // shorter cloud id reverse-prefix-matching a longer local row.
+  it('does not reverse-prefix a cloud id onto a longer local row', () => {
+    expect(resolveModelRate(rates, 'ollama', 'devstral-small-cloud')).toBeNull()
+  })
+
+  it('leaves the cost blank rather than reporting a misleading zero', () => {
+    expect(estimateRunCostUsd(rates, 'ollama', 'glm-5.3:cloud', 1_000_000, 500_000)).toBe(0)
+    // Callers treat <= 0 as "render nothing". The local control still resolves.
+    expect(resolveModelRate(rates, 'ollama', 'qwen3:4b-instruct')?.modelId).toBe(
+      'qwen3:4b-instruct'
+    )
+  })
+
+  // Once real cloud rows are added they must price normally, including a tag
+  // that extends a cloud row.
+  it('prices a cloud model once its own row exists', () => {
+    const priced: RendererProviderRates = {
+      ollama: [
+        ...(rates.ollama || []),
+        { modelId: 'glm-5.3:cloud', inputUsdPerMillion: 0.6, outputUsdPerMillion: 2.2 }
+      ]
+    }
+    expect(resolveModelRate(priced, 'ollama', 'glm-5.3:cloud')?.inputUsdPerMillion).toBe(0.6)
+    expect(estimateRunCostUsd(priced, 'ollama', 'glm-5.3:cloud', 1_000_000, 0)).toBeCloseTo(0.6, 6)
+  })
+
+  it('leaves local model resolution untouched', () => {
+    expect(resolveModelRate(rates, 'ollama', 'devstral-small-2:24b')?.modelId).toBe(
+      'devstral-small-2:24b'
+    )
+    expect(resolveModelRate(rates, 'ollama', 'gemma4:12b')?.modelId).toBe('qwen3:4b-instruct')
   })
 })
 

@@ -16,10 +16,18 @@
  *   (currently empty — repopulate as future shipped features warrant a highlight)
  */
 
-export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info'
+export type AppNotificationKind =
+  | 'deprecation'
+  | 'addition'
+  | 'feature'
+  | 'info'
+  /** A condition that wants an action (a paused Stack recovery); amber. */
+  | 'warning'
+  /** A failure the app could not resolve on its own (damaged Stack history); red. */
+  | 'error'
 
 /** Visual tone of a notification card. */
-export type AppNotificationTone = 'default' | 'danger'
+export type AppNotificationTone = 'default' | 'danger' | 'warning'
 
 /** Optional provider accent for model/provider-specific announcement cards. */
 export type AppNotificationAccent = 'default' | 'claude' | 'ensemble' | 'cursor' | 'grok'
@@ -78,6 +86,19 @@ export interface AppNotification {
    *  newly-added models. When present, renderers show this grouped list
    *  instead of the plain `body` paragraph. */
   groups?: AppNotificationProviderGroup[]
+  /** Buttons rendered under the copy. Data only: the renderer-side publisher
+   *  of a dynamic notice supplies the handler (lib/dynamicAppNotifications),
+   *  so this registry type stays serializable for the remote projection. */
+  actions?: readonly AppNotificationAction[]
+}
+
+/** One action button on a notice. */
+export interface AppNotificationAction {
+  /** Stable per-notice action id, e.g. 'open-stack'. */
+  id: string
+  label: string
+  /** Emphasis for a destructive action such as archiving. */
+  tone?: 'default' | 'danger'
 }
 
 /** Max changelog-derived cards in the carousel at once (after pinned notices). */
@@ -86,11 +107,14 @@ export const CHANGELOG_FEATURE_NOTIFICATION_MAX_ACTIVE = 2
 const MS_PER_DAY = 86_400_000
 
 /**
- * Card tone for a kind. Only deprecation/sunset notices are RED; every other
- * kind uses the theme-default card (contrast-aware text + shiny accent rim).
+ * Card tone for a kind. Deprecation/sunset and error notices are RED, a
+ * warning is amber; every other kind uses the theme-default card
+ * (contrast-aware text + shiny accent rim).
  */
 export function appNotificationTone(kind: AppNotificationKind): AppNotificationTone {
-  return kind === 'deprecation' ? 'danger' : 'default'
+  if (kind === 'deprecation' || kind === 'error') return 'danger'
+  if (kind === 'warning') return 'warning'
+  return 'default'
 }
 
 export function appNotificationAccent(notification: AppNotification): AppNotificationAccent {
@@ -127,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-08-20'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-23'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,29 +162,111 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: 'AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.',
+    body: "Claude Opus 5.5, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
+      {
+        // Opus 5.5 released 2026-09-22: the headline launch of this lineup, so
+        // Claude leads the card again. Fable 5.1 stays listed beneath it.
+        provider: 'claude',
+        label: 'Claude',
+        models: [
+          {
+            name: 'Opus 5.5',
+            blurb:
+              "Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."
+          },
+          {
+            name: 'Fable 5.1',
+            blurb:
+              "Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."
+          }
+        ]
+      },
+      {
+        // GPT-6 Sol and Luna began rolling out on 2026-09-22 (Codex changelog,
+        // alongside Codex CLI 0.155.0), so Codex sits right behind the headline
+        // Claude launch of the same day; Astra (2026-09-03) stays listed beneath
+        // them. All three are announced regardless of this seat's entitlement:
+        // access ramps by account and client version, so the card names the
+        // models rather than the seat's current access to them.
+        provider: 'codex',
+        label: 'Codex',
+        models: [
+          {
+            name: 'GPT-6 Sol',
+            blurb:
+              "OpenAI's GPT-6 for complex coding and agentic workflows — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
+          },
+          {
+            name: 'GPT-6 Luna',
+            blurb:
+              "OpenAI's most efficient GPT-6 for focused, high-volume tasks — the same 1.05M window and ladder at $0.10/$0.50 per Mtok."
+          },
+          {
+            name: 'GPT-6 Astra',
+            blurb:
+              "OpenAI's most capable GPT-6, for the hardest end-to-end work. Rolling out by organisation."
+          }
+        ]
+      },
+      {
+        // K2.8 Preview rolled out 2026-09-11 on the UNCHANGED `kimi-for-coding`
+        // wire id, so it is the same route the retired "K2.7 Coding" row
+        // dispatched — relabelled, with K3's effort axis and a 1M window. The
+        // Highspeed tier stayed on K2.7 and is now its own picker row.
+        provider: 'kimi',
+        label: 'Kimi',
+        models: [
+          {
+            name: 'K2.8 Preview',
+            blurb:
+              "Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."
+          },
+          {
+            name: 'K2.7 Code Highspeed',
+            blurb:
+              'The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking.'
+          }
+        ]
+      },
+      {
+        // Devin is a whole new seat (approved 2026-09-01). The card leads with
+        // Cognition's own SWE models — the other families on the seat are
+        // covered elsewhere on this card — and never names a 'CLI default':
+        // the picker carries the CLI's humanised family catalogue (shared
+        // devinModelCatalog.ts) with the effort slider as the reasoning axis.
+        provider: 'devin',
+        label: 'Devin',
+        models: [
+          {
+            name: 'SWE-2',
+            blurb:
+              "Cognition's newest coding model - Medium, High, or Max effort. Paid plans; Devin marks it Pro."
+          },
+          {
+            name: 'SWE-1.6 Slow',
+            blurb: "The seat default — Cognition's own coding model, $0.50/$2.50 per Mtok."
+          },
+          {
+            name: 'SWE-1.6 · SWE-1.6 Fast',
+            blurb: 'The rest of the SWE-1.6 generation at the same $0.50/$2.50 per Mtok.'
+          },
+          {
+            name: 'SWE-1.7 · SWE-1.7 Lightning',
+            blurb:
+              "Cognition's newest coding models — Medium or Max on the effort slider, $0.50/$2.50 and $2.50/$12.50 per Mtok."
+          }
+        ]
+      },
       {
         provider: 'antigravity',
         label: 'AntiGravity',
         models: [
           {
-            name: 'Gemini 3.7 Flash',
+            name: 'Gemini 3.8 Flash',
             blurb:
               'The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI.'
-          },
-          {
-            name: 'Sonnet 4.6',
-            blurb: 'A top-tier model with better long-form reasoning and coding context.'
-          },
-          {
-            name: 'Opus 4.6',
-            blurb: 'A premium reasoning model tuned for nuanced instruction following.'
-          },
-          {
-            name: 'GPT-OSS-120B',
-            blurb: 'OpenAI 120B OSS model with broad capability and strong tool use.'
           }
         ]
       },
@@ -169,8 +275,12 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Grok',
         models: [
           {
-            name: 'Grok 4.6 Fast',
-            blurb: 'The new 500K default with Low through Extra High reasoning in Grok Build.'
+            name: 'Grok 4.7',
+            blurb: 'The new 500K default with Low through Extra High reasoning.'
+          },
+          {
+            name: 'Grok 4.7 Fast',
+            blurb: 'The Fast route of the 4.7 pair, same 500K window and effort ladder.'
           }
         ]
       },
@@ -190,8 +300,14 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Muse',
         models: [
           {
-            name: 'Muse Spark 1.2',
-            blurb: 'Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok.'
+            name: 'Muse Spark 1.3',
+            blurb:
+              "Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."
+          },
+          {
+            name: 'Muse Contributor Spark 1.3',
+            blurb:
+              'The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement.'
           }
         ]
       },
@@ -200,14 +316,9 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Mistral',
         models: [
           {
-            name: 'Devstral Small',
-            blurb:
-              'New configurable Effort options for a faster, lower-cost default or deeper reasoning.'
-          },
-          {
             name: 'Mistral 3.5 Medium',
             blurb:
-              'Configurable Effort tuning now available, balancing latency and reasoning depth.'
+              'Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth.'
           },
           {
             name: 'Mistral Large 3',
@@ -231,17 +342,27 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
               'Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient.'
           },
           {
-            name: 'Devstral 2',
-            blurb:
-              'A faster default path with broader instruction coverage and lower per-token cost.'
-          },
-          {
             name: 'Leanstral 1.5 (Labs)',
             blurb: 'Leanstral 1.5 (Labs) is a research-focused experimental reasoning update.'
           },
           {
             name: 'GLM-5.2 (via Mistral)',
             blurb: 'GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts.'
+          },
+          {
+            name: 'GLM-5.2 (Mistral Hosted)',
+            blurb:
+              'GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan.'
+          },
+          {
+            // API-key lane, mirroring the 5.2 pair: same host, opposite lane.
+            name: 'GLM-5.3 (via Mistral)',
+            blurb: 'The 5.3 generation hosted by Mistral — 1M context, on your own API key.'
+          },
+          {
+            // The Vibe-subscription GLM-5.3, mirroring the 5.2 subscription extra.
+            name: 'GLM-5.3 (Mistral Hosted)',
+            blurb: 'GLM-5.3 on the Vibe subscription — 1M context, no API key, metered on your plan.'
           },
           {
             name: 'Codestral (Aug 2025)',
@@ -264,11 +385,35 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         ]
       },
       {
-        // Curated local tags wear their upstream brand hue via accentProvider
-        // (shared/ollamaBrandTable). The Ollama heading stays Ollama green.
+        // Curated local tags and signed-in Cloud rows both wear their upstream
+        // brand hue via accentProvider (shared/ollamaBrandTable). The Ollama
+        // heading stays Ollama green.
         provider: 'ollama',
         label: 'Ollama',
         models: [
+          {
+            name: 'DeepSeek V4.1 Flash (Cloud)',
+            blurb:
+              "DeepSeek's 763B MoE on Ollama Cloud — 1M context, vision and tools, Low/High/Max thinking.",
+            accentProvider: 'deepseek'
+          },
+          {
+            name: 'GLM 5.2 (Cloud)',
+            blurb:
+              "Z.ai's 1M-context flagship on Ollama Cloud — signed in, no local VRAM required.",
+            accentProvider: 'zai'
+          },
+          {
+            name: 'MiniMax M3 (Cloud)',
+            blurb:
+              'MiniMax M3 on Ollama Cloud — a 1M context window for long-horizon agentic work.',
+            accentProvider: 'minimax'
+          },
+          {
+            name: 'Ornith 1.5 (9B & 35B)',
+            blurb: "Deep Reinforce's 262K agentic coder, local in both a 9B and a 35B size.",
+            accentProvider: 'deep-reinforce'
+          },
           {
             name: 'Gemma 4 (31B-MLX)',
             blurb: 'Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.',
@@ -306,6 +451,141 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'Rnj-1',
             blurb: "Essential AI's 8B agentic coding model with native tools.",
             accentProvider: 'essential'
+          }
+        ]
+      },
+      {
+        // Curated Pi BYOK models wear their upstream brand hue via accentProvider
+        // (shared/piBrandTable). The Pi heading stays Pi slate.
+        provider: 'pi',
+        label: 'Pi',
+        models: [
+          {
+            // Leads the group: the newest story on this lineup (released
+            // 2026-09-23). `stealth` is the gold override for OpenRouter's
+            // anonymous namespace — see PI_UPSTREAM_BRANDS. The blurb says
+            // "always-on" on purpose: every other reasoning row in this Pi
+            // group can be switched Off, and this route has no Off to offer.
+            name: 'Space Bunny Alpha (OpenRouter Free)',
+            blurb:
+              'A free stealth preview from an anonymous lab — 1M context, vision, and always-on Low-to-Max reasoning.',
+            accentProvider: 'stealth'
+          },
+          {
+            // Released 2026-09-17. `unbiased` is a real accent override — a
+            // burnt vermilion from PI_UPSTREAM_BRANDS that keeps the brand's
+            // red clear of the palette's vivid ones. The blurb says "no effort
+            // axis" on purpose: the endpoint advertises no reasoning
+            // parameter.
+            name: 'Pareto (OpenRouter)',
+            blurb:
+              "Unbiased's multimodal frontier composite — 262K with vision, no effort axis, $2.50/$7.50 per Mtok.",
+            accentProvider: 'unbiased'
+          },
+          {
+            // "Coming soon" on OpenRouter: announced 2026-09-17 with no live
+            // endpoint yet, so the blurb says so rather than promising a run.
+            name: 'Jev 1.13 (OpenRouter)',
+            blurb:
+              "TypeSafe's first System One structured decision model — 32K, typed choices not prose. Coming soon.",
+            accentProvider: 'typesafe'
+          },
+          {
+            name: 'Fugu Max (OpenRouter)',
+            blurb:
+              "Sakana's multi-agent orchestrator — 1M context, Off-to-Max effort, $2/$6 per Mtok.",
+            accentProvider: 'sakana'
+          },
+          {
+            name: 'Fugu Ultra v2 (OpenRouter)',
+            blurb:
+              'The higher-performance Fugu for deep research and full-stack work — 1M, $5/$30 per Mtok.',
+            accentProvider: 'sakana'
+          },
+          {
+            name: 'Mercury 2.5 (OpenRouter)',
+            blurb:
+              "Inception's GA diffusion LLM — 260K context, Off-to-Max effort, $0.20/$0.75 per Mtok.",
+            accentProvider: 'inception'
+          },
+          {
+            name: 'Nex-N2.5-Pro (OpenRouter Free)',
+            blurb:
+              "Nex AGI's free 262K agentic coder with vision and Off-to-Max effort; 30-day retention.",
+            accentProvider: 'nexagi'
+          },
+          {
+            name: 'Nex-N2.5-Mini (OpenRouter Free)',
+            blurb: 'The lighter free Nex-N2.5 — the same 262K window and effort ladder, text only.',
+            accentProvider: 'nexagi'
+          },
+          {
+            name: 'Qwen 3.8 27B (Cerebras)',
+            blurb:
+              "Alibaba's 27B model via Cerebras — 131K context, vision and Off/Low/Medium/High reasoning.",
+            accentProvider: 'cerebras'
+          },
+          {
+            name: 'North Mini Code (OpenRouter Free)',
+            blurb:
+              "Cohere's 256K agentic coder via OpenRouter, with interleaved reasoning and tool use.",
+            accentProvider: 'cohere'
+          },
+          {
+            name: 'MiniMax M3 (OpenRouter Free)',
+            blurb:
+              "MiniMax's free 1M multimodal agent model via OpenRouter, with reasoning and tools.",
+            accentProvider: 'minimax'
+          },
+          {
+            name: 'Inkling (OpenRouter Free)',
+            blurb:
+              "Thinking Machines' 1M multimodal model with Off-to-Max effort; free research traffic is logged.",
+            accentProvider: 'thinkingmachines'
+          },
+          {
+            name: 'Inkling Small (OpenRouter Free)',
+            blurb:
+              'A faster 1M Inkling with Off-to-Max effort; avoid sensitive data on the logged free endpoint.',
+            accentProvider: 'thinkingmachines'
+          },
+          {
+            name: 'DeepSeek V4 Flash',
+            blurb: 'DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.',
+            accentProvider: 'deepseek'
+          },
+          {
+            name: 'GLM-5.2',
+            blurb: 'Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.',
+            accentProvider: 'zai'
+          },
+          {
+            name: 'Qwen3.8 Max',
+            blurb: 'Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.',
+            accentProvider: 'qwen'
+          },
+          {
+            name: 'Xiaomi MiMo',
+            blurb:
+              'MiMo V2.6 Pro and V2.6 Flash join V2.5 and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.',
+            accentProvider: 'xiaomi'
+          },
+          {
+            name: 'Mistral Large 3',
+            blurb: 'Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.',
+            accentProvider: 'mistral'
+          },
+          {
+            name: 'Laguna S 2.1',
+            blurb:
+              'Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.',
+            accentProvider: 'poolside'
+          },
+          {
+            name: 'Nemotron 3 Ultra',
+            blurb:
+              'NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.',
+            accentProvider: 'nvidia'
           }
         ]
       }

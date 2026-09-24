@@ -23,7 +23,12 @@
  * purely opportunistic.
  */
 
-import type { LiveSteerDeliveryHooks, LiveSteerTransport, RunSession } from '../RunManager'
+import type {
+  LiveSteerDeliveryHooks,
+  LiveSteerReservation,
+  LiveSteerTransport,
+  RunSession
+} from '../RunManager'
 import type { MidRunSteeringAuthorKind } from '../run/MidRunSteering'
 import { appendSteeringMessage } from './SteeringMessageBatch'
 
@@ -32,6 +37,7 @@ export interface BrokerSteerTransport extends LiveSteerTransport {
   peek(): string | null
   /** Consume and return the pending steering text. */
   drain(): string | null
+  reserve(): LiveSteerReservation | null
 }
 
 /**
@@ -46,6 +52,9 @@ export function createBrokerSteerTransport(
   getPending: () => string | null
 ): BrokerSteerTransport {
   let pendingHooks: LiveSteerDeliveryHooks[] = []
+  const openReservations = new Set<{
+    settleAmbiguous: (reason?: string) => void
+  }>()
   return {
     sendSteer(text: string, hooks?: LiveSteerDeliveryHooks): boolean {
       if (!text.trim()) return false
@@ -59,7 +68,20 @@ export function createBrokerSteerTransport(
 
     cancel(): void {
       setPending(null)
+      const rejectedPendingHooks = pendingHooks
       pendingHooks = []
+      for (const hook of rejectedPendingHooks) {
+        try {
+          hook.onRejected?.(
+            'Broker steering was cancelled before it reached a provider delivery boundary.'
+          )
+        } catch {
+          // Settle the remaining exact receipts even if one callback fails.
+        }
+      }
+      for (const reservation of [...openReservations]) {
+        reservation.settleAmbiguous()
+      }
     },
 
     peek(): string | null {
@@ -67,20 +89,66 @@ export function createBrokerSteerTransport(
     },
 
     drain(): string | null {
+      const reservation = this.reserve()
+      if (!reservation) return null
+      reservation.commit()
+      return reservation.text
+    },
+
+    reserve(): LiveSteerReservation | null {
+      // One exact broker batch may be in flight at a time. Allowing a later
+      // batch to reserve before the first settles makes rollback ordering
+      // dependent on response timing and can replay newer text ahead of older
+      // text. Leave later arrivals pending until this receipt is terminal.
+      if (openReservations.size > 0) return null
       const text = getPending()
-      if (text !== null) {
-        setPending(null)
-        const hooks = pendingHooks
-        pendingHooks = []
-        for (const hook of hooks) {
-          try {
-            hook.onDelivered()
-          } catch {
-            // Receipt evidence must not stop later receipts or live delivery.
+      if (text === null) return null
+      setPending(null)
+      const hooks = pendingHooks
+      pendingHooks = []
+      let settled = false
+      const token = {
+        settleAmbiguous: (reason?: string): void => {
+          if (settled) return
+          settled = true
+          openReservations.delete(token)
+          for (const hook of hooks) {
+            try {
+              hook.onAmbiguous?.(
+                reason || 'Broker steering was cancelled after its delivery batch was reserved.'
+              )
+            } catch {
+              // Settle the remaining exact receipts even if one callback fails.
+            }
           }
         }
       }
-      return text
+      openReservations.add(token)
+      return {
+        text,
+        commit(): void {
+          if (settled) return
+          settled = true
+          openReservations.delete(token)
+          for (const hook of hooks) {
+            try {
+              hook.onDelivered()
+            } catch {
+              // Receipt evidence must not stop later receipts or live delivery.
+            }
+          }
+        },
+        rollback(): void {
+          if (settled) return
+          settled = true
+          openReservations.delete(token)
+          setPending(appendSteeringMessage(text, getPending() || ''))
+          pendingHooks = [...hooks, ...pendingHooks]
+        },
+        ambiguous(reason: string): void {
+          token.settleAmbiguous(reason)
+        }
+      }
     }
   }
 }
@@ -138,10 +206,36 @@ export function drainPendingSteerTextFromSession(
   session: Pick<RunSession, 'liveSteerTransport' | 'pendingSteerText'> | null | undefined
 ): string | null {
   if (!session) return null
-  const transportText = session.liveSteerTransport?.drain?.()
-  if (transportText) return transportText
+  const transportDrain = session.liveSteerTransport?.drain
+  if (transportDrain) return transportDrain.call(session.liveSteerTransport)
   if (!session.pendingSteerText) return null
-  const text = session.pendingSteerText
+  const text = String(session.pendingSteerText)
   session.pendingSteerText = null
   return text
+}
+
+export function reservePendingSteerTextFromSession(
+  session: Pick<RunSession, 'liveSteerTransport' | 'pendingSteerText'> | null | undefined
+): LiveSteerReservation | null {
+  if (!session) return null
+  const transportReserve = session.liveSteerTransport?.reserve
+  if (transportReserve) return transportReserve.call(session.liveSteerTransport)
+  if (!session.pendingSteerText) return null
+  const text = String(session.pendingSteerText)
+  session.pendingSteerText = null
+  let settled = false
+  return {
+    text,
+    commit: () => {
+      settled = true
+    },
+    rollback: () => {
+      if (settled) return
+      settled = true
+      session.pendingSteerText = appendSteeringMessage(text, session.pendingSteerText || '')
+    },
+    ambiguous: () => {
+      settled = true
+    }
+  }
 }

@@ -31,6 +31,10 @@
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { APPROVAL_TRANSPORT_TIMEOUT_MS } from '../../shared/interactionTimeouts'
+import {
+  claimsTaskWraithMcpNamespace,
+  resolveCatalogActionStrict
+} from '../../shared/providerActionTaxonomy'
 
 const HOOK_NAME = 'taskwraith-approval-bridge'
 /** agy default is 30s; honor TaskWraith's full configurable approval ceiling. */
@@ -44,6 +48,8 @@ export interface AgyHookBridgeDecision {
   /** `none` responds `{}` — no decision, agy's native flow proceeds. */
   decision: 'allow' | 'deny' | 'none'
   reason?: string
+  /** Host-only audit callback; never serialized into the provider reply. */
+  onReplyWritten?: () => void
 }
 
 export interface AgyHookToolCall {
@@ -75,7 +81,13 @@ export interface AgyHookToolCall {
  * external binary and its tool namespace is not ours to enumerate. Shipping a
  * matcher of exactly `run_command` is what let `Edit` through to that fate.
  */
-export type AgyHookToolKind = 'shell' | 'write' | 'mcp' | 'other'
+export type AgyHookToolKind =
+  | 'shell'
+  | 'write'
+  | 'mcp'
+  | 'taskwraith-mcp'
+  | 'invalid-taskwraith-mcp'
+  | 'other'
 
 const SHELL_TOOL_RE = /(?:^|_)(?:run_?)?(?:command|terminal|shell|bash)(?:$|_)/i
 const WRITE_TOOL_RE = /(?:write|edit|create|replace|delete|remove|rename|move|patch|insert)/i
@@ -87,6 +99,16 @@ const MCP_TOOL_RE = /^(?:call|use)_mcp_tool$/i
 export function classifyAgyHookTool(name: string): AgyHookToolKind {
   const trimmed = String(name || '').trim()
   if (!trimmed) return 'other'
+  // agy 1.1.22 exposes registered MCP tools as direct qualified names instead
+  // of the older call_mcp_tool wrapper. A valid TaskWraith name must pass the
+  // hook explicitly, then the broker performs its normal profile, policy,
+  // workspace, lock, and audit checks. Unknown lookalikes claiming the
+  // reserved namespace fail closed rather than falling through as native.
+  if (claimsTaskWraithMcpNamespace(trimmed)) {
+    return resolveCatalogActionStrict(trimmed).ok
+      ? 'taskwraith-mcp'
+      : 'invalid-taskwraith-mcp'
+  }
   // MCP calls are classified BEFORE the write heuristic: the inner tool name
   // rides the args, not the tool name, so `call_mcp_tool` itself never looks
   // like a mutation — but keeping the branch explicit means a future rename
@@ -318,7 +340,10 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
   const runs = new Map<string, (toolCall: AgyHookToolCall) => Promise<AgyHookBridgeDecision>>()
 
   const server: Server = createServer((request, response) => {
-    const respond = (payload: Record<string, unknown>): void => {
+    const respond = (payload: Record<string, unknown>, onWritten?: () => void): void => {
+      if (onWritten) response.once('finish', () => {
+        try { onWritten() } catch { /* Audit cannot alter a completed reply. */ }
+      })
       const text = JSON.stringify(payload)
       response.writeHead(200, {
         'Content-Type': 'application/json',
@@ -382,7 +407,8 @@ export async function startAgyHookBridgeServer(): Promise<AgyHookBridgeServer> {
               ? { decision: 'deny', ...(decision.reason ? { reason: decision.reason } : {}) }
               : decision.decision === 'allow'
                 ? { decision: 'allow' }
-                : {}
+                : {},
+            decision.onReplyWritten
           ),
         denyBridgeFailure
       )

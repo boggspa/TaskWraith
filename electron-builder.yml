@@ -1,5 +1,9 @@
 appId: com.chrisizatt.taskwraith
 productName: TaskWraith
+extraMetadata:
+  taskwraithDistributionIdentity: beta
+  taskwraithAppId: com.chrisizatt.taskwraith
+  taskwraithUpdateFeedChannel: latest
 directories:
   buildResources: build
 # TaskWraith's UI strings are app-authored; keep Electron's own Chromium
@@ -19,10 +23,17 @@ files:
   # Misc top-level artefacts that have shown up in earlier ships.
   - '!*.zip'
   - '!*.dmg'
+  # Root-level screenshots from doc/QA passes. Top-level only — app icons under
+  # `resources/` and `build/` are untouched.
+  - '!*.png'
   # Local agent/session state from the development loop.
   - '!.claude/**'
   - '!.cursor/**'
+  - '!.cursor-mcp-probe/**'
+  - '!.agents/**'
+  - '!.devin/**'
   - '!.fixpass*'
+  - '!.taskwraith-worktrees/**'
   - '!.wsa-*'
   # Shared-checkout coordination markers (AGENTS.md / CLAUDE.md). These are
   # untracked and gitignored, but this list is a denylist, so without these
@@ -51,12 +62,23 @@ files:
   # exactly why this denylist has to name them.
   - '!.work-guard/**'
   - '!.tmp_vitest/**'
-  - '!test_output.log'
+  # `*.log*` matches root level only (minimatch `*` does not cross `/`), the
+  # same scope as the `!*.zip` / `!*.dmg` entries above. It replaced a
+  # hand-named `!test_output.log`, which `test_output2.log` walked straight
+  # past into the package.
+  - '!*.log*'
   # Dev/CI artefact trees. No runtime code resolves any of these; `resources/`
   # (app icons, Tools.md) is the one sibling that IS load-bearing — do not add
   # it here.
   - '!artifacts/**'
   - '!perf-artifacts/**'
+  # Synthetic Electron userData profiles written by the perf soak harness.
+  # Gitignored and untracked, so — like `.work-guard` above — this denylist is
+  # the only thing keeping them out. They hold chat/checkpoint fixtures, and
+  # each Codex sandbox hardlinks a 210MB argv0 shim under three names, which
+  # asar stores as three full copies: 3.3GB on disk packed as a 12.7GB
+  # app.asar and failed the 500MB afterPack guard on 2026-09-06.
+  - '!perf-homes/**'
   - '!prototypes/**'
   - '!papercuts/**'
   - '!.githooks/**'
@@ -67,25 +89,36 @@ files:
   - '!swift/**'
   - '!ios/**'
   - '!design-assets/**'
+  - '!website/**'
   # Dev/release-only material that has no business in a distributed app.asar
   # (a security reviewer found .local-only + docs + AGENTS.md shipping in
   # 1.4.9). This `files` list is a denylist, so anything not excluded here
   # gets bundled — keep it exhaustive for non-runtime trees.
   - '!.local-only/**'
   - '!docs/**'
+  - '!how-to-copy/**'
   - '!tests/**'
   - '!scripts/**'
+  # The 1.9.9-only, hash-pinned identity payload is installed by afterPack.
+  # Excluding it from app.asar avoids a self-referential 0.1.0 artifact hash.
+  - '!resources/identity-handoff.json'
+  # The reviewed emulator bundle is copied once to process.resourcesPath/emulator
+  # through extraResources below. Keeping it out of app.asar avoids duplicate
+  # bytes and lets the main-process manifest resolve one fixed packaged root.
+  - '!resources/emulator/**'
   # relay/src is statically imported into out/main at build time (bundled),
   # so the source tree itself is dead weight in the package.
   - '!relay/**'
   - '!{AGENTS.md,CLAUDE.md,ARCHITECTURE.md,WINDOWS_PARITY_QA.md,TERMS_NOTES.md}'
-  - '!{electron-builder.yml,electron-builder.debug.yml,vitest.config.ts}'
+  - '!{electron-builder*.yml,vitest.config.ts}'
   - '!**/*.tsbuildinfo'
-  # TUI payload + official Node runtime ship outside app.asar via top-level
-  # extraResources (Developer Preview sidecar). RunAsNode is fused off on the
-  # App binary; launchers exec tui-runtime/<platform>-<arch>/node instead.
+  # TUI and diagnostic Host payloads + official Node runtime ship outside
+  # app.asar via top-level extraResources. RunAsNode is fused off on the App
+  # binary; sidecar launchers exec tui-runtime/<platform>-<arch>/node instead.
   - '!out/tui/**'
+  - '!out/host/**'
   - '!build/tui-launcher/**'
+  - '!build/host-launcher/**'
   - '!build/tui-runtime/**'
   # pdfjs-dist ships ~36MB, most of it dev artefacts and a browser viewer we
   # never load. Pruning the unused trees takes it to roughly 9MB.
@@ -115,16 +148,34 @@ files:
 # process.resourcesPath (macOS: TaskWraith.app/Contents/Resources/; win/linux:
 # <install>/resources/). Requires `npm run tui:build` and
 # `npm run prepare:tui-runtime` (or prepare:tui-runtime:mac for universal)
-# before electron-builder. Do NOT re-enable FuseV1 RunAsNode for the App binary.
+# before electron-builder. The diagnostic Host is an opt-in sidecar only; it
+# shares tui-runtime Node but does not change TUI/Desktop authority. Do NOT
+# re-enable FuseV1 RunAsNode for the App binary.
 extraResources:
+  - from: resources/emulator
+    to: emulator
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
   - from: out/tui
     to: tui
     filter:
       - '**/*'
       - '!**/*.map'
       - '!**/.DS_Store'
+  - from: out/host
+    to: host
+    filter:
+      - '**/*'
+      - '!**/*.map'
+      - '!**/.DS_Store'
   - from: build/tui-launcher
     to: bin
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
+  - from: build/host-launcher
+    to: host-bin
     filter:
       - '**/*'
       - '!**/.DS_Store'
@@ -190,9 +241,12 @@ mac:
   extendInfo:
     CFBundleName: TaskWraith
     CFBundleDisplayName: TaskWraith
+    # Start without a Dock tile, including CLI bridge invocations. Bootstrap
+    # promotes only the primary desktop process to a regular application.
+    LSUIElement: true
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    NSSpeechRecognitionUsageDescription: TaskWraith transcribes audio files you point it at entirely on-device (no audio leaves your Mac) so agents can read back what was said.
+    NSSpeechRecognitionUsageDescription: TaskWraith transcribes audio files you point it at with macOS Speech Recognition without sending audio from your Mac, so agents can read back what was said.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
     NSLocalNetworkUsageDescription: TaskWraith discovers and connects to your paired iPhone or iPad on your local network to stream live run events, approval requests, and tool outputs.

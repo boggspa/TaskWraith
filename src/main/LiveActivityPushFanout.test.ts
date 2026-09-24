@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   contentFingerprint,
   livePhaseForCardStatus,
+  participantSeatPhase,
   LiveActivityPushFanout
 } from './LiveActivityPushFanout'
 import { LiveActivityTokenStore } from './LiveActivityTokenStore'
@@ -50,6 +51,35 @@ describe('live activity phase mapping', () => {
     expect(livePhaseForCardStatus('reticulating')).toBeNull()
     expect(livePhaseForCardStatus(undefined)).toBeNull()
   })
+
+  it('maps ensemble participant statuses into existing wire phases', () => {
+    expect(participantSeatPhase('answered')).toBe('complete')
+    expect(participantSeatPhase('yielded')).toBe('complete')
+    expect(participantSeatPhase('sleeping')).toBe('complete')
+    expect(participantSeatPhase('unreachable')).toBe('failed')
+    expect(participantSeatPhase('skipped')).toBe('cancelled')
+    expect(participantSeatPhase('cancelled')).toBe('cancelled')
+    expect(participantSeatPhase('failed')).toBe('failed')
+    expect(participantSeatPhase('error')).toBe('failed')
+    expect(participantSeatPhase('running')).toBe('running')
+    expect(participantSeatPhase('idle')).toBe('running')
+    expect(participantSeatPhase('reticulating')).toBe('running')
+    expect(participantSeatPhase('success')).toBe('running')
+    expect(participantSeatPhase('awaitingApproval')).toBe('running')
+  })
+})
+
+describe('live activity summary fingerprints', () => {
+  it('changes when only seat counters change', () => {
+    const base = buildLiveActivityContentState({ phase: 'running', startedAtUnix: 1 })
+    const changed = buildLiveActivityContentState({
+      phase: 'running',
+      startedAtUnix: 1,
+      activeSeats: 1
+    })
+
+    expect(contentFingerprint(changed)).not.toBe(contentFingerprint(base))
+  })
 })
 
 describe('live activity fanout', () => {
@@ -64,7 +94,14 @@ describe('live activity fanout', () => {
   })
 
   it('pushes an update for a live run', async () => {
-    h.fanout.onTaskCard({ id: 'chat-1', status: 'running', additions: 10 })
+    h.fanout.onTaskCard({
+      id: 'chat-1',
+      status: 'running',
+      additions: 10,
+      activeSeats: 2,
+      respondedSeats: 3,
+      blockedSeats: 1
+    })
     await vi.waitFor(() => expect(h.pushLiveActivityToToken).toHaveBeenCalledTimes(1))
     const [token, env, payload] = h.pushLiveActivityToToken.mock.calls[0] as never as [
       string,
@@ -74,6 +111,9 @@ describe('live activity fanout', () => {
     expect(token).toBe('abc123')
     expect(env).toBe('sandbox')
     expect(payload.event).toBe('update')
+    expect(payload).toMatchObject({
+      contentState: { activeSeats: 2, respondedSeats: 3, blockedSeats: 1 }
+    })
     // The collapse id is the OPAQUE activity ref, never the threadId — that is
     // what keeps the push itself from linking back to a conversation.
     expect(payload.collapseId).toBe('ref-1')
@@ -329,7 +369,7 @@ describe('push-to-start', () => {
     h.fanout.onTaskCard({
       id: 'chat-1',
       status: 'running',
-      provider: 'codex',
+      provider: 'pi',
       isEnsemble: true,
       seats: [{ provider: 'codex', phase: 'running' }]
     })
@@ -339,7 +379,7 @@ describe('push-to-start', () => {
       string,
       { archetype: string }
     >
-    expect(payload.attributes.archetype).toBe('ensemble')
+    expect(payload.attributes).toMatchObject({ archetype: 'ensemble', provider: 'ensemble' })
   })
 
   it('cancels a pending start when the run finishes first', () => {

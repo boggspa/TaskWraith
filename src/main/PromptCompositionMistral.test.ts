@@ -116,12 +116,12 @@ describe('composeRunPrompt — Mistral runtime preamble', () => {
     expect(resumed.contextualPrompt).toContain(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
   })
 
-  it('uses the unprefixed TaskWraith delegate tool name', () => {
+  it('uses Vibe single-underscore TaskWraith delegate tool names', () => {
     const result = composeMistral({
       taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
     })
-    expect(result.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
+    expect(result.contextualPrompt).toContain('TaskWraith_delegate_to_subthread')
+    expect(result.contextualPrompt).toContain('TaskWraith_delegate_wave')
     expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(result.contextualPrompt).not.toContain('mcp__TaskWraith__delegate_wave')
   })
@@ -140,5 +140,41 @@ describe('composeRunPrompt — Mistral runtime preamble', () => {
     expect(result.contextualPrompt).not.toContain(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
     // Context injection is independent of MCP advertisement and must survive.
     expect(result.contextualPrompt).toContain('Rename the byte pin to spark_pin.')
+  })
+
+  // The Mistral API-lane models are strong coders that reliably probe an
+  // unfamiliar tool with a name-only call and repair from the rejection. On any
+  // tool outside PRE_APPROVAL_SCHEMA_VALIDATED_TOOLS that probe reaches the USER
+  // as an approval prompt for a call that cannot succeed, so the lane is told
+  // once, up front, rather than being left to discover the schema by trial.
+  it('tells the Mistral lane to populate tool arguments on the first attempt', () => {
+    const result = composeMistral()
+    expect(result.contextualPrompt).toContain(
+      'Send every tool call with its arguments already populated'
+    )
+    expect(result.contextualPrompt).toContain("read_file({ path: 'src/main/thing.ts' })")
+    expect(result.contextualPrompt).toContain('read_file({})')
+  })
+
+  // The whole point of keying it: this is a per-lane accommodation. If it leaks
+  // into the shared preamble every other seat pays for Mistral's failure mode.
+  it('does not spend the line on lanes that did not need it', () => {
+    for (const provider of ['claude', 'codex', 'grok', 'devin'] as const) {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider,
+        finalPrompt: 'Now update the docs to match.',
+        messages: priorTurns,
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: provider,
+        taskWraithMcpAdvertised: true
+      })
+      expect(result.contextualPrompt).not.toContain(
+        'Send every tool call with its arguments already populated'
+      )
+    }
   })
 })

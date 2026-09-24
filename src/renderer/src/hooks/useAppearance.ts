@@ -8,13 +8,21 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
+  TranscriptTextSize,
+  TranscriptView,
+  TranscriptWidth,
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
-import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../../../shared/themeAccentColor'
+import {
+  DEFAULT_THEME_ACCENT_COLOR,
+  isDefaultThemeAccentColor,
+  normalizeThemeAccentColor,
+  resolveThemeAccentColorForAppearance
+} from '../../../shared/themeAccentColor'
 import {
   normalizeAgentThemeTokenOverrides,
   type AgentThemeTokenOverrides
@@ -23,6 +31,7 @@ import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
 } from '../../../shared/systemThemeAppearance'
+import { normalizeSystemAccentColor } from '../../../shared/systemAccentColor'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   FONT_STACKS,
@@ -32,7 +41,11 @@ import {
 } from '../lib/typefaceOptions'
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
 import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
+import { DEFAULT_TRANSCRIPT_VIEW, resolveTranscriptView } from '../lib/transcriptViewOverride'
+import { DEFAULT_TRANSCRIPT_TEXT_SIZE, resolveTranscriptTextSize } from '../lib/transcriptTextSize'
+import { DEFAULT_TRANSCRIPT_WIDTH, resolveTranscriptWidth } from '../lib/transcriptWidth'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
+import { startupSettingsRequest } from '../lib/startupSettingsCache'
 
 const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
   agentAura: true,
@@ -48,13 +61,51 @@ export interface AppearanceState {
   themeAppearance: ThemeAppearance
   themeCornerStyle: ThemeCornerStyle
   themeAccentStyle: ThemeAccentStyle
+  /**
+   * The user's message-bubble colour, chosen in Settings. Despite the name it
+   * no longer drives `--accent`; see `resolveAccentTokens`.
+   */
   themeAccentColor: string
+  /**
+   * The host OS accent colour, or null where the platform reports none. Host
+   * state read over IPC — never persisted, and never written back to settings.
+   */
+  systemAccentColor: string | null
   userBubbleColor: UserBubbleColor
   diffStatColors: DiffStatColors
   agentThemeTokens: AgentThemeTokenOverrides
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   fanoutLaneLayout: FanoutLaneLayout
+  /**
+   * Appearance default for how much of a turn a transcript renders.
+   *
+   * REQUIRED here although `AppSettings.defaultTranscriptView` is optional:
+   * absence is resolved once, at the hydrate seam below, so no consumer has to
+   * re-decide what "user has not chosen" means. Required also makes the
+   * interface and `getInitialState` compile-caught rather than silent.
+   */
+  defaultTranscriptView: TranscriptView
+  /**
+   * Appearance size for transcript message text.
+   *
+   * REQUIRED here for the same reason `defaultTranscriptView` is, and carried as
+   * the NAME rather than the scale on purpose: the number is resolved once, in
+   * `TranscriptPanel`, by the very `const` that mints the layout epoch. Nothing
+   * upstream of that component ever holds the scale, so nothing upstream can
+   * hand two consumers two different scales.
+   */
+  transcriptTextSize: TranscriptTextSize
+  /**
+   * Appearance width for the transcript reading column.
+   *
+   * REQUIRED here like its siblings, and carried as the NAME — but unlike
+   * `transcriptTextSize` the name never becomes a number anywhere upstream of
+   * CSS. There is no width in px for this hook to hold, because the column a
+   * name produces depends on the pane: `narrow` is 640px in the main pane and
+   * 348px in a phone-narrow side chat. See `lib/transcriptWidth`.
+   */
+  transcriptWidth: TranscriptWidth
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
@@ -77,11 +128,12 @@ export interface AppearanceState {
 const DEFAULT_INSPECTOR_WIDTH = 380
 const DEFAULT_SIDEBAR_WIDTH = 260
 const DEFAULT_PANE_OPACITY = 100
-// Single-source the inspector/right-dock width bounds from panelWidths so this
-// normalize clamp can't silently drift below the resize handlers' ceiling. A
-// stale local MAX of 720 previously re-clamped every dragged/keyboard width on
-// each appearance.update(), so the dock could never grow past 720px on wide
-// windows even though startRightPanelResize allows up to min(1120, 58vw).
+// Single-source the inspector/right-dock width bounds from panelWidths (which
+// itself reads shared/panelWidthLimits, as does main's settings sanitizer) so
+// this normalize clamp can't silently drift below the resize handlers'
+// ceiling. A stale local MAX of 720 previously re-clamped every
+// dragged/keyboard width on each appearance.update(); main's sanitizer copy
+// then repeated the same bug at the persistence seam.
 const MIN_INSPECTOR_WIDTH = MIN_RIGHT_PANEL_WIDTH
 const MAX_INSPECTOR_WIDTH = MAX_RIGHT_PANEL_WIDTH
 const MIN_SIDEBAR_WIDTH = 220
@@ -114,6 +166,32 @@ export const resolvePaneOpacityFactor = (
   value: unknown,
   reduceTransparency: boolean
 ): number => (reduceTransparency ? 1 : normalizePaneOpacity(value) / 100)
+
+/**
+ * Splits the two colours that used to be a single token.
+ *
+ * `--accent` is the DESKTOP's accent — buttons, focus rings, selection, every
+ * `var(--accent)` caller — and follows the OS. `null` there means "apply
+ * nothing", so the active theme's own `--accent` stands; that is the correct
+ * result on a host with no accent preference to report, not a fallback colour
+ * invented here.
+ *
+ * `--message-bubble-accent` is the colour the user picked in Settings for
+ * their own bubble. It is always applied, because the app is its only source.
+ *
+ * Kept pure and exported so the split is testable without a DOM.
+ */
+export function resolveAccentTokens(input: {
+  systemAccentColor: unknown
+  messageBubbleColor: string
+}): { accent: string | null; accentHover: string | null; messageBubbleAccent: string } {
+  const accent = normalizeSystemAccentColor(input.systemAccentColor)
+  return {
+    accent,
+    accentHover: accent ? `color-mix(in srgb, ${accent} 78%, white)` : null,
+    messageBubbleAccent: input.messageBubbleColor
+  }
+}
 
 const hostPlatform = (): string =>
   typeof window !== 'undefined' && typeof window.api?.hostPlatform === 'string'
@@ -149,12 +227,16 @@ function getInitialState(): AppearanceState {
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'system',
     themeAccentColor: DEFAULT_THEME_ACCENT_COLOR,
+    systemAccentColor: null,
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     agentThemeTokens: {},
     appIconVariant: DEFAULT_APP_ICON_VARIANT,
     promptSurfaceStyle: 'liquid_glass',
     fanoutLaneLayout: DEFAULT_FANOUT_LANE_LAYOUT,
+    defaultTranscriptView: DEFAULT_TRANSCRIPT_VIEW,
+    transcriptTextSize: DEFAULT_TRANSCRIPT_TEXT_SIZE,
+    transcriptWidth: DEFAULT_TRANSCRIPT_WIDTH,
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -213,8 +295,8 @@ export function useAppearance() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    window.api
-      .getSettings()
+    startupSettingsRequest
+      .request()
       .then((settings: AppSettings) => {
         const legacyFunFx = getLegacyFunFxSettingsFromLocalStorage()
         const funFxMode = isFunFxMode(settings.funFxMode)
@@ -231,7 +313,13 @@ export function useAppearance() {
         if (settings.themeAppearance && settings.themeAppearance !== themeAppearance) {
           window.api.updateSettings({ themeAppearance }).catch(() => {})
         }
-        setState({
+        setState((prev) => ({
+          // Spread first so state that is NOT a stored setting survives this
+          // literal. `systemAccentColor` is read over its own IPC and usually
+          // lands before the settings file does, so a plain object literal
+          // here silently threw the OS accent away on every launch that won
+          // the race. Every persisted field below still overwrites its own key.
+          ...prev,
           mode: settings.appearanceMode || 'soft_glass',
           visualEffectStyle: settings.visualEffectStyle || 'auto',
           themeAppearance,
@@ -247,6 +335,18 @@ export function useAppearance() {
           // every fresh install) reads as the DEFAULT layout; only an explicit
           // choice overrides it. See resolveFanoutLaneLayout.
           fanoutLaneLayout: resolveFanoutLaneLayout(settings.fanoutLaneLayout),
+          // Same contract, one seam: absent (or unreadable) means "follow the
+          // default", never a pin. This is the ONE place absence is resolved —
+          // every consumer downstream reads a concrete view.
+          defaultTranscriptView: resolveTranscriptView(settings.defaultTranscriptView),
+          // Absence resolves to `default` — scale exactly 1, i.e. the size every
+          // estimate constant in the virtualiser was measured at. Resolved HERE
+          // and nowhere else, so no consumer re-decides what "unset" means.
+          transcriptTextSize: resolveTranscriptTextSize(settings.transcriptTextSize),
+          // Absence resolves to `medium` — no attribute stamped, i.e. the column
+          // every pane already renders. Resolved HERE and nowhere else, so no
+          // consumer re-decides what "unset" means.
+          transcriptWidth: resolveTranscriptWidth(settings.transcriptWidth),
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,
@@ -282,7 +382,7 @@ export function useAppearance() {
           mainPaneOpacity: normalizePaneOpacity(settings.mainPaneOpacity),
           sidebarOpacityOverride: Boolean(settings.sidebarOpacityOverride),
           mainPaneOpacityOverride: Boolean(settings.mainPaneOpacityOverride)
-        })
+        }))
         if (typeof settings.funFxEnabled !== 'boolean' || !isFunFxMode(settings.funFxMode)) {
           window.api
             .updateSettings({
@@ -324,11 +424,26 @@ export function useAppearance() {
     root.setAttribute('data-corners', next.themeCornerStyle)
     root.setAttribute('data-accent', 'custom')
     root.setAttribute('data-user-bubble-color', 'shared')
-    root.style.setProperty('--accent', next.themeAccentColor)
-    root.style.setProperty(
-      '--accent-hover',
-      `color-mix(in srgb, ${next.themeAccentColor} 78%, white)`
-    )
+    const accentTokens = resolveAccentTokens({
+      systemAccentColor: next.systemAccentColor,
+      messageBubbleColor: resolveThemeAccentColorForAppearance(
+        next.themeAccentColor,
+        next.themeAppearance,
+        Boolean(window.matchMedia?.('(prefers-color-scheme: light)').matches)
+      )
+    })
+    root.style.setProperty('--message-bubble-accent', accentTokens.messageBubbleAccent)
+    // Removing rather than writing a fallback is deliberate: an inline
+    // property on documentElement outranks every [data-theme] block, so a
+    // stand-in colour here would freeze the accent for every theme on a host
+    // that simply has no accent to report.
+    if (accentTokens.accent && accentTokens.accentHover) {
+      root.style.setProperty('--accent', accentTokens.accent)
+      root.style.setProperty('--accent-hover', accentTokens.accentHover)
+    } else {
+      root.style.removeProperty('--accent')
+      root.style.removeProperty('--accent-hover')
+    }
     root.style.setProperty('--diff-stat-add-color', next.diffStatColors.additions)
     root.style.setProperty('--diff-stat-del-color', next.diffStatColors.deletions)
     root.setAttribute('data-prompt-surface', next.promptSurfaceStyle)
@@ -336,6 +451,21 @@ export function useAppearance() {
     // needs no prop threaded through the transcript tree, only the per-lane
     // slot attribute the panel stamps on its own rows.
     root.setAttribute('data-fanout-lane-layout', next.fanoutLaneLayout)
+    // `defaultTranscriptView` deliberately stamps NOTHING here. The fold it
+    // drives is pure JS (`lib/transcriptViewFold`) read through
+    // `useTranscriptView`, so an attribute would be a second source of truth
+    // that no stylesheet reads — and one a future seam guard could demand
+    // everywhere. The absence is a decision, not an oversight.
+    // `transcriptTextSize` deliberately stamps NOTHING here either, and unlike
+    // `defaultTranscriptView` that IS a CSS setting — which makes the omission
+    // worth stating rather than assuming. The scale reaches CSS as an inline
+    // `--transcript-font-scale` on `.transcript-inner`, written by
+    // `TranscriptPanel` from the same `const` it mints the virtualiser's layout
+    // epoch from. Stamping it on `:root` from here instead would put the number
+    // the DOM renders at in a different module, a different function and a
+    // different call stack from the number the height estimator is calibrated
+    // for, coupled by nothing — and this function runs in the MAIN WINDOW only,
+    // so a popped-out chat would take the prop and never the attribute.
     root.setAttribute('data-composer-style', next.composerStyle)
     // NOTE: `data-interface-style` used to mirror the composer shell onto the
     // whole app (transcript/sidebar/message-bubbles). That app-wide repaint was
@@ -437,6 +567,35 @@ export function useAppearance() {
     }
   }, [state, loaded, applyToDocument])
 
+  // The OS accent is HOST state, not a stored preference: read it once at
+  // mount and follow it live. It deliberately never joins the `update` write —
+  // persisting the desktop's colour would make a machine's accent travel with
+  // the settings file to a machine with a different one.
+  useEffect(() => {
+    let cancelled = false
+    // Returning `prev` unchanged is load-bearing, not tidy: a fresh object
+    // reference re-runs applyToDocument, which rewrites ~20 attributes on
+    // documentElement and restarts every infinite CSS animation gated on one.
+    const adopt = (color: string | null): void => {
+      setState((prev) =>
+        prev.systemAccentColor === (color ?? null)
+          ? prev
+          : { ...prev, systemAccentColor: color ?? null }
+      )
+    }
+    window.api
+      .getSystemAccentColor?.()
+      .then((color) => {
+        if (!cancelled) adopt(color ?? null)
+      })
+      .catch(() => {})
+    const unsubscribe = window.api.onSystemAccentColorChanged?.(adopt)
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [])
+
   // Live-apply an agent restyle. Settings are otherwise read ONCE on mount, so
   // without this an agent write persists but nothing changes until a reload —
   // which for "ask the agent to round the corners" reads as the tool not
@@ -499,6 +658,9 @@ export function useAppearance() {
             appIconVariant: next.appIconVariant,
             promptSurfaceStyle: next.promptSurfaceStyle,
             fanoutLaneLayout: next.fanoutLaneLayout,
+            defaultTranscriptView: next.defaultTranscriptView,
+            transcriptTextSize: next.transcriptTextSize,
+            transcriptWidth: next.transcriptWidth,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,
             composerFontFamily: next.composerFontFamily,
@@ -554,7 +716,8 @@ export function useAppearance() {
   useEffect(() => {
     const motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     const transparencyQuery = window.matchMedia?.('(prefers-reduced-transparency: reduce)')
-    if (!motionQuery && !transparencyQuery) {
+    const colorSchemeQuery = window.matchMedia?.('(prefers-color-scheme: light)')
+    if (!motionQuery && !transparencyQuery && !colorSchemeQuery) {
       return
     }
 
@@ -584,11 +747,25 @@ export function useAppearance() {
       })
     }
 
+    const handleColorSchemeChange = () => {
+      setState((prev) => {
+        if (
+          prev.themeAppearance !== 'system' ||
+          !isDefaultThemeAccentColor(prev.themeAccentColor)
+        ) {
+          return prev
+        }
+        return { ...prev }
+      })
+    }
+
     motionQuery?.addEventListener?.('change', handlePreferenceChange)
     transparencyQuery?.addEventListener?.('change', handlePreferenceChange)
+    colorSchemeQuery?.addEventListener?.('change', handleColorSchemeChange)
     return () => {
       motionQuery?.removeEventListener?.('change', handlePreferenceChange)
       transparencyQuery?.removeEventListener?.('change', handlePreferenceChange)
+      colorSchemeQuery?.removeEventListener?.('change', handleColorSchemeChange)
     }
   }, [])
 

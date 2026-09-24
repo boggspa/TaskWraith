@@ -1,3 +1,7 @@
+import type { TranscriptView } from '../main/store/types'
+
+export type { TranscriptView }
+
 export const MAX_CHAT_POPOUT_ROUND_EXPANSION_ENTRIES = 256
 export const MAX_CHAT_POPOUT_ROUND_ID_LENGTH = 256
 export const MAX_CHAT_POPOUT_ANCHOR_ID_LENGTH = 2048
@@ -81,4 +85,47 @@ export function normalizeChatPopoutRoundExpansion(
   }
   if (value.length > 0 && byRoundId.size === 0) return undefined
   return Array.from(byRoundId, ([roundId, expanded]) => ({ roundId, expanded }))
+}
+
+/**
+ * Narrow a CARRIED transcript-view override, preserving the absence of one.
+ *
+ * Deliberately NOT `resolveTranscriptView`, which is TOTAL and falls back to
+ * `'standard'`. Running an absent override through a total normaliser converts
+ * "this chat carried no override" into an EXPLICIT `'standard'` pin, and by
+ * `setTranscriptViewOverride`'s own semantics an explicit entry beats a later
+ * Appearance default of `minimal` — every popped-out chat would be silently
+ * frozen on Standard, with no production bulk-clear to recover with.
+ *
+ * `undefined` here means "follow the default", exactly as
+ * `normalizeChatPopoutScrollState` and `normalizeChatPopoutRoundExpansion`
+ * above return `undefined` for state the sender did not carry.
+ */
+export function normalizeTranscriptViewOverride(value: unknown): TranscriptView | undefined {
+  return value === 'minimal' || value === 'tools' || value === 'standard' ? value : undefined
+}
+
+/**
+ * The dock-leg (popout -> main window) variant, which is TRI-STATE.
+ *
+ * The open leg lands in a FRESH window whose store is empty, so "carry nothing"
+ * and "carry no override" are the same thing there. The dock leg lands in a
+ * window that may already hold an override for this chat, so the popout has to
+ * be able to say "I am on Follow default" distinctly from "I said nothing":
+ *
+ *   undefined -> the sender carried no opinion (older build, junk on the wire)
+ *                and the receiver must leave what it has alone
+ *   null      -> the sender is explicitly on Follow default; CLEAR the entry
+ *   a view    -> pin it
+ *
+ * `roundExpansion` already draws this distinction on the same leg — an absent
+ * key leaves the receiver untouched while an in-band `[]` deletes its entry.
+ * Junk collapses to `undefined` rather than `null` so an unreadable payload can
+ * never clear a pin the user made in the main window.
+ */
+export function normalizeTranscriptViewOverrideTransfer(
+  value: unknown
+): TranscriptView | null | undefined {
+  if (value === null) return null
+  return normalizeTranscriptViewOverride(value)
 }

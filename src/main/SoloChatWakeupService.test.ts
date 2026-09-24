@@ -875,6 +875,30 @@ describe('SoloChatWakeupService — getAllPersistedWakeups', () => {
     service.cancelWakeup('chat-solo-1', scheduled.wakeup!.wakeupId)
     expect(service.getAllPersistedWakeups()).toEqual([])
   })
+
+  it('prefers the narrowed candidate chats when wired, without touching listChats', () => {
+    const chats = new Map<string, ChatRecord>()
+    const chat = makeChat()
+    chats.set(chat.appChatId, chat)
+    const listChats = vi.fn(() => Array.from(chats.values()))
+    const service = new SoloChatWakeupService({
+      getChat: (id) => chats.get(id),
+      saveChat: (c) => chats.set(c.appChatId, c),
+      listChats,
+      listWakeupCandidateChats: () => [],
+      dispatchRun: async () => ({ dispatched: true, appRunId: 'r' }),
+      scheduleWakeupTimer: () => {},
+      cancelWakeupTimer: () => {},
+      createRunId: () => 'rid',
+      now: () => 1_700_000_000_000,
+      nowIso: () => '2026-05-27T10:00:00.000Z'
+    })
+    service.scheduleWakeup('chat-solo-1', 'codex', 'r1', { delayMs: 60_000 })
+    // The narrowed source says no chat can hold a wakeup, so the scan visits
+    // nothing — and proves it by never calling the whole-corpus listChats.
+    expect(service.getAllPersistedWakeups()).toEqual([])
+    expect(listChats).not.toHaveBeenCalled()
+  })
 })
 
 describe('SoloChatWakeupService — expireWakeup', () => {

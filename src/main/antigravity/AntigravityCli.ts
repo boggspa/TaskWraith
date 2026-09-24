@@ -13,10 +13,26 @@ import {
   TASKWRAITH_LOCK_OWNER_ENV_KEY,
   withExactWorkspaceLockOwnerEnv
 } from '../WorkspaceLockExecutionIdentity'
+import { AGY_PRINT_TIMEOUT } from '../../shared/antigravityPrintTimeout'
 
 export const AGY_BINARY_NAME = 'agy'
 export const AGY_MODEL_DISCOVERY_ARGS = ['models'] as const
-export const AGY_READ_ONLY_PRINT_TIMEOUT = '30m'
+
+/**
+ * The agy print-mode wall clock, shared verbatim with the headless host lane.
+ * It lives in `src/shared` because both bundles need the number and neither
+ * should pull this module's binary-resolution or lock-identity dependencies in
+ * to get it.
+ */
+export { AGY_PRINT_TIMEOUT, AGY_PRINT_TIMEOUT_MS } from '../../shared/antigravityPrintTimeout'
+
+/**
+ * @deprecated Misnamed: `buildAgyPrintArgs` applies this to `accept-edits`
+ * turns as well as `plan` ones, so nothing about it is read-only. Use
+ * `AGY_PRINT_TIMEOUT`. Retained because importers outside this module's
+ * ownership still reference the old name.
+ */
+export const AGY_READ_ONLY_PRINT_TIMEOUT = AGY_PRINT_TIMEOUT
 
 /**
  * These variables select API-key, service-account, or bearer-token flows in
@@ -251,13 +267,7 @@ function buildAgyPrintArgs(
     throw new Error('An Antigravity print-mode prompt is required.')
   }
 
-  const args = [
-    '--sandbox',
-    '--mode',
-    mode,
-    '--print-timeout',
-    AGY_READ_ONLY_PRINT_TIMEOUT
-  ]
+  const args = ['--sandbox', '--mode', mode, '--print-timeout', AGY_PRINT_TIMEOUT]
   const conversationId = normalizeAgyConversationId(input.conversationId)
   if (conversationId && input.newProject) {
     throw new Error('Antigravity cannot create a new project while resuming a conversation.')

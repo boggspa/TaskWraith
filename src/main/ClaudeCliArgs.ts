@@ -15,7 +15,8 @@ const CLAUDE_SONNET_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
 const CLAUDE_SONNET_5_FAMILY = /sonnet-5(?![0-9])/
 const CLAUDE_EFFORT_ALIASES: Record<string, string> = {
   extra: 'xhigh',
-  ultracode: 'max'
+  ultracode: 'max',
+  ultratask: 'max'
 }
 
 export function normalizeClaudeEffortFlag(value: string | null | undefined): string | null {

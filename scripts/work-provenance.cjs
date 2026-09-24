@@ -271,7 +271,29 @@ function writeEventImmutable(identity, event) {
 
 function eventIdentityPayload(event) {
   if (!event || typeof event !== 'object') return event
-  const { recordedAt: _recordedAt, ...identity } = event
+  // An origin event's identity is its deterministic eventId —
+  // `sha256(observationId, path, fingerprint)` — and the fields that hash feeds
+  // from (`path`, `after`, the marker actor). Two other origin fields are DERIVED
+  // annotations recomputed against evolving store state, and legitimately drift for
+  // the very same eventId between the first publication and a later reconcile:
+  //   - `predecessorOriginEventId` drops once the predecessor origin is resolved and
+  //     falls out of the lineage lookup (work-provenance.cjs:727-737);
+  //   - `confidence` downgrades as the candidate set for a fingerprint shrinks
+  //     (work-provenance.cjs:738-742).
+  // Neither is part of the identity, so they must not gate immutable-publish
+  // equivalence. Including them made every reconcile pass throw an "identity
+  // collision" on a benign annotation change, which aborted the pass before its
+  // tombstone prune ran and let the sidecar graveyard grow without bound. Stripping
+  // them keeps the first publication authoritative (first-writer-wins) while a
+  // genuine identity divergence still differs in path/after/actor and is still
+  // rejected. Both fields are origin-only, so this is a no-op for recovery and
+  // resolution events.
+  const {
+    recordedAt: _recordedAt,
+    predecessorOriginEventId: _predecessorOriginEventId,
+    confidence: _confidence,
+    ...identity
+  } = event
   if (identity.kind === 'recovery' && identity.recovery && typeof identity.recovery === 'object') {
     const { pinnedAt: _pinnedAt, ...recoveryIdentity } = identity.recovery
     return { ...identity, recovery: recoveryIdentity }

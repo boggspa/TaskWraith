@@ -9,6 +9,7 @@ import {
   expiresAtFromPayload,
   payloadIsMutating,
   payloadRequiresWorkspaceGating,
+  BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS,
   workspaceIdFromPayload,
   type BridgeActionPayload,
   type BridgeApprovalDecision
@@ -1137,6 +1138,73 @@ describe('decodeBridgeActionPayload', () => {
       ).toMatchObject({ kind: 'unknown', rawKind: 'githubWatchPr' })
     })
 
+    it('decodes githubMergePr only with the phone elevation claim, and refuses a named PR target', () => {
+      const merge = decodeBridgeActionPayload(
+        encode({
+          kind: 'githubMergePr',
+          actionId: 'merge-1',
+          workspaceId: 'ws-1',
+          elevationAcknowledged: true
+        })
+      ).payload
+      expect(merge.kind).toBe('githubMergePr')
+      expect(merge).toMatchObject({ workspaceId: 'ws-1', elevationAcknowledged: true })
+      expect(payloadIsMutating(merge)).toBe(true)
+      expect(payloadRequiresWorkspaceGating(merge)).toBe(true)
+      expect(workspaceIdFromPayload(merge)).toBe('ws-1')
+
+      // Missing phone-sheet claim → unknown. This is only half the gate:
+      // decode-true is not host consent (see executeGithubMergePr).
+      expect(
+        decodeBridgeActionPayload(
+          encode({ kind: 'githubMergePr', actionId: 'merge-2', workspaceId: 'ws-1' })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'githubMergePr',
+            actionId: 'merge-3',
+            workspaceId: 'ws-1',
+            elevationAcknowledged: false
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'githubMergePr',
+            actionId: 'merge-4',
+            workspaceId: 'ws-1',
+            elevationAcknowledged: 'true'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+
+      // Phone-chosen merge target is refused, not sanitised.
+      for (const extra of [
+        { prNumber: 7 },
+        { number: 7 },
+        { prUrl: 'https://github.com/o/r/pull/7' },
+        { url: 'https://github.com/o/r/pull/7' },
+        { path: '/tmp/repo' }
+      ]) {
+        expect(
+          decodeBridgeActionPayload(
+            encode({
+              kind: 'githubMergePr',
+              actionId: 'merge-target',
+              workspaceId: 'ws-1',
+              elevationAcknowledged: true,
+              ...extra
+            })
+          ).payload
+        ).toMatchObject({ kind: 'unknown', rawKind: 'githubMergePr' })
+      }
+    })
+
     it('decodes githubCreatePr with optional title/body/draft', () => {
       const create = decodeBridgeActionPayload(
         encode({
@@ -1170,6 +1238,93 @@ describe('decodeBridgeActionPayload', () => {
           })
         ).payload
       ).toMatchObject({ kind: 'unknown', rawKind: 'githubCreatePr' })
+    })
+
+    it('decodes createSubThread and rejects recall, retired, empty, and oversized prompts', () => {
+      const spawn = decodeBridgeActionPayload(
+        encode({
+          kind: 'createSubThread',
+          actionId: 'sub-1',
+          workspaceId: 'ws-1',
+          threadId: 'parent-1',
+          provider: 'codex',
+          prompt: 'Review the failing test.',
+          returnResult: true
+        })
+      ).payload
+      expect(spawn.kind).toBe('createSubThread')
+      expect(spawn).toMatchObject({
+        threadId: 'parent-1',
+        provider: 'codex',
+        prompt: 'Review the failing test.',
+        returnResult: true
+      })
+      expect(payloadIsMutating(spawn)).toBe(true)
+      expect(payloadRequiresWorkspaceGating(spawn)).toBe(true)
+      expect(workspaceIdFromPayload(spawn)).toBe('ws-1')
+
+      // Known seat provider that is not in the static live set is still
+      // admitted on the wire; the host revalidates live admission.
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'antigravity',
+            prompt: 'Investigate the crash.'
+          })
+        ).payload.kind
+      ).toBe('createSubThread')
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'gemini',
+            prompt: 'Should not spawn.'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: '   '
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: 'x'.repeat(BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS + 1)
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'createSubThread',
+            workspaceId: 'ws-1',
+            threadId: 'parent-1',
+            provider: 'codex',
+            prompt: 'Continue the child.',
+            subThreadId: 'child-1'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'createSubThread' })
     })
 
     it('rejects malformed workspace file writes', () => {
@@ -1339,6 +1494,89 @@ describe('decodeBridgeActionPayload', () => {
       )
 
       expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
+    })
+
+    it('decodes a composerPrompt image attachment with id and valid markup', () => {
+      const markup = {
+        schemaVersion: 1,
+        attachmentId: 'shot-9',
+        primitives: [
+          {
+            type: 'rect',
+            start: { x: 0.1, y: 0.2 },
+            end: { x: 0.4, y: 0.5 },
+            color: { r: 0, g: 1, b: 0, a: 1 },
+            thickness: 1.5
+          }
+        ]
+      }
+      const imageAttachments = [{ ...imageAttachment(1), id: 'shot-9', markup }]
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'fix the boxed region',
+          provider: 'codex',
+          imageAttachments
+        })
+      )
+
+      expect(payload.kind).toBe('composerPrompt')
+      if (payload.kind === 'composerPrompt') {
+        expect(payload.imageAttachments).toEqual(imageAttachments)
+      }
+    })
+
+    it('rejects composerPrompt image markup that violates the host contract', () => {
+      const base = {
+        kind: 'composerPrompt',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'annotate',
+        provider: 'codex'
+      }
+      const cases = [
+        { ...imageAttachment(1), markup: { schemaVersion: 1, attachmentId: 'shot-9', primitives: [] } },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 2, attachmentId: 'shot-9', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 1, attachmentId: '', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: { schemaVersion: 1, attachmentId: 'other', primitives: [] }
+        },
+        {
+          ...imageAttachment(1),
+          id: 'shot-9',
+          markup: {
+            schemaVersion: 1,
+            attachmentId: 'shot-9',
+            primitives: [
+              {
+                type: 'arrow',
+                start: { x: -0.1, y: 0.2 },
+                end: { x: 0.4, y: 0.5 },
+                color: { r: 1, g: 0, b: 0, a: 1 },
+                thickness: 2
+              }
+            ]
+          }
+        }
+      ]
+      for (const image of cases) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({ ...base, imageAttachments: [image] })
+        )
+        expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'composerPrompt' })
+      }
     })
 
     it('decodes composer queue actions', () => {
@@ -2828,7 +3066,14 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'ensembleWakeNow', workspaceId: 'w', threadId: 't', wakeupId: 'wakeup' },
       { kind: 'ensembleCancelWakeup', workspaceId: 'w', threadId: 't', wakeupId: 'wakeup' },
       { kind: 'ensembleQueuePrompt', workspaceId: 'w', threadId: 't', text: 'queue' },
-      { kind: 'ensembleSteer', workspaceId: 'w', threadId: 't', text: 'steer' }
+      { kind: 'ensembleSteer', workspaceId: 'w', threadId: 't', text: 'steer' },
+      {
+        kind: 'createSubThread',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'codex',
+        prompt: 'spawn'
+      }
     ]
     for (const v of variants) {
       expect(payloadRequiresWorkspaceGating(v)).toBe(true)
@@ -3094,5 +3339,35 @@ describe('ensembleRosterUpdate stageRole (staged fan-out)', () => {
       const { payload } = decodeBridgeActionPayload(encode(rosterUpdate(stage)))
       expect(payload.kind).toBe('unknown')
     }
+  })
+})
+
+describe('host-stamped fields never arrive over the wire', () => {
+  it('strips origin from composerPrompt and ensembleSteer payloads before the type gate', () => {
+    const spoofed = { channel: 'local-control', pid: 1, label: 'Not really Claude Code' }
+    const composer = decodeBridgeActionPayload(
+      encode({
+        kind: 'composerPrompt',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'hi',
+        provider: 'claude',
+        origin: spoofed
+      })
+    )
+    expect(composer.payload.kind).toBe('composerPrompt')
+    expect(composer.payload).not.toHaveProperty('origin')
+    expect(composer.rawJson).not.toHaveProperty('origin')
+    const steer = decodeBridgeActionPayload(
+      encode({
+        kind: 'ensembleSteer',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'go',
+        origin: spoofed
+      })
+    )
+    expect(steer.payload.kind).toBe('ensembleSteer')
+    expect(steer.payload).not.toHaveProperty('origin')
   })
 })

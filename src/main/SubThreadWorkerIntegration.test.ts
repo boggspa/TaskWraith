@@ -37,9 +37,11 @@ describe('sub-thread long-lived worker main-process integration', () => {
   })
 
   it('claims and prebinds the stable run identity before normal RunCoordinator dispatch', () => {
+    // Sweep-budget args (perf-boot 04989a0e2): recovery signatures take a
+    // budget now, so markers pin the 'name(' prefix rather than 'name()'.
     const drain = sourceBetween(
       'async function maybeDrainSubThreadWorkerQueue(',
-      'function recoverSubThreadWorkerQueues()'
+      'function recoverSubThreadWorkerQueues('
     )
 
     expectContains(drain, 'claimNextSubThreadWorkerEvent(')
@@ -48,13 +50,61 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(drain, 'resolveSubThreadWorkerPermissions(')
     expectContains(drain, "presetId: 'read_only'")
     expectContains(drain, 'runCoordinatorRef.dispatch(')
+    expectContains(drain, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(drain, 'persistedParentRun:')
     expectContains(drain, 'sessionTrust: false')
+  })
+
+  it('shares bounded host admission across every Ensemble-originated child launch', () => {
+    const delegation = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      "} else if (toolName === 'ultra_task') {"
+    )
+    const wave = sourceBetween(
+      "} else if (toolName === 'delegate_wave') {",
+      'const finalRichResult = richResult as McpToolExecutionResult | null'
+    )
+    const drain = sourceBetween(
+      'async function maybeDrainSubThreadWorkerQueue(',
+      'function recoverSubThreadWorkerQueues('
+    )
+
+    expectContains(delegation, 'resolveEnsembleDelegatedRunOrigin({')
+    expectContains(delegation, 'resolveHostAdmissionRunOrigin(')
+    expectContains(delegation, 'parentIsEnsemble && !ensembleDelegationOrigin')
+    expectContains(delegation, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(delegation, 'delegatedPostureStillCurrent()')
+    expectContains(wave, 'prepareSpawn: () => {')
+    expectContains(wave, 'parentWaveIsEnsemble && !ensembleWaveOrigin')
+    expectContains(wave, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(wave, 'delegatedPostureStillCurrent()')
+    expectContains(drain, 'ensembleDelegatedRunAdmission.start({')
+    expectContains(drain, 'delegatedPostureStillCurrent()')
+    expectContains(indexSource, 'hostAdmissionRuntime: ensembleHostAdmissionRuntime')
+    expectContains(indexSource, 'ensembleDelegatedRunAdmission.cancelBeforeDispatch(')
+    expectContains(indexSource, 'ensembleDelegatedRunAdmission.list()')
+    expectContains(indexSource, 'containBackgroundSubThreadDispatchRejection(')
+    expectContains(indexSource, 'targetChats.has(entry.parentChatId)')
+    expectContains(indexSource, 'chatIds.has(entry.parentChatId)')
+    expectContains(indexSource, 'confirmDispatchingTransportGone(')
+  })
+
+  it('routes child-only Ensemble awaits by main-owned run lookup when context identity is absent', () => {
+    const awaitBranch = sourceBetween(
+      "} else if (toolName === 'ensemble_await') {",
+      "} else if (toolName === 'ensemble_lane_result') {"
+    )
+
+    expectContains(awaitBranch, 'resolveHostAdmissionRunOrigin(')
+    expectContains(awaitBranch, 'ensembleAwaitOrigin ||')
+    expectContains(awaitBranch, "ensembleAwaitParentChat?.chatKind === 'ensemble'")
+    expectContains(awaitBranch, 'ensembleParent: Boolean(')
   })
 
   it('fails closed for workers queued by a scheduled parent without waking that parent', () => {
     const drain = sourceBetween(
       'async function maybeDrainSubThreadWorkerQueue(',
-      'function recoverSubThreadWorkerQueues()'
+      'function recoverSubThreadWorkerQueues('
     )
     const localFailure = sourceBetween(
       'function failClaimedScheduledParentSubThreadWorker(',
@@ -76,9 +126,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
       "} else if (toolName === 'delegate_to_subthread') {",
       'const finalRichResult = richResult as McpToolExecutionResult | null'
     )
-    const guard = delegation.indexOf(
-      'wasScheduledOccurrenceRunIdObserved(context.appRunId)'
-    )
+    const guard = delegation.indexOf('wasScheduledOccurrenceRunIdObserved(context.appRunId)')
 
     expect(guard).toBeGreaterThanOrEqual(0)
     expect(guard).toBeLessThan(delegation.indexOf('resolveSubThreadRecall('))
@@ -89,7 +137,7 @@ describe('sub-thread long-lived worker main-process integration', () => {
   it('settles terminal worker events, drains the next item, and recovers queues on startup', () => {
     expectContains(indexSource, 'settleSubThreadWorkerEvent(')
     expectContains(indexSource, 'recoverSubThreadWorkerControl(')
-    expectContains(indexSource, 'recoverSubThreadWorkerQueues()')
+    expectContains(indexSource, 'recoverSubThreadWorkerQueues(')
     expectContains(indexSource, 'maybeDrainSubThreadWorkerQueue(')
     expectContains(indexSource, 'child.delegationContext?.workerControl?.events')
     expectContains(indexSource, 'isActiveChatRunStatus(run.status)')
@@ -101,7 +149,9 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, "from './ChatRunReconciler'")
     expectContains(indexSource, 'function isChatRunLive(')
     expectContains(indexSource, 'function reconcileStaleChatRunsProjection(')
-    expectContains(indexSource, 'reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    // Perf-boot 04989a0e2 threads a budget through the call (ternary arms keep
+    // minAgeMs: 0); pin the callee, with the floor pinned in the mailbox suite.
+    expectContains(indexSource, 'reconcileStaleChatRunsProjection(')
     expectContains(indexSource, 'getRunSession: (runId) => runManager.get(runId)')
     expectContains(indexSource, "eventType: 'chat_run_terminal_recovered'")
     expectContains(indexSource, 'chatRunReconcilerInterval = setInterval')
@@ -110,12 +160,12 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'broadcastRemoteProjectionSnapshot()')
     // Universal settle runs before sub-thread worker control recovery.
     const recoverPending = sourceBetween(
-      'function recoverSubThreadControlPlane(): void {',
+      'function recoverSubThreadControlPlane(',
       '/**\n * Surface a sub-thread-dispatch failure'
     )
-    expect(
-      recoverPending.indexOf('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
-    ).toBeLessThan(recoverPending.indexOf('recoverSubThreadWorkerQueues()'))
+    expect(recoverPending.indexOf('reconcileStaleChatRunsProjection(')).toBeLessThan(
+      recoverPending.indexOf('recoverSubThreadWorkerQueues(')
+    )
   })
 
   it('preserves the frozen Codex startup lease and canonical gateway target dispatch', () => {
@@ -123,5 +173,46 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'shouldRestartCodexAppServerForMcpConfig')
     expectContains(indexSource, 'dispatchResolvedGatewayTarget({')
     expectContains(indexSource, 'executeCanonical: executeGeminiMcpTool')
+  })
+
+  it('routes ultra_task through the signed request resolver and dedicated approval gate', () => {
+    const ultraTask = sourceBetween(
+      "} else if (toolName === 'ultra_task') {",
+      "} else if (toolName === 'delegate_wave') {"
+    )
+    const single = sourceBetween(
+      "} else if (toolName === 'delegate_to_subthread') {",
+      "} else if (toolName === 'ultra_task') {"
+    )
+
+    expectContains(ultraTask, "markDispatchHandled('subthread-control')")
+    expectContains(ultraTask, 'resolveUltraTaskToolRequest(args, {')
+    expectContains(ultraTask, 'provider: parentProvider')
+    expectContains(ultraTask, 'model: context.model')
+    expectContains(ultraTask, 'allowedProviders: selectableProviderIds(')
+    expectContains(ultraTask, 'buildUltraTaskModelCapabilityCatalog({')
+    expectContains(ultraTask, 'resolveUltraTaskCapability({')
+    expectContains(ultraTask, "kind: 'execution_graph'")
+    expectContains(ultraTask, 'requestAgenticServiceApproval(')
+    expectContains(ultraTask, 'const stageCount = resolved.scoutCount + 3')
+    expectContains(ultraTask, 'workers: resolved.approvalPreviewWorkers')
+    expectContains(ultraTask, 'scoutCount: resolved.scoutCount')
+    expectContains(ultraTask, 'started = startGraph({')
+    expectContains(ultraTask, 'Every join is automatic')
+    expect(ultraTask).not.toContain('buildUltraTaskWave')
+    expect(ultraTask).not.toContain('executeDelegateWaveTool({')
+    expect(ultraTask).not.toContain('resolved.waveArgs')
+    expectContains(single, 'toolName,')
+    expectContains(indexSource, "toolName === 'ultra_task' ||")
+  })
+
+  it('derives parent liveness from active RunManager sessions, never a persisted chat field', () => {
+    expectContains(indexSource, 'function hasActiveProviderRunForChat(')
+    expectContains(indexSource, 'runManager.getActiveByProvider(provider)')
+    expectContains(indexSource, 'session.appChatId === chatId')
+    expectContains(indexSource, 'hasActiveProviderRunForChat(parent.appChatId)')
+    expectContains(indexSource, 'hasActiveProviderRunForChat(parentChat.appChatId)')
+    expect(indexSource).not.toContain('parent?.appRunId')
+    expect(indexSource).not.toContain('parentChat?.appRunId')
   })
 })

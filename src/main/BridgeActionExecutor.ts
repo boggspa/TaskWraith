@@ -35,6 +35,7 @@ import type {
   BridgeGitCreateBranchAction,
   BridgeGitCreateWorktreeAction,
   BridgeGithubCreatePrAction,
+  BridgeGithubMergePrAction,
   BridgeGithubWatchPrAction,
   BridgeWorkflowRunNowAction,
   BridgeWorkflowSetEnabledAction,
@@ -47,6 +48,7 @@ import type {
   BridgeEnsembleSettingsUpdateAction,
   BridgeEnsembleQueueItemAction,
   BridgeCreateSideChatAction,
+  BridgeCreateSubThreadAction,
   BridgeSetThreadNotesAction,
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
@@ -209,6 +211,7 @@ export interface BridgeActionExecutor {
     action: BridgeGithubPrReadinessAction
   ): Promise<BridgeActionExecutionResult>
   executeGithubCreatePr(action: BridgeGithubCreatePrAction): Promise<BridgeActionExecutionResult>
+  executeGithubMergePr(action: BridgeGithubMergePrAction): Promise<BridgeActionExecutionResult>
   executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult>
   executeWorkflowSetEnabled(
     action: BridgeWorkflowSetEnabledAction,
@@ -243,6 +246,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeCreateSideChat(
     action: BridgeCreateSideChatAction
+  ): Promise<BridgeActionExecutionResult>
+  executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
   ): Promise<BridgeActionExecutionResult>
   executeSetThreadNotes(action: BridgeSetThreadNotesAction): Promise<BridgeActionExecutionResult>
   executeSetThreadTitle(action: BridgeSetThreadTitleAction): Promise<BridgeActionExecutionResult>
@@ -496,6 +502,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('githubCreatePr', action.workspaceId)
   }
+  async executeGithubMergePr(
+    action: BridgeGithubMergePrAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('githubMergePr', action.workspaceId)
+  }
   async executeCancelRun(action: BridgeCancelRunAction): Promise<BridgeActionExecutionResult> {
     return notWired('cancelRun', action.runId)
   }
@@ -560,6 +571,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeCreateSideChatAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('createSideChat', action.threadId)
+  }
+  async executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('createSubThread', action.threadId)
   }
   async executeSetThreadNotes(
     action: BridgeSetThreadNotesAction
@@ -688,6 +704,12 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('chatMessageTranscript', action.appChatId)
   }
+}
+
+/** Audit suffix for a host-stamped origin (see BridgeComposerPromptAction.origin). */
+function originLogSuffix(origin: BridgeComposerPromptAction['origin']): string {
+  if (!origin) return ''
+  return ` origin=${origin.channel} pid=${origin.pid ?? '-'} label=${origin.label ?? '-'}`
 }
 
 function notWired(kind: string, id: string): BridgeActionExecutionResult {
@@ -918,6 +940,24 @@ export interface MainProcessActionExecutorDependencies {
     pr?: Record<string, unknown>
     reason?: string
   }>
+  /** Optional. Live `src/main/index.ts` injects this. Missing still
+   * returns notWired. Supplying this WITHOUT `requestGithubMergePrApprovalFn`
+   * still refuses — a merge callback is not consent. */
+  githubMergePrFn?: (action: BridgeGithubMergePrAction) => Promise<{
+    ok: boolean
+    pr?: Record<string, unknown>
+    reason?: string
+  }>
+  /** Host-authoritative merge consent, mirroring `terminalOpen`'s
+   * `requestAgenticServiceApproval` call. Must NOT wrap
+   * `beginExternalPublishReceipt` (that ledger auto-allows
+   * `origin: 'ios-bridge'`). A phone-stamped
+   * `elevationAcknowledged: true` is not this callback. Live
+   * `src/main/index.ts` injects this; executeGithubMergePr will not
+   * invoke githubMergePrFn without it. */
+  requestGithubMergePrApprovalFn?: (
+    action: BridgeGithubMergePrAction
+  ) => Promise<boolean>
   gitBranchesFn?: (action: BridgeGitBranchesAction) => Promise<{
     ok: boolean
     branches?: Array<Record<string, unknown>>
@@ -1076,6 +1116,8 @@ export interface MainProcessActionExecutorDependencies {
   ensembleSettingsUpdateFn?: (action: BridgeEnsembleSettingsUpdateAction) => Promise<unknown>
   ensembleQueueItemFn?: (action: BridgeEnsembleQueueItemAction) => Promise<unknown>
   createSideChatFn?: (action: BridgeCreateSideChatAction) => Promise<unknown>
+  /** The host must validate this provider proposal against live admission. */
+  createSubThreadFn?: (action: BridgeCreateSubThreadAction) => Promise<unknown>
   setThreadNotesFn?: (action: BridgeSetThreadNotesAction) => Promise<unknown>
   setThreadTitleFn?: (action: BridgeSetThreadTitleAction) => Promise<unknown>
   setChatKindFn?: (action: BridgeSetChatKindAction) => Promise<unknown>
@@ -1668,6 +1710,52 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     }
   }
 
+  async executeGithubMergePr(
+    action: BridgeGithubMergePrAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (action.elevationAcknowledged !== true) {
+      return {
+        executed: false,
+        message: 'Merge requires the workflowDelete elevation acknowledgement.'
+      }
+    }
+    if (!this.deps.githubMergePrFn) {
+      return notWired('githubMergePr', action.workspaceId)
+    }
+    // A wired merge callback is not consent. The phone bit above is the
+    // confirmation-sheet claim; this is the host-verification half
+    // terminalOpen has (requestAgenticServiceApproval) and merge lacked.
+    if (!this.deps.requestGithubMergePrApprovalFn) {
+      return {
+        executed: false,
+        message:
+          'Merge requires host-verified approval; a phone elevation receipt is not sufficient.'
+      }
+    }
+    this.log(`[BridgeActionExecutor] githubMergePr ws=${action.workspaceId}`)
+    try {
+      const approved = await this.deps.requestGithubMergePrApprovalFn(action)
+      if (!approved) {
+        return { executed: false, message: 'Merge was not approved.' }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] githubMergePr approval failed: ${message}`)
+      return { executed: false, message: `Merge approval failed: ${message}` }
+    }
+    try {
+      const result = await this.deps.githubMergePrFn(action)
+      if (result.ok && result.pr) {
+        return { executed: true, message: 'Pull request merged.', data: { pr: result.pr } }
+      }
+      return { executed: false, message: result.reason ?? 'Could not merge the pull request.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] githubMergePr failed: ${message}`)
+      return { executed: false, message: `Merge pull request failed: ${message}` }
+    }
+  }
+
   async executeGitBranches(
     action: BridgeGitBranchesAction
   ): Promise<BridgeActionExecutionResult> {
@@ -1852,7 +1940,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       return notWired('composerPrompt', action.threadId)
     }
     this.log(
-      `[BridgeActionExecutor] composerPrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}`
+      `[BridgeActionExecutor] composerPrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}${originLogSuffix(action.origin)}`
     )
     try {
       const result = await this.deps.composerPromptFn(action)
@@ -2215,6 +2303,11 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
   async executeEnsembleSteer(
     action: BridgeEnsembleSteerAction
   ): Promise<BridgeActionExecutionResult> {
+    if (action.origin) {
+      this.log(
+        `[BridgeActionExecutor] ensembleSteer thread=${action.threadId}${originLogSuffix(action.origin)}`
+      )
+    }
     return this.executeEnsembleAction(
       'ensembleSteer',
       action.threadId,
@@ -2263,6 +2356,17 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'createSideChat',
       action.threadId,
       this.deps.createSideChatFn,
+      action
+    )
+  }
+
+  async executeCreateSubThread(
+    action: BridgeCreateSubThreadAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.executeEnsembleAction(
+      'createSubThread',
+      action.threadId,
+      this.deps.createSubThreadFn,
       action
     )
   }

@@ -1,0 +1,1350 @@
+'use strict'
+
+/**
+ * M1 cross-thread work-span collector (Independent Threads Programme,
+ * Appendix B of docs/performance/independent-threads-programme.md).
+ *
+ * Folds per-process WorkSpanRecorder aggregates into the report's
+ * `metrics.crossThread` block, keyed by interference-matrix cell. The block
+ * is what §1.1's paired light-alone/light-beside comparisons read: WHICH
+ * span kind, on WHICH shared resource, cost the light thread how much,
+ * while the heavy thread ran.
+ *
+ * ATTRIBUTION (Amendment A1, Review2 R2-M1-1/2): process-wide byKind /
+ * byResource maps CANNOT distinguish a light thread from a heavy one —
+ * swapping their durations leaves them byte-identical — so the recorder's
+ * per-chat `byChat` map is the acceptance evidence and this collector
+ * carries it through validated. Likewise `exact` holds never-sampled
+ * offered counters: a zero sampled `fallbackCount` never proves zero
+ * fallbacks, `exact.offeredFallbackCount` does. Both are validated when
+ * present and absent-tolerated, so pre-attribution reports keep validating
+ * while a malformed block still fails closed.
+ *
+ * HOST POLLING: the Host transport is an opt-in snapshot FILE written by
+ * src/host-runtime/HostPerfSnapshotFile.ts. When a `hostPerfSnapshotPath`
+ * option or TASKWRAITH_PERF_HOST_SNAPSHOT_PATH env var names that file,
+ * readHostPerfSnapshotFile reads it and validates identity, sequence and
+ * freshness; ONLY a valid fresh read replaces the unsupported marker.
+ * Unconfigured stays { unsupported: 'host_perf_transport_unspecified' };
+ * configured-but-wrong reports the specific refusal (stale / identity
+ * mismatch / invalid) so a broken transport can never impersonate a
+ * pre-transport baseline. Main sampling uses the existing preload
+ * getMainPerfSnapshot IPC through a caller-supplied renderer
+ * Runtime.evaluate session; absent spans stay unsupported.
+ *
+ * WINDOWED EVIDENCE (A1.52 close-out): the runner samples the Host snapshot
+ * file DURING replay, one accepted read per writer capture, and
+ * aggregateHostWindowSamples buckets those reads into the lanes driver's
+ * observed role/window bounds. Lag stays per-capture and self-describing
+ * (observedForMs + windowBasis + configuredIntervalMs, A1.51); work spans,
+ * being cumulative and percentile-bearing, are reported only as subtractable
+ * counter deltas per window, so a paired run's light-alone and light-beside
+ * phases no longer fold into one combined number.
+ *
+ * WIRING STATUS: the legacy section providers are dependency-injected closures.
+ * Production wiring (main's `workSpans` snapshot section, Host's
+ * HostPerfSnapshot meter) is @IntegrationOwner work gated on the live
+ * startup-redesign session releasing index.ts / HostStandaloneComposition.ts.
+ * Until then this collector is exercised by tests only.
+ *
+ * FAIL-CLOSED, two levels — same contract as mainPersistenceStatsCollector:
+ * a malformed section is never half-imported (normalize refuses it), and a
+ * collection where NO process yields a valid section refuses outright. A
+ * single degraded process degrades to an `{ error }` marker (the
+ * MainPerfSnapshot section pattern) so one sick process cannot erase the
+ * attribution the others captured under the same load.
+ */
+
+const { parseCellName } = require('../interferenceMatrix.cjs')
+
+/**
+ * Span taxonomy — must stay in lockstep with WORK_SPAN_KINDS /
+ * WORK_SPAN_RESOURCES / WORK_SPAN_PROCESSES in src/main/perf/WorkSpanRecorder.ts.
+ * If either side changes without the other, the harness will validate a
+ * stale contract and attribution silently escapes the report.
+ * `round_start` was added by Amendment A1.1 (§1.1 B1: composer send → first
+ * participant dispatch); per-kind wait reasons live with the recorder and
+ * travel on individual spans, not on these aggregates.
+ */
+const WORK_SPAN_PROCESSES = Object.freeze(['main', 'host', 'renderer'])
+const WORK_SPAN_KINDS = Object.freeze([
+  'round_start',
+  'admission_wait',
+  'provider_config_wait',
+  'prompt_build',
+  'checkpoint_prepare',
+  'host_queue_wait',
+  'durable_commit',
+  'receipt_delivery',
+  'control_response',
+  'persist_barrier'
+])
+const WORK_SPAN_RESOURCES = Object.freeze([
+  'ensemble_pool',
+  'host_chain',
+  'codex_daemon',
+  'cursor_overlay',
+  'ollama_model',
+  'workspace_lock',
+  'none'
+])
+
+/** WorkSpanKeyAggregate fields (WorkSpanRecorder.ts). */
+const SPAN_AGGREGATE_FIELDS = Object.freeze([
+  'count',
+  'totalMs',
+  'p50Ms',
+  'p95Ms',
+  'maxMs',
+  'bytes',
+  'fallbackCount'
+])
+
+/**
+ * Fields a newer recorder adds. Validated WHEN PRESENT, never required: a
+ * report captured by an older recorder must keep validating, and a silently
+ * unvalidated field is exactly how attribution escapes the schema.
+ */
+const SPAN_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['p99Ms', 'percentileSampleCount'])
+
+/** Per-chat attributed aggregate fields (WorkSpanChatAggregate). */
+const SPAN_CHAT_AGGREGATE_FIELDS = Object.freeze([
+  'count',
+  'totalMs',
+  'p50Ms',
+  'p95Ms',
+  'p99Ms',
+  'maxMs'
+])
+
+/** Per-chat fields a newer recorder adds; validated when present (see above). */
+const SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS = Object.freeze(['percentileSampleCount'])
+
+/** Exact never-sampled offered counters (WorkSpanOfferedCounters). */
+const SPAN_OFFERED_FIELDS = Object.freeze(['offeredCount', 'offeredFallbackCount', 'offeredBytes'])
+
+/** WorkSpanAggregates counters (WorkSpanRecorder.ts). */
+const SPAN_COUNTER_FIELDS = Object.freeze(['recorded', 'dropped', 'sampledOut', 'rejected'])
+
+/** Counters a newer recorder adds; validated when present (see above). */
+const SPAN_COUNTER_OPTIONAL_FIELDS = Object.freeze(['degraded', 'attributionOverflow'])
+
+/** Schema version of the `metrics.crossThread` block this collector writes. */
+const CROSS_THREAD_SCHEMA_VERSION = 1
+
+const PROCESS_SET = new Set(WORK_SPAN_PROCESSES)
+const KIND_SET = new Set(WORK_SPAN_KINDS)
+const RESOURCE_SET = new Set(WORK_SPAN_RESOURCES)
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function validateAggregateMap(map, allowedKeys, label, errors) {
+  if (!isPlainObject(map)) {
+    errors.push(`${label} must be an object`)
+    return
+  }
+  for (const [key, aggregate] of Object.entries(map)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`${label}.${key} is not a known span taxonomy member`)
+      continue
+    }
+    if (!isPlainObject(aggregate)) {
+      errors.push(`${label}.${key} must be an aggregate object`)
+      continue
+    }
+    for (const field of SPAN_AGGREGATE_FIELDS) {
+      if (!isFiniteNumber(aggregate[field])) {
+        errors.push(`${label}.${key}.${field} must be finite`)
+      }
+    }
+    for (const field of SPAN_AGGREGATE_OPTIONAL_FIELDS) {
+      if (aggregate[field] !== undefined && !isFiniteNumber(aggregate[field])) {
+        errors.push(`${label}.${key}.${field} must be finite when present`)
+      }
+    }
+  }
+}
+
+/**
+ * Exact offered counters: totals plus optional per-kind / per-resource maps.
+ * Absent entirely on a pre-attribution recorder; malformed when present is
+ * always an error — §1.1 B7 reads these as the authoritative coverage
+ * evidence, so they may never be half-imported.
+ */
+function validateExactCounters(exact, errors) {
+  if (exact === undefined) return
+  if (!isPlainObject(exact)) {
+    errors.push('exact must be an object')
+    return
+  }
+  for (const field of SPAN_OFFERED_FIELDS) {
+    if (!isFiniteNumber(exact[field])) errors.push(`exact.${field} must be finite`)
+  }
+  for (const [label, allowed] of [
+    ['byKind', KIND_SET],
+    ['byResource', RESOURCE_SET]
+  ]) {
+    const map = exact[label]
+    if (map === undefined) continue
+    if (!isPlainObject(map)) {
+      errors.push(`exact.${label} must be an object`)
+      continue
+    }
+    for (const [key, counters] of Object.entries(map)) {
+      if (!allowed.has(key)) {
+        errors.push(`exact.${label}.${key} is not a known span taxonomy member`)
+        continue
+      }
+      if (!isPlainObject(counters)) {
+        errors.push(`exact.${label}.${key} must be a counters object`)
+        continue
+      }
+      for (const field of SPAN_OFFERED_FIELDS) {
+        if (!isFiniteNumber(counters[field])) {
+          errors.push(`exact.${label}.${key}.${field} must be finite`)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Per-chat attribution: `byChat[chatId][kind] = WorkSpanChatAggregate`. This
+ * is the light-vs-heavy evidence a paired G-X comparison reads, so an
+ * unknown kind or a non-finite percentile is an error, not a warning.
+ */
+function validateByChat(byChat, errors) {
+  if (byChat === undefined) return
+  if (!isPlainObject(byChat)) {
+    errors.push('byChat must be an object')
+    return
+  }
+  for (const [chatId, kinds] of Object.entries(byChat)) {
+    if (typeof chatId !== 'string' || chatId.length === 0) {
+      errors.push('byChat keys must be non-empty chat ids')
+      continue
+    }
+    if (!isPlainObject(kinds)) {
+      errors.push(`byChat.${chatId} must be an object`)
+      continue
+    }
+    for (const [kind, aggregate] of Object.entries(kinds)) {
+      if (!KIND_SET.has(kind)) {
+        errors.push(`byChat.${chatId}.${kind} is not a known span kind`)
+        continue
+      }
+      if (!isPlainObject(aggregate)) {
+        errors.push(`byChat.${chatId}.${kind} must be an aggregate object`)
+        continue
+      }
+      for (const field of SPAN_CHAT_AGGREGATE_FIELDS) {
+        if (!isFiniteNumber(aggregate[field])) {
+          errors.push(`byChat.${chatId}.${kind}.${field} must be finite`)
+        }
+      }
+      for (const field of SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS) {
+        if (aggregate[field] !== undefined && !isFiniteNumber(aggregate[field])) {
+          errors.push(`byChat.${chatId}.${kind}.${field} must be finite when present`)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Versioned metadata lives INSIDE workSpans so existing section-only folding
+ * cannot discard the Host identity, freshness or coverage decision.
+ * "available" is attribution availability, not a paired performance verdict.
+ */
+function hostIdentityValid(identity) {
+  return (
+    isPlainObject(identity) &&
+    identity.process === 'host' &&
+    typeof identity.instanceId === 'string' &&
+    identity.instanceId.length > 0 &&
+    Number.isSafeInteger(identity.generation) &&
+    identity.generation >= 0 &&
+    Number.isSafeInteger(identity.pid) &&
+    identity.pid > 0 &&
+    (identity.bootEpoch === undefined ||
+      (typeof identity.bootEpoch === 'string' && HOST_BOOT_EPOCH_PATTERN.test(identity.bootEpoch)))
+  )
+}
+
+function identityIsPinned(identity, expected) {
+  return (
+    isPlainObject(expected) &&
+    ['instanceId', 'generation', 'pid'].every(
+      (key) => expected[key] !== undefined && expected[key] === identity[key]
+    )
+  )
+}
+
+/**
+ * Boot-epoch coverage between the file identity and the reader pin:
+ * 'absent' when neither side carries an epoch (legacy files and legacy pins
+ * keep their exact prior semantics), 'verified' when the pin carries one and
+ * it matches exactly, 'unpinned' when the file carries an epoch the pin does
+ * not (the incarnation is unprovable), 'mismatch' when a pinned epoch is
+ * absent from or different in the file. hostIdentityValid rejects malformed
+ * file epochs before coverage is consulted, so a bad shape never matches.
+ */
+function bootEpochCoverage(identity, expected) {
+  const fileEpoch = isPlainObject(identity) ? identity.bootEpoch : undefined
+  const pinEpoch = isPlainObject(expected) ? expected.bootEpoch : undefined
+  if (pinEpoch !== undefined) return pinEpoch === fileEpoch ? 'verified' : 'mismatch'
+  return fileEpoch !== undefined ? 'unpinned' : 'absent'
+}
+
+/** Legacy pin satisfied AND the boot epoch, if either side has one, agreed. */
+function identityStrictlyPinned(identity, expected) {
+  const coverage = bootEpochCoverage(identity, expected)
+  return identityIsPinned(identity, expected) && (coverage === 'absent' || coverage === 'verified')
+}
+
+function attributionCoverage(section, meta, requiredChatIds) {
+  const availableChatIds = isPlainObject(section.byChat) ? Object.keys(section.byChat).sort() : []
+  const missingChatIds = requiredChatIds.filter(
+    (id) =>
+      !isPlainObject(section.byChat?.[id]) ||
+      !Object.values(section.byChat[id]).some(
+        (aggregate) =>
+          isPlainObject(aggregate) && isFiniteNumber(aggregate.count) && aggregate.count > 0
+      )
+  )
+  let status = 'available'
+  let reason = null
+  const epochCoverage = bootEpochCoverage(meta.identity, meta.expectedIdentity)
+  if (!identityIsPinned(meta.identity, meta.expectedIdentity)) {
+    status = 'unsupported'
+    reason = 'expected_identity_required'
+  } else if (epochCoverage === 'unpinned') {
+    // The file proves an incarnation the pin cannot vouch for: legacy
+    // diagnostics stay valid, strict attribution does not.
+    status = 'unsupported'
+    reason = 'boot_epoch_unpinned'
+  } else if (epochCoverage === 'mismatch') {
+    status = 'unsupported'
+    reason = 'boot_epoch_mismatch'
+  } else if (requiredChatIds.length === 0) {
+    status = 'unsupported'
+    reason = 'designated_population_required'
+  } else if (meta.truncation?.byChat || (meta.truncated && meta.truncation === null)) {
+    status = 'censored'
+    reason = 'transport_attribution_truncated'
+  } else if (!isPlainObject(section.byChat) || missingChatIds.length) {
+    status = 'censored'
+    reason = 'designated_population_missing'
+  } else if (section.attributionOverflow === undefined) {
+    status = 'unsupported'
+    reason = 'population_coverage_unknown'
+  }
+  return {
+    status,
+    reason,
+    requiredChatIds,
+    availableChatIds,
+    missingChatIds,
+    // These remain sampled-population diagnostics. No claim of an unsampled
+    // window or process-wide zero fallback is inferred from attributed timing.
+    sourceCoverage: Object.fromEntries(
+      [...SPAN_COUNTER_FIELDS, ...SPAN_COUNTER_OPTIONAL_FIELDS].map((key) => [
+        key,
+        section[key] ?? null
+      ])
+    )
+  }
+}
+
+const HOST_LAG_FIELDS = ['observedForMs', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'meanMs']
+const HOST_LAG_WINDOW_BASIS = 'since_last_reset'
+
+function normalizeHostLag(lag, options = {}) {
+  if (!isPlainObject(lag)) return { unsupported: 'host_perf_lag_invalid: object_required' }
+  for (const key of HOST_LAG_FIELDS) {
+    if (!isFiniteNumber(lag[key]) || lag[key] < 0)
+      return { unsupported: 'host_perf_lag_invalid: ' + key }
+  }
+  if (typeof lag.sampling !== 'boolean') return { unsupported: 'host_perf_lag_invalid: sampling' }
+  if (
+    lag.p50Ms > lag.p95Ms ||
+    lag.p95Ms > lag.p99Ms ||
+    lag.p99Ms > lag.maxMs ||
+    lag.meanMs > lag.maxMs
+  ) {
+    return { unsupported: 'host_perf_lag_invalid: range' }
+  }
+  if (!lag.sampling || lag.observedForMs === 0) return { unsupported: 'host_perf_lag_unobserved' }
+  const hasWindowBasis = Object.hasOwn(lag, 'windowBasis')
+  const hasConfiguredInterval = Object.hasOwn(lag, 'configuredIntervalMs')
+  if (!hasWindowBasis && !hasConfiguredInterval) {
+    if (options.requireIntervalMetadata === true) {
+      return { unsupported: 'host_perf_lag_interval_unspecified' }
+    }
+    // Compatibility for already-folded diagnostic reports. A fresh file read
+    // requires the metadata below, so an old cumulative block cannot become
+    // evidence merely because the work-span cargo remains readable.
+    return Object.fromEntries([...HOST_LAG_FIELDS, 'sampling'].map((key) => [key, lag[key]]))
+  }
+  if (lag.windowBasis !== HOST_LAG_WINDOW_BASIS) {
+    return { unsupported: 'host_perf_lag_invalid: windowBasis' }
+  }
+  if (!Number.isSafeInteger(lag.configuredIntervalMs) || lag.configuredIntervalMs <= 0) {
+    return { unsupported: 'host_perf_lag_invalid: configuredIntervalMs' }
+  }
+  return Object.fromEntries(
+    [...HOST_LAG_FIELDS, 'sampling', 'windowBasis', 'configuredIntervalMs'].map((key) => [
+      key,
+      lag[key]
+    ])
+  )
+}
+
+function sameJson(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJson(value, right[index]))
+    )
+  }
+  if (isPlainObject(left) || isPlainObject(right)) {
+    return (
+      isPlainObject(left) &&
+      isPlainObject(right) &&
+      Object.keys(left).length === Object.keys(right).length &&
+      Object.keys(left).every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]))
+    )
+  }
+  return left === right
+}
+
+function validateHostSnapshotMetadata(meta, section, errors) {
+  if (meta === undefined) return // Legacy sections remain diagnostic-compatible.
+  const invalid = (reason) => errors.push('hostSnapshot.' + reason)
+  if (!isPlainObject(meta) || meta.schemaVersion !== 1 || section.process !== 'host') {
+    invalid('schema')
+    return
+  }
+  if (
+    !hostIdentityValid(meta.identity) ||
+    !Number.isSafeInteger(meta.sequence) ||
+    meta.sequence <= 0 ||
+    meta.sequenceMonotonicity !== 'not_checked'
+  ) {
+    invalid('identity_or_sequence')
+    return
+  }
+  if (meta.expectedIdentity !== null && !isPlainObject(meta.expectedIdentity)) {
+    invalid('expectedIdentity')
+    return
+  }
+  if (
+    meta.expectedIdentity &&
+    Object.keys(meta.expectedIdentity).some(
+      (key) =>
+        !['instanceId', 'generation', 'pid', 'bootEpoch'].includes(key) ||
+        meta.expectedIdentity[key] !== meta.identity[key]
+    )
+  ) {
+    invalid('expectedIdentity_mismatch')
+    return
+  }
+  if (meta.identityVerified !== identityStrictlyPinned(meta.identity, meta.expectedIdentity))
+    invalid('identityVerified')
+  const captured = typeof meta.capturedAt === 'string' ? Date.parse(meta.capturedAt) : NaN
+  const read = typeof meta.readAt === 'string' ? Date.parse(meta.readAt) : NaN
+  if (
+    !Number.isFinite(captured) ||
+    !Number.isFinite(read) ||
+    !isFiniteNumber(meta.maxAgeMs) ||
+    meta.maxAgeMs <= 0 ||
+    !isFiniteNumber(meta.ageMs) ||
+    meta.ageMs !== read - captured ||
+    Math.abs(meta.ageMs) > meta.maxAgeMs
+  )
+    invalid('freshness')
+  if (
+    !Number.isSafeInteger(meta.bytesRead) ||
+    meta.bytesRead < 0 ||
+    !Number.isSafeInteger(meta.maxBytes) ||
+    meta.maxBytes <= 0 ||
+    meta.bytesRead > meta.maxBytes
+  )
+    invalid('byte_coverage')
+  if (
+    typeof meta.truncated !== 'boolean' ||
+    (meta.truncation !== null &&
+      (!isPlainObject(meta.truncation) ||
+        typeof meta.truncation.extraSections !== 'boolean' ||
+        typeof meta.truncation.byChat !== 'boolean')) ||
+    (!meta.truncated && meta.truncation !== null)
+  ) {
+    invalid('truncation')
+    return
+  }
+  const population = meta.attribution?.requiredChatIds
+  if (
+    !Array.isArray(population) ||
+    population.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(population).size !== population.length
+  ) {
+    invalid('attribution_population')
+    return
+  }
+  if (!sameJson(meta.attribution, attributionCoverage(section, meta, population)))
+    invalid('attribution_coverage')
+  if (!isPlainObject(meta.eventLoopLag) || typeof meta.eventLoopLag.unsupported !== 'string') {
+    const normalized = normalizeHostLag(meta.eventLoopLag)
+    if (normalized.unsupported || !sameJson(meta.eventLoopLag, normalized)) invalid('eventLoopLag')
+  } else if (!meta.eventLoopLag.unsupported.startsWith('host_perf_lag_'))
+    invalid('eventLoopLag_unsupported')
+}
+
+/**
+ * Validate one process's WorkSpanAggregates section (the shape
+ * `WorkSpanRecorder.section()` emits) before anyone treats it as evidence.
+ *
+ * @param {unknown} payload
+ * @param {string} [processName] when given, the section's `process` must match
+ * @returns {{ ok: true, section: object } | { ok: false, reason: string }}
+ */
+function normalizeWorkSpanSection(payload, processName) {
+  const errors = []
+  if (!isPlainObject(payload)) return { ok: false, reason: 'section is not an object' }
+  if (!PROCESS_SET.has(payload.process)) {
+    errors.push(`process must be one of ${WORK_SPAN_PROCESSES.join('|')}`)
+  } else if (processName !== undefined && payload.process !== processName) {
+    errors.push(`section.process ${payload.process} does not match provider ${processName}`)
+  }
+  validateAggregateMap(payload.byKind, KIND_SET, 'byKind', errors)
+  validateAggregateMap(payload.byResource, RESOURCE_SET, 'byResource', errors)
+  for (const field of SPAN_COUNTER_FIELDS) {
+    if (!isFiniteNumber(payload[field])) {
+      errors.push(`${field} must be finite`)
+    }
+  }
+  for (const field of SPAN_COUNTER_OPTIONAL_FIELDS) {
+    if (payload[field] !== undefined && !isFiniteNumber(payload[field])) {
+      errors.push(`${field} must be finite when present`)
+    }
+  }
+  validateExactCounters(payload.exact, errors)
+  validateByChat(payload.byChat, errors)
+  validateHostSnapshotMetadata(payload.hostSnapshot, payload, errors)
+  if (errors.length > 0) return { ok: false, reason: errors.join('; ') }
+  return { ok: true, section: payload }
+}
+
+/**
+ * Validate a whole `metrics.crossThread` block. Returns an array of error
+ * strings (empty when valid) so schema.cjs can fold it into its own error
+ * list — the report schema owns the verdict, this module owns the shape.
+ *
+ * OPTIONAL-WHEN-ABSENT at the schema level (pre-M1 baselines carry no block
+ * and must keep validating); PRESENT-BUT-MALFORMED is always an error.
+ */
+function validateCrossThreadBlock(block) {
+  const errors = []
+  if (!isPlainObject(block)) return ['block must be an object']
+  if (block.schemaVersion !== CROSS_THREAD_SCHEMA_VERSION) {
+    errors.push(`schemaVersion must be ${CROSS_THREAD_SCHEMA_VERSION}`)
+  }
+  if (!isPlainObject(block.cells)) {
+    errors.push('cells required')
+    return errors
+  }
+  for (const [name, cell] of Object.entries(block.cells)) {
+    if (parseCellName(name) === null) {
+      errors.push(`cell ${JSON.stringify(name)} is not a valid matrix cell name`)
+      continue
+    }
+    if (!isPlainObject(cell) || !isPlainObject(cell.processes)) {
+      errors.push(`cell ${name}.processes required`)
+      continue
+    }
+    const processNames = Object.keys(cell.processes)
+    if (processNames.length === 0) {
+      errors.push(`cell ${name} carries no process sections`)
+    }
+    for (const processName of processNames) {
+      if (!PROCESS_SET.has(processName)) {
+        errors.push(`cell ${name}.processes.${processName} is not a known process`)
+        continue
+      }
+      const section = cell.processes[processName]
+      if (isPlainObject(section) && typeof section.error === 'string') continue
+      const check = normalizeWorkSpanSection(section, processName)
+      if (!check.ok) {
+        errors.push(`cell ${name}.${processName}: ${check.reason}`)
+      }
+    }
+  }
+  return errors
+}
+
+/**
+ * Sample every offered process section. Each provider is an injected closure
+ * returning (or resolving) one WorkSpanAggregates-shaped object; a throw,
+ * an `{ error }` marker, null, or a malformed payload degrades THAT process
+ * to an `{ error }` entry. If no process yields a valid section the whole
+ * sample refuses — an empty crossThread block reads as "measured, nothing
+ * happened", which is a claim this collector never makes.
+ *
+ * @param {Record<string, () => unknown>} providers keyed by process name
+ * @returns {Promise<{ ok: true, sections: object, errors: object }
+ *                 | { ok: false, reason: string }>}
+ */
+async function sampleWorkSpanSections(providers) {
+  if (!isPlainObject(providers)) {
+    return { ok: false, reason: 'providers map required' }
+  }
+  const sections = {}
+  const errors = {}
+  for (const [processName, provider] of Object.entries(providers)) {
+    if (!PROCESS_SET.has(processName)) {
+      return { ok: false, reason: `unknown process provider ${JSON.stringify(processName)}` }
+    }
+    if (typeof provider !== 'function') {
+      errors[processName] = 'provider is not a function'
+      continue
+    }
+    let value
+    try {
+      value = await Promise.resolve(provider())
+    } catch (error) {
+      errors[processName] = error instanceof Error ? error.message : String(error)
+      continue
+    }
+    if (isPlainObject(value) && typeof value.error === 'string') {
+      errors[processName] = value.error
+      continue
+    }
+    const check = normalizeWorkSpanSection(value, processName)
+    if (!check.ok) {
+      errors[processName] = check.reason
+      continue
+    }
+    sections[processName] = check.section
+  }
+  if (Object.keys(sections).length === 0) {
+    const detail = Object.entries(errors)
+      .map(([proc, reason]) => `${proc}: ${reason}`)
+      .join('; ')
+    return {
+      ok: false,
+      reason: `no process yielded a valid span section${detail ? ` (${detail})` : ''}`
+    }
+  }
+  return { ok: true, sections, errors }
+}
+
+/**
+ * Fold sampled sections into `metrics.crossThread.cells[cell]`. Mutates and
+ * returns `metrics` so the caller keeps one object identity (the
+ * applyPersistenceStatsToMetrics pattern). Degraded processes are recorded
+ * as `{ error }` markers beside the valid ones.
+ *
+ * Throws on a bad cell name or an unsampled sections object — the sample
+ * step above is the fail-closed boundary; by this point inputs are evidence.
+ */
+function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
+  if (!isPlainObject(metrics)) {
+    throw new Error('metrics required')
+  }
+  const name = typeof cell === 'string' ? cell : cellNameSafe(cell)
+  if (parseCellName(name) === null) {
+    throw new Error(`invalid matrix cell: ${JSON.stringify(name)}`)
+  }
+  if (!isPlainObject(sections) || Object.keys(sections).length === 0) {
+    throw new Error('sampled sections required')
+  }
+  if (options.requireHostAttribution === true) {
+    const checked = normalizeWorkSpanSection(sections.host, 'host')
+    if (!checked.ok || checked.section.hostSnapshot?.attribution.status !== 'available') {
+      throw new Error(
+        'Host attribution requires pinned identity and available designated population.'
+      )
+    }
+  }
+  const now = typeof options.now === 'function' ? options.now : () => new Date()
+  let capturedAt
+  try {
+    const clock = now()
+    const ms = clock.getTime()
+    capturedAt = clock.toISOString()
+    if (!Number.isFinite(ms) || Date.parse(capturedAt) !== ms) throw new Error('invalid clock')
+  } catch {
+    throw new Error('cross_thread_clock_unavailable')
+  }
+  if (!isPlainObject(metrics.crossThread)) {
+    metrics.crossThread = { schemaVersion: CROSS_THREAD_SCHEMA_VERSION, cells: {} }
+  }
+  if (!isPlainObject(metrics.crossThread.cells)) {
+    metrics.crossThread.cells = {}
+  }
+  metrics.crossThread.cells[name] = {
+    capturedAt,
+    // Deep copy: sections may be live recorder output (byChat/exact are
+    // rebuilt per snapshot), and a stored report must not alias it.
+    processes: JSON.parse(JSON.stringify(sections))
+  }
+  return metrics
+}
+
+function cellNameSafe(cell) {
+  const { cellName } = require('../interferenceMatrix.cjs')
+  return cellName(cell)
+}
+
+/**
+ * Per-role/window Host evidence (A1.52 close-out: "sampling during each
+ * role/window", building on A1.51's per-write lag basis).
+ *
+ * The defect this closes: Host snapshots were read once after replay/capture,
+ * so the transported lag window covered capture-phase quiet time and the
+ * cumulative work-span aggregates combined the paired light-alone and
+ * light-beside phases into one number. The runner now samples the Host
+ * snapshot file DURING replay (createT2HostWindowSampler) and this pure
+ * step buckets the accepted reads into the lanes driver's OBSERVED windows
+ * ({ role, repetition, startedAtMs, endedAtMs }) — never a re-derived
+ * schedule, so the A1.49 fence and MATRIX_SAMPLING stay untouched.
+ *
+ * Two bases, each self-describing (A1.51's percentileSampleCount rule):
+ * - lag: 'per_capture_samples'. Each in-window capture keeps its own
+ *   observedForMs / windowBasis / configuredIntervalMs verbatim; the
+ *   across-capture aggregates name their statistic (maxAcrossMs is the
+ *   greatest per-capture maxMs, p95AcrossMs the nearest-rank p95 across
+ *   per-capture p95Ms values). No percentile is ever pooled across captures.
+ * - workSpans: 'cumulative_counter_delta'. Work-span aggregates are
+ *   cumulative since Host boot and percentiles do not subtract, so a window
+ *   carries ONLY the subtractable fields (counters, exact offered counters,
+ *   per-kind/resource count/totalMs/bytes/fallbackCount, per-chat
+ *   count/totalMs) between the first and last in-window samples;
+ *   percentiles are excluded with a named reason rather than diffed into a
+ *   number that would misdescribe its own basis.
+ *
+ * Fail-closed: a non-monotonic counter (negative delta) refuses the window's
+ * whole delta block with a named marker; a window with fewer than two
+ * in-window samples carries an explicit marker instead of a fabricated
+ * delta; malformed input refuses the aggregation outright.
+ */
+const HOST_WINDOW_EVIDENCE_SCHEMA_VERSION = 1
+const HOST_WINDOW_LAG_BASIS = 'per_capture_samples'
+const HOST_WINDOW_DELTA_BASIS = 'cumulative_counter_delta'
+/** Subtractable aggregate fields; percentiles are deliberately absent. */
+const SPAN_DELTA_AGGREGATE_FIELDS = Object.freeze(['count', 'totalMs', 'bytes', 'fallbackCount'])
+const SPAN_DELTA_CHAT_FIELDS = Object.freeze(['count', 'totalMs'])
+
+function nearestRank95(values) {
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)]
+}
+
+function deltaCounterFields(from, to, fields, label, problems, out) {
+  for (const field of fields) {
+    const fromPresent = isFiniteNumber(from[field])
+    const toPresent = isFiniteNumber(to[field])
+    if (!fromPresent && !toPresent) continue // unmeasured is not zero
+    const delta = (toPresent ? to[field] : 0) - (fromPresent ? from[field] : 0)
+    if (delta < 0) {
+      problems.push(`${label}.${field}`)
+      continue
+    }
+    out[field] = delta
+  }
+}
+
+function deltaKeyedMaps(fromMap, toMap, fields, label, problems) {
+  const out = {}
+  const from = isPlainObject(fromMap) ? fromMap : {}
+  const to = isPlainObject(toMap) ? toMap : {}
+  for (const key of new Set([...Object.keys(from), ...Object.keys(to)])) {
+    const a = isPlainObject(from[key]) ? from[key] : {}
+    const b = isPlainObject(to[key]) ? to[key] : {}
+    const entry = {}
+    let nonzero = false
+    for (const field of fields) {
+      const av = isFiniteNumber(a[field]) ? a[field] : 0
+      const bv = isFiniteNumber(b[field]) ? b[field] : 0
+      const delta = bv - av
+      if (delta < 0) {
+        problems.push(`${label}.${key}.${field}`)
+        break
+      }
+      entry[field] = delta
+      if (delta > 0) nonzero = true
+    }
+    // A zero-activity key is omitted, so an absent kind/resource/chat reads
+    // as "nothing recorded in this window" — which the cumulative diff
+    // proves — never as "not measured".
+    if (nonzero) out[key] = entry
+  }
+  return out
+}
+
+function sampleByChatTruncated(sample) {
+  return (
+    sample.truncation?.byChat === true ||
+    sample.workSpans?.hostSnapshot?.truncation?.byChat === true
+  )
+}
+
+function deltaWindowWorkSpans(fromSample, toSample) {
+  const problems = []
+  const from = fromSample.workSpans
+  const to = toSample.workSpans
+  const counters = {}
+  deltaCounterFields(
+    from,
+    to,
+    [...SPAN_COUNTER_FIELDS, ...SPAN_COUNTER_OPTIONAL_FIELDS],
+    'counters',
+    problems,
+    counters
+  )
+  let exact = null
+  if (isPlainObject(from.exact) || isPlainObject(to.exact)) {
+    exact = {}
+    deltaCounterFields(
+      isPlainObject(from.exact) ? from.exact : {},
+      isPlainObject(to.exact) ? to.exact : {},
+      SPAN_OFFERED_FIELDS,
+      'exact',
+      problems,
+      exact
+    )
+    for (const label of ['byKind', 'byResource']) {
+      const fromMap = isPlainObject(from.exact) ? from.exact[label] : undefined
+      const toMap = isPlainObject(to.exact) ? to.exact[label] : undefined
+      if (!isPlainObject(fromMap) && !isPlainObject(toMap)) continue
+      exact[label] = deltaKeyedMaps(fromMap, toMap, SPAN_OFFERED_FIELDS, `exact.${label}`, problems)
+    }
+  }
+  const byKind = deltaKeyedMaps(
+    from.byKind,
+    to.byKind,
+    SPAN_DELTA_AGGREGATE_FIELDS,
+    'byKind',
+    problems
+  )
+  const byResource = deltaKeyedMaps(
+    from.byResource,
+    to.byResource,
+    SPAN_DELTA_AGGREGATE_FIELDS,
+    'byResource',
+    problems
+  )
+  let byChat
+  if (sampleByChatTruncated(fromSample) || sampleByChatTruncated(toSample)) {
+    byChat = { unsupported: 'transport_attribution_truncated' }
+  } else {
+    byChat = {}
+    const fromChats = isPlainObject(from.byChat) ? from.byChat : {}
+    const toChats = isPlainObject(to.byChat) ? to.byChat : {}
+    for (const chatId of new Set([...Object.keys(fromChats), ...Object.keys(toChats)])) {
+      const kinds = deltaKeyedMaps(
+        fromChats[chatId],
+        toChats[chatId],
+        SPAN_DELTA_CHAT_FIELDS,
+        `byChat.${chatId}`,
+        problems
+      )
+      if (Object.keys(kinds).length > 0) byChat[chatId] = kinds
+    }
+  }
+  if (problems.length > 0) {
+    return { unsupported: `window_delta_non_monotonic: ${problems[0]}` }
+  }
+  return {
+    basis: HOST_WINDOW_DELTA_BASIS,
+    from: { sequence: fromSample.sequence, capturedAt: fromSample.capturedAt },
+    to: { sequence: toSample.sequence, capturedAt: toSample.capturedAt },
+    counters,
+    exact,
+    byKind,
+    byResource,
+    byChat,
+    percentiles: 'excluded_not_subtractable'
+  }
+}
+
+function aggregateWindowLag(inWindow) {
+  const captures = []
+  let unobservedCount = 0
+  const intervals = new Set()
+  for (const entry of inWindow) {
+    const lag = entry.sample.eventLoopLag
+    if (!isPlainObject(lag) || typeof lag.unsupported === 'string') {
+      unobservedCount += 1
+      continue
+    }
+    if (isFiniteNumber(lag.configuredIntervalMs)) intervals.add(lag.configuredIntervalMs)
+    captures.push({
+      capturedAt: entry.sample.capturedAt,
+      observedForMs: lag.observedForMs,
+      p50Ms: lag.p50Ms,
+      p95Ms: lag.p95Ms,
+      p99Ms: lag.p99Ms,
+      maxMs: lag.maxMs,
+      meanMs: lag.meanMs
+    })
+  }
+  return {
+    basis: HOST_WINDOW_LAG_BASIS,
+    sampleCount: captures.length,
+    unobservedCount,
+    observedForMs: captures.reduce((sum, capture) => sum + capture.observedForMs, 0),
+    windowBasis: HOST_LAG_WINDOW_BASIS,
+    configuredIntervalMs: intervals.size === 1 ? [...intervals][0] : null,
+    maxAcrossMs: captures.length > 0 ? Math.max(...captures.map((capture) => capture.maxMs)) : null,
+    p95AcrossMs:
+      captures.length > 0 ? nearestRank95(captures.map((capture) => capture.p95Ms)) : null,
+    acrossBasis: {
+      maxAcrossMs: 'max_of_per_capture_maxMs',
+      p95AcrossMs: 'nearest_rank_p95_of_per_capture_p95Ms'
+    },
+    captures
+  }
+}
+
+/**
+ * Bucket accepted Host snapshot reads (readHostPerfSnapshotFile results, in
+ * acceptance order with strictly increasing sequence) into observed replay
+ * windows. Returns { ok: true, evidence } or { ok: false, reason }.
+ */
+function aggregateHostWindowSamples(options) {
+  if (!isPlainObject(options)) return { ok: false, reason: 'options required' }
+  const { samples, windows } = options
+  if (!Array.isArray(samples)) return { ok: false, reason: 'samples must be an array' }
+  if (!Array.isArray(windows)) return { ok: false, reason: 'windows must be an array' }
+  const normalized = []
+  for (const [index, sample] of samples.entries()) {
+    if (!isPlainObject(sample)) return { ok: false, reason: `samples[${index}] must be an object` }
+    if (!Number.isSafeInteger(sample.sequence) || sample.sequence <= 0) {
+      return { ok: false, reason: `samples[${index}].sequence must be a positive safe integer` }
+    }
+    if (index > 0 && sample.sequence <= normalized[index - 1].sample.sequence) {
+      return { ok: false, reason: `samples[${index}].sequence is not strictly increasing` }
+    }
+    const capturedAtMs = typeof sample.capturedAt === 'string' ? Date.parse(sample.capturedAt) : NaN
+    if (!Number.isFinite(capturedAtMs)) {
+      return { ok: false, reason: `samples[${index}].capturedAt must be an ISO timestamp` }
+    }
+    if (!isPlainObject(sample.workSpans)) {
+      return { ok: false, reason: `samples[${index}].workSpans must be an object` }
+    }
+    normalized.push({ sample, capturedAtMs })
+  }
+  const evidenceWindows = []
+  for (const [index, window] of windows.entries()) {
+    if (!isPlainObject(window)) return { ok: false, reason: `windows[${index}] must be an object` }
+    if (typeof window.role !== 'string' || window.role.length === 0) {
+      return { ok: false, reason: `windows[${index}].role must be a non-empty string` }
+    }
+    if (!Number.isSafeInteger(window.repetition) || window.repetition < 0) {
+      return { ok: false, reason: `windows[${index}].repetition must be a non-negative integer` }
+    }
+    const record = {
+      role: window.role,
+      repetition: window.repetition,
+      outcome: typeof window.outcome === 'string' ? window.outcome : null,
+      reason: typeof window.reason === 'string' ? window.reason : null,
+      startedAtMs: isFiniteNumber(window.startedAtMs) ? window.startedAtMs : null,
+      endedAtMs: isFiniteNumber(window.endedAtMs) ? window.endedAtMs : null
+    }
+    if (
+      record.startedAtMs === null ||
+      record.endedAtMs === null ||
+      record.startedAtMs >= record.endedAtMs
+    ) {
+      evidenceWindows.push({
+        ...record,
+        lag: { unsupported: 'window_bounds_unavailable' },
+        workSpans: { unsupported: 'window_bounds_unavailable' }
+      })
+      continue
+    }
+    const inWindow = normalized.filter(
+      (entry) => entry.capturedAtMs >= record.startedAtMs && entry.capturedAtMs <= record.endedAtMs
+    )
+    evidenceWindows.push({
+      ...record,
+      lag: aggregateWindowLag(inWindow),
+      workSpans:
+        inWindow.length >= 2
+          ? deltaWindowWorkSpans(inWindow[0].sample, inWindow[inWindow.length - 1].sample)
+          : {
+              unsupported: 'window_delta_requires_two_in_window_samples',
+              inWindowSampleCount: inWindow.length
+            }
+    })
+  }
+  return {
+    ok: true,
+    evidence: {
+      schemaVersion: HOST_WINDOW_EVIDENCE_SCHEMA_VERSION,
+      basis: {
+        lag: HOST_WINDOW_LAG_BASIS,
+        workSpans: HOST_WINDOW_DELTA_BASIS,
+        attribution:
+          'accepted Host samples bucketed by capturedAt within the lanes driver observed window bounds'
+      },
+      windows: evidenceWindows
+    }
+  }
+}
+
+const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
+
+/** Reader freshness bound: outside ±this window the file is not evidence. */
+/** Inner bound for the renderer round trip; see sampleHostSpans. */
+const DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS = 30_000
+
+const DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS = 15_000
+/** Reader input bound, independent of the writer's configured output bound. */
+const DEFAULT_HOST_SNAPSHOT_MAX_BYTES = 1024 * 1024
+/**
+ * Public opaque boot epoch (additive M1 identity field): 64 lowercase hex
+ * characters, minted per Host incarnation and compared for equality only —
+ * never a timestamp, never a counter, never the auth token. A malformed
+ * epoch fails the whole file identity; an epoch the reader pin does not
+ * carry downgrades strict attribution but never legacy diagnostics.
+ */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
+function resolveHostPerfSnapshotPath(options) {
+  if (typeof options.hostPerfSnapshotPath === 'string' && options.hostPerfSnapshotPath.length > 0) {
+    return options.hostPerfSnapshotPath
+  }
+  const env = isPlainObject(options.env) ? options.env : process.env
+  const fromEnv = env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH
+  return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : null
+}
+
+/**
+ * Read one Host perf snapshot file (HostPerfSnapshotFile.ts writer format:
+ * { identity, sequence, capturedAt, truncated?, snapshot }) and validate it
+ * into a hostPerf block. Every refusal is a specific `{ unsupported }`
+ * marker — never a throw, and never a silent fall-through to the
+ * pre-transport 'host_perf_transport_unspecified', which is reserved for
+ * the genuinely unconfigured case.
+ *
+ * options: hostPerfSnapshotPath | env (defaults process.env) picks the
+ * file; expectedIdentity { instanceId?, generation?, pid?, bootEpoch? } pins
+ * which Host instance may supply diagnostics; full identity plus
+ * requiredChatIds are required for attribution availability. A pinned
+ * bootEpoch must match exactly: a mismatch, or a file without the pinned
+ * epoch, refuses the whole read as identity mismatch; an epoch the pin does
+ * not carry downgrades strict attribution to 'boot_epoch_unpinned' while
+ * legacy diagnostics stay valid. maxAgeMs bounds freshness both ways;
+ * maxBytes bounds descriptor input independently of the writer. fs must expose
+ * lstat/open/fstat/read/closeSync. Positive sequence does not prove monotonic
+ * consumption. Metadata embedded in workSpans survives existing report folds;
+ * requireHostAttribution:true on the fold refuses missing/censored evidence.
+ */
+function readBoundedHostSnapshot(path, options) {
+  const nodeFs = require('node:fs')
+  const fs = options.fs === undefined ? nodeFs : options.fs
+  const maxBytes =
+    options.maxBytes === undefined ? DEFAULT_HOST_SNAPSHOT_MAX_BYTES : options.maxBytes
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    return { unsupported: 'host_perf_snapshot_invalid: maxBytes' }
+  }
+  const methods = ['lstatSync', 'openSync', 'fstatSync', 'readSync', 'closeSync']
+  if (!isPlainObject(fs) || methods.some((name) => typeof fs[name] !== 'function')) {
+    return { unsupported: 'host_perf_snapshot_unreadable: fs_contract' }
+  }
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino
+  let fd
+  try {
+    const named = fs.lstatSync(path)
+    if (!named.isFile()) return { unsupported: 'host_perf_snapshot_nonregular' }
+    const flags =
+      nodeFs.constants.O_RDONLY |
+      (nodeFs.constants.O_NONBLOCK || 0) |
+      (nodeFs.constants.O_NOFOLLOW || 0)
+    fd = fs.openSync(path, flags)
+    const before = fs.fstatSync(fd)
+    if (!before.isFile()) return { unsupported: 'host_perf_snapshot_nonregular' }
+    if (!sameFile(named, before)) return { unsupported: 'host_perf_snapshot_replaced' }
+    if (!Number.isSafeInteger(before.size) || before.size < 0)
+      return { unsupported: 'host_perf_snapshot_unreadable: size' }
+    if (before.size > maxBytes) return { unsupported: 'host_perf_snapshot_oversized' }
+    // A small fixed buffer, never a file-size or caller-cap allocation. Read at
+    // most cap+1 bytes so growth after fstat cannot bypass the input bound.
+    const buffer = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1))
+    const chunks = []
+    let total = 0
+    while (total <= maxBytes) {
+      const length = Math.min(buffer.length, maxBytes + 1 - total)
+      const count = fs.readSync(fd, buffer, 0, length, total)
+      if (!Number.isSafeInteger(count) || count < 0 || count > length) {
+        return { unsupported: 'host_perf_snapshot_unreadable: read_count' }
+      }
+      if (count === 0) break
+      total += count
+      if (total > maxBytes) return { unsupported: 'host_perf_snapshot_oversized' }
+      chunks.push(Buffer.from(buffer.subarray(0, count)))
+    }
+    const after = fs.fstatSync(fd)
+    const current = fs.lstatSync(path)
+    if (!current.isFile() || !sameFile(before, current) || !sameFile(before, after)) {
+      return { unsupported: 'host_perf_snapshot_replaced' }
+    }
+    if (after.size > maxBytes || current.size > maxBytes)
+      return { unsupported: 'host_perf_snapshot_oversized' }
+    if (after.size > before.size || current.size > before.size)
+      return { unsupported: 'host_perf_snapshot_changed: grew' }
+    if (after.size < before.size || current.size < before.size)
+      return { unsupported: 'host_perf_snapshot_changed: shrunk' }
+    if (
+      total !== before.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      before.mtimeMs !== current.mtimeMs ||
+      before.ctimeMs !== current.ctimeMs
+    ) {
+      return { unsupported: 'host_perf_snapshot_changed: modified_or_short_read' }
+    }
+    return { raw: Buffer.concat(chunks, total).toString('utf8'), bytesRead: total, maxBytes }
+  } catch (error) {
+    const code = error && typeof error.code === 'string' ? error.code : 'io_error'
+    return {
+      unsupported:
+        code === 'ELOOP'
+          ? 'host_perf_snapshot_nonregular'
+          : 'host_perf_snapshot_unreadable: ' + code
+    }
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        /* Failure remains diagnostic-only. */
+      }
+    }
+  }
+}
+
+function readHostPerfSnapshotFile(options = {}) {
+  const path = resolveHostPerfSnapshotPath(options)
+  if (path === null) return { unsupported: HOST_PERF_UNSPECIFIED }
+  const bounded = readBoundedHostSnapshot(path, options)
+  if (bounded.unsupported) return bounded
+  let payload
+  try {
+    payload = JSON.parse(bounded.raw)
+  } catch {
+    return { unsupported: 'host_perf_snapshot_invalid: parse_error' }
+  }
+  if (!isPlainObject(payload)) return { unsupported: 'host_perf_snapshot_invalid: payload_shape' }
+  const identity = payload.identity
+  if (!hostIdentityValid(identity)) return { unsupported: 'host_perf_snapshot_invalid: identity' }
+  const expected = isPlainObject(options.expectedIdentity)
+    ? Object.fromEntries(
+        ['instanceId', 'generation', 'pid', 'bootEpoch']
+          .filter((key) => options.expectedIdentity[key] !== undefined)
+          .map((key) => [key, options.expectedIdentity[key]])
+      )
+    : null
+  if (expected && Object.keys(expected).some((key) => expected[key] !== identity[key])) {
+    return { unsupported: 'host_perf_snapshot_identity_mismatch' }
+  }
+  if (!Number.isSafeInteger(payload.sequence) || payload.sequence <= 0) {
+    return { unsupported: 'host_perf_snapshot_invalid: sequence' }
+  }
+  const capturedAtMs = typeof payload.capturedAt === 'string' ? Date.parse(payload.capturedAt) : NaN
+  if (!Number.isFinite(capturedAtMs))
+    return { unsupported: 'host_perf_snapshot_invalid: capturedAt' }
+  let readAt
+  let readAtMs
+  try {
+    const now = (typeof options.now === 'function' ? options.now : () => new Date())()
+    readAtMs = now.getTime()
+    readAt = now.toISOString()
+    if (!Number.isFinite(readAtMs) || Date.parse(readAt) !== readAtMs)
+      throw new Error('invalid clock')
+  } catch {
+    return { unsupported: 'host_perf_snapshot_clock_unavailable' }
+  }
+  const maxAgeMs =
+    isFiniteNumber(options.maxAgeMs) && options.maxAgeMs > 0
+      ? options.maxAgeMs
+      : DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS
+  const ageMs = readAtMs - capturedAtMs
+  if (Math.abs(ageMs) > maxAgeMs) return { unsupported: 'host_perf_snapshot_stale' }
+  const snapshot = payload.snapshot
+  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
+    return { unsupported: 'host_perf_snapshot_invalid: snapshot_shape' }
+  }
+  const checked = normalizeWorkSpanSection(snapshot.sections.workSpans, 'host')
+  if (!checked.ok) return { unsupported: 'host_perf_snapshot_invalid: ' + checked.reason }
+  if (payload.truncated !== undefined && typeof payload.truncated !== 'boolean') {
+    return { unsupported: 'host_perf_snapshot_invalid: truncated' }
+  }
+  const truncation = payload.truncation ?? null
+  if (
+    truncation !== null &&
+    (!payload.truncated ||
+      !isPlainObject(truncation) ||
+      typeof truncation.extraSections !== 'boolean' ||
+      typeof truncation.byChat !== 'boolean')
+  ) {
+    return { unsupported: 'host_perf_snapshot_invalid: truncation' }
+  }
+  const requiredChatIds = options.requiredChatIds === undefined ? [] : options.requiredChatIds
+  if (
+    !Array.isArray(requiredChatIds) ||
+    requiredChatIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(requiredChatIds).size !== requiredChatIds.length
+  ) {
+    return { unsupported: 'host_perf_snapshot_invalid: requiredChatIds' }
+  }
+  const eventLoopLag = normalizeHostLag(snapshot.eventLoopLag, { requireIntervalMetadata: true })
+  const meta = {
+    schemaVersion: 1,
+    identity: {
+      process: 'host',
+      instanceId: identity.instanceId,
+      generation: identity.generation,
+      pid: identity.pid,
+      ...(identity.bootEpoch === undefined ? {} : { bootEpoch: identity.bootEpoch })
+    },
+    expectedIdentity: expected,
+    identityVerified: identityStrictlyPinned(identity, expected),
+    sequence: payload.sequence,
+    // Positivity is shape validation; this stateless reader does NOT enforce
+    // ordered consumption, deduplication, or restart monotonicity.
+    sequenceMonotonicity: 'not_checked',
+    capturedAt: payload.capturedAt,
+    readAt,
+    ageMs,
+    maxAgeMs,
+    bytesRead: bounded.bytesRead,
+    maxBytes: bounded.maxBytes,
+    truncated: payload.truncated === true,
+    truncation,
+    eventLoopLag
+  }
+  meta.attribution = attributionCoverage(checked.section, meta, [...requiredChatIds].sort())
+  const section = { ...checked.section, hostSnapshot: meta }
+  const validated = normalizeWorkSpanSection(section, 'host')
+  if (!validated.ok) return { unsupported: 'host_perf_snapshot_invalid: ' + validated.reason }
+  return {
+    identity: { ...meta.identity },
+    sequence: meta.sequence,
+    capturedAt: meta.capturedAt,
+    ...(meta.truncated ? { truncated: true } : {}),
+    ...(truncation ? { truncation: { ...truncation } } : {}),
+    eventLoopLag: JSON.parse(JSON.stringify(eventLoopLag)),
+    workSpans: JSON.parse(JSON.stringify(section))
+  }
+}
+
+/**
+ * Normalize the main snapshot independently of its polling transport. The
+ * snapshot's `host` field is OS load, not Node Host perf, and is never used as
+ * a substitute for the unavailable Host snapshot transport.
+ */
+function normalizeHostSpanSnapshot(snapshot, hostPerf = { unsupported: HOST_PERF_UNSPECIFIED }) {
+  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.sections)) {
+    return { workSpans: { unsupported: 'main_perf_snapshot_unavailable' }, hostPerf }
+  }
+  const section = snapshot.sections.workSpans
+  if (section === undefined || section === null) {
+    return { workSpans: { unsupported: 'main_work_spans_section_unavailable' }, hostPerf }
+  }
+  const checked = normalizeWorkSpanSection(section, 'main')
+  if (!checked.ok) {
+    return { workSpans: { unsupported: 'main_work_spans_invalid: ' + checked.reason }, hostPerf }
+  }
+  return { workSpans: JSON.parse(JSON.stringify(checked.section)), hostPerf }
+}
+
+/**
+ * Same injected Runtime.evaluate/post seam and return-by-value extraction as
+ * mainPersistenceStatsCollector. This sampler uses a renderer CDP session:
+ * the existing preload getMainPerfSnapshot IPC supplies the main snapshot.
+ * No new global handle, launch or inspector attachment is created here.
+ */
+async function sampleHostSpans(session, options = {}) {
+  // Resolved once per sample: the Host file transport is independent of the
+  // renderer session, so a Host read outcome (fresh, stale, mismatched)
+  // rides along even when main sampling itself is unsupported.
+  const hostPerf = readHostPerfSnapshotFile(options)
+  const unsupported = (reason) => ({
+    workSpans: { unsupported: reason },
+    hostPerf
+  })
+  if (!session || typeof session.post !== 'function') {
+    return unsupported('renderer_runtime_session_required')
+  }
+  const expression = `(async () => {
+    if (!globalThis.api || typeof globalThis.api.getMainPerfSnapshot !== 'function') return null
+    return await globalThis.api.getMainPerfSnapshot({ resetLagWindow: false })
+  })()`
+  // Bounded, and NOT optional. awaitPromise:true means the CDP reply waits on
+  // the renderer's promise, and the websocket transport only rejects an
+  // outstanding request when the socket closes — so a renderer that never
+  // resolves would hang this sample forever. This call sat unreachable behind a
+  // verb mismatch until the renderer wrapper gained post(); bounding it is part
+  // of the same change, because bounding one await elsewhere is exactly how the
+  // capture phase kept relocating its hang instead of losing it.
+  const evaluateTimeoutMs = isFiniteNumber(options.evaluateTimeoutMs)
+    ? options.evaluateTimeoutMs
+    : DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS
+  let result
+  try {
+    result = await Promise.resolve(
+      session.post(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: true },
+        { timeoutMs: evaluateTimeoutMs }
+      )
+    )
+  } catch (error) {
+    return unsupported('main_perf_snapshot_evaluation_failed: ' + String(error))
+  }
+  if (isPlainObject(result) && result.exceptionDetails) {
+    return unsupported('main_perf_snapshot_evaluation_exception')
+  }
+  const value =
+    isPlainObject(result) && isPlainObject(result.result) ? result.result.value : undefined
+  return normalizeHostSpanSnapshot(value, hostPerf)
+}
+
+module.exports = {
+  DEFAULT_MAIN_SNAPSHOT_EVALUATE_TIMEOUT_MS,
+  DEFAULT_HOST_SNAPSHOT_MAX_AGE_MS,
+  DEFAULT_HOST_SNAPSHOT_MAX_BYTES,
+  WORK_SPAN_PROCESSES,
+  WORK_SPAN_KINDS,
+  WORK_SPAN_RESOURCES,
+  SPAN_AGGREGATE_FIELDS,
+  SPAN_AGGREGATE_OPTIONAL_FIELDS,
+  SPAN_CHAT_AGGREGATE_FIELDS,
+  SPAN_CHAT_AGGREGATE_OPTIONAL_FIELDS,
+  SPAN_OFFERED_FIELDS,
+  SPAN_COUNTER_FIELDS,
+  SPAN_COUNTER_OPTIONAL_FIELDS,
+  CROSS_THREAD_SCHEMA_VERSION,
+  HOST_WINDOW_EVIDENCE_SCHEMA_VERSION,
+  HOST_WINDOW_LAG_BASIS,
+  HOST_WINDOW_DELTA_BASIS,
+  normalizeWorkSpanSection,
+  validateCrossThreadBlock,
+  sampleWorkSpanSections,
+  applyCrossThreadToMetrics,
+  aggregateHostWindowSamples,
+  normalizeHostSpanSnapshot,
+  readHostPerfSnapshotFile,
+  sampleHostSpans
+}

@@ -23,8 +23,42 @@
 // are waiting on wakeups and may legitimately outlive a process session.
 
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
-import { buildStaleRunSettlementNotice } from './RunFailureNotice'
+import {
+  STALE_RUN_SETTLEMENT_ORIGIN,
+  STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+  buildStaleRunSettlementNotice
+} from './RunFailureNotice'
 import type { StaleRunSettlementEntry } from './RunFailureNotice'
+import { isActiveChatRunStatus } from '../shared/chatRunStatus'
+
+export { isActiveChatRunStatus }
+
+/**
+ * Whether a persisted run is worth reconciling at all.
+ *
+ * Exported because the answer has to be identical in two places: this
+ * reconciler's own per-run loop, and the store's candidate index that decides
+ * which chats the sweep even reads. A copy that drifted would not fail loudly
+ * -- it would silently stop reconciling some class of stuck run -- so there is
+ * exactly one definition.
+ */
+export function chatRunIsReconcilable(run: Pick<ChatRun, 'status' | 'endedAt'>): boolean {
+  if (isActiveChatRunStatus(run.status)) return true
+  // Older desktop runs could be persisted before their renderer-side status
+  // was seeded. Treat only an unended missing-status row as a reconciliation
+  // candidate; an ended legacy row is historical data, not evidence of live
+  // work.
+  return run.status === undefined && !run.endedAt
+}
+
+/** Whether any of a record's runs is worth reconciling. */
+export function chatHasReconcilableRun(chat: { runs?: readonly ChatRun[] }): boolean {
+  const runs = Array.isArray(chat.runs) ? chat.runs : []
+  return runs.some(
+    (run) =>
+      run && typeof run.runId === 'string' && run.runId.trim() !== '' && chatRunIsReconcilable(run)
+  )
+}
 
 /** Terminal status stamped onto a ChatRun settled by this reconciler. */
 export const CHAT_RUN_STALE_SETTLEMENT_STATUS = 'failed' as const
@@ -38,25 +72,6 @@ export const CHAT_RUN_STALE_EXIT_CODE = 1
  */
 export const CHAT_RUN_STALE_REASON =
   'Interrupted with no live RunManager session, bridge transcript, background sub-thread transcript, or non-terminal run-queue job.'
-
-/**
- * ChatRun statuses that project as "still active" on remote/task surfaces.
- * Mirrors `isActiveSubThreadRunStatus` plus `steer_promoting` / `cancelling`
- * so the universal reconciler is a strict superset of the sub-thread path.
- */
-const ACTIVE_CHAT_RUN_STATUSES = new Set([
-  'running',
-  'queued',
-  'starting',
-  'cancelling',
-  'steer_promoting',
-  'active',
-  'paused'
-])
-
-export function isActiveChatRunStatus(status: unknown): boolean {
-  return typeof status === 'string' && ACTIVE_CHAT_RUN_STATUSES.has(status)
-}
 
 export interface StaleChatRunSettlement {
   chatId: string
@@ -96,11 +111,24 @@ export interface ReconcileStaleChatRunsOptions {
 }
 
 export function settleStaleChatRun(run: ChatRun, nowIso: string): ChatRun {
+  // `== null` mirrors the `??` fills below exactly (both fire on null and
+  // undefined), so the authored flags can never disagree with the seal.
+  const authoredEndedAt = run.endedAt == null
+  const authoredExitCode = run.exitCode == null
   return {
     ...run,
     status: CHAT_RUN_STALE_SETTLEMENT_STATUS,
     endedAt: run.endedAt ?? nowIso,
-    exitCode: run.exitCode ?? CHAT_RUN_STALE_EXIT_CODE
+    exitCode: run.exitCode ?? CHAT_RUN_STALE_EXIT_CODE,
+    staleSettlementProvenance: {
+      schemaVersion: STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+      origin: STALE_RUN_SETTLEMENT_ORIGIN,
+      runId: run.runId,
+      settledAt: nowIso,
+      previousStatus: String(run.status),
+      authoredEndedAt,
+      authoredExitCode
+    }
   }
 }
 
@@ -312,12 +340,7 @@ export function reconcileStaleChatRuns(
     const settled: StaleRunSettlementEntry[] = []
     const nextRuns = runs.map((run) => {
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
-      // Older desktop runs could be persisted before their renderer-side
-      // status was seeded. Treat only an unended missing-status row as a
-      // reconciliation candidate; an ended legacy row is historical data,
-      // not evidence of live work.
-      const isLegacyUnsealedRun = run.status === undefined && !run.endedAt
-      if (!isActiveChatRunStatus(run.status) && !isLegacyUnsealedRun) return run
+      if (!chatRunIsReconcilable(run)) return run
       if (isRunLive(run.runId)) return run
 
       const terminalSeal = terminalChatRunSealFromExactSession(
@@ -437,9 +460,41 @@ export function queueJobStatusForTerminalRunStatus(
   return 'failed'
 }
 
+export interface ReconcileOrphanedRunQueueJobsOptions {
+  /**
+   * EXACT live-ownership witness for a run id, consulted immediately before a
+   * job would be settled. Return true only while a real owner still holds the
+   * run — an active RunManager session, or an Ensemble participant run that is
+   * seeded and not yet terminal-finalized.
+   *
+   * This exists because a terminal-looking ChatRun is not proof the work
+   * stopped. A run is seeded and persisted `running` before its lengthy async
+   * preparation, and RunManager ownership begins only later; a sweep during
+   * that gap can settle the ChatRun to 'failed' while the provider is still
+   * legitimately preparing. The next sweep would then read that false seal as
+   * authoritative and settle the queue job too, turning one bookkeeping error
+   * into a cascade. Live ownership therefore OUTRANKS a terminal-looking
+   * ChatRun here, whatever that seal says.
+   *
+   * Two rules for whoever supplies this:
+   *
+   * 1. NEVER answer from the run-queue job itself. The job is the thing being
+   *    reconciled, so using it as its own witness makes a stranded job
+   *    immortal — precisely the wedge this reconciler exists to clear.
+   * 2. Answer from IN-MEMORY owners only. They vanish on restart, so startup
+   *    recovery still settles a genuine orphan exactly once; a durable witness
+   *    would survive the crash that orphaned the job and never release it.
+   *
+   * Omitted, behaviour is unchanged: every caller that predates this option
+   * keeps settling purely on the ChatRun seal.
+   */
+  isRunLive?: (runId: string) => boolean
+}
+
 export function reconcileOrphanedRunQueueJobs(
   jobs: ReadonlyArray<OrphanedRunQueueJobLike>,
-  terminalRunStatusById: ReadonlyMap<string, string>
+  terminalRunStatusById: ReadonlyMap<string, string>,
+  options: ReconcileOrphanedRunQueueJobsOptions = {}
 ): OrphanedRunQueueJobSettlement[] {
   const settlements: OrphanedRunQueueJobSettlement[] = []
   for (const job of jobs) {
@@ -450,6 +505,10 @@ export function reconcileOrphanedRunQueueJobs(
     // already `active`; accepting that row as a terminal seal false-fails the
     // job underneath a provider turn that is still making progress.
     if (!runStatus || isActiveChatRunStatus(runStatus)) continue
+    // Asked last, and only for a job that would otherwise settle now: the
+    // witness can be a live map lookup, and a job that is not a settlement
+    // candidate needs no owner check at all.
+    if (options.isRunLive?.(job.runId)) continue
     settlements.push({
       runId: job.runId,
       ...(job.chatId ? { chatId: job.chatId } : {}),

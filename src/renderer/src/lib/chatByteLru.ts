@@ -1,5 +1,12 @@
 import type { ChatListItem, ChatMessage, ChatRecord, ChatRun } from '../../../main/store/types'
+import { estimateJsonishBytes } from '../../../shared/transcriptPage'
 import { isChatSummaryRecord } from './chatRecordMerge'
+import { projectThreadRunWallMs } from '../../../shared/threadRunWallTime'
+
+// Stage 2 dedup: the jsonish byte walker lives once in `src/shared` so the
+// renderer LRU, the renderer presentation windows, and main-produced
+// transcript pages all agree on byte counts.
+export { estimateJsonishBytes }
 
 /**
  * T7b — byte-weighted LRU for renderer-hydrated full chats.
@@ -22,27 +29,50 @@ const PIN_REASONS: readonly ChatPinReason[] = [
   'manual'
 ]
 
-export function estimateJsonishBytes(value: unknown): number {
-  if (value == null) return 0
-  if (typeof value === 'string') return value.length * 2
-  if (typeof value === 'number' || typeof value === 'boolean') return 8
-  if (Array.isArray(value)) {
-    let total = 16
-    for (const entry of value) total += estimateJsonishBytes(entry)
-    return total
-  }
-  if (typeof value === 'object') {
-    let total = 16
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      total += key.length * 2 + estimateJsonishBytes(entry)
-    }
-    return total
-  }
-  return 0
-}
+/**
+ * Per-message byte sizes, memoised on OBJECT IDENTITY.
+ *
+ * `estimateJsonishBytes` is a full recursive walk of every key and every string
+ * of a message, and the renderer calls it over a WHOLE window — not just the
+ * arriving rows — every time a transcript window is bounded or a chat is
+ * weighed. At a 6,000-row window that is ~7 ms on the renderer's main thread
+ * per pushed frame, which is the one remaining O(window) term in a push lane
+ * whose entire purpose is to cost O(new rows).
+ *
+ * Identity is a sound key HERE because a renderer-held message is immutable:
+ * records arrive by structured clone, and `applyChatTranscriptOps` is
+ * replace-only — an `update` op assigns `next[index] = op.message`, a new
+ * object, so a row whose reference is unchanged cannot have changed content.
+ * A replaced row is a cache miss, which is exactly right.
+ *
+ * Do NOT lift this into `src/shared`. Main mutates a message in place
+ * (`ChatRecordMutation.ts`, the `message_content_append` op), so the same memo
+ * on that side would hand back a stale size for a row that had grown — and
+ * this value drives a memory budget, so under-reporting a row that grew from
+ * bytes to megabytes is the exact failure the budget exists to prevent.
+ *
+ * A WeakMap pins nothing: an evicted row's entry goes with the row.
+ */
+const messageByteSizes = new WeakMap<ChatMessage, number>()
 
 export function estimateChatMessageBytes(message: ChatMessage): number {
-  return estimateJsonishBytes(message)
+  // Not an object: unmeasurable and unkeyable. `estimateJsonishBytes` already
+  // answers 0 for these, and a WeakMap.set would throw.
+  if (!message || typeof message !== 'object') return 0
+  const cached = messageByteSizes.get(message)
+  if (cached !== undefined) return cached
+  const bytes = Math.max(0, estimateJsonishBytes(message))
+  messageByteSizes.set(message, bytes)
+  return bytes
+}
+
+/** Bytes of a message ARRAY, matching `estimateJsonishBytes` on the same array. */
+export function estimateChatMessagesBytes(messages: readonly ChatMessage[]): number {
+  // 16 is the array overhead `estimateJsonishBytes` charges, kept identical so
+  // a memoised total and a direct walk never disagree by a constant.
+  let total = 16
+  for (const message of messages) total += estimateChatMessageBytes(message)
+  return total
 }
 
 export function estimateChatRecordBytes(chat: ChatRecord): number {
@@ -67,14 +97,19 @@ export function demoteChatToSummary(chat: ChatRecord): ChatListItem {
   const messageCount = Array.isArray(chat.messages) ? chat.messages.length : 0
   const runCount = Array.isArray(chat.runs) ? chat.runs.length : 0
   const lastRun = runCount > 0 ? (chat.runs as ChatRun[])[runCount - 1] : undefined
-  const { messages: _messages, runs: _runs, ...chrome } = chat
+  const { messages: _messages, runs: _runs, ensemble: sourceEnsemble, ...chrome } = chat
+  const ensemble = sourceEnsemble
+    ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(sourceEnsemble)
+    : undefined
   return {
     ...chrome,
+    ...(ensemble ? { ensemble } : {}),
     messages: [],
     runs: [],
     summaryOnly: true,
     messageCount,
     runCount,
+    runWallMs: projectThreadRunWallMs(chat.runs, chat.ensemble),
     ...(lastRun ? { lastRun } : {})
   }
 }

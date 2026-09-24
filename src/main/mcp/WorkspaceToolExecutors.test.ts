@@ -12,6 +12,7 @@ import {
   executeFindFiles,
   executeGetDiagnostics,
   executeGitBlame,
+  executeGitCommit,
   executeGitCreatePr,
   executeGithubCiStatus,
   executeGitLog,
@@ -198,7 +199,7 @@ describe('executeRunTask', () => {
     }
   })
 
-  it('keeps release scripts blocked by default and allows them with an approval bypass', async () => {
+  it('runs notarize package scripts without a release-class block', async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-run-task-release-'))
     try {
       await writeFile(
@@ -215,22 +216,8 @@ describe('executeRunTask', () => {
         return commandResult('notarized build complete\n')
       })
 
-      const blocked = await executeRunTask(deps, { task: 'build:mac:notarized' }, workspace)
-      expect(blocked).toMatchObject({
-        task: 'build:mac:notarized',
-        exitCode: null,
-        error: expect.stringContaining('release-class command')
-      })
-      expect(calls).toEqual([])
-
-      const allowed = await executeRunTask(
-        deps,
-        { task: 'build:mac:notarized' },
-        workspace,
-        { allowReleaseCommand: true, approvalSource: 'approvedMcpTask' }
-      )
-
-      expect(allowed).toMatchObject({
+      const ran = await executeRunTask(deps, { task: 'build:mac:notarized' }, workspace)
+      expect(ran).toMatchObject({
         task: 'build:mac:notarized',
         command: ['npm', 'run', 'build:mac:notarized'],
         exitCode: 0
@@ -238,18 +225,163 @@ describe('executeRunTask', () => {
       expect(calls).toEqual([
         {
           command: ['npm', 'run', 'build:mac:notarized'],
-          options: {
-            timeoutMs: 600_000,
-            releaseApproval: {
-              allowReleaseCommand: true,
-              approvalSource: 'approvedMcpTask'
-            }
-          }
+          options: 600_000
         }
       ])
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
+  })
+})
+
+describe('executeGitCommit slices', () => {
+  const workspace = resolve('/tmp/taskwraith-git-commit')
+  const context = {
+    scope: 'workspace' as const,
+    cwd: workspace,
+    workspacePath: workspace,
+    assertMutationAuthorized: () => {},
+    assertMutationStillLive: () => {}
+  }
+
+  it('uses an explicit --only pathspec and ignores the shared index', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads === 1 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('[main slice-head] commit\n')
+    })
+
+    const result = await executeGitCommit(
+      deps,
+      { message: 'feat: commit one file', mode: 'pathspec', paths: ['src/a.ts'] },
+      workspace,
+      context
+    )
+
+    expect(calls.some((call) => call.command[1] === 'add')).toBe(false)
+    expect(calls.find((call) => call.command[1] === 'commit')?.command).toEqual([
+      'git',
+      'commit',
+      '--only',
+      '-m',
+      'feat: commit one file',
+      '--',
+      resolve(workspace, 'src/a.ts')
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'pathspec',
+      commit: 'slice-head',
+      paths: ['src/a.ts']
+    })
+  })
+
+  it('carries the seat lock owner into the pathspec commit so the pre-commit hook can match its claim', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads === 1 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('[main slice-head] commit\n')
+    })
+
+    // The private-index branch already hands git the owner id; the pathspec
+    // branch ran `git commit --only` with no environment at all, so the
+    // pre-commit hook could not match the seat's own runtime claim and
+    // blocked the commit (QA 2026-09-15, Muse Work 2).
+    const result = await executeGitCommit(
+      deps,
+      { message: 'feat: commit one file', mode: 'pathspec', paths: ['src/a.ts'] },
+      workspace,
+      { ...context, workspaceLockOwnerId: 'owner-seat-1' }
+    )
+
+    expect(result).toMatchObject({ ok: true, mode: 'pathspec' })
+    const commit = calls.find((call) => call.command[1] === 'commit')
+    expect(commit?.options).toMatchObject({
+      environment: { TASKWRAITH_LOCK_OWNER_ID: 'owner-seat-1' }
+    })
+  })
+
+  it('builds selected hunks in a private index and advances shared staging by that patch', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads < 3 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff' && argv.includes('--cached')) return commandResult('src/a.ts\0')
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('')
+    })
+
+    const result = await executeGitCommit(
+      deps,
+      {
+        message: 'fix: commit selected hunk',
+        mode: 'private_index',
+        paths: ['src/a.ts'],
+        patch: [
+          'diff --git a/src/a.ts b/src/a.ts',
+          'index 1111111..2222222 100644',
+          '--- a/src/a.ts',
+          '+++ b/src/a.ts',
+          '@@ -1 +1 @@',
+          '-old',
+          '+new',
+          ''
+        ].join('\n')
+      },
+      workspace,
+      context
+    )
+
+    const commitIndex = calls.findIndex(call => call.command[1] === 'commit')
+    const privateCalls = calls.slice(0, commitIndex + 1).filter((call) =>
+      ['read-tree', 'apply', 'diff', 'commit'].includes(call.command[1])
+    )
+    expect(privateCalls).not.toHaveLength(0)
+    for (const call of privateCalls) {
+      expect(call.options).toMatchObject({
+        environment: { GIT_INDEX_FILE: expect.stringContaining('taskwraith-git-commit-') }
+      })
+    }
+    expect(calls.some(call => call.command[1] === 'reset')).toBe(false)
+    const resync = calls.slice(commitIndex + 1).filter(call => call.command[1] === 'apply')
+    expect(resync).toHaveLength(2)
+    expect(resync[0].command).toContain('--check')
+    expect(resync[1].command).not.toContain('--check')
+    expect(resync.every(call => call.options === 30_000)).toBe(true)
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'private_index',
+      commit: 'slice-head',
+      paths: ['src/a.ts']
+    })
   })
 })
 
@@ -599,6 +731,13 @@ describe('executeApplyPatch envelope failure', () => {
     )
     expect(result.ok).toBe(false)
     expect(result.message).toContain('*** Begin Patch')
+    expect(result).toMatchObject({
+      repair: {
+        retryTemplate: {
+          patch: expect.stringContaining('*** Begin Patch')
+        }
+      }
+    })
     expect(commands).toHaveLength(1)
     expect(commands[0].slice(0, 3)).toEqual(['git', 'apply', '--check'])
   })
@@ -2863,5 +3002,40 @@ describe('delegate wave visibility', () => {
     const read = executeReadSubthreadResult(deps, context, { subThreadId: 'w1' }) as any
     expect(read.result).toBe('w1 findings')
     expect(read.waveId).toBe(WAVE_ID)
+  })
+})
+
+describe('executeWorkspaceSearch argument aliases', () => {
+  it('rejects conflicting query and pattern aliases before executing a search', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const deps = makeDeps(async () => commandResult(''))
+
+    await expect(
+      executeWorkspaceSearch(
+        deps,
+        { query: 'alpha', pattern: 'beta' },
+        { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+        workspace
+      )
+    ).rejects.toThrow(/query.*pattern/i)
+  })
+
+  it('accepts pattern alone as the workspace search query', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    let commandSeen: string[] = []
+    const deps = makeDeps(async (command) => {
+      commandSeen = command as string[]
+      return commandResult('')
+    })
+
+    const result = await executeWorkspaceSearch(
+      deps,
+      { pattern: 'needle' },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      workspace
+    )
+
+    expect(result).toMatchObject({ ok: true, query: 'needle' })
+    expect(commandSeen).toContain('needle')
   })
 })

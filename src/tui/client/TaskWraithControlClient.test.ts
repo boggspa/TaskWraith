@@ -365,4 +365,77 @@ describe('TaskWraithControlClient', () => {
     expect(options.connectTimeoutMs).toBe(customConnectTimeout)
     expect(options.requestTimeoutMs).toBe(customRequestTimeout)
   })
+
+  it('sends thread.find and resolves the slim result', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const pending = client.findThreads({ query: 'persistence', limit: 3 })
+    const frame = await readLine(hostSocket)
+    expect(frame).toMatchObject({
+      type: 'request',
+      method: 'thread.find',
+      params: { query: 'persistence', limit: 3 }
+    })
+    hostSocket.write(
+      `${JSON.stringify({
+        type: 'response',
+        id: (frame as { id: string }).id,
+        ok: true,
+        result: { threads: [{ id: 'thread-1', title: 'Host persistence programme' }], total: 1 }
+      })}\n`
+    )
+    await expect(pending).resolves.toMatchObject({ total: 1 })
+  })
+
+  it('names the owning agent when given a pid, not the short-lived CLI process', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '9.9.9',
+      clientPid: 84536,
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    const connected = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect(hello.clientPid).toBe(84536)
+    expect(hello.clientPid).not.toBe(process.pid)
+    sendWelcome(socket)
+    await connected
+  })
+
+  it('advertises only the capabilities it was given, so a sender never joins the poll', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '9.9.9',
+      capabilities: ['compose'],
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    const connected = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect(hello.capabilities).toEqual(['compose'])
+    sendWelcome(socket)
+    await connected
+  })
+
+  it('reports its pid and label in the hello so the host can stamp prompts', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '0.1.0-test',
+      clientLabel: 'Claude Code',
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    const connectPromise = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect(hello).toMatchObject({
+      type: 'hello',
+      clientPid: process.pid,
+      clientLabel: 'Claude Code'
+    })
+    sendWelcome(socket)
+    await connectPromise
+  })
 })

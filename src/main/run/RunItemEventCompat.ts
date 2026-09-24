@@ -7,6 +7,7 @@ import {
   type RunItemKind
 } from '../../shared/runItemEvents'
 import { resolveToolEventName } from '../../shared/toolEventNaming'
+import { extractToolInvocationParameters } from '../../shared/toolInvocationPresentation'
 
 export interface CompatRunItemIdentity {
   chatId: string
@@ -249,10 +250,11 @@ export class RunItemEventCompatMapper {
       // dual-lane dedupe, so they must resolve identically (toolEventNaming.ts).
       const toolName = resolveToolEventName(record, 'tool')
       const itemId = this.toolItemId(identity, record, toolName, 'use')
+      const parameters = extractToolInvocationParameters(record)
       return [
         ...this.ensureItemStarted(identity, itemId, 'tool', {
           toolName,
-          data: recordField(record, 'parameters') || recordField(record, 'input')
+          data: parameters
         }),
         {
           kind: 'tool/progress',
@@ -260,7 +262,7 @@ export class RunItemEventCompatMapper {
           toolCallId: itemId,
           toolName,
           status: 'running',
-          data: recordField(record, 'parameters') || recordField(record, 'input'),
+          data: parameters,
           source: 'adapter'
         }
       ]

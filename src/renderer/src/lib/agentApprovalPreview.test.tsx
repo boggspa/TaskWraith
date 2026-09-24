@@ -1,12 +1,35 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  AgentApprovalPreview,
   formatCanvasEvalScriptForReview,
   formatToolPermissionRetryExactArgumentsForReview,
   renderAgentApprovalPreview
 } from './agentApprovalPreview'
 
 describe('agent approval preview', () => {
+  it('renders opaque approval data through the public memoized component', () => {
+    const preview: unknown = {
+      kind: 'command',
+      command: 'printf "<review this>"',
+      cwd: '/workspace',
+      riskLabels: ['workspace shell execution']
+    }
+
+    const markup = renderToStaticMarkup(<AgentApprovalPreview preview={preview} />)
+
+    expect(markup).toContain('&lt;review this&gt;')
+    expect(markup).toContain('/workspace')
+    expect(markup).toContain('workspace shell execution')
+    expect(markup).not.toContain('<review this>')
+  })
+
+  it('keeps non-object approval payloads out of the public preview', () => {
+    for (const preview of [null, undefined, 42, 'unstructured provider payload']) {
+      expect(renderToStaticMarkup(<AgentApprovalPreview preview={preview} />)).toBe('')
+    }
+  })
+
   it('renders shell risk labels and env deltas', () => {
     const markup = renderToStaticMarkup(
       renderAgentApprovalPreview({

@@ -1,4 +1,6 @@
 import type { ChatListItem, ChatRecord } from '../../../main/store/types'
+import { isTranscriptPagedShell } from '../../../shared/transcriptPage'
+import { mergeCatalogueDisplay } from '../../../shared/threadCatalogueMerge'
 
 export function isChatSummaryRecord(
   chat: ChatRecord | null | undefined
@@ -10,7 +12,14 @@ export function mergeChatRecordValue(
   existing: ChatRecord | undefined,
   incoming: ChatRecord
 ): ChatRecord {
-  if (existing && isChatSummaryRecord(incoming) && !isChatSummaryRecord(existing)) {
+  // A refreshed lean list row must never clobber a hydrated record's
+  // transcript/roster — nor a paged shell's full chrome (Stage 1b).
+  if (
+    existing &&
+    isChatSummaryRecord(incoming) &&
+    (!isChatSummaryRecord(existing) || isTranscriptPagedShell(existing))
+  ) {
+    if (incoming.catalogueProjection === true) return mergeCatalogueDisplay(existing, incoming)
     const {
       summaryOnly: _summaryOnly,
       messageCount: _messageCount,

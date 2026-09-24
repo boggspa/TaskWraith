@@ -3,7 +3,7 @@
 **Platform:** Both
 
 ## What it is
-Push notifications wake a paired iPhone or iPad when it's backgrounded or locked: an approval or question waiting on you, or a run finishing (success or failure). The Mac sends a routing-only Apple Push Notification (no message content inside the push itself); the phone shows a generic alert, or — if your Mac is reachable and the device registered an encryption key — a richer banner with the run's title and a short preview, hydrated locally over the encrypted device link.
+Push notifications wake a paired iPhone or iPad when it's backgrounded or locked: an approval or question waiting on you, or a run finishing (success or failure). The Mac sends a routing-only Apple Push Notification (no message content inside the push itself); the phone shows a generic alert, or — if your Mac is reachable and the device registered an encryption key — a richer banner with the run's title and a short preview, filled in locally over the encrypted link between your devices.
 
 ## Where to find it
 Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. They only fire while the device isn't already connected and active in the app, and never while you're at the Mac (an "at desktop" check suppresses them so you don't get redundant alerts). The credentials that enable them live in **Settings → Integrations → Devices**, under **Bridge networking → Apple Push Notifications (APNs)**.

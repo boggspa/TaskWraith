@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { UsageRecord } from '../store/types'
+import type { MuseSubscriptionUsageReading } from '../muse/MuseSubscriptionUsage'
+import type { UsageWebSessionReading } from '../../shared/usageWebSession'
 import {
   createTaskWraithQuotaSnapshotHook,
   parseDeepSeekBalanceResponse
@@ -251,6 +253,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => true,
       getMuseMonthlySpendCapUsd: () => 15,
       fetchImpl,
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -291,7 +294,9 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         provider: 'meta',
         planType: 'Muse local estimate',
         windows: []
-      })
+      }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
     ])
     expect(JSON.stringify(snapshots)).not.toContain('ds-secret')
     expect(JSON.stringify(snapshots)).not.toContain('cerebras-secret')
@@ -308,13 +313,16 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl,
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
     await expect(read()).resolves.toEqual([
       expect.objectContaining({ provider: 'deepseek', configured: false, windows: [] }),
       expect.objectContaining({ provider: 'cerebras', configured: false, windows: [] }),
-      expect.objectContaining({ provider: 'meta', configured: false, windows: [] })
+      expect.objectContaining({ provider: 'meta', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
     ])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -394,6 +402,399 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         balances: expect.arrayContaining([
           expect.objectContaining({ label: 'Remaining balance', amount: 10.55, unit: 'GBP' })
         ])
+      })
+    )
+  })
+
+  it('projects imported Meta/Cerebras billing and Qwen/MiMo token-plan readings', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const readUsageWebSession = vi.fn(async (provider: string) => {
+      if (provider === 'meta') {
+        return { balance: 15, spend: 0, currency: 'GBP', capturedAt }
+      }
+      if (provider === 'cerebras') {
+        return { balance: 11.56, spend: 0, currency: 'USD', capturedAt }
+      }
+      if (provider === 'qwen') {
+        return { quotaUsedPercent: 0, capturedAt }
+      }
+      if (provider === 'mimo') {
+        return {
+          quotaUsedPercent: 0,
+          planName: 'Lite Monthly Plan',
+          resetAt: '2026-09-25T23:59:59.000Z',
+          capturedAt
+        }
+      }
+      return null
+    })
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        cerebras: { purchasedCredits: 11.56, currentBalance: 5, currency: 'USD' },
+        meta: { preloadCredits: 15, remainingBalance: 5, currency: 'GBP' }
+      }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession,
+      readDevinPlanInfoRows: async () => [],
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    expect(readUsageWebSession).toHaveBeenCalledTimes(5)
+    expect(snapshots).toEqual([
+      expect.objectContaining({ provider: 'deepseek', configured: false }),
+      expect.objectContaining({
+        provider: 'cerebras',
+        fetchedAt: capturedAt,
+        windows: [
+          expect.objectContaining({ label: 'Credit used', valueText: '$0.00', usedPercent: 0 })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Current balance', amount: 11.56 })
+        ])
+      }),
+      expect.objectContaining({
+        provider: 'meta',
+        fetchedAt: capturedAt,
+        windows: [
+          expect.objectContaining({ label: 'Credit used', valueText: '£0.00', usedPercent: 0 })
+        ],
+        balances: expect.arrayContaining([
+          expect.objectContaining({ label: 'Remaining balance', amount: 15 })
+        ])
+      }),
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] }),
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] }),
+      expect.objectContaining({
+        provider: 'mimo',
+        planType: 'Lite Monthly Plan',
+        windows: [
+          expect.objectContaining({
+            label: 'Plan Quota',
+            usedPercent: 0,
+            resetAt: '2026-09-25T23:59:59.000Z'
+          })
+        ]
+      }),
+      expect.objectContaining({
+        provider: 'qwen',
+        planType: 'Token Plan',
+        windows: [expect.objectContaining({ label: '7-Day Quota', usedPercent: 0 })]
+      })
+    ])
+  })
+
+  it('projects the imported Muse Code subscription meters as their own lane', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const readUsageWebSession = vi.fn(async (provider: string) =>
+      provider === 'muse'
+        ? {
+            currentUsedPercent: 37,
+            weeklyUsedPercent: 82,
+            planName: 'Muse Code High Usage',
+            resetAt: '2026-09-07T00:00:00.000Z',
+            capturedAt
+          }
+        : null
+    )
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession,
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    const muse = snapshots.find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: capturedAt,
+        stale: false,
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({
+            id: 'muse-subscription-current',
+            label: 'Current usage',
+            usedPercent: 37,
+            remainingPercent: 63
+          }),
+          expect.objectContaining({
+            id: 'muse-subscription-weekly',
+            label: 'Weekly limit',
+            usedPercent: 82,
+            remainingPercent: 18,
+            resetAt: '2026-09-07T00:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60
+          })
+        ]
+      })
+    )
+  })
+
+  it('omits the Muse subscription lane without an import and flags an aged reading stale', async () => {
+    const withoutImport = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async () => null),
+      now: () => NOW
+    })
+    expect((await withoutImport()).some((snapshot) => snapshot.provider === 'muse')).toBe(false)
+
+    const agedCapturedAt = new Date(NOW - 45 * 60 * 1000).toISOString()
+    const withAgedImport = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async (provider: string) =>
+        provider === 'muse' ? { weeklyUsedPercent: 5, capturedAt: agedCapturedAt } : null
+      ),
+      now: () => NOW
+    })
+    const muse = (await withAgedImport()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        stale: true,
+        planType: 'Muse Code subscription',
+        windows: [expect.objectContaining({ label: 'Weekly limit', usedPercent: 5 })]
+      })
+    )
+  })
+
+  function cliReading(
+    overrides?: Partial<MuseSubscriptionUsageReading>
+  ): MuseSubscriptionUsageReading {
+    return {
+      planName: 'Muse Code High Usage',
+      hasSubscription: true,
+      current: {
+        usedPercent: 47,
+        resetAtText: '4:18 PM',
+        resetAt: '2026-08-13T16:18:00.000Z',
+        limitWindowSeconds: null
+      },
+      weekly: {
+        usedPercent: 17,
+        resetAtText: 'Sep 7 1:00 AM',
+        resetAt: '2026-09-07T01:00:00.000Z',
+        limitWindowSeconds: 7 * 24 * 60 * 60
+      },
+      session: {
+        inputTokens: 0,
+        cachedTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        turns: 0,
+        subagents: 0
+      },
+      refreshedAt: new Date(NOW - 30_000).toISOString(),
+      ...overrides
+    }
+  }
+
+  function museHook(deps: {
+    web?: UsageWebSessionReading | null
+    cli?: MuseSubscriptionUsageReading | null
+  }) {
+    return createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async (provider: string) =>
+        provider === 'muse' ? (deps.web ?? null) : null
+      ),
+      // Pin the Devin lane off: these Muse tests assert per-lane shapes and
+      // must not depend on the host's Devin state DB.
+      readDevinPlanInfoRows: async () => [],
+      ...(deps.cli !== undefined && deps.cli !== null
+        ? { readMuseSubscriptionCli: () => deps.cli }
+        : {}),
+      now: () => NOW
+    })
+  }
+
+  it('prefers the CLI-supplied Muse subscription reading over the browser import', async () => {
+    const browserCapturedAt = new Date(NOW - 60_000).toISOString()
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        weeklyUsedPercent: 82,
+        planName: 'Browser Plan',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        capturedAt: browserCapturedAt
+      },
+      cli: cliReading()
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: new Date(NOW - 30_000).toISOString(),
+        stale: false,
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({
+            id: 'muse-subscription-current',
+            label: 'Current usage',
+            usedPercent: 47,
+            remainingPercent: 53,
+            resetAt: '2026-08-13T16:18:00.000Z',
+            limitLabel: '53% remaining · Muse CLI /usage'
+          }),
+          expect.objectContaining({
+            id: 'muse-subscription-weekly',
+            label: 'Weekly limit',
+            usedPercent: 17,
+            remainingPercent: 83,
+            resetAt: '2026-09-07T01:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60,
+            limitLabel: '83% remaining · Muse CLI /usage'
+          })
+        ]
+      })
+    )
+  })
+
+  it('projects a CLI-only Muse subscription reading with no browser import', async () => {
+    const read = museHook({ web: null, cli: cliReading() })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        configured: true,
+        fetchedAt: new Date(NOW - 30_000).toISOString(),
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({ id: 'muse-subscription-current', usedPercent: 47 }),
+          expect.objectContaining({ id: 'muse-subscription-weekly', usedPercent: 17 })
+        ]
+      })
+    )
+  })
+
+  it('keeps the browser-only Muse snapshot byte-identical without a CLI reading', async () => {
+    const capturedAt = new Date(NOW - 60_000).toISOString()
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        weeklyUsedPercent: 82,
+        planName: 'Muse Code High Usage',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        capturedAt
+      }
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse?.windows).toEqual([
+      {
+        id: 'muse-subscription-current',
+        label: 'Current usage',
+        usedPercent: 37,
+        remainingPercent: 63,
+        limitLabel: '63% remaining · imported browser session'
+      },
+      {
+        id: 'muse-subscription-weekly',
+        label: 'Weekly limit',
+        usedPercent: 82,
+        remainingPercent: 18,
+        limitLabel: '18% remaining · imported browser session',
+        resetAt: '2026-09-07T00:00:00.000Z',
+        limitWindowSeconds: 7 * 24 * 60 * 60
+      }
+    ])
+    expect(muse?.fetchedAt).toBe(capturedAt)
+  })
+
+  it('never synthesises a window duration for Current usage, even with a CLI reset', async () => {
+    const read = museHook({ web: null, cli: cliReading() })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    const current = muse?.windows.find((window) => window.id === 'muse-subscription-current')
+    const weekly = muse?.windows.find((window) => window.id === 'muse-subscription-weekly')
+    expect(current?.resetAt).toBe('2026-08-13T16:18:00.000Z')
+    expect(current).not.toHaveProperty('limitWindowSeconds')
+    expect(weekly?.limitWindowSeconds).toBe(7 * 24 * 60 * 60)
+  })
+
+  it('accepts an async CLI supplier without disturbing the snapshot', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({}),
+      getApiUsageBilling: () => ({}),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readUsageWebSession: vi.fn(async () => null),
+      readMuseSubscriptionCli: async () => cliReading(),
+      now: () => NOW
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    expect(muse).toEqual(
+      expect.objectContaining({
+        provider: 'muse',
+        planType: 'Muse Code High Usage',
+        windows: [
+          expect.objectContaining({ id: 'muse-subscription-current', usedPercent: 47 }),
+          expect.objectContaining({ id: 'muse-subscription-weekly', usedPercent: 17 })
+        ]
+      })
+    )
+  })
+
+  it('treats a 0% CLI meter as a real value, not an absent one', async () => {
+    const read = museHook({
+      web: {
+        currentUsedPercent: 37,
+        capturedAt: new Date(NOW - 60_000).toISOString()
+      },
+      cli: cliReading({
+        current: {
+          usedPercent: 0,
+          resetAtText: '4:18 PM',
+          resetAt: '2026-08-13T16:18:00.000Z',
+          limitWindowSeconds: null
+        }
+      })
+    })
+
+    const muse = (await read()).find((snapshot) => snapshot.provider === 'muse')
+    const current = muse?.windows.find((window) => window.id === 'muse-subscription-current')
+    expect(current).toEqual(
+      expect.objectContaining({
+        usedPercent: 0,
+        remainingPercent: 100,
+        limitLabel: '100% remaining · Muse CLI /usage'
       })
     )
   })
@@ -526,6 +927,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       getMuseConfigured: () => false,
       getMuseMonthlySpendCapUsd: () => undefined,
       fetchImpl: vi.fn(),
+      readDevinPlanInfoRows: async () => [],
       now: () => NOW
     })
 
@@ -536,7 +938,9 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         error: expect.stringContaining('DeepSeek key')
       }),
       expect.objectContaining({ provider: 'cerebras', configured: false }),
-      expect.objectContaining({ provider: 'meta', configured: false })
+      expect.objectContaining({ provider: 'meta', configured: false }),
+      expect.objectContaining({ provider: 'openrouter', configured: false }),
+      expect.objectContaining({ provider: 'devin', configured: false })
     ])
   })
 
@@ -600,6 +1004,7 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
         getMuseConfigured: () => false,
         getMuseMonthlySpendCapUsd: () => undefined,
         fetchImpl,
+        readDevinPlanInfoRows: async () => [],
         now: () => NOW
       })
 
@@ -607,7 +1012,9 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
       await expect(readWith(fetchImpl)()).resolves.toEqual([
         expect.objectContaining({ provider: 'deepseek', configured: true, windows: [], error }),
         expect.objectContaining({ provider: 'cerebras', configured: false }),
-        expect.objectContaining({ provider: 'meta', configured: false })
+        expect.objectContaining({ provider: 'meta', configured: false }),
+        expect.objectContaining({ provider: 'openrouter', configured: false }),
+        expect.objectContaining({ provider: 'devin', configured: false })
       ])
     }
 
@@ -672,5 +1079,297 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     expect(deepseek?.balances).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: 'Total available', amount: -0.03 })])
     )
+  })
+
+  it('rolls the configured monthly reset onto deepseek/cerebras/meta credit-used windows', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        deepseek: { totalTopUp: 10, resetAt: '2026-07-20T00:00:00.000Z' },
+        cerebras: {
+          purchasedCredits: 20,
+          currentBalance: 6.5,
+          resetAt: '2026-07-20T00:00:00.000Z'
+        },
+        meta: {
+          preloadCredits: 15,
+          remainingBalance: 14.95,
+          resetAt: '2026-07-20T00:00:00.000Z'
+        }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // 2026-07-20 rolls one whole month forward to the next occurrence
+    // strictly after NOW (2026-08-13T12:00Z): 2026-08-20.
+    for (const provider of ['deepseek', 'cerebras', 'meta'] as const) {
+      const snapshot = snapshots.find((entry) => entry.provider === provider)
+      expect(snapshot?.windows[0]).toEqual(
+        expect.objectContaining({
+          label: 'Credit used',
+          resetAt: '2026-08-20T00:00:00.000Z'
+        })
+      )
+    }
+  })
+
+  it('leaves credit-used and balance windows reset-free without a reset date', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1, EUR: 0.92, GBP: 0.79 } }),
+      getApiUsageBilling: () => ({
+        deepseek: { totalTopUp: 10 },
+        cerebras: { purchasedCredits: 20, currentBalance: 6.5 },
+        meta: { preloadCredits: 15, remainingBalance: 14.95 }
+      }),
+      getMuseConfigured: () => true,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // No synthetic default: without a configured date the windows carry no
+    // resetAt (dashes already resolve via the 'credit' label; resetAt drives
+    // pace/reset text only).
+    for (const provider of ['deepseek', 'cerebras', 'meta'] as const) {
+      const snapshot = snapshots.find((entry) => entry.provider === provider)
+      expect(snapshot?.windows[0]?.label).toBe('Credit used')
+      expect(snapshot?.windows[0]).not.toHaveProperty('resetAt')
+    }
+
+    const anchorless = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'ok', keys: { deepseek: 'ds-secret' } }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      fetchImpl: vi.fn(async () => response(deepSeekBalance())),
+      now: () => NOW
+    })
+    const [balanceOnly] = await anchorless()
+    expect(balanceOnly?.windows[0]?.label).toBe('Available balance')
+    expect(balanceOnly?.windows[0]).not.toHaveProperty('resetAt')
+  })
+
+  it('keeps OpenRouter unconfigured without a key, billing anchor, or tracked spend', async () => {
+    const readWith = (
+      overrides: Partial<Parameters<typeof createTaskWraithQuotaSnapshotHook>[0]>
+    ) =>
+      createTaskWraithQuotaSnapshotHook({
+        loadPiKeys: () => ({ status: 'missing' }),
+        getUsageRecords: () => [],
+        getProviderRates: () => providerRates,
+        getFxRates: () => ({ rates: { USD: 1 } }),
+        getApiUsageBilling: () => undefined,
+        getMuseConfigured: () => false,
+        getMuseMonthlySpendCapUsd: () => undefined,
+        readDevinPlanInfoRows: async () => [],
+        now: () => NOW,
+        ...overrides
+      })
+
+    // Nothing known: the fourth lane is a configured-false tombstone.
+    expect((await readWith({})())[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: false, windows: [] })
+    )
+
+    // A stored key alone gates the lane (no budget, so no windows yet) and
+    // the secret never crosses into the snapshot.
+    const keyed = await readWith({
+      loadPiKeys: () => ({ status: 'ok', keys: { openrouter: 'or-secret' } })
+    })()
+    expect(keyed[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: true, windows: [] })
+    )
+    expect(JSON.stringify(keyed)).not.toContain('or-secret')
+
+    // Tracked openrouter/* runs alone gate the lane the same way.
+    const spent = await readWith({
+      getUsageRecords: () => [usage({ id: 'or-usage', model: 'openrouter/z-ai/glm-5.2' })]
+    })()
+    expect(spent[3]).toEqual(
+      expect.objectContaining({ provider: 'openrouter', configured: true, windows: [] })
+    )
+  })
+
+  it('meters OpenRouter credit used against the configured monthly budget and rolled reset', async () => {
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [
+        usage({
+          id: 'or-usage',
+          model: 'openrouter/z-ai/glm-5.2',
+          timestamp: NOW - 1_000,
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })
+      ],
+      getProviderRates: () => ({
+        baseline: {
+          pi: {
+            models: [
+              ...providerRates.baseline.pi.models,
+              {
+                modelId: 'openrouter/z-ai/glm-5.2',
+                inputUsdPerMillion: 1,
+                outputUsdPerMillion: 2,
+                cachedInputUsdPerMillion: 0.1
+              }
+            ]
+          },
+          muse: providerRates.baseline.muse
+        }
+      }),
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => ({
+        openrouter: {
+          monthlyBudgetUsd: 50,
+          currency: 'USD',
+          resetAt: '2026-07-20T00:00:00.000Z'
+        }
+      }),
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      now: () => NOW
+    })
+
+    const snapshots = await read()
+    // The 1M/1M run prices to $3.00 and falls inside the approximated cycle
+    // (30 days before the rolled 2026-08-20 reset), so the config-anchored
+    // meter reads ~$3 of $50 with the rolled reset attached.
+    expect(snapshots[3]).toEqual(
+      expect.objectContaining({
+        provider: 'openrouter',
+        configured: true,
+        planType: 'API Credits',
+        windows: [
+          expect.objectContaining({
+            id: 'openrouter-credit-used',
+            label: 'Credit used',
+            valueText: '~$3.00',
+            usedPercent: expect.closeTo(6),
+            resetAt: '2026-08-20T00:00:00.000Z'
+          })
+        ]
+      })
+    )
+    expect(snapshots[3]?.windows[0]?.limitLabel).toContain('$50.00')
+  })
+
+  function devinHook(rows: string[], platform: NodeJS.Platform = 'darwin') {
+    return createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readDevinPlanInfoRows: async () => rows,
+      devinPlatform: platform,
+      now: () => NOW
+    })
+  }
+
+  function devinPlanInfoRow(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      planName: 'Core',
+      hideDailyQuota: false,
+      hideWeeklyQuota: false,
+      quotaUsage: {
+        dailyRemainingPercent: 40,
+        dailyResetAtUnix: Math.floor(Date.parse('2026-09-04T00:00:00.000Z') / 1000),
+        weeklyRemainingPercent: 80,
+        weeklyResetAtUnix: Math.floor(Date.parse('2026-09-07T01:00:00.000Z') / 1000)
+      },
+      ...overrides
+    })
+  }
+
+  it('projects Devin daily and weekly windows from injected plan-info rows', async () => {
+    const read = devinHook([devinPlanInfoRow()])
+
+    const devin = (await read()).find((snapshot) => snapshot.provider === 'devin')
+    expect(devin).toEqual(
+      expect.objectContaining({
+        provider: 'devin',
+        configured: true,
+        fetchedAt: new Date(NOW).toISOString(),
+        stale: false,
+        planType: 'Core',
+        windows: [
+          expect.objectContaining({
+            id: 'devin-daily',
+            label: 'Daily quota (Core)',
+            usedPercent: 60,
+            remainingPercent: 40,
+            resetAt: '2026-09-04T00:00:00.000Z',
+            limitWindowSeconds: 24 * 60 * 60
+          }),
+          expect.objectContaining({
+            id: 'devin-weekly',
+            label: 'Weekly quota (Core)',
+            usedPercent: 20,
+            remainingPercent: 80,
+            resetAt: '2026-09-07T01:00:00.000Z',
+            limitWindowSeconds: 7 * 24 * 60 * 60
+          })
+        ]
+      })
+    )
+  })
+
+  it('emits an unconfigured Devin lane instead of a fabricated meter', async () => {
+    // No rows: Devin not installed / never signed in.
+    const missing = (await devinHook([])()).find((snapshot) => snapshot.provider === 'devin')
+    expect(missing).toEqual(
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
+    )
+
+    // Both hide flags set: the plan has no such windows at all — still no
+    // 0% meter, and rows that carry no plan shape are skipped the same way.
+    const hidden = (
+      await devinHook([
+        devinPlanInfoRow({ hideDailyQuota: true, hideWeeklyQuota: true }),
+        JSON.stringify({ apiKey: 'devin-secret', account: 'someone' })
+      ])()
+    ).find((snapshot) => snapshot.provider === 'devin')
+    expect(hidden?.windows).toEqual([])
+    expect(hidden?.configured).toBe(false)
+    expect(JSON.stringify(hidden)).not.toContain('devin-secret')
+  })
+
+  it('keeps the Devin lane off non-macOS platforms without touching the DB', async () => {
+    const reader = vi.fn(async () => [devinPlanInfoRow()])
+    const read = createTaskWraithQuotaSnapshotHook({
+      loadPiKeys: () => ({ status: 'missing' }),
+      getUsageRecords: () => [],
+      getProviderRates: () => providerRates,
+      getFxRates: () => ({ rates: { USD: 1 } }),
+      getApiUsageBilling: () => undefined,
+      getMuseConfigured: () => false,
+      getMuseMonthlySpendCapUsd: () => undefined,
+      readDevinPlanInfoRows: reader,
+      devinPlatform: 'linux',
+      now: () => NOW
+    })
+
+    const devin = (await read()).find((snapshot) => snapshot.provider === 'devin')
+    expect(devin).toEqual(
+      expect.objectContaining({ provider: 'devin', configured: false, windows: [] })
+    )
+    expect(reader).not.toHaveBeenCalled()
   })
 })

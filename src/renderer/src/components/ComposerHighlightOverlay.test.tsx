@@ -124,18 +124,19 @@ describe('ComposerHighlightOverlay', () => {
     expect(html).not.toContain('[@Reviewer]')
   })
 
-  it('renders roster-group mentions with the neutral accent in mention-only mode', () => {
+  it('renders roster-group mentions with the OS-following accent in mention-only mode', () => {
     const html = renderToStaticMarkup(
       <ComposerHighlightOverlay
-        value="@All ask @Reviewers and @BG."
+        value="@All ask @Captains, @Management, @Reviewers and @BG."
         participants={[]}
         textareaRef={textareaRef}
         syncEpoch="test"
       />
     )
 
-    expect((html.match(/composer-mention-token--group/g) || []).length).toBe(3)
-    expect(html).toContain('--user-bubble-base')
+    expect((html.match(/composer-mention-token--group/g) || []).length).toBe(5)
+    expect(html).toContain('color:var(--accent)')
+    expect(html).not.toContain('--user-bubble-base')
     expect(html).not.toContain('--provider-')
   })
 
@@ -254,7 +255,8 @@ describe('ComposerHighlightOverlay', () => {
 
     expect(html).toContain('composer-mention-token--group composer-md-bold')
     expect(html).toContain('@Workers')
-    expect(html).toContain('--user-bubble-base')
+    expect(html).toContain('color:var(--accent)')
+    expect(html).not.toContain('--user-bubble-base')
   })
 
   it('still renders the ghost suggestion span in richText mode', () => {

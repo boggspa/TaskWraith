@@ -780,6 +780,8 @@ export class BridgeActionRouter {
         return this.executor.executeGithubPrReadiness(payload)
       case 'githubCreatePr':
         return this.executor.executeGithubCreatePr(payload)
+      case 'githubMergePr':
+        return this.executor.executeGithubMergePr(payload)
       case 'cancelRun':
         return this.executor.executeCancelRun(payload)
       case 'workflowSetEnabled':
@@ -806,6 +808,8 @@ export class BridgeActionRouter {
         return this.executor.executeEnsembleQueueItem(payload)
       case 'createSideChat':
         return this.executor.executeCreateSideChat(payload)
+      case 'createSubThread':
+        return this.executor.executeCreateSubThread(payload)
       case 'setThreadNotes':
         return this.executor.executeSetThreadNotes(payload)
       case 'setThreadTitle':
@@ -1477,6 +1481,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
       return 'fileWrite'
     case 'gitPush':
     case 'githubCreatePr':
+    case 'githubMergePr':
       return 'externalPublish'
     case 'cancelRun':
     case 'ensembleCancelRound':
@@ -1515,6 +1520,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'proposedPlanDecision':
     case 'canvasAction':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setTrustedSession':
       return 'startTurn'
     // Admin-only capabilities: these are intentionally NOT included in the
@@ -1601,7 +1607,7 @@ function actionAckDescriptorFromPayload(
   if (payload.kind === 'setWatchedThread' && payload.appChatId !== null) {
     descriptor.threadId = payload.appChatId
   }
-  if (payload.kind === 'createSideChat') {
+  if (payload.kind === 'createSideChat' || payload.kind === 'createSubThread') {
     const result = isRecord(data?.result) ? data.result : null
     if (typeof result?.threadId === 'string') {
       descriptor.threadId = result.threadId

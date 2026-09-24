@@ -19,7 +19,6 @@ public struct ModelContextLengthRow: Hashable, Sendable {
     public let modelId: String
     public let label: String
     public let contextWindow: Int
-    public let maxContextWindow: Int?
     public let formatted: String
 }
 
@@ -59,23 +58,27 @@ public enum ModelContextLengths {
         case "codex":
             return [
                 (id: "gpt-5.5",              label: "GPT-5.5"),
+                // GPT-6 Sol and Luna (2026-09-22) — mirrors the rows that
+                // ensembleProviderDefaults.ts lists between gpt-6-astra (which
+                // has no iOS row) and the 5.6 trio.
+                (id: "gpt-6-sol",            label: "GPT-6-Sol"),
+                (id: "gpt-6-luna",           label: "GPT-6-Luna"),
                 // GPT-5.6 trio — GA 2026-07-09, official hyphenated display
                 // names; mirrors ensembleProviderDefaults.ts order VERBATIM.
                 (id: "gpt-5.6-sol",          label: "GPT-5.6-Sol"),
                 (id: "gpt-5.6-terra",        label: "GPT-5.6-Terra"),
                 (id: "gpt-5.6-luna",         label: "GPT-5.6-Luna"),
-                (id: "gpt-5.4",              label: "GPT-5.4"),
-                (id: "gpt-5.4-mini",         label: "GPT-5.4 Mini"),
-                (id: "gpt-5.3-codex-spark",  label: "GPT-5.3 Codex Spark"),
             ]
         case "claude":
             return [
                 // Labels omit the "Claude " prefix and the Legacy cluster sits
                 // below the current models — VERBATIM mirror of the TS picker
                 // (StaticProviderModels.ts CLAUDE_STATIC_MODELS).
+                (id: "claude-opus-5-5",     label: "Opus 5.5"),
                 (id: "claude-opus-5",       label: "Opus 5"),
-                (id: "claude-fable-5",      label: "Fable 5"),
+                (id: "claude-fable-5-1",    label: "Fable 5.1"),
                 (id: "claude-sonnet-5",     label: "Sonnet 5"),
+                (id: "claude-fable-5",      label: "Fable 5 Legacy"),
                 (id: "claude-sonnet-4-6",   label: "Sonnet 4.6 Legacy"),
                 (id: "claude-opus-4-8-1m",  label: "Opus 4.8 1M Legacy"),
                 (id: "claude-opus-4-7-1m",  label: "Opus 4.7 1M Legacy"),
@@ -83,36 +86,65 @@ public enum ModelContextLengths {
             ]
         case "kimi":
             return [
-                (id: "kimi-k2.7-code", label: "K2.7 Coding"),
-                // K3 (2026-07-16) — Moonshot's flagship; 256K on Moderato and
-                // up to 1M on Allegretto+, with no Highspeed tier.
-                (id: "kimi-k3",        label: "K3"),
+                // K2.8 Preview (2026-09-11) replaced K2.7 on the standard
+                // `kimi-for-coding` route and took it to 1M; Highspeed stayed
+                // on K2.7 at 256K and became its own row.
+                (id: "kimi-k2.8-preview",          label: "K2.8 Preview"),
+                (id: "kimi-k2.7-code-highspeed",   label: "K2.7 Code Highspeed"),
+                // K3 (2026-07-16) — Moonshot's flagship, split into two
+                // concrete routes since d19931eb8: the 1M route (Allegretto+)
+                // and the fixed quota-efficient 256K one. Each carries its own
+                // official window, so no plan-range display remains.
+                // Labels mirror src/shared/kimiModels.ts VERBATIM.
+                (id: "kimi-k3",        label: "K3 (1M)"),
+                (id: "kimi-k3-256k",   label: "K3 (256K)"),
             ]
         case "pi":
             // BYOK seat: the flagship row per allowed upstream. Wire ids stay
             // `<upstream>/<model>` so the window lookup matches the desktop.
             return [
-                (id: "deepseek/deepseek-v4-flash",  label: "DeepSeek V4 Flash"),
-                (id: "deepseek/deepseek-v4-pro",    label: "DeepSeek V4 Pro"),
+                (id: "deepseek/deepseek-v4-flash",  label: "V4 Flash"),
+                (id: "deepseek/deepseek-v4-pro",    label: "V4 Pro"),
                 (id: "zai/glm-5.2",                 label: "GLM-5.2"),
                 (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
-                (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
+                (id: "minimax/MiniMax-M3",          label: "M3"),
+                (id: "xiaomi-token-plan-sgp/mimo-v2.6-pro", label: "MiMo V2.6 Pro (SGP)"),
                 (id: "mistral/devstral-2512",       label: "Devstral 2"),
+                (id: "openrouter/stealth/ox-alpha", label: "Ox Alpha"),
+                (id: "openrouter/z-ai/glm-5.2",      label: "GLM 5.2"),
+                (id: "openrouter/poolside/laguna-s-2.1", label: "Laguna S 2.1"),
+                (id: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra"),
+                (id: "openrouter/cohere/north-mini-code:free", label: "North Mini Code"),
+                (id: "openrouter/minimax/minimax-m3:free", label: "M3 (OpenRouter)"),
+                (id: "openrouter/thinkingmachines/inkling:free", label: "Inkling"),
+                (id: "openrouter/thinkingmachines/inkling-small:free", label: "Inkling Small"),
+                (id: "openrouter/tencent/hy4-preview", label: "Hy4 Preview"),
+                (id: "openrouter/inception/mercury-2.5-preview", label: "Mercury 2.5 Preview"),
+                (id: "openrouter/inception/mercury-2.5", label: "Mercury 2.5"),
+                (id: "openrouter/nex-agi/nex-n2.5-mini:free", label: "Nex-N2.5-Mini"),
+                (id: "openrouter/nex-agi/nex-n2.5-pro:free", label: "Nex-N2.5-Pro"),
+                (id: "openrouter/sakana/fugu-max", label: "Fugu Max"),
+                (id: "openrouter/sakana/fugu-ultra-v2", label: "Fugu Ultra v2"),
+                (id: "openrouter/unbiased/pareto", label: "Pareto"),
+                (id: "openrouter/typesafe/jev-1.13", label: "Jev 1.13"),
+                (id: "openrouter/stealth/space-bunny-alpha", label: "Space Bunny Alpha"),
             ]
         case "grok":
             return [
                 // Grok's CLI models are permanently Fast-mode. Cursor's
                 // provider-scoped Grok rows keep a separate Fast toggle.
+                // 4.7 ships as a standard/Fast pair; standard is the default.
+                (id: "grok-4.7",                label: "Grok 4.7"),
+                (id: "grok-4.7-fast",           label: "Grok 4.7 Fast"),
                 (id: "grok-4.6",                label: "Grok 4.6 Fast"),
                 (id: "grok-4.5",                label: "Grok 4.5 Fast"),
-                (id: "grok-composer-2.5-fast",  label: "Grok Composer 2.5 Fast"),
             ]
         case "cursor":
             return [
                 (id: "composer-2.5",       label: "Composer 2.5"),
                 (id: "composer-2.5-fast",  label: "Composer 2.5 Fast"),
+                // Cursor retired the Grok 4.5 family; its CLI rejects the ids.
                 (id: "grok-4.6",           label: "Cursor Grok 4.6"),
-                (id: "grok-4.5",           label: "Cursor Grok 4.5"),
             ]
         case "antigravity":
             // Gemini-api lane. The `gemini-api:` prefix is load-bearing
@@ -129,12 +161,13 @@ public enum ModelContextLengths {
         case "mistral":
             // Mistral Vibe seat. BARE ids only — a `mistral/<model>` id
             // belongs to Pi's BYOK upstream, a different provider that shares
-            // the brand word. devstral-small leads because it is the seat
-            // default. Mirrors MISTRAL_MODELS and the contextWindows
-            // registrations.
+            // the brand word. Medium 3.5 leads because it is the Vibe 2.25
+            // seat default. Context-length table stays a short subset.
             return [
-                (id: "devstral-small",      label: "Devstral Small"),
                 (id: "mistral-medium-3.5",  label: "Mistral Medium 3.5"),
+                (id: "glm-5-2",             label: "GLM-5.2 (Mistral Hosted)"),
+                (id: "glm-5-3",             label: "GLM-5.3 (Mistral Hosted)"),
+                (id: "zai-glm-5-3",         label: "GLM-5.3 (via Mistral)"),
             ]
         case "ollama":
             return [
@@ -144,10 +177,13 @@ public enum ModelContextLengths {
                 (id: "qwen3.5:9b",         label: "Qwen 3.5 (9B Param)"),
                 (id: "qwen3.6:35b",        label: "Qwen 3.6 (35B-A3B)"),
                 (id: "qwen3.8:27b-mlx",    label: "Qwen 3.8 (27B-MLX)"),
+                (id: "qwen3.8-flash-next:125b-mlx", label: "Qwen 3.8 Flash Next (125B-MLX)"),
                 (id: "gemma3:4b",          label: "Gemma 3 (4B Param)"),
                 (id: "gemma4:12b",         label: "Gemma 4 (12B Param)"),
                 (id: "ornith:9b",          label: "Ornith 1.0 (9B Param)"),
                 (id: "ornith:35b",         label: "Ornith 1.0 (35B Param)"),
+                (id: "ornith-1.5:9b",     label: "Ornith 1.5 (9B Param)"),
+                (id: "ornith-1.5:35b",     label: "Ornith 1.5 (35B Param)"),
                 (id: "laguna-xs-2.1:q8_0", label: "Laguna XS 2.1 (33B-A3B Q8)"),
                 (id: "gpt-oss:20b",        label: "GPT OSS (20B Param)"),
                 (id: "lfm2.5-thinking:1.2b", label: "LFM 2.5 Thinking (1.2B Param)"),
@@ -156,16 +192,20 @@ public enum ModelContextLengths {
                 (id: "granite4:3b",        label: "Granite 4.0 (3B Param)"),
                 (id: "granite4.1:3b",      label: "Granite 4.1 (3B Param)"),
                 (id: "granite4.1:30b",     label: "Granite 4.1 (30B Param)"),
+                (id: "granite4.2:3b",      label: "Granite 4.2 (3B Param)"),
+                (id: "granite4.2:8b",      label: "Granite 4.2 (8B Param)"),
+                (id: "granite4.2:30b",     label: "Granite 4.2 (30B Param)"),
                 (id: "nemotron-3-nano:4b", label: "Nemotron 3 Nano (4B Param)"),
                 (id: "nemotron3:33b",      label: "Nemotron 3 Nano Omni (33B Param)"),
                 (id: "nemotron-3.5-lightning:30b-mlx", label: "Nemotron 3.5 Lightning (30B-MLX)"),
                 (id: "devstral-small-2:24b", label: "Devstral Small 2 (24B Param)"),
+                (id: "mistral-medium-3.5:128b", label: "Mistral Medium 3.5 (128B Param)"),
                 (id: "ministral-3:3b",     label: "Ministral 3 (3B Param)"),
                 (id: "ministral-3:14b",    label: "Ministral 3 (14B Param)"),
                 (id: "muse-glimmer:30b-mlx", label: "Muse Glimmer (30B-MLX)"),
                 (id: "llama3.1:8b",         label: "Llama 3.1 (8B Param)"),
-                (id: "deepseek-r1:1.5b",    label: "DeepSeek R1 (1.5B Param)"),
-                (id: "deepseek-r1:8b",      label: "DeepSeek R1 (8B Param)"),
+                (id: "deepseek-r1:1.5b",    label: "R1 (1.5B Param)"),
+                (id: "deepseek-r1:8b",      label: "R1 (8B Param)"),
                 (id: "rnj-1",               label: "Rnj-1 (8B Param)"),
                 (id: "glm-4.7-flash:q4_K_M", label: "GLM-4.7-Flash (30B-A3B Q4)"),
                 (id: "north-mini-code-1.0:q4_K_M", label: "North Mini Code 1.0 (30B-A3B Q4)"),
@@ -213,16 +253,15 @@ public enum ModelContextLengths {
                 .filter { !aliasIds.contains($0.id) }
                 .map { opt in
                     let window = ContextWindows.resolve(provider: provider, model: opt.id)
-                    let maxWindow: Int? =
-                        provider == "kimi" && opt.id == "kimi-k3" ? 1_048_576 : nil
+                    let formattedWindow =
+                        provider == "kimi" && window == 262_144
+                            ? "256k"
+                            : formatContextTokens(window)
                     return ModelContextLengthRow(
                         modelId: opt.id,
                         label: opt.label,
                         contextWindow: window,
-                        maxContextWindow: maxWindow,
-                        formatted: maxWindow.map {
-                            "\(formatContextTokens(window))–\(formatContextTokens($0))"
-                        } ?? formatContextTokens(window)
+                        formatted: formattedWindow
                     )
                 }
             if !rows.isEmpty {

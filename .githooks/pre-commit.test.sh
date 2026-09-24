@@ -98,9 +98,10 @@ write_manual_marker() {
     'manual test marker' > "$repo/.WORK-IN-PROGRESS-manual-test.md"
 }
 
-# A manual claim raised by a sandboxed seat: no pid (it cannot inspect one),
-# authenticated instead by the per-seat TASKWRAITH_LOCK_OWNER_ID it already
-# carries in its environment.
+# A manual claim raised through the preferred narrow seat identity: no pid,
+# authenticated by the per-seat TASKWRAITH_LOCK_OWNER_ID already carried in
+# the environment. Stable host-PID fallback coverage lives in the ordinary
+# ancestor-owned manual-claim cases below.
 write_owner_id_marker() {
   local repo="$1" owner_id="$2" path="$3"
   printf '%s\n' \
@@ -388,13 +389,12 @@ if [[ "$hook_output" != *'has no pid'* ]]; then
 fi
 assertions=$((assertions + 1))
 
-# SANDBOXED SEATS. A TaskWraith provider seat cannot inspect its own pid, so it
-# cannot satisfy the pid lane at all — ownership there is pid ancestry and
-# liveness is `kill -0`. It does carry a per-seat opaque id in its environment
-# (TASKWRAITH_LOCK_OWNER_ID, scoped to runId+laneId+participantId), which the
-# derived lane already trusts. These pin the same identity working for a manual,
-# intent-length claim, since derived markers are lease-transient and cannot
-# express "I am working on these files for the next two hours".
+# OWNER-ID-ONLY SEATS. A TaskWraith provider seat normally carries a per-seat
+# opaque id (TASKWRAITH_LOCK_OWNER_ID, scoped to runId+laneId+participantId),
+# which the derived lane already trusts. These pin the same identity working
+# for a manual, intent-length claim. A verified stable host PID is an allowed
+# coordinated fallback and is covered by the ancestor-owned manual-claim tests;
+# transient shell/provider pids remain invalid.
 repo="$(new_repo seat-claim-foreign)"
 stage_file "$repo" src/manual.ts
 write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
@@ -507,7 +507,7 @@ if [[ "$hook_output" == *'no live claim of yours'* ]]; then
 fi
 assertions=$((assertions + 1))
 
-# THE 15-MINUTE LEASE CEILING. Nothing bounded a lease before: `expires: 2099-…`
+# THE 20-MINUTE LEASE CEILING. Nothing bounded a lease before: `expires: 2099-…`
 # held a path for 73 years, and an owner-id claim has no pid to decay it, so the
 # lease was its only decay signal and that signal was unbounded. The cap is
 # anchored to `started` — anchoring to "now" would push the expiry forward on
@@ -521,14 +521,28 @@ repo="$(new_repo lease-within-ceiling)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
 set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 5)"
-expect_block 'a claim inside its 15m ceiling still blocks' "$repo"
+expect_block 'a claim inside its 20m ceiling still blocks' "$repo"
+
+repo="$(new_repo lease-python-utc-offset)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 2 | sed 's/Z$/.123456+00:00/')"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_shift 10 | sed 's/Z$/.123456+00:00/')"
+expect_block 'Python UTC offsets and microseconds preserve a live claim' "$repo"
+
+repo="$(new_repo lease-python-utc-capped)"
+stage_file "$repo" src/manual.ts
+write_manual_marker "$repo" "$foreign_pid" src/manual.ts
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25 | sed 's/Z$/+00:00/')"
+set_marker_expires "$repo/.WORK-IN-PROGRESS-manual-test.md" '2099-07-29T00:00:00+00:00'
+expect_allow 'UTC-offset claims still decay at the 20m ceiling' "$repo"
 
 repo="$(new_repo lease-past-ceiling)"
 stage_file "$repo" src/manual.ts
 write_manual_marker "$repo" "$foreign_pid" src/manual.ts
-set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
-expect_allow 'a 2099 lease decays at 15m from started' "$repo"
-if [[ "$hook_output" != *'15m ceiling'* ]]; then
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25)"
+expect_allow 'a 2099 lease decays at 20m from started' "$repo"
+if [[ "$hook_output" != *'20m ceiling'* ]]; then
   printf 'FAIL: ceiling decay was not explained to its owner\n%s\n' "$hook_output" >&2
   exit 1
 fi
@@ -570,7 +584,7 @@ expect_block 'a short lease needs no started to hold' "$repo"
 repo="$(new_repo lease-seat-capped)"
 stage_file "$repo" src/manual.ts
 write_owner_id_marker "$repo" seat-owner-1 src/manual.ts
-set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 20)"
+set_marker_started "$repo/.WORK-IN-PROGRESS-manual-test.md" "$(iso_ago 25)"
 expect_allow 'a seat claim decays at the ceiling like any other' "$repo" seat-owner-2
 
 # A RUNTIME lease is NOT capped: durable lock authority owns its lifetime, and

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { resolveAssistantDeltaMerge } from './assistantDeltaMerge'
 import { resolveAssistantDeltaTarget } from './assistantDeltaTarget'
 
@@ -48,8 +48,14 @@ export interface AssistantDeltaInput {
   preserveDivergentSnapshot?: boolean
   /** Codex `itemId`, when present — drives the inter-item `---` separator. */
   itemId?: string
-  /** Pre-resolved provider model metadata (Ollama), stamped onto the bubble. */
-  providerModelMetadata?: { providerModel?: string; providerModelLabel?: string }
+  /** Immutable speaker identity resolved when this assistant bubble starts. */
+  providerModelMetadata?: {
+    assistantProvider?: ProviderId
+    providerModel?: string
+    providerModelLabel?: string
+    assistantReasoningEffort?: string
+    assistantThinkingEnabled?: boolean
+  }
 }
 
 export interface AssistantDeltaDeps {

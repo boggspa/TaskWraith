@@ -38,6 +38,26 @@ function advance(source: ChatRecord, content: string): ChatRecord {
   return next
 }
 
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    rows.push({
+      relative: path.relative(root, current) || '.',
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
+}
+
 describe('IncrementalChatPersistence', () => {
   let baseDir: string
   let persistence: IncrementalChatPersistence
@@ -94,17 +114,52 @@ describe('IncrementalChatPersistence', () => {
     ]
     persistence.persist(null, first, 'normal')
 
+    // The checkpoint is written from the in-memory authoritative record: no
+    // replay of the on-disk checkpoint and no whole-record parity pass.
     expect(persistence.persist(first, terminal, 'terminal')).toMatchObject({
       checkpointed: true,
-      parityVerified: true
+      parityVerified: null
     })
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
     expect(persistence.stats()).toMatchObject({
       terminalCheckpoints: 1,
-      parityChecks: 1,
-      parityMatches: 1,
-      parityMismatches: 0
+      parityChecks: 0
     })
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(1)
+    expect(persistence.replay('chat-1').record).toEqual(terminal)
+  })
+
+  it('checkpoints bounded/idle compaction from the last journaled head', () => {
+    const first = chat()
+    const second = advance(first, 'second')
+    persistence.persist(null, first, 'normal')
+    persistence.persist(first, second, 'normal')
+
+    expect(persistence.checkpointChat('chat-1')).toBe(true)
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(1)
+    expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
+    expect(persistence.replay('chat-1').record).toEqual(second)
+  })
+
+  it('replays instead when the journaled head was mutated in place', () => {
+    const first = chat()
+    const second = advance(first, 'second')
+    persistence.persist(null, first, 'normal')
+    persistence.persist(first, second, 'normal')
+    // A caller growing the persisted object after the save: that row was
+    // never journaled, so it must not be smuggled into the checkpoint.
+    second.messages.push({
+      id: 'unjournaled',
+      role: 'assistant',
+      content: 'late',
+      timestamp: '2026-08-16T00:00:09.000Z'
+    })
+
+    expect(persistence.checkpointChat('chat-1')).toBe(true)
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(0)
+    expect(
+      persistence.replay('chat-1').record?.messages.map((message) => message.id)
+    ).not.toContain('unjournaled')
   })
 
   it('repairs a same-revision side-band drift before deriving the next batch', () => {
@@ -126,15 +181,42 @@ describe('IncrementalChatPersistence', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1)
   })
 
-  it('retains the approval fsync boundary and verifies without checkpointing', () => {
+  it('keeps replay read-only, suppresses verify repair, and rejects every persistence mutation', () => {
+    const sideBand = chat(1, 'side-band state')
+    persistence.persist(null, sideBand, 'normal')
+    const before = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatPersistence({
+      journal: createIncrementalChatJournal(baseDir, { canWrite: () => false }),
+      canWrite: () => false,
+      logger
+    })
+    const authoritative = chat(1, 'authoritative state')
+
+    expect(readOnly.replay('chat-1').record).toEqual(sideBand)
+    expect(readOnly.verify('chat-1', authoritative, true)).toBe(false)
+    for (const mutate of [
+      () => readOnly.persist(sideBand, advance(sideBand, 'late'), 'normal'),
+      () => readOnly.replaceAuthoritative('chat-1', authoritative),
+      () => readOnly.checkpointIdle(),
+      () => readOnly.checkpointAll(),
+      () => readOnly.purge('chat-1'),
+      () => readOnly.clear()
+    ]) {
+      expect(mutate).toThrow('read-only')
+    }
+    expect(snapshotTree(baseDir)).toEqual(before)
+  })
+
+  it('retains the approval fsync boundary without checkpointing or a parity pass', () => {
     const first = chat()
     const approval = advance(first, 'approval opened')
     persistence.persist(null, first, 'normal')
 
     expect(persistence.persist(first, approval, 'approval')).toMatchObject({
       checkpointed: false,
-      parityVerified: true
+      parityVerified: null
     })
+    expect(persistence.stats().parityChecks).toBe(0)
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(true)
     expect(persistence.replay('chat-1').record).toEqual(approval)
   })
@@ -153,7 +235,7 @@ describe('IncrementalChatPersistence', () => {
 
     expect(() => persistence.persist(first, second, 'normal')).toThrow(/simulated fsync failure/)
     expect(persistence.persist(second, third, 'terminal')).toMatchObject({
-      parityVerified: true
+      checkpointed: true
     })
     expect(persistence.replay('chat-1').record).toEqual(third)
     expect(persistence.stats().baselineRepairs).toBe(1)
@@ -268,6 +350,54 @@ describe('IncrementalChatPersistence', () => {
       expect(appendDurability(first, streamedA, 'approval')).toEqual({ durability: 'immediate' })
       const streamedB = advance(first, 'initial plus other')
       expect(appendDurability(first, streamedB, 'terminal')).toEqual({ durability: 'immediate' })
+    })
+  })
+
+  describe('pending mutation bytes (meters the deferred compatibility checkpoint)', () => {
+    it('accumulates the estimated bytes appended since the last full checkpoint and resets on it', () => {
+      const first = chat()
+      expect(persistence.persist(null, first, 'normal').mutationBytes).toBe(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+
+      const second = advance(first, 'streamed second state')
+      const appended = persistence.persist(first, second, 'normal').mutationBytes
+      expect(appended).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(appended)
+
+      const third = advance(second, 'streamed third state, a little longer')
+      const appendedAgain = persistence.persist(second, third, 'normal').mutationBytes
+      expect(appendedAgain).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(appended + appendedAgain)
+
+      expect(persistence.checkpointChat('chat-1')).toBe(true)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+      expect(persistence.pendingMutationBytes('never-seen')).toBe(0)
+    })
+
+    it('keeps counting across a deferred terminal checkpoint and resets on an eager one', () => {
+      const first = chat()
+      persistence.persist(null, first, 'normal')
+      const second = advance(first, 'second')
+      const deferred = persistence.persist(first, second, 'terminal', undefined, {
+        deferTerminalCheckpoint: true
+      })
+      expect(deferred.terminalCheckpointDeferred).toBe(true)
+      expect(deferred.mutationBytes).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(deferred.mutationBytes)
+
+      const third = advance(second, 'third')
+      const eager = persistence.persist(second, third, 'terminal')
+      expect(eager.checkpointed).toBe(true)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+    })
+
+    it('forgets a purged chat', () => {
+      const first = chat()
+      persistence.persist(null, first, 'normal')
+      persistence.persist(first, advance(first, 'second'), 'normal')
+      expect(persistence.pendingMutationBytes('chat-1')).toBeGreaterThan(0)
+      persistence.purge('chat-1')
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
     })
   })
 })

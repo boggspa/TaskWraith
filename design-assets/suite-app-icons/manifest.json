@@ -1,12 +1,38 @@
 {
   "family": "TaskWraith companions",
-  "scope": "studio-only",
-  "sourceCommit": "63603c538d66c862f64440126a8452b98242471c",
   "ghost": {
     "path": "ghost/ghost-guy-mark-monoline-white.svg",
     "sha256": "5c6055d5a9037344d50a3bf84f08fca9979de741fd1a4fed50e7172b8732fa60"
   },
   "products": [
+    {
+      "id": "observatory",
+      "name": "TaskWraith Observatory",
+      "accent": "#6EDBE7",
+      "catalogueGlyph": "agent-pool-icons/icons/turbo-telescope.svg",
+      "catalogueGlyphSha256": "4992e0a122a96aae9d0c474f18f9ff155dd09657330a9a3c74a2862b4ef10040",
+      "outputs": {
+        "app-icon.icns": "25b4545b20b7f9abd6dd1c4ef6e50a5e0b2356a6820a8700a64e624280b77799",
+        "app-icon.png": "8bb92c02d01664606b76e3a67d3d4ad933b86a18d269f284b528c997574d0776",
+        "app-icon.svg": "43e3607f6d77906f7cbab5aa09f7c36cc1b9aafe5cedf770721a7422b7043915",
+        "mark-on-light.svg": "3b8a7fcad44158dbf743945c67dde24d4666d092ec2afc3a06929204468ac5e2",
+        "mark.svg": "0a1008c9965b7a8a8a60784b7ca6ad48321707eba49a1140c5995bad6b43e8cf"
+      }
+    },
+    {
+      "id": "provider-hub",
+      "name": "Provider Hub",
+      "accent": "#FFB276",
+      "catalogueGlyph": "agent-pool-icons/icons/glyph-fanout-routes.svg",
+      "catalogueGlyphSha256": "692e58520cb41728a9620fc238c1b21773e9e5be747258fb8f4be27f2d7fa0c6",
+      "outputs": {
+        "app-icon.icns": "6f08ae68a36748565e3e17a9a1c7809174fd3de5edce6062901cac43d0561ccc",
+        "app-icon.png": "1b486535c51691b1edd988e76a2e3ad918fe1b93b8dbba8fd8911b2317d7aedd",
+        "app-icon.svg": "5700203f849a11b465d681fedb3fd95ada1c83bf0dfbc72449928ac49767925e",
+        "mark-on-light.svg": "4a04db72901953790455c2a1d6e5413a74d2695caa56a65cd4ca308f2df3b29f",
+        "mark.svg": "37734cec5c166e93aa8bfd8fe5ac999413de0904c0929b90666115fa78e4759c"
+      }
+    },
     {
       "id": "studio",
       "name": "TaskWraith Studio",
@@ -16,7 +42,9 @@
       "outputs": {
         "app-icon.icns": "6d85a016351175308eec41c722772ef56270ebcc521f6d0bb58c4740575a37e8",
         "app-icon.png": "ec449b00b8f77ddc2ff7ea68ada022de081300f9209e05ef7987c63cb3702609",
-        "app-icon.svg": "f2ba26113ed3c72e4627b3e8dfbe0d3b0117b7a2181e93068c05b6997976436d"
+        "app-icon.svg": "f2ba26113ed3c72e4627b3e8dfbe0d3b0117b7a2181e93068c05b6997976436d",
+        "mark-on-light.svg": "b2ac10eb802e41605fd8f6a3eafe0b838150ddee346f61445566dd0fc4751f14",
+        "mark.svg": "5bd06ab04a45468394423e1ffb107ab0bd667d20688319b0d3ee19df89816b5f"
       }
     }
   ]

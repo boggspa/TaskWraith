@@ -1,0 +1,226 @@
+import { describe, expect, it } from 'vitest'
+import {
+  canonicalTaskWraithToolName,
+  EMULATOR_MCP_TOOL_NAMES,
+  isEnsembleControlToolName,
+  isPortableEnsembleControlToolName,
+  normalizeEnsembleMcpToolArguments,
+  normalizePortableEnsembleControlArguments,
+  TASKWRAITH_MCP_TOOLS
+} from './taskWraithMcpCatalog'
+
+const CONTROL_TOOL_NAMES = ['ensemble_control', 'ensemble_bossman_control'] as const
+
+describe('one Ensemble argument convention', () => {
+  it('unwraps the params envelope on BOTH control tool names', () => {
+    for (const toolName of CONTROL_TOOL_NAMES) {
+      expect(
+        normalizeEnsembleMcpToolArguments(toolName, {
+          action: 'set_round_plan',
+          params: { planSummary: 'Review the implementation.' }
+        })
+      ).toEqual({ action: 'set_round_plan', planSummary: 'Review the implementation.' })
+    }
+  })
+
+  it('passes an already-flat call through unchanged on BOTH control tool names', () => {
+    for (const toolName of CONTROL_TOOL_NAMES) {
+      expect(
+        normalizeEnsembleMcpToolArguments(toolName, {
+          action: 'set_round_plan',
+          planSummary: 'Review the implementation.'
+        })
+      ).toEqual({ action: 'set_round_plan', planSummary: 'Review the implementation.' })
+    }
+  })
+
+  it('MERGES instead of replacing, so an envelope that omits action keeps the outer action', () => {
+    // The broker path used to assign `arguments = arguments.params`, which
+    // dropped a top-level action the envelope did not repeat.
+    for (const toolName of CONTROL_TOOL_NAMES) {
+      expect(
+        normalizeEnsembleMcpToolArguments(toolName, {
+          action: 'assign_work',
+          params: { targetParticipantId: 'p7', objective: 'Ship the slice.' }
+        })
+      ).toEqual({
+        action: 'assign_work',
+        targetParticipantId: 'p7',
+        objective: 'Ship the slice.'
+      })
+    }
+  })
+
+  it('lets a flat field win, but never lets an absent flat field erase an enveloped one', () => {
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_control', {
+        action: 'set_round_plan',
+        planSummary: 'flat wins',
+        params: { planSummary: 'enveloped loses' }
+      })
+    ).toMatchObject({ planSummary: 'flat wins' })
+
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_control', {
+        action: 'set_round_plan',
+        planSummary: undefined,
+        params: { planSummary: 'enveloped survives' }
+      })
+    ).toMatchObject({ planSummary: 'enveloped survives' })
+  })
+
+  it('folds snake_case aliases centrally instead of per dispatch site', () => {
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_fanout', {
+        prompt: 'go',
+        write_scopes: { Work4: ['src/main/index.ts'] },
+        target_stage: 'workers'
+      })
+    ).toMatchObject({
+      writeScopes: { Work4: ['src/main/index.ts'] },
+      targetStage: 'workers'
+    })
+
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_lane_result', {
+        lane_id: 'lane-7',
+        max_chars: 2000
+      })
+    ).toMatchObject({ laneId: 'lane-7', maxChars: 2000 })
+  })
+
+  it('never overwrites an explicit camelCase field with its snake_case twin', () => {
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_lane_result', {
+        laneId: 'lane-camel',
+        lane_id: 'lane-snake'
+      })
+    ).toMatchObject({ laneId: 'lane-camel' })
+  })
+
+  it.each(['Validator', 'ensemble-participant-20'])(
+    'decodes JSON-encoded fan-out scopes keyed by %s without changing writer intent',
+    (key) => {
+      const scopes = { [key]: ['src/one.ts', 'src/two.ts', 'src/three.ts'] }
+      const args = Object.freeze({
+        targets: ['Validator', 'Reviewer'],
+        prompt: 'Implement the slice.',
+        mode: 'locked_writers',
+        isolation: 'off',
+        writeScopes: JSON.stringify(scopes)
+      })
+      const normalized = normalizeEnsembleMcpToolArguments('ensemble_fanout', args)
+      expect(normalized).toEqual({ ...args, writeScopes: scopes })
+      expect(args.writeScopes).toBe(JSON.stringify(scopes))
+      expect(normalizeEnsembleMcpToolArguments('ensemble_fanout', normalized)).toBe(normalized)
+    }
+  )
+
+  it('decodes the snake_case scope field after folding aliases', () => {
+    const scopes = { Validator: [{ kind: 'path', path: 'src/one.ts' }] }
+    const args = { write_scopes: JSON.stringify(scopes) }
+    expect(normalizeEnsembleMcpToolArguments('mcp__taskwraith__ensemble_fanout', args)).toEqual({
+      ...args,
+      writeScopes: scopes
+    })
+  })
+
+  it.each(['["src/one.ts"]', ['src/one.ts'], 'workspace', '{broken', 'null', '', null])(
+    'leaves scope input %j to the executor rather than guessing a writer',
+    (writeScopes) => {
+      const args = { targets: ['Validator', 'Reviewer'], writeScopes }
+      expect(normalizeEnsembleMcpToolArguments('ensemble_fanout', args)).toBe(args)
+    }
+  )
+
+  it('does not decode scope-looking fields on other tools or inside nested objects', () => {
+    const args = { writeScopes: '{"Validator":["src/one.ts"]}' }
+    expect(normalizeEnsembleMcpToolArguments('ensemble_fanout_all', args)).toBe(args)
+    expect(normalizeEnsembleMcpToolArguments('write_file', args)).toBe(args)
+    const scopes = { Validator: '{"path":"src/one.ts"}' }
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_fanout', { writeScopes: JSON.stringify(scopes) })
+    ).toEqual({ writeScopes: scopes })
+  })
+
+  it('folds only the top level so nested strict-schema objects stay byte-identical', () => {
+    const normalized = normalizeEnsembleMcpToolArguments('ensemble_roster_edit', {
+      action: 'edit_participant',
+      target_participant_id: 'p1',
+      participant: { permission_preset_id: 'read_only' }
+    }) as Record<string, unknown>
+
+    expect(normalized.targetParticipantId).toBe('p1')
+    expect(normalized.participant).toEqual({ permission_preset_id: 'read_only' })
+  })
+
+  it('leaves non-Ensemble tools completely alone, by identity', () => {
+    const args = { path: 'a.ts', old_string: 'x', new_string: 'y' }
+    expect(normalizeEnsembleMcpToolArguments('replace', args)).toBe(args)
+    expect(normalizeEnsembleMcpToolArguments('run_shell_command', { command: 'ls' })).toEqual({
+      command: 'ls'
+    })
+  })
+
+  it('tolerates non-record arguments without throwing', () => {
+    expect(normalizeEnsembleMcpToolArguments('ensemble_control', undefined)).toBeUndefined()
+    expect(normalizeEnsembleMcpToolArguments('ensemble_control', 'raw-string')).toBe('raw-string')
+    expect(
+      normalizeEnsembleMcpToolArguments('ensemble_control', { action: 'x', params: 7 })
+    ).toEqual({ action: 'x', params: 7 })
+  })
+
+  it('resolves prefixed provider spellings of both control names', () => {
+    expect(
+      normalizeEnsembleMcpToolArguments('mcp__TaskWraith__ensemble_bossman_control', {
+        action: 'set_round_plan',
+        params: { plan_summary: 'Prefixed spelling still normalizes.' }
+      })
+    ).toMatchObject({
+      action: 'set_round_plan',
+      planSummary: 'Prefixed spelling still normalizes.'
+    })
+  })
+
+  it('keeps the profile FENCE predicate narrow while argument shaping covers both names', () => {
+    // Widening isPortableEnsembleControlToolName would make legacy profiles
+    // reject the canonical ensemble_bossman_control with -32601.
+    expect(isPortableEnsembleControlToolName('ensemble_control')).toBe(true)
+    expect(isPortableEnsembleControlToolName('ensemble_bossman_control')).toBe(false)
+
+    expect(isEnsembleControlToolName('ensemble_control')).toBe(true)
+    expect(isEnsembleControlToolName('ensemble_bossman_control')).toBe(true)
+    expect(isEnsembleControlToolName('ensemble_fanout')).toBe(false)
+
+    expect(canonicalTaskWraithToolName('ensemble_control')).toBe('ensemble_bossman_control')
+  })
+
+  it('keeps the legacy alias export delegating to the shared convention', () => {
+    expect(
+      normalizePortableEnsembleControlArguments('ensemble_bossman_control', {
+        action: 'set_round_plan',
+        params: { planSummary: 'Legacy alias, new behaviour.' }
+      })
+    ).toEqual({ action: 'set_round_plan', planSummary: 'Legacy alias, new behaviour.' })
+  })
+})
+
+describe('fresh permission-opportunity redemption identity', () => {
+  it('keeps the new redemption tool canonical and distinct from legacy permission retry', () => {
+    expect(TASKWRAITH_MCP_TOOLS).toContain('redeem_permission_opportunity')
+    expect(canonicalTaskWraithToolName('redeem_permission_opportunity')).toBe(
+      'redeem_permission_opportunity'
+    )
+    expect(canonicalTaskWraithToolName('request_tool_permission')).toBe('request_tool_permission')
+  })
+})
+
+describe('fixed packaged emulator catalog identity', () => {
+  it('keeps the public surface closed to open, observe, and bounded step', () => {
+    expect(EMULATOR_MCP_TOOL_NAMES).toEqual(['emulator_open', 'emulator_observe', 'emulator_step'])
+    for (const toolName of EMULATOR_MCP_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS).toContain(toolName)
+      expect(canonicalTaskWraithToolName(toolName)).toBe(toolName)
+    }
+  })
+})

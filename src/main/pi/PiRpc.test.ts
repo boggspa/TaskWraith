@@ -359,7 +359,8 @@ describe('PiRpcTurnReducer', () => {
       })
     )
     const settled = reducer.ingest(jsonLine({ type: 'agent_settled' }))
-    expect(settled[0]).toMatchObject({ sessionId: 'sess-9', model: 'DeepSeek V4 Pro' })
+    expect(settled[0]).toMatchObject({ sessionId: 'sess-9', modelLabel: 'DeepSeek V4 Pro' })
+    expect(settled[0]).not.toHaveProperty('model')
   })
 
   it('treats a rejected prompt command as a terminal failure', () => {
@@ -500,5 +501,19 @@ describe('PiRpcTurnReducer', () => {
     expect(JSON.parse(piAbortCommand())).toEqual({ type: 'abort' })
     expect(JSON.parse(piSteerCommand('focus'))).toEqual({ type: 'steer', message: 'focus' })
     expect(piPromptCommand('a\nb')).not.toContain('\n')
+  })
+
+  it('includes image content blocks on prompt commands', () => {
+    expect(
+      JSON.parse(
+        piPromptCommand('inspect this', undefined, [
+          { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }
+        ])
+      )
+    ).toEqual({
+      type: 'prompt',
+      message: 'inspect this',
+      images: [{ type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }]
+    })
   })
 })

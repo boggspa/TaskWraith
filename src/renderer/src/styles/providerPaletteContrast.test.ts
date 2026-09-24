@@ -42,7 +42,7 @@ const STATIC_PROVIDER_COLORS = {
   kimi: '#0073E6',
   grok: '#757575',
   cursor: '#8C7508',
-  ollama: '#1A8562',
+  ollama: '#976C52',
   antigravity: '#308713',
   ensemble: '#986781',
   alibaba: '#8C52EF',
@@ -64,8 +64,35 @@ const STATIC_PROVIDER_COLORS = {
   minimax: '#C044A4',
   mistral: '#D44404',
   muse: '#1671EA',
+  devin: '#4878AE',
   cerebras: '#BB584A',
-  groq: '#088482'
+  groq: '#088482',
+  openrouter: '#E02948',
+  thinkingmachines: '#C24E68',
+  xiaomi: '#008844',
+  // Hy4 / Mercury Preview brand overrides (e6f026ed5, f348daf0f) shipped
+  // outside this mirror AND outside the AA band — the contrast loop threw at
+  // tencent first, so inception's own failure was masked until both joined.
+  // Same hues as the brand picks, moved to AA-on-both-grounds luminance.
+  tencent: '#4E73CA',
+  inception: '#7C5BE9',
+  // Nex AGI's mark is monochrome, so this hue is a TaskWraith design token,
+  // not a brand value — the most distinct near-neutral in the AA band.
+  nexagi: '#747A42',
+  // Sakana's brand red (#E10600) pulled ~10 degrees toward crimson: the
+  // straight hue-preserving lift lands dE 2.2 from openbmb, which is not a
+  // distinguishable accent. This sits dE 6.3 from openbmb and openrouter both.
+  sakana: '#EA0C2D',
+  // OpenRouter's stealth slot is anonymous by design, so this is a TaskWraith
+  // design token like nexagi's: the most saturated gold available at this
+  // palette's luminance, sat between claude (dE 9.20) and cursor (dE 8.88).
+  stealth: '#9E6C00',
+  // Swapped 2026-09-18. Pareto takes a burnt vermilion that keeps its brand's
+  // red without colliding with the vivid ones (dE 7.2 from mistral/cerebras),
+  // and Jev takes the magenta, which matches TypeSafe's pink mark (dE 11.0
+  // from alibaba). See theme.css for both sweeps.
+  unbiased: '#B85A35',
+  typesafe: '#C700E4'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -82,7 +109,7 @@ const IOS_PROVIDER_CASES = [
   ['case "kimi"', '#0073E6'],
   ['case "grok"', '#757575'],
   ['case "cursor"', '#8C7508'],
-  ['case "ollama"', '#1A8562'],
+  ['case "ollama"', '#976C52'],
   ['case "antigravity", "google"', '#308713'],
   ['case "ensemble"', '#986781'],
   ['case "alibaba", "qwen"', '#8C52EF'],
@@ -94,7 +121,17 @@ const IOS_PROVIDER_CASES = [
   ['case "essential"', '#8462CA'],
   ['case "nvidia"', '#538200'],
   ['case "openbmb"', '#E22B17'],
-  ['case "poolside"', '#0C8194']
+  ['case "poolside"', '#0C8194'],
+  ['case "openrouter"', '#E02948'],
+  ['case "thinkingmachines"', '#C24E68'],
+  ['case "devin"', '#4878AE'],
+  ['case "tencent"', '#4E73CA'],
+  ['case "inception"', '#7C5BE9'],
+  ['case "nexagi"', '#747A42'],
+  ['case "sakana"', '#EA0C2D'],
+  ['case "stealth"', '#9E6C00'],
+  ['case "unbiased"', '#B85A35'],
+  ['case "typesafe"', '#C700E4']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {
@@ -104,7 +141,7 @@ const PROVIDER_RGB_TRIPLETS = {
   kimi: '0 115 230',
   grok: '117 117 117',
   cursor: '140 117 8',
-  ollama: '26 133 98',
+  ollama: '151 108 82',
   ensemble: '152 103 129'
 } as const
 
@@ -209,6 +246,24 @@ describe('provider palette contrast', () => {
     }
   })
 
+  it('wires the Thinking Machines Pi upstream hue through every renderer consumer', () => {
+    expect(transcriptCss).toContain('.message-meta.provider-thinkingmachines')
+    expect(transcriptCss).toContain('.message-group:has(.message-meta.provider-thinkingmachines)')
+    expect(transcriptCss).toContain('.participant-health-chip.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-provider-card-dot.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-provider-card-fill.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-model-dot.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-model-meter-fill.provider-thinkingmachines')
+    expect(composerCss).toContain('.welcome-usage-bar-segment.provider-thinkingmachines')
+    expect(composerCss).toContain('.activity-yield-target.provider-thinkingmachines')
+    expect(composerCss).toContain('.notification-newadditions-model.provider-thinkingmachines')
+    expect(settingsCss).toContain('.settings-model-comparison-dot.provider-thinkingmachines')
+    expect(settingsCss).toContain('.settings-model-comparison-fill.provider-thinkingmachines')
+    expect(settingsCss).toContain('.run-card-provider.provider-thinkingmachines')
+    expect(ensembleCss).toContain('.ensemble-above-chip.provider-thinkingmachines')
+    expect(ensembleCss).toContain('.ensemble-above-chip-tooltip.provider-thinkingmachines')
+  })
+
   it('keeps first-class seat hues on the Participants reachable chip strip', () => {
     for (const provider of [
       'codex',
@@ -222,6 +277,7 @@ describe('provider palette contrast', () => {
       'pi',
       'mistral',
       'muse',
+      'devin',
       'deepseek'
     ]) {
       expect(transcriptCss).toContain(`.participant-health-chip.provider-${provider}`)

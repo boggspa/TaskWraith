@@ -8,6 +8,10 @@ import {
   type GeminiApiProviderDeps
 } from './GeminiApiProvider'
 import { gatewayToolDefinitions } from './mcp/McpToolGateway'
+import {
+  GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS
+} from './mcp/McpToolProfiles'
 import { AppStore } from './store'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import type {
@@ -52,7 +56,7 @@ function makeDeps(overrides: {
     toolName: string,
     args: unknown,
     route: AgentRunRoute | null
-  ) => Promise<{ text: string; isError?: boolean }>
+  ) => ReturnType<GeminiApiProviderDeps['executeMcpTool']>
   prepareToolContext?: (
     sender: Electron.WebContents,
     payload: AgentRunPayload,
@@ -810,6 +814,20 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     ).toEqual(['read_file'])
   })
 
+  it('declares opaque redemption only to a fresh v18 native API receipt', () => {
+    const tools = [
+      makeMcpTool('read_file'),
+      makeMcpTool('request_tool_permission'),
+      makeMcpTool('redeem_permission_opportunity')
+    ]
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v17').map((tool) => tool.name)
+    ).toEqual(['read_file'])
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v18').map((tool) => tool.name)
+    ).toEqual(['read_file', 'redeem_permission_opportunity'])
+  })
+
   it('gives a receipted gateway API seat the virtual gateway without declaring retry directly', () => {
     const tools = [
       makeMcpTool('read_file'),
@@ -819,6 +837,25 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     expect(
       filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v9').map((tool) => tool.name)
     ).toEqual(['read_file', 'capability_search', 'capability_invoke'])
+  })
+
+  it('filters native declarations to the exact lean solo profile', () => {
+    const tools = [
+      ...GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES
+    ].map(makeMcpTool)
+    const names = filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-solo-v1').map(
+      (tool) => tool.name
+    )
+
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toHaveLength(31)
+    expect(names).toEqual(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS)
+    expect(names).toEqual(
+      expect.arrayContaining(['ensemble_await', 'ensemble_lane_result', 'delegate_wave'])
+    )
+    for (const name of GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES) {
+      expect(names).not.toContain(name)
+    }
   })
 
   it('passes function declarations on every generateContentStream call', async () => {
@@ -898,6 +935,76 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
       .map((line) => line.payload.text)
     expect(texts).toEqual(['Got it.'])
   })
+
+  it.each([false, true])(
+    'delivers tool screenshots as image parts with exact call pairing (isError=%s)',
+    async (isError) => {
+      const png = Buffer.from('first screenshot').toString('base64')
+      const jpeg = Buffer.from('second screenshot').toString('base64')
+      const metadata = 'Screen dimensions: 1200 x 800 pixels; coordinates are image pixels.'
+      const { loader, callsRef } = scriptedSdk([
+        [
+          {
+            functionCalls: [
+              { id: 'screen-call', name: 'canvas_screenshot', args: { canvasId: 'canvas-1' } },
+              { id: 'label-call', name: 'read_file', args: { path: 'label.txt' } }
+            ]
+          }
+        ],
+        [{ text: 'Inspected the returned screen.' }]
+      ])
+      const { deps, errors } = makeDeps({
+        profiles: [makeApiKeyProfile()],
+        defaultProfileId: 'profile-1',
+        loadSdk: loader,
+        mcpTools: [makeMcpTool('canvas_screenshot'), makeMcpTool('read_file')],
+        executeMcpTool: async (name) =>
+          name === 'read_file'
+            ? { text: 'screen label' }
+            : {
+                text: metadata,
+                isError,
+                content: [
+                  { type: 'text', text: metadata },
+                  { type: 'image', mimeType: 'image/png', data: png },
+                  { type: 'image', mimeType: 'image/jpeg', data: jpeg }
+                ]
+              }
+      })
+
+      await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+      expect(errors).toEqual([])
+      expect(callsRef).toHaveLength(2)
+      expect(callsRef[1].contents.at(-1)).toEqual({
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'screen-call',
+              name: 'canvas_screenshot',
+              response: isError ? { error: metadata } : { output: metadata }
+            }
+          },
+          { inlineData: { mimeType: 'image/png', data: png } },
+          { inlineData: { mimeType: 'image/jpeg', data: jpeg } },
+          {
+            functionResponse: {
+              id: 'label-call',
+              name: 'read_file',
+              response: { output: 'screen label' }
+            }
+          }
+        ]
+      })
+      const responses = callsRef[1].contents
+        .at(-1)
+        .parts.filter((part: any) => part.functionResponse)
+        .map((part: any) => part.functionResponse.response)
+      expect(JSON.stringify(responses)).not.toContain(png)
+      expect(JSON.stringify(responses)).not.toContain(jpeg)
+    }
+  )
 
   it('does not reuse an earlier tool-round usage snapshot when the final invocation omits it', async () => {
     const { loader } = scriptedSdk([

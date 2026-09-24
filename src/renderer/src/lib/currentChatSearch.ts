@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import { buildTranscriptRowKeys } from './transcriptRowKey'
 
 export interface CurrentChatSearchTarget {
   messageId: string
@@ -101,12 +102,16 @@ export function buildCurrentChatSearchTargets(
   messages: readonly ChatMessage[],
   options?: CurrentChatSearchOptions
 ): CurrentChatSearchTarget[] {
+  // Keys come from the UNFILTERED list: a search hit has to scroll to the row
+  // the transcript actually rendered, and retired rows still occupy an
+  // occurrence slot in that walk.
+  const rowKeys = buildTranscriptRowKeys(messages)
   return messages
     .map((message, index) => ({ message, index }))
     .filter(({ message }) => !isRetiredExternalChannelInboundMessage(message))
     .map(({ message, index }) => ({
       messageId: message.id,
-      rowKey: `${message.id}#${index}`,
+      rowKey: rowKeys[index],
       label: messageLabel(message, options),
       text: currentChatSearchTextForMessage(message, options)
     }))

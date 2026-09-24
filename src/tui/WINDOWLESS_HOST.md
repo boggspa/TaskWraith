@@ -1,10 +1,49 @@
 # TUI Windowless Host Closeout
 
-**Status:** Implementation complete; fresh packaged-artifact smoke required by each release build
+> [!WARNING]
+> Do not use this superseded Electron-headless launch method for smoke tests. Direct your testing to the modern `taskwraith-host serve` architecture.
+
+> **SUPERSEDED (2026-08-25).** This file is historical. It describes the
+> predecessor path in which the TUI launched the TaskWraith **app
+> executable** with `--taskwraith-headless-host` so Electron main ran
+> windowless.
+>
+> **Current TUI Host:** a pure-Node `taskwraith-host` process. The launch
+> resolver spawns ordinary Node only —
+> [`hostProcessManager.ts`](./hostProcessManager.ts) builds
+> `[cli, 'serve', '--mode', 'production', '--profile', p]`, refuses any
+> executable that is not ordinary Node, and strips `ELECTRON_RUN_AS_NODE`.
+> `tw` auto-starts that Host when none is reachable; `tw --no-start-host`
+> is connect-only. Standalone production composes the nine live-selectable
+> providers; AntiGravity stays desktop-conditional and is not composed;
+> Cursor is setup/auth-only (run hard-stop); Grok advertises `grok login` plus
+> env keys; Pi is env-only with no begin-able login. Operator contract:
+> [`README.md`](./README.md) Current boundary,
+> [`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts),
+> and [`DESIGN.md`](./DESIGN.md). Detailed Host-arc history is maintained in a
+> private local-only tracker; this document and `DESIGN.md` are the public TUI
+> operator contract.
+>
+> App-side posture handling still exists
+> ([`TuiHeadlessHostSession`](../main/TuiHeadlessHostSession.ts), wired
+> from `src/main/index.ts`), but nothing in the TUI passes the headless
+> flag any more; the argv constant is the surviving reference. The
+> “Pure-Node follow-up” section at the bottom is what README/DESIGN now
+> describe as done for the TUI launch path. Desktop cutover remains a
+> separate, gated concern.
+>
+> The historical body is retained below. Do not treat its acceptance
+> contract (packaged App launch, windowless Electron main) as current TUI
+> smoke requirements. Its lifetime and PID rules are also historical: the
+> Host is now lease-owned (see [`README.md`](./README.md)), and the TUI
+> stops a stale or selected Host only through verified termination, which
+> checks the process's recorded birth before signalling it.
+
+**Status:** Superseded — historical closeout 2026-08-16
 
 **Closed:** 2026-08-16
 
-**Boundary:** GUI-independent TUI backed by a supervised Electron Host
+**Boundary (historical):** GUI-independent TUI backed by a supervised Electron Host
 
 ## Outcome
 

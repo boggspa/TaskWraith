@@ -22,12 +22,19 @@ import {
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
   buildRemoteTaskFeedSnapshot,
-  projectChatKind
+  projectChatKind,
+  projectCreateSubThreadCapability,
+  projectGithubMergePrCapability
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
 import type { TaskWraithPluginActivatedMobileProjection } from '../shared/plugins/PluginTypes'
 import { withContextUsageSnapshot } from '../shared/contextUsage'
+import {
+  DEFAULT_DARK_THEME_ACCENT_COLOR,
+  DEFAULT_LIGHT_THEME_ACCENT_COLOR,
+  DEFAULT_THEME_ACCENT_COLOR
+} from '../shared/themeAccentColor'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -350,6 +357,21 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects the semantic default accent for light and dark appearances', () => {
+    expect(
+      buildRemoteShellAppearance({
+        themeAppearance: 'light',
+        themeAccentColor: DEFAULT_THEME_ACCENT_COLOR
+      }).colors.accent
+    ).toBe(DEFAULT_LIGHT_THEME_ACCENT_COLOR)
+    expect(
+      buildRemoteShellAppearance({
+        themeAppearance: 'dark',
+        themeAccentColor: DEFAULT_THEME_ACCENT_COLOR
+      }).colors.accent
+    ).toBe(DEFAULT_DARK_THEME_ACCENT_COLOR)
+  })
+
   it('builds a bounded task feed sorted by recent activity', () => {
     const question = buildMobileQuestionCard({
       questionId: 'q1',
@@ -584,6 +606,24 @@ describe('RemoteTaskProjection', () => {
       kimiFastMode: false,
       kimiReasoningEffort: 'high',
       kimiThinkingEnabled: true
+    })
+  })
+
+  it('projects the exact Pi effort so remote composers do not reset existing chats', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'pi',
+        providerMetadata: {
+          selectedModelType: 'openrouter/thinkingmachines/inkling:free',
+          piReasoningEffort: 'minimal'
+        }
+      })
+    )
+
+    expect(card).toMatchObject({
+      provider: 'pi',
+      selectedModelType: 'openrouter/thinkingmachines/inkling:free',
+      piReasoningEffort: 'minimal'
     })
   })
 
@@ -2045,5 +2085,94 @@ describe('buildRemoteEnsembleState — fan-out policy follows the round only whi
     expect(buildRemoteEnsembleState(policyChat(undefined))?.fanoutPolicy).toBe(
       'locked_writers_with_boss'
     )
+  })
+})
+
+describe('projectCreateSubThreadCapability', () => {
+  const spawnFn = async () => ({ ok: true })
+  const requiredCaps = {
+    monitor: true,
+    approve: true,
+    answer: true,
+    cancel: true,
+    startTurn: true,
+    diffReview: true,
+    steer: true
+  }
+
+  it('is true when a function is injected AND the workspace has startTurn', () => {
+    expect(projectCreateSubThreadCapability(spawnFn, true)).toBe(true)
+    expect(projectCreateSubThreadCapability(() => ({ ok: true }), true)).toBe(true)
+  })
+
+  it('is false when a function is injected but the workspace has no startTurn', () => {
+    expect(projectCreateSubThreadCapability(spawnFn, false)).toBe(false)
+    expect(projectCreateSubThreadCapability(spawnFn)).toBe(false)
+    expect(projectCreateSubThreadCapability(spawnFn, undefined)).toBe(false)
+    // A startTurn function is the dishonest fallback: router existence is not success.
+    expect(projectCreateSubThreadCapability(spawnFn, () => undefined)).toBe(false)
+  })
+
+  it('is false when the callback is absent or not a function', () => {
+    expect(projectCreateSubThreadCapability(undefined, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(null, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(true, true)).toBe(false)
+    expect(projectCreateSubThreadCapability({}, true)).toBe(false)
+    expect(projectCreateSubThreadCapability(undefined)).toBe(false)
+  })
+
+  it('reaches the phone as the card capability bit, omitted when unwired', () => {
+    const wired = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        createSubThread: projectCreateSubThreadCapability(spawnFn, true)
+      }
+    })
+    expect(wired.capabilities?.createSubThread).toBe(true)
+
+    const noStartTurn = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        startTurn: false,
+        createSubThread: projectCreateSubThreadCapability(spawnFn, false)
+      }
+    })
+    expect(noStartTurn.capabilities?.createSubThread).toBe(false)
+
+    const unwired = buildRemoteTaskCard(chat(), {
+      capabilities: {
+        ...requiredCaps,
+        createSubThread: projectCreateSubThreadCapability(undefined, true)
+      }
+    })
+    expect(unwired.capabilities?.createSubThread).toBe(false)
+
+    const absent = buildRemoteTaskCard(chat(), { capabilities: requiredCaps })
+    expect(absent.capabilities?.createSubThread).toBeUndefined()
+  })
+})
+
+describe('projectGithubMergePrCapability', () => {
+  const mergeFn = async () => ({ ok: true })
+  const approvalFn = async () => true
+  it('is true only when both callbacks are functions and externalPublish is literal true', () => {
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, true)).toBe(true)
+    expect(projectGithubMergePrCapability(mergeFn, undefined, true)).toBe(false)
+    expect(projectGithubMergePrCapability(undefined, approvalFn, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, false)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, {}, true)).toBe(false)
+    expect(projectGithubMergePrCapability(true, approvalFn, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, true, true)).toBe(false)
+    expect(projectGithubMergePrCapability(mergeFn, approvalFn, () => undefined)).toBe(false)
+  })
+  it('reaches the phone as the card capability bit', () => {
+    const caps = {
+      monitor: true, approve: true, answer: true, cancel: true,
+      startTurn: true, diffReview: true, steer: true
+    }
+    expect(buildRemoteTaskCard(chat(), { capabilities: { ...caps, githubMergePr: projectGithubMergePrCapability(mergeFn, approvalFn, true) } }).capabilities?.githubMergePr).toBe(true)
+    expect(buildRemoteTaskCard(chat(), { capabilities: { ...caps, githubMergePr: projectGithubMergePrCapability(mergeFn, undefined, true) } }).capabilities?.githubMergePr).toBe(false)
+    expect(buildRemoteTaskCard(chat(), { capabilities: caps }).capabilities?.githubMergePr).toBeUndefined()
   })
 })

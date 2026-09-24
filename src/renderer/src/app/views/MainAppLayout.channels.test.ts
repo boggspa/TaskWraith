@@ -53,7 +53,10 @@ describe('MainAppLayout Channel integration', () => {
       'chatId === currentChatAppChatId ? focusedPaneTopLeftChrome : undefined'
     )
     expect(layoutSource).toContain('{humanCollaborationControls}')
-    expect(layoutSource).toContain('isChatPopoutWindow && humanCollaborationControls && (')
+    // ab39060a0 gated the popout chrome on !isCompactChatCompanion as well.
+    expect(layoutSource).toContain(
+      'isChatPopoutWindow && !isCompactChatCompanion && humanCollaborationControls && ('
+    )
   })
 
   it('keeps Channel state and IPC out of the composition root', () => {

@@ -671,6 +671,28 @@ public final class RemoteSessionModel: ObservableObject {
     /// (nil / empty = no name; the greeting then shows just the time-of-day).
     public var projectedUserName: String? { projectedShellAppearance?.userName }
     @Published public private(set) var lastActionMessage: String?
+    /// On-device record of every reconnect decision, dial, establish, probe
+    /// verdict and teardown. Exported from Settings → Remote so a storm can be
+    /// diagnosed from the phone that saw it rather than reconstructed by hand.
+    public let connectionDiagnostics = ConnectionLogStore()
+
+    func logConnection(_ kind: String, _ detail: String = "") {
+        connectionDiagnostics.append(kind, detail)
+    }
+
+    nonisolated static func phaseLabel(_ phase: SessionPhase) -> String {
+        switch phase {
+        case .idle: return "idle"
+        case .connecting: return "connecting"
+        case .awaitingMacConfirm: return "awaitingMacConfirm"
+        case .connected: return "connected"
+        case .error: return "error"
+        }
+    }
+
+    nonisolated static func relayHostLabel(_ url: String) -> String {
+        URL(string: url)?.host ?? url
+    }
     nonisolated static let hostUnavailableActionMessage =
         "Your Mac isn't responding. Wake it, then retry; your synced threads are still available."
     /// Set after createThread succeeds — HomeView navigates to the new chat.
@@ -682,7 +704,39 @@ public final class RemoteSessionModel: ObservableObject {
     /// computed statics, so the rebuild is how they re-read) — which would
     /// otherwise drop the open chat + reset the sidebar. `selectedTaskId` drives
     /// the iPad detail column and the iPhone `navigationDestination(item:)`.
-    @Published public var selectedTaskId: String?
+    @Published public var selectedTaskId: String? {
+        didSet {
+            // Only a real change counts. This is the ONLY signal that
+            // distinguishes "the user opened a thread" from "SwiftUI rebuilt
+            // the thread view": both run ThreadDetailView's arming `.task`,
+            // and only the former should snap the transcript to the tail.
+            guard oldValue != selectedTaskId else { return }
+            threadSelectionGeneration &+= 1
+        }
+    }
+    /// Advances whenever the selected thread changes. Consumed by
+    /// `TranscriptFollowStateStore.shouldArmOnOpen` so a remount cannot be
+    /// mistaken for an open.
+    public private(set) var threadSelectionGeneration = 0
+    /// The side chat opened inline in a thread's "Side chats" inspector tab,
+    /// keyed by PARENT thread. Hoisted onto the model for the same reason as
+    /// `selectedTaskId`: `SideChatsPanel` held it in `@State`, and both the
+    /// `switch model.phase` branches and RootView's `.id(themes.revision)`
+    /// rebuild the shell as a new identity — so a reconnect, or any settings
+    /// change, closed the open side chat back to the list.
+    ///
+    /// Keyed rather than single-valued because the panel is per-thread. One
+    /// global slot would follow the user to the next thread, where
+    /// `selectedSideChatCard` rejects it as a non-child and the panel sits on
+    /// its "Opening side chat…" spinner for a thread nobody is loading.
+    ///
+    /// Known limitation of the durability: a side chat that disappears while
+    /// its parent survives (deleted on the Mac) leaves the panel on that same
+    /// spinner until the user backs out, where the old `@State` forgot it at
+    /// the next rebuild. A snapshot request for a missing thread acks with no
+    /// thread rather than an error, so nothing here separates "gone" from
+    /// "still loading" and a timeout would be a guess.
+    @Published public var selectedSideChatByThread: [String: String] = [:]
     // Sidebar layout — persisted across launches (see TWSidebarPersistence). The
     // paren-wrapped initializer disambiguates the didSet block from a trailing
     // closure on `load(_:)`.
@@ -706,6 +760,11 @@ public final class RemoteSessionModel: ObservableObject {
     /// Deep-link target captured from a notification tap before the session is
     /// established (cold launch); applied to navigationTarget on `.established`.
     private var pendingDeepLinkThreadId: String?
+    /// Set by a content-bearing wake (`notification-tap` / foreground / resume)
+    /// so `.established` from that walk rehydrates instead of waiting for the
+    /// Mac to push an unsolicited snapshot. Cleared when consumed or when the
+    /// already-alive path rehydrates itself.
+    private var pendingWakeRehydrate = false
     /// Slice 5 (RC4): per-thread wake generation. A notification tap / foreground
     /// bumps the target thread's counter; the detail view refetches a cached-but-
     /// stale transcript when the generation advances past what it last applied, so
@@ -870,7 +929,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// relay registration needed for force-quit completion banners.
     private func storePushRegistrationFromAck(_ ack: AckResult, expectedHostId: String?) {
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data),
             let ackData = actionAck.data
         else { return }
         // Key the record by the host captured at send time — never re-derive from
@@ -908,7 +967,7 @@ public final class RemoteSessionModel: ObservableObject {
         guard pendingApnsToken != nil else { return }
         apnsTokenRetryTask?.cancel()
         apnsTokenRetryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await TWRetryDelay.sleep(milliseconds: 5_000)
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.sendPendingApnsTokenIfReady() }
         }
@@ -1031,24 +1090,30 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func handleRemoteWake(reason: String, timeoutMs: Int = 10_000) async -> Bool {
         guard hasStoredPairing else { return false }
+        logConnection("remote-wake", "\(reason) phase=\(Self.phaseLabel(phase))")
+        if Self.shouldRehydrateAfterWake(reason: reason) {
+            pendingWakeRehydrate = true
+        }
+        #if DEBUG
+            remoteWakeBeganHookForTesting?()
+        #endif
         switch phase {
         case .connected:
-            if let client {
-                let attempt = connectAttempt
-                let alive = await client.checkSocketAlive()
-                guard connectAttempt == attempt else {
-                    return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
+            let attempt = connectAttempt
+            let probe = await probeConnectedHealth(peer: false)
+            guard connectAttempt == attempt else {
+                return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
+            }
+            if probe.alive {
+                // Rehydrate content on a genuinely-alive wake (RC1), EXCEPT on
+                // the approval-ack path (tight background budget) and the silent
+                // push (runs outside the background assertion). rehydrate only
+                // enqueues fire-and-forget work, so the ack still returns now.
+                if Self.shouldRehydrateAfterWake(reason: reason) {
+                    rehydrateAfterAliveWake()
                 }
-                if alive {
-                    // Rehydrate content on a genuinely-alive wake (RC1), EXCEPT on
-                    // the approval-ack path (tight background budget) and the silent
-                    // push (runs outside the background assertion). rehydrate only
-                    // enqueues fire-and-forget work, so the ack still returns now.
-                    if reason != Self.approvalAckWakeReason, reason != Self.silentPushWakeReason {
-                        rehydrateAfterAliveWake()
-                    }
-                    return true
-                }
+                pendingWakeRehydrate = false
+                return true
             }
             // Half-open from connected — allowed supersede source (b).
             requestReconnect(.health, socketAlive: false)
@@ -1066,7 +1131,7 @@ public final class RemoteSessionModel: ObservableObject {
         while waitedMs < timeoutMs {
             if case .connected = phase { return true }
             guard !Task.isCancelled else { return false }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            await TWRetryDelay.sleep(milliseconds: 250)
             waitedMs += 250
         }
         return false
@@ -1193,42 +1258,71 @@ public final class RemoteSessionModel: ObservableObject {
         #endif
     }
 
+    /// Maps a card into the glance-widget row the widget extension will render.
+    /// Kept static and internal so tests can assert the mapping without
+    /// spinning up a full `RemoteSessionModel`.
+    static func glanceWidgetRow(for card: RemoteTaskCard) -> TWWidgetSnapshot.Row {
+        let mapped = TWWidgetSnapshot.Row.mappedStatus(
+            status: card.status,
+            provider: card.provider,
+            chatKind: card.chatKind,
+            updatedAt: card.updatedAt)
+        func tintHex() -> UInt32? {
+            switch mapped.status {
+            case "running":
+                return TWTheme.providerAccentHex(mapped.displayProvider)
+            case "failed", "error":
+                return TWTheme.diffStatDelHex
+            case "success":
+                return TWTheme.diffStatAddHex
+            case "awaitingApproval", "awaitingQuestion":
+                return TWTheme.statusAttentionHex
+            default:
+                return nil
+            }
+        }
+        return TWWidgetSnapshot.Row(
+            threadId: card.threadId ?? card.id,
+            title: card.title?.isEmpty == false ? (card.title ?? "Task") : "Task",
+            status: mapped.status,
+            providerLabel: mapped.displayProvider.map { TWTheme.providerLabel($0) },
+            tintHex: tintHex(),
+            updatedAt: mapped.updatedAtMs)
+    }
+
+    /// Urgency rank for glance rows: needs-you first, then active (queued/running),
+    /// then terminal/other rows ordered by recency.
+    static func glanceWidgetSortRank(_ status: String) -> Int {
+        switch status {
+        case "awaitingApproval", "awaitingQuestion": return 0
+        case "queued", "running": return 1
+        default: return 2
+        }
+    }
+
     #if os(iOS)
         /// Write the home-screen glance widget's snapshot into the App Group.
         /// Colours resolve HERE (TWTheme is app-side only — the widget links
         /// TaskWraithKit alone and renders whatever hex it is handed).
-        /// Running rows lead, then the most recent terminals, capped by the
-        /// snapshot itself.
+        /// Rows are ordered by operational urgency (needs-you, active, then the
+        /// most recently updated terminals) so the widget surface stays useful even
+        /// without exposing task titles.
         private func syncGlanceWidgetSnapshot() {
             guard !isDemo else { return }
-            func tintHex(_ card: RemoteTaskCard) -> UInt32 {
-                switch card.status {
-                case "running":
-                    return TWTheme.providerAccentHex(card.provider)
-                case "failed", "error":
-                    return TWTheme.diffStatDelHex
-                default:
-                    return TWTheme.diffStatAddHex
+            let rows = taskCards
+                .map { Self.glanceWidgetRow(for: $0) }
+                .sorted { a, b in
+                    let rankA = Self.glanceWidgetSortRank(a.status)
+                    let rankB = Self.glanceWidgetSortRank(b.status)
+                    if rankA != rankB {
+                        return rankA < rankB
+                    }
+                    return (a.updatedAt ?? 0) > (b.updatedAt ?? 0)
                 }
-            }
-            func row(_ card: RemoteTaskCard) -> TWWidgetSnapshot.Row {
-                TWWidgetSnapshot.Row(
-                    threadId: card.threadId ?? card.id,
-                    title: card.title?.isEmpty == false ? (card.title ?? "Task") : "Task",
-                    status: card.status == "running"
-                        ? "running"
-                        : (card.status == "failed" || card.status == "error")
-                            ? "failed" : "completed",
-                    providerLabel: card.provider.map { TWTheme.providerLabel($0) },
-                    tintHex: tintHex(card),
-                    updatedAt: nil)
-            }
-            let running = taskCards.filter { $0.status == "running" }
-            let settled = taskCards.filter { $0.status != "running" }
             let snapshot = TWWidgetSnapshot(
                 generatedAt: Int64(Date().timeIntervalSince1970 * 1000),
                 hostName: pairedHosts.first?.macDisplayName,
-                rows: (running + settled).map(row))
+                rows: rows)
             snapshot.save(suiteName: TWPushKeyAccess.appGroup)
             #if canImport(WidgetKit)
                 WidgetCenter.shared.reloadTimelines(ofKind: "TWGlanceWidget")
@@ -1335,8 +1429,21 @@ public final class RemoteSessionModel: ObservableObject {
         self.pairedHosts = doc.hosts
         self.selectedHostId = doc.selectedHostId
         self.hasStoredPairing = doc.selectedHostId != nil
+        // A stored pairing means this phone established at least once. Restore
+        // that so a cold launch (notification / widget / APNs) keeps ConnectedShell
+        // instead of flashing PairingView. Also honor an explicit App Group flag
+        // so forgetAllHosts can clear the bit independently of a later re-pair.
+        self.wasEverConnected =
+            self.hasStoredPairing
+            || pushGatewayDefaults.bool(forKey: Self.wasEverConnectedDefaultsKey)
+        if self.wasEverConnected {
+            self.persistWasEverConnectedFlag()
+        }
         if let active = doc.selectedHost {
             self.macDisplayName = Self.sanitizedMacName(active.macDisplayName)
+            if self.identityError == nil {
+                self.prepareHostProjectionOffline(hostIdentity: active.macIdentityPubKey)
+            }
         }
         streamingPublishGate.bind { [weak self] threadId, staging in
             self?.applyStreamingStagingPublish(threadId: threadId, staging: staging)
@@ -1355,7 +1462,18 @@ public final class RemoteSessionModel: ObservableObject {
     // new route (the tunnel, a Wi-Fi join) appears.
 
     private var autoReconnectTask: Task<Void, Never>?
-    private var socketHealthTask: Task<Void, Never>?
+    private var delayedSocketClosedReconnectTask: Task<Void, Never>?
+    private var socketClosedRedialDelayMs: Int {
+        #if DEBUG
+            if let override = socketClosedRedialDelayMsForTesting { return override }
+        #endif
+        return 1_200
+    }
+    /// Shared in-flight health probe. `handleRemoteWake`, `verifyConnectedSocket`,
+    /// and `requestActionAckWithWake` join this Task instead of stacking a 2.5s
+    /// relay ping on top of a 6s encrypted peer ping.
+    private var socketHealthTask: Task<(alive: Bool, peer: Bool), Never>?
+    private var socketHealthProbeGeneration = 0
     private var autoReconnectAttempt = 0
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature = ""
@@ -1376,6 +1494,12 @@ public final class RemoteSessionModel: ObservableObject {
             get { autoReconnectAttempt }
             set { autoReconnectAttempt = newValue }
         }
+
+        /// In-flight flag the disconnect-invalidation regression pins.
+        var reconnectCoordinatorInFlightForTesting: Bool { reconnectCoordinator.inFlight }
+
+        /// Shrink the `handleSocketClosed` 1.2s delayed redial in tests.
+        var socketClosedRedialDelayMsForTesting: Int?
     #endif
 
     private func startPathMonitor() {
@@ -1414,7 +1538,7 @@ public final class RemoteSessionModel: ObservableObject {
         autoReconnectAttempt += 1
         let delaySeconds = min(30.0, 1.5 * pow(2.0, Double(min(attempt, 4))))
         autoReconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            await TWRetryDelay.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.hasStoredPairing else { return }
@@ -1432,6 +1556,11 @@ public final class RemoteSessionModel: ObservableObject {
     private func cancelSocketHealthCheck() {
         socketHealthTask?.cancel()
         socketHealthTask = nil
+    }
+
+    private func cancelDelayedSocketClosedReconnect() {
+        delayedSocketClosedReconnectTask?.cancel()
+        delayedSocketClosedReconnectTask = nil
     }
 
     private func prepareHostProjectionOffline(hostIdentity: String) {
@@ -1525,7 +1654,7 @@ public final class RemoteSessionModel: ObservableObject {
     public func pair(fromBootstrapJSON json: String) {
         let sanitized = Self.sanitizeBootstrapJSON(json)
         guard let data = sanitized.data(using: .utf8),
-            let bootstrap = try? JSONDecoder().decode(PairingBootstrapPayload.self, from: data)
+            let bootstrap = try? TWCoders.decoder.decode(PairingBootstrapPayload.self, from: data)
         else {
             phase = .error(
                 "That doesn't look like a valid pairing code. Use the Copy setup payload "
@@ -1607,7 +1736,7 @@ public final class RemoteSessionModel: ObservableObject {
                     continue
                 }
                 guard
-                    let bootstrap = try? JSONDecoder().decode(
+                    let bootstrap = try? TWCoders.decoder.decode(
                         PairingBootstrapPayload.self, from: data)
                 else {
                     lastError = "\(label) returned an unreadable pairing response."
@@ -1758,7 +1887,7 @@ public final class RemoteSessionModel: ObservableObject {
                 let budgetMs = RelayCandidates.dialTimeoutMs(for: candidate)
                 var waitedMs = 0
                 poll: while waitedMs < budgetMs {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    await TWRetryDelay.sleep(milliseconds: 250)
                     waitedMs += 250
                     guard self.connectAttempt == attempt else { return }
                     switch self.phase {
@@ -1808,6 +1937,10 @@ public final class RemoteSessionModel: ObservableObject {
             preferRemoteFirst: remoteFirst,
             preferredFirst: preferredRelay)
         cancelSocketHealthCheck()
+        logConnection(
+            "dial",
+            "from=\(Self.phaseLabel(phase)) doors=\(candidates.map(Self.relayHostLabel).joined(separator: ","))"
+                + " budget=\(RelayCandidates.walkBudgetMs(for: candidates) / 1000)s")
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
         pinnedMacIdentityB64 = record.macIdentityPubKey
@@ -1869,6 +2002,7 @@ public final class RemoteSessionModel: ObservableObject {
                     // stamp under the new host's identity. Matches the guard the
                     // rest of the walk already enforces per candidate.
                     guard self.connectAttempt == attempt else { return }
+                    self.logConnection("door-ok", Self.relayHostLabel(candidate))
                     self.relayUrl = candidate
                     self.trustedReconnectAttempt = nil
                     // Refresh the record so the v1 field tracks the
@@ -1878,9 +2012,12 @@ public final class RemoteSessionModel: ObservableObject {
                 } catch {
                     lastFailure = TransportErrorCopy.friendlyMessage(
                         for: error, relayUrl: candidate)
+                    self.logConnection(
+                        "door-failed", "\(Self.relayHostLabel(candidate)): \(lastFailure ?? "")")
                 }
             }
             guard self.connectAttempt == attempt else { return }
+            self.logConnection("walk-failed", lastFailure ?? "no door reachable")
             self.teardown()
             self.trustedReconnectAttempt = nil
             var detail =
@@ -1936,6 +2073,10 @@ public final class RemoteSessionModel: ObservableObject {
             reason: reason,
             phase: phase,
             socketAlive: socketAlive)
+        logConnection(
+            "wake",
+            "\(reason.rawValue) phase=\(Self.phaseLabel(phase))"
+                + (socketAlive.map { " socketAlive=\($0)" } ?? "") + " → \(action.rawValue)")
         switch action {
         case .ignore:
             return
@@ -1954,30 +2095,344 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func verifyConnectedSocket() {
-        guard socketHealthTask == nil else { return }
-        guard let client else {
-            requestReconnect(.health, socketAlive: false)
-            return
-        }
         let attempt = connectAttempt
-        socketHealthTask = Task { [weak self] in
-            let alive = await client.checkSocketAlive()
-            await MainActor.run {
-                guard let self else { return }
-                self.socketHealthTask = nil
-                guard self.connectAttempt == attempt else { return }
-                guard case .connected = self.phase else { return }
-                // Socket is alive but the app was suspended and may have missed
-                // pushes — rehydrate content instead of bare-returning (RC1). No
-                // teardown on the alive path (keeps RC5 masked).
-                guard !alive else {
-                    self.rehydrateAfterAliveWake()
-                    return
-                }
-                // Half-open from connected — allowed supersede source (b).
-                self.requestReconnect(.health, socketAlive: false)
+        Task { [weak self] in
+            guard let self else { return }
+            let probe = await self.probeConnectedHealth(peer: false)
+            guard self.connectAttempt == attempt else { return }
+            guard case .connected = self.phase else { return }
+            // Socket is alive but the app was suspended and may have missed
+            // pushes — rehydrate content instead of bare-returning (RC1). No
+            // teardown on the alive path (keeps RC5 masked).
+            guard !probe.alive else {
+                self.rehydrateAfterAliveWake()
+                return
             }
+            // Half-open from connected — allowed supersede source (b).
+            self.requestReconnect(.health, socketAlive: false)
         }
+    }
+
+    /// Single-flight health probe. Concurrent wake / foreground / action
+    /// callers join the in-flight Task. A peer caller that joined a socket
+    /// probe which came back alive still upgrades to `checkPeerAlive` (socket
+    /// up != Mac awake); a dead socket is enough to skip the 6s peer ping.
+    /// Evidence backing host-liveness (R1). Updated ONLY at the probe choke
+    /// point below, from probes that already run — never from a send timeout,
+    /// and never by initiating a probe of its own. The type and its evidence
+    /// rule live in `HostLivenessPresentation.swift` beside the derivation they
+    /// feed, where they are unit-testable without standing up a session.
+    @Published private var hostLivenessProbeLedger = HostLivenessProbeLedger()
+
+    /// Projected host liveness.
+    ///
+    /// Combines the true socket-vs-peer probe evidence with the live paired-host
+    /// projection already owned by this model. Missing projection fields never
+    /// become happy defaults; they degrade through `HostLiveness.derive`.
+    public var hostLiveness: HostLiveness? {
+        return HostLiveness.derive(
+            sessionPhase: phase,
+            projectionPhase: hostProjection.phase,
+            healthProjection: hostProjection.health,
+            probeLedger: hostLivenessProbeLedger)
+    }
+
+    /// Whether a composer send must be diverted into the offline outbox.
+    ///
+    /// Only the two states whose delivery path cannot presently be trusted
+    /// divert. A stale projection is not itself evidence that sends are broken.
+    public var shouldQueueOutboundSends: Bool {
+        switch hostLiveness {
+        case .asleep, .unreachable: return true
+        case .live, .stale, .none: return false
+        }
+    }
+
+    private var offlineOutboxHostIdentity: String?
+    private var offlineOutboxDrainerStorage: OfflineOutboxDrainer?
+
+    /// The outbox, PARTITIONED BY PAIRED-HOST IDENTITY.
+    ///
+    /// This used to be one global store on the standard defaults suite, which
+    /// was a content-leak risk rather than an untidiness: queued prompts are
+    /// addressed by thread id, thread ids are not unique across Macs, so a
+    /// collision could have delivered one Mac's prompt text into a different
+    /// Mac's thread. Partitioning removes that possibility structurally.
+    ///
+    /// Rebuilt when the pinned identity changes, so a host switch parks the
+    /// previous Mac's prompts in ITS OWN partition rather than carrying them
+    /// over to be refused. **Nothing is deleted on switch** — the old partition
+    /// is still on disk and is re-adopted verbatim if that Mac is paired again.
+    /// Silently dropping prompts the user pressed send on is precisely the loss
+    /// this feature exists to prevent.
+    ///
+    /// Owns the drainer so its single-flight guard is real across calls.
+    private var offlineOutboxDrainer: OfflineOutboxDrainer {
+        // Unpaired gets its own partition rather than sharing a Mac's, so a
+        // prompt typed before pairing can never be delivered against a thread
+        // id that happens to match on the Mac paired afterwards.
+        let identity = pinnedMacIdentityB64 ?? "unpaired"
+        if let existing = offlineOutboxDrainerStorage, offlineOutboxHostIdentity == identity {
+            return existing
+        }
+        let store = OfflineComposerQueueStore(hostIdentity: identity)
+        let drainer = OfflineOutboxDrainer(queue: store.load(), store: store)
+        offlineOutboxDrainerStorage = drainer
+        offlineOutboxHostIdentity = identity
+        return drainer
+    }
+
+    /// Prompts stranded in the pre-partition global outbox. Never adopted (we
+    /// cannot know which Mac they were for) and never deleted. Surfaced so the
+    /// user can be told they exist.
+    public var offlineOutboxLegacyQuarantinedCount: Int {
+        OfflineComposerQueueStore.legacyQuarantinedCount()
+    }
+
+    /// The quarantined prompts themselves, so a recovery surface can show the
+    /// user what is stranded instead of only how much.
+    ///
+    /// FOLLOW-UP, named rather than implied: nothing renders these yet. Until
+    /// something does, a user with legacy prompts can neither read them nor
+    /// clear them — smaller than losing them, still not good enough. The UI
+    /// belongs in the composer/settings surface, which this lane does not own.
+    public var offlineOutboxLegacyQuarantinedPrompts: [QueuedComposerSend] {
+        OfflineComposerQueueStore.legacyQuarantinedPrompts()
+    }
+
+    /// Accept a prompt the user pressed send on while the Mac was not
+    /// answering. The returned outcome is NOT discardable — see the note on
+    /// `OfflineComposerQueue.enqueue`; the caller must render every case.
+    public func enqueueOfflinePrompt(threadId: String, text: String)
+        -> OfflineComposerEnqueueOutcome
+    {
+        offlineOutboxDrainer.enqueue(
+            id: UUID().uuidString, threadId: threadId, text: text, now: Date())
+    }
+
+    /// Surface these rather than letting the user discover the condition when a
+    /// send is refused.
+    public var offlineOutboxIsOverCapacity: Bool { offlineOutboxDrainer.queue.isOverCapacity }
+    public var offlineOutboxOverflowCount: Int { offlineOutboxDrainer.queue.overflowCount }
+    public func offlineOutboxCount(forThread threadId: String) -> Int {
+        offlineOutboxDrainer.queue.count(forThread: threadId)
+    }
+
+    /// Deliver everything the outbox is holding, oldest first.
+    ///
+    /// ## What `.delivered` means here, precisely
+    ///
+    /// It means the prompt was handed to THE SAME send path a live composer send
+    /// uses — not that the agent ran it. That is exactly the promise the outbox
+    /// made ("this sends when your Mac answers"), and no more. If the Mac then
+    /// refuses, the existing action-failure machinery reports it the same way it
+    /// would for a prompt typed while online; the outbox does not claim an
+    /// outcome it cannot observe.
+    ///
+    /// A thread that has vanished from the projection is reported `.rejected`
+    /// rather than delivered — we can know that without asking, and silently
+    /// dropping it would be the loss this whole type prevents.
+    #if DEBUG
+        /// Point the outbox at a scratch defaults suite.
+        ///
+        /// Still needed after per-host partitioning, for a narrower reason:
+        /// unpaired test models all resolve to the same `"unpaired"` partition
+        /// on the standard suite, so without this they would share one outbox.
+        /// The first integration run of this file failed exactly that way,
+        /// with prompts accumulating across tests (7, 8, 6…) — which was a real
+        /// production finding, since it is what led to the partitioning above.
+        func useOfflineOutboxStoreForTesting(_ store: OfflineComposerQueueStore) {
+            offlineOutboxDrainerStorage = OfflineOutboxDrainer(
+                queue: store.load(), store: store)
+            // Pin the identity to whatever is current, so the partitioned
+            // accessor treats the injected store as already-matching and does
+            // not rebuild it out from under the test on first read.
+            offlineOutboxHostIdentity = pinnedMacIdentityB64 ?? "unpaired"
+        }
+
+        /// Test seam replacing the real bridge send, so `flushOfflineOutbox` can
+        /// be driven end to end without a transport.
+        ///
+        /// It exists because of a real defect: the drain's unit tests passed
+        /// against an HONEST stub while the production closure could only ever
+        /// answer `.delivered`. The protocol was tested; the wiring was not.
+        var offlineOutboxSendOverrideForTesting:
+            ((QueuedComposerSend) async -> OfflineOutboxDelivery)?
+    #endif
+
+    public func flushOfflineOutbox() async -> OfflineOutboxDrainReport {
+        await offlineOutboxDrainer.drain { [weak self] entry in
+            guard let self else { return .unreachable }
+            #if DEBUG
+                if let override = self.offlineOutboxSendOverrideForTesting {
+                    return await override(entry)
+                }
+            #endif
+            guard case .connected = self.phase else { return .unreachable }
+            guard let card = self.taskCards.first(where: { $0.id == entry.threadId }) else {
+                return .rejected("that conversation is no longer available")
+            }
+            return await self.deliverQueuedPrompt(entry, card: card)
+        }
+    }
+
+    /// Deliver one queued prompt and WAIT for the Mac's verdict.
+    ///
+    /// The previous version called fire-and-forget `continueTask` and returned
+    /// `.delivered` unconditionally, so the drainer removed the entry BEFORE any
+    /// ack existed. Every later failure — a negative ack, a missing thread, a
+    /// lost transport — landed after the prompt was already deleted, and
+    /// `.rejected`/`.unreachable` were unreachable in production despite being
+    /// covered by tests. Delivery is now judged BY THE ACK, which is the same
+    /// doctrine `steerSoloLive` already documents.
+    ///
+    /// The three pre-checks are load-bearing, not defensive noise: they are
+    /// exactly the `continueTask` early returns that fire NEITHER callback, and
+    /// suspending on a continuation those paths can reach would wedge the drain
+    /// permanently. Keep them in sync if that method grows another early exit.
+    private func deliverQueuedPrompt(_ entry: QueuedComposerSend, card: RemoteTaskCard)
+        async -> OfflineOutboxDelivery
+    {
+        if isDemo { return .rejected("demo mode does not send to a Mac") }
+        guard card.threadId != nil else {
+            return .rejected("that conversation is no longer available")
+        }
+        // Ensemble cards route without a provider — `continueTask` only demands
+        // one on the non-ensemble branch, so demanding it here would refuse
+        // sends the app would otherwise have made.
+        if !card.isEnsemble, card.provider?.isEmpty != false {
+            return .rejected("that conversation has no provider selected")
+        }
+
+        return await withCheckedContinuation { continuation in
+            var settled = false
+            let settle: (OfflineOutboxDelivery) -> Void = { value in
+                guard !settled else { return }
+                settled = true
+                continuation.resume(returning: value)
+            }
+            // ONE callback. The previous version listened to `onActionUnsent`
+            // AND `onActionAck` and tried to compose them; that could not work,
+            // because one route fired neither on success and the other fired
+            // them in an order that hid `.unreachable`. Classification now
+            // happens where the outcome is known, not here.
+            continueTask(
+                card, prompt: entry.text,
+                navigateOnAck: false,
+                onActionDeliveryVerdict: { verdict in settle(verdict) })
+        }
+    }
+
+    /// Drain hook for `applySessionEstablished`. Fire-and-forget, but the report
+    /// is CONSUMED rather than discarded — a drain nobody hears about would be
+    /// the same silent handling this feature exists to remove.
+    private func scheduleOfflineOutboxFlush() {
+        Task { [weak self] in
+            guard let self else { return }
+            let report = await self.flushOfflineOutbox()
+            guard !report.isEmpty else { return }
+            // Every bucket is surfaced, including DEFERRED. Reporting only
+            // delivery and rejection left a mixed drain partly silent — the
+            // user would be told two prompts sent and never learn three more
+            // are still waiting.
+            var parts: [String] = []
+            if !report.delivered.isEmpty { parts.append("sent \(report.delivered.count)") }
+            if let rejection = report.rejected.first {
+                parts.append("\(report.rejected.count) refused (\(rejection.reason))")
+            }
+            if !report.deferred.isEmpty {
+                parts.append("\(report.deferred.count) still waiting")
+            }
+            guard !parts.isEmpty else { return }
+            self.lastActionMessage =
+                "Prompts saved while your Mac wasn't answering — "
+                + parts.joined(separator: ", ") + "."
+        }
+    }
+
+    /// Surface an offline-outbox outcome through the existing action toast.
+    /// A method rather than an exposed stored property, so the composer cannot
+    /// accidentally clobber unrelated action copy.
+    public func reportOfflineOutboxOutcome(_ message: String) {
+        lastActionMessage = message
+    }
+
+    private func probeConnectedHealth(peer: Bool) async -> (alive: Bool, peer: Bool) {
+        if let existing = socketHealthTask {
+            let result = await existing.value
+            if peer && !result.peer && result.alive {
+                return await startConnectedHealthProbe(peer: true)
+            }
+            return result
+        }
+        return await startConnectedHealthProbe(peer: peer)
+    }
+
+    private func startConnectedHealthProbe(peer: Bool) async -> (alive: Bool, peer: Bool) {
+        #if DEBUG
+            if let override = healthProbeOverrideForTesting {
+                return await runConnectedHealthProbe(peer: peer) {
+                    await override()
+                }
+            }
+        #endif
+        guard let client else { return (false, peer) }
+        let captured = client
+        return await runConnectedHealthProbe(peer: peer) {
+            if peer {
+                return await captured.checkPeerAlive()
+            }
+            return await captured.checkSocketAlive()
+        }
+    }
+
+    private func runConnectedHealthProbe(
+        peer: Bool,
+        body: @escaping @Sendable () async -> Bool
+    ) async -> (alive: Bool, peer: Bool) {
+        if let existing = socketHealthTask {
+            return await existing.value
+        }
+        socketHealthProbeGeneration += 1
+        let generation = socketHealthProbeGeneration
+        #if DEBUG
+            socketHealthProbeStartsForTesting += 1
+        #endif
+        let task = Task<(alive: Bool, peer: Bool), Never> {
+            if Task.isCancelled { return (false, peer) }
+            let alive = await body()
+            return (alive, peer)
+        }
+        socketHealthTask = task
+        let result = await task.value
+        if socketHealthProbeGeneration == generation {
+            socketHealthTask = nil
+        }
+        // R1: the ONLY place host-liveness evidence is gathered. Both probe
+        // kinds funnel through here, so recording the outcome costs nothing and
+        // adds no traffic. Wiring this to a send timeout instead would make
+        // `.asleep` a guess again — see the ledger's evidence rule.
+        hostLivenessProbeLedger.record(alive: result.alive, peer: result.peer, at: Date())
+        logConnection("probe", "\(result.peer ? "peer" : "socket") alive=\(result.alive)")
+        return result
+    }
+
+    /// Socket-only verdict for the action path's peer-silent branch. Deliberately
+    /// NOT routed through the shared probe: a sibling action's in-flight PEER
+    /// probe would be joined and its `alive:false` misread as a dead socket.
+    private func probeSocketOnly(client: RelayTransportClient) async -> Bool {
+        #if DEBUG
+            if let override = socketProbeOverrideForTesting {
+                let alive = await override()
+                hostLivenessProbeLedger.record(alive: alive, peer: false, at: Date())
+                logConnection("probe", "socket alive=\(alive) (peer-silent check)")
+                return alive
+            }
+        #endif
+        let alive = await client.checkSocketAlive()
+        hostLivenessProbeLedger.record(alive: alive, peer: false, at: Date())
+        logConnection("probe", "socket alive=\(alive) (peer-silent check)")
+        return alive
     }
 
     /// Single-flight latch for `requestFullProjection`. Reset via `defer` when the
@@ -2020,7 +2475,7 @@ public final class RemoteSessionModel: ObservableObject {
                 guard Self.fullProjectionResyncShouldRetry(ack: ack, phase: self.phase) else {
                     return
                 }
-                try? await Task.sleep(nanoseconds: backoffNs)
+                await TWRetryDelay.sleep(nanoseconds: backoffNs)
                 backoffNs *= 2
             }
         }
@@ -2056,6 +2511,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// no reason) and a user tap ("notification-tap") DO rehydrate.
     static let approvalAckWakeReason = "notification-action"
     static let silentPushWakeReason = "remote-notification"
+    /// App Group / suite flag so a cold launch with a stored pairing can keep
+    /// ConnectedShell mounted (`showShellDuringDrop`) instead of flashing PairingView.
+    static let wasEverConnectedDefaultsKey = "tw.wasEverConnected.v1"
+
+    static func shouldRehydrateAfterWake(reason: String) -> Bool {
+        reason != approvalAckWakeReason && reason != silentPushWakeReason
+    }
 
     #if DEBUG
         private(set) var aliveRehydrateInvocationsForTesting = 0
@@ -2154,7 +2616,13 @@ public final class RemoteSessionModel: ObservableObject {
     public func disconnect() {
         cancelAutoReconnect(resetAttempts: true)
         cancelSocketHealthCheck()
+        cancelDelayedSocketClosedReconnect()
         trustedReconnectAttempt = nil
+        // Invalidate in-flight `reconnectTrusted` walks (they key off this
+        // generation) and drop coordinator bookkeeping so a later genuine wake
+        // is `.start`, not `.supersede` against a ghost flight.
+        connectAttempt += 1
+        reconnectCoordinator.invalidate()
         teardown()
         phase = .idle
         taskCards = []
@@ -2258,13 +2726,14 @@ public final class RemoteSessionModel: ObservableObject {
         // live-selectable but still needs models so the demo picker is usable.
         // AGY IDs/labels mirror AntigravityGeminiApiStaticModels (`gemini-api:`
         // prefix). Kimi IDs/labels mirror StaticProviderModels KIMI_STATIC_MODELS
-        // (kimi-k3 / kimi-k2.7-code label "K2.7 Coding"; Highspeed is a speed
-        // tier, not the model label).
+        // (kimi-k2.8-preview "K2.8 Preview" / kimi-k2.7-code-highspeed
+        // "K2.7 Code Highspeed" / kimi-k3 / kimi-k3-256k — Highspeed is its own
+        // row since 2026-09-11, not a speed tier).
         // Reasoning tiers + Fast-capable ids mirror the real catalogs so the
         // combined picker's ladder / Fast pill / bolt markers all light up in
         // the demo (they'd otherwise be invisible until a Mac pairs).
         let providerModelsJSON = """
-        {"claude":[{"id":"claude-opus-5","label":"Opus 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"claude-fable-5","label":"Fable 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"},{"id":"claude-sonnet-5","label":"Sonnet 5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"}],"codex":[{"id":"gpt-5.5","label":"GPT-5.5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"medium"},{"id":"gpt-5.6-sol","label":"GPT-5.6-Sol","supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"}],"kimi":[{"id":"kimi-k3","label":"K3","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"low"},{"id":"kimi-k2.7-code","label":"K2.7 Coding","supportedReasoningEfforts":[{"reasoningEffort":"on"}],"defaultReasoningEffort":"on"}],"antigravity":[{"id":"gemini-api:gemini-3.1-pro","label":"Gemini 3.1 Pro","isDefault":true},{"id":"gemini-api:gemini-3.1-flash-lite","label":"Gemini 3.1 Flash-Lite"},{"id":"gemini-api:gemini-2.5-pro","label":"Gemini 2.5 Pro"},{"id":"gemini-api:gemini-2.5-flash","label":"Gemini 2.5 Flash"}],"cursor":[{"id":"composer-2.5","label":"Composer 2.5","isDefault":true},{"id":"composer-2.5-fast","label":"Composer 2.5 Fast"},{"id":"grok-4.6","label":"Cursor Grok 4.6","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"},{"id":"cursor-grok-4.5","label":"Grok 4.5"}],"grok":[{"id":"grok-4.6","label":"Grok 4.6 Fast","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"},{"id":"grok-4.5","label":"Grok 4.5"},{"id":"grok-4.5-mini","label":"Grok 4.5 Mini"}],"ollama":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)","isDefault":true}]}
+        {"claude":[{"id":"claude-opus-5-5","label":"Opus 5.5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"claude-opus-5","label":"Opus 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"claude-fable-5","label":"Fable 5","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"},{"id":"claude-sonnet-5","label":"Sonnet 5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"}],"codex":[{"id":"gpt-6-sol","label":"GPT-6-Sol","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"gpt-6-luna","label":"GPT-6-Luna","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"medium"},{"id":"gpt-5.5","label":"GPT-5.5","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"medium"},{"id":"gpt-5.6-sol","label":"GPT-5.6-Sol","supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"ultracode"}],"defaultReasoningEffort":"high"}],"kimi":[{"id":"kimi-k2.8-preview","label":"K2.8 Preview","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"max"},{"id":"kimi-k2.7-code-highspeed","label":"K2.7 Code Highspeed","supportedReasoningEfforts":[{"reasoningEffort":"on"}],"defaultReasoningEffort":"on"},{"id":"kimi-k3","label":"K3 (1M)","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"max"},{"id":"kimi-k3-256k","label":"K3 (256K)","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"max"}],"defaultReasoningEffort":"max"}],"antigravity":[{"id":"gemini-api:gemini-3.1-pro","label":"Gemini 3.1 Pro","isDefault":true},{"id":"gemini-api:gemini-3.1-flash-lite","label":"Gemini 3.1 Flash-Lite"},{"id":"gemini-api:gemini-2.5-pro","label":"Gemini 2.5 Pro"},{"id":"gemini-api:gemini-2.5-flash","label":"Gemini 2.5 Flash"}],"cursor":[{"id":"composer-2.5","label":"Composer 2.5","isDefault":true},{"id":"composer-2.5-fast","label":"Composer 2.5 Fast"},{"id":"grok-4.6","label":"Cursor Grok 4.6","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"}],"grok":[{"id":"grok-4.6","label":"Grok 4.6 Fast","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"},{"reasoningEffort":"high"},{"reasoningEffort":"xhigh"}],"defaultReasoningEffort":"high"},{"id":"grok-4.5","label":"Grok 4.5"},{"id":"grok-4.5-mini","label":"Grok 4.5 Mini"}],"ollama":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)","isDefault":true}]}
         """
         let workflowsJSON = """
         [
@@ -2296,21 +2765,32 @@ public final class RemoteSessionModel: ObservableObject {
                         ReasoningEffortOption(reasoningEffort: "xhigh"),
                     ],
                     defaultReasoningEffort: "high"),
+            ]
+            pm["grok"] = [
                 ModelOption(
-                    id: "grok-4.5",
-                    label: "Cursor Grok 4.5",
+                    id: "grok-4.7",
+                    label: "Grok 4.7",
+                    isDefault: true,
                     supportedReasoningEfforts: [
                         ReasoningEffortOption(reasoningEffort: "low"),
                         ReasoningEffortOption(reasoningEffort: "medium"),
                         ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
                     ],
                     defaultReasoningEffort: "high"),
-            ]
-            pm["grok"] = [
+                ModelOption(
+                    id: "grok-4.7-fast",
+                    label: "Grok 4.7 Fast",
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
                 ModelOption(
                     id: "grok-4.6",
                     label: "Grok 4.6 Fast",
-                    isDefault: true,
                     supportedReasoningEfforts: [
                         ReasoningEffortOption(reasoningEffort: "low"),
                         ReasoningEffortOption(reasoningEffort: "medium"),
@@ -2327,7 +2807,6 @@ public final class RemoteSessionModel: ObservableObject {
                         ReasoningEffortOption(reasoningEffort: "high"),
                     ],
                     defaultReasoningEffort: "high"),
-                ModelOption(id: "grok-composer-2.5-fast", label: "Grok Composer 2.5 Fast"),
             ]
             providerModels = pm
         }
@@ -2393,39 +2872,62 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-08-20","kind":"addition","title":"New Additions","body":"AntiGravity Gemini 3.7 Flash, Sonnet 4.6, Opus 4.6, and GPT-OSS-120B, Grok 4.6 in Grok and Cursor, Devstral Small and Mistral 3.5 Medium, Muse Spark 1.2, and local Ollama Gemma 4 (31B-MLX) / Qwen 3.8 / Muse Glimmer / Nemotron 3.5 Lightning / North Mini Code / GLM-4.7-Flash / Rnj-1, plus the new Mistral lineup: Mistral 3, Mistral 3.1, Mistral Medium (Latest), Mistral Large 3, Mistral Small 4, Devstral 2, Leanstral 1.5 (Labs), GLM-5.2 via Mistral, Codestral (Aug 2025), and Ministral 3.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-23","kind":"addition","title":"New Additions","body":"Claude Opus 5.5, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"claude","label":"Claude","models":[
+              {"name":"Opus 5.5","blurb":"Anthropic's newest Opus — 1M context, always-on adaptive thinking, the full effort ladder, $4/$20 per Mtok."},
+              {"name":"Fable 5.1","blurb":"Anthropic's newest Fable — 1M context, adaptive thinking, the full effort ladder. Fable 5 moves to Legacy."}
+            ]},
+            {"provider":"codex","label":"Codex","models":[
+              {"name":"GPT-6 Sol","blurb":"OpenAI's GPT-6 for complex coding and agentic workflows — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."},
+              {"name":"GPT-6 Luna","blurb":"OpenAI's most efficient GPT-6 for focused, high-volume tasks — the same 1.05M window and ladder at $0.10/$0.50 per Mtok."},
+              {"name":"GPT-6 Astra","blurb":"OpenAI's most capable GPT-6, for the hardest end-to-end work. Rolling out by organisation."}
+            ]},
+            {"provider":"kimi","label":"Kimi","models":[
+              {"name":"K2.8 Preview","blurb":"Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."},
+              {"name":"K2.7 Code Highspeed","blurb":"The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking."}
+            ]},
+            {"provider":"devin","label":"Devin","models":[
+              {"name":"SWE-2","blurb":"Cognition's newest coding model - Medium, High, or Max effort. Paid plans; Devin marks it Pro."},
+              {"name":"SWE-1.6 Slow","blurb":"The seat default — Cognition's own coding model, $0.50/$2.50 per Mtok."},
+              {"name":"SWE-1.6 · SWE-1.6 Fast","blurb":"The rest of the SWE-1.6 generation at the same $0.50/$2.50 per Mtok."},
+              {"name":"SWE-1.7 · SWE-1.7 Lightning","blurb":"Cognition's newest coding models — Medium or Max on the effort slider, $0.50/$2.50 and $2.50/$12.50 per Mtok."}
+            ]},
             {"provider":"antigravity","label":"AntiGravity","models":[
-              {"name":"Gemini 3.7 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."},
-              {"name":"Sonnet 4.6","blurb":"A top-tier model with better long-form reasoning and coding context."},
-              {"name":"Opus 4.6","blurb":"A premium reasoning model tuned for nuanced instruction following."},
-              {"name":"GPT-OSS-120B","blurb":"OpenAI 120B OSS model with broad capability and strong tool use."}
+              {"name":"Gemini 3.8 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
             {"provider":"grok","label":"Grok","models":[
-              {"name":"Grok 4.6 Fast","blurb":"The new 500K default with Low through Extra High reasoning in Grok Build."}
+              {"name":"Grok 4.7","blurb":"The new 500K default with Low through Extra High reasoning."},
+              {"name":"Grok 4.7 Fast","blurb":"The Fast route of the 4.7 pair, same 500K window and effort ladder."}
             ]},
             {"provider":"cursor","label":"Cursor","models":[
               {"name":"Grok 4.6","blurb":"A 256K Cursor model with Low through Extra High reasoning and Standard/Fast modes."}
             ]},
             {"provider":"muse","label":"Muse","models":[
-              {"name":"Muse Spark 1.2","blurb":"Muse Code CLI over Meta Model API — 1M context at $1.25/$4.25 per Mtok."}
+              {"name":"Muse Spark 1.3","blurb":"Meta's newest Spark in Muse Code and the Meta Model API — 1M context at $1.25/$4.25 per Mtok."},
+              {"name":"Muse Contributor Spark 1.3","blurb":"The discounted route at $0.10/$0.20 per Mtok; content may be used for product improvement."}
             ]},
             {"provider":"mistral","label":"Mistral","models":[
-              {"name":"Devstral Small","blurb":"New configurable Effort options for a faster, lower-cost default or deeper reasoning."},
-              {"name":"Mistral 3.5 Medium","blurb":"Configurable Effort tuning now available, balancing latency and reasoning depth."},
+              {"name":"Mistral 3.5 Medium","blurb":"Vibe 2.25 default. Configurable Effort tuning, balancing latency and reasoning depth."},
               {"name":"Mistral Large 3","blurb":"A flagship-sized 262K context model tuned for deeper planning and coding tasks."},
               {"name":"Mistral Medium (Latest)","blurb":"Current Mistral Medium flagship with stronger context and balanced latency."},
               {"name":"Mistral Medium 3.1","blurb":"Mistral Medium 3.1 extends the medium family with a refreshed default profile."},
               {"name":"Mistral Medium 3","blurb":"Legacy Mistral Medium 3 keeps strong performance in a lighter-cost package."},
               {"name":"Mistral Small 4","blurb":"Mistral Small 4 expands tool and reasoning coverage while staying cost-efficient."},
-              {"name":"Devstral 2","blurb":"A faster default path with broader instruction coverage and lower per-token cost."},
               {"name":"Leanstral 1.5 (Labs)","blurb":"Leanstral 1.5 (Labs) is a research-focused experimental reasoning update."},
               {"name":"GLM-5.2 (via Mistral)","blurb":"GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts."},
+              {"name":"GLM-5.2 (Mistral Hosted)","blurb":"GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan."},
+              {"name":"GLM-5.3 (via Mistral)","blurb":"The 5.3 generation hosted by Mistral — 1M context, on your own API key."},
+              {"name":"GLM-5.3 (Mistral Hosted)","blurb":"GLM-5.3 on the Vibe subscription — 1M context, no API key, metered on your plan."},
               {"name":"Codestral (Aug 2025)","blurb":"Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning."},
               {"name":"Ministral 3 (14B)","blurb":"Ministral 3 (14B) balances throughput and coding depth on the same family stack."},
               {"name":"Ministral 3 (8B)","blurb":"Ministral 3 (8B) keeps the same family strengths in a smaller profile."},
               {"name":"Ministral 3 (3B)","blurb":"Ministral 3 (3B) is the compact variant for lighter tasks and lower cost."}
             ]},
             {"provider":"ollama","label":"Ollama","models":[
+              {"name":"DeepSeek V4.1 Flash (Cloud)","blurb":"DeepSeek's 763B MoE on Ollama Cloud — 1M context, vision and tools, Low/High/Max thinking.","accentProvider":"deepseek"},
+              {"name":"GLM 5.2 (Cloud)","blurb":"Z.ai's 1M-context flagship on Ollama Cloud — signed in, no local VRAM required.","accentProvider":"zai"},
+              {"name":"MiniMax M3 (Cloud)","blurb":"MiniMax M3 on Ollama Cloud — a 1M context window for long-horizon agentic work.","accentProvider":"minimax"},
+              {"name":"Ornith 1.5 (9B & 35B)","blurb":"Deep Reinforce's 262K agentic coder, local in both a 9B and a 35B size.","accentProvider":"deep-reinforce"},
               {"name":"Gemma 4 (31B-MLX)","blurb":"Google Gemma 4 31B-MLX through Ollama, with 262K context and tooling support.","accentProvider":"google"},
               {"name":"Qwen 3.8 (27B-MLX)","blurb":"Alibaba's 27B MLX multimodal agent with tools, thinking, and 262K context (Ollama 0.32.12+).","accentProvider":"qwen"},
               {"name":"Muse Glimmer (30B-MLX)","blurb":"Meta's 30B multimodal agent model with vision, tools, thinking, and failure recovery (131K).","accentProvider":"meta"},
@@ -2433,6 +2935,28 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"North Mini Code 1.0","blurb":"Cohere's 500K agentic coder with tools and thinking — local, no cloud account.","accentProvider":"cohere"},
               {"name":"GLM-4.7-Flash","blurb":"Z.ai 30B-A3B local reasoner with tools and thinking (~203K).","accentProvider":"zai"},
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
+            ]},
+            {"provider":"pi","label":"Pi","models":[
+              {"name":"Space Bunny Alpha (OpenRouter Free)","blurb":"A free stealth preview from an anonymous lab — 1M context, vision, and always-on Low-to-Max reasoning.","accentProvider":"stealth"},
+              {"name":"Pareto (OpenRouter)","blurb":"Unbiased's multimodal frontier composite — 262K with vision, no effort axis, $2.50/$7.50 per Mtok.","accentProvider":"unbiased"},
+              {"name":"Jev 1.13 (OpenRouter)","blurb":"TypeSafe's first System One structured decision model — 32K, typed choices not prose. Coming soon.","accentProvider":"typesafe"},
+              {"name":"Fugu Max (OpenRouter)","blurb":"Sakana's multi-agent orchestrator — 1M context, Off-to-Max effort, $2/$6 per Mtok.","accentProvider":"sakana"},
+              {"name":"Fugu Ultra v2 (OpenRouter)","blurb":"The higher-performance Fugu for deep research and full-stack work — 1M, $5/$30 per Mtok.","accentProvider":"sakana"},
+              {"name":"Mercury 2.5 (OpenRouter)","blurb":"Inception's GA diffusion LLM — 260K context, Off-to-Max effort, $0.20/$0.75 per Mtok.","accentProvider":"inception"},
+              {"name":"Nex-N2.5-Pro (OpenRouter Free)","blurb":"Nex AGI's free 262K agentic coder with vision and Off-to-Max effort; 30-day retention.","accentProvider":"nexagi"},
+              {"name":"Nex-N2.5-Mini (OpenRouter Free)","blurb":"The lighter free Nex-N2.5 — the same 262K window and effort ladder, text only.","accentProvider":"nexagi"},
+              {"name":"Qwen 3.8 27B (Cerebras)","blurb":"Alibaba's 27B model via Cerebras — 131K context, vision and Off/Low/Medium/High reasoning.","accentProvider":"cerebras"},
+              {"name":"North Mini Code (OpenRouter Free)","blurb":"Cohere's 256K agentic coder via OpenRouter, with interleaved reasoning and tool use.","accentProvider":"cohere"},
+              {"name":"MiniMax M3 (OpenRouter Free)","blurb":"MiniMax's free 1M multimodal agent model via OpenRouter, with reasoning and tools.","accentProvider":"minimax"},
+              {"name":"Inkling (OpenRouter Free)","blurb":"Thinking Machines' 1M multimodal model with Off-to-Max effort; free research traffic is logged.","accentProvider":"thinkingmachines"},
+              {"name":"Inkling Small (OpenRouter Free)","blurb":"A faster 1M Inkling with Off-to-Max effort; avoid sensitive data on the logged free endpoint.","accentProvider":"thinkingmachines"},
+              {"name":"DeepSeek V4 Flash","blurb":"DeepSeek V4 Flash via Pi — with reasoning tiers and strong coding performance.","accentProvider":"deepseek"},
+              {"name":"GLM-5.2","blurb":"Z.ai GLM-5.2 via Pi — 1M context with broad capability and strong reasoning.","accentProvider":"zai"},
+              {"name":"Qwen3.8 Max","blurb":"Qwen3.8 Max via Pi — cutting-edge multimodal reasoning from Alibaba.","accentProvider":"qwen"},
+              {"name":"Xiaomi MiMo","blurb":"MiMo V2.6 Pro and V2.6 Flash join V2.5 and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.","accentProvider":"xiaomi"},
+              {"name":"Mistral Large 3","blurb":"Mistral Large 3 via Pi — 262K context for deep planning and complex tasks.","accentProvider":"mistral"},
+              {"name":"Laguna S 2.1","blurb":"Poolside Laguna S 2.1 via Pi — a high-performance reasoning model from Poolside.","accentProvider":"poolside"},
+              {"name":"Nemotron 3 Ultra","blurb":"NVIDIA Nemotron 3 Ultra via Pi — a massive 550B parameter model for enterprise tasks.","accentProvider":"nvidia"}
             ]}
           ]}
          ],
@@ -2486,7 +3010,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     private static func decodeDemo<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
         guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
+        return try? TWCoders.decoder.decode(type, from: data)
     }
 
     /// Clears cached projection/render state (snapshots, streaming buffers, usage
@@ -2640,7 +3164,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     private static func retitledCard(_ card: RemoteTaskCard, title: String) -> RemoteTaskCard {
         guard
-            let data = try? JSONEncoder().encode(card),
+            let data = try? TWCoders.encoder.encode(card),
             var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return card
@@ -2648,7 +3172,7 @@ public final class RemoteSessionModel: ObservableObject {
         object["title"] = title
         guard
             let nextData = try? JSONSerialization.data(withJSONObject: object),
-            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+            let decoded = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: nextData)
         else {
             return card
         }
@@ -2752,9 +3276,9 @@ public final class RemoteSessionModel: ObservableObject {
         ]
         guard
             let cardData = try? JSONSerialization.data(withJSONObject: cardDict),
-            let card = try? JSONDecoder().decode(RemoteTaskCard.self, from: cardData),
+            let card = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: cardData),
             let snapData = try? JSONSerialization.data(withJSONObject: snapDict),
-            let snap = try? JSONDecoder().decode(RemoteThreadSnapshot.self, from: snapData)
+            let snap = try? TWCoders.decoder.decode(RemoteThreadSnapshot.self, from: snapData)
         else {
             onCreated?(nil)
             return
@@ -2772,7 +3296,7 @@ public final class RemoteSessionModel: ObservableObject {
         var dict: [String: Any] = ["id": id, "role": role, "kind": "message", "preview": preview]
         if let speaker { dict["speaker"] = speaker }
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let row = try? JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+            let row = try? TWCoders.decoder.decode(RemoteThreadSnapshot.Row.self, from: data)
         else { return nil }
         return row
     }
@@ -2982,7 +3506,7 @@ public final class RemoteSessionModel: ObservableObject {
             "etag": "demo-etag-\(content.utf8.count)",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
-            let result = try? JSONDecoder().decode(WorkspaceFileReadResult.self, from: data)
+            let result = try? TWCoders.decoder.decode(WorkspaceFileReadResult.self, from: data)
         else { return nil }
         return result
     }
@@ -3012,6 +3536,10 @@ public final class RemoteSessionModel: ObservableObject {
         }
         pairingStore.remove(macIdentityPubKey: id)
         refreshPairedHostsPublished()
+        if !hasStoredPairing {
+            wasEverConnected = false
+            persistWasEverConnectedFlag()
+        }
         registerWithProjectPushGatewaysIfReady()
         guard wasActive else { return }
         pinnedMacIdentityB64 = nil
@@ -3038,6 +3566,8 @@ public final class RemoteSessionModel: ObservableObject {
         let forgottenHostIds = pairedHosts.map(\.macIdentityPubKey)
         deregisterFromProjectPushGateways(pairedHosts)
         pairingStore.clearAll()
+        wasEverConnected = false
+        persistWasEverConnectedFlag()
         refreshPairedHostsPublished()
         registerWithProjectPushGatewaysIfReady()
         pinnedMacIdentityB64 = nil
@@ -3109,13 +3639,28 @@ public final class RemoteSessionModel: ObservableObject {
     private func handleSocketClosed() {
         // Intentional teardown nils the client BEFORE closing — ignore.
         guard client != nil else { return }
+        logConnection("socket-closed", "phase=\(Self.phaseLabel(phase))")
         hostProjection.markTransportClosed()
+        scheduleReconnectAfterUnexpectedClose()
+    }
+
+    /// Delay then `reconnectIfStale()`. Stored so `disconnect()` / demo / host-switch
+    /// can cancel it; the captured `connectAttempt` is a second guard if cancel
+    /// loses a race with the sleep finishing.
+    private func scheduleReconnectAfterUnexpectedClose() {
         guard case .connected = phase else { return }
         if hasStoredPairing {
             phase = .error("Connection lost — reconnecting…")
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                await MainActor.run { self?.reconnectIfStale() }
+            let attempt = connectAttempt
+            cancelDelayedSocketClosedReconnect()
+            let delayMs = UInt64(socketClosedRedialDelayMs)
+            delayedSocketClosedReconnectTask = Task { [weak self] in
+                await TWRetryDelay.sleep(milliseconds: delayMs)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.connectAttempt == attempt, !self.isDemo else { return }
+                    self.reconnectIfStale()
+                }
             }
         } else {
             phase = .error("Connection lost.")
@@ -3163,6 +3708,10 @@ public final class RemoteSessionModel: ObservableObject {
         refreshPairedHostsPublished()
     }
 
+    private func persistWasEverConnectedFlag() {
+        pushGatewayDefaults.set(wasEverConnected, forKey: Self.wasEverConnectedDefaultsKey)
+    }
+
     /// Mirror the persisted multi-host document into the @Published surface the
     /// view layer renders. Call after every store mutation.
     private func refreshPairedHostsPublished() {
@@ -3173,7 +3722,82 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private static func iso8601Now() -> String {
-        ISO8601DateFormatter().string(from: Date())
+        TWCoders.iso8601Now()
+    }
+
+    /// Shared `.established` body so a test can fire the same mutations without
+    /// a live transport client. `client == nil` skips host-projection activate.
+    private func applySessionEstablished(from client: RelayTransportClient?) {
+        if let client {
+            if let hostIdentity = pinnedMacIdentityB64,
+                let phoneIdentity = pairedHostProjectionIdentity(
+                    identityPublicKeyBase64: client.identityPublicKeyBase64)
+            {
+                hostProjection.activate(
+                    hostIdentity: hostIdentity,
+                    phoneIdentity: phoneIdentity,
+                    transport: client)
+            } else {
+                hostProjection.clear(removePersistedSnapshot: false)
+            }
+        }
+        cancelAutoReconnect(resetAttempts: true)
+        phase = .connected
+        reconnectCoordinator.markAttemptFinished()
+        logConnection("established", relayUrl.map(Self.relayHostLabel) ?? "")
+        wasEverConnected = true
+        persistWasEverConnectedFlag()
+        persistCurrentPairing()
+        // Item 1: the outbox promised these would send "when your Mac answers".
+        // This is that moment. Single-flight inside the drainer, so a reconnect
+        // storm cannot double-send.
+        scheduleOfflineOutboxFlush()
+        // Cold-launch deep link: a notification tap set a target before the
+        // session existed — apply it now that ConnectedShell will render.
+        if let pending = pendingDeepLinkThreadId {
+            navigationTarget = pending
+            pendingDeepLinkThreadId = nil
+        }
+        // Wake-path rehydrate: a notification/APNs/foreground walk that just
+        // established should pull the projection instead of waiting for an
+        // unsolicited Mac push. No-op until handleRemoteWake arms the flag.
+        if pendingWakeRehydrate {
+            pendingWakeRehydrate = false
+            rehydrateAfterAliveWake()
+        }
+        // Grace fallback for the hydration gate: a Mac with genuinely nothing
+        // shared must eventually show the true empty state rather than ticking
+        // forever. Idempotent — content arriving first flips the flag and this
+        // no-ops.
+        if !projectionHydrated {
+            let graceAttempt = connectAttempt
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await MainActor.run {
+                    guard let self else { return }
+                    let connected: Bool
+                    if case .connected = self.phase {
+                        connected = true
+                    } else {
+                        connected = false
+                    }
+                    guard
+                        Self.shouldConfirmProjectionEmpty(
+                            timerConnectAttempt: graceAttempt,
+                            currentConnectAttempt: self.connectAttempt,
+                            isConnected: connected)
+                    else { return }
+                    self.projectionHydrated = true
+                    self.projectionGraceExpired = true
+                }
+            }
+        }
+        if let visible = visibleThreadId {
+            requestThreadSnapshot(visible, bypassVisibleStreamSuppression: true)
+        }
+        reassertWatchedThreadToHost()
+        requestPushAuthorizationIfNeeded()
+        sendPendingApnsTokenIfReady()
     }
 
     private func consumeEvents(of client: RelayTransportClient) {
@@ -3207,83 +3831,15 @@ public final class RemoteSessionModel: ObservableObject {
                 case .established:
                     await MainActor.run {
                         guard self.client === client else { return }
-                        if let hostIdentity = self.pinnedMacIdentityB64,
-                            let phoneIdentity = pairedHostProjectionIdentity(
-                                identityPublicKeyBase64: client.identityPublicKeyBase64)
-                        {
-                            self.hostProjection.activate(
-                                hostIdentity: hostIdentity,
-                                phoneIdentity: phoneIdentity,
-                                transport: client)
-                        } else {
-                            self.hostProjection.clear(removePersistedSnapshot: false)
-                        }
-                        self.cancelAutoReconnect(resetAttempts: true)
-                        self.phase = .connected
-                        self.reconnectCoordinator.markAttemptFinished()
-                        self.wasEverConnected = true
-                        self.persistCurrentPairing()
-                        // Cold-launch deep link: a notification tap set a target
-                        // before the session existed — apply it now that
-                        // ConnectedShell will render.
-                        if let pending = self.pendingDeepLinkThreadId {
-                            self.navigationTarget = pending
-                            self.pendingDeepLinkThreadId = nil
-                        }
-                        // Grace fallback for the hydration gate: a Mac with
-                        // genuinely nothing shared must eventually show the
-                        // true empty state (with its setup instructions)
-                        // rather than ticking forever. Idempotent — content
-                        // arriving first flips the flag and this no-ops.
-                        if !self.projectionHydrated {
-                            let graceAttempt = self.connectAttempt
-                            Task { [weak self] in
-                                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                                await MainActor.run {
-                                    guard let self else { return }
-                                    // Only confirm-empty for THIS connection (a
-                                    // superseded reconnect's timer must not latch a
-                                    // false empty for a newer, still-loading one).
-                                    let connected: Bool
-                                    if case .connected = self.phase {
-                                        connected = true
-                                    } else {
-                                        connected = false
-                                    }
-                                    guard
-                                        Self.shouldConfirmProjectionEmpty(
-                                            timerConnectAttempt: graceAttempt,
-                                            currentConnectAttempt: self.connectAttempt,
-                                            isConnected: connected)
-                                    else { return }
-                                    // Keep projectionHydrated=true too: the
-                                    // preset-settling guard reads it as its
-                                    // timeout-release for a genuinely-empty Mac.
-                                    self.projectionHydrated = true
-                                    self.projectionGraceExpired = true
-                                }
-                            }
-                        }
-                        // The establish snapshot covers recent-N threads; the
-                        // one the user is LOOKING AT may be older — refresh it
-                        // explicitly so the transcript catches up after a
-                        // backgrounded run finished.
-                        if let visible = self.visibleThreadId {
-                            self.requestThreadSnapshot(
-                                visible, bypassVisibleStreamSuppression: true)
-                        }
-                        self.reassertWatchedThreadToHost()
-                        // APNs: ask AFTER a successful session (never at cold
-                        // launch), then register; the token callback ships it
-                        // up via handleApnsToken.
-                        self.requestPushAuthorizationIfNeeded()
-                        self.sendPendingApnsTokenIfReady()
+                        self.applySessionEstablished(from: client)
                     }
                 case .message(let method, let params):
                     await self.handle(method: method, params: params)
                 case .error(let message):
                     await MainActor.run {
                         guard self.client === client else { return }
+                        self.logConnection(
+                            "transport-error", "phase=\(Self.phaseLabel(self.phase)) \(message)")
                         if case .connected = self.phase {
                             // A transport-level timeout while the session is still .connected is a
                             // transient network blip, NOT a sleeping Mac. twFriendlyMessage re-maps
@@ -3357,7 +3913,7 @@ public final class RemoteSessionModel: ObservableObject {
 
         init(
             decode: @escaping @Sendable (Data) throws -> DecodedProjectionSnapshot = { data in
-                try JSONDecoder().decode(DecodedProjectionSnapshot.self, from: data)
+                try TWCoders.decoder.decode(DecodedProjectionSnapshot.self, from: data)
             },
             apply: @escaping (DecodedProjectionSnapshot) -> Void
         ) {
@@ -3483,7 +4039,7 @@ public final class RemoteSessionModel: ObservableObject {
             decode: @escaping @Sendable ([Data]) throws -> [DecodedProjectionMessage] = {
                 frames in
                 frames.compactMap {
-                    try? JSONDecoder().decode(DecodedProjectionMessage.self, from: $0)
+                    try? TWCoders.decoder.decode(DecodedProjectionMessage.self, from: $0)
                 }
             },
             apply: @escaping ([DecodedProjectionMessage]) -> Void
@@ -3607,28 +4163,28 @@ public final class RemoteSessionModel: ObservableObject {
         case "bridge.broadcastRemoteProjectionSnapshot":
             projectionSnapshotCoalescer.enqueue(params)
         case "bridge.broadcastWorkspaceList":
-            guard let message = try? JSONDecoder().decode(WorkspaceListMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(WorkspaceListMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: workspace list")
                 return
             }
             applyWorkspaceList(message)
         case "bridge.broadcastThreadList":
-            guard let message = try? JSONDecoder().decode(ThreadListMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ThreadListMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: thread list")
                 return
             }
             applyThreadList(message)
         case "bridge.broadcastModelUsage":
-            guard let message = try? JSONDecoder().decode(ModelUsageMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ModelUsageMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: model usage")
                 return
             }
             modelUsage = message.usage
         case "bridge.broadcastUsageRollup":
-            guard let message = try? JSONDecoder().decode(UsageRollupMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(UsageRollupMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: usage rollup")
                 return
@@ -3638,7 +4194,7 @@ public final class RemoteSessionModel: ObservableObject {
             externalTokenDaily = message.externalDaily
         case "bridge.broadcastWelcomeDashboard":
             guard
-                let message = try? JSONDecoder().decode(WelcomeDashboardMessage.self, from: params)
+                let message = try? TWCoders.decoder.decode(WelcomeDashboardMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: welcome dashboard")
                 return
@@ -3646,14 +4202,14 @@ public final class RemoteSessionModel: ObservableObject {
             welcomeDashboard = message.dashboard
         case "bridge.broadcastFirstLaunchState":
             guard
-                let message = try? JSONDecoder().decode(FirstLaunchStateMessage.self, from: params)
+                let message = try? TWCoders.decoder.decode(FirstLaunchStateMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: first launch state")
                 return
             }
             firstLaunchState = message.state
         case "bridge.broadcastProviderModels":
-            guard let message = try? JSONDecoder().decode(ProviderModelsMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(ProviderModelsMessage.self, from: params)
             else { return }
             providerModels = Dictionary(
                 uniqueKeysWithValues: message.providers.map { ($0.provider, $0.models) })
@@ -3664,7 +4220,7 @@ public final class RemoteSessionModel: ObservableObject {
             // the previously-stored template in place rather than reverting to
             // the default — a malformed broadcast shouldn't silently discard a
             // template the user already configured.
-            guard let message = try? JSONDecoder().decode(BannerTemplateMessage.self, from: params)
+            guard let message = try? TWCoders.decoder.decode(BannerTemplateMessage.self, from: params)
             else {
                 print("[tw] DECODE FAILED: banner template")
                 return
@@ -3699,7 +4255,7 @@ public final class RemoteSessionModel: ObservableObject {
                 let provider: String?
                 let payload: WirePayload?
             }
-            guard let wire = try? JSONDecoder().decode(Wire.self, from: params),
+            guard let wire = try? TWCoders.decoder.decode(Wire.self, from: params),
                 let threadId = wire.threadId
             else { return }
             // Token-level progressive streaming: agent-output lines carry the
@@ -4313,7 +4869,7 @@ public final class RemoteSessionModel: ObservableObject {
         var summaries = snapshot.runSummaries ?? []
         if let latest = snapshot.runSummary { summaries.append(latest) }
         guard let match = summaries.first(where: { $0.runId == liveRunId }),
-            match.endedAt != nil || Self.isFinishedRunStatus(match.status)
+            twIsTerminalRunSummary(match)
         else { return }
         streamingTexts[key] = nil
         streamingSegments[key] = nil
@@ -4324,20 +4880,6 @@ public final class RemoteSessionModel: ObservableObject {
             streamingTerminalThreads.remove(key)
         }
         streamingPublishGate.reset(threadId: key)
-    }
-
-    /// Terminal run-status vocabulary the Mac projects (bridge runs flip
-    /// ChatRun.status to success/failed on finalize; the broader set is defensive
-    /// against other providers). `endedAt` is the primary terminal signal; this
-    /// is the fallback when a summary carries a status but no end timestamp.
-    private static func isFinishedRunStatus(_ status: String?) -> Bool {
-        guard let status else { return false }
-        switch status {
-        case "success", "failed", "completed", "complete", "cancelled", "canceled", "error", "done":
-            return true
-        default:
-            return false
-        }
     }
 
     private func currentRunSummaryFingerprints(
@@ -4577,8 +5119,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private static func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
-        guard let status = summary.status, !status.isEmpty else { return false }
-        return status != "running"
+        twIsTerminalRunSummary(summary)
     }
 
     private func windowStart(for snapshot: RemoteThreadSnapshot) -> Int {
@@ -5476,6 +6017,47 @@ public final class RemoteSessionModel: ObservableObject {
         return pr
     }
 
+    /// Whether the Mac projects real merge support for this workspace. True only
+    /// when `capabilities.githubMergePr == true` (host-derived: both merge
+    /// callbacks injected) AND the workspace grants `externalPublish`, the
+    /// router's `githubMergePr` requirement. Absent/false is fail-closed: the
+    /// phone never offers a control that would call a `notWired` executor or be
+    /// refused by the router.
+    public func isGithubMergePrHostWired(forWorkspaceId workspaceId: String?) -> Bool {
+        guard let workspaceId,
+            let capabilities = workspaces.first(where: { $0.id == workspaceId })?.capabilities
+        else { return false }
+        return GithubMergePrGate.isAvailable(
+            hostProjected: capabilities.githubMergePr,
+            externalPublish: capabilities.externalPublish)
+    }
+
+    /// Merge the current branch's GitHub PR. DESTRUCTIVE and irreversible from
+    /// the phone.
+    ///
+    /// Fail-closed twice before anything is sent: the caller must pass the
+    /// elevation acknowledgement collected from its confirmation UI, and the
+    /// workspace must project merge support — so a capability that flips to
+    /// false between render and tap still cannot reach the wire. The Mac then
+    /// runs its own host-verified approval (`requestAgenticServiceApproval`)
+    /// before any merge: the phone's receipt is necessary, never sufficient.
+    public func mergeGithubPr(
+        workspaceId: String, elevationAcknowledged: Bool
+    ) async throws -> GitPullRequestSummary {
+        guard elevationAcknowledged,
+            isGithubMergePrHostWired(forWorkspaceId: workspaceId)
+        else {
+            throw RemoteFileActionError.denied(
+                "Merge isn't available — the Mac hasn't enabled pull request merge for this workspace.")
+        }
+        let ack = try await requestFileAction(
+            BridgeAction.githubMergePr(
+                workspaceId: workspaceId, elevationAcknowledged: elevationAcknowledged),
+            timeoutMs: 60_000)
+        guard let pr = ack.data?.pr else { throw RemoteFileActionError.malformedAck }
+        return pr
+    }
+
     /// Queue a peer thread message for another thread on the Mac.
     ///
     /// QUEUE-ONLY by construction: the Mac's gate denies a remote wake outright, so
@@ -5516,7 +6098,7 @@ public final class RemoteSessionModel: ObservableObject {
             throw RemoteFileActionError.denied(ack.error ?? "Action denied.")
         }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { throw RemoteFileActionError.malformedAck }
         if actionAck.accepted == false {
             throw RemoteFileActionError.denied(actionAck.message ?? "Denied by Mac policy.")
@@ -6046,7 +6628,7 @@ public final class RemoteSessionModel: ObservableObject {
         if isDemo {
             editDemoSnapshot(thread) { draft in
                 var entries = draft.blackboardEntries ?? []
-                let createdAt = ISO8601DateFormatter().string(from: Date())
+                let createdAt = TWCoders.iso8601Now()
                 let entry = RemoteThreadSnapshot.BlackboardEntry(
                     id: "bb-demo-\(UUID().uuidString)",
                     key: key ?? "user-note-\(Int(Date().timeIntervalSince1970))",
@@ -6182,13 +6764,13 @@ public final class RemoteSessionModel: ObservableObject {
         _ card: RemoteTaskCard, key: String, value: Bool
     ) -> RemoteTaskCard {
         guard
-            let data = try? JSONEncoder().encode(card),
+            let data = try? TWCoders.encoder.encode(card),
             var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return card }
         object[key] = value
         guard
             let nextData = try? JSONSerialization.data(withJSONObject: object),
-            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+            let decoded = try? TWCoders.decoder.decode(RemoteTaskCard.self, from: nextData)
         else { return card }
         return decoded
     }
@@ -6674,6 +7256,15 @@ public final class RemoteSessionModel: ObservableObject {
         }
 
         if selectedTaskId.map(revokedThreadKeys.contains) == true { selectedTaskId = nil }
+        // Keyed on the PARENT only. A side chat inherits its parent's
+        // workspace at creation, so a revoked workspace takes both together
+        // and filtering on the selected id as well would be unreachable.
+        let survivingSideChatSelections = selectedSideChatByThread.filter {
+            !revokedThreadKeys.contains($0.key)
+        }
+        if survivingSideChatSelections != selectedSideChatByThread {
+            selectedSideChatByThread = survivingSideChatSelections
+        }
         if navigationTarget.map(revokedThreadKeys.contains) == true { navigationTarget = nil }
         if visibleThreadId.map(revokedThreadKeys.contains) == true { visibleThreadId = nil }
         if pendingDeepLinkThreadId.map(revokedThreadKeys.contains) == true {
@@ -7019,6 +7610,29 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// iOS grants ~30s of background execution for a notification action.
+    /// Leave a 2s margin for process overhead around the 28s working budget.
+    nonisolated public static let notificationApprovalBackgroundBudgetMs = 28_000
+    nonisolated public static let notificationApprovalDefaultAckTimeoutMs = 7_000
+    nonisolated public static let notificationApprovalMinAckTimeoutMs = 1_000
+    /// `RelayTransportClient.checkPeerAlive` default wait. Stacking this after
+    /// a 22s wake plus a 7s ack blows the background window.
+    nonisolated public static let notificationApprovalPeerPreflightMs = 6_000
+
+    /// Remaining ack timeout inside the notification-action background budget.
+    /// `nil` means abort — there is not enough time to send a bounded ack.
+    nonisolated public static func remainingNotificationApprovalAckTimeoutMs(
+        elapsedMs: Int,
+        budgetMs: Int = notificationApprovalBackgroundBudgetMs,
+        peerPreflightMs: Int = 0,
+        maxAckMs: Int = notificationApprovalDefaultAckTimeoutMs,
+        minAckMs: Int = notificationApprovalMinAckTimeoutMs
+    ) -> Int? {
+        let remaining = budgetMs - elapsedMs - peerPreflightMs
+        guard remaining >= minAckMs else { return nil }
+        return min(maxAckMs, remaining)
+    }
+
     /// Lock-screen Approve/Deny: resolve an approval from a notification action
     /// in the background with NO MobileApprovalCard present (a cold-launched
     /// process has no hydrated cards). Reconnects the E2EE bridge first and only
@@ -7036,7 +7650,19 @@ public final class RemoteSessionModel: ObservableObject {
         // (acceptForSession/Workspace, cancel) stay in-app where the command
         // text is visible.
         guard decision == "accept" || decision == "decline" else { return false }
-        let connected = await handleRemoteWake(reason: "notification-action", timeoutMs: timeoutMs)
+        let started = Date()
+        // Cap the wake so wake + default ack cannot exceed the background budget
+        // even when the Mac is slow; remaining time after the actual elapsed wake
+        // is computed below.
+        let wakeCap = max(
+            0,
+            Self.notificationApprovalBackgroundBudgetMs
+                - Self.notificationApprovalDefaultAckTimeoutMs)
+        let connected = await handleRemoteWake(
+            reason: "notification-action", timeoutMs: min(timeoutMs, wakeCap))
+        let elapsedMs = max(0, Int((Date().timeIntervalSince(started) * 1000).rounded(.up)))
+        guard let ackTimeout = Self.remainingNotificationApprovalAckTimeoutMs(elapsedMs: elapsedMs)
+        else { return false }
         guard connected, case .connected = phase, client != nil else { return false }
         guard let context = replyContext(workspaceId: workspaceId, threadId: threadId, runId: nil)
         else { return false }
@@ -7060,16 +7686,17 @@ public final class RemoteSessionModel: ObservableObject {
                 return false
             }
         }
-        // Bound the ack request so reconnect (≤timeoutMs) + ack stays within the
-        // OS background-execution budget.
+        // Bound the ack to remaining budget. Skip the 6s peer preflight — the wake
+        // already joined the shared health probe.
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             send(
                 BridgeAction.approvalReply(
                     toolCallId: toolCallId, decision: decision,
                     workspaceId: context.workspaceId, threadId: context.threadId),
-                timeoutMs: 7_000,
+                timeoutMs: ackTimeout,
                 successLabel: label,
                 navigateToThreadId: context.threadId,
+                skipPeerPreflight: true,
                 onAck: { accepted in continuation.resume(returning: accepted) })
         }
     }
@@ -7080,11 +7707,18 @@ public final class RemoteSessionModel: ObservableObject {
     public func handleNotificationTap(threadId: String) {
         Task { [weak self] in
             guard let self else { return }
-            _ = await self.handleRemoteWake(reason: "notification-tap", timeoutMs: 22_000)
-            await MainActor.run {
-                self.routeNotificationTarget(threadId)
-            }
+            await self.performNotificationTap(threadId: threadId)
         }
+    }
+
+    func performNotificationTap(threadId: String, timeoutMs: Int = 22_000) async {
+        // Register the deep-link BEFORE the wake walk. `.established` consumes
+        // pendingDeepLinkThreadId; if we wait until after handleRemoteWake the
+        // target is delayed by the whole reconnect budget (up to 22s).
+        await MainActor.run {
+            self.routeNotificationTarget(threadId)
+        }
+        _ = await handleRemoteWake(reason: "notification-tap", timeoutMs: timeoutMs)
     }
 
     /// Slice 5 (RC4): route a tapped notification to its target thread AND force
@@ -7118,6 +7752,26 @@ public final class RemoteSessionModel: ObservableObject {
         }
         func setPhaseForTesting(_ newPhase: SessionPhase) {
             phase = newPhase
+        }
+        /// Stamp a just-established `.connected` session so storm tests can
+        /// fire the notification-tap + scenePhase.active race against it.
+        func markJustEstablishedForTesting(at now: Date = Date()) {
+            phase = .connected
+            reconnectCoordinator.markAttemptFinished(at: now)
+        }
+        /// Fire the delayed-redial path without a live transport client.
+        func simulateUnexpectedSocketCloseForTesting() {
+            scheduleReconnectAfterUnexpectedClose()
+        }
+        private(set) var socketHealthProbeStartsForTesting = 0
+        var healthProbeOverrideForTesting: (@Sendable () async -> Bool)?
+        var remoteWakeBeganHookForTesting: (() -> Void)?
+        var pendingDeepLinkThreadIdForTesting: String? { pendingDeepLinkThreadId }
+        func performNotificationTapForTesting(threadId: String, timeoutMs: Int = 0) async {
+            await performNotificationTap(threadId: threadId, timeoutMs: timeoutMs)
+        }
+        func applySessionEstablishedForTesting() {
+            applySessionEstablished(from: nil)
         }
     #endif
 
@@ -7578,7 +8232,7 @@ public final class RemoteSessionModel: ObservableObject {
             navigateOnAck: false,
             onAckResult: { [weak self] accepted, ack in
                 guard accepted, let data = ack?.result,
-                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                    let result = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
                 else {
                     completion(false)
                     return
@@ -7629,7 +8283,7 @@ public final class RemoteSessionModel: ObservableObject {
             navigateOnAck: false,
             onAckResult: { accepted, ack in
                 guard accepted, let data = ack?.result,
-                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                    let result = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
                 else {
                     completion(false)
                     return
@@ -7744,7 +8398,22 @@ public final class RemoteSessionModel: ObservableObject {
         extraWorkspaceIds: [String]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         navigateOnAck: Bool = true,
-        onActionUnsent: (() -> Void)? = nil
+        onActionUnsent: (() -> Void)? = nil,
+        /// ONE typed terminal verdict, fired EXACTLY ONCE on EVERY route —
+        /// including the hostProjection accepted-success path.
+        ///
+        /// This replaces an earlier `onActionAck: ((Bool) -> Void)` that was
+        /// wrong twice over. The hostProjection route fired NOTHING on accepted
+        /// success, so an awaiting caller hung forever; and on the bridge route
+        /// `send` emits its failure callbacks in a fixed order that hides
+        /// `.unreachable` behind `.rejected`. A Bool could not carry the
+        /// distinction and a pair of callbacks could not be ordered safely, so
+        /// there is now exactly one callback carrying a classified outcome.
+        ///
+        /// STILL callback-free — pre-check before suspending on this:
+        /// `isDemo`, a missing `threadId`, and (non-ensemble cards only) a
+        /// missing `provider`. See `deliverQueuedPrompt`.
+        onActionDeliveryVerdict: ((OfflineOutboxDelivery) -> Void)? = nil
     ) {
         if isDemo {
             appendDemoTurn(card: card, prompt: prompt)
@@ -7786,9 +8455,15 @@ public final class RemoteSessionModel: ObservableObject {
                         for: receipt,
                         success: card.isEnsemble ? "Sent to ensemble." : "Sent.")
                     guard PairedHostActionRouting.acceptedForProcessing(receipt) else {
+                        onActionDeliveryVerdict?(.rejected("your Mac did not accept it"))
                         onActionUnsent?()
                         return
                     }
+                    // Accepted for processing IS delivery on this route. Fired
+                    // here, before any further work, because this success path
+                    // previously emitted NO callback at all — an awaiting
+                    // caller suspended on it hung forever on a SUCCESSFUL send.
+                    onActionDeliveryVerdict?(.delivered)
                     if navigateOnAck { self.navigationTarget = thread }
                     if receipt.status == .succeeded {
                         self.hideRunSummaryFingerprintsForNextTurn(
@@ -7800,6 +8475,9 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 } catch {
                     self.lastActionMessage = error.localizedDescription
+                    // We never obtained a verdict from the Mac, so this is
+                    // "could not ask", not "was refused".
+                    onActionDeliveryVerdict?(.unreachable)
                     onActionUnsent?()
                 }
             }
@@ -7814,6 +8492,7 @@ public final class RemoteSessionModel: ObservableObject {
                 successLabel: "Sent to ensemble.",
                 navigateOnAck: navigateOnAck,
                 onUnsent: onActionUnsent,
+                onDeliveryVerdict: onActionDeliveryVerdict,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -7838,6 +8517,7 @@ public final class RemoteSessionModel: ObservableObject {
                 successLabel: "Sent.",
                 navigateOnAck: navigateOnAck,
                 onUnsent: onActionUnsent,
+                onDeliveryVerdict: onActionDeliveryVerdict,
                 onAck: { [weak self] accepted in
                     guard accepted else { return }
                     self?.hideRunSummaryFingerprintsForNextTurn(
@@ -7859,22 +8539,79 @@ public final class RemoteSessionModel: ObservableObject {
     /// not been sent when `hostUnavailable` is thrown, so this one retry cannot
     /// duplicate a mutation.
     private func requestActionAckWithWake(
-        _ params: [String: Any], timeoutMs: Int, announceWake: Bool = true
+        _ params: [String: Any], timeoutMs: Int, announceWake: Bool = true,
+        skipPeerPreflight: Bool = false
     ) async throws -> AckResult {
         // `[String: Any]` is not Sendable. Freeze it to immutable bytes before
         // crossing from MainActor to the transport actor; the same bytes are
         // safe to reuse only because a host-unavailable preflight sends no
         // application action.
         let paramsData = try JSONSerialization.data(withJSONObject: params)
+        if skipPeerPreflight {
+            // Already proved alive on the notification-approval wake path.
+            // Do not spend another 6s peer ping or a 12s recover wait — that is
+            // what blew the ~30s background window.
+            guard case .connected = phase, let activeClient = client else {
+                throw TransportError.hostUnavailable
+            }
+            return try await activeClient.requestSerialized(
+                "bridge.requestActionAck",
+                paramsData: paramsData,
+                timeoutMs: timeoutMs,
+                skipPeerPreflight: true)
+        }
         if case .connected = phase, let activeClient = client {
-            do {
-                return try await activeClient.requestSerialized(
-                    "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
-            } catch TransportError.hostUnavailable {
-                // Fall through to a fresh trusted reconnect. No app action was
-                // transmitted; RelayTransportClient fails before enqueueing it.
-            } catch {
-                throw error
+            // Join any in-flight wake/foreground probe so a 6s encrypted peer
+            // ping does not stack on a 2.5s relay ping. A dead shared probe
+            // skips checkPeerAlive entirely and recovers.
+            let probe = await probeConnectedHealth(peer: true)
+            if probe.alive {
+                do {
+                    return try await activeClient.requestSerialized(
+                        "bridge.requestActionAck",
+                        paramsData: paramsData,
+                        timeoutMs: timeoutMs,
+                        skipPeerPreflight: probe.peer)
+                } catch TransportError.hostUnavailable {
+                    // Fall through to a fresh trusted reconnect. No app action was
+                    // transmitted; RelayTransportClient fails before enqueueing it.
+                } catch {
+                    throw error
+                }
+            } else if probe.peer, client === activeClient, case .connected = phase {
+                // The Mac did not answer the encrypted ping. That is two very
+                // different situations, and only one of them is worth a dial:
+                //   - the SOCKET is dead (background kill, relay reap) → re-dial;
+                //   - the socket is live and the Mac is merely busy or asleep →
+                //     a re-dial lands on the same silent Mac, and tearing this
+                //     session down to get there was the reconnect storm: every
+                //     establish restarts the Mac's post-establish sweep, whose
+                //     starved pong fails the next preflight, which dialled again.
+                // Hold the session, give the Mac one more probe window, then
+                // fail honestly. The liveness banner already reads "connection
+                // up, Mac hasn't replied" with Retry for exactly this state.
+                if await probeSocketOnly(client: activeClient) {
+                    let retry = await probeConnectedHealth(peer: true)
+                    if retry.alive, client === activeClient {
+                        do {
+                            return try await activeClient.requestSerialized(
+                                "bridge.requestActionAck",
+                                paramsData: paramsData,
+                                timeoutMs: timeoutMs,
+                                skipPeerPreflight: retry.peer)
+                        } catch TransportError.hostUnavailable {
+                            // Socket gone between the probes — dial below.
+                        } catch {
+                            throw error
+                        }
+                    } else {
+                        logConnection("peer-silent", "link up — holding session, no dial")
+                        #if DEBUG
+                            peerSilentHoldsForTesting += 1
+                        #endif
+                        throw TransportError.hostUnavailable
+                    }
+                }
             }
         }
 
@@ -7925,6 +8662,24 @@ public final class RemoteSessionModel: ObservableObject {
         func recoverFromUnavailableHostForActionForTesting() {
             recoverFromUnavailableHostForAction()
         }
+
+        /// Round 6: how many times a peer-silent-but-link-up verdict held the
+        /// session instead of dialling.
+        private(set) var peerSilentHoldsForTesting = 0
+        /// Overrides the socket-only check in the peer-silent branch.
+        var socketProbeOverrideForTesting: (@Sendable () async -> Bool)?
+
+        /// A client with no socket, so `phase == .connected && client != nil`
+        /// holds and the action path reaches its probes (which tests override).
+        func installBareClientForTesting() {
+            client = try? RelayTransportClient(identitySeed: identitySeed)
+        }
+
+        func requestActionAckWithWakeForTesting(
+            _ params: [String: Any], timeoutMs: Int = 1_000
+        ) async throws -> AckResult {
+            try await requestActionAckWithWake(params, timeoutMs: timeoutMs)
+        }
     #endif
 
     nonisolated static func actionFailureMessage(
@@ -7945,8 +8700,23 @@ public final class RemoteSessionModel: ObservableObject {
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
         silent: Bool = false,
+        skipPeerPreflight: Bool = false,
         onThreadCreated: ((String?) -> Void)? = nil,
         onUnsent: (() -> Void)? = nil,
+        /// ONE typed terminal verdict, fired EXACTLY ONCE per send, classified
+        /// here where the outcome is actually known.
+        ///
+        /// The legacy trio below cannot be composed into a verdict by a caller:
+        /// on `hostUnavailable` this method fires `onAck(false)` BEFORE
+        /// `onUnsent`, so a one-shot listener records "declined" and never sees
+        /// "unreachable" — and some routes fire NO callback at all on success.
+        /// Anything that must distinguish refused-by-the-Mac from
+        /// could-not-reach-the-Mac uses this, never the trio.
+        ///
+        /// Declared ahead of the trio deliberately: Swift enforces call-site
+        /// argument order, so this keeps the verdict visible at the top of a
+        /// call rather than buried after a multi-line `onAck` closure.
+        onDeliveryVerdict: ((OfflineOutboxDelivery) -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil,
         onAckResult: ((Bool, AckResult?) -> Void)? = nil
     ) {
@@ -7954,7 +8724,8 @@ public final class RemoteSessionModel: ObservableObject {
         Task {
             do {
                 let ack = try await self.requestActionAckWithWake(
-                    params, timeoutMs: timeoutMs, announceWake: !silent)
+                    params, timeoutMs: timeoutMs, announceWake: !silent,
+                    skipPeerPreflight: skipPeerPreflight)
                 await MainActor.run {
                     let accepted = Self.actionAckSucceeded(ack)
                     let threadId = accepted ? (Self.threadId(from: ack) ?? navigateToThreadId) : nil
@@ -7966,6 +8737,7 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                     onAck?(accepted)
                     onAckResult?(accepted, ack)
+                    onDeliveryVerdict?(Self.actionDeliveryVerdict(ack))
                     // Connection-aware copy. A request ack can time out even while the
                     // session is fully ESTABLISHED — a momentarily slow Mac, a heavy op
                     // right after connect, or a dropped ack on a live socket. The Mac is
@@ -7991,6 +8763,16 @@ public final class RemoteSessionModel: ObservableObject {
                 await MainActor.run {
                     onAck?(false)
                     onAckResult?(false, nil)
+                    // Classified HERE, where the error is in scope. This is the
+                    // ordering bug's fix: the two lines above and the
+                    // `onUnsent` below fire in a fixed sequence that made
+                    // `.unreachable` unobservable to a one-shot listener.
+                    var verdictIsUnreachable = false
+                    if case TransportError.hostUnavailable = error { verdictIsUnreachable = true }
+                    onDeliveryVerdict?(
+                        verdictIsUnreachable
+                            ? .unreachable
+                            : .rejected(Self.actionFailureMessage(error, phase: self.phase)))
                     // Only restore composer content when peer preflight proves
                     // the app action was never transmitted. An ack timeout is
                     // ambiguous (the run may have started), so never invite a
@@ -8023,7 +8805,7 @@ public final class RemoteSessionModel: ObservableObject {
     private static func approvalAckOutcome(_ ack: AckResult?) -> ApprovalAckOutcome {
         guard let ack, ack.ok else { return .transportError }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { return .succeeded }
         if actionAck.accepted == false { return .rejected }
         if actionAck.executed == false {
@@ -8038,25 +8820,35 @@ public final class RemoteSessionModel: ObservableObject {
         return .succeeded
     }
 
-    private static func actionAckSucceeded(_ ack: AckResult) -> Bool {
+    nonisolated private static func actionAckSucceeded(_ ack: AckResult) -> Bool {
         guard ack.ok else { return false }
         guard let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         else { return true }
         if actionAck.accepted == false { return false }
         if actionAck.executed == false { return false }
         return true
     }
 
+    /// One delivery classification for the bridge's outer ack. An outer
+    /// `ok:false` is not a Mac-authored refusal: no action verdict arrived, so
+    /// the outbox must keep the prompt as unreachable rather than label it
+    /// declined.
+    nonisolated static func actionDeliveryVerdict(_ ack: AckResult) -> OfflineOutboxDelivery {
+        if actionAckSucceeded(ack) { return .delivered }
+        if !ack.ok { return .unreachable }
+        return .rejected("your Mac declined it")
+    }
+
     private static func threadId(from ack: AckResult) -> String? {
         guard let data = ack.result else { return nil }
         if let threadId = nestedThreadId(from: data) { return threadId }
-        if let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data) {
+        if let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data) {
             if let threadId = actionAck.data?.threadId { return threadId }
             if let threadId = actionAck.threadId { return threadId }
         }
         struct Loose: Codable { let threadId: String? }
-        if let loose = try? JSONDecoder().decode(Loose.self, from: data) {
+        if let loose = try? TWCoders.decoder.decode(Loose.self, from: data) {
             return loose.threadId
         }
         return nil
@@ -8068,7 +8860,8 @@ public final class RemoteSessionModel: ObservableObject {
                 with: data, options: [.fragmentsAllowed]) as? [String: Any],
             let dataObject = object["data"] as? [String: Any]
         else { return nil }
-        if dataObject["actionKind"] as? String == "createSideChat",
+        if let actionKind = dataObject["actionKind"] as? String,
+            actionKind == "createSideChat" || actionKind == "createSubThread",
             let result = dataObject["result"] as? [String: Any],
             let threadId = result["threadId"] as? String,
             !threadId.isEmpty
@@ -8090,7 +8883,7 @@ public final class RemoteSessionModel: ObservableObject {
             return ack.error ?? "Action denied."
         }
         if let data = ack.result,
-            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+            let actionAck = try? TWCoders.decoder.decode(BridgeActionAck.self, from: data)
         {
             if actionAck.accepted == false {
                 return actionAck.message ?? "Denied by Mac policy."

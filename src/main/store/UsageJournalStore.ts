@@ -31,6 +31,8 @@ export interface UsageJournalStoreOptions {
   compactionDelayMs?: number
   now?: () => number
   logger?: Pick<Console, 'error' | 'warn'>
+  /** Dynamic legacy-writer authority. False makes construction and reads strictly no-repair. */
+  canWrite?: () => boolean
   /** Dependency seam for deterministic read-failure/race tests. */
   readTextFile?: UsageJournalReadTextFile
   /** Dependency seam for a deterministic source-name swap at retirement. */
@@ -123,6 +125,13 @@ class UnsafeUsageStorePathError extends Error {
   }
 }
 
+export class UsageJournalStoreReadOnlyError extends Error {
+  constructor() {
+    super('Usage journal mutation is unavailable after Host ownership.')
+    this.name = 'UsageJournalStoreReadOnlyError'
+  }
+}
+
 /**
  * Durable usage persistence with a cheap completion-path write.
  *
@@ -148,6 +157,7 @@ export class UsageJournalStore {
   private readonly compactionDelayMs: number
   private readonly now: () => number
   private readonly logger: Pick<Console, 'error' | 'warn'>
+  private readonly canWrite: () => boolean
   private readonly readFileBytes: (filePath: string) => Buffer
   private readonly beforeRetireRename?: (filePath: string) => void
   private readonly afterRetireRename?: (filePath: string, retiredPath: string) => void
@@ -193,12 +203,14 @@ export class UsageJournalStore {
     this.compactionDelayMs = Math.max(0, options.compactionDelayMs ?? DEFAULT_COMPACTION_DELAY_MS)
     this.now = options.now ?? Date.now
     this.logger = options.logger ?? console
+    this.canWrite = options.canWrite ?? (() => true)
     this.readFileBytes = options.readTextFile
       ? (filePath) => Buffer.from(options.readTextFile!(filePath), 'utf8')
       : readRegularFileBytesNoFollow
     this.beforeRetireRename = options.beforeRetireRename
     this.afterRetireRename = options.afterRetireRename
     this.afterHistoryMutationStep = options.afterHistoryMutationStep
+    if (!this.isWritable()) return
     try {
       const recoveryLock = this.tryAcquireLock()
       if (recoveryLock) {
@@ -224,6 +236,7 @@ export class UsageJournalStore {
    * can never borrow or replace it.
    */
   beginHistoryMutation(input: UsageHistoryMutationInput): UsageHistoryMutationHold {
+    this.assertWritable()
     const requested = normalizeUsageHistoryMutationIntent({
       schemaVersion: 1,
       ...input,
@@ -253,6 +266,7 @@ export class UsageJournalStore {
    * append gate before the outer history transaction commits.
    */
   purgeHistoryStrict(hold: UsageHistoryMutationHold): UsageHistoryPurgeReport {
+    this.assertWritable()
     const intent = this.requireActiveHistoryMutationHold(hold)
     return this.purgeHistoryIntentStrict(intent)
   }
@@ -262,6 +276,7 @@ export class UsageJournalStore {
    * verified purge and after the last in-process holder ends it.
    */
   endHistoryMutation(hold: UsageHistoryMutationHold): boolean {
+    this.assertWritable()
     if (this.activeHistoryMutationHolds.get(hold.token) !== hold.operationId) return false
     this.activeHistoryMutationHolds.delete(hold.token)
     if ([...this.activeHistoryMutationHolds.values()].includes(hold.operationId)) return true
@@ -290,6 +305,7 @@ export class UsageJournalStore {
    * completed idempotently before retirement; completed intents are reverified.
    */
   recoverPendingHistoryMutationStrict(): UsageHistoryPurgeReport | null {
+    this.assertWritable()
     const intent = this.readHistoryMutationIntent()
     if (!intent) return null
     const token = randomUUID()
@@ -339,16 +355,18 @@ export class UsageJournalStore {
       )
     }
 
-    this.noteUncheckpointedArtifacts(artifactPaths)
-    if (artifactPaths.length > 0) this.scheduleAgeCompaction()
-    if (
-      journalRecordCount >= this.compactAfterRecords ||
-      artifactPaths.some((filePath) => safeRegularFileSize(filePath) >= this.compactAfterBytes) ||
-      artifactPaths.some((filePath) => filePath !== this.journalPath) ||
-      journalReadFailed ||
-      this.compactionAgeDue()
-    ) {
-      this.scheduleCompaction()
+    if (this.isWritable()) {
+      this.noteUncheckpointedArtifacts(artifactPaths)
+      if (artifactPaths.length > 0) this.scheduleAgeCompaction()
+      if (
+        journalRecordCount >= this.compactAfterRecords ||
+        artifactPaths.some((filePath) => safeRegularFileSize(filePath) >= this.compactAfterBytes) ||
+        artifactPaths.some((filePath) => filePath !== this.journalPath) ||
+        journalReadFailed ||
+        this.compactionAgeDue()
+      ) {
+        this.scheduleCompaction()
+      }
     }
 
     const effectiveHistoryMutation = this.readHistoryMutationIntent() ?? pendingHistoryMutation
@@ -360,6 +378,7 @@ export class UsageJournalStore {
   }
 
   append(record: UsageRecord): void {
+    this.assertWritable()
     this.assertUsageRecordHistoryMutationAllowed(record)
     this.assertAppendTargetsSafe()
     this.refreshUncheckpointedSince()
@@ -414,6 +433,7 @@ export class UsageJournalStore {
    * retained on every failure.
    */
   compact(nowMs = this.now()): boolean {
+    this.assertWritable()
     if (this.readHistoryMutationIntent()) return false
     const compacted = this.compactOnce(nowMs)
     if (compacted) this.finishSuccessfulCompaction()
@@ -503,6 +523,18 @@ export class UsageJournalStore {
     this.compactionTimer = null
     this.ageCompactionTimer = null
     this.compactionRetryTimer = null
+  }
+
+  private isWritable(): boolean {
+    try {
+      return this.canWrite() === true
+    } catch {
+      return false
+    }
+  }
+
+  private assertWritable(): void {
+    if (!this.isWritable()) throw new UsageJournalStoreReadOnlyError()
   }
 
   private readHistoryMutationIntent(): UsageHistoryMutationIntent | null {
@@ -1030,6 +1062,7 @@ export class UsageJournalStore {
   }
 
   private scheduleCompaction(): void {
+    if (!this.isWritable()) return
     if (this.compactionTimer) return
     if (
       !this.compactionRetryTimer &&
@@ -1039,12 +1072,14 @@ export class UsageJournalStore {
     }
     this.compactionTimer = setTimeout(() => {
       this.compactionTimer = null
+      if (!this.isWritable()) return
       this.compact()
     }, this.compactionDelayMs)
     this.compactionTimer.unref?.()
   }
 
   private scheduleAgeCompaction(): void {
+    if (!this.isWritable()) return
     if (this.uncheckpointedSinceMs == null) return
     const dueAtMs = this.uncheckpointedSinceMs + this.compactAfterMs
     if (
@@ -1060,12 +1095,14 @@ export class UsageJournalStore {
     this.ageCompactionTimer = setTimeout(() => {
       this.ageCompactionTimer = null
       this.ageCompactionDueAtMs = null
+      if (!this.isWritable()) return
       this.compact()
     }, delayMs)
     this.ageCompactionTimer.unref?.()
   }
 
   private scheduleCompactionRetry(): void {
+    if (!this.isWritable()) return
     if (this.compactionRetryTimer || this.compactionRetryAttempt >= MAX_COMPACTION_RETRY_ATTEMPTS) {
       return
     }
@@ -1076,6 +1113,7 @@ export class UsageJournalStore {
     this.compactionRetryAttempt += 1
     this.compactionRetryTimer = setTimeout(() => {
       this.compactionRetryTimer = null
+      if (!this.isWritable()) return
       this.compact()
     }, delayMs)
     this.compactionRetryTimer.unref?.()
@@ -1139,7 +1177,7 @@ export class UsageJournalStore {
       return { status: 'ok', records: parsed as UsageRecord[], version }
     } catch (error) {
       this.logger.error(`Failed to parse usage checkpoint ${this.checkpointPath}`, error)
-      if (!this.preservedCorruptCheckpointVersions.has(version)) {
+      if (this.isWritable() && !this.preservedCorruptCheckpointVersions.has(version)) {
         const preserveWhileLocked = (): void => {
           // A history intent is the privacy authority. Never mint a new
           // forensic copy behind its sweep; when this process owns the usage

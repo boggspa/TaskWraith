@@ -82,6 +82,7 @@ const settings: AppSettings = {
       pi: 120_000,
       mistral: 120_000,
       muse: 120_000,
+      devin: 120_000
     },
     mainAuthorityMs: 60_000
   }
@@ -211,6 +212,51 @@ describe('PermissionService — surface-scoped canvas grants', () => {
     expect(
       service.resolvePermission('gemini', 'shellCommands', '/repo', 'run-1', settings).decision
     ).toBe('allow')
+  })
+
+  it('requires an exact Simulator surface even when the broad policy says allow', () => {
+    const { service } = harness()
+    const simulatorSettings = {
+      ...settings,
+      agenticServices: { ...settings.agenticServices, simulatorCanvas: 'allow' as const }
+    }
+    expect(
+      service.resolvePermission(
+        'gemini',
+        'simulatorCanvas',
+        '/repo',
+        'run-1',
+        simulatorSettings,
+        'simulator:DEVICE-1:com.example.App'
+      ).decision
+    ).toBe('ask')
+    service.addSessionGrant(
+      'gemini',
+      '/repo',
+      'simulatorCanvas',
+      'run-1',
+      'simulator:DEVICE-1:com.example.App'
+    )
+    expect(
+      service.resolvePermission(
+        'gemini',
+        'simulatorCanvas',
+        '/repo',
+        'run-1',
+        simulatorSettings,
+        'simulator:DEVICE-1:com.example.App'
+      ).decision
+    ).toBe('allow')
+  })
+
+  it('revokes the exact surface grant after navigation, takeover, or lease expiry', () => {
+    const { service, runManager } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-a')
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-a')).toBe(true)
+    expect(
+      service.removeSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-a')
+    ).toBe(true)
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-a')).toBe(false)
   })
 })
 
@@ -381,7 +427,7 @@ describe('PermissionService', () => {
     ).toBe('ask')
   })
 
-  it('treats canvasEval (RCE) as non-grantable — no session/workspace grant auto-allows it', () => {
+  it('keeps broad session/workspace grants from covering unrelated canvasEval surfaces', () => {
     const runManager = new RunManager()
     runManager.create({ runId: 'run-eval', provider: 'gemini', workspacePath: '/repo' })
     const service = new PermissionService({ runManager, sessionGrants: new Set() })
@@ -403,7 +449,8 @@ describe('PermissionService', () => {
     expect(withSession.sessionGrantAllowed).toBe(false)
     expect(withSession.decision).toBe('ask')
 
-    // A workspace grant is equally inert — eval always re-prompts.
+    // A workspace grant is equally inert. The dedicated surface-window path is
+    // intentionally separate and is exercised below.
     const withWorkspace = service.resolvePermission('gemini', 'canvasEval', '/repo', undefined, {
       ...settings,
       agenticWorkspaceGrants: [
@@ -925,5 +972,110 @@ describe('PermissionService', () => {
       expect(decisionFor('workspace_write', 'shellCommands', globalShellDeny)).toBe('deny')
       expect(decisionFor('full_access', 'shellCommands', globalShellDeny)).toBe('deny')
     })
+  })
+})
+
+describe('canvas_eval 12h approval window', () => {
+  const HOUR = 60 * 60 * 1000
+  const WINDOW = 12 * HOUR
+
+  function makeService(): PermissionService {
+    const runManager = new RunManager()
+    return new PermissionService({ runManager, sessionGrants: new Set() })
+  }
+
+  it('is not granted before any approval', () => {
+    expect(makeService().hasLiveCanvasEvalWindowGrant('canvas-a', 1_000)).toBe(false)
+  })
+
+  it('grants for exactly 12h from the first accept, then re-prompts', () => {
+    const service = makeService()
+    const t0 = 1_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + HOUR)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW - 1)).toBe(true)
+    // At the 12h boundary the window has elapsed → the next eval re-prompts.
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+  })
+
+  it('anchors the window to the FIRST accept — a later eval never slides the 12h', () => {
+    const service = makeService()
+    const t0 = 5_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    // A second accept / auto-approve 6h in must NOT extend the window.
+    service.recordCanvasEvalWindowGrant('canvas-a', t0 + 6 * HOUR)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW - 1)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+  })
+
+  it('is bound to the exact canvasId and requires one', () => {
+    const service = makeService()
+    const t0 = 2_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-b', t0 + HOUR)).toBe(false)
+    // A missing / blank surface can never establish or match a window grant.
+    service.recordCanvasEvalWindowGrant(undefined, t0)
+    service.recordCanvasEvalWindowGrant('', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant(undefined, t0)).toBe(false)
+    expect(service.hasLiveCanvasEvalWindowGrant('', t0)).toBe(false)
+  })
+
+  it('continues on the same live Canvas surface across navigation and later turns', () => {
+    const service = makeService()
+    const t0 = 2_500_000
+    service.recordCanvasEvalWindowGrant('canvas-live', t0)
+
+    // The window key is the live canvas id, deliberately not its current URL,
+    // provider, or run. Navigation and a later agent turn therefore retain it.
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-live', t0 + HOUR)).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-other', t0 + HOUR)).toBe(false)
+  })
+
+  it('a re-prompt after expiry starts a fresh 12h window', () => {
+    const service = makeService()
+    const t0 = 3_000_000
+    service.recordCanvasEvalWindowGrant('canvas-a', t0)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t0 + WINDOW)).toBe(false)
+    // The human is asked again and accepts; the window restarts from that accept.
+    const t1 = t0 + WINDOW + HOUR
+    service.recordCanvasEvalWindowGrant('canvas-a', t1)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', t1 + HOUR)).toBe(true)
+  })
+
+  it('a human accept opens the window; decline does not; it never becomes a generic session grant', () => {
+    const runManager = new RunManager()
+    runManager.create({ runId: 'run-eval', provider: 'claude', workspacePath: '/repo' })
+    const service = new PermissionService({ runManager, sessionGrants: new Set() })
+
+    // Accept, carrying the exact surface the user was shown → window opens.
+    expect(
+      service.applyApprovalDecision({
+        provider: 'claude',
+        workspacePath: '/repo',
+        service: 'canvasEval',
+        runId: 'run-eval',
+        action: 'accept',
+        surfaceId: 'canvas-a'
+      })
+    ).toBe(true)
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-a', Date.now())).toBe(true)
+    // The generic session/workspace machinery remains separate: its broad grant
+    // key is not populated. The approval gate consults the live surface window
+    // before showing another prompt.
+    expect(service.hasSessionGrant('claude', '/repo', 'canvasEval', 'run-eval', 'canvas-a')).toBe(
+      false
+    )
+
+    // A decline opens nothing for that surface.
+    service.applyApprovalDecision({
+      provider: 'claude',
+      workspacePath: '/repo',
+      service: 'canvasEval',
+      runId: 'run-eval',
+      action: 'decline',
+      surfaceId: 'canvas-b'
+    })
+    expect(service.hasLiveCanvasEvalWindowGrant('canvas-b', Date.now())).toBe(false)
   })
 })

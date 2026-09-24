@@ -10,6 +10,7 @@ import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
 import {
   buildTaskWraithRoundCloseoutMessage,
   buildTaskWraithRunCloseoutMessage,
+  CLOSEOUT_FILE_CHANGES_LIMIT,
   collectCloseoutSubagentDelegations,
   isSameTaskWraithCloseout,
   upsertTaskWraithCloseoutMessage
@@ -124,6 +125,43 @@ describe('taskWraithCloseoutMessage', () => {
       observedChangedFileCount: 0
     })
     expect(closeout.content).not.toContain('- Commits:')
+  })
+
+  it('reports goal runtime up to the thread last activity, not the days since', () => {
+    // The goal is left `active` and nothing ever closes its interval, so the
+    // close-out used to report the wall-clock age of the goal. Measured on a
+    // live profile: 18.8 days of "active" time on a thread idle for 17.7 days.
+    const run: ChatRun = {
+      runId: 'run-goal',
+      provider: 'codex',
+      startedAt: '2026-08-11T10:00:00.000Z',
+      endedAt: '2026-08-11T10:30:00.000Z',
+      status: 'success'
+    }
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({
+        updatedAt: Date.parse('2026-08-11T10:30:00.000Z'),
+        messages: [{ ...message('a1', 'assistant', 'Worked on it.'), runId: 'run-goal' }],
+        runs: [run],
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Keep going',
+          status: 'active',
+          mode: 'taskwraith_steered',
+          runtimeLedger: {
+            startedAt: '2026-08-11T10:00:00.000Z',
+            intervals: [{ status: 'active', startedAt: '2026-08-11T10:00:00.000Z' }]
+          }
+        }
+      } as never),
+      run,
+      completedAt: '2026-08-29T10:00:00.000Z',
+      exitCode: 0,
+      now: new Date('2026-08-29T10:00:00.000Z')
+    } as never)
+
+    expect(closeout.content).toContain('The linked goal remained active (wall 30m')
+    expect(closeout.content).not.toMatch(/wall \d+d/)
   })
 
   it('tombstones slim fileChanges in metadata and keeps them out of bubble prose', () => {
@@ -396,6 +434,34 @@ describe('taskWraithCloseoutMessage', () => {
     expect(JSON.stringify(closeout.metadata?.closeoutFileChanges)).not.toContain(
       'harvested/should-not-appear.ts'
     )
+  })
+
+  it('keeps a bounded file list honest about every changed path', () => {
+    const run: ChatRun = {
+      runId: 'run-many-files',
+      provider: 'codex',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:00:30.000Z',
+      status: 'success'
+    }
+    const fileChanges = Array.from({ length: CLOSEOUT_FILE_CHANGES_LIMIT + 5 }, (_, index) => ({
+      path: `src/file-${index + 1}.ts`,
+      status: 'modified' as const,
+      additions: 1,
+      deletions: 0
+    }))
+    const closeout = buildTaskWraithRunCloseoutMessage({
+      chat: chat({ runs: [run] }),
+      run,
+      completedAt: '2026-07-07T12:00:30.000Z',
+      exitCode: 0,
+      fileChanges
+    })
+
+    expect(closeout.metadata?.closeoutFileChanges).toHaveLength(CLOSEOUT_FILE_CHANGES_LIMIT)
+    expect(closeout.metadata?.closeoutFileChangesTotal).toBe(fileChanges.length)
+    expect(closeout.metadata?.closeoutReceipt?.observedChangedFileCount).toBe(fileChanges.length)
+    expect(closeout.content).toContain(`${fileChanges.length} changed files`)
   })
 
   it('keeps a long assistant summary intact and flattens Markdown into prose', () => {
@@ -1528,6 +1594,54 @@ Next action:
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
   })
 
+  it('uses the run lifecycle authority when streamed content retains its running status', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-streamed-status',
+      status: 'completed',
+      prompt: 'Stream a long response',
+      startedAt: '2026-09-21T09:00:00.000Z',
+      endedAt: '2026-09-21T09:01:00.000Z',
+      participants: []
+    }
+    const run: ChatRun = {
+      runId: 'run-streamed-status',
+      provider: 'codex',
+      status: 'success',
+      startedAt: round.startedAt,
+      endedAt: round.endedAt,
+      ensembleRoundId: round.roundId,
+      ensembleParticipantId: 'participant-streamed-status',
+      ensembleRole: 'Reviewer',
+      ensembleOrder: 1,
+      ensembleParticipantStatus: 'yielded'
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        runs: [run],
+        messages: [
+          {
+            ...message('streamed-content', 'assistant', 'A streamed answer.'),
+            runId: run.runId,
+            metadata: {
+              kind: 'ensembleParticipant',
+              ensembleStatus: 'running'
+            }
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.metadata?.closeoutParticipantTable?.rows).toMatchObject([
+      {
+        participantId: 'participant-streamed-status',
+        status: 'yielded'
+      }
+    ])
+  })
+
   it('renders participant details with individual @-tagged members, turns, and tokens', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-2',
@@ -1709,6 +1823,81 @@ Next action:
     expect(table?.rows?.[2]?.workLabel).toBe('—')
   })
 
+  it('lets an actual K2.8 run outrank a legacy snapshot and projects only obsolete effort', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-kimi-migration',
+      status: 'completed',
+      prompt: 'Exercise the migrated Kimi seat.',
+      startedAt: '2026-09-12T12:00:00.000Z',
+      endedAt: '2026-09-12T12:01:00.000Z',
+      participants: [
+        {
+          participantId: 'kimi',
+          provider: 'kimi',
+          role: 'Reviewer',
+          order: 1,
+          status: 'answered',
+          initialSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'on',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'read_only'
+          }
+        }
+      ]
+    }
+    const snapshot = (reasoningEffort: string): NonNullable<ChatRun['ensembleSeatSnapshot']> => ({
+      schemaVersion: 1,
+      provider: 'kimi',
+      model: reasoningEffort === 'on' ? 'kimi-k2.7-code' : 'kimi-k2.8-preview',
+      reasoningEffort,
+      thinkingEnabled: true,
+      configuredPermissionPresetId: 'read_only'
+    })
+    const runs: ChatRun[] = [
+      {
+        runId: 'run-kimi-old-control',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:00.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        requestedModel: 'kimi-k2.7-code',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('on')
+      },
+      {
+        runId: 'run-kimi-high',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:10.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('high')
+      },
+      {
+        runId: 'run-kimi-ultratask',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:20.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('ultraTask')
+      }
+    ]
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({ chatKind: 'ensemble', runs }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    const seatText = closeout.metadata?.closeoutParticipantTable?.rows[0]?.seatText
+    expect(seatText).toContain('K2.8 Preview · Max → High → UltraTask')
+    expect(seatText).not.toContain('K2.7 Coding')
+    expect(seatText).not.toContain('Thinking')
+  })
+
   it('uses compact status icons without repeating participant counts in prose', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-status-icons',
@@ -1868,6 +2057,60 @@ Next action:
       permissionPresetId: 'default'
     })
     expect(table?.totalWorkLabel).toBe('3 Turns')
+  })
+
+  it('does not label a signed seal without presetId as the configured wider tier', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-signed-blank',
+      status: 'completed',
+      prompt: 'Seal without preset',
+      startedAt: '2026-07-07T12:00:00.000Z',
+      endedAt: '2026-07-07T12:01:00.000Z',
+      participants: [
+        {
+          participantId: 'seat',
+          provider: 'claude',
+          role: 'Lead',
+          order: 1,
+          status: 'answered'
+        }
+      ]
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        runs: [
+          {
+            runId: 'seat-run-1',
+            provider: 'claude',
+            startedAt: '2026-07-07T12:00:00.000Z',
+            status: 'success',
+            requestedModel: 'claude-fable-5',
+            ensembleRoundId: round.roundId,
+            ensembleParticipantId: 'seat',
+            ensembleRole: 'Lead',
+            ensembleOrder: 1,
+            ensembleSeatSnapshot: {
+              schemaVersion: 1,
+              provider: 'claude',
+              model: 'claude-fable-5',
+              configuredPermissionPresetId: 'workspace_write'
+            },
+            permissionPosture: {
+              schemaVersion: 1,
+              externalPathGrantCount: 0,
+              postureHash: 'seat-posture-blank',
+              signaturePresent: true
+            }
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+    const table = closeout.metadata?.closeoutParticipantTable
+    expect(table?.rows?.[0]?.seatText).not.toMatch(/Full WS Access|Accept Edits|\bAsk\b/)
+    expect(table?.rows?.[0]?.seatLink?.after).not.toHaveProperty('permissionPresetId')
   })
 
   it('prefers an AI summary over the final assistant text and records provenance', () => {

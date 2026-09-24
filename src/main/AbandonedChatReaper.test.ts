@@ -84,6 +84,18 @@ describe('isReapableAbandonedChat — explicit-intent exclusions', () => {
       })
     ).toBe(true)
   })
+  it('uses provenance before placeholder spelling', () => {
+    expect(
+      isReapableAbandonedChat(
+        chat({ title: 'New Chat', threadTitle: { source: 'user' } })
+      )
+    ).toBe(false)
+    expect(
+      isReapableAbandonedChat(
+        chat({ title: 'Automatic title', threadTitle: { source: 'prompt-fallback' } })
+      )
+    ).toBe(true)
+  })
 })
 
 describe('isReapableAbandonedChat — relationship exclusions', () => {
@@ -261,6 +273,32 @@ describe('reapAbandonedChats (orchestration)', () => {
     // Chat" create-time quota; ensemble is never reaped here.
     expect(reaped).toEqual(['t1'])
     expect(deleted).toEqual(['t1'])
+  })
+
+  it('protects a parent named only by getParentChatIds, which a narrowed list cannot derive', () => {
+    // The corpus holds a STARTED child pointing at `shell`, but a narrowed
+    // getChats has already dropped that child as an impossible candidate. So
+    // deriveParentChatIds, which infers parentage from the list it is handed,
+    // sees no child at all and would reap a real parent. Whole-corpus
+    // parentage supplied by the caller is the only thing standing in the way.
+    const shell = chat({ appChatId: 'shell', createdAt: 900 })
+    const older = chat({ appChatId: 'older', createdAt: 800 })
+    const newest = chat({ appChatId: 'newest', createdAt: 1200 })
+
+    const deleted: string[] = []
+    const reaped = reapAbandonedChats({
+      getChats: () => [shell, older, newest],
+      getParentChatIds: () => new Set(['shell']),
+      getWorkflowChatIds: () => new Set(),
+      getScheduledChatIds: () => new Set(),
+      deleteChat: (id) => deleted.push(id)
+    })
+
+    // `newest` takes the single survivor slot, so `older` is the only thing
+    // left to reap — and `shell` is absent because it is a parent. Drop the
+    // parentChatIds wiring and `shell` joins this list.
+    expect(reaped).toEqual(['older'])
+    expect(deleted).toEqual(['older'])
   })
 
   it('caps the burst at `limit`, leaving the rest for the next create', () => {

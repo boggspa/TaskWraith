@@ -15,4 +15,11 @@ describe('Markdown inline diff-stat colours', () => {
     expect(diffStatsCss).toContain('.message-markdown-pro .markdown-inline-diff-stat.is-deletion')
     expect(diffStatsCss).toContain('color: var(--diff-stat-del-color, #ec3d35)')
   })
+
+  it('tints check-result accents from the same live variables', () => {
+    expect(diffStatsCss).toContain('.message-markdown-pro .markdown-inline-check-outcome.is-pass')
+    expect(diffStatsCss).toContain('.message-markdown-pro .markdown-inline-check-outcome.is-fail')
+    expect(diffStatsCss).toContain('.message-markdown-pro .markdown-inline-check-outcome.is-skip')
+    expect(diffStatsCss).toContain('color: var(--warning, #f5a623)')
+  })
 })

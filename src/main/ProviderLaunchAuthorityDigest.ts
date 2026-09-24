@@ -23,12 +23,17 @@ const MAX_TEXT_LENGTH = 4_096
  * scheduling service — originally six providers, seven since the Mistral seat
  * joined ProviderId (codex/claude/kimi/grok/cursor/ollama/mistral). Muse joins
  * ProviderId as decode/run-management identity but stays excluded here until a
- * real SealEvidenceMuse producer exists. Keep it narrow: Pi and conditional
+ * real SealEvidenceMuse producer exists. Devin likewise joins ProviderId as a
+ * decode/run-management identity and stays excluded here until a real
+ * SealEvidenceDevin producer exists. Keep it narrow: Pi and conditional
  * AntiGravity now have strict evidence schemas, but neither is allowed to
  * become production seal-wired merely because the central digest can validate
  * its provider-local authority. Live-selectable ≠ launch-sealed.
  */
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi' | 'muse'>
+export type LiveProviderLaunchId = Exclude<
+  ProviderId,
+  'gemini' | 'antigravity' | 'pi' | 'muse' | 'devin'
+>
 
 /** Every provider with a strict central launch-authority schema/producer. */
 export type LaunchAuthorityProviderId = LiveProviderLaunchId | 'pi' | 'antigravity'
@@ -172,10 +177,11 @@ export interface GrokLaunchControls {
 export interface MistralLaunchControls {
   /** Mistral Vibe is ACP-only — `vibe-acp`. There is no second transport. */
   readonly transport: 'acp'
-  /** The Vibe ACP session mode actually selected via session/set_mode. `plan`
-   *  and `chat` are Vibe's read-only modes; `auto-approve` bypasses every tool
-   *  gate, so which one ran is authority-relevant, not cosmetic. */
-  readonly sessionMode: 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
+  /** The Vibe ACP session mode selected via session/set_config_option. `ask`
+   *  (legacy `default`) is approval-gated, while `plan` and `chat` are
+   *  read-only; `auto-approve` bypasses every tool gate, so which one ran is
+   *  authority-relevant, not cosmetic. */
+  readonly sessionMode: 'ask' | 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
   readonly readOnlySeat: boolean
   /** `initialize` never advertises `clientCapabilities.fs` — the ACP core never
    *  wires onInboundRequest, so an advertised fs capability would be answered
@@ -224,7 +230,10 @@ export interface CursorLaunchControls {
 
 export interface OllamaLaunchControls {
   readonly transport: 'http-chat'
-  readonly reasoningLevel: 'low' | 'medium' | 'high' | null
+  /** Exact native `/api/chat` think value: boolean for ordinary thinking
+   * models, level string for GPT-OSS, null when thinking is unsupported. */
+  /** Ollama's wire `think` value: a boolean, or one of its four levels. */
+  readonly reasoningLevel: boolean | 'low' | 'medium' | 'high' | 'max' | null
   readonly contextCapTokens: number
   readonly protocolMode: 'native_first' | 'json_fallback' | 'json_only'
   readonly compactToolSchemas: boolean
@@ -880,11 +889,14 @@ function normalizeOllamaControls(value: unknown): OllamaLaunchControls {
   )
   return {
     transport: oneOf(record.transport, ['http-chat'], 'Ollama transport'),
-    reasoningLevel: nullableOneOf(
-      record.reasoningLevel,
-      ['low', 'medium', 'high'],
-      'Ollama reasoning level'
-    ),
+    reasoningLevel:
+      typeof record.reasoningLevel === 'boolean'
+        ? boolean(record.reasoningLevel, 'Ollama thinking toggle')
+        : nullableOneOf(
+            record.reasoningLevel,
+            ['low', 'medium', 'high', 'max'],
+            'Ollama reasoning level'
+          ),
     contextCapTokens: positiveInteger(record.contextCapTokens, 'Ollama context cap'),
     protocolMode: oneOf(
       record.protocolMode,
@@ -1056,6 +1068,8 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
     [
       'taskwraith-full-v1',
       'taskwraith-full-v2',
+      'taskwraith-full-v3',
+      'taskwraith-full-v4',
       'taskwraith-core-v1',
       'taskwraith-core-v2',
       'taskwraith-gateway-v1',
@@ -1077,7 +1091,28 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
       'taskwraith-gateway-v12',
       'taskwraith-gateway-v12-mesh',
       'taskwraith-gateway-v13',
-      'taskwraith-gateway-v13-mesh'
+      'taskwraith-gateway-v13-mesh',
+      'taskwraith-gateway-v14',
+      'taskwraith-gateway-v14-mesh',
+      'taskwraith-gateway-v15',
+      'taskwraith-gateway-v15-mesh',
+      'taskwraith-gateway-v16',
+      'taskwraith-gateway-v16-mesh',
+      'taskwraith-gateway-v17',
+      'taskwraith-gateway-v17-mesh',
+      'taskwraith-gateway-v18',
+      'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-v20',
+      'taskwraith-gateway-v20-mesh',
+      'taskwraith-gateway-solo-v4',
+      'taskwraith-gateway-v21',
+      'taskwraith-gateway-v21-mesh',
+      'taskwraith-gateway-solo-v5',
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
+      'taskwraith-gateway-solo-v1',
+      'taskwraith-gateway-solo-v2',
+      'taskwraith-gateway-solo-v3'
     ],
     'TaskWraith MCP profile'
   )

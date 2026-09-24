@@ -15,7 +15,11 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
+import { sidebarThreadDragSession } from '../lib/sidebarThreadDragSession'
 import { MascotGhost, SidebarRunningGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
+import { ChatAgeLabel } from './ChatAgeLabel'
+import { HighlightMatch } from './HighlightMatch'
+import { SidebarChatTitleEditable } from './SidebarChatTitleEditable'
 import { HostStatusRow } from './HostStatusRow'
 import { useHostProjectionStore } from './HostProjectionProvider'
 import { useHostProjection } from '../hooks/useHostProjection'
@@ -48,6 +52,7 @@ import { reusePairedRemoteDevices } from '../lib/pairedRemoteDevices'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
 import { ProjectsSidebarView } from './ProjectsSidebarView'
+import { TerminalSidebarView } from '../lib/TerminalSidebarView'
 import { useLocalServers } from '../hooks/useLocalServers'
 import { useSidebarHierarchyDrag } from '../hooks/useSidebarHierarchyDrag'
 import {
@@ -60,6 +65,10 @@ import { AppShellStatsToolbar } from './AppShellStatsToolbar'
 import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
+import {
+  createSidebarChatPopoutActions,
+  type SidebarChatPopoutHandler
+} from '../lib/sidebarChatPopoutAction'
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -70,9 +79,7 @@ import {
   type ChatGitWorkflowState
 } from '../../../shared/chatGitWorkflow'
 import { chatGitWorkflowMarker, groupChatsByGitWorkflow } from '../lib/gitWorkflowSections'
-import { decodeSidebarGitIndicators } from '../lib/sidebarGitIndicators'
-import { SidebarGitIndicatorStrip } from './SidebarGitIndicatorStrip'
-import { branchTone } from './GitStatusChips'
+import { SidebarTitleTicker } from './SidebarTitleTicker'
 import { isSubThreadChat } from '../lib/chatScope'
 import {
   primarySurfaceForSidebarTabChange,
@@ -93,6 +100,7 @@ import {
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import { approvalActionPresentation } from '../lib/approvalActionPresentation'
 import type { AgentQuestionState } from './AgentQuestionCard'
 import { chatHasPendingAgentQuestion } from '../lib/agentQuestionQueue'
 import type { LocalServerEntry } from '../../../main/localServers/types'
@@ -123,22 +131,16 @@ import {
   type SidebarThreadOrderState
 } from '../lib/sidebarThreadOrder'
 
+// The masthead ghost SVG is static markup. React compares the
+// `dangerouslySetInnerHTML` prop by object identity on updates, so a fresh
+// `{ __html }` literal per render re-assigns `innerHTML` — replacing the
+// parsed SVG subtree on every Sidebar update. This shared descriptor keeps
+// the markup byte-identical while retaining the existing DOM node.
+const taskwraithGhostMonolineHtml = { __html: taskwraithGhostMonolineSvg }
+
 export interface WorkspaceBoardCreateInput {
   workspaceId?: string
   name?: string
-}
-
-const ageTickListeners = new Set<() => void>()
-if (typeof window !== 'undefined') {
-  window.setInterval(() => {
-    ageTickListeners.forEach((listener) => listener())
-  }, 60000)
-}
-function subscribeAgeTick(listener: () => void): () => void {
-  ageTickListeners.add(listener)
-  return () => {
-    ageTickListeners.delete(listener)
-  }
 }
 
 interface SidebarProps {
@@ -197,20 +199,36 @@ interface SidebarProps {
    * host can key surface-scoped state — e.g. the contextual dock memory.
    * Fires for EVERY tab change regardless of source (click, arrow keys, the
    * tab-follows-chat effect), unlike onPrimarySurfaceSelect. */
-  onActiveSidebarTabChange?: (tab: 'chat' | 'threads' | 'projects') => void
+  onActiveSidebarTabChange?: (tab: SidebarActiveTab) => void
   onSelectChat: (chat: ChatRecord) => void
   /** Start Project Home for an unhomed project (Work panel pass-through). */
   onStartProjectHome?: (projectId: string) => void
   /** Reports the selected Project detail target for Work-scoped host chrome. */
   onSelectedProjectChange?: (projectId: string | null) => void
+  /** Open the app-global site Logins dock panel (Work panel pass-through). */
+  onOpenWebSiteLogins?: () => void
   /** Open the References dock panel for a project (Work panel pass-through). */
   onOpenReferencesLibrary?: (projectId: string) => void
   onOpenThreadGraph?: (projectId: string) => void
+  /**
+   * Durable executions this workspace owns, newest first. Surfaced here because
+   * the Execution Map had no route from anywhere the user actually looks: a
+   * graph could pause or fail with nothing pointing at it.
+   */
+  executionRunEntries?: ReadonlyArray<{
+    executionId: string
+    title: string
+    statusLabel: string
+    isLive: boolean
+  }>
+  onOpenExecutionRun?: (executionId: string) => void
   projectGraphEntries?: { id: string; name: string; memberCount: number }[]
   activeThreadGraphProjectId?: string | null
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
+  /** Open this chat in its own pop-out window (all chat types). */
+  onOpenChatPopout?: SidebarChatPopoutHandler
   onOpenSettings: () => void
   /** Live update snapshot for the one-click pill above the masthead. */
   updateSnapshot?: UpdateStateSnapshot | null
@@ -449,9 +467,9 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
 // state, the panel/tab DOM ids, and the surface-toggle planner all key on the
 // id, so the label can change (or be A/B'd) without touching the route. The
 // noun inside the panel remains "Projects".
-const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects']
+const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects', 'terminal']
 
-function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects'> {
+function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects' | 'terminal'> {
   return chat.scope === 'global' ? 'chat' : 'threads'
 }
 /**
@@ -467,8 +485,12 @@ function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'project
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
-const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'hierarchy-disclosures-v2'
+const PREVIOUS_COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const EXPANDED_WORKSPACE_IDS_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspaces'
 type SidebarSectionId =
+  | 'active-runs'
+  | 'local-servers'
   | 'workflows'
   | 'workspace-boards'
   | 'pinned'
@@ -479,6 +501,8 @@ type SidebarSectionId =
   | 'chats'
   | 'shared'
 const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
+  'active-runs',
+  'local-servers',
   'workflows',
   'workspace-boards',
   'pinned',
@@ -489,7 +513,10 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'chats',
   'shared'
 ] as const
-const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>(['recents'])
+const SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT = new Set<SidebarSectionId>([
+  'active-runs',
+  'recents'
+])
 
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
   return new Set(
@@ -516,6 +543,47 @@ function defaultExpandedWorkspaceIds(
 ): Set<string> {
   const workspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
   return workspaceId ? new Set([workspaceId]) : new Set()
+}
+
+interface InitialExpandedWorkspaceState {
+  ids: Set<string>
+  hasPersistedPreference: boolean
+}
+
+function loadInitialExpandedWorkspaceState(
+  workspaces: WorkspaceRecord[],
+  currentWorkspace: WorkspaceRecord | null
+): InitialExpandedWorkspaceState {
+  try {
+    const raw = localStorage.getItem(EXPANDED_WORKSPACE_IDS_STORAGE_KEY)
+    if (raw === null) {
+      return {
+        ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+        hasPersistedPreference: false
+      }
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return {
+        ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+        hasPersistedPreference: false
+      }
+    }
+    const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
+    return {
+      ids: new Set(
+        parsed.filter(
+          (value): value is string => typeof value === 'string' && workspaceIds.has(value)
+        )
+      ),
+      hasPersistedPreference: true
+    }
+  } catch {
+    return {
+      ids: defaultExpandedWorkspaceIds(workspaces, currentWorkspace),
+      hasPersistedPreference: false
+    }
+  }
 }
 
 /** Per-list preview cap. Each thread list (a workspace's chats, Ensembles,
@@ -632,7 +700,9 @@ const SIDEBAR_SYSTEM_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: strin
   { value: 'cyber', label: 'Cyber' },
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' }
+  { value: 'sage', label: 'Sage' },
+  { value: 'xcode-dark', label: 'Xcode Dark' },
+  { value: 'xcode-light', label: 'Xcode Light' }
 ]
 
 function FolderSymbolIcon() {
@@ -1134,147 +1204,6 @@ function XSymbolIcon() {
   )
 }
 
-/**
- * `SidebarChatTitleEditable` — renders a chat's title with two modes:
- *
- *   - Display: `<HighlightMatch>` for search-term highlighting. Double-
- *     clicking the title enters edit mode. Plain row clicks still navigate,
- *     so rename stays deliberate without requiring a prior selection click.
- *   - Edit: an `<input>` with the current title pre-filled. Enter
- *     submits, Escape cancels, blur submits (matches Finder rename UX).
- *     We stopPropagation on click/mousedown so clicks inside the input
- *     don't re-fire the parent row's onClick handler.
- *
- * Used at all 6 chat-tile render sites (pinned, recents, ensembles
- * section, workspace-expanded parents, workspace-expanded sub-threads,
- * global chats). Each site passes its own outer span className so the
- * existing per-section styling rules (`.sidebar-pinned-label` /
- * `.sidebar-recents-label` / `.sidebar-chat-title`) keep working.
- */
-function SidebarChatTitleEditable({
-  chat,
-  className,
-  query,
-  isEditing,
-  onStartEdit,
-  onSubmit,
-  onCancel
-}: {
-  chat: ChatRecord
-  className: string
-  query: string
-  isSelected?: boolean
-  isEditing: boolean
-  onStartEdit: () => void
-  onSubmit: (nextValue: string) => void
-  onCancel: () => void
-}): React.JSX.Element {
-  const [draft, setDraft] = useState(chat.title)
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const draftRef = useRef(chat.title)
-  const editClosedRef = useRef(true)
-  const wasEditingRef = useRef(false)
-  const closeWithSubmit = useCallback(
-    (nextValue?: string): void => {
-      if (editClosedRef.current) return
-      editClosedRef.current = true
-      onSubmit(nextValue ?? draftRef.current)
-    },
-    [onSubmit]
-  )
-  const closeWithCancel = useCallback((): void => {
-    if (editClosedRef.current) return
-    editClosedRef.current = true
-    onCancel()
-  }, [onCancel])
-
-  // Seed the draft when edit mode opens. Once the user is typing, keep
-  // incoming chat updates from clobbering the in-progress rename.
-  useEffect(() => {
-    if (!isEditing) {
-      wasEditingRef.current = false
-      editClosedRef.current = true
-      return
-    }
-    if (wasEditingRef.current) return
-    wasEditingRef.current = true
-    editClosedRef.current = false
-    draftRef.current = chat.title
-    setDraft(chat.title)
-  }, [isEditing, chat.appChatId, chat.title])
-
-  useEffect(() => {
-    if (!isEditing) return
-    const frame = window.requestAnimationFrame(() => {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [isEditing, chat.appChatId])
-
-  if (isEditing) {
-    return (
-      <span className={className}>
-        <input
-          ref={inputRef}
-          autoFocus
-          className="sidebar-chat-title-input"
-          value={draft}
-          onChange={(event) => {
-            draftRef.current = event.target.value
-            setDraft(event.target.value)
-          }}
-          onBlur={(event) => closeWithSubmit(event.currentTarget.value)}
-          onClick={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-              event.preventDefault()
-              event.stopPropagation()
-              closeWithSubmit(event.currentTarget.value)
-            } else if (event.key === 'Escape') {
-              event.preventDefault()
-              event.stopPropagation()
-              closeWithCancel()
-            }
-          }}
-          aria-label="Rename chat"
-        />
-      </span>
-    )
-  }
-
-  // Content-only search hint: when the query matched a message body but
-  // not the title, the title highlight is empty and the user can't tell
-  // why the row surfaced. Show a small "in conversation" snippet so the
-  // match is honest. Skipped entirely when the title already matches.
-  const contentSnippet = getChatContentMatchSnippet(chat, query)
-
-  return (
-    <span
-      className={className}
-      onDoubleClick={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onStartEdit()
-      }}
-    >
-      <HighlightMatch text={chat.title} query={query} />
-      {contentSnippet && (
-        <span className="sidebar-chat-subline sidebar-search-content-match">
-          <span
-            className="sidebar-run-status tone-muted"
-            title={`Match in conversation: ${contentSnippet}`}
-          >
-            <HighlightMatch text={contentSnippet} query={query} />
-          </span>
-        </span>
-      )}
-    </span>
-  )
-}
-
 // `PinSymbolIcon` was used by the inline pin/unpin icon button that
 // every chat-tile + workspace-tile rendered alongside the three-dots
 // overflow menu (1.0.2 behaviour). Both icon buttons were retired in
@@ -1374,6 +1303,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
   if (provider === 'muse') return 'Muse'
+  if (provider === 'devin') return 'Devin'
   return 'Gemini'
 }
 
@@ -1441,71 +1371,6 @@ export function SidebarGitWorkflowIcon({
       aria-label={`Git: ${label}`}
     >
       <ToolFamilyIcon family={GIT_WORKFLOW_ICON_FAMILY[marker.state]} size={12} />
-    </span>
-  )
-}
-
-/**
- * Active-row title ticker: the selected row's label slowly slides between the
- * thread title and its workspace/branch identity ("TaskWraith/master"). Pure
- * CSS (see 01-sidebar.css `.sidebar-title-ticker*`): two 100%-width
- * ellipsizing segments in an overflow-hidden strip, ease-in-out holds,
- * disabled under prefers-reduced-motion. Rename editing bypasses the ticker
- * at the call sites so double-click-to-rename keeps working.
- */
-function SidebarTitleTicker({
-  identity,
-  branch,
-  gitIndicators,
-  className,
-  children
-}: {
-  identity: string
-  /** The branch half of `identity`, supplied separately rather than split out
-   * of it: a branch may itself contain "/" ("feat/foo"), and so may a
-   * folder-derived workspace name, so there is no safe place to cut the joined
-   * string. Absent (no repo / detached) leaves the whole face untinted. */
-  branch?: string | null
-  /** Encoded git status strip (see lib/sidebarGitIndicators). Rides the
-   * identity face, right-aligned, so it slides in and out with the branch
-   * name rather than becoming permanent row chrome. */
-  gitIndicators?: string | null
-  className: string
-  children: ReactNode
-}): ReactNode {
-  const indicators = decodeSidebarGitIndicators(gitIndicators)
-  // Only the branch is tinted; the repo/workspace name stays in the row's own
-  // ink. The suffix check is belt-and-braces — if the two ever disagree the
-  // face renders plain rather than mis-slicing the name.
-  const trimmedBranch = (branch || '').trim()
-  const branchSuffix = trimmedBranch ? `/${trimmedBranch}` : ''
-  const splitsCleanly = Boolean(branchSuffix) && identity.endsWith(branchSuffix)
-  const repoHalf = splitsCleanly ? identity.slice(0, identity.length - trimmedBranch.length) : ''
-  return (
-    <span className={`sidebar-title-ticker ${className}`}>
-      <span className="sidebar-title-ticker-strip">
-        <span className="sidebar-title-ticker-seg">{children}</span>
-        <span className="sidebar-title-ticker-seg sidebar-title-ticker-identity" aria-hidden>
-          <span className="sidebar-title-ticker-identity-text">
-            {splitsCleanly ? (
-              <>
-                {repoHalf}
-                <span
-                  className={`sidebar-title-ticker-branch git-tone-${branchTone(
-                    trimmedBranch,
-                    false
-                  )}`}
-                >
-                  {trimmedBranch}
-                </span>
-              </>
-            ) : (
-              identity
-            )}
-          </span>
-          <SidebarGitIndicatorStrip indicators={indicators} />
-        </span>
-      </span>
     </span>
   )
 }
@@ -2014,120 +1879,12 @@ function chatMatchesSearch(chat: ChatRecord, query: string): boolean {
   return searchableText.toLowerCase().includes(query)
 }
 
-/**
- * When a search hits a chat's message body but NOT its title, the title
- * highlight stays empty and the row gives no clue why it matched. This
- * returns a short snippet of the first matching message (centered on the
- * match) so the tile can surface a "found in conversation" hint. Returns
- * null when there's no query, the title already covers the match, or no
- * message body contains the term — in those cases the existing title
- * highlight is enough.
- */
-function getChatContentMatchSnippet(chat: ChatRecord, query: string): string | null {
-  if (!query) return null
-  if (chat.title.toLowerCase().includes(query)) return null
-  const summaryPreview = (chat as Partial<ChatListItem>).searchPreview
-  if (summaryPreview && summaryPreview.toLowerCase().includes(query)) {
-    return summaryPreview
-  }
-  for (const message of chat.messages || []) {
-    if (message.metadata?.kind === 'channelInbound') continue
-    const content = message.content || ''
-    const matchIndex = content.toLowerCase().indexOf(query)
-    if (matchIndex < 0) continue
-    const radius = 24
-    const start = Math.max(0, matchIndex - radius)
-    const end = Math.min(content.length, matchIndex + query.length + radius)
-    const snippet = content.slice(start, end).replace(/\s+/g, ' ').trim()
-    return `${start > 0 ? '…' : ''}${snippet}${end < content.length ? '…' : ''}`
-  }
-  return null
-}
-
 function workspaceMatchesSearch(workspace: WorkspaceRecord, query: string): boolean {
   if (!query) return true
   return [workspace.displayName, workspace.path, workspace.branch]
     .join(' ')
     .toLowerCase()
     .includes(query)
-}
-
-function ChatAgeLabel({ timestamp }: { timestamp: number }): ReactNode {
-  const [label, setLabel] = useState(() =>
-    Number.isFinite(timestamp) ? formatChatAge(timestamp, Date.now()) : ''
-  )
-
-  useEffect(() => {
-    if (!Number.isFinite(timestamp)) {
-      let cancelled = false
-      queueMicrotask(() => {
-        if (!cancelled) setLabel((prev) => (prev === '' ? prev : ''))
-      })
-      return () => {
-        cancelled = true
-      }
-    }
-    const compute = () => formatChatAge(timestamp, Date.now())
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      setLabel((prev) => {
-        const next = compute()
-        return prev === next ? prev : next
-      })
-    })
-    const unsubscribe = subscribeAgeTick(() => {
-      setLabel((prev) => {
-        const next = compute()
-        return prev === next ? prev : next
-      })
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [timestamp])
-
-  if (!label) return null
-  return (
-    <span className="sidebar-chat-age" title={formatChatAgeTitle(timestamp)}>
-      {label}
-    </span>
-  )
-}
-
-function formatChatAge(timestamp: number, now: number): string {
-  if (!Number.isFinite(timestamp)) return ''
-  const elapsedMs = Math.max(0, now - timestamp)
-  const elapsedMinutes = Math.floor(elapsedMs / 60000)
-  if (elapsedMinutes < 1) return 'now'
-  if (elapsedMinutes < 60) return `${elapsedMinutes}m`
-  const elapsedHours = Math.floor(elapsedMinutes / 60)
-  if (elapsedHours < 24) return `${elapsedHours}h`
-  const elapsedDays = Math.floor(elapsedHours / 24)
-  if (elapsedDays < 7) return `${elapsedDays}d`
-
-  const date = new Date(timestamp)
-  const sameYear = date.getFullYear() === new Date(now).getFullYear()
-  // `[]` defers to the runtime's default locale (matches
-  // `formatChatAgeTitle` below) instead of hard-coding en-GB.
-  return date.toLocaleDateString(
-    [],
-    sameYear
-      ? { day: 'numeric', month: 'short' }
-      : { day: 'numeric', month: 'short', year: '2-digit' }
-  )
-}
-
-function formatChatAgeTitle(timestamp: number): string {
-  if (!Number.isFinite(timestamp)) return ''
-  return new Date(timestamp).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 function formatWorkflowTime(value?: string): string {
@@ -2390,35 +2147,6 @@ function getWorkspaceMeta(workspace: WorkspaceRecord): string {
   return [compactPath, workspace.branch ? `branch ${workspace.branch}` : '']
     .filter(Boolean)
     .join(' · ')
-}
-
-function HighlightMatch({ text, query }: { text: string; query: string }): ReactNode {
-  if (!query) return text
-  const lowerText = text.toLowerCase()
-  const lowerQuery = query.toLowerCase()
-  const parts: ReactNode[] = []
-  let cursor = 0
-  let matchIndex = lowerText.indexOf(lowerQuery, cursor)
-
-  while (matchIndex >= 0) {
-    if (matchIndex > cursor) {
-      parts.push(text.slice(cursor, matchIndex))
-    }
-    const matchEnd = matchIndex + lowerQuery.length
-    parts.push(
-      <mark key={`${matchIndex}-${matchEnd}`} className="sidebar-search-highlight">
-        {text.slice(matchIndex, matchEnd)}
-      </mark>
-    )
-    cursor = matchEnd
-    matchIndex = lowerText.indexOf(lowerQuery, cursor)
-  }
-
-  if (cursor < text.length) {
-    parts.push(text.slice(cursor))
-  }
-
-  return parts.length > 0 ? parts : text
 }
 
 type SidebarRunStatusSnapshot = {
@@ -2831,16 +2559,18 @@ export function ApprovalsFooterPopover({
               approval.preview?.toolName
             ) || approval.preview?.requiresExactDesktopReview === true
             const canApprove = actions.includes('accept') && !requiresDetailedReview
-            const alwaysAllowAction: AgentApprovalAction | null = actions.includes('acceptForWorkspace')
-              ? requiresDetailedReview
-                ? null
-                : 'acceptForWorkspace'
-              : actions.includes('acceptForSession') && !requiresDetailedReview
+            const broaderScopeAction: AgentApprovalAction | null = actions.includes(
+              'acceptForWorkspace'
+            )
+              ? 'acceptForWorkspace'
+              : actions.includes('acceptForSession')
                 ? 'acceptForSession'
                 : null
+            const broaderScopePresentation = broaderScopeAction
+              ? approvalActionPresentation(broaderScopeAction)
+              : null
             const canDeny = actions.includes('decline')
-            const hasInlineActions =
-              Boolean(onRespondApproval) && (canApprove || Boolean(alwaysAllowAction) || canDeny)
+            const hasInlineActions = Boolean(onRespondApproval) && (canApprove || canDeny)
             const rowLabel = chatId && onJumpToChat
               ? `${approval.title}, ${providerLabel}, open thread`
               : `${approval.title}, ${providerLabel}`
@@ -2873,6 +2603,14 @@ export function ApprovalsFooterPopover({
                     Review the exact script in the task before approving.
                   </div>
                 )}
+                {broaderScopePresentation && chatId && onJumpToChat && (
+                  <div
+                    className="sidebar-footer-approval-meta"
+                    title={broaderScopePresentation.title}
+                  >
+                    Open the task to review broader approval options.
+                  </div>
+                )}
                 {hasInlineActions && (
                   <div
                     className="sidebar-footer-approval-actions"
@@ -2886,20 +2624,6 @@ export function ApprovalsFooterPopover({
                         onClick={() => void onRespondApproval?.(approval.id, 'accept')}
                       >
                         Approve
-                      </button>
-                    )}
-                    {alwaysAllowAction && (
-                      <button
-                        type="button"
-                        className="sidebar-footer-approval-action is-always"
-                        title={
-                          alwaysAllowAction === 'acceptForWorkspace'
-                            ? 'Allow this kind of request for this workspace until revoked in Approvals & Grants.'
-                            : 'Allow matching requests for the rest of this app session.'
-                        }
-                        onClick={() => void onRespondApproval?.(approval.id, alwaysAllowAction)}
-                      >
-                        Always Allow
                       </button>
                     )}
                     {canDeny && (
@@ -3031,11 +2755,15 @@ export function Sidebar({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  onOpenWebSiteLogins,
   onOpenThreadGraph,
+  executionRunEntries,
+  onOpenExecutionRun,
   projectGraphEntries,
   activeThreadGraphProjectId,
   onOpenChatInSidePanel,
   onOpenInMultiview,
+  onOpenChatPopout,
   onOpenSettings,
   updateSnapshot,
   onQuickUpdate,
@@ -3260,7 +2988,8 @@ export function Sidebar({
   const [sidebarSearchByTab, setSidebarSearchByTab] = useState<Record<SidebarActiveTab, string>>({
     chat: '',
     threads: '',
-    projects: ''
+    projects: '',
+    terminal: ''
   })
   const sidebarSearch = sidebarSearchByTab[activeSidebarTab]
   const setActiveSidebarSearch = useCallback(
@@ -3273,10 +3002,15 @@ export function Sidebar({
   const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
   const pairedDevicesRef = useRef(pairedDevices)
   const startupExpandedWorkspaceId = defaultExpandedWorkspaceId(workspaces, currentWorkspace)
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() =>
-    defaultExpandedWorkspaceIds(workspaces, currentWorkspace)
+  const [initialExpandedWorkspaceState] = useState<InitialExpandedWorkspaceState>(() =>
+    loadInitialExpandedWorkspaceState(workspaces, currentWorkspace)
   )
-  const expandedWorkspaceStartupSeededRef = useRef(expandedWorkspaceIds.size > 0)
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
+    initialExpandedWorkspaceState.ids
+  )
+  const expandedWorkspaceStartupSeededRef = useRef(
+    initialExpandedWorkspaceState.hasPersistedPreference || expandedWorkspaceIds.size > 0
+  )
   const [expandedSubThreadParentIds, setExpandedSubThreadParentIds] = useState<Set<string>>(
     () =>
       new Set(
@@ -3309,7 +3043,19 @@ export function Sidebar({
         )
         const version = localStorage.getItem(COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY)
         if (version !== COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION) {
+          if (version === PREVIOUS_COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION) {
+            // Preserve every v1 choice, including an intentionally empty set
+            // (all sections expanded). Only Local Servers needs its old local
+            // default translated into the new shared state.
+            const migrated = new Set(saved)
+            migrated.add('local-servers')
+            return migrated
+          }
           const migrated = saved.size === 0 ? defaultCollapsedSidebarSections() : new Set(saved)
+          // Older, unversioned state predates the current defaults. Preserve
+          // the established Local Servers default and keep the explicitly
+          // expanded-by-default sections reachable.
+          migrated.add('local-servers')
           for (const sectionId of SIDEBAR_SECTIONS_EXPANDED_BY_DEFAULT) {
             migrated.delete(sectionId)
           }
@@ -3397,7 +3143,7 @@ export function Sidebar({
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
   const projectSidebarChats = topLevelChats
-  const activeChatSurfaceTab: Exclude<SidebarActiveTab, 'projects'> =
+  const activeChatSurfaceTab: Exclude<SidebarActiveTab, 'projects' | 'terminal'> =
     activeSidebarTab === 'chat' ? 'chat' : 'threads'
   const activeSurfaceChats = chats.filter(
     (chat) => getChatSidebarTab(chat) === activeChatSurfaceTab
@@ -3747,6 +3493,7 @@ export function Sidebar({
       draggable: true,
       onDragStart: (event) => {
         const payload = { listId, chatId: chat.appChatId }
+        sidebarThreadDragSession.start(payload)
         draggedThreadPayloadRef.current = payload
         setDraggedThreadPayload(payload)
         event.dataTransfer.effectAllowed = canPin ? 'copyMove' : 'move'
@@ -3758,6 +3505,7 @@ export function Sidebar({
         event.dataTransfer.setData('text/plain', chat.title)
       },
       onDragEnd: () => {
+        sidebarThreadDragSession.end()
         draggedThreadPayloadRef.current = null
         setDraggedThreadPayload(null)
         setDraggedChatId(null)
@@ -4040,7 +3788,11 @@ export function Sidebar({
   // a General chat, while Code starts a workspace chat. Projects remains a
   // cross-scope organisational view and keeps General chat as its first action.
   const primaryNewTitle =
-    activeSidebarTab === 'threads' ? 'New workspace chat' : 'New general chat'
+    activeSidebarTab === 'terminal'
+      ? 'New Terminal Session…'
+      : activeSidebarTab === 'threads'
+        ? 'New workspace chat'
+        : 'New general chat'
   const defaultWorkspaceForNewChat =
     currentWorkspace ||
     [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
@@ -4206,13 +3958,31 @@ export function Sidebar({
         }
       }
     }
-    void refreshRemoteDevices()
-    const interval = window.setInterval(() => {
+
+    let interval: number | undefined
+    const start = () => {
+      if (interval !== undefined) return
+      interval = window.setInterval(() => { void refreshRemoteDevices() }, 5000)
+    }
+    const stop = () => {
+      if (interval !== undefined) {
+        window.clearInterval(interval)
+        interval = undefined
+      }
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) stop()
+      else { void refreshRemoteDevices(); start() }
+    }
+    if (!document.hidden) {
       void refreshRemoteDevices()
-    }, 5000)
+      start()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       cancelled = true
-      window.clearInterval(interval)
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 
@@ -4238,6 +4008,17 @@ export function Sidebar({
       return new Set([startupExpandedWorkspaceId])
     })
   }, [startupExpandedWorkspaceId])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        EXPANDED_WORKSPACE_IDS_STORAGE_KEY,
+        JSON.stringify([...expandedWorkspaceIds])
+      )
+    } catch {
+      // Ignore persistence errors in constrained environments.
+    }
+  }, [expandedWorkspaceIds])
 
   useEffect(() => {
     const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
@@ -4525,6 +4306,14 @@ export function Sidebar({
         }
       })
     }
+    if (onOpenChatPopout) {
+      items.push(
+        ...createSidebarChatPopoutActions(chat, (targetChat, presentation) => {
+          acknowledgeChatTerminalOutcome(targetChat)
+          onOpenChatPopout(targetChat, presentation)
+        })
+      )
+    }
     if (hasWorkspaceDirectory) {
       items.push({
         id: 'show-workspace-in-finder',
@@ -4570,7 +4359,7 @@ export function Sidebar({
     const trimmed = normalizeThreadTitle(nextValue, '')
     const currentTitle = normalizeThreadTitle(chat.title, '')
     setEditingChatTarget(null)
-    if (!trimmed || trimmed === currentTitle) return
+    if (!trimmed || (trimmed === currentTitle && chat.threadTitle?.source === 'user')) return
     onRenameChat?.(chat.appChatId, trimmed)
   }
 
@@ -4867,6 +4656,30 @@ export function Sidebar({
       className={`app-sidebar${animationClassName ? ` ${animationClassName}` : ''}${
         footerPopoverActive ? ' has-footer-popover' : ''
       }`}
+      onDragEnterCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        setPinDropActive(false)
+        setThreadDropTarget(null)
+      }}
+      onDragOverCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'none'
+      }}
+      onDropCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        sidebarThreadDragSession.end()
+        draggedThreadPayloadRef.current = null
+        setDraggedThreadPayload(null)
+        setDraggedChatId(null)
+        setPinDropActive(false)
+        setThreadDropTarget(null)
+      }}
     >
       <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="sidebar-content">
@@ -4890,7 +4703,7 @@ export function Sidebar({
               <span
                 className="sidebar-product-ghost sidebar-product-ghost-monoline"
                 aria-hidden
-                dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+                dangerouslySetInnerHTML={taskwraithGhostMonolineHtml}
               />
               TaskWraith
             </span>
@@ -4909,6 +4722,15 @@ export function Sidebar({
               type="button"
               className="sidebar-primary-action"
               onClick={() => {
+                if (activeSidebarTab === 'terminal') {
+                  const wsPath = currentWorkspace?.path || defaultWorkspaceForNewChat?.path
+                  if (wsPath) {
+                    void import('../lib/TerminalSidebarStore').then(({ terminalLaunchBus }) => {
+                      terminalLaunchBus.request(wsPath)
+                    })
+                  }
+                  return
+                }
                 setNewMenuOpen((current) => {
                   const next = !current
                   if (next) {
@@ -4917,10 +4739,10 @@ export function Sidebar({
                   return next
                 })
               }}
-              title="Create"
-              aria-label="Create"
-              aria-expanded={newMenuOpen}
-              aria-haspopup="menu"
+              title={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+              aria-label={activeSidebarTab === 'terminal' ? 'New Terminal Session…' : 'Create'}
+              aria-expanded={activeSidebarTab === 'terminal' ? undefined : newMenuOpen}
+              aria-haspopup={activeSidebarTab === 'terminal' ? undefined : 'menu'}
             >
               <PlusSymbolIcon />
               <span>New</span>
@@ -5056,10 +4878,12 @@ export function Sidebar({
               {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
             </span>
           )}
-          <span>
-            {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
-            {activeSidebarChatCount === 1 ? '' : 's'}
-          </span>
+          {activeSidebarTab !== 'terminal' && (
+            <span>
+              {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
+              {activeSidebarChatCount === 1 ? '' : 's'}
+            </span>
+          )}
           {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
         </div>
 
@@ -5097,7 +4921,7 @@ export function Sidebar({
               }}
               tabIndex={activeSidebarTab === tab ? 0 : -1}
             >
-              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : 'Work'}
+              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : tab === 'projects' ? 'Work' : 'Terminal'}
             </button>
           ))}
         </div>
@@ -5126,16 +4950,20 @@ export function Sidebar({
               placeholder={
                 activeSidebarTab === 'projects'
                   ? 'Search projects & members'
-                  : activeSidebarTab === 'chat'
-                    ? 'Search chats'
-                    : 'Search workspaces & threads'
+                  : activeSidebarTab === 'terminal'
+                    ? 'Search sessions'
+                    : activeSidebarTab === 'chat'
+                      ? 'Search chats'
+                      : 'Search workspaces & threads'
               }
               aria-label={
                 activeSidebarTab === 'projects'
                   ? 'Search projects and project members'
-                  : activeSidebarTab === 'chat'
-                    ? 'Search chats'
-                    : 'Search workspaces and chats'
+                  : activeSidebarTab === 'terminal'
+                    ? 'Search terminal sessions'
+                    : activeSidebarTab === 'chat'
+                      ? 'Search chats'
+                      : 'Search workspaces and chats'
               }
               spellCheck={false}
             />
@@ -5153,9 +4981,11 @@ export function Sidebar({
                   aria-label={
                     activeSidebarTab === 'projects'
                       ? 'Clear project search'
-                      : activeSidebarTab === 'chat'
-                        ? 'Clear chat search'
-                        : 'Clear workspace and thread search'
+                      : activeSidebarTab === 'terminal'
+                        ? 'Clear session search'
+                        : activeSidebarTab === 'chat'
+                          ? 'Clear chat search'
+                          : 'Clear workspace and thread search'
                   }
                 >
                   <XSymbolIcon />
@@ -5175,12 +5005,14 @@ export function Sidebar({
             >
               <ProjectsSidebarView
                 chats={projectSidebarChats}
+                activeRunChats={displayChats}
                 currentChat={currentChat}
                 activeChatId={selectedChatId}
                 runningChatIds={runningChatIds}
                 searchQuery={sidebarSearchQuery}
                 isSearchActive={isSidebarSearchActive}
                 onSelectChat={selectAndAcknowledgeChat}
+                onOpenChatPopout={onOpenChatPopout}
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={reportSelectedProject}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
@@ -5189,6 +5021,69 @@ export function Sidebar({
                 onSearchResultCountChange={setProjectsSearchResultCount}
                 initialSelectedProjectId={initialSelectedWorkProjectId}
               />
+              {onOpenWebSiteLogins && (
+                <section className="sidebar-project-graphs-section" aria-label="Site logins">
+                  <div className="sidebar-project-graphs-header">
+                    <span className="sidebar-project-graphs-title">Logins</span>
+                    <span className="sidebar-project-graphs-hint">Sites you stay signed into</span>
+                  </div>
+                  <div className="sidebar-project-graphs-list">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="sidebar-project-graph-item"
+                      onClick={onOpenWebSiteLogins}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          onOpenWebSiteLogins()
+                        }
+                      }}
+                      title="Open saved site logins"
+                    >
+                      <span className="sidebar-project-graph-glyph" aria-hidden="true">
+                        &#9679;
+                      </span>
+                      <span className="sidebar-project-graph-name">Saved site logins</span>
+                    </div>
+                  </div>
+                </section>
+              )}
+              {onOpenExecutionRun && executionRunEntries && executionRunEntries.length > 0 && (
+                <section
+                  className="sidebar-execution-runs-section"
+                  aria-label="Durable executions"
+                >
+                  <div className="sidebar-project-graphs-header">
+                    <span className="sidebar-project-graphs-title">Executions</span>
+                    <span className="sidebar-project-graphs-hint">Open the execution map</span>
+                  </div>
+                  <div className="sidebar-project-graphs-list">
+                    {executionRunEntries.map((entry) => (
+                      <div
+                        key={entry.executionId}
+                        role="button"
+                        tabIndex={0}
+                        className={`sidebar-project-graph-item ${entry.isLive ? 'is-live' : ''}`}
+                        onClick={() => onOpenExecutionRun(entry.executionId)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onOpenExecutionRun(entry.executionId)
+                          }
+                        }}
+                        title={`Open ${entry.title} execution map`}
+                      >
+                        <span className="sidebar-project-graph-glyph" aria-hidden="true">
+                          ⌘
+                        </span>
+                        <span className="sidebar-project-graph-name">{entry.title}</span>
+                        <span className="sidebar-project-graph-count">{entry.statusLabel}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               {onOpenThreadGraph && projectGraphEntries && projectGraphEntries.length > 0 && (
                 <section className="sidebar-project-graphs-section" aria-label="Node graphs">
                   <div className="sidebar-project-graphs-header">
@@ -5224,6 +5119,14 @@ export function Sidebar({
                 </section>
               )}
             </div>
+          ) : activeSidebarTab === 'terminal' ? (
+            <div
+              id="sidebar-terminal-panel"
+              role="tabpanel"
+              aria-labelledby="sidebar-terminal-tab"
+            >
+              <TerminalSidebarView workspaces={workspaces} />
+            </div>
           ) : (
             <div
               id={`sidebar-${activeSidebarTab}-panel`}
@@ -5238,14 +5141,21 @@ export function Sidebar({
               runningChatIds={runningChatIds}
               surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
               onSelectChat={selectAndAcknowledgeChat}
+              onOpenChatPopout={onOpenChatPopout}
               onInspectRun={onInspectRun}
               onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
+              collapsed={isSectionCollapsed('active-runs')}
+              onToggleCollapsed={() => toggleSidebarSection('active-runs')}
             />
           )}
 
           {wrapHierarchySection(
             'local-servers',
-            <LocalServersSection onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard} />,
+            <LocalServersSection
+              onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard}
+              collapsed={isSectionCollapsed('local-servers')}
+              onToggleCollapsed={() => toggleSidebarSection('local-servers')}
+            />,
             activeSidebarTab === 'threads' && localServers.length > 0
           )}
 
@@ -6651,15 +6561,15 @@ export function Sidebar({
               <span>Settings</span>
             </button>
           </div>
-          {/* Traffic-light control cluster: Approvals (red) / Shares (yellow) /
-              Devices (green). Each opens a popover anchored to its own icon;
+          {/* Attention control cluster: Approvals waiting (yellow) / Devices
+              connected (green). Each opens a popover anchored to its own icon;
               the bottom item deep-links to the matching Settings tab. Settings
               stays flex:1 so it dominates the row. */}
           <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
             <div className="sidebar-footer-control-anchor" ref={approvalsFooterAnchorRef}>
               <button
                 type="button"
-                className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
+                className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-yellow' : ''}${
                   approvalsPopoverOpen ? ' is-open' : ''
                 }`}
                 onClick={() => {

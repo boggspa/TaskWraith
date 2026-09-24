@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_NOTE,
@@ -17,7 +18,68 @@ function between(start: string, end: string): string {
   return source.slice(startIndex, endIndex)
 }
 
+/** The single call to `name` inside `scope`; a missing or duplicated call reds. */
+function onlyCall(scope: ts.Node, name: string): ts.CallExpression {
+  const calls = probe.callsTo(scope, name)
+  expect(
+    calls.map((call) => probe.text(call).slice(0, 80)),
+    `calls to ${name}`
+  ).toHaveLength(1)
+  return calls[0]
+}
+
+/** Nearest ancestor of `node` that `test` accepts; throws when there is none. */
+function enclosing<T extends ts.Node>(
+  node: ts.Node,
+  test: (candidate: ts.Node) => candidate is T
+): T {
+  for (let current = node.parent; current; current = current.parent) {
+    if (test(current)) return current
+  }
+  throw new Error(`${probe.text(node).slice(0, 80)} has no enclosing ${test.name}`)
+}
+
+/** A dependency's initializer on a `new X({ ... })` or `f({ ... })`, whitespace removed. */
+function dep(call: ts.CallExpression | ts.NewExpression, name: string): string | undefined {
+  return probe.propText(call, 0, name)?.replace(/\s+/g, '')
+}
+
 describe('execution graph main integration', () => {
+  it('routes solo UltraTask through the durable unanchored graph owner', () => {
+    const dispatcher = between(
+      "} else if (toolName === 'ultra_task') {",
+      "} else if (toolName === 'delegate_wave') {"
+    )
+    const initialization = between(
+      'executionGraphRepositoryRef = executionGraphRepository',
+      '// Phase C5 scaffold: APNs wake-on-approval.'
+    )
+
+    expect(dispatcher).toContain("markDispatchHandled('subthread-control')")
+    expect(dispatcher).toContain('resolveUltraTaskToolRequest(')
+    expect(dispatcher).toContain('listUltraTaskModelsRef')
+    expect(dispatcher).toContain('buildUltraTaskModelCapabilityCatalog({')
+    expect(dispatcher).toContain('resolveUltraTaskCapability({')
+    expect(dispatcher).toContain("id: 'ultratask-graph-v1'")
+    expect(dispatcher).toContain('resolved.model === context.model')
+    expect(dispatcher).toContain("toolName: 'ultra_task'")
+    expect(dispatcher).toContain('startUltraTaskGraphRef')
+    expect(dispatcher).toContain("status: 'running'")
+    expect(dispatcher).toContain('Every join is automatic')
+    // The graph is unanchored (it dispatches its own work rather than waiting
+    // on the initiating run) but it is NOT unowned: the handler stamps the
+    // accountable thread/seat, and the result payload sends the seat to
+    // ensemble_await instead of releasing it to report completion early.
+    expect(dispatcher).toContain('owner: {')
+    expect(dispatcher).toContain('threadId: parentChat.appChatId')
+    expect(dispatcher).toContain('ensemble_await({ executionIds:')
+    expect(dispatcher).toContain('Do not report completion before then.')
+    expect(dispatcher).not.toContain('executeDelegateWaveTool(')
+    expect(initialization).toContain('startUltraTaskGraphRef = (input) =>')
+    expect(initialization).toContain('startPreparedUltraTaskGraph(input, {')
+    expect(initialization).toContain('executionGraphCoordinator.startExecutionGraph(request)')
+  })
+
   it('owns queue lease, composition, and adapter dispatch without a renderer pump', () => {
     const dispatcher = between(
       'const dispatchMainOwnedExecutionGraphAttempt =',
@@ -25,8 +87,8 @@ describe('execution graph main integration', () => {
     )
 
     expect(dispatcher).toContain('resolveExecutionGraphQueueAuthority(appRunId)')
-    expect(dispatcher).toContain('reserveExclusiveChatDispatch')
-    expect(dispatcher.indexOf('reserveExclusiveChatDispatch')).toBeLessThan(
+    expect(dispatcher).toContain('reserveConcurrentGraphChatDispatch')
+    expect(dispatcher.indexOf('reserveConcurrentGraphChatDispatch')).toBeLessThan(
       dispatcher.indexOf('runQueueService.leaseJob')
     )
     expect(dispatcher.indexOf('resolveExecutionGraphQueueAuthority(appRunId)')).toBeLessThan(
@@ -38,7 +100,44 @@ describe('execution graph main integration', () => {
     expect(dispatcher.indexOf('registerExecutionGraphRunTranscript')).toBeLessThan(adapterDispatch)
     expect(dispatcher).toMatch(/const result = await runCoordinator\.dispatch\(\s*entry\.payload,/)
     expect(dispatcher).toContain('recordPreSessionDispatchFailure')
-    expect(dispatcher).toContain('releaseExclusiveChatDispatch(exclusiveReservation)')
+    expect(dispatcher).toContain('releaseConcurrentGraphChatDispatch(graphReservation)')
+  })
+
+  it('keeps graph lanes independent from ordinary parent occupancy through adapter adoption', () => {
+    const graphLeaseBypass = source.indexOf(
+      'if (executionGraphBypassesOrdinaryChatOccupancy(job)) return true'
+    )
+    const ordinaryLeaseGuard = source.indexOf('const queueLeaseAlreadyHeld', graphLeaseBypass)
+    expect(graphLeaseBypass).toBeGreaterThanOrEqual(0)
+    expect(ordinaryLeaseGuard).toBeGreaterThan(graphLeaseBypass)
+
+    const prelaunch = between(
+      'const authorizeProviderAdapterLaunch =',
+      'const runCoordinator = new RunCoordinator'
+    )
+    expect(prelaunch).toContain('executionGraphPrelaunchJobIsStarting(job.status)')
+    expect(source).toContain('executionGraphLifecyclePairMatches({')
+  })
+
+  it('wires execution progress and durable results into the parent await', () => {
+    const awaitBranch = between(
+      "} else if (toolName === 'ensemble_await') {",
+      "} else if (toolName === 'ensemble_lane_result') {"
+    )
+    expect(awaitBranch).toContain('getExecutionResultMailbox')
+    expect(awaitBranch).toContain('projection.updatedAt')
+    expect(awaitBranch).toContain('topology: projection.topology')
+    expect(awaitBranch).toContain('activations: projection.activations')
+  })
+
+  it('excludes graph rows from owner-busy checks and cascades explicit parent stop', () => {
+    const delivery = between(
+      'const deliverSettledExecutionResult =',
+      'const executionGraphCoordinator = new ExecutionGraphCoordinator'
+    )
+    expect(delivery.match(/hasNonGraphThreadTurn/g)).toHaveLength(2)
+    expect(source).toContain('stopParentRunAndOwnedExecutions(')
+    expect(source).toContain('return cancelExplicitParentRun(normalizedProvider, runIdString)')
   })
 
   it('commits the exact transcript result before graph settlement and queue projection', () => {
@@ -99,55 +198,137 @@ describe('execution graph main integration', () => {
   })
 
   it('keeps graph diagnostics available across initialization and recovery failures', () => {
-    const initialization = between(
-      'executionGraphComposedPayloads.clear()',
-      '// Phase C5 scaffold: APNs wake-on-approval.'
-    )
-    const diagnosticsRegistration = initialization.indexOf(
-      'registerExecutionGraphDiagnosticsHandler({'
-    )
-    const repositoryInitialization = initialization.indexOf(
-      'const executionGraphRepository = new ExecutionGraphRepository('
-    )
+    // Initialization: the diagnostics query, and the retry/archive commands
+    // beside it, register before the repository is constructed, so a throw
+    // there leaves them answering with the reason instead of no handler.
+    const [repository] = probe.construction('ExecutionGraphRepository')
+    const diagnosticsQuery = onlyCall(probe.source, 'registerExecutionGraphDiagnosticsHandler')
+    const recoveryCommands = onlyCall(probe.source, 'registerExecutionGraphRecoveryHandlers')
+    expect(diagnosticsQuery.getStart()).toBeLessThan(repository.getStart())
+    expect(recoveryCommands.getStart()).toBeLessThan(repository.getStart())
+    expect(dep(diagnosticsQuery, 'getSnapshot')).toBe('getExecutionGraphDiagnosticsSnapshot')
+    expect(dep(recoveryCommands, 'getSnapshot')).toBe('getExecutionGraphDiagnosticsSnapshot')
 
-    expect(diagnosticsRegistration).toBeGreaterThanOrEqual(0)
-    expect(repositoryInitialization).toBeGreaterThan(diagnosticsRegistration)
-    expect(initialization).toContain('executionGraphRepositoryRef?.listRepositoryDiagnostics()')
-    expect(initialization).toContain("code: 'initialization_failed'")
+    // The snapshot reads the repository through its nullable ref, and the
+    // recovery and service lists from the two `let`s everything else writes.
+    const [snapshot] = probe.objectLiterals(probe.fn('getExecutionGraphDiagnosticsSnapshot'))
+    expect(probe.propOf(snapshot, 'repositoryDiagnostics')?.replace(/\s+/g, '')).toBe(
+      'executionGraphRepositoryRef?.listRepositoryDiagnostics()??[]'
+    )
+    expect(probe.propOf(snapshot, 'recoveryDiagnostics')).toBe('executionGraphRecoveryDiagnostics')
+    expect(probe.propOf(snapshot, 'serviceDiagnostics')).toBe('executionGraphServiceDiagnostics')
 
-    // Anchored on a form tolerant of extra `&& !<name>` conjuncts. The 1.9.2 arc
-    // widened this gate to also demand `!workspaceLockStartupRecoveryBlockedReason`;
-    // an added conjunct strictly narrows when recovery runs, so it cannot weaken
-    // what this test protects, and a literal has broken here twice already.
-    const recoveryGate =
-      /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*\)\s*\{\s*const startupRecoveryRecords/
-    const recoveryStart = source.search(recoveryGate)
-    expect(recoveryStart).toBeGreaterThanOrEqual(0)
-    const recoveryEnd = source.indexOf(
-      'AppStore.recoverInterruptedScheduledTasksAfterStartup()',
-      recoveryStart
+    // An initialization failure nulls the coordinator ref (which the recovery
+    // controller reads, so the launch pass falls back to nothing paused) and
+    // records the reason on the service list.
+    const initializationFailure = enclosing(repository, ts.isTryStatement).catchClause
+    expect(initializationFailure).toBeDefined()
+    expect(probe.assignmentsTo(initializationFailure!, 'executionGraphCoordinatorRef')).toEqual([
+      'null'
+    ])
+    expect(
+      probe.assignmentsTo(initializationFailure!, 'executionGraphServiceDiagnostics').join(' ')
+    ).toContain("code: 'initialization_failed'")
+
+    // Recovery runs from the owner-metadata starter's timer, out of reach of
+    // the try/catch around the starter (which covers only a synchronous
+    // throw). Each startup pass is the recover callback; the controller picks
+    // the owners it preloads, keeps the paused set in the snapshot's recovery
+    // list, and hears every failed pass, reporting one that keeps failing on
+    // the service list. ExecutionGraphStartupRecovery.test.ts proves that
+    // through the real starter.
+    const starter = onlyCall(probe.source, 'startCatalogueExecutionRecovery')
+    expect(dep(starter, 'recover')).toBe(
+      '()=>{executionGraphRecoveryController.runStartupRecovery()}'
     )
-    expect(recoveryEnd).toBeGreaterThan(recoveryStart)
-    const recovery = source.slice(recoveryStart, recoveryEnd)
-    expect(recovery).toContain(
-      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
+    expect(dep(starter, 'ownerIds')).toBe('()=>executionGraphRecoveryController.startupOwnerIds()')
+    expect(dep(starter, 'onError')).toBe(
+      '(error,retrying)=>executionGraphRecoveryController.startupPassFailed(error,retrying)'
     )
-    expect(recovery).toContain("code: 'startup_recovery_failed'")
+    expect(
+      probe
+        .assignmentsTo(
+          enclosing(starter, ts.isTryStatement).catchClause!,
+          'executionGraphServiceDiagnostics'
+        )
+        .join(' ')
+    ).toContain("code: 'startup_recovery_failed'")
+    const [controller] = probe.construction('ExecutionGraphRecoveryController')
+    expect(dep(controller, 'coordinator')).toBe('()=>executionGraphCoordinatorRef')
+    expect(dep(controller, 'readDiagnostics')).toBe('()=>executionGraphRecoveryDiagnostics')
+    expect(dep(controller, 'writeDiagnostics')).toBe(
+      '(next)=>{executionGraphRecoveryDiagnostics=next}'
+    )
+    expect(dep(controller, 'readServiceDiagnostics')).toBe('()=>executionGraphServiceDiagnostics')
+    expect(dep(controller, 'writeServiceDiagnostics')).toBe(
+      '(next)=>{executionGraphServiceDiagnostics=next}'
+    )
   })
 
   it('recovers the ordinary queue before the graph coordinator at startup', () => {
-    const queueRecovery = source.indexOf(
-      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()'
-    )
-    const graphRecovery = source.indexOf(
-      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
-    )
+    const recovery = probe.fn('runDeferredWorkspaceLockRecovery')
+    const queueRecovery = onlyCall(recovery, 'recoverRunQueueAfterStartup')
+    const starter = onlyCall(recovery, 'startCatalogueExecutionRecovery')
 
-    expect(queueRecovery).toBeGreaterThanOrEqual(0)
-    expect(graphRecovery).toBeGreaterThan(queueRecovery)
+    // Queue recovery is synchronous and has settled before the starter is
+    // even called; the starter only schedules the graph's launch pass.
+    expect(queueRecovery.getStart()).toBeLessThan(starter.getStart())
+
+    // One gate for both, so no launch runs graph recovery after skipping the
+    // queue recovery it depends on. The gate may gain `&& !<reason>`
+    // conjuncts; each only narrows when recovery runs.
+    const gate = enclosing(queueRecovery, ts.isIfStatement)
+    expect(enclosing(starter, ts.isIfStatement).getStart()).toBe(gate.getStart())
+    expect(probe.text(gate.expression)).toContain('!historyDeletionStartupRecoveryBlockedReason')
+
+    // And that starter is the only way in: the launch pass is called from its
+    // recover callback and nowhere else, and nothing here drives the graph
+    // coordinator's recovery around the controller. (Other services have
+    // their own `recover` methods, so the receiver is what is checked.)
+    expect(probe.callsTo(starter, 'runStartupRecovery')).toHaveLength(1)
+    expect(probe.callsTo(probe.source, 'runStartupRecovery')).toHaveLength(1)
+    const direct = [
+      ...probe.callsTo(probe.source, 'recover'),
+      ...probe.callsTo(probe.source, 'recoverExecutions')
+    ]
+      .map((call) => probe.text(call))
+      .filter((call) => call.includes('executionGraphCoordinator'))
+    expect(direct).toEqual([])
   })
 
-  it('delivers committed predecessor results as untrusted data before composition', () => {
+  it('tells recovery about a graph lease before anything can run between them', () => {
+    // Startup recovery parks a claimed attempt whose queue row is past
+    // `queued` unless this process leased it, and the boot sweep leases
+    // queued attempts before the deferred launch pass runs. With no await
+    // between the lease and the note, no recovery pass can land between them.
+    const dispatcher = probe.fn('dispatchMainOwnedExecutionGraphAttempt')
+    const lease = onlyCall(dispatcher, 'leaseJob')
+    const note = onlyCall(dispatcher, 'noteDispatchLease')
+    const compose = onlyCall(dispatcher, 'composeMainOwnedExecutionGraphAttempt')
+    expect(probe.text(note).replace(/\s+/g, '')).toBe(
+      'executionGraphCoordinatorRef?.noteDispatchLease(appRunId)'
+    )
+    expect(lease.getEnd()).toBeLessThan(note.getStart())
+    expect(note.getEnd()).toBeLessThan(compose.getStart())
+
+    const awaits: ts.AwaitExpression[] = []
+    const visit = (node: ts.Node): void => {
+      if (ts.isAwaitExpression(node)) awaits.push(node)
+      ts.forEachChild(node, visit)
+    }
+    visit(dispatcher)
+    expect(awaits.length).toBeGreaterThan(0)
+    expect(
+      awaits
+        .filter((node) => node.getStart() > lease.getEnd() && node.getStart() < note.getStart())
+        .map((node) => probe.text(node))
+    ).toEqual([])
+
+    // The dispatcher is the only way a graph row is leased, so no other lease is noted.
+    expect(probe.callsTo(probe.source, 'noteDispatchLease')).toHaveLength(1)
+  })
+
+  it('delivers committed predecessor results as exact named data inputs before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',
       'const composeMainOwnedExecutionGraphAttempt ='
@@ -156,8 +337,31 @@ describe('execution graph main integration', () => {
     expect(composer).toContain("predecessorAttempt.state !== 'succeeded'")
     expect(composer).toContain('!predecessorAttempt.result')
     expect(composer).toContain('verifyExecutionGraphAttemptReceiptOnChat')
+    expect(composer).toContain("edge.kind === 'data'")
+    expect(composer).toContain('bindExecutionGraphInputsToRequest(')
+    expect(composer).toContain('Execution graph bound input prompt changed before composition.')
+    // Pre-data-edge linear Stacks retain their one-predecessor compatibility envelope.
     expect(composer).toContain('formatExecutionGraphPredecessorResults(')
     expect(composer).toContain("contextIsolation: 'execution_graph'")
+  })
+
+  it('signs and persists the bound prompt while retaining the reusable template proof', () => {
+    const initialization = between(
+      'materializePausedQueueJob: (input) => {',
+      'getQueueJob: (runId) => {'
+    )
+    const authority = between(
+      'const resolveExecutionGraphQueueAuthority =',
+      'const graphOwnedComposerInput ='
+    )
+
+    expect(initialization).toContain(
+      'const request = bindExecutionGraphInputsToRequest(templateRequest, input.inputs)'
+    )
+    expect(initialization).toContain('request: templateRequest')
+    expect(initialization).toContain('attemptRequest: request')
+    expect(initialization).toContain('request: { ...request, sessionTrust: false }')
+    expect(authority).toContain('request: { ...job.request, prompt: templateRequest.prompt }')
   })
 
   it('persists the exact adapter prompt and rechecks predecessor receipts before launch', () => {

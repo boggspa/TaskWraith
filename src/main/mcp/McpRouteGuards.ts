@@ -21,7 +21,14 @@ export interface McpCallerContext {
   fixedToolAllowlist?: readonly string[]
 }
 
-export type McpGuardResult = { ok: true } | { ok: false; error: string }
+export interface McpDirectToolHint {
+  toolNames: readonly ['git_commit', 'write_file', 'apply_patch']
+  message: string
+}
+
+export type McpGuardResult =
+  | { ok: true }
+  | { ok: false; error: string; directToolHint?: McpDirectToolHint }
 
 export function validateMcpCallerToolAllowlist(
   toolName: string,
@@ -47,13 +54,15 @@ export function isMutatingTaskWraithMcpTool(toolName: string, toolArgs?: unknown
 }
 
 /**
- * Tools whose approval prompt must reach a human on EVERY call, regardless of
- * standing grants, trusted-session state or session-YOLO.
+ * Tools held out of generic standing-grant, trusted-session, and session-YOLO
+ * auto-approval. Capability-specific scoped approval can still resolve later.
  *
  * Most are a channel between the agent and a third party that no amount of prior
  * trust in the workspace covers:
  *  - `image_generate` ships agent-chosen text off-box to a third-party API.
- *  - `canvas_eval` executes agent-authored JavaScript.
+ *  - `canvas_eval` requires the first exact-live-surface desktop accept; its
+ *    dedicated 12h same-surface window is checked later and deliberately may
+ *    auto-resolve across navigation and later turns.
  *  - Outlook reads pull a stranger's words into the model's context; Outlook
  *    writes put agent-chosen text and recipients into a real mailbox. Both
  *    halves of that channel are prompt-injection surface, so both prompt.
@@ -109,7 +118,12 @@ export function validateMutatingMcpRoute(
   }
   return {
     ok: false,
-    error: `TaskWraith blocked unrouted mutating MCP tool call "${toolName}". Bridge calls that can mutate workspace or app state must provide TASKWRAITH_RUN_ID or TASKWRAITH_CHAT_ID; the single-active-run fallback is only allowed for read-only tools.`
+    error: `TaskWraith blocked unrouted mutating MCP tool call "${toolName}". Bridge calls that can mutate workspace or app state must provide TASKWRAITH_RUN_ID or TASKWRAITH_CHAT_ID; the single-active-run fallback is only allowed for read-only tools. The call is still blocked. Recovery route: restore a run-bound route, then use the directly advertised git_commit tool for commits or write_file/apply_patch for workspace changes. Their normal route, approval, and workspace checks still apply. This hint grants no permission and does not retry the call.`,
+    directToolHint: {
+      toolNames: ['git_commit', 'write_file', 'apply_patch'],
+      message:
+        'This call remains blocked. Reissue through a directly advertised commit or file tool; its normal route, approval, and workspace checks still apply.'
+    }
   }
 }
 

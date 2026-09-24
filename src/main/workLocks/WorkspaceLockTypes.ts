@@ -235,6 +235,30 @@ export type WorkspaceLockProcessObservation =
   | { state: 'live'; processBirthIdentity: string }
   | { state: 'identity_unavailable' }
 
+/** Exact incarnation named by one commit-fence record: a partition's owner or a reclaim contender. */
+export interface WorkspaceLockCommitFenceOwnerIdentity {
+  pid: number
+  processBirthIdentity: string
+  /** Absent for the unpartitioned fence. Diagnostic only: deferral matches any partition. */
+  partitionKey?: string
+}
+
+/**
+ * Renderer-safe liveness of the process behind a lease, as last observed by
+ * this authority's periodic pass. Pids and birth identities stay out on purpose.
+ */
+export interface WorkspaceLockHolderLiveness {
+  /** `this` only for a lease issued by the running authority (same instance and generation). */
+  instanceScope: 'this' | 'other'
+  liveness: 'live' | 'lapsed' | 'dead' | 'unknown'
+  /**
+   * Wall age of the holder's last heartbeat at the last scan; absent for this
+   * incarnation's own leases and for a holder that never wrote one.
+   */
+  heartbeatAgeMs?: number
+  generation: number
+}
+
 export interface WorkspaceLockAuthorityDependencies {
   nowIso: () => string
   nextId: (kind: 'fence' | 'lease' | 'transition') => string
@@ -249,6 +273,19 @@ export interface WorkspaceLockAuthorityDependencies {
   ) => CanonicalWorkspaceLockPathVerification
   /** Required before the authority grants a hunk claim. */
   validateHunkBaseline?: (claim: CanonicalWorkspaceLockClaim) => boolean | Promise<boolean>
+  /** Monotonic milliseconds for lapse grace; defaults to process.hrtime. */
+  monotonicNowMs?: () => number
+  /**
+   * Every process identity named by any commit-fence record, read without
+   * taking, releasing, reclaiming or creating anything. The periodic reclaim
+   * defers a lapsed holder named in ANY partition, not only the partition of
+   * its lease's current claim: the executor holds the partitions of its
+   * admission claims, and a replace can move the claim's object identity
+   * (planned -> dev:ino) while the holder still sits in the old partition.
+   * Absent, or throwing, a lapsed but live holder is never reclaimed: nothing
+   * shows it has left the fence.
+   */
+  readCommitFenceOwners?: () => readonly WorkspaceLockCommitFenceOwnerIdentity[]
   instance: {
     instanceId: string
     pid: number
@@ -262,6 +299,8 @@ export interface WorkspaceLockSnapshot {
   lastTransitionId: string
   leases: WorkspaceLockLease[]
   projectionErrors: string[]
+  /** Keyed by leaseId; absent until the first periodic pass has observed holders. */
+  holderLiveness?: Record<string, WorkspaceLockHolderLiveness>
 }
 
 export interface WorkspaceLockMutationCapability {

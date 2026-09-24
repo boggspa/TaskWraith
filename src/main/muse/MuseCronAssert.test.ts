@@ -165,7 +165,11 @@ describe('MuseCronAssert', () => {
     }
   })
 
-  it('fails when session-index has no row and refuses lease escapes', () => {
+  it('treats a missing session-index row with no cron artifacts as vacuously empty', () => {
+    // The CLI indexes sessions asynchronously, and a run that failed before
+    // its first turn (e.g. missing credentials) never creates a row at all.
+    // That must not fabricate a hard "cannot assert" failure onto a run
+    // result that already failed for its real reason.
     const root = join(TEMP_ROOT, 'missing-index-row')
     const museDataHome = join(root, 'xdg-data', 'muse')
     mkdirSync(museDataHome, { recursive: true })
@@ -187,11 +191,76 @@ describe('MuseCronAssert', () => {
       sessionId: '44444444-4444-4444-8444-444444444444',
       leaseRoot: root
     })
-    expect(missing.ok).toBe(false)
-    if (!missing.ok) {
-      expect(missing.reason).toMatch(/no row/i)
-    }
+    expect(missing).toMatchObject({
+      ok: true,
+      sessionDir: null,
+      cronDbPath: null,
+      jobCount: 0,
+      basis: 'no-session-cron-artifacts'
+    })
+  })
 
+  it('treats an entirely missing session-index with no cron artifacts as vacuously empty', () => {
+    const root = join(TEMP_ROOT, 'missing-index-db')
+    const museDataHome = join(root, 'xdg-data', 'muse')
+    mkdirSync(museDataHome, { recursive: true })
+
+    const result = assertMuseCronJobsEmpty({
+      museDataHome,
+      sessionId: '77777777-7777-4777-8777-777777777777',
+      leaseRoot: root
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      jobCount: 0,
+      basis: 'no-session-cron-artifacts'
+    })
+  })
+
+  it('still fails closed on an unindexed cron.db that has jobs', () => {
+    // Protection preserved: no session-index row, but a real cron.db with
+    // rows exists inside the lease data home — that is a containment breach,
+    // not an indexing hiccup.
+    const root = join(TEMP_ROOT, 'unindexed-breach')
+    const museDataHome = join(root, 'xdg-data', 'muse')
+    mkdirSync(museDataHome, { recursive: true })
+    const sessionDir = join(museDataHome, 'sessions', '2026', '09', '01', 'unindexed')
+    seedCronDb(sessionDir, { jobs: 1 })
+
+    const result = assertMuseCronJobsEmpty({
+      museDataHome,
+      sessionId: '88888888-8888-4888-8888-888888888888',
+      leaseRoot: root
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toMatch(/containment breach.*unindexed/i)
+      expect(result.jobCount).toBe(1)
+      expect(result.cronDbPath).toBe(museCronDbPathForSessionDir(sessionDir))
+    }
+  })
+
+  it('accepts an unindexed cron.db whose cron_jobs table is empty via the lease scan', () => {
+    const root = join(TEMP_ROOT, 'unindexed-empty')
+    const museDataHome = join(root, 'xdg-data', 'muse')
+    mkdirSync(museDataHome, { recursive: true })
+    const sessionDir = join(museDataHome, 'sessions', '2026', '09', '01', 'unindexed-empty')
+    seedCronDb(sessionDir, { jobs: 0 })
+
+    const result = assertMuseCronJobsEmpty({
+      museDataHome,
+      sessionId: '99999999-9999-4999-8999-999999999999',
+      leaseRoot: root
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      jobCount: 0,
+      cronDbPath: museCronDbPathForSessionDir(sessionDir),
+      basis: 'lease-scan'
+    })
+  })
+
+  it('refuses lease escapes from the session index', () => {
     const escapeRoot = join(TEMP_ROOT, 'escape')
     const escapeData = join(escapeRoot, 'xdg-data', 'muse')
     const outsideDir = join(TEMP_ROOT, 'outside-session')

@@ -1,0 +1,433 @@
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import {
+  discoverHostStandaloneAntigravity,
+  parseHostStandaloneAgyModels,
+  readHostStandaloneAntigravityConsent,
+  type DiscoverHostStandaloneAntigravityInput
+} from './HostStandaloneAntigravityAdmission'
+
+const paths: string[] = []
+
+/**
+ * Admission validates the resolved binary with the ambient platform's
+ * absolute-path rules, so the fixture must be canonical on the runner's OS.
+ * Nothing executes it.
+ */
+const AGY_BINARY =
+  process.platform === 'win32' ? 'C:\\taskwraith-test-bin\\agy.exe' : '/usr/local/bin/agy'
+
+afterEach(() => {
+  while (paths.length > 0) rmSync(paths.pop()!, { recursive: true, force: true })
+})
+
+function profile(settings?: unknown): string {
+  const path = realpathSync(mkdtempSync(join(tmpdir(), 'host-antigravity-admission-')))
+  paths.push(path)
+  if (settings !== undefined) {
+    writeFileSync(join(path, 'settings.json'), JSON.stringify(settings), { mode: 0o600 })
+  }
+  return path
+}
+
+function acceptedSettings() {
+  return {
+    antigravityEnabled: true,
+    antigravityOptInAcceptedAt: 1_700_000_000_000,
+    unrelatedSecret: 'must-not-project'
+  }
+}
+
+function withdrawConsent(path: string): void {
+  writeFileSync(
+    join(path, 'settings.json'),
+    JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
+    { mode: 0o600 }
+  )
+}
+
+const CONSENT_REQUIRED = {
+  status: 'consent_required',
+  admission: null,
+  detail: 'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
+}
+
+describe('readHostStandaloneAntigravityConsent', () => {
+  it('reads only the existing two-part profile consent', () => {
+    expect(readHostStandaloneAntigravityConsent(profile(acceptedSettings()))).toEqual({
+      accepted: true,
+      acceptedAt: 1_700_000_000_000,
+      status: 'accepted'
+    })
+    expect(
+      readHostStandaloneAntigravityConsent(
+        profile({ antigravityEnabled: true, antigravityOptInAcceptedAt: null })
+      )
+    ).toEqual({ accepted: false, acceptedAt: null, status: 'missing' })
+    expect(
+      readHostStandaloneAntigravityConsent(
+        profile({ antigravityEnabled: true, antigravityOptInAcceptedAt: 'yes' })
+      )
+    ).toEqual({ accepted: false, acceptedAt: null, status: 'missing' })
+  })
+
+  it('fails closed for missing, malformed, oversized, and symlinked settings', () => {
+    expect(readHostStandaloneAntigravityConsent(profile())).toEqual({
+      accepted: false,
+      acceptedAt: null,
+      status: 'missing'
+    })
+    const malformed = profile()
+    writeFileSync(join(malformed, 'settings.json'), '{broken', { mode: 0o600 })
+    expect(readHostStandaloneAntigravityConsent(malformed).accepted).toBe(false)
+
+    const oversized = profile()
+    writeFileSync(join(oversized, 'settings.json'), 'x'.repeat(512 * 1024 + 1), { mode: 0o600 })
+    expect(readHostStandaloneAntigravityConsent(oversized).status).toBe('invalid')
+
+    const target = profile(acceptedSettings())
+    const linked = profile()
+    symlinkSync(join(target, 'settings.json'), join(linked, 'settings.json'))
+    expect(readHostStandaloneAntigravityConsent(linked)).toEqual({
+      accepted: false,
+      acceptedAt: null,
+      status: 'invalid'
+    })
+  })
+})
+
+describe('discoverHostStandaloneAntigravity', () => {
+  it('does no binary or process work before consent', async () => {
+    const resolveBinary = vi.fn(async () => ({ binaryPath: AGY_BINARY }))
+    const capture = vi.fn()
+
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: profile({ antigravityEnabled: true }),
+        resolveBinary,
+        capture
+      })
+    ).resolves.toMatchObject({ status: 'consent_required', admission: null })
+    expect(resolveBinary).not.toHaveBeenCalled()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('requires a resolved official binary and a current nonempty live model probe', async () => {
+    const consentedProfile = profile(acceptedSettings())
+    const capture = vi.fn(async () => ({ stdout: '', stderr: '', code: 0 }))
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: consentedProfile,
+        resolveBinary: async () => ({ binaryPath: null }),
+        capture
+      })
+    ).resolves.toMatchObject({ status: 'unavailable', admission: null })
+    expect(capture).not.toHaveBeenCalled()
+
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: consentedProfile,
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture
+      })
+    ).resolves.toMatchObject({ status: 'auth_required', admission: null })
+    expect(capture).toHaveBeenCalledTimes(1)
+  })
+
+  it('admits only live discovered rows, groups efforts, and keeps AntiGravity conditional', async () => {
+    const capture = vi.fn<DiscoverHostStandaloneAntigravityInput['capture']>(async () => ({
+      stdout: JSON.stringify({
+        models: [
+          { id: 'gemini-3.7-flash-high' },
+          { id: 'gemini-3.7-flash-medium' },
+          { id: 'gemini-3.7-flash-low' },
+          { id: 'claude-opus-4-6' }
+        ]
+      }),
+      stderr: '',
+      code: 0
+    }))
+    const result = await discoverHostStandaloneAntigravity({
+      profilePath: profile(acceptedSettings()),
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+      capture,
+      env: {
+        PATH: '/usr/local/bin',
+        GEMINI_API_KEY: 'never-forward',
+        google_api_key: 'never-forward-either',
+        TASKWRAITH_LOCK_OWNER_ID: 'not-a-discovery-claim'
+      }
+    })
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') throw new Error('expected admission')
+    expect(isLiveSelectableProvider('antigravity')).toBe(false)
+    expect(result.admission.offers.providerId).toBe('antigravity')
+    expect(result.admission.offers.models).toEqual([
+      expect.objectContaining({
+        modelId: 'gemini-3.7-flash-high',
+        label: 'Gemini 3.7 Flash',
+        default: true,
+        reasoning: [
+          expect.objectContaining({ reasoningId: 'low' }),
+          expect.objectContaining({ reasoningId: 'medium' }),
+          expect.objectContaining({ reasoningId: 'high' })
+        ]
+      }),
+      expect.objectContaining({ modelId: 'claude-opus-4-6', label: 'Opus 4.6' })
+    ])
+    expect(
+      result.admission.offers.postures.map((posture) => [posture.label, posture.available])
+    ).toEqual([
+      ['Plan', true],
+      ['Ask', false],
+      ['Accept Edits', false],
+      ['Full WS Access', false],
+      ['Full Access (YOLO)', false]
+    ])
+    const captureOptions = capture.mock.calls[0]?.[2]
+    expect(captureOptions).toMatchObject({ timeoutMs: 8_000 })
+    expect(captureOptions?.env).toMatchObject({ PATH: '/usr/local/bin', FORCE_COLOR: '0' })
+    expect(captureOptions?.env).not.toHaveProperty('GEMINI_API_KEY')
+    expect(captureOptions?.env).not.toHaveProperty('google_api_key')
+    expect(captureOptions?.env).not.toHaveProperty('TASKWRAITH_LOCK_OWNER_ID')
+    expect(JSON.stringify(result)).not.toContain('must-not-project')
+  })
+
+  it('defaults to the newest Flash family, and to 3.7 on a catalogue without it', async () => {
+    const discover = (ids: readonly string[]) =>
+      discoverHostStandaloneAntigravity({
+        profilePath: profile(acceptedSettings()),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture: async () => ({
+          stdout: JSON.stringify({ models: ids.map((id) => ({ id })) }),
+          stderr: '',
+          code: 0
+        })
+      })
+    const defaults = (probe: Awaited<ReturnType<typeof discover>>) => {
+      if (probe.status !== 'ready') throw new Error('expected admission')
+      return probe.admission.offers.models.map((row) => [row.label, row.default === true])
+    }
+
+    // 3.8 is listed AFTER 3.7 so the default must be won by preference, not
+    // by the first-row fallback.
+    const current = await discover([
+      'gemini-3.7-flash-high',
+      'gemini-3.7-flash-low',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low'
+    ])
+    expect(defaults(current)).toEqual([
+      ['Gemini 3.7 Flash', false],
+      ['Gemini 3.8 Flash', true]
+    ])
+    if (current.status !== 'ready') throw new Error('expected admission')
+    expect(current.admission.offers.models[1]).toMatchObject({
+      modelId: 'gemini-3.8-flash-high',
+      reasoning: [
+        expect.objectContaining({ reasoningId: 'low', label: 'Low' }),
+        expect.objectContaining({ reasoningId: 'medium', label: 'Medium' }),
+        expect.objectContaining({ reasoningId: 'high', label: 'High' })
+      ]
+    })
+
+    // An older live catalogue without 3.8 keeps 3.7 as its default.
+    const older = await discover(['gemini-3.6-flash-high', 'gemini-3.7-flash-high'])
+    expect(defaults(older)).toEqual([
+      ['Gemini 3.6 Flash', false],
+      ['Gemini 3.7 Flash', true]
+    ])
+  })
+
+  it('rechecks consent and never substitutes cached or static rows', async () => {
+    const path = profile(acceptedSettings())
+    const capture = vi.fn(async () => ({
+      stdout: 'gemini-3.7-flash-high\n',
+      stderr: '',
+      code: 0
+    }))
+    const input = {
+      profilePath: path,
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+      capture
+    }
+    await expect(discoverHostStandaloneAntigravity(input)).resolves.toMatchObject({
+      status: 'ready'
+    })
+    writeFileSync(
+      join(path, 'settings.json'),
+      JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
+      { mode: 0o600 }
+    )
+    await expect(discoverHostStandaloneAntigravity(input)).resolves.toMatchObject({
+      status: 'consent_required',
+      admission: null
+    })
+    expect(capture).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects oversized live probe output instead of parsing a partial model floor', async () => {
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: profile(acceptedSettings()),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture: async () => ({
+          stdout: `gemini-3.7-flash-high\n${'x'.repeat(256 * 1024)}`,
+          stderr: '',
+          code: 0
+        })
+      })
+    ).resolves.toMatchObject({
+      status: 'unknown',
+      admission: null,
+      detail: 'The agy account probe exceeded its bounded output limit.'
+    })
+  })
+
+  // A signed-out agy answers with no models. An agy that could not be read at
+  // all says nothing about the account, so the Host may keep the offers of its
+  // last answered probe for it and never for a signed-out answer.
+  it('reports agy that could not be read as unknown, apart from a signed-out answer', async () => {
+    const probe = (capture: DiscoverHostStandaloneAntigravityInput['capture']) =>
+      discoverHostStandaloneAntigravity({
+        profilePath: profile(acceptedSettings()),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture
+      })
+    const unknown = {
+      status: 'unknown',
+      admission: null,
+      detail: 'A live agy account could not be verified; sign in and retry.'
+    }
+
+    await expect(
+      probe(async () => ({ stdout: '', stderr: '', code: null, timedOut: true }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => {
+        throw new Error('the PTY could not start')
+      })
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({ stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 1 }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({
+        stdout: '',
+        stderr: '',
+        code: null,
+        error: 'agy models could not start.'
+      }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({ stdout: 'Not logged in. Please sign in.', stderr: '', code: 0 }))
+    ).resolves.toMatchObject({
+      status: 'auth_required',
+      admission: null,
+      detail: 'agy returned no live authenticated models; sign in and retry.'
+    })
+  })
+
+  // Resolving the binary and running `agy models` both wait, and consent can
+  // be withdrawn during either. The probe then reports the withdrawal.
+  it('reads consent again after the binary resolves, and calls no agy models once it is withdrawn', async () => {
+    const path = profile(acceptedSettings())
+    const capture = vi.fn<DiscoverHostStandaloneAntigravityInput['capture']>(async () => ({
+      stdout: 'gemini-3.7-flash-high\n',
+      stderr: '',
+      code: 0
+    }))
+
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: path,
+        resolveBinary: async () => {
+          withdrawConsent(path)
+          return { binaryPath: AGY_BINARY }
+        },
+        capture
+      })
+    ).resolves.toEqual(CONSENT_REQUIRED)
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('hands the capture a check that reads consent from its own source each time', async () => {
+    const path = profile(acceptedSettings())
+    const seen: boolean[] = []
+
+    await discoverHostStandaloneAntigravity({
+      profilePath: path,
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+      capture: async (_command, _args, options) => {
+        seen.push(options.consentHeld())
+        withdrawConsent(path)
+        seen.push(options.consentHeld())
+        return { stdout: '', stderr: '', code: null, error: 'agy models was not started.' }
+      }
+    })
+    expect(seen).toEqual([true, false])
+  })
+
+  it.each([
+    [
+      'does not start agy',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async (_command, _args, options) => {
+          withdrawConsent(path)
+          return options.consentHeld()
+            ? { stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 0 }
+            : { stdout: '', stderr: '', code: null, error: 'agy models was not started.' }
+        }
+    ],
+    [
+      'lets agy answer',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async () => {
+          withdrawConsent(path)
+          return { stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 0 }
+        }
+    ],
+    [
+      'throws',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async () => {
+          withdrawConsent(path)
+          throw new Error('the PTY could not start')
+        }
+    ]
+  ])(
+    'reports consent withdrawn during agy models as consent_required when the capture then %s',
+    async (_label, capture) => {
+      const path = profile(acceptedSettings())
+
+      await expect(
+        discoverHostStandaloneAntigravity({
+          profilePath: path,
+          resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+          capture: capture(path)
+        })
+      ).resolves.toEqual(CONSENT_REQUIRED)
+    }
+  )
+})
+
+describe('parseHostStandaloneAgyModels', () => {
+  it('rejects unauthenticated prose while accepting current table output', () => {
+    expect(parseHostStandaloneAgyModels('Not logged in. Please sign in.')).toEqual([])
+    expect(parseHostStandaloneAgyModels('["Not logged in"]')).toEqual([])
+    expect(
+      parseHostStandaloneAgyModels(
+        'gemini-3.7-flash-high\tGemini 3.7 Flash High\r\ngemini-3.7-flash-low  Gemini 3.7 Flash Low'
+      )
+    ).toEqual([
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash High' },
+      { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash Low' }
+    ])
+  })
+})

@@ -4,18 +4,53 @@ import { mergeOllamaModelCatalog, ollamaModelCatalogKey } from './ollamaModelCat
 describe('mergeOllamaModelCatalog', () => {
   it('humanises Cloud recommendations while preserving their exact wire ids', () => {
     const models = mergeOllamaModelCatalog([
+      { id: 'glm-5.3-flash:cloud', label: 'glm-5.3-flash' },
       { id: 'glm-5.2:cloud', label: 'glm-5.2' },
-      { id: 'minimax-m3:cloud', label: 'minimax-m3' }
+      { id: 'minimax-m3:cloud', label: 'minimax-m3' },
+      { id: 'deepseek-v4-pro:cloud', label: 'deepseek-v4-pro' },
+      { id: 'deepseek-v4-flash:cloud', label: 'deepseek-v4-flash' },
+      { id: 'gemma4:cloud', label: 'gemma4' }
     ])
 
+    expect(models.find((model) => model.id === 'glm-5.3-flash:cloud')).toMatchObject({
+      id: 'glm-5.3-flash:cloud',
+      label: 'GLM 5.3 Flash'
+    })
     expect(models.find((model) => model.id === 'glm-5.2:cloud')).toMatchObject({
       id: 'glm-5.2:cloud',
       label: 'GLM 5.2'
     })
     expect(models.find((model) => model.id === 'minimax-m3:cloud')).toMatchObject({
       id: 'minimax-m3:cloud',
-      label: 'MiniMax M3'
+      label: 'M3'
     })
+    expect(models.find((model) => model.id === 'deepseek-v4-pro:cloud')?.label).toBe(
+      'V4 Pro'
+    )
+    expect(models.find((model) => model.id === 'deepseek-v4-flash:cloud')?.label).toBe(
+      'V4 Flash'
+    )
+    expect(models.find((model) => model.id === 'gemma4:cloud')?.label).toBe('Gemma 4')
+  })
+
+  it('humanises and deduplicates the newest installed local tags', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'mistral-medium-3.5:latest', label: 'mistral-medium-3.5:latest' },
+      { id: 'granite4.2:latest', label: 'granite4.2:latest' },
+      { id: 'qwen3.8-flash-next:125b-mlx', label: 'qwen3.8-flash-next:125b-mlx' }
+    ])
+
+    expect(
+      models.filter(
+        (model) => ollamaModelCatalogKey(model.id) === 'mistral-medium-3.5:128b'
+      )
+    ).toHaveLength(1)
+    expect(
+      models.filter((model) => ollamaModelCatalogKey(model.id) === 'granite4.2:8b')
+    ).toHaveLength(1)
+    expect(models.find((model) => model.id === 'qwen3.8-flash-next:125b-mlx')?.label).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
   })
 
   it('keeps curated human labels when live Ollama returns raw model tags', () => {
@@ -94,7 +129,7 @@ describe('mergeOllamaModelCatalog', () => {
       'Llama 3.1 (8B Param)'
     )
     expect(models.find((model) => model.id === 'deepseek-r1:8b')?.label).toBe(
-      'DeepSeek R1 (8B Param)'
+      'R1 (8B Param)'
     )
     expect(models.filter((model) => ollamaModelCatalogKey(model.id) === 'rnj-1')).toHaveLength(1)
     expect(models.find((model) => model.id === 'glm-4.7-flash:q4_K_M')?.label).toBe(

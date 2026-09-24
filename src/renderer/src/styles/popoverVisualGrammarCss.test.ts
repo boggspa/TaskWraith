@@ -46,6 +46,7 @@ describe('popover visual grammar inventory', () => {
       'components/CombinedPermissionsPicker.tsx',
       'components/ComposerBlackboardButton.tsx',
       'components/ComposerBranchWorktreePopover.tsx',
+      'components/ComposerEnsembleToggleButton.tsx',
       'components/ComposerPlusPicker.tsx',
       'components/ComposerProviderPicker.tsx',
       'components/ComposerScheduleButton.tsx',
@@ -53,12 +54,13 @@ describe('popover visual grammar inventory', () => {
       'components/ComposerVoiceInput.tsx',
       'components/ContextMeterPopover.tsx',
       'components/CopyTranscriptButton.tsx',
-      'components/EnsembleModePicker.tsx',
       'components/EnsembleOrchestrationRow.tsx',
+      'components/EnsembleParticipantsAboveRow.tsx',
       'components/EnsembleRosterPresetPicker.tsx',
       'components/GitHubSatellitePopover.tsx',
       'components/MainPaneActionPill.tsx',
       'components/MultiviewLayoutPicker.tsx',
+      'components/TranscriptViewPicker.tsx',
       'components/WorkspaceStatsPopover.tsx'
     ])
   })

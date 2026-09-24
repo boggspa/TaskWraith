@@ -1,7 +1,5 @@
 import type {
-  TaskWraithControlEnsembleSummary,
   TaskWraithControlModelOffer,
-  TaskWraithControlParticipant,
   TaskWraithControlProviderPresentation,
   TaskWraithControlThread,
   TaskWraithControlTranscriptRow
@@ -17,15 +15,45 @@ import {
   visibleWidth,
   wrapPlainText
 } from './ansi'
-import type { TaskWraithTuiState } from './state'
+import { activeGoalModeLabel } from '../shared/activeGoalPresentation'
+import {
+  contextPercent,
+  formatContextTokens,
+  isContextWindowProviderId,
+  resolveContextWindow
+} from '../shared/contextWindows'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import { resolveGhostBanner } from './ghostBanner'
+import { filterTuiSlashCommands } from './slashCommands'
+import { tuiSeatsRoster, visibleThreadRows, type TaskWraithTuiState } from './state'
+import { queuedDraftsForThread } from './promptQueue'
+import { providerLoginGuidance } from './providerLoginFlow'
+import { permissionToneHex } from './permissionTone'
+import {
+  resolveTuiHomePosture,
+  tuiModelChoices,
+  modelRequiresApiKey,
+  tuiModelBillingLabel,
+  tuiModelBillingLegend,
+  tuiPostureCeilingNote,
+  tuiProviderWriteDisclosure
+} from './modelPicker'
+import {
+  TUI_AUTO_THEME_NAME,
+  TUI_DEFAULT_THEME_NAME,
+  TUI_UNPAINTED_THEME,
+  resolveTuiTheme,
+  tuiThemeNames,
+  type TuiTheme,
+  type TuiThemeTone
+} from './palette'
 import {
   TUI_GLYPHS_UNICODE,
   TUI_LAYOUT,
   TUI_MOTION,
-  TUI_TONE,
   resolveTuiDensity,
+  tuiGlyphsAreUnicode,
   tuiStatusGlyph,
-  tuiToneHex,
   type TuiGlyphSet,
   type TuiRunStatus,
   type TuiSemanticTone
@@ -39,10 +67,31 @@ export interface TaskWraithTuiRenderOptions {
   animationEnabled?: boolean
   /** Glyph vocabulary to draw with. Defaults to the Unicode set. */
   glyphs?: TuiGlyphSet
+  /**
+   * Palette to paint the frame in. Defaults to the unpainted theme, which
+   * inherits the terminal's own colours and renders byte-identically to the
+   * pre-theme surface.
+   */
+  theme?: TuiTheme
 }
 
 function terminalLabel(value: unknown): string {
   return sanitizeTerminalText(String(value ?? '')).replace(/\n+/g, ' ')
+}
+
+// Diff/code lines must preserve indentation while still stripping terminal
+// controls. `sanitizeTerminalText` intentionally collapses whitespace for
+// prose, which would make an inline hunk unreadable.
+function terminalCodeLine(value: unknown): string {
+  return (
+    String(value ?? '')
+      .replaceAll('\u001b', '')
+      .replace(/\r\n?/g, ' ')
+      // eslint-disable-next-line no-control-regex -- provider code previews reject C0/C1 controls.
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, (character) =>
+        character === '\t' ? '  ' : ''
+      )
+  )
 }
 
 function selectedPendingApproval(state: TaskWraithTuiState) {
@@ -77,31 +126,12 @@ function permissionLabel(value: string | undefined): string {
   const known: Record<string, string> = {
     workspace_write: 'Full WS Access',
     read_only: 'Ask',
-    full_access: 'Full Access',
-    auto_edit: 'Auto Edit',
+    full_access: 'Full Access (YOLO)',
+    auto_edit: 'Full WS Access',
     plan: 'Plan',
     default: 'Accept Edits'
   }
   return known[normalized.toLowerCase()] ?? compactLabel(normalized)
-}
-
-function ensembleModeLabel(value: string): string {
-  const normalized = terminalLabel(value).trim().toLowerCase()
-  if (normalized === 'continuous') return 'Continuous'
-  if (normalized === 'turn-bound' || normalized === 'turn_bound') return 'Turn'
-  return compactLabel(normalized)
-}
-
-function fanoutLabel(value: string): string {
-  const normalized = terminalLabel(value).trim().toLowerCase()
-  const known: Record<string, string> = {
-    off: 'Off',
-    read_only: 'Read-only',
-    all: 'All',
-    locked_writers_with_boss: 'Locked writers',
-    locked_writers_user_preflight: 'Locked writers'
-  }
-  return known[normalized] ?? compactLabel(normalized)
 }
 
 function reasoningLabel(provider: string, value: string | undefined): string {
@@ -138,7 +168,7 @@ function reasoningLadder(
   return [0, 1, 2]
     .map((index) =>
       index < level
-        ? ansi.color(glyphs.reasoningOn, mixHex(accent, TUI_TONE.highlight, index * 0.12))
+        ? ansi.color(glyphs.reasoningOn, mixHex(accent, tones(ansi).highlight, index * 0.12))
         : ansi.dim(glyphs.reasoningOff)
     )
     .join('')
@@ -161,9 +191,33 @@ function currentWallTime(thread: TaskWraithControlThread): number | undefined {
   return Number(projected)
 }
 
+/**
+ * The active theme's state tones.
+ *
+ * `renderTaskWraithTui` hands every helper a toned `Ansi`, so the fallback only
+ * covers a helper reached some other way. It resolves to the unpainted theme's
+ * tones — the house palette — which is what these sites read before themes
+ * existed, and keeps the literals in `palette.ts` where they belong.
+ */
+function tones(ansi: Ansi): TuiThemeTone {
+  return ansi.tones ?? TUI_UNPAINTED_THEME.tone
+}
+
 function tone(ansi: Ansi, text: string, value: TuiSemanticTone): string {
-  const hex = tuiToneHex(value)
+  const palette = tones(ansi)
+  const hex =
+    value === 'good'
+      ? palette.good
+      : value === 'warning'
+        ? palette.warning
+        : value === 'error'
+          ? palette.error
+          : undefined
   return hex ? ansi.color(text, hex) : text
+}
+
+function permissionColor(ansi: Ansi, postureId: string | undefined): string {
+  return permissionToneHex(postureId, tones(ansi).permission)
 }
 
 function borderedLine(
@@ -197,16 +251,32 @@ function borderBottom(width: number, ansi: Ansi, glyphs: TuiGlyphSet): string {
   )
 }
 
-function transcriptSpeaker(row: TaskWraithControlTranscriptRow, ansi: Ansi): string {
+function transcriptSpeaker(
+  row: TaskWraithControlTranscriptRow,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string {
   const speaker = terminalLabel(row.speaker)
   if (row.role === 'user') return ansi.bold(speaker || 'You')
-  if (row.provider) return ansi.provider(speaker, row.provider.accent)
-  if (row.role === 'error') return ansi.provider(speaker || 'Error', TUI_TONE.error)
+  if (row.provider) {
+    const identity = [
+      row.provider.displayProvider || speaker,
+      row.model ?? row.provider.modelLabel ?? row.provider.model,
+      reasoningLabel(row.provider.runtimeProvider, row.reasoning)
+    ]
+      .map(terminalLabel)
+      .filter(Boolean)
+    return ansi.provider(identity.join(` ${glyphs.separator} `), row.provider.accent)
+  }
+  if (row.role === 'error') return ansi.provider(speaker || 'Error', tones(ansi).error)
   if (row.role === 'tool') return ansi.dim(speaker || 'Tool')
   return ansi.bold(speaker || 'TaskWraith')
 }
 
-function renderToolLine(
+const TUI_TOOL_DIFF_PREVIEW_LINES = 10
+const TUI_TOOL_COMMAND_PREVIEW_LINES = 3
+
+function renderToolHeader(
   tool: NonNullable<TaskWraithControlTranscriptRow['tools']>[number],
   ansi: Ansi,
   width: number,
@@ -220,20 +290,118 @@ function renderToolLine(
         : glyphs.toolDone
   const accent =
     tool.status === 'running'
-      ? TUI_TONE.warning
+      ? tones(ansi).warning
       : tool.status === 'error'
-        ? TUI_TONE.error
-        : TUI_TONE.good
+        ? tones(ansi).error
+        : tones(ansi).good
   const delta =
     tool.additions !== undefined || tool.deletions !== undefined
-      ? `  +${tool.additions ?? 0} -${tool.deletions ?? 0}`
+      ? `  ${ansi.color(`+${tool.additions ?? 0}`, tones(ansi).good)} ${ansi.color(`-${tool.deletions ?? 0}`, tones(ansi).error)}`
       : ''
+  const file = tool.file ? ` ${glyphs.separator} ${terminalLabel(tool.file)}` : ''
   const detail = tool.detail ? ` ${glyphs.separator} ${terminalLabel(tool.detail)}` : ''
+  const label = tool.command ? 'Ran a command' : terminalLabel(tool.name)
   const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
   return fitAnsiLine(
-    `${gutter}${ansi.color(glyph, accent)} ${ansi.dim(`${terminalLabel(tool.name)}${detail}${delta}`)}`,
+    `${gutter}${ansi.color(glyph, accent)} ${ansi.provider(
+      `${label}${file}${detail}`,
+      tones(ansi).ensemble
+    )}${delta}`,
     width
   )
+}
+
+function renderToolDiff(
+  diff: NonNullable<TaskWraithControlTranscriptRow['tools']>[number]['diff'],
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  if (!diff) return []
+  const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
+  const lines: string[] = []
+  let renderedLines = 0
+  let hiddenLines = 0
+  for (const hunk of diff.hunks) {
+    if (renderedLines >= TUI_TOOL_DIFF_PREVIEW_LINES) {
+      hiddenLines += hunk.lines.length
+      continue
+    }
+    lines.push(fitAnsiLine(`${gutter}${ansi.dim(terminalLabel(hunk.header))}`, width))
+    for (const line of hunk.lines) {
+      if (renderedLines >= TUI_TOOL_DIFF_PREVIEW_LINES) {
+        hiddenLines += 1
+        continue
+      }
+      const oldLine = line.oldLine === undefined ? '    ' : String(line.oldLine).padStart(4)
+      const newLine = line.newLine === undefined ? '    ' : String(line.newLine).padStart(4)
+      const marker =
+        line.type === 'add' ? glyphs.diffAdd : line.type === 'del' ? glyphs.diffRemove : ' '
+      const lineTone =
+        line.type === 'add' ? tones(ansi).good : line.type === 'del' ? tones(ansi).error : undefined
+      const code = `${ansi.dim(`${oldLine} ${newLine}`)} ${lineTone ? ansi.color(marker, lineTone) : marker}${terminalCodeLine(line.text)}`
+      lines.push(fitAnsiLine(`${gutter}${code}`, width))
+      renderedLines += 1
+    }
+  }
+  if (hiddenLines > 0 || diff.truncated) {
+    const suffix =
+      hiddenLines > 0
+        ? `${hiddenLines} more diff line${hiddenLines === 1 ? '' : 's'}`
+        : 'diff preview capped'
+    lines.push(fitAnsiLine(`${gutter}${ansi.dim(`${glyphs.ellipsis} ${suffix}`)}`, width))
+  }
+  return lines
+}
+
+function renderToolCommand(
+  command: NonNullable<TaskWraithControlTranscriptRow['tools']>[number]['command'],
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  if (!command) return []
+  const gutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
+  const lines: string[] = []
+  if (command.command) {
+    lines.push(
+      fitAnsiLine(
+        `${gutter}${ansi.color('$', tones(ansi).ensemble)} ${terminalCodeLine(command.command)}`,
+        width
+      )
+    )
+  }
+  const outputLines = command.output?.replace(/\r\n?/g, '\n').split('\n') ?? []
+  const visibleOutput = outputLines.slice(0, TUI_TOOL_COMMAND_PREVIEW_LINES)
+  for (const output of visibleOutput) {
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.dim(terminalCodeLine(output))}`, width))
+  }
+  if (command.exitCode !== undefined) {
+    const exitTone = command.exitCode === 0 ? tones(ansi).good : tones(ansi).error
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.color(`exit ${command.exitCode}`, exitTone)}`, width))
+  }
+  const hiddenOutput = Math.max(0, outputLines.length - visibleOutput.length)
+  if (hiddenOutput > 0 || command.truncated) {
+    const suffix =
+      hiddenOutput > 0
+        ? `${hiddenOutput} more output line${hiddenOutput === 1 ? '' : 's'}`
+        : 'output preview capped'
+    lines.push(fitAnsiLine(`${gutter}  ${ansi.dim(`${glyphs.ellipsis} ${suffix}`)}`, width))
+  }
+  return lines
+}
+
+function renderToolLines(
+  tool: NonNullable<TaskWraithControlTranscriptRow['tools']>[number],
+  ansi: Ansi,
+  width: number,
+  glyphs: TuiGlyphSet
+): string[] {
+  return [
+    renderToolHeader(tool, ansi, width, glyphs),
+    ...renderToolDiff(tool.diff, width, ansi, glyphs),
+    ...renderToolCommand(tool.command, width, ansi, glyphs)
+  ]
 }
 
 function renderTranscriptRow(
@@ -245,12 +413,12 @@ function renderTranscriptRow(
   const bodyWidth = Math.max(TUI_LAYOUT.minProseWidth, width - 2)
   const gutter = ' '.repeat(TUI_LAYOUT.transcriptGutter)
   const detailGutter = ' '.repeat(TUI_LAYOUT.transcriptDetailGutter)
-  const lines: string[] = [fitAnsiLine(`${gutter}${transcriptSpeaker(row, ansi)}`, width)]
+  const lines: string[] = [fitAnsiLine(`${gutter}${transcriptSpeaker(row, ansi, glyphs)}`, width)]
   const bodyTone =
     row.role === 'system' || row.role === 'tool'
       ? (value: string) => ansi.dim(value)
       : row.role === 'error'
-        ? (value: string) => ansi.color(value, TUI_TONE.error)
+        ? (value: string) => ansi.color(value, tones(ansi).error)
         : (value: string) => value
   for (const line of wrapPlainText(row.text || '', bodyWidth)) {
     lines.push(fitAnsiLine(`${gutter}${bodyTone(line)}`, width))
@@ -260,52 +428,27 @@ function renderTranscriptRow(
       row.thinking.status === 'running' ? glyphs.thinkingRunning : glyphs.thinkingSettled
     lines.push(
       fitAnsiLine(
-        `${detailGutter}${ansi.color(status, row.provider?.accent ?? TUI_TONE.ensemble)} ${ansi.dim(
+        `${detailGutter}${ansi.color(status, row.provider?.accent ?? tones(ansi).ensemble)} ${ansi.dim(
           terminalLabel(row.thinking.title)
         )}`,
         width
       )
     )
   }
-  for (const tool of row.tools ?? []) {
-    lines.push(renderToolLine(tool, ansi, width, glyphs))
-  }
+  for (const tool of row.tools ?? []) lines.push(...renderToolLines(tool, ansi, width, glyphs))
   lines.push('')
   return lines
 }
 
-function activeParticipant(
-  ensemble: TaskWraithControlEnsembleSummary | undefined
-): TaskWraithControlParticipant | undefined {
-  return ensemble?.participants.find((participant) => participant.active)
-}
-
 function workingPresentation(thread: TaskWraithControlThread): {
   provider: TaskWraithControlProviderPresentation
-  role?: string
   model?: string
   reasoning?: string
 } {
-  const participant = activeParticipant(thread.ensemble)
-  if (!participant) {
-    return {
-      provider: thread.provider,
-      model: thread.provider.modelLabel ?? thread.provider.model,
-      reasoning: thread.reasoning
-    }
-  }
   return {
-    provider: {
-      runtimeProvider: participant.provider,
-      displayProvider: participant.displayProvider,
-      hueKey: participant.hueKey,
-      accent: participant.accent,
-      shortCode: participant.shortCode,
-      ...(participant.model ? { model: participant.model, modelLabel: participant.model } : {})
-    },
-    role: participant.role,
-    model: participant.model,
-    reasoning: participant.reasoning
+    provider: thread.provider,
+    model: thread.provider.modelLabel ?? thread.provider.model,
+    reasoning: thread.reasoning
   }
 }
 
@@ -328,7 +471,7 @@ function shimmerWorking(
           : distance === TUI_MOTION.shimmerFalloff
             ? TUI_MOTION.shimmerMid
             : 0
-      return ansi.color(character, mixHex(accent, TUI_TONE.highlight, amount))
+      return ansi.color(character, mixHex(accent, tones(ansi).highlight, amount))
     })
     .join('')
 }
@@ -345,7 +488,6 @@ function renderWorkingBlock(
   const current = workingPresentation(thread)
   const identity = [
     current.provider.displayProvider,
-    current.role,
     current.model ?? current.provider.modelLabel,
     reasoningLabel(current.provider.runtimeProvider, current.reasoning)
   ]
@@ -373,37 +515,210 @@ function renderWorkingBlock(
   ]
 }
 
+/**
+ * Home-screen connection copy.
+ *
+ * Every string here names the *Host* rather than Electron: the TUI has spawned
+ * an ordinary Node `taskwraith-host` since the pure-Node cutover, and the App
+ * need never be running. Separator and ellipsis come from the glyph set so the
+ * line degrades with the rest of the chrome under `--ascii`.
+ */
+function homeConnectionStatus(state: TaskWraithTuiState, glyphs: TuiGlyphSet): string {
+  const sep = ` ${glyphs.separator} `
+  if (state.connection === 'connecting') return `Looking for the TaskWraith Host${glyphs.ellipsis}`
+  if (state.connection === 'reconnecting') {
+    return `Reconnecting to the TaskWraith Host${glyphs.ellipsis}`
+  }
+  if (state.connection === 'offline') return `Host offline${sep}retrying`
+  if (state.connection === 'incompatible-protocol') {
+    return `Host protocol mismatch${sep}update TaskWraith`
+  }
+  return 'connected'
+}
+
+function homeWorkspace(state: TaskWraithTuiState) {
+  const workspaces = state.snapshot?.workspaces ?? []
+  return workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? workspaces[0]
+}
+
+function homeIdentity(state: TaskWraithTuiState) {
+  const selectedThread = state.thread?.thread
+  const continuedThread =
+    state.homeContinuationThreadId === selectedThread?.id ? selectedThread : undefined
+  if (continuedThread) {
+    return {
+      presentation: continuedThread.provider,
+      modelLabel: terminalLabel(
+        continuedThread.provider.modelLabel ??
+          continuedThread.provider.model ??
+          continuedThread.provider.displayProvider
+      ),
+      reasoning: continuedThread.reasoning ?? 'Default'
+    }
+  }
+  const home = state.homeTune
+  const choice = home ? tuiModelChoices(home.providers)[home.modelIndex] : undefined
+  const provider = choice?.provider
+  const model = choice?.model
+  if (!provider || !model) {
+    const thread = state.thread?.thread
+    if (!thread) return undefined
+    return {
+      presentation: thread.provider,
+      modelLabel: terminalLabel(
+        thread.provider.modelLabel ?? thread.provider.model ?? thread.provider.displayProvider
+      ),
+      reasoning: thread.reasoning ?? 'Default'
+    }
+  }
+  const reasoning = model.reasoning.filter((candidate) => candidate.available)[
+    home?.reasoningIndex ?? -1
+  ]
+  return {
+    presentation: resolveTaskWraithProviderPresentation(
+      provider.status.providerId,
+      model.modelId,
+      model.label
+    ),
+    modelLabel: terminalLabel(model.label),
+    reasoning: reasoning?.label ?? reasoning?.reasoningId ?? 'Default'
+  }
+}
+
+function homeReasoningPresentation(
+  provider: string,
+  value: string
+): {
+  label: string
+  shimmer: boolean
+} {
+  const normalized = terminalLabel(value).trim().toLowerCase()
+  const words = normalized.replace(/[_-]+/g, ' ')
+  const label =
+    normalized === 'max'
+      ? 'MAX'
+      : normalized === 'ultra'
+        ? 'ULTRA'
+        : normalized === 'ultracode'
+          ? 'ULTRACODE'
+          : normalized === 'xhigh' || words === 'extra high'
+            ? 'Extra High'
+            : reasoningLabel(provider, value) || 'Default'
+  return {
+    label,
+    shimmer: ['extra', 'extra high', 'max', 'ultra', 'ultracode'].includes(label.toLowerCase())
+  }
+}
+
+function renderHomeIdentity(
+  state: TaskWraithTuiState,
+  ansi: Ansi,
+  animationEnabled: boolean,
+  glyphs: TuiGlyphSet
+): string {
+  const separator = ansi.dim(` ${glyphs.separator} `)
+  const parts = [ansi.bold('TaskWraith')]
+  const identity = homeIdentity(state)
+  if (identity) {
+    const provider = terminalLabel(identity.presentation.displayProvider)
+    const model = identity.modelLabel
+    const providerAndModel = model.toLowerCase().startsWith(provider.toLowerCase())
+      ? model
+      : `${provider} ${model}`
+    parts.push(ansi.provider(providerAndModel, identity.presentation.accent))
+    const effort = homeReasoningPresentation(
+      identity.presentation.runtimeProvider,
+      identity.reasoning
+    )
+    parts.push(
+      effort.shimmer
+        ? ansi.bold(
+            shimmerWorking(
+              effort.label,
+              identity.presentation.accent,
+              ansi,
+              state.animationFrame,
+              animationEnabled
+            )
+          )
+        : ansi.color(effort.label, identity.presentation.accent)
+    )
+  }
+  const workspace = homeWorkspace(state)
+  if (workspace) parts.push(ansi.bold(terminalLabel(workspace.name)))
+  return parts.join(separator)
+}
+
+function renderHomeStatus(state: TaskWraithTuiState, ansi: Ansi, glyphs: TuiGlyphSet): string {
+  if (
+    state.connection !== 'connected' &&
+    state.connection !== 'demo' &&
+    state.connection !== 'replay'
+  ) {
+    return ansi.dim(homeConnectionStatus(state, glyphs))
+  }
+  const workspace = homeWorkspace(state)
+  const threadStatus = state.thread?.thread.status
+  return [
+    `${ansi.color(glyphs.statusActive, tones(ansi).good)} ${ansi.color('connected', tones(ansi).good)}`,
+    workspace ? 'workspace ready' : 'global scope',
+    ansi.dim(
+      threadStatus === 'working' ? 'active run' : state.thread ? 'thread ready' : 'no active run'
+    )
+  ].join(ansi.dim(` ${glyphs.separator} `))
+}
+
+function homeBlock(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  animationEnabled: boolean,
+  glyphs: TuiGlyphSet
+) {
+  const banner = resolveGhostBanner({
+    width,
+    height,
+    variant: tuiGlyphsAreUnicode(glyphs) ? 'unicode' : 'ascii',
+    markGlyph: glyphs.ghost
+  })
+  return {
+    bannerKind: banner.kind,
+    lines: [
+      ...banner.lines.map((line) => ansi.bold(line.trimEnd())),
+      '',
+      renderHomeIdentity(state, ansi, animationEnabled, glyphs),
+      renderHomeStatus(state, ansi, glyphs),
+      `Type ${ansi.color('/help', tones(ansi).permission.info)} for commands or ${ansi.color(
+        'Ctrl+K',
+        tones(ansi).permission.info
+      )} to switch threads`
+    ]
+  }
+}
+
 function renderHome(
   state: TaskWraithTuiState,
   width: number,
   height: number,
   ansi: Ansi,
+  animationEnabled: boolean,
   glyphs: TuiGlyphSet
 ): string[] {
-  const lines = Array.from({ length: Math.max(1, height) }, () => '')
-  const center = Math.max(1, Math.floor(width / 2))
-  const start = Math.max(0, Math.floor(height / 2) - 5)
-  const place = (row: number, text: string, offset = 0) => {
+  const canvasHeight = Math.max(1, height)
+  const lines = Array.from({ length: canvasHeight }, () => '')
+  const place = (row: number, text: string) => {
     if (row < 0 || row >= lines.length) return
-    const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2) + offset)
-    lines[row] = fitAnsiLine(`${' '.repeat(left)}${text}`, width)
+    lines[row] = fitAnsiLine(`  ${text}`, width)
   }
-  place(start, ansi.dim(`${glyphs.separator}                 ${glyphs.star}`), -5)
-  place(start + 1, ansi.dim(`       ${glyphs.separator}`))
-  place(start + 3, ansi.provider(glyphs.ghost, TUI_TONE.ensemble))
-  place(start + 5, ansi.bold('TaskWraith'))
-  const status =
-    state.connection === 'connecting'
-      ? 'Looking for the Electron host…'
-      : state.connection === 'reconnecting'
-        ? 'Reconnecting to the TaskWraith host…'
-        : state.connection === 'offline'
-          ? 'Electron host offline · retrying locally'
-          : state.connection === 'incompatible-protocol'
-            ? 'Open TaskWraith to update the App · protocol mismatch'
-            : 'No thread selected'
-  place(start + 6, ansi.dim(status))
-  place(start + 8, ansi.dim('Ctrl+K threads · Ctrl+P commands'))
+  const block = homeBlock(state, width, canvasHeight, ansi, animationEnabled, glyphs)
+  const start =
+    block.bannerKind === 'full'
+      ? 1
+      : Math.max(0, Math.floor((canvasHeight - block.lines.length) / 3))
+  block.lines.forEach((text, index) => {
+    if (text) place(start + index, text)
+  })
   return lines
 }
 
@@ -421,8 +736,7 @@ function renderEmptyThread(
     const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2) + offset)
     lines[row] = fitAnsiLine(`${' '.repeat(left)}${text}`, width)
   }
-  const kindLabel = thread.chatKind === 'ensemble' ? 'Ensemble' : 'Chat'
-  const identity = [terminalLabel(thread.title) || kindLabel, thread.provider.displayProvider]
+  const identity = [terminalLabel(thread.title) || 'Chat', thread.provider.displayProvider]
     .map(terminalLabel)
     .filter(Boolean)
     .join(' · ')
@@ -441,8 +755,17 @@ function renderTranscriptCanvas(
   glyphs: TuiGlyphSet
 ): string[] {
   const snapshot = state.thread
-  if (!snapshot) return renderHome(state, width, height, ansi, glyphs)
-  const allLines = snapshot.rows.flatMap((row) => renderTranscriptRow(row, width, ansi, glyphs))
+  if (!snapshot) return renderHome(state, width, height, ansi, animationEnabled, glyphs)
+  const allLines =
+    state.homeContinuationThreadId === snapshot.thread.id
+      ? [
+          ...homeBlock(state, width, height, ansi, animationEnabled, glyphs).lines.map((line) =>
+            fitAnsiLine(`  ${line}`, width)
+          ),
+          ''
+        ]
+      : []
+  allLines.push(...snapshot.rows.flatMap((row) => renderTranscriptRow(row, width, ansi, glyphs)))
   allLines.push(
     ...renderWorkingBlock(
       snapshot.thread,
@@ -519,7 +842,16 @@ function renderContextOverlay(
       glyphs
     )
   )
-  lines.push(overlayValue('permission', permissionLabel(context.permission), width, ansi, glyphs))
+  lines.push(
+    overlayValue(
+      'permission',
+      permissionLabel(context.permission),
+      width,
+      ansi,
+      glyphs,
+      permissionColor(ansi, context.permission)
+    )
+  )
   lines.push(
     overlayValue(
       'run',
@@ -537,56 +869,153 @@ function renderContextOverlay(
       glyphs
     )
   )
-  if (context.ensemble) {
-    const ensemble = context.ensemble
+  lines.push(borderedLine(ansi.dim('Esc close · Ctrl+O toggle'), width, ansi, glyphs))
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+function renderSetupOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const cold = state.coldStart
+  const step = cold?.kind ?? 'idle'
+  const title = state.coldStartIntent === 'new-thread' ? 'New solo thread' : 'Host setup'
+  const lines = [borderTitle(title, width, ansi, glyphs)]
+  const hint =
+    step === 'idle'
+      ? 'Enter an absolute workspace path, then press Enter.'
+      : step === 'workspace'
+        ? state.coldStartIntent === 'new-thread'
+          ? 'Use ↑/↓ to choose a provider, then Enter. Esc cancels.'
+          : 'Press Enter to choose an available provider.'
+        : step === 'auth'
+          ? cold?.kind === 'auth' && cold.operationId
+            ? 'Complete the provider flow; Enter refreshes status.'
+            : 'Press Enter to begin the available user-owned auth flow.'
+          : step === 'offers'
+            ? 'Press Enter to create a thread.'
+            : step === 'thread'
+              ? 'Press Enter to configure this thread.'
+              : step === 'configure'
+                ? 'Space acknowledges the selected posture; Enter applies it.'
+                : step === 'ready'
+                  ? 'Thread is ready.'
+                  : 'Host setup is unavailable; this session is read-only.'
+  lines.push(borderedLine(ansi.dim(hint), width, ansi, glyphs))
+  if (cold?.kind === 'idle') {
     lines.push(
-      overlayValue(
-        'roster',
-        `${terminalLabel(ensemble.preset)} · ${ensembleModeLabel(
-          ensemble.mode
-        )} · fan-out ${fanoutLabel(ensemble.fanout)} · ${ensemble.continuationHops}/${ensemble.maxContinuationHops}`,
+      borderedLine(
+        ` path  ${sanitizeTerminalText(state.input) || ansi.dim('/absolute/path')}`,
         width,
         ansi,
-        glyphs,
-        TUI_TONE.ensemble
+        glyphs
       )
     )
-    const room = Math.max(0, height - lines.length - 3)
-    const participants = ensemble.participants.slice(0, room)
-    participants.forEach((participant, index) => {
-      const status: TuiRunStatus = participant.active
-        ? 'working'
-        : participant.next
-          ? 'next'
-          : 'idle'
-      const marker = participant.enabled ? tuiStatusGlyph(status, glyphs) : glyphs.seatDisabled
-      const suffix = participant.stage === 'background' ? ' · BG' : ''
-      const identity = `${index + 1} ${marker} ${terminalLabel(
-        participant.displayProvider
-      )} · ${terminalLabel(participant.role)}${
-        participant.model ? ` · ${terminalLabel(participant.model)}` : ''
-      }${suffix}`
+  }
+  if (cold?.kind === 'workspace' && state.coldStartProviderChoices?.length) {
+    state.coldStartProviderChoices.forEach((provider, index) => {
+      const marker = index === (state.coldStartProviderIndex ?? 0) ? glyphs.promptCaret : ' '
       lines.push(
-        participant.enabled
-          ? overlayValue(index ? '' : 'cast', identity, width, ansi, glyphs, participant.accent)
-          : overlayValue(index ? '' : 'cast', ansi.dim(identity), width, ansi, glyphs)
-      )
-    })
-    if (participants.length < ensemble.participants.length) {
-      lines.push(
-        overlayValue(
-          '',
-          `+${ensemble.participants.length - participants.length} more participants`,
+        borderedLine(
+          `${marker} ${provider.label} · ${provider.status.replace('_', ' ')}`,
           width,
           ansi,
           glyphs
         )
       )
-    }
+    })
   }
-  lines.push(borderedLine(ansi.dim('Esc close · Ctrl+O toggle'), width, ansi, glyphs))
+  if (cold?.kind === 'auth') {
+    lines.push(borderedLine(ansi.dim(` provider  ${cold.providerId}`), width, ansi, glyphs))
+    cold.flows.forEach((flow, index) => {
+      const marker = index === (state.coldStartAuthFlowIndex ?? 0) ? glyphs.promptCaret : ' '
+      lines.push(borderedLine(`${marker} ${flow.label}`, width, ansi, glyphs))
+    })
+  }
+  if (cold?.kind === 'offers' || cold?.kind === 'thread' || cold?.kind === 'configure') {
+    lines.push(borderedLine(ansi.dim(` provider  ${cold.providerId}`), width, ansi, glyphs))
+  }
+  if (cold?.kind === 'configure') {
+    const models = cold.offers.models.filter((candidate) => candidate.available)
+    const postures = cold.offers.postures
+    const selectedModel = models[state.coldStartModelIndex ?? 0]
+    const reasoning = selectedModel?.reasoning.filter((candidate) => candidate.available) ?? []
+    if (models.some((model) => modelRequiresApiKey(cold.providerId, model.modelId))) {
+      lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+    }
+    lines.push(borderedLine(ansi.dim(' model  ↑/↓'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        models.map((model) =>
+          tuiModelBillingLabel(cold.providerId, model.modelId, model.label, glyphs)
+        ),
+        state.coldStartModelIndex ?? 0,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderedLine(ansi.dim(' reasoning  Tab'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        reasoning.map((offer) => offer.label),
+        state.coldStartReasoningIndex ?? 0,
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderedLine(ansi.dim(' posture  ←/→'), width, ansi, glyphs))
+    lines.push(
+      ...renderSetupChoiceWindow(
+        postures.map((posture) =>
+          ansi.color(
+            `${posture.label}${
+              !posture.available
+                ? ` · unavailable${posture.detail ? ` · ${terminalLabel(posture.detail)}` : ''}`
+                : ''
+            }${
+              posture.requiresExplicitConsent
+                ? cold.acknowledgedPostureIds.includes(posture.postureId)
+                  ? ' · acknowledged'
+                  : ' · consent required · Space'
+                : ''
+            }`,
+            permissionColor(ansi, posture.postureId)
+          )
+        ),
+        state.coldStartPostureIndex ?? 0,
+        width,
+        ansi,
+        glyphs,
+        5
+      )
+    )
+  }
   lines.push(borderBottom(width, ansi, glyphs))
-  return lines.slice(0, Math.max(1, height))
+  return lines
+}
+
+function renderSetupChoiceWindow(
+  labels: readonly string[],
+  selectedIndex: number,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet,
+  windowSize = 3
+): string[] {
+  if (!labels.length) return [borderedLine(ansi.dim('  unavailable'), width, ansi, glyphs)]
+  const selected = Math.max(0, Math.min(selectedIndex, labels.length - 1))
+  const size = Math.max(1, windowSize)
+  const start = Math.max(0, Math.min(labels.length - size, selected - Math.floor(size / 2)))
+  return labels.slice(start, start + size).map((label, offset) => {
+    const index = start + offset
+    const marker = index === selected ? glyphs.promptCaret : ' '
+    return borderedLine(`${marker} ${label}`, width, ansi, glyphs)
+  })
 }
 
 function threadRunStatus(thread: TaskWraithControlThread): TuiRunStatus {
@@ -608,7 +1037,7 @@ function renderThreadsOverlay(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
-  const threads = (state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+  const threads = visibleThreadRows(state)
   const lines = [borderTitle('Threads', width, ansi, glyphs)]
   const capacity = Math.max(1, height - 3)
   if (!threads.length) {
@@ -623,7 +1052,7 @@ function renderThreadsOverlay(
     ) {
       const thread = threads[index]
       const selected = index === safeIndex
-      const marker = threadStatusMark(thread, glyphs)
+      const marker = thread.archived ? glyphs.statusSkipped : threadStatusMark(thread, glyphs)
       const provider = ansi.provider(
         terminalLabel(thread.provider.shortCode),
         thread.provider.accent
@@ -638,7 +1067,18 @@ function renderThreadsOverlay(
       lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
     }
   }
-  lines.push(borderedLine(ansi.dim('↑↓ choose · Enter open · Esc close'), width, ansi, glyphs))
+  lines.push(
+    borderedLine(
+      ansi.dim(
+        state.showArchivedThreads
+          ? '↑↓ choose · Enter restores an archived chat · a hides · Esc close'
+          : '↑↓ choose · Enter open · a reveals archived · Esc close'
+      ),
+      width,
+      ansi,
+      glyphs
+    )
+  )
   lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
@@ -675,7 +1115,7 @@ function renderMissionsOverlay(
         width,
         ansi,
         glyphs,
-        projection.freshness === 'live' ? TUI_TONE.good : TUI_TONE.warning
+        projection.freshness === 'live' ? tones(ansi).good : tones(ansi).warning
       )
     )
     const missions = [...projection.missions]
@@ -739,27 +1179,19 @@ function renderMissionsOverlay(
             glyphs
           )
         )
-        const routing = activeRound.routing ?? projection.routing
-        if (routing) {
-          lines.push(
-            overlayValue(
-              'routing',
-              `${terminalLabel(routing.mode)} · fan-out ${terminalLabel(routing.fanout)}${
-                routing.continuationHops !== undefined && routing.maxContinuationHops !== undefined
-                  ? ` · ${routing.continuationHops}/${routing.maxContinuationHops}`
-                  : ''
-              }`,
-              width,
-              ansi,
-              glyphs,
-              TUI_TONE.ensemble
-            )
-          )
-        }
         const providerOutcomes = activeRound.providerRunIds
           .map((runId) => projection.runs.find((run) => run.runId === runId))
           .filter((run): run is (typeof projection.runs)[number] => Boolean(run))
-          .map((run) => `${run.providerId}:${run.providerOutcome}`)
+          // A bare `claude:failed` is the whole "it failed and nothing is
+          // evidently wrong" complaint. When the Host sent a reason, show it —
+          // the reason is already bounded and pre-composed at the wire, and it
+          // is only ever absent, never blank, so this cannot render a dangling
+          // separator.
+          .map((run) =>
+            run.failureReason
+              ? `${run.providerId}:${run.providerOutcome} · ${run.failureReason}`
+              : `${run.providerId}:${run.providerOutcome}`
+          )
         if (providerOutcomes.length) {
           lines.push(
             overlayValue(
@@ -792,45 +1224,14 @@ function renderMissionsOverlay(
             width,
             ansi,
             glyphs,
-            TUI_TONE.good
+            tones(ansi).good
           )
         )
       }
-      const participants = projection.participants
-        .filter((participant) => participant.threadId === selected.threadId)
-        .sort((left, right) => left.order - right.order)
-      const castCapacity = Math.max(0, height - 2 - lines.length)
-      const maxOffset = Math.max(0, participants.length - castCapacity)
-      const castOffset = Math.min(Math.max(0, state.missionParticipantOffset ?? 0), maxOffset)
-      const visibleParticipants = participants.slice(castOffset, castOffset + castCapacity)
-      visibleParticipants.forEach((participant, index) => {
-        const provider = projection.providers.find(
-          (candidate) => candidate.providerId === participant.providerId
-        )
-        const marker = participant.enabled
-          ? tuiStatusGlyph(participant.active ? 'working' : 'idle', glyphs)
-          : glyphs.seatDisabled
-        lines.push(
-          overlayValue(
-            index ? '' : 'cast',
-            `${marker} ${terminalLabel(provider?.shortCode ?? participant.providerId)} · ${terminalLabel(
-              participant.role
-            )} · ${terminalLabel(participant.status ?? 'idle')}${
-              participants.length > visibleParticipants.length
-                ? ` · ${castOffset + index + 1}/${participants.length}`
-                : ''
-            }`,
-            width,
-            ansi,
-            glyphs,
-            participant.active ? TUI_TONE.ensemble : undefined
-          )
-        )
-      })
     }
   }
   const footer = borderedLine(
-    ansi.dim('↑↓ mission · PgUp/PgDn cast · ←→/Tab filter · Enter thread · Esc close'),
+    ansi.dim('↑↓ mission · ←→/Tab filter · Enter thread · Esc close'),
     width,
     ansi,
     glyphs
@@ -839,36 +1240,258 @@ function renderMissionsOverlay(
   return [...lines.slice(0, Math.max(1, height - 2)), footer, bottom].slice(0, Math.max(1, height))
 }
 
-function renderHelpOverlay(
+/**
+ * The /workspace picker. New threads inherit a workspace that was never chosen
+ * — the open thread's, else the FIRST registered one in raw file order — so the
+ * lens names the resolved target explicitly rather than leaving a silent pick
+ * to be discovered after a chat lands in the wrong repository.
+ */
+function renderWorkspacesOverlay(
+  state: TaskWraithTuiState,
   width: number,
   height: number,
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
-  const lines = [
-    borderTitle('Commands', width, ansi, glyphs),
-    overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
-    overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
-    overlayValue('Ctrl+R', 'live and historical missions', width, ansi, glyphs),
-    overlayValue('Ctrl+G', 'tune lens — model/reasoning or seats', width, ansi, glyphs),
-    overlayValue('Ctrl+P', 'commands', width, ansi, glyphs),
-    overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
-    overlayValue('Enter', 'send prompt / choose item', width, ansi, glyphs),
-    overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
-    overlayValue('/model', 'stage a model/reasoning switch (solo)', width, ansi, glyphs),
-    overlayValue('/seats', 'enable or disable ensemble seats', width, ansi, glyphs),
-    overlayValue('/missions', 'open active mission control', width, ansi, glyphs),
-    overlayValue('/history', 'open completed mission history', width, ansi, glyphs),
-    overlayValue('/cancel', 'request cancellation of the active run', width, ansi, glyphs),
-    overlayValue('/quit', 'leave the sidecar; the host keeps running', width, ansi, glyphs),
+  const workspaces = state.snapshot?.workspaces ?? []
+  const lines = [borderTitle('Workspaces', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  if (!workspaces.length) {
+    lines.push(borderedLine(ansi.dim('No workspaces are registered.'), width, ansi, glyphs))
+    lines.push(
+      borderedLine(ansi.dim('/workspace <absolute-path> registers one.'), width, ansi, glyphs)
+    )
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+  // Mirrors resolveWorkspaceId in TaskWraithTui: an explicit pick wins, then the
+  // open thread's workspace, then the arbitrary first row. Kept in step so the
+  // marked row is always the one a new thread would actually use.
+  const activeId =
+    workspaces.find((workspace) => workspace.id === state.activeWorkspaceId)?.id ??
+    state.thread?.thread.workspaceId ??
+    workspaces[0]?.id
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, workspaces.length - 1))
+  const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+  for (
+    let index = windowStart;
+    index < Math.min(workspaces.length, windowStart + capacity);
+    index += 1
+  ) {
+    const workspace = workspaces[index]
+    const selected = index === safeIndex
+    const active = workspace.id === activeId
+    const name = truncateAnsi(terminalLabel(workspace.name), Math.max(8, width - 34))
+    const suffix = active ? ansi.dim('  new threads land here') : ''
+    const line = `${selected ? glyphs.selection : ' '} ${name}${suffix}`
+    lines.push(borderedLine(line, width, ansi, glyphs))
+  }
+  lines.push(
     borderedLine(
-      ansi.dim('Esc close · state is still governed by Electron main'),
+      ansi.dim('↑↓ choose · Enter set · /workspace <path> adds · Esc close'),
       width,
       ansi,
       glyphs
-    ),
-    borderBottom(width, ansi, glyphs)
-  ]
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+/** `26h 14m` / `3m` — goal ledgers routinely span days, so hours never roll up. */
+function goalDuration(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || ms <= 0) return undefined
+  const minutes = Math.floor(ms / 60_000)
+  const hours = Math.floor(minutes / 60)
+  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/**
+ * The /goal lens. The App authors goals; this Host reads them, so the lens is
+ * read-only by construction and says so rather than implying the CLI can steer
+ * a goal it cannot author.
+ */
+function renderGoalOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const lines = [borderTitle('Goal', width, ansi, glyphs)]
+  const threadId = state.selectedThreadId
+  const goal = threadId
+    ? state.hostProjection?.threads.find((candidate) => candidate.id === threadId)?.goal
+    : undefined
+  if (!threadId) {
+    lines.push(borderedLine(ansi.dim('Open a thread to see its goal.'), width, ansi, glyphs))
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+  if (!goal) {
+    lines.push(
+      borderedLine(ansi.dim('This thread has no durable goal.'), width, ansi, glyphs),
+      borderedLine(
+        ansi.dim('Goals are authored in the TaskWraith app; the CLI reads them.'),
+        width,
+        ansi,
+        glyphs
+      ),
+      borderBottom(width, ansi, glyphs)
+    )
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  const tone =
+    goal.status === 'blocked'
+      ? tones(ansi).warning
+      : goal.status === 'active'
+        ? tones(ansi).good
+        : undefined
+  lines.push(overlayValue('status', terminalLabel(goal.status), width, ansi, glyphs, tone))
+  lines.push(
+    overlayValue(
+      'mode',
+      terminalLabel(activeGoalModeLabel(goal.mode as never)),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  const wall = goalDuration(goal.wallMs)
+  const active = goalDuration(goal.activeMs)
+  if (wall) {
+    const value = active && active !== wall ? `${wall} ${glyphs.separator} active ${active}` : wall
+    lines.push(overlayValue('elapsed', value, width, ansi, glyphs))
+  }
+  if (goal.blockedReason) {
+    lines.push(overlayValue('blocked', terminalLabel(goal.blockedReason), width, ansi, glyphs))
+  }
+
+  const density = resolveTuiDensity(width)
+  const bodyWidth = Math.max(8, width - density.overlayLabelWidth - 4)
+  lines.push(overlayValue('objective', '', width, ansi, glyphs))
+  for (const line of wrapPlainText(goal.objective, bodyWidth)) {
+    lines.push(borderedLine(`  ${line}`, width, ansi, glyphs))
+  }
+  if (goal.objectiveTruncated) {
+    // A clipped objective must never read as the whole objective.
+    lines.push(
+      borderedLine(ansi.dim(`  ${glyphs.ellipsis} truncated by the Host`), width, ansi, glyphs)
+    )
+  }
+  if (goal.acceptanceCriteria?.length) {
+    lines.push(overlayValue('acceptance', '', width, ansi, glyphs))
+    for (const criterion of goal.acceptanceCriteria) {
+      for (const [index, line] of wrapPlainText(criterion, bodyWidth - 2).entries()) {
+        lines.push(borderedLine(`  ${index === 0 ? '- ' : '  '}${line}`, width, ansi, glyphs))
+      }
+    }
+  }
+  lines.push(
+    borderedLine(ansi.dim('read-only · authored in the app · Esc close'), width, ansi, glyphs)
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+/**
+ * The /theme picker.
+ *
+ * Selection previews by repainting the whole frame, which is why there is no
+ * sample swatch here: the surrounding chrome IS the swatch, and a small colour
+ * chip beside a name is a worse preview than the thing itself. Vibe debounces
+ * its preview by 100ms because a Textual theme change rebuilds a stylesheet;
+ * ours rebuilds a string, so it repaints on the keystroke.
+ */
+function renderThemeOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+  const committed = state.themeName ?? TUI_DEFAULT_THEME_NAME
+  const lines = [borderTitle('Theme', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, names.length - 1))
+  const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+  const labelWidth = Math.max(...names.map((name) => visibleWidth(name)))
+  for (
+    let index = windowStart;
+    index < Math.min(names.length, windowStart + capacity);
+    index += 1
+  ) {
+    const name = names[index]
+    const selected = index === safeIndex
+    const isCommitted = name === committed
+    const theme = name === TUI_AUTO_THEME_NAME ? undefined : resolveTuiTheme(name)
+    // Grok flags which of its themes need 24-bit colour. Worth surfacing at the
+    // moment of choice rather than after the ground silently fails to appear.
+    const unavailable = theme?.requiresTruecolor && ansi.mode !== 'truecolor'
+    const summary = theme ? theme.summary : 'Follow the terminal’s own light or dark appearance.'
+    const note = unavailable ? ' (needs truecolor)' : ''
+    const label = `${name}${' '.repeat(Math.max(0, labelWidth - visibleWidth(name)))}`
+    const marked = isCommitted ? ansi.bold(label) : label
+    const line = `${selected ? glyphs.selection : ' '} ${marked}  ${ansi.dim(`${summary}${note}`)}`
+    lines.push(borderedLine(line, width, ansi, glyphs))
+  }
+  lines.push(borderedLine(ansi.dim('↑↓ preview · Enter keep · Esc revert'), width, ansi, glyphs))
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+function renderHelpOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const sep = ` ${glyphs.separator} `
+  const commands = filterTuiSlashCommands(state.commandPaletteQuery ?? state.input)
+  const capacity = Math.max(1, height - 4)
+  const safeIndex = Math.max(0, Math.min(state.overlayIndex, Math.max(0, commands.length - 1)))
+  const windowStart = Math.max(
+    0,
+    Math.min(Math.max(0, commands.length - capacity), safeIndex - Math.floor(capacity / 2))
+  )
+  const lines = [borderTitle('Commands', width, ansi, glyphs)]
+  if (!commands.length) {
+    lines.push(borderedLine(ansi.dim('No matching slash commands.'), width, ansi, glyphs))
+  } else {
+    for (
+      let index = windowStart;
+      index < Math.min(commands.length, windowStart + capacity);
+      index += 1
+    ) {
+      const command = commands[index]
+      const label = command.aliases.length
+        ? `${command.usage}${sep}${command.aliases.join(` ${glyphs.separator} `)}`
+        : command.usage
+      const caution = command.destructive ? `${sep}confirm after completion` : ''
+      const row = overlayValue(label, `${command.description}${caution}`, width, ansi, glyphs)
+      lines.push(index === safeIndex ? ansi.inverse(row) : row)
+    }
+  }
+  lines.push(
+    borderedLine(
+      ansi.dim(`↑↓ / PgUp/PgDn choose${sep}Enter open${sep}Tab complete${sep}Esc close`),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(
+    borderedLine(
+      ansi.dim(`Ctrl+P reopens${sep}the TaskWraith Host owns thread state`),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
 
@@ -889,43 +1512,117 @@ function renderTuneOverlay(
   glyphs: TuiGlyphSet
 ): string[] {
   const thread = state.thread?.thread
-  if (!thread) {
-    return [
-      borderTitle('Tune lens', width, ansi, glyphs),
-      borderedLine(ansi.dim('Open a thread before tuning.'), width, ansi, glyphs),
-      borderBottom(width, ansi, glyphs)
-    ]
-  }
-  if (thread.ensemble) {
-    const seats = thread.ensemble.participants
-    const lines = [borderTitle('Seats (preview)', width, ansi, glyphs)]
-    if (!seats.length) {
-      lines.push(borderedLine(ansi.dim('This ensemble has no seats.'), width, ansi, glyphs))
+  const home = state.homeTune
+  if (home) {
+    const lines = [borderTitle(thread ? 'Model' : 'Default model', width, ansi, glyphs)]
+    if (home.loading) {
+      lines.push(borderedLine(ansi.dim('Fetching ready-provider offers…'), width, ansi, glyphs))
+    } else if (home.error) {
+      lines.push(
+        borderedLine(tone(ansi, terminalLabel(home.error), 'warning'), width, ansi, glyphs)
+      )
     } else {
-      const capacity = Math.max(1, height - 3)
-      const safeIndex = Math.max(0, Math.min(state.overlayIndex, seats.length - 1))
-      const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
-      for (
-        let index = windowStart;
-        index < Math.min(seats.length, windowStart + capacity);
-        index += 1
-      ) {
-        const seat = seats[index]
-        const selected = index === safeIndex
-        const mark = seat.enabled ? glyphs.seatEnabled : glyphs.seatDisabled
-        const identity = `${terminalLabel(seat.displayProvider)} · ${terminalLabel(seat.role)}${
-          seat.model ? ` · ${terminalLabel(seat.model)}` : ''
-        }${seat.stage === 'background' ? ' · BG' : ''}`
-        const body = seat.enabled
-          ? `${ansi.color(mark, seat.accent)} ${ansi.provider(identity, seat.accent)}`
-          : ansi.dim(`${mark} ${identity}`)
-        const line = `${selected ? glyphs.selection : ' '} ${body}`
+      const choices = tuiModelChoices(home.providers)
+      const keyLegend = choices.some((candidate) =>
+        modelRequiresApiKey(candidate.provider.status.providerId, candidate.model.modelId)
+      )
+      if (keyLegend) {
+        lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+      }
+      const choice = choices[home.modelIndex]
+      const provider = choice?.provider
+      const model = choice?.model
+      const presentation = resolveTaskWraithProviderPresentation(
+        provider?.status.providerId,
+        model?.modelId,
+        model?.label
+      )
+      const capacity = Math.max(1, height - 4 - (keyLegend ? 1 : 0))
+      const start = Math.max(0, home.modelIndex - Math.floor(capacity / 2))
+      for (let index = start; index < Math.min(choices.length, start + capacity); index += 1) {
+        const candidate = choices[index]
+        const selected = index === home.modelIndex
+        const candidatePresentation = resolveTaskWraithProviderPresentation(
+          candidate.provider.status.providerId,
+          candidate.model.modelId,
+          candidate.model.label
+        )
+        const providerLabel = terminalLabel(candidate.provider.status.label)
+        const modelLabel = terminalLabel(candidate.model.label)
+        const displayLabel = modelLabel.toLowerCase().startsWith(providerLabel.toLowerCase())
+          ? modelLabel
+          : `${providerLabel} ${modelLabel}`
+        const label = tuiModelBillingLabel(
+          candidate.provider.status.providerId,
+          candidate.model.modelId,
+          displayLabel,
+          glyphs
+        )
+        const current =
+          thread?.provider.runtimeProvider === candidate.provider.status.providerId &&
+          thread.provider.model === candidate.model.modelId
+        // Mark a provider that can never mutate a file AT THE POINT OF CHOICE.
+        // Hiding it would read as a missing feature; labelling it is the whole
+        // difference between an informed choice and a turn that fails for no
+        // reason the user can see.
+        const readOnly = !tuiProviderWriteDisclosure(candidate.provider).canModifyFiles
+        const suffix = [
+          current ? 'current' : '',
+          candidate.model.default ? 'Host default' : '',
+          readOnly ? 'read-only' : ''
+        ]
+          .filter(Boolean)
+          .join(' · ')
+        const line = `${selected ? glyphs.selection : ' '} ${ansi.provider(
+          label,
+          candidatePresentation.accent,
+          current
+        )}${suffix ? ` ${ansi.dim(`(${suffix})`)}` : ''}`
         lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
       }
+      // Spell out WHY the highlighted provider cannot edit, in the Host's own
+      // words, so the row marker is an explanation rather than a label.
+      const writeDisclosure = provider ? tuiProviderWriteDisclosure(provider) : undefined
+      if (writeDisclosure?.notice) {
+        lines.push(
+          borderedLine(
+            tone(ansi, terminalLabel(writeDisclosure.notice), 'warning'),
+            width,
+            ansi,
+            glyphs
+          )
+        )
+      }
+      // Say when two offered tiers grant the same authority, so Shift+Tab is
+      // not read as a change it does not make. Disclosure only — the mapping
+      // behind it is deliberate and documented.
+      const ceilingNote = provider
+        ? tuiPostureCeilingNote(
+            provider.offers.postures,
+            resolveTuiHomePosture(home.providers, home.modelIndex, state.homePermission)?.postureId
+          )
+        : undefined
+      if (ceilingNote) {
+        lines.push(borderedLine(ansi.dim(terminalLabel(ceilingNote)), width, ansi, glyphs))
+      }
+      const reasoning = model?.reasoning.filter((candidate) => candidate.available) ?? []
+      const reasoningRows = [
+        home.reasoningIndex === -1
+          ? ansi.provider('[provider default]', presentation.accent)
+          : 'provider default',
+        ...reasoning.map((candidate, index) =>
+          index === home.reasoningIndex
+            ? ansi.provider(`[${terminalLabel(candidate.label)}]`, presentation.accent)
+            : terminalLabel(candidate.label)
+        )
+      ].join(` ${ansi.dim(glyphs.separator)} `)
+      lines.push(overlayValue('reasoning', reasoningRows, width, ansi, glyphs))
     }
     lines.push(
       borderedLine(
-        ansi.dim('↑↓ seat · Enter toggle · applies immediately · Esc close'),
+        ansi.dim(
+          `↑↓ model · ←→ reasoning · Enter ${thread ? 'switch' : 'save default'} · Esc close`
+        ),
         width,
         ansi,
         glyphs
@@ -934,10 +1631,17 @@ function renderTuneOverlay(
     lines.push(borderBottom(width, ansi, glyphs))
     return lines.slice(0, Math.max(1, height))
   }
+  if (!thread) {
+    return [
+      borderTitle('Tune lens', width, ansi, glyphs),
+      borderedLine(ansi.dim('Open a thread before tuning.'), width, ansi, glyphs),
+      borderBottom(width, ansi, glyphs)
+    ]
+  }
   const offers = state.offers
   const lines = [borderTitle('Model (preview)', width, ansi, glyphs)]
   if (state.offersLoading) {
-    lines.push(borderedLine(ansi.dim('Fetching offers from the App…'), width, ansi, glyphs))
+    lines.push(borderedLine(ansi.dim('Fetching offers from the Host…'), width, ansi, glyphs))
   } else if (!offers) {
     lines.push(borderedLine(ansi.dim('No model offers are available.'), width, ansi, glyphs))
   } else if (offers.locked) {
@@ -954,7 +1658,13 @@ function renderTuneOverlay(
       )
     )
     const models = offers.models
-    const capacity = Math.max(1, height - 5)
+    const keyLegend = models.some((model) =>
+      modelRequiresApiKey(offers.provider.runtimeProvider, model.id)
+    )
+    if (keyLegend) {
+      lines.push(borderedLine(ansi.dim(tuiModelBillingLegend(glyphs)), width, ansi, glyphs))
+    }
+    const capacity = Math.max(1, height - 5 - (keyLegend ? 1 : 0))
     const safeIndex = Math.max(0, Math.min(state.overlayIndex, models.length - 1))
     const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
     for (
@@ -964,7 +1674,12 @@ function renderTuneOverlay(
     ) {
       const offer = models[index]
       const selected = index === safeIndex
-      const label = terminalLabel(offer.label ?? offer.id)
+      const label = tuiModelBillingLabel(
+        offers.provider.runtimeProvider,
+        offer.id,
+        terminalLabel(offer.label ?? offer.id),
+        glyphs
+      )
       const body = offer.disabled
         ? ansi.dim(label)
         : ansi.provider(label, offers.provider.accent, Boolean(offer.current))
@@ -998,6 +1713,515 @@ function renderTuneOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+/**
+ * The /git overlay: a capability-gated READ (status | diff | log), never a
+ * mutation. The three non-negotiables: capability-unavailable is a calm
+ * configuration state (never a red failure), a Host-truncated result is
+ * plainly bannered (never rendered as if complete), and every line is
+ * width-bounded and glyph-laddered so 80x24 + ASCII/NO_COLOR hold.
+ */
+function renderGitOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const lines = [borderTitle('Git', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const git = state.git
+  const footer = borderedLine(
+    ansi.dim('s status · d diff · l log · r refresh · Esc close'),
+    width,
+    ansi,
+    glyphs
+  )
+
+  // Demo mode: show a notice; never fabricate a plausible repo state.
+  if (state.connection === 'demo') {
+    lines.push(
+      borderedLine(
+        ansi.dim('git reads need a live Host — this demo session has none.'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  if (!git) {
+    lines.push(borderedLine(ansi.dim('No git read yet.'), width, ansi, glyphs))
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  // Header: branch + short head + scope tabs (active scope inverted).
+  const result = git.outcome?.available ? git.outcome.result : undefined
+  const branch = result?.branch ?? null
+  const head = result?.head ? result.head.slice(0, 7) : null
+  const identity = branch
+    ? `${glyphs.gitBranch} ${terminalLabel(branch)}${head ? ` ${ansi.dim(`@ ${head}`)}` : ''}`
+    : ansi.dim('no branch')
+  const tabs = (['status', 'diff', 'log'] as const)
+    .map((tab) => (tab === git.scope ? ansi.inverse(` ${tab} `) : ` ${tab} `))
+    .join(ansi.dim('·'))
+  lines.push(borderedLine(joinLeftRight(identity, tabs, width - 2), width, ansi, glyphs))
+
+  const body: string[] = []
+  if (git.loading) {
+    body.push(borderedLine(ansi.dim(`reading ${git.scope}…`), width, ansi, glyphs))
+  } else if (git.error) {
+    body.push(
+      borderedLine(
+        tone(ansi, terminalLabel(`git read failed · ${git.error}`), 'error'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!git.outcome) {
+    body.push(borderedLine(ansi.dim('No git read yet.'), width, ansi, glyphs))
+  } else if (!git.outcome.available) {
+    // A Host without git is a normal configuration — calm, not a failure.
+    body.push(borderedLine(ansi.dim('git is unavailable on this Host'), width, ansi, glyphs))
+  } else if (git.outcome.result.scope === 'status') {
+    const status = git.outcome.result
+    // A truncated status must be bannered exactly like a truncated diff: a
+    // clean-looking partial file list must never read as the whole tree.
+    if (status.truncated) {
+      body.push(
+        borderedLine(
+          tone(ansi, 'truncated by the Host (128 KiB cap) — showing a partial view', 'warning'),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+    const staged = status.files.filter((file) => file.staged).length
+    const unstaged = status.files.filter((file) => file.unstaged).length
+    const untracked = status.files.filter((file) => file.kind === 'untracked').length
+    body.push(
+      borderedLine(
+        ansi.dim(`staged ${staged} · unstaged ${unstaged} · untracked ${untracked}`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    const rowCapacity = Math.max(1, capacity - 2)
+    for (const file of status.files.slice(0, rowCapacity)) {
+      const marker =
+        file.kind === 'created'
+          ? tone(ansi, glyphs.diffAdd, 'good')
+          : file.kind === 'deleted'
+            ? tone(ansi, glyphs.diffRemove, 'error')
+            : file.kind === 'untracked'
+              ? '?'
+              : file.kind === 'conflicted'
+                ? tone(ansi, glyphs.statusNeedsInput, 'warning')
+                : file.kind === 'renamed'
+                  ? glyphs.pendingChange
+                  : file.kind === 'ignored'
+                    ? glyphs.statusPending
+                    : '~'
+      const flags = `${file.staged ? 'S' : glyphs.statusPending}${file.unstaged ? 'U' : glyphs.statusPending}`
+      const renamedFrom = file.originalPath
+        ? ` ${ansi.dim(`(from ${terminalLabel(file.originalPath)}` + ')')}`
+        : ''
+      const row = `${marker} ${truncateAnsi(terminalLabel(file.path), Math.max(8, width - 10))}${ansi.dim(` ${flags}`)}${renamedFrom}`
+      body.push(borderedLine(row, width, ansi, glyphs))
+    }
+    if (status.files.length > rowCapacity) {
+      body.push(
+        borderedLine(ansi.dim(`… ${status.files.length - rowCapacity} more`), width, ansi, glyphs)
+      )
+    }
+    if (!status.files.length) {
+      body.push(borderedLine(ansi.dim('working tree clean'), width, ansi, glyphs))
+    }
+  } else {
+    // diff / log: bounded text lines. A Host-truncated result is bannered at
+    // the top — a partial view must never read as the whole diff.
+    const text = git.outcome.result.text
+    const rawLines = text.split('\n')
+    if (git.outcome.result.truncated) {
+      body.push(
+        borderedLine(
+          tone(ansi, 'truncated by the Host (128 KiB cap) — showing a partial view', 'warning'),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+    const textCapacity = Math.max(1, capacity - (git.outcome.result.truncated ? 3 : 1))
+    for (const rawLine of rawLines.slice(0, textCapacity)) {
+      const line = truncateAnsi(terminalLabel(rawLine), Math.max(8, width - 4))
+      const toned =
+        rawLine.startsWith('+') && !rawLine.startsWith('++')
+          ? tone(ansi, line, 'good')
+          : rawLine.startsWith('-') && !rawLine.startsWith('--')
+            ? tone(ansi, line, 'error')
+            : rawLine.startsWith('@')
+              ? ansi.dim(line)
+              : rawLine.startsWith('diff --git')
+                ? ansi.bold(line)
+                : line
+      body.push(borderedLine(toned, width, ansi, glyphs))
+    }
+    if (rawLines.length > textCapacity) {
+      body.push(
+        borderedLine(
+          ansi.dim(`… ${rawLines.length - textCapacity} more lines`),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+  }
+  for (const line of body.slice(0, capacity)) lines.push(line)
+  lines.push(footer)
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+/**
+ * The /seats lens: ensemble seat control on the selected thread. The roster
+ * renders from the coherent Host projection (never a captured copy), the
+ * Host's typed toggle refusal renders in plain language, and the desktop-only
+ * round boundary is stated where a seat-toggling user would look. Calm states
+ * (no capability, solo thread, no projected roster) are not errors.
+ */
+function renderSeatsOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const sep = ` ${glyphs.separator} `
+  const lines = [borderTitle('Seats', width, ansi, glyphs)]
+  const capacity = Math.max(1, height - 3)
+  const seats = state.seats
+  const footer = borderedLine(
+    ansi.dim(`up/down seat${sep}Enter/Space toggle${sep}r refresh${sep}Esc close`),
+    width,
+    ansi,
+    glyphs
+  )
+  const finish = (body: string[]): string[] => {
+    for (const line of body.slice(0, capacity)) lines.push(line)
+    lines.push(footer)
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+
+  // Demo mode: show a notice; never fabricate a plausible roster.
+  if (state.connection === 'demo') {
+    return finish([
+      borderedLine(
+        ansi.dim(`seat control needs a live Host${sep}this demo session has none`),
+        width,
+        ansi,
+        glyphs
+      )
+    ])
+  }
+
+  if (!seats) {
+    return finish([borderedLine(ansi.dim('No seat lens is open.'), width, ansi, glyphs)])
+  }
+
+  const thread = state.hostProjection?.threads.find((candidate) => candidate.id === seats.threadId)
+  const roster = tuiSeatsRoster(state)
+  if (thread) {
+    lines.push(
+      borderedLine(
+        joinLeftRight(
+          truncateAnsi(terminalLabel(thread.title), Math.max(8, width - 14)),
+          ansi.dim(`${roster.length} seat${roster.length === 1 ? '' : 's'}`),
+          // borderedLine's content area is the canvas minus its two borders.
+          width - 4
+        ),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  }
+
+  const body: string[] = []
+  if (seats.unavailable) {
+    body.push(borderedLine(ansi.dim(seats.unavailable), width, ansi, glyphs))
+    body.push(
+      borderedLine(
+        ansi.dim('the connected Host does not advertise the ensemble capability'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (seats.loading) {
+    body.push(borderedLine(ansi.dim(`reading seats${glyphs.ellipsis}`), width, ansi, glyphs))
+  } else if (seats.error) {
+    body.push(
+      borderedLine(
+        tone(ansi, terminalLabel(`seat read failed${sep}${seats.error}`), 'error'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!thread) {
+    body.push(borderedLine(ansi.dim('the Host does not project this thread'), width, ansi, glyphs))
+  } else if (thread.chatKind !== 'ensemble') {
+    body.push(
+      borderedLine(
+        ansi.dim(`this thread is solo${sep}seats exist on ensemble threads`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else if (!roster.length) {
+    body.push(
+      borderedLine(
+        ansi.dim('the Host projects no participants for this thread'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+  } else {
+    // Seat control is real here; round execution is not. Someone who can
+    // toggle seats will reasonably assume they can start a round — say so.
+    body.push(
+      borderedLine(
+        ansi.dim(`rounds run in the desktop app${sep}sending a prompt here is refused`),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    const safeIndex = Math.max(0, Math.min(state.overlayIndex, roster.length - 1))
+    const rowCapacity = Math.max(1, capacity - 3)
+    const windowStart = Math.max(0, safeIndex - Math.floor(rowCapacity / 2))
+    for (
+      let index = windowStart;
+      index < Math.min(roster.length, windowStart + rowCapacity);
+      index += 1
+    ) {
+      const participant = roster[index]!
+      const selected = index === safeIndex
+      const provider = state.hostProjection?.providers.find(
+        (candidate) => candidate.providerId === participant.providerId
+      )
+      const identity = [
+        participant.role,
+        provider?.displayProvider || participant.providerId,
+        participant.modelId
+      ]
+        .filter(Boolean)
+        .join(' ')
+      const details = [
+        ...(participant.stage && participant.stage !== 'any' ? [participant.stage] : []),
+        participant.enabled ? 'enabled' : 'disabled',
+        ...(participant.active ? ['active'] : []),
+        ...(participant.status ? [participant.status] : [])
+      ].join(sep)
+      const seatGlyph = participant.enabled ? glyphs.seatEnabled : glyphs.seatDisabled
+      const row = `${selected ? glyphs.selection : ' '} ${seatGlyph} ${truncateAnsi(
+        terminalLabel(identity),
+        Math.max(8, width - 24)
+      )} ${ansi.dim(terminalLabel(details))}`
+      body.push(borderedLine(selected ? ansi.inverse(row) : row, width, ansi, glyphs))
+    }
+    if (roster.length > windowStart + rowCapacity || windowStart > 0) {
+      const hidden = roster.length - Math.min(roster.length, windowStart + rowCapacity)
+      body.push(borderedLine(ansi.dim(`${glyphs.ellipsis} ${hidden} more`), width, ansi, glyphs))
+    }
+  }
+  // The Host's typed refusal survives as lens state, not a fading notice.
+  if (seats.actionError) {
+    body.push(
+      borderedLine(tone(ansi, terminalLabel(seats.actionError), 'warning'), width, ansi, glyphs)
+    )
+  }
+  return finish(body)
+}
+
+function renderProviderLoginOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const login = state.providerLogin
+  const lines = [borderTitle('Provider setup', width, ansi, glyphs)]
+  if (!login || login.loading) {
+    lines.push(
+      borderedLine(ansi.dim('Reading provider status from the Host…'), width, ansi, glyphs)
+    )
+  } else if (login.error) {
+    lines.push(borderedLine(tone(ansi, terminalLabel(login.error), 'error'), width, ansi, glyphs))
+  }
+  if (login?.providers.length) {
+    const selectedIndex = Math.max(
+      0,
+      login.providers.findIndex((provider) => provider.providerId === login.selectedProviderId)
+    )
+    const capacity = Math.max(1, Math.min(8, height - 8))
+    const start = Math.max(0, selectedIndex - Math.floor(capacity / 2))
+    for (
+      let index = start;
+      index < Math.min(login.providers.length, start + capacity);
+      index += 1
+    ) {
+      const provider = login.providers[index]
+      const selected = index === selectedIndex
+      const statusTone =
+        provider.status === 'ready'
+          ? 'good'
+          : provider.status === 'auth_required'
+            ? 'warning'
+            : provider.status === 'unavailable'
+              ? 'error'
+              : 'neutral'
+      const row = `${selected ? glyphs.selection : ' '} ${terminalLabel(provider.label)} ${tone(
+        ansi,
+        provider.status.replace('_', ' '),
+        statusTone
+      )}`
+      lines.push(borderedLine(selected ? ansi.inverse(row) : row, width, ansi, glyphs))
+    }
+    const provider = login.providers[selectedIndex]
+    if (login.authStatus) {
+      lines.push(
+        overlayValue(
+          'auth',
+          terminalLabel(login.authStatus.state.replace('_', ' ')),
+          width,
+          ansi,
+          glyphs
+        )
+      )
+    }
+    if (login.flows.length) {
+      const flows = login.flows
+        .map((flow, index) =>
+          index === login.flowIndex
+            ? ansi.inverse(`[${terminalLabel(flow.label)}]`)
+            : terminalLabel(flow.label)
+        )
+        .join(` ${ansi.dim(glyphs.separator)} `)
+      lines.push(overlayValue('flow', flows, width, ansi, glyphs))
+      const detail = login.flows[login.flowIndex]?.detail
+      if (detail) lines.push(borderedLine(ansi.dim(terminalLabel(detail)), width, ansi, glyphs))
+    } else if (!login.loading) {
+      for (const wrapped of wrapPlainText(
+        providerLoginGuidance(provider),
+        Math.max(8, width - 4)
+      )) {
+        lines.push(borderedLine(ansi.dim(terminalLabel(wrapped)), width, ansi, glyphs))
+      }
+    }
+  }
+  lines.push(
+    borderedLine(
+      ansi.dim('↑↓ provider · Tab flow · Enter sign in/refresh · r refresh · Esc close'),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
+  return lines.slice(0, Math.max(1, height))
+}
+
+/** Shortens from the middle, keeping a path's root and its unique tail. */
+function truncateMiddle(value: string, width: number, ellipsis: string): string {
+  const characters = Array.from(value)
+  if (characters.length <= width) return value
+  const keep = Math.max(0, width - Array.from(ellipsis).length)
+  const head = Math.floor(keep / 4)
+  return `${characters.slice(0, head).join('')}${ellipsis}${characters
+    .slice(characters.length - (keep - head))
+    .join('')}`
+}
+
+/**
+ * The /host lens. The title, an armed `y` prompt, the hint and pid + holders on
+ * every Host row are never cut; fields and notes yield first, and Host rows past
+ * the viewport are counted, never silently dropped.
+ */
+function renderHostOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const panel = state.hostPanel
+  // The builders write ' · ' and '…'; under --ascii they degrade like the chrome.
+  const text = (value: string): string =>
+    terminalLabel(value).split(' · ').join(` ${glyphs.separator} `).split('…').join(glyphs.ellipsis)
+  const title = borderTitle(text(panel?.title ?? 'Host'), width, ansi, glyphs)
+  const line = (content: string): string => borderedLine(content, width, ansi, glyphs)
+  if (!panel) {
+    return [title, line(ansi.dim(text('Reading the Host…'))), borderBottom(width, ansi, glyphs)]
+  }
+  const hosts = panel.hosts ?? []
+  const closing = [
+    ...(panel.prompt ? [line(tone(ansi, ansi.bold(text(panel.prompt)), 'warning'))] : []),
+    line(ansi.dim(text(panel.hint))),
+    borderBottom(width, ansi, glyphs)
+  ]
+  // Notes yield first, so an armed prompt stays on screen however short the lens.
+  const noteRoom = Math.max(0, height - 1 - (hosts.length ? 1 : 0) - closing.length)
+  const footer = [
+    ...(panel.notes ?? []).slice(0, noteRoom).map((note) => line(ansi.dim(text(note)))),
+    ...closing
+  ]
+  // With Hosts to list, the head always leaves at least the "+N more" line.
+  const reserve = footer.length + (hosts.length ? 1 : 0)
+  const head = [
+    title,
+    ...panel.fields.map((field) =>
+      overlayValue(
+        field.label,
+        text(field.value),
+        width,
+        ansi,
+        glyphs,
+        field.tone ? tones(ansi)[field.tone] : undefined
+      )
+    ),
+    ...(panel.hostsHeading ? [line(ansi.bold(text(panel.hostsHeading)))] : [])
+  ].slice(0, Math.max(1, height - reserve))
+  const room = Math.max(0, height - head.length - footer.length)
+  const shown = hosts.length > room ? Math.max(0, room - 1) : hosts.length
+  const rows = hosts.slice(0, shown).map((host) => {
+    const fixed = `${text(host.pid)}  ${text(host.holders)}  `
+    const note = host.note ? `  ${text(host.note)}` : ''
+    // A long note (a refusal's detail) is cut at the edge before the profile
+    // loses more than half the row: its tail is what tells two Hosts apart.
+    const available = Math.max(8, width - 4 - visibleWidth(fixed))
+    const profileWidth = Math.max(Math.ceil(available / 2), available - visibleWidth(note))
+    const profile = truncateMiddle(terminalLabel(host.profile), profileWidth, glyphs.ellipsis)
+    const row = `${fixed}${profile}${note}`
+    return line(host.tone ? tone(ansi, row, host.tone) : row)
+  })
+  if (shown < hosts.length) rows.push(line(ansi.dim(`+${hosts.length - shown} more, not shown`)))
+  return [...head, ...rows, ...footer].slice(0, Math.max(1, height))
+}
+
 function renderOverlay(
   state: TaskWraithTuiState,
   width: number,
@@ -1005,8 +2229,17 @@ function renderOverlay(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
+  if (state.overlay === 'host') {
+    return renderHostOverlay(state, width, height, ansi, glyphs)
+  }
   if (state.overlay === 'context') {
     return renderContextOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'setup') {
+    return renderSetupOverlay(state, width, ansi, glyphs).slice(0, Math.max(1, height))
+  }
+  if (state.overlay === 'login') {
+    return renderProviderLoginOverlay(state, width, height, ansi, glyphs)
   }
   if (state.overlay === 'threads') {
     return renderThreadsOverlay(state, width, height, ansi, glyphs)
@@ -1017,76 +2250,42 @@ function renderOverlay(
   if (state.overlay === 'tune') {
     return renderTuneOverlay(state, width, height, ansi, glyphs)
   }
-  return renderHelpOverlay(width, height, ansi, glyphs)
-}
-
-function participantRunStatus(participant: TaskWraithControlParticipant): TuiRunStatus {
-  if (participant.active) return 'working'
-  if (participant.next) return 'next'
-  const completed = ['answered', 'yielded', 'completed', 'success'].includes(
-    participant.status || ''
-  )
-  if (completed) return 'done'
-  const failed = ['failed', 'unreachable', 'cancelled'].includes(participant.status || '')
-  if (failed) return 'failed'
-  if (participant.status === 'skipped') return 'skipped'
-  if (participant.status === 'sleeping') return 'sleeping'
-  return 'idle'
-}
-
-function participantToken(
-  participant: TaskWraithControlParticipant,
-  ansi: Ansi,
-  width: number,
-  glyphs: TuiGlyphSet
-): string {
-  const marker = tuiStatusGlyph(participantRunStatus(participant), glyphs)
-  const density = resolveTuiDensity(width)
-  // Compact baton shows short codes only; normal/expanded include role.
-  // (Was width>=100 and width>=72 with identical arms — density collapses that.)
-  const identity = density.providerFullName
-    ? `${terminalLabel(participant.shortCode)} ${terminalLabel(participant.role)}`
-    : terminalLabel(participant.shortCode)
-  const suffix = participant.stage === 'background' ? ' BG' : ''
-  return `${ansi.color(marker, participant.accent)} ${ansi.provider(identity, participant.accent, participant.active)}${ansi.dim(suffix)}`
-}
-
-function renderEnsembleBaton(
-  ensemble: TaskWraithControlEnsembleSummary,
-  width: number,
-  ansi: Ansi,
-  glyphs: TuiGlyphSet
-): string {
-  const density = resolveTuiDensity(width)
-  const participants = ensemble.participants.filter((participant) => participant.enabled)
-  const active = participants.find((participant) => participant.active)
-  const next = participants.find((participant) => participant.next)
-  if (density.tier === 'compact') {
-    const visible = [active, next].filter(
-      (participant, index, list): participant is TaskWraithControlParticipant =>
-        Boolean(participant) && list.indexOf(participant) === index
-    )
-    const hidden = Math.max(0, participants.length - visible.length)
-    const right = `${visible
-      .map((participant) => participantToken(participant, ansi, width, glyphs))
-      .join(ansi.dim(` ${glyphs.selection} `))}${hidden ? ansi.dim(` +${hidden}`) : ''}`
-    return joinLeftRight(ansi.provider('ENS', TUI_TONE.ensemble), right, width)
+  if (state.overlay === 'git') {
+    return renderGitOverlay(state, width, height, ansi, glyphs)
   }
-  const roomForCast = density.batonCastSlots
-  const cast = participants.slice(0, roomForCast)
-  if (active && !cast.includes(active)) cast[cast.length - 1] = active
-  if (next && !cast.includes(next) && cast.length > 1) cast[cast.length - 1] = next
-  const unique = cast.filter(
-    (participant, index) => cast.findIndex((candidate) => candidate.id === participant.id) === index
+  if (state.overlay === 'seats') {
+    return renderSeatsOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'workspaces') {
+    return renderWorkspacesOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'theme') {
+    return renderThemeOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'goal') {
+    return renderGoalOverlay(state, width, height, ansi, glyphs)
+  }
+  return renderHelpOverlay(state, width, height, ansi, glyphs)
+}
+
+function renderContextMeter(
+  thread: TaskWraithControlThread,
+  width: number,
+  ansi: Ansi
+): string | undefined {
+  const used = thread.tokenEstimate
+  const provider = thread.provider.runtimeProvider
+  if (!Number.isFinite(used) || Number(used) < 0 || !isContextWindowProviderId(provider)) {
+    return undefined
+  }
+  const window = resolveContextWindow(provider, thread.provider.model)
+  const percent = Math.round(contextPercent(Number(used), window))
+  if (width < 96) return ansi.dim(`ctx ${percent}%`)
+  const formatHudContextTokens = (value: number): string =>
+    formatContextTokens(value).replace(/\.0M$/, 'M')
+  return ansi.dim(
+    `context: ${percent}% (≈${formatHudContextTokens(Math.round(Number(used)))}/${formatHudContextTokens(window)})`
   )
-  const hidden = Math.max(0, participants.length - unique.length)
-  const left = density.batonExpandedLabel
-    ? `${ansi.provider('ENSEMBLE', TUI_TONE.ensemble)} ${terminalLabel(
-        ensemble.preset
-      )} · ${ensembleModeLabel(ensemble.mode)}`
-    : `${ansi.provider('ENS', TUI_TONE.ensemble)} ${terminalLabel(ensemble.preset)}`
-  const right = `${unique.map((participant) => participantToken(participant, ansi, width, glyphs)).join(ansi.dim(`  ${glyphs.selection}  `))}${hidden ? ansi.dim(`  +${hidden}`) : ''} ${ansi.dim(`${ensemble.continuationHops}/${ensemble.maxContinuationHops}`)}`
-  return joinLeftRight(left, right, width)
 }
 
 function renderHud(
@@ -1109,15 +2308,19 @@ function renderHud(
             : state.connection === 'incompatible-protocol'
               ? tone(ansi, 'Open TaskWraith to update the App', 'error')
               : tone(ansi, state.connection.toUpperCase(), 'neutral')
+    const workspace = homeWorkspace(state)
+    const left = workspace
+      ? ansi.bold(terminalLabel(workspace.path || workspace.name))
+      : ansi.bold('TaskWraith')
     // Wave 4.2b: deferred thread.select has no thread yet — still show the Host ask.
     if (state.notice && (!state.notice.expiresAt || state.notice.expiresAt > now)) {
       return joinLeftRight(
-        ansi.bold('TaskWraith'),
+        left,
         tone(ansi, terminalLabel(state.notice.text), state.notice.tone),
         width
       )
     }
-    return joinLeftRight(ansi.bold('TaskWraith'), connection, width)
+    return joinLeftRight(left, connection, width)
   }
   const workspace =
     state.snapshot?.workspaces.find((candidate) => candidate.id === thread.workspaceId)?.name ??
@@ -1155,6 +2358,8 @@ function renderHud(
   const elapsed = formatTuiDuration(currentWallTime(thread))
   const pendingApproval = selectedPendingApproval(state)
   const openQuestion = selectedOpenQuestion(state)
+  const queuedDrafts = queuedDraftsForThread(state, thread.id)
+  const blockedDraft = queuedDrafts.find((draft) => draft.phase === 'blocked')
   const status = pendingApproval
     ? tone(ansi, 'APPROVAL · y/n', 'warning')
     : openQuestion
@@ -1168,32 +2373,84 @@ function renderHud(
             : ''
   // A staged model/reasoning choice rides the next send; wear the provider
   // accent because it names the identity the next turn will run as.
-  const pending =
-    state.pendingSelection && !thread.ensemble
-      ? ansi.color(
-          `${glyphs.pendingChange} ${terminalLabel(
-            state.pendingSelection.label ?? state.pendingSelection.model
-          )}${
-            state.pendingSelection.reasoningEffort
-              ? ` ${terminalLabel(state.pendingSelection.reasoningEffort)}`
-              : ''
-          }`,
-          presentation.provider.accent
-        )
-      : undefined
+  const pending = state.pendingSelection
+    ? ansi.color(
+        `${glyphs.pendingChange} ${terminalLabel(
+          state.pendingSelection.label ?? state.pendingSelection.model
+        )}${
+          state.pendingSelection.reasoningEffort
+            ? ` ${terminalLabel(state.pendingSelection.reasoningEffort)}`
+            : ''
+        }`,
+        presentation.provider.accent
+      )
+    : undefined
   const cost = terminalLabel(thread.costText)
+  const contextMeter = renderContextMeter(thread, width, ansi)
   const right = [
     ansi.provider(provider, presentation.provider.accent),
     model,
     pending,
     reasoningText,
     status,
+    blockedDraft
+      ? tone(
+          ansi,
+          `QUEUE BLOCKED${blockedDraft.error ? ` · ${terminalLabel(blockedDraft.error)}` : ''}`,
+          'error'
+        )
+      : queuedDrafts.length
+        ? ansi.dim(`${queuedDrafts.length} QUEUED`)
+        : undefined,
     elapsed !== '—' ? elapsed : undefined,
-    cost
+    cost,
+    contextMeter
   ]
     .filter(Boolean)
     .join(ansi.dim(density.segmentSpacing === 'padded' ? ` ${glyphs.separator} ` : ' '))
   return joinLeftRight(left, right, width)
+}
+
+/**
+ * The tier the next turn will actually run under, or undefined when none
+ * resolves. These paths deliberately do not fall back to `default`: once a
+ * posture lookup has run and come back empty, naming a tier anyway states a
+ * capability the Host has not offered, and permissionLabel renders the honest
+ * placeholder instead. The final `default` is different — it is the resting
+ * state before any offers exist, not a resolution that failed.
+ */
+function selectedPermissionPostureId(state: TaskWraithTuiState): string | undefined {
+  const threadPermission = state.thread?.context.permission
+  if (threadPermission) return threadPermission
+  const cold = state.coldStart
+  if (cold?.kind === 'configure') {
+    return cold.offers.postures[state.coldStartPostureIndex ?? 0]?.postureId
+  }
+  if (state.homeTune) {
+    return resolveTuiHomePosture(
+      state.homeTune.providers,
+      state.homeTune.modelIndex,
+      state.homePermission
+    )?.postureId
+  }
+  return 'default'
+}
+
+function renderComposerDivider(
+  state: TaskWraithTuiState,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet,
+  withLabel: boolean
+): string {
+  const postureId = selectedPermissionPostureId(state)
+  const color = permissionColor(ansi, postureId)
+  const rule = glyphs.boxHorizontal
+  if (!withLabel) return fitAnsiLine(ansi.color(rule.repeat(width), color), width)
+  const label = ` ${permissionLabel(postureId)} `
+  const tail = 2
+  const lead = Math.max(0, width - visibleWidth(label) - tail)
+  return fitAnsiLine(ansi.color(`${rule.repeat(lead)}${label}${rule.repeat(tail)}`, color), width)
 }
 
 function renderComposer(
@@ -1202,37 +2459,85 @@ function renderComposer(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string {
-  const accent = state.thread?.thread.provider.accent ?? TUI_TONE.ensemble
+  const accent =
+    state.thread?.thread.provider.accent ??
+    permissionColor(ansi, selectedPermissionPostureId(state))
   const prompt = ansi.provider(glyphs.promptCaret, accent)
   const density = resolveTuiDensity(width)
   const pendingApproval = selectedPendingApproval(state)
   const openQuestion = selectedOpenQuestion(state)
+  const setupRequired = Boolean(state.coldStart && state.coldStart.kind !== 'ready')
+  const queuedDrafts = queuedDraftsForThread(state, state.selectedThreadId)
+  const homeChoice = state.homeTune
+    ? tuiModelChoices(state.homeTune.providers)[state.homeTune.modelIndex]
+    : undefined
+  const canCyclePermission = Boolean(
+    state.connection === 'connected' &&
+    ((state.selectedThreadId && state.thread) ||
+      (!state.selectedThreadId &&
+        homeChoice?.provider.offers.postures.some((posture) => posture.available)))
+  )
+  const live = Boolean(
+    state.selectedThreadId &&
+    state.hostProjection &&
+    state.hostProjection.freshness === 'live' &&
+    (state.hostProjection.runs.some(
+      (run) =>
+        run.threadId === state.selectedThreadId &&
+        run.endedAt === undefined &&
+        (run.providerOutcome === 'running' ||
+          run.providerOutcome === 'requires_action' ||
+          run.providerOutcome === 'unknown')
+    ) ||
+      state.hostProjection.rounds.some(
+        (round) =>
+          round.threadId === state.selectedThreadId &&
+          round.endedAt === undefined &&
+          (round.status === 'running' || round.status === 'unknown')
+      ))
+  )
   // Glyph-set aware: ↵/· on Unicode, \/. on ASCII so chrome never mojibakes.
   const sep = ` ${glyphs.separator} `
-  const right = pendingApproval
-    ? ansi.dim(`y accept${sep}n decline`)
-    : openQuestion
-      ? density.composerHints === 'none'
-        ? ansi.dim(`${glyphs.newline} answer`)
-        : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
-      : density.composerHints === 'full'
-        ? ansi.dim(`${glyphs.newline} send${sep}^O context${sep}^K threads`)
-        : density.composerHints === 'short'
-          ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
-          : ansi.dim(`${glyphs.newline} send`)
+  const right = setupRequired
+    ? ansi.dim(state.coldStartIntent === 'new-thread' ? 'Choose a provider' : 'Host setup required')
+    : pendingApproval
+      ? ansi.dim(`y accept${sep}n decline`)
+      : openQuestion
+        ? density.composerHints === 'none'
+          ? ansi.dim(`${glyphs.newline} answer`)
+          : ansi.dim(`${glyphs.newline} answer${sep}/dismiss`)
+        : live
+          ? ansi.dim(
+              `${glyphs.newline} queue${sep}Esc steer${
+                queuedDrafts.length ? `${sep}${queuedDrafts.length} waiting` : ''
+              }`
+            )
+          : density.composerHints === 'full'
+            ? ansi.dim(
+                `${glyphs.newline} send${
+                  canCyclePermission ? `${sep}Shift+Tab permissions` : ''
+                }${sep}^O context${sep}^K threads`
+              )
+            : density.composerHints === 'short'
+              ? ansi.dim(`${glyphs.newline} send${sep}^O context`)
+              : ansi.dim(`${glyphs.newline} send`)
   const leftAvailable = Math.max(1, width - visibleWidth(right) - 1)
   const inputAvailable = Math.max(1, leftAvailable - visibleWidth(prompt) - 1)
-  const input = state.input
-    ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
-    : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
-        state.connection === 'offline'
-          ? 'Start TaskWraith to compose'
-          : pendingApproval
-            ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
-            : openQuestion
-              ? `Answer · ${terminalLabel(openQuestion.promptPreview)}`
-              : 'Ask TaskWraith…'
-      )}`
+  const input = setupRequired
+    ? `${ansi.color(glyphs.cursor, accent)} ${ansi.dim('Complete Host setup to compose')}`
+    : state.input
+      ? renderComposerInput(state.input, state.inputCursor, inputAvailable, ansi, accent, glyphs)
+      : `${ansi.color(glyphs.cursor, accent)} ${ansi.dim(
+          state.connection === 'offline'
+            ? // The App is not the dependency here: `tw` talks to an ordinary
+              // Node Host it can start itself, so offline means "reconnecting".
+              `Waiting for the TaskWraith Host${glyphs.ellipsis}`
+            : pendingApproval
+              ? `Approval · ${terminalLabel(pendingApproval.actionKind)}`
+              : openQuestion
+                ? `Answer · ${terminalLabel(openQuestion.promptPreview)}`
+                : 'Ask TaskWraith…'
+        )}`
   return joinLeftRight(`${prompt} ${input}`, right, width)
 }
 
@@ -1274,24 +2579,49 @@ export function renderTaskWraithTui(
   const now = options.now ?? Date.now()
   const animationEnabled = options.animationEnabled !== false
   const glyphs = options.glyphs ?? TUI_GLYPHS_UNICODE
+  const theme = options.theme ?? TUI_UNPAINTED_THEME
+  // One toned clone per frame, handed to every helper in place of the caller's
+  // bare instance. This is how the theme's state tones reach thirteen colour
+  // sites without a new argument on sixteen internal signatures.
+  const ansi = options.ansi.withTones(theme.tone)
   const thread = state.thread?.thread
-  const footerRows = thread?.ensemble ? TUI_LAYOUT.ensembleFooterRows : TUI_LAYOUT.soloFooterRows
+  const footerRows = TUI_LAYOUT.soloFooterRows
   const canvasHeight = Math.max(1, height - footerRows)
   let canvas =
     state.overlay === 'none'
-      ? renderTranscriptCanvas(state, width, canvasHeight, options.ansi, animationEnabled, glyphs)
-      : renderOverlay(state, width, canvasHeight, options.ansi, glyphs)
+      ? renderTranscriptCanvas(state, width, canvasHeight, ansi, animationEnabled, glyphs)
+      : renderOverlay(state, width, canvasHeight, ansi, glyphs)
   if (canvas.length > canvasHeight) canvas = canvas.slice(0, canvasHeight)
   if (canvas.length < canvasHeight) {
     canvas = [...canvas, ...Array.from({ length: canvasHeight - canvas.length }, () => '')]
   }
   const footer: string[] = []
-  if (thread?.ensemble) {
-    footer.push(renderEnsembleBaton(thread.ensemble, width, options.ansi, glyphs))
-  }
-  footer.push(renderHud(state, thread, width, options.ansi, now, glyphs))
-  footer.push(renderComposer(state, width, options.ansi, glyphs))
+  footer.push(renderComposerDivider(state, width, ansi, glyphs, true))
+  footer.push(renderComposer(state, width, ansi, glyphs))
+  footer.push(renderComposerDivider(state, width, ansi, glyphs, false))
+  footer.push(renderHud(state, thread, width, ansi, now, glyphs))
+
+  // Region grounds, deepest first. An overlay raises the canvas to `surface`
+  // rather than drawing a floating panel over `background`: the TUI has no
+  // z-order to cast a shadow with, so depth has to be carried by the fill the
+  // overlay replaces the canvas with.
+  const ground = theme.ground
+  const ink = theme.ink?.primary
+  const canvasGround = state.overlay === 'none' ? ground?.background : ground?.surface
+
   const lines = [...canvas, ...footer].slice(0, height)
-  while (lines.length < height) lines.push('')
-  return lines.map((line) => fitAnsiLine(line, width)).join('\n')
+  const grounds = [
+    ...canvas.map(() => canvasGround),
+    ground?.surface,
+    ground?.surface,
+    ground?.surface,
+    ground?.panel
+  ].slice(0, height)
+  while (lines.length < height) {
+    lines.push('')
+    grounds.push(canvasGround)
+  }
+  return lines
+    .map((line, index) => ansi.paint(fitAnsiLine(line, width), grounds[index], ink))
+    .join('\n')
 }

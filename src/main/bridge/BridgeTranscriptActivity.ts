@@ -8,6 +8,10 @@ import {
   imageViewCountFromResult,
   isImageViewToolUse
 } from '../../shared/imageViewIdentity'
+import {
+  extractToolInvocationParameters,
+  presentToolInvocation
+} from '../../shared/toolInvocationPresentation'
 
 const BRIDGE_TOOL_CATEGORY_RULES: Array<{
   pattern: RegExp
@@ -32,18 +36,6 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function parametersRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string') {
-    try {
-      return recordValue(JSON.parse(value))
-    } catch {
-      // Native wrapper tools can carry executable source instead of JSON.
-      return { input: value }
-    }
-  }
-  return recordValue(value)
 }
 
 function bridgeToolKindCategory(kind: string): ToolActivity['category'] | undefined {
@@ -121,12 +113,58 @@ export function bridgeAssistantMessageMetadata(input: {
   provider: ProviderId
   actualModel?: string
   modelLabel?: string
-}): ChatMessage['metadata'] | undefined {
-  if (input.provider !== 'ollama') return undefined
-  if (!input.actualModel && !input.modelLabel) return undefined
+}): ChatMessage['metadata'] {
   return {
+    assistantProvider: input.provider,
     ...(input.actualModel ? { providerModel: input.actualModel } : {}),
     ...(input.modelLabel ? { providerModelLabel: input.modelLabel } : {})
+  }
+}
+
+/** The subset of a ChatRun this module needs; keeps the store types out of the seam. */
+export interface BridgeToolRowRun {
+  runId: string
+  actualModel?: string
+  requestedModel?: string
+  modelLabel?: string
+}
+
+/**
+ * Brand metadata for a bridge-lane tool row, or undefined when no model is
+ * known and the row should stay exactly as metadata-free as it was.
+ *
+ * A `role: 'tool'` row carries no model of its own, so its accent depended
+ * entirely on finding its run in the chat record — an array that is empty by
+ * construction on a paged/summary record and one render stale on a retained
+ * one. Stamping the row makes it self-branding, the way an assistant bubble
+ * already is.
+ *
+ * The `requestedModel` fallback is the load-bearing half. Pi deliberately
+ * leaves `actualModel` UNSET — its terminal event reports a human label, and
+ * treating that as a wire id was the first cause in this investigation
+ * (0f1347266) — and a label cannot resolve a Pi upstream, which is keyed on a
+ * `<upstream>/<model>` wire id. Without the run's requested model this stamp
+ * would miss the one seat that most needs it. The precedence deliberately
+ * mirrors the renderer's own read: actual, then requested.
+ *
+ * Deliberately NOT `assistantProvider` — that makes a row claim to be an
+ * assistant turn, and a tool row's provider already resolves from its run and
+ * its activities. Deliberately never `kind`: that is the transcript-card
+ * discriminator, and a burst row tagged with one stops being adoptable.
+ */
+export function bridgeToolRowMetadata(input: {
+  actualModel?: string
+  modelLabel?: string
+  run?: BridgeToolRowRun | null
+}): ChatMessage['metadata'] | undefined {
+  const wireId = String(
+    input.actualModel || input.run?.actualModel || input.run?.requestedModel || ''
+  ).trim()
+  const label = String(input.modelLabel || input.run?.modelLabel || '').trim()
+  if (!wireId && !label) return undefined
+  return {
+    ...(wireId ? { providerModel: wireId } : {}),
+    ...(label ? { providerModelLabel: label } : {})
   }
 }
 
@@ -137,7 +175,7 @@ export function buildBridgeToolActivity(input: {
   nowIso?: () => string
 }): ToolActivity {
   const { payload, provider, activityIndex, nowIso = () => new Date().toISOString() } = input
-  const toolName = String(
+  const reportedToolName = String(
     payload.tool_name || payload.toolName || payload.name || recordValue(payload.function).name || 'tool'
   )
   const id = String(
@@ -148,22 +186,22 @@ export function buildBridgeToolActivity(input: {
       payload.toolCallId ||
       `bridge-tool-${activityIndex + 1}`
   )
-  const rawParameters = parametersRecord(
-    payload.parameters ?? payload.input ?? payload.arguments ?? payload.params
-  )
+  const rawParameters = extractToolInvocationParameters(payload)
   const innerName =
-    /^(use_tool|call_tool|mcp)$/i.test(toolName) && typeof rawParameters.tool_name === 'string'
+    /^(use_tool|call_tool|mcp)$/i.test(reportedToolName) &&
+    typeof rawParameters.tool_name === 'string'
       ? rawParameters.tool_name
       : undefined
-  const effectiveName = innerName || toolName
-  const canonicalName = canonicalImageViewToolName(effectiveName, rawParameters)
+  const presentation = presentToolInvocation(innerName || reportedToolName, rawParameters)
+  const effectiveName = presentation.toolName
+  const canonicalName = canonicalImageViewToolName(effectiveName, presentation.parameters)
   const parameterImageCount =
     canonicalName === IMAGE_VIEW_TOOL_NAME
-      ? imageViewCountFromParameters(rawParameters)
+      ? imageViewCountFromParameters(presentation.parameters)
       : undefined
   const parameters = parameterImageCount
-    ? { ...rawParameters, imageCount: parameterImageCount }
-    : rawParameters
+    ? { ...presentation.parameters, imageCount: parameterImageCount }
+    : presentation.parameters
   const filePath =
     stringValue(parameters.path) ||
     stringValue(parameters.file_path) ||
@@ -184,7 +222,11 @@ export function buildBridgeToolActivity(input: {
     stringValue(parameters.tool_kind) ||
     stringValue(parameters.toolKind) ||
     stringValue(parameters.kind)
-  const diffSummary = bridgeToolDiffStats(effectiveName, parameters)
+  const category =
+    canonicalName === IMAGE_VIEW_TOOL_NAME ? 'read' : bridgeToolCategory(effectiveName, toolKind)
+  const diffSummary = bridgeToolDiffStats(effectiveName, parameters, {
+    writeLike: category === 'write'
+  })
   const patchPaths = new Set(
     (diffSummary?.files ?? []).map((file) => file.path).filter(Boolean) as string[]
   )
@@ -197,8 +239,7 @@ export function buildBridgeToolActivity(input: {
       canonicalName === IMAGE_VIEW_TOOL_NAME
         ? IMAGE_VIEW_DISPLAY_NAME
         : bridgeToolDisplayName(effectiveName),
-    category:
-      canonicalName === IMAGE_VIEW_TOOL_NAME ? 'read' : bridgeToolCategory(effectiveName, toolKind),
+    category,
     status: 'running',
     startedAt: nowIso(),
     parameters,

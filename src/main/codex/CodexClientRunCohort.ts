@@ -76,6 +76,29 @@ export class CodexClientRunCohortRegistry<T> {
     if (this.active) this.active.accepting = false
   }
 
+  /** Live admission state only; a final-owner close can never be reopened. */
+  admissionState(): {
+    readonly compatibilityKey: string
+    readonly resource: T
+    readonly accepting: boolean
+  } | null {
+    const cohort = this.active
+    if (!cohort || cohort.closing || cohort.owners.size === 0) return null
+    return {
+      compatibilityKey: cohort.compatibilityKey,
+      resource: cohort.resource,
+      accepting: cohort.accepting
+    }
+  }
+
+  /** Fair waiter bookkeeping may undo its closure while owners are still live. */
+  reopenAdmission(): boolean {
+    const cohort = this.active
+    if (!cohort || cohort.closing || cohort.owners.size === 0) return false
+    cohort.accepting = true
+    return true
+  }
+
   private leaseFor(cohort: ActiveCohort<T>, owner: string): CodexClientRunCohortLease<T> {
     let released = false
     return {

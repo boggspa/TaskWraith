@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, JSX } from 'react'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
-import { MicrophoneSymbolIcon, StopSymbolIcon } from './AppChromeSymbols'
+import { ComposerVoiceControls } from './ComposerVoiceControls'
 
 const VOICE_LEVEL_COUNT = 96
 const EMPTY_LEVELS = Array.from({ length: VOICE_LEVEL_COUNT }, () => 0)
@@ -851,47 +851,22 @@ export function ComposerVoiceInputButton({
 
   return (
     <>
-      <span
-        ref={controlRef}
-        data-composer-control="voice"
-        className={`composer-voice-control${state.isRecording ? ' is-recording' : ''}${isMenuOpen ? ' is-menu-open' : ''}`}
-      >
-        <button
-          type="button"
-          className={`composer-action-btn voice-btn composer-voice-btn${state.isRecording ? ' is-recording' : ''}`}
-          onClick={() => {
-            if (state.isRecording) stopRecording()
-            else void startRecording()
-          }}
-          disabled={(disabled && !state.isRecording) || isStarting || isTranscribing}
-          title={isStarting ? 'Starting microphone...' : title}
-          aria-label={
-            state.isRecording
-              ? 'Stop voice dictation'
-              : isStarting
-                ? 'Starting voice dictation'
-                : isTranscribing
-                  ? 'Transcribing voice dictation'
-                : 'Start voice dictation'
-          }
-          aria-pressed={state.isRecording}
-        >
-          {state.isRecording ? <StopSymbolIcon /> : <MicrophoneSymbolIcon />}
-        </button>
-        <button
-          ref={chevronRef}
-          type="button"
-          className="composer-voice-chevron"
-          onClick={handleMenuToggle}
-          disabled={disabled || state.isRecording || isStarting || isTranscribing}
-          title="Select microphone"
-          aria-label="Select microphone"
-          aria-haspopup="dialog"
-          aria-expanded={isMenuOpen}
-        >
-          <span aria-hidden />
-        </button>
-      </span>
+      <ComposerVoiceControls
+        composerStyle={composerStyle}
+        controlRef={controlRef}
+        chevronRef={chevronRef}
+        disabled={disabled}
+        isRecording={state.isRecording}
+        isMenuOpen={isMenuOpen}
+        isStarting={isStarting}
+        isTranscribing={isTranscribing}
+        title={title}
+        onToggleRecording={() => {
+          if (state.isRecording) stopRecording()
+          else void startRecording()
+        }}
+        onToggleMenu={handleMenuToggle}
+      />
       {popoverContent ? createPortal(popoverContent, document.body) : null}
     </>
   )

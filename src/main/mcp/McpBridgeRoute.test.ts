@@ -54,9 +54,11 @@ function buildLiveEnvironment(input: {
     profile: {
       safeSubset: true,
       gatewaySubset: true,
+      soloSubset: true,
       meshTopologyDirect: true,
       sketchDirect: true,
-      orchestrationDirect: true
+      orchestrationDirect: true,
+      permissionOpportunityDirect: true
     }
   })
 }
@@ -101,14 +103,22 @@ describe('MCP bridge route-from-env authority', () => {
       instanceEpoch: instanceEpochB,
       bridgeLogEpoch: 11
     })
-    expect(parsedA.value.profile).toMatchObject({ safeSubset: true, gatewaySubset: true })
+    expect(parsedA.value.profile).toMatchObject({
+      safeSubset: true,
+      gatewaySubset: true,
+      soloSubset: true
+    })
     expect(parsedA.value.profile.planSubset).toBe(false)
     expect(parsedA.value.profile.meshTopologyDirect).toBe(true)
     expect(parsedA.value.profile.sketchDirect).toBe(true)
     expect(parsedA.value.profile.orchestrationDirect).toBe(true)
+    expect(parsedA.value.profile.permissionOpportunityDirect).toBe(true)
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]).toBe('0')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },
       parentProvider: 'cursor',
@@ -237,10 +247,16 @@ describe('MCP bridge route-from-env authority', () => {
     delete missingProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]
     const missingSketchProfile = { ...built.env }
     delete missingSketchProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]
+    const missingSoloProfile = { ...built.env }
+    delete missingSoloProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]
     const missingTopologyProfile = { ...built.env }
     delete missingTopologyProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]
     const missingOrchestrationProfile = { ...built.env }
     delete missingOrchestrationProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]
+    const missingPermissionOpportunityProfile = { ...built.env }
+    delete missingPermissionOpportunityProfile[
+      MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect
+    ]
     const malformedProfile = {
       ...built.env,
       [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: 'yes'
@@ -254,11 +270,19 @@ describe('MCP bridge route-from-env authority', () => {
       ok: false,
       reason: 'invalid-profile-environment'
     })
+    expect(parseMcpBridgeRouteFromEnv(missingSoloProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
     expect(parseMcpBridgeRouteFromEnv(missingTopologyProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })
     expect(parseMcpBridgeRouteFromEnv(missingOrchestrationProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
+    expect(parseMcpBridgeRouteFromEnv(missingPermissionOpportunityProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })
@@ -339,6 +363,7 @@ describe('MCP bridge route-from-env authority', () => {
   it('keeps only valid provider stamps and bounded opaque route identifiers', () => {
     expect(normalizeMcpBridgeParentProvider('pi')).toBe('pi')
     expect(normalizeMcpBridgeParentProvider('ollama')).toBe('ollama')
+    expect(normalizeMcpBridgeParentProvider('muse')).toBe('muse')
     expect(
       normalizeMcpBridgeRoute({
         appRunId: 'r'.repeat(513),
@@ -356,5 +381,19 @@ describe('MCP bridge route-from-env authority', () => {
     if (!built.ok) throw new Error('Expected valid endpoint environment.')
     expect(built.env[MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]).toBe('gemini')
     expect(built.env[MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]).toBe(tokenA)
+
+    const muse = buildLiveEnvironment({
+      socketPath: socketA,
+      brokerToken: tokenA,
+      instanceEpoch: instanceEpochA,
+      bridgeLogEpoch: 8,
+      parentProvider: 'muse'
+    })
+    expect(muse.ok).toBe(true)
+    if (!muse.ok) throw new Error('Expected valid Muse endpoint environment.')
+    expect(parseMcpBridgeRouteFromEnv(muse.env)).toMatchObject({
+      ok: true,
+      value: { parentProvider: 'muse' }
+    })
   })
 })

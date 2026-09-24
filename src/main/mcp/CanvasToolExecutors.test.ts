@@ -73,6 +73,15 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       ref: args.ref,
       selector: args.selector
     }),
+    act: async (_id, args) => ({
+      ok: true,
+      action: args.kind,
+      found: true,
+      executed: args.kind !== 'wait_for',
+      verified: args.kind === 'wait_for' ? 'unchanged' : 'changed',
+      ref: args.ref,
+      selector: args.selector
+    }),
     annotate: async (_id, marks) => ({
       schemaVersion: 1,
       id: 'ann1',
@@ -162,6 +171,72 @@ describe('executeCanvasTool', () => {
     )
     expect(result.isError).toBeFalsy()
     expect(result.structuredContent?.canvasId).toBe('c1')
+  })
+
+  it('returns bounded drive reports for the exact chat context', async () => {
+    let seen: unknown
+    const controller = fakeController({
+      driveReports: (input, context) => {
+        seen = { input, context }
+        return [{ reportId: 'report-1', surfaceId: 'canvas-a' } as never]
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_drive_report',
+      { surfaceId: 'canvas-a', limit: 5 },
+      ctx,
+      'claude'
+    )
+
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      tool: 'canvas_drive_report',
+      count: 1,
+      reports: [{ reportId: 'report-1', surfaceId: 'canvas-a' }]
+    })
+    expect(seen).toMatchObject({
+      input: { surfaceId: 'canvas-a', limit: 5 },
+      context: { chatId: 'chat1', runId: 'run1', provider: 'claude' }
+    })
+  })
+
+  it('records an explicit post-observation drive verdict', async () => {
+    let seen: unknown
+    const controller = fakeController({
+      verifyDriveAction: (input, context) => {
+        seen = { input, context }
+        return { actionId: input.actionId, status: 'verified' } as never
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const result = await executeCanvasTool(
+      'canvas_drive_verify',
+      {
+        reportId: 'report-1',
+        actionId: 'action-1',
+        surfaceId: 'canvas-a',
+        observationId: 'observation-1',
+        verdict: 'confirmed'
+      },
+      ctx,
+      'codex'
+    )
+
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      action: { actionId: 'action-1', status: 'verified' }
+    })
+    expect(seen).toMatchObject({
+      input: {
+        reportId: 'report-1',
+        actionId: 'action-1',
+        surfaceId: 'canvas-a',
+        observationId: 'observation-1',
+        verdict: 'confirmed'
+      },
+      context: { chatId: 'chat1', runId: 'run1', provider: 'codex' }
+    })
   })
 
   it('canvas_open can request a first-class dock presentation without changing its canvasId', async () => {
@@ -1285,7 +1360,8 @@ describe('executeCanvasTool', () => {
         canvasId: 'c1',
         ref: 'ax1',
         expectedObservationId: 'observation-7',
-        expectedInputEpoch: 4
+        expectedInputEpoch: 4,
+        requireIndependentVerifier: true
       },
       ctx,
       'claude'
@@ -1306,7 +1382,8 @@ describe('executeCanvasTool', () => {
     expect(seen.inspect).toMatchObject({ expectedObservationId: 'observation-7' })
     expect(seen.click).toMatchObject({
       expectedObservationId: 'observation-7',
-      expectedInputEpoch: 4
+      expectedInputEpoch: 4,
+      requireIndependentVerifier: true
     })
     expect(seen.fill).toMatchObject({
       expectedObservationId: 'observation-7',
@@ -1318,6 +1395,69 @@ describe('executeCanvasTool', () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
     const r = await executeCanvasTool('canvas_fill', { canvasId: 'c1', ref: 'e5' }, ctx, 'claude')
     expect(r.isError).toBe(true)
+  })
+
+  it('routes key, hover, select, scroll, and wait_for through structured actions', async () => {
+    const actions: unknown[] = []
+    const controller = fakeController({
+      act: async (_id, action) => {
+        actions.push(action)
+        return {
+          ok: true,
+          action: action.kind,
+          found: true,
+          executed: action.kind !== 'wait_for',
+          verified: action.kind === 'wait_for' ? 'unchanged' : 'changed'
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+
+    await executeCanvasTool(
+      'canvas_key',
+      { canvasId: 'c1', ref: 'e1', key: 'Enter', expectedInputEpoch: 2 },
+      ctx,
+      'claude'
+    )
+    await executeCanvasTool('canvas_hover', { canvasId: 'c1', selector: '#menu' }, ctx, 'claude')
+    await executeCanvasTool(
+      'canvas_select',
+      { canvasId: 'c1', ref: 'e2', value: 'Option A' },
+      ctx,
+      'claude'
+    )
+    await executeCanvasTool('canvas_scroll', { canvasId: 'c1', deltaY: 400 }, ctx, 'claude')
+    await executeCanvasTool(
+      'canvas_wait_for',
+      { canvasId: 'c1', selector: '[data-ready]', timeoutMs: 2_000 },
+      ctx,
+      'claude'
+    )
+
+    expect(actions).toEqual([
+      expect.objectContaining({ kind: 'key', ref: 'e1', key: 'Enter', expectedInputEpoch: 2 }),
+      expect.objectContaining({ kind: 'hover', selector: '#menu' }),
+      expect.objectContaining({ kind: 'select', ref: 'e2', value: 'Option A' }),
+      expect.objectContaining({ kind: 'scroll', deltaX: 0, deltaY: 400 }),
+      expect.objectContaining({ kind: 'wait_for', selector: '[data-ready]', timeoutMs: 2_000 })
+    ])
+  })
+
+  it('validates required arguments for the richer Canvas verbs', async () => {
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
+    expect(
+      (await executeCanvasTool('canvas_key', { canvasId: 'c1', ref: 'e1' }, ctx, 'claude')).isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_select', { canvasId: 'c1', ref: 'e1' }, ctx, 'claude'))
+        .isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_scroll', { canvasId: 'c1' }, ctx, 'claude')).isError
+    ).toBe(true)
+    expect(
+      (await executeCanvasTool('canvas_wait_for', { canvasId: 'c1' }, ctx, 'claude')).isError
+    ).toBe(true)
   })
 
   it('canvas_annotate drops untargeted marks and requires at least one', async () => {
@@ -1388,7 +1528,7 @@ describe('executeCanvasTool', () => {
     expect(r.structuredContent?.value).toBe('evaluated:1 + 1')
   })
 
-  it('canvas_eval fails closed without a per-call approval receipt', async () => {
+  it('canvas_eval fails closed without a per-execution approval receipt', async () => {
     const controller = fakeController()
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     const r = await executeCanvasTool(
@@ -1398,7 +1538,7 @@ describe('executeCanvasTool', () => {
       'claude'
     )
     expect(r.isError).toBe(true)
-    expect(r.text).toContain('bound per-call approval receipt')
+    expect(r.text).toContain('bound per-execution approval receipt')
   })
 
   it('classifies a host-side canvas_eval failure without returning raw error text', async () => {
@@ -1440,8 +1580,8 @@ describe('executeCanvasTool', () => {
   it('threads provider/chat/run context to the controller', async () => {
     let seen: unknown = null
     const controller = fakeController({
-      snapshot: async (_id, callCtx) => {
-        seen = callCtx
+      snapshot: async (_id, callCtx, options) => {
+        seen = { callCtx, options }
         return {
           url: 'u',
           title: 'T',
@@ -1454,8 +1594,16 @@ describe('executeCanvasTool', () => {
       }
     })
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
-    await executeCanvasTool('canvas_snapshot', { canvasId: 'c1' }, ctx, 'grok')
-    expect(seen).toEqual({ provider: 'grok', chatId: 'chat1', runId: 'run1', workspacePath: '/ws' })
+    await executeCanvasTool(
+      'canvas_snapshot',
+      { canvasId: 'c1', driveActionId: 'action-earlier' },
+      ctx,
+      'grok'
+    )
+    expect(seen).toEqual({
+      callCtx: { provider: 'grok', chatId: 'chat1', runId: 'run1', workspacePath: '/ws' },
+      options: { driveActionId: 'action-earlier' }
+    })
   })
 })
 

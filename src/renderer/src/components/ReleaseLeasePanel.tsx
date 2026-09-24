@@ -5,11 +5,10 @@ import './ReleaseLeasePanel.css'
 /**
  * ReleaseLeasePanel — grant control for the session release lease.
  *
- * `ReleaseCommandPolicy` blocks release-class commands (git push, gh release,
- * notarytool, npm publish, ...) unless the caller presents an approval source.
- * A lease is the user saying "I am going AFK, you are authorized to publish":
- * while it is live it satisfies that gate on every agent route, and without one
- * the gate stays shut. This panel is the only place a lease is granted.
+ * Historical grant control for a retired lexical release-class gate. Command
+ * classification no longer blocks git push, notarytool, or publish, so a lease
+ * is not required to run those commands. This panel remains the only place a
+ * leftover named-class lease is granted.
  *
  * Split into a pure view plus a container so the presentation is testable with
  * `renderToStaticMarkup` — this repo has no DOM test environment.

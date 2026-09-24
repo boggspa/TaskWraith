@@ -1,6 +1,9 @@
 import type { ToolActivity } from '../../../main/store/types'
+import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
-import { isReasoningToolName } from './ToolParser'
+import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
+import { isTranscriptPriorityActivity, transcriptViewFoldsLiveStacks } from './transcriptViewFold'
+import type { TranscriptView } from './transcriptViewOverride'
 
 /**
  * Settled-stack auto-collapse (transcript tidy-up).
@@ -32,6 +35,13 @@ export function isThinkingStackActivity(activity: ToolActivity): boolean {
 export function activityStackHasLiveWork(activities: readonly ToolActivity[]): boolean {
   return activities.some(
     (activity) => activity.status === 'running' || activity.status === 'pending'
+  )
+}
+
+function isCollapsedStackPresentationActivity(activity: ToolActivity): boolean {
+  return (
+    !isHiddenInfrastructureToolName(activity.toolName || '') &&
+    !isMcpTransportWrapperActivity(activity)
   )
 }
 
@@ -90,8 +100,11 @@ function thinkingDurationLabel(totalMs: number): string {
  * the expanded stack too); tool families follow in first-appearance order so
  * the summary reads in the same sequence as the work happened. */
 export function summarizeCollapsedActivityStack(
-  activities: readonly ToolActivity[]
+  rawActivities: readonly ToolActivity[]
 ): CollapsedStackSummary {
+  // Synthetic housekeeping rows (AntiGravity init, unclassified agy steps)
+  // never count toward the folded one-liner.
+  const activities = rawActivities.filter(isCollapsedStackPresentationActivity)
   let thinkingCount = 0
   let thinkingMs = 0
   let thinkingFailed = false
@@ -260,6 +273,60 @@ export function shouldAutoCollapseActivityStack(input: {
   isLastRow: boolean
 }): boolean {
   if (input.isLiveRow || input.isLastRow) return false
-  if (input.activities.length === 0) return false
-  return !activityStackHasLiveWork(input.activities)
+  // Keep this eligibility test in the same visibility space as the summary.
+  // A stack made only of synthetic infrastructure rows has no user-facing
+  // activity to fold, and previously produced a collapsed "0 activity steps"
+  // control. Hidden work also cannot keep visible settled work expanded.
+  const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
+  if (visibleActivities.length === 0) return false
+  if (visibleActivities.some(isTranscriptPriorityActivity)) return false
+  return !activityStackHasLiveWork(visibleActivities)
+}
+
+/**
+ * The same question, asked for a transcript view that folds live work.
+ *
+ * Minimal's whole point is a one-liner WHILE the turn runs, so it must clear
+ * two of the four refusals above, not one. Clearing only `isLiveRow`/
+ * `isLastRow` provably does nothing for a running stack: the liveness refusal
+ * is evaluated afterwards and unconditionally, so a fold that cleared only the
+ * first would still be refused for exactly the rows the feature exists for.
+ *
+ * The other two refusals are kept, and for different reasons. A stack of only
+ * hidden infrastructure has no visible one-liner to show, and folding it
+ * produced a "0 activity steps" control once already — keeping it is also what
+ * stops `CollapsedActivityStackRow` hitting its `activityCount === 0` guard and
+ * rendering nothing at all for a live turn. And a priority activity
+ * (`ensemble_yield`) is conversation structure rather than tool noise, the same
+ * rule that exempts a failure from every fold.
+ *
+ * Deliberately a separate export rather than a parameter on the predicate
+ * above: that one stays byte-identical, so Standard and Tools cannot change,
+ * and every call site has to say out loud whether it folds live work. Today
+ * exactly one does — the transcript's row renderer. Super-group membership and
+ * the fan-out lane model both keep the strict predicate.
+ */
+export function shouldAutoCollapseActivityStackForView(
+  input: {
+    activities: readonly ToolActivity[]
+    isLiveRow: boolean
+    isLastRow: boolean
+  },
+  view: TranscriptView,
+  viewHidesAllContent = false
+): boolean {
+  if (shouldAutoCollapseActivityStack(input)) return true
+  // Redundant today, load-bearing the moment a caller passes the flag:
+  // standard hides nothing, so it can never reach the clauses below.
+  if (view === 'standard') return false
+  const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
+  if (visibleActivities.length === 0) return false
+  if (visibleActivities.some(isTranscriptPriorityActivity)) return false
+  // Minimal folds a live stack BECAUSE THE USER ASKED FOR QUIET, even when
+  // content survives. Any other filtering view folds one only BECAUSE THERE IS
+  // NOTHING LEFT TO SHOW — without that, a live stack the view emptied renders
+  // as a blank row with no one-liner to fall back on. Two different rules;
+  // collapsing them into one would fold Tools rows that still have tool
+  // content to display.
+  return transcriptViewFoldsLiveStacks(view) || viewHidesAllContent
 }

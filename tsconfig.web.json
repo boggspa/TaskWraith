@@ -1,5 +1,21 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  // TS6305 FIX (resolves papercuts/2026-08-25-ts6305-noemit-residual.md).
+  // Two structural facts previously made every `tsc --noEmit
+  // -p tsconfig.web.json` run report exactly one TS6305 demanding the built
+  // declaration output 'src/main/store/types.d.ts':
+  //   1. This config listed src/main/store/types.ts as an explicit include
+  //      root while ALSO referencing composite ./tsconfig.node.json (whose
+  //      include owns src/main/**) — explicit roots belonging to a referenced
+  //      project must have built .d.ts output, which --noEmit never produces.
+  //   2. The reference itself caused cross-project imports to be resolved
+  //      through that project's (nonexistent) declaration outputs.
+  // Removing only the include entry floods typecheck:web with hundreds of
+  // TS6305s (verified), so instead: keep the root, drop the now-useless
+  // "references" block (typecheck scripts run `tsc -p`, never build mode),
+  // and set disableSourceOfProjectReferenceRedirect so any remaining
+  // cross-project resolution reads .ts sources directly. Do NOT remove
+  // src/main/store/types.ts from include or delete src/preload/*.d.ts.
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
@@ -7,9 +23,17 @@
     "src/preload/*.d.ts",
     "src/main/store/types.ts"
   ],
+  // No "exclude": src/renderer/src/lib (including its tests) must stay in
+  // this program. The old lib exclude was a residual of the removed composite
+  // "references" block above, and it left lib test files typechecked by no
+  // config at all (tsconfig.node.json cherry-picks only a few lib sources).
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
+    // Read referenced-project sources (.ts) instead of redirecting imports to
+    // their built declaration outputs (.d.ts), which never exist under
+    // --noEmit. See the header note above.
+    "disableSourceOfProjectReferenceRedirect": true,
     "baseUrl": ".",
     "paths": {
       "@renderer/*": [

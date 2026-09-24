@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
 import {
   isChatGitWorkflowState,
@@ -16,20 +16,53 @@ import type {
   ReapAbandonedChatsDeps,
   RendererReapContext
 } from '../AbandonedChatReaper'
+import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
 import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
+import { defaultThreadTitleRepairStatePath } from '../store/ThreadTitleRepair'
+import {
+  createThreadTitleRepairRunner,
+  readThreadTitleRepairStateFile,
+  threadTitleRepairModeFromEnv,
+  writeThreadTitleRepairStateFile
+} from '../ThreadTitleRepairRunner'
+import {
+  RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+  chatPersistenceRevision,
+  parseRendererChatTranscriptMutationRequest,
+  type RendererChatTranscriptMutationResult
+} from '../../shared/rendererChatTranscriptMutation'
+import {
+  chatUpdateProducerEnvelopeFor,
+  computeChatSubRevisions,
+  type ChatTranscriptOp
+} from '../../shared/chatUpdateTransport'
+import { ChatTranscriptMutationIndex } from '../store/ChatTranscriptMutationAuthoring'
+import { assertSafeChatId } from '../ChatPath'
+import {
+  parseChatComposerSelectionPatchRequest,
+  type ChatComposerSelectionPatchResult
+} from '../../shared/chatComposerSelectionPatch'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
   | { kind: 'chat'; chatId: string; workspaceId?: string }
 
 export interface ChatHandlerDeps {
+  beforeChatInventoryWrite?: () => Promise<void> | undefined
+  beforeSaveChat?: (chat: ChatRecord) => Promise<void> | undefined
+  beforeTranscriptOps?: (chatId: string, ops: readonly ChatTranscriptOp[]) => Promise<void> | undefined
+  observeHistoryChanges?: (listener: () => void) => void
+  repairIndexedTitle?: import('../ThreadTitleRepairRunner').ThreadTitleRepairRunnerDeps['repairIndexedChat']
   chatService: Pick<
     ChatService,
     | 'getChats'
+    | 'getAbandonedReapCandidates'
+    | 'getWorkspaceCommitAttributionProjections'
     | 'getChatList'
     | 'getPinnedMessages'
     | 'getChat'
     | 'saveChat'
+    | 'patchChatComposerSelection'
     | 'deleteChat'
     | 'truncateChatHistory'
     | 'clearChats'
@@ -46,11 +79,29 @@ export interface ChatHandlerDeps {
     | 'rebindChatWorkspace'
     | 'queueChatWorkspaceRebind'
     | 'getSideChats'
-    // Required, not optional: the set-chat-kind gate needs to know whether a
-    // chat is shared, and a missing method must be a compile error rather than
-    // a silently-permitted collapse of a shared panel.
-    | 'listHumanCollaborationShares'
   >
+  /**
+   * Host-routed chat-persistence durability barrier (AppStore.saveChat's
+   * Host-owned-gate branch enqueues; this drains). Awaited after ensemble-chat
+   * creation, but only for a bounded window and never fatally — see
+   * `settleEnsembleCreatePersistBarrier`. Optional so unit-test harnesses can
+   * omit it.
+   */
+  awaitChatRecordPersisted?: (chatId: string) => Promise<void>
+  /**
+   * The Host's durable record for a chat, bypassing the optimistic shadow cache
+   * and the selection overlay. Read after the set-chat-kind barrier: a mode
+   * switch that never reached the durable record must fail loudly, not report a
+   * success the next stale delivery will revert. Optional so unit-test
+   * harnesses can omit it (verification then skips).
+   */
+  readDurableChatRecord?: (chatId: string) => ChatRecord | null
+  /**
+   * Overrides `CHAT_KIND_PERSIST_VERIFY_WINDOW_MS`. Exists so a test can drive
+   * the re-read window to zero instead of sleeping through it; production
+   * leaves it unset.
+   */
+  chatKindPersistVerifyWindowMs?: number
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
   /** Revoke/claim provider approval authority synchronously before graph awaits. */
@@ -86,15 +137,27 @@ export interface ChatHandlerDeps {
   broadcastThreadUpdate: (chatId: string | undefined) => void
   broadcastThreadList: () => void
   broadcastChatUpdated: (chat: ChatRecord) => void
+  adoptRendererChatMutation: (
+    senderId: number,
+    chat: ChatRecord,
+    basePersistenceRevision: number
+  ) => boolean
+  /** Compact renderer saves are already reflected locally; notify only peers. */
+  broadcastChatUpdatedExcept: (chat: ChatRecord, senderId: number) => void
   broadcastChatPopoutUpdate: (chat: ChatRecord) => void
   pushRemoteTaskCardDelta: (chatId: string) => void
+  /**
+   * Live provider-run liveness for a chat, from the run manager rather than the
+   * stored record. The title repair pass defers a chat that is mid-turn.
+   */
+  isChatBusy: (chatId: string) => boolean
   pushRemoteThreadSnapshot: (chat: ChatRecord, workspaceId: string) => void
   canonicalRemoteWorkspaceId: (workspaceId?: string | null) => string | null
   globalRemoteScope: string
   reapAbandonedChats: (
     deps: ReapAbandonedChatsDeps,
     renderer?: RendererReapContext
-  ) => string[]
+  ) => string[] | Promise<string[]>
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
   /** Chat ids with a live share or a contribution awaiting host review. */
@@ -137,6 +200,8 @@ export interface ChatHandlerDeps {
       | 'create-side-chat'
       | 'set-chat-kind'
       | 'save-chat'
+      | 'patch-chat-composer-selection'
+      | 'mutate-chat-transcript'
       | 'delete-chat'
       | 'truncate-chat'
       | 'set-chat-git-workflow'
@@ -170,6 +235,44 @@ const runHasDiff = (run: ChatRun | undefined): boolean =>
 function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
   const revision = chat?.persistenceRevision
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
+
+function rendererMutationNeedsMediaNormalization(
+  operations: readonly ChatTranscriptOp[]
+): boolean {
+  for (const operation of operations) {
+    const changedMessages =
+      operation.op === 'append'
+        ? operation.messages
+        : operation.op === 'update'
+          ? [operation.message]
+          : []
+    for (const message of changedMessages) {
+      if (message.role !== 'assistant' && message.role !== 'system') continue
+      if (message.content.includes('![')) return true
+      if (Array.isArray(message.metadata?.mediaRefs)) return true
+    }
+  }
+  return false
+}
+
+function executionGraphOwnedRunIds(chat: ChatRecord): Set<string> {
+  return new Set(
+    (chat.runs ?? [])
+      .filter((run) => run.providerMetadata?.executionGraphAttempt !== undefined)
+      .map((run) => run.runId)
+  )
+}
+
+function messageClaimsExecutionGraphOwnership(
+  message: ChatRecord['messages'][number],
+  ownedRunIds: ReadonlySet<string>
+): boolean {
+  return Boolean(
+    (message.runId && ownedRunIds.has(message.runId)) ||
+      message.metadata?.kind === 'executionGraphAttempt' ||
+      message.metadata?.kind === 'executionGraphAttemptOutput'
+  )
 }
 
 function preserveExecutionGraphTranscript(
@@ -243,7 +346,202 @@ function assertReadableWorkspace(
   }
 }
 
+/**
+ * How long chat creation waits for the Host to confirm a new ensemble record
+ * before giving up on the confirmation and returning the chat anyway. The
+ * shutdown drain bounds itself for the same reason
+ * (`HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS`); the create path never did.
+ */
+export const ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS = 5_000
+
+/**
+ * Bounded, non-fatal wait for the Host to confirm a freshly created ensemble
+ * record.
+ *
+ * Chat creation must never be destroyed by Host persistence trouble. The
+ * renderer discards this IPC's promise (`onNewChat` is typed `=> void`), so a
+ * rejection or an unbounded wait here reaches the user as a "+ New" menu item
+ * that silently does nothing — measured 2026-08-29 against a saturated Host
+ * that failed every `thread.record.persist` in the session.
+ *
+ * Durability is still enforced where it actually matters:
+ * `EnsembleOrchestrator.persistChatBarrier` blocks before any round dispatches,
+ * so an unconfirmed record can exist but can never start work. Both the timeout
+ * and the failure are reported loudly instead of being swallowed.
+ */
+async function settleEnsembleCreatePersistBarrier(
+  awaitChatRecordPersisted: ((chatId: string) => Promise<void>) | undefined,
+  chatId: string
+): Promise<void> {
+  const barrier = awaitChatRecordPersisted?.(chatId)
+  if (!barrier) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // Attach the handler to the barrier itself rather than to the race: the
+  // losing branch stays pending, and a late rejection with no handler would
+  // surface as an unhandled rejection in main.
+  const reported = barrier.catch((error) => {
+    console.error(
+      `[create-ensemble-chat] Host record persist failed for chat ${chatId}; ` +
+        'the chat was created but is not yet durable.',
+      error
+    )
+  })
+  const bound = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS)
+    timer.unref?.()
+  })
+  try {
+    if ((await Promise.race([reported, bound])) === 'timeout') {
+      console.error(
+        `[create-ensemble-chat] Host record persist did not confirm chat ${chatId} within ` +
+          `${ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS}ms; the chat was created but is not ` +
+          'yet durable.'
+      )
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * How long a mode switch waits for the Host to confirm the rewritten record
+ * before verifying against whatever is durable. Same bound as chat creation:
+ * the user is waiting on a toggle, but a saturated Host must not wedge the IPC.
+ */
+export const CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS = 5_000
+
+/**
+ * How long the durable record is re-read for AFTER the barrier stops being
+ * waited on, before the switch is called a failure.
+ *
+ * The barrier bound above is not a failure signal — it only stops waiting, and
+ * the Host client's own command ceiling is 30s (`HostThreadRecordPersistCommand`),
+ * six times longer. Asserting once the instant the bound expires therefore reads
+ * a record that is merely still in flight and reports a failure the user then
+ * meets as "the Ensemble toggle does nothing". Re-reading for a further bounded
+ * window costs nothing when the write already landed (the first read wins) and
+ * removes the dominant false negative when it has not.
+ */
+export const CHAT_KIND_PERSIST_VERIFY_WINDOW_MS = 5_000
+const CHAT_KIND_PERSIST_VERIFY_POLL_MS = 100
+
+/**
+ * Bounded wait + durable verification for `set-chat-kind`.
+ *
+ * Mode switches ride the same Host-routed CAS lane as every other save, but
+ * unlike a transcript append their loss is invisible until some later write —
+ * a switch that never lands is a silent revert the user only meets when the
+ * next stale delivery flips the thread back (measured 2026-08-30: Ensemble
+ * forced back on mid-session, provider changes undone). Wait a bounded window
+ * for the lane to drain, then verify the DURABLE record carries the requested
+ * kind; a mismatch throws so the renderer keeps the truthful pre-toggle state
+ * and reports the failure in the thread log instead of applying an optimistic
+ * record the Host never accepted.
+ */
+async function assertChatKindPersisted(
+  deps: Pick<
+    ChatHandlerDeps,
+    | 'awaitChatRecordPersisted'
+    | 'readDurableChatRecord'
+    | 'getSettings'
+    | 'chatKindPersistVerifyWindowMs'
+  >,
+  chatId: string,
+  targetKind: ChatKind
+): Promise<void> {
+  const barrier = deps.awaitChatRecordPersisted?.(chatId)
+  if (barrier) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Same shape as settleEnsembleCreatePersistBarrier: the handler rides on
+    // the barrier itself, so a late rejection on the losing branch cannot
+    // surface as an unhandled rejection in main.
+    const reported = barrier.catch((error) => {
+      console.error(`[set-chat-kind] Host record persist failed for chat ${chatId}.`, error)
+    })
+    const bound = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS)
+      timer.unref?.()
+    })
+    try {
+      if ((await Promise.race([reported, bound])) === 'timeout') {
+        console.error(
+          `[set-chat-kind] Host record persist did not confirm chat ${chatId} within ` +
+            `${CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS}ms; verifying against the durable record.`
+        )
+      }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+  // Local history off means `saveChatThroughHost` returned without writing at
+  // all, while `readDurableChatRecord` still reads `chats/<id>.json` — and
+  // turning history off does not purge those files. Verifying here compares the
+  // switch against a record nothing is maintaining, so every mode toggle on a
+  // profile that ever had history enabled fails deterministically. There is no
+  // durable write to verify, so do not invent one.
+  if (deps.getSettings?.().storeLocalChatHistory === false) return
+  const readDurableKind = (): ChatKind | null => {
+    try {
+      const durable = deps.readDurableChatRecord?.(chatId)
+      // No durable record at all: the chat was never persisted, so there is
+      // nothing to verify against and the in-memory mutation stands on its own.
+      if (!durable) return targetKind
+      return durable.chatKind === 'ensemble' ? 'ensemble' : 'single'
+    } catch (error) {
+      // A torn or unreadable record is not evidence the switch failed, and
+      // letting a raw SyntaxError out of here surfaces as the mode-change error.
+      console.error(`[set-chat-kind] Durable record for chat ${chatId} is unreadable.`, error)
+      return null
+    }
+  }
+  let durableKind = readDurableKind()
+  if (durableKind !== targetKind) {
+    const deadline =
+      Date.now() + (deps.chatKindPersistVerifyWindowMs ?? CHAT_KIND_PERSIST_VERIFY_WINDOW_MS)
+    while (durableKind !== null && durableKind !== targetKind && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CHAT_KIND_PERSIST_VERIFY_POLL_MS)
+        timer.unref?.()
+      })
+      durableKind = readDurableKind()
+    }
+  }
+  if (durableKind === null) return
+  if (durableKind !== targetKind) {
+    throw new Error(
+      `The chat mode change could not be persisted — the durable record is still ` +
+        `${durableKind === 'ensemble' ? 'an Ensemble' : 'a single-provider chat'}. ` +
+        'The thread is unchanged; try the switch again.'
+    )
+  }
+}
+
 export function registerChatHandlers(deps: ChatHandlerDeps): void {
+  const rendererTranscriptIndexes = new Map<string, ChatTranscriptMutationIndex>()
+  const threadTitleRepair = createThreadTitleRepairRunner({
+    repairIndexedChat: deps.repairIndexedTitle,
+    statePath: defaultThreadTitleRepairStatePath(app.getPath('userData')),
+    // Unscoped on purpose: the list this handler returns can be narrowed to one
+    // workspace, and a partial observation would strand every candidate outside
+    // it. Discovery is index-backed, so sourcing the full list costs no reads.
+    listChats: () => deps.chatService.getChatList(),
+    getChat: (chatId) => deps.chatService.getChat(chatId),
+    saveChat: (chat) => deps.chatService.saveChat(chat),
+    awaitChatRecordPersisted: deps.awaitChatRecordPersisted,
+    isChatBusy: (chatId) => deps.isChatBusy(chatId),
+    broadcastChatUpdated: (chat) => deps.broadcastChatUpdated(chat),
+    broadcastThreadUpdate: (chatId) => deps.broadcastThreadUpdate(chatId),
+    pushRemoteTaskCardDelta: (chatId) => deps.pushRemoteTaskCardDelta(chatId),
+    readStateFile: readThreadTitleRepairStateFile,
+    writeStateFile: writeThreadTitleRepairStateFile,
+    mode: threadTitleRepairModeFromEnv(process.env.TASKWRAITH_THREAD_TITLE_REPAIR)
+  })
+  deps.observeHistoryChanges?.(() => threadTitleRepair.observe())
+  if (deps.repairIndexedTitle) threadTitleRepair.observe()
+  const afterMigration = <T>(write: () => T): T | Promise<T> => {
+    const pending = deps.beforeChatInventoryWrite?.()
+    return pending ? pending.then(write) : write()
+  }
   const observeNoHistoryChat = (chat: ChatRecord): void => {
     if (deps.getSettings().storeLocalChatHistory === false) {
       deps.observeSoloSteerTranscriptRows(chat)
@@ -256,9 +554,28 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     const owned = deps.chatService.getChat(scope.chatId)
     return owned ? [owned] : []
   })
+  /**
+   * Commit attributions for one workspace, without its transcripts.
+   *
+   * The Commits inspector used `get-chats` for this and paid a whole-profile
+   * parse plus a whole-workspace transcript serialization on the main process
+   * for every open — the app froze until it finished. The records returned
+   * here keep only messages carrying a commit receipt.
+   */
+  ipcMain.handle('get-workspace-commit-attributions', (event, workspaceId: string) => {
+    const scope = deps.resolveSenderChatReadScope(event)
+    assertReadableWorkspace(scope, workspaceId)
+    if (scope.kind === 'all') {
+      return deps.chatService.getWorkspaceCommitAttributionProjections(workspaceId)
+    }
+    const owned = deps.chatService.getChat(scope.chatId)
+    const projected = owned ? projectChatForCommitAttribution(owned) : null
+    return projected ? [projected] : []
+  })
   ipcMain.handle('get-chat-list', (event, workspaceId?: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
     assertReadableWorkspace(scope, workspaceId)
+    threadTitleRepair.observe()
     const list = deps.chatService.getChatList(
       scope.kind === 'chat' ? scope.workspaceId : workspaceId
     )
@@ -285,20 +602,20 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     assertReadableChat(scope, chatId)
     return deps.chatService.getChat(chatId)
   })
-  ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => {
+  ipcMain.handle('create-chat', (event, workspaceId: string, workspacePath: string) => afterMigration(() => {
     deps.assertSenderCanManageChatCollection(event, 'create-chat')
     const chat = deps.chatService.createChat(workspaceId, workspacePath)
     observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
-  })
-  ipcMain.handle('create-global-chat', (event) => {
+  }))
+  ipcMain.handle('create-global-chat', (event) => afterMigration(() => {
     deps.assertSenderCanManageChatCollection(event, 'create-global-chat')
     const chat = deps.chatService.createGlobalChat()
     observeNoHistoryChat(chat)
     deps.broadcastThreadUpdate(chat?.appChatId)
     return chat
-  })
+  }))
   ipcMain.handle(
     'create-ensemble-chat',
     async (event, args?: { workspaceId?: string; workspacePath?: string }) => {
@@ -307,7 +624,12 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         throw new Error('Ensemble Mode is disabled.')
       }
       const configuredProviders = await deps.detectConfiguredProviders(deps.getSettings())
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.createEnsembleChat(args, configuredProviders)
+      // Durability barrier: bounded and non-fatal. A slow or failing Host must
+      // not destroy the create — see settleEnsembleCreatePersistBarrier.
+      if (chat)
+        await settleEnsembleCreatePersistBarrier(deps.awaitChatRecordPersisted, chat.appChatId)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
@@ -328,6 +650,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     ) => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-sub-thread')
       deps.assertParentChatCreationAllowed(args.parentChatId)
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.createSubThread(args)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
@@ -352,14 +675,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         originRunId?: string
         sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut'
       }
-    ) => {
+    ) => afterMigration(() => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-side-chat')
       deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSideChat(args)
       observeNoHistoryChat(chat)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
-    }
+    })
   )
   ipcMain.handle('get-side-chats', (event, parentChatId: string) => {
     const scope = deps.resolveSenderChatReadScope(event)
@@ -368,7 +691,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   })
   ipcMain.handle(
     'set-chat-kind',
-    (
+    async (
       event,
       args: {
         chatId: string
@@ -382,41 +705,21 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       if (args?.targetKind === 'ensemble' && deps.getSettings().ensembleModeEnabled === false) {
         throw new Error('Ensemble Mode is disabled.')
       }
-      // A SHARED thread cannot leave panel mode — not by the host, not by an
-      // agent, not by any renderer. Collapsing routes through
-      // AppStore.setChatKind, which strips the roster and stashes it in
-      // `providerMetadata.stashedEnsemble`; the next preset-apply consumes that
-      // stash, so a seat removed by a collapse can silently RESURRECT later.
-      // With external collaborators occupying seats that is not a cosmetic
-      // problem — a kicked person's seat could come back.
-      //
-      // `ChatService.setChatKind` refuses this too, and THAT is the gate every
-      // door goes through; this copy is kept because it is cheap and because it
-      // fails before any of the argument validation below. The share check runs
-      // first because it is cheap; only then do we pay for a chat read to
-      // confirm this is actually a collapse and not a no-op.
-      if (args?.targetKind !== 'ensemble') {
-        // ACTIVE participants, not enabled shares — both revoke paths leave the
-        // share record behind, and an enabled share nobody is admitted to
-        // protects nothing. ChatService.setChatKind is the authority; this copy
-        // is the cheap early check.
-        const admitted = deps.chatService
-          .listHumanCollaborationShares(args.chatId)
-          .filter((share) => share.enabled)
-          .some((share) => (share.participants || []).some((p) => p.status === 'active'))
-        if (admitted && deps.chatService.getChat(args.chatId)?.chatKind === 'ensemble') {
-          throw new Error(
-            'This chat is shared. Stop sharing before switching it out of panel mode.'
-          )
-        }
-      }
+      await deps.beforeChatInventoryWrite?.()
       const chat = deps.chatService.setChatKind(args)
+      // Prove the mode switch reached the durable Host record before reporting
+      // success — otherwise the next stale delivery silently reverts the toggle.
+      await assertChatKindPersisted(
+        deps,
+        args.chatId,
+        args?.targetKind === 'ensemble' ? 'ensemble' : 'single'
+      )
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
     }
   )
 
-  ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => {
+  ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => afterMigration(() => {
     deps.assertSenderCanRebindChatWorkspace(event, args?.chatId)
     const before = deps.chatService.getChat(args?.chatId)
     if (!deps.getChatWorkspaceRebindBlocker) {
@@ -463,11 +766,16 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       deps.broadcastThreadList()
     }
     return { chat: rebound, changed }
-  })
+  }))
 
-  ipcMain.handle('save-chat', (event, chat: ChatRecord) => {
+  type RendererSaveResult = { chat: ChatRecord; previous: ChatRecord | null; accepted: boolean }
+  ipcMain.handle('save-chat', function saveRendererChat(event, chat: ChatRecord): RendererSaveResult | Promise<RendererSaveResult> {
     const chatId = chat.appChatId
     deps.assertSenderChatScope(event, chatId, 'save-chat')
+    const waiting = deps.beforeSaveChat?.(chat)
+    if (waiting) return waiting.then(() => saveRendererChat(event, chat))
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate.wait(chatId).then(() => saveRendererChat(event, chat))
     const previous = deps.chatService.getChat(chatId)
     const normalized = preserveExecutionGraphTranscript(
       previous,
@@ -504,6 +812,259 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         persistenceRevision(saved) > persistenceRevision(previous)
     }
   })
+
+  ipcMain.handle(
+    'patch-chat-composer-selection',
+    async (event, payload: unknown): Promise<ChatComposerSelectionPatchResult> => {
+      const request = parseChatComposerSelectionPatchRequest(payload)
+      if (!request) throw new Error('Invalid chat composer selection patch.')
+      assertSafeChatId(request.chatId)
+      deps.assertSenderChatScope(event, request.chatId, 'patch-chat-composer-selection')
+      const previous = deps.chatService.getChat(request.chatId)
+      if (!previous) {
+        return {
+          ok: false,
+          changed: false,
+          chatId: request.chatId,
+          reason: 'chat-not-found'
+        }
+      }
+      const result = await deps.chatService.patchChatComposerSelection(request)
+      if (!result.changed) {
+        return {
+          ok: true,
+          changed: false,
+          chatId: previous.appChatId,
+          revision: persistenceRevision(previous),
+          updatedAt: previous.updatedAt
+        }
+      }
+      const saved = result.chat
+      observeNoHistoryChat(saved)
+      deps.broadcastChatUpdated(saved)
+      deps.broadcastThreadUpdate(saved.appChatId)
+      return {
+        ok: true,
+        changed: true,
+        chatId: saved.appChatId,
+        revision: persistenceRevision(saved),
+        updatedAt: saved.updatedAt
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'mutate-chat-transcript',
+    function mutateTranscript(event, payload: unknown): RendererChatTranscriptMutationResult | Promise<RendererChatTranscriptMutationResult> {
+      const request = parseRendererChatTranscriptMutationRequest(payload)
+      const requestedChatId =
+        payload && typeof payload === 'object' && typeof (payload as { chatId?: unknown }).chatId === 'string'
+          ? (payload as { chatId: string }).chatId
+          : ''
+      if (!request) {
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: requestedChatId,
+          revision: 0,
+          reason: 'invalid-request',
+          canonical: null
+        }
+      }
+
+      deps.assertSenderChatScope(event, request.chatId, 'mutate-chat-transcript')
+      const waiting = deps.beforeTranscriptOps?.(request.chatId, request.transcriptOps)
+      if (waiting) return waiting.then(() => mutateTranscript(event, payload))
+      if (threadCatalogueWriteGate.isHeld(request.chatId)) return threadCatalogueWriteGate.wait(request.chatId).then(() => mutateTranscript(event, payload))
+      const previous = deps.chatService.getChat(request.chatId)
+      if (!previous) {
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: 0,
+          reason: 'chat-not-found',
+          canonical: null
+        }
+      }
+      if (chatPersistenceRevision(previous) !== request.baseRevision) {
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(previous),
+          reason: 'revision-conflict',
+          canonical: previous
+        }
+      }
+
+      let index = rendererTranscriptIndexes.get(request.chatId)
+      if (!index?.isCurrent(previous.persistenceRevision, previous.messages.length)) {
+        try {
+          index = new ChatTranscriptMutationIndex(
+            previous.messages,
+            previous.persistenceRevision
+          )
+          rendererTranscriptIndexes.set(request.chatId, index)
+          if (rendererTranscriptIndexes.size > 256) {
+            const oldestChatId = rendererTranscriptIndexes.keys().next().value
+            if (oldestChatId && oldestChatId !== request.chatId) {
+              rendererTranscriptIndexes.delete(oldestChatId)
+            }
+          }
+        } catch {
+          rendererTranscriptIndexes.delete(request.chatId)
+          return {
+            version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+            accepted: false,
+            chatId: request.chatId,
+            revision: chatPersistenceRevision(previous),
+            reason: 'operation-conflict',
+            canonical: previous
+          }
+        }
+      }
+
+      const transaction = index!.begin()
+      const messages = previous.messages.slice()
+      const graphOwnedRunIds = executionGraphOwnedRunIds(previous)
+      try {
+        for (const operation of request.transcriptOps) {
+          if (operation.op === 'append') {
+            if (
+              operation.messages.some((message) =>
+                messageClaimsExecutionGraphOwnership(message, graphOwnedRunIds)
+              )
+            ) {
+              throw new Error('Renderer cannot append main-owned graph transcript rows')
+            }
+            transaction.append(operation.messages)
+            messages.push(...operation.messages)
+            continue
+          }
+          if (operation.op === 'truncateFrom') {
+            // Rewind: drop every row after the anchor, keeping the anchor. The
+            // anchor's own text is edited by a separate `update` op.
+            const anchorIndex = transaction.indexOf(operation.id)
+            if (anchorIndex < 0) throw new Error('Transcript operation target is absent')
+            const removed = messages.slice(anchorIndex + 1)
+            if (removed.length === 0) continue
+            // Same fence as a single delete, applied to EVERY dropped row: a
+            // renderer-authored truncation cannot take main-owned graph rows,
+            // because preserveExecutionGraphTranscript would re-add them on
+            // save and the caller would silently see the tail come back.
+            if (
+              removed.some((message) =>
+                messageClaimsExecutionGraphOwnership(message, graphOwnedRunIds)
+              )
+            ) {
+              throw new Error('Renderer cannot truncate main-owned graph transcript rows')
+            }
+            transaction.splice(
+              anchorIndex + 1,
+              removed.length,
+              removed.map((message) => message.id),
+              []
+            )
+            messages.splice(anchorIndex + 1, removed.length)
+            continue
+          }
+          const messageIndex = transaction.indexOf(operation.id)
+          if (messageIndex < 0) throw new Error('Transcript operation target is absent')
+          if (
+            messageClaimsExecutionGraphOwnership(
+              messages[messageIndex],
+              graphOwnedRunIds
+            ) ||
+            (operation.op === 'update' &&
+              messageClaimsExecutionGraphOwnership(operation.message, graphOwnedRunIds))
+          ) {
+            throw new Error('Renderer cannot mutate main-owned graph transcript rows')
+          }
+          if (operation.op === 'update') {
+            transaction.update(operation.message)
+            messages[messageIndex] = operation.message
+          } else {
+            transaction.splice(messageIndex, 1, [operation.id], [])
+            messages.splice(messageIndex, 1)
+          }
+        }
+      } catch {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(previous),
+          reason: 'operation-conflict',
+          canonical: previous
+        }
+      }
+
+      const candidate = { ...previous, messages }
+      const normalized = rendererMutationNeedsMediaNormalization(request.transcriptOps)
+        ? deps.normalizeTranscriptMarkdownMediaForChat(candidate)
+        : candidate
+      const authoredTranscript = transaction.finish()
+      const saved = deps.chatService.saveChat(
+        normalized,
+        normalized.messages === messages ? { authoredTranscript } : undefined
+      )
+      const accepted =
+        deps.getSettings().storeLocalChatHistory === false ||
+        chatPersistenceRevision(saved) > chatPersistenceRevision(previous)
+      if (!accepted) {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+        return {
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          accepted: false,
+          chatId: request.chatId,
+          revision: chatPersistenceRevision(saved),
+          reason: 'save-conflict',
+          canonical: saved
+        }
+      }
+
+      if (saved.messages.length === messages.length) {
+        transaction.commit(saved.persistenceRevision)
+      } else {
+        transaction.abort()
+        rendererTranscriptIndexes.delete(request.chatId)
+      }
+      observeNoHistoryChat(saved)
+      if (
+        deps.adoptRendererChatMutation(
+          event.sender.id,
+          saved,
+          request.baseRevision
+        )
+      ) {
+        deps.broadcastChatUpdatedExcept(saved, event.sender.id)
+      } else {
+        deps.broadcastChatUpdated(saved)
+      }
+      deps.maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-mutate-chat-transcript')
+      deps.broadcastThreadUpdate(saved.appChatId)
+      const envelope = chatUpdateProducerEnvelopeFor(saved)
+      const contentSub = computeChatSubRevisions(saved)
+      return {
+        version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+        accepted: true,
+        chatId: saved.appChatId,
+        revision: chatPersistenceRevision(saved),
+        updatedAt: saved.updatedAt,
+        messageCount: saved.messages.length,
+        recordHash: contentSub.recordHash,
+        ...(envelope?.state.transcriptHash
+          ? { transcriptHash: envelope.state.transcriptHash }
+          : {})
+      }
+    }
+  )
 
   // Per-thread git workflow marker (sidebar git icon + "Git" section). The
   // field is MAIN-OWNED like watchedPr: reporters send a small observation and
@@ -606,8 +1167,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
                 )
               }
             : renderer ?? {}
-        // selectCandidates() walks the whole chat corpus (AppStore.getChats())
-        // to find abandoned drafts, so it is not free to call repeatedly. The
+        // selectCandidates() reads only the chats that could still be reapable
+        // (getAbandonedReapCandidates skips anything the chat-list index can
+        // vouch for as already started), so it no longer parses the whole
+        // corpus -- but it still stats every chat file and fully parses every
+        // empty shell, so it is not free to call repeatedly. The
         // loop still re-validates a candidate against LIVE state immediately
         // before deleting it -- awaiting deleteChatWithLifecycle can let
         // anything change (a message arrives, the chat gets pinned or opened
@@ -623,9 +1187,15 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         // still re-checked against a fresh corpus read, exactly as before.
         const selectCandidates = (): string[] => {
           const collected: string[] = []
+          // Parentage comes from the whole corpus, not from the narrowed list:
+          // a started parent is skipped as a candidate, and deriving parentage
+          // from the list alone would then reap an empty chat that a skipped
+          // child still points at.
+          const { chats, parentChatIds } = deps.chatService.getAbandonedReapCandidates()
           deps.reapAbandonedChats(
             {
-              getChats: () => deps.chatService.getChats(),
+              getChats: () => chats,
+              getParentChatIds: () => parentChatIds,
               getWorkflowChatIds: deps.getWorkflowChatIds,
               getScheduledChatIds: deps.getScheduledChatIds,
               getSharedChatIds: deps.getSharedChatIds,
@@ -690,3 +1260,4 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     })()
   })
 }
+import { threadCatalogueWriteGate } from '../store/ThreadCatalogueWriteGate'

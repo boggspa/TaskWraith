@@ -14,7 +14,7 @@ Click the media icon among the corner controls above the transcript (it shows a 
 1. Click the media corner button above the transcript to open the dock.
 2. Pick an item from the list on the right to preview it on the left — images, audio (waveform player), and video all preview inline.
 3. Use the actions menu (⋯) on the preview to open the file in Finder, copy its path, or save it elsewhere.
-4. For audio/video items, click **Detach** to pop the player out into its own Multiview pane.
+4. For audio/video items, click **Detach to pane** to pop the player out into its own Multiview pane.
 5. Click **Close** to dismiss the dock.
 
 ## Tips & related

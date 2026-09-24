@@ -222,8 +222,8 @@ describe('sanitizeRawProviderMediaRef', () => {
       legitRef({ workspaceId: 'ws-evil', workspaceRelativePath: '../../etc/passwd' })
     )
     expect(ref).not.toBeNull()
-    expect((ref as Record<string, unknown>).workspaceId).toBeUndefined()
-    expect((ref as Record<string, unknown>).workspaceRelativePath).toBeUndefined()
+    expect((ref as unknown as Record<string, unknown>).workspaceId).toBeUndefined()
+    expect((ref as unknown as Record<string, unknown>).workspaceRelativePath).toBeUndefined()
   })
 
   it('defaults a missing/blank name to "Image"', () => {

@@ -1,11 +1,30 @@
-import * as electron from 'electron'
+import {
+  assertPeopleDonorMutationAllowed,
+  pendingPeopleDonorMutation
+} from '../../host-shared/thread-catalogue/PeopleDonorMutationGate'
+import { preserveSettledRunSeals } from '../../shared/threadCatalogueTerminalRuns'
+import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
+import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
+import { ThreadCatalogueMirror, catalogueChatListItem } from './ThreadCatalogueMirror'
+import { projectThreadCatalogueRecord } from './ThreadCatalogueFromRecord'
+import { ThreadCatalogueSourcePublisher } from './ThreadCatalogueSourcePublisher'
+import { threadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
+import { readCanonicalCatalogueChat } from './ThreadCatalogueCanonicalRead'
+import { normalizeCatalogueChatRecord } from './ThreadCatalogueNormalize'
+import { preserveContinuityRunReceipts } from '../../shared/threadContinuity'
 import * as fs from 'fs'
 import * as path from 'path'
 import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { adoptSupersededMaxWaveAgents } from './maxWaveAgentsDefault'
-import { attachChatUpdateProducerEnvelope } from '../../shared/chatUpdateTransport'
+import {
+  attachChatUpdateProducerEnvelope,
+  chatUpdateProducerEnvelopeFor
+} from '../../shared/chatUpdateTransport'
+import { assertAuthoritativeChatForSave } from './assertAuthoritativeChatForSave'
+import { escalateSummaryChatForSave } from './escalateSummaryChatForSave'
+import { durableActiveGoalToRestore } from './durableActiveGoalToRestore'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -15,13 +34,12 @@ import {
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
-import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
+import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
 import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
-import { resolveActiveGoalForEnsemble } from '../GoalState'
 import { MissionFactLedgerRepository } from '../missionLedger/MissionFactLedger'
 import { MissionFactShadowService } from '../missionLedger/MissionFactShadowService'
 import {
@@ -30,6 +48,12 @@ import {
   legacyKimiAcpSeatStatePaths,
   legacyKimiAcpSeatStateRoots
 } from '../kimi/KimiAcpSeatState'
+import {
+  legacyMuseSeatStatePaths,
+  legacyMuseSeatStateRoots,
+  museSeatStatePath,
+  museSeatStateRoot
+} from '../muse/MuseSeatState'
 import {
   UsageJournalStore,
   type UsageHistoryMutationHold,
@@ -48,24 +72,59 @@ import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import {
   createIncrementalChatPersistence,
+  DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP,
   type IncrementalChatPersistenceBoundary,
   type IncrementalChatPersistResult,
   type IncrementalChatPersistenceStats
 } from './IncrementalChatPersistence'
 import {
+  createSegmentedChatStore,
+  isSegmentedChatStoreEnabled,
+  type SegmentedChatStoreStats
+} from './SegmentedChatStore'
+import {
   ChatUpdateProjectionTracker,
   type ChatUpdateProjectionObservation
 } from './ChatUpdateProjectionTracker'
-import type { AuthoredChatTranscriptMutation } from './ChatRecordMutation'
+import { rebaseChatRecordUpdate, type AuthoredChatTranscriptMutation } from './ChatRecordMutation'
+import { applyLocalAiThreadTitle, applyThreadTitlePolicy } from './ThreadTitlePolicy'
+import { buildContinuationEvidenceSnapshot } from '../ContinuationProposal'
+import { observeComposerContinuationPersisted } from '../services/ComposerContinuationPrefetch'
 import { createSaveCoalescer, type FlushReason, type SaveCoalescerStats } from './saveCoalescer'
+import {
+  runLegacyStoreWriteAdmission,
+  scheduleLegacyStoreDeferredWrite,
+  type LegacyStoreDeferredSettlement,
+  type LegacyStoreWriteAdmissionScope
+} from './LegacyStoreWriteAdmission'
+import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
 import { readRunEventLedgerHead } from './RunEventLedgerHead'
+import {
+  createDesktopHostThreadRecordPersistClient,
+  HostThreadRecordPersistError,
+  type HostThreadRecordPersistInput,
+  type HostThreadRecordPersistPort
+} from '../host/HostThreadRecordPersistCommand'
+import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
+import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
+import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
+import { resolveHostMaterializeMinIntervalMs } from './hostChatCompatibilityPolicy'
+import { createHostMaterializationBarrier } from './hostMaterializationBarrier'
+import {
+  DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+  DeferredHostMaterialization
+} from './hostChatCompatibilityDeferral'
+import {
+  createDesktopHostWorkspaceRecordClient,
+  type HostWorkspaceRecordPort
+} from '../host/HostWorkspaceRecordCommand'
 import { createDirectoryFsyncQueue } from './DirectoryFsyncQueue'
+import { requireConfiguredHostStoreRuntime } from '../../host-runtime/HostStoreRuntime'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
   UsageHistoryPurgeReport
 } from './UsageJournalStore'
-import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import { workflowAuthorityDigest } from '../WorkflowAuthorityDigest'
 import { publishCliPathDirectories } from '../CliPathDirectoriesPublisher'
@@ -74,7 +133,6 @@ import {
   WorkspaceRecord,
   ChatRecord,
   ChatRun,
-  ChatWorkflowMode,
   FanoutWorktreeCandidate,
   ChatListItem,
   ChatListRunSummary,
@@ -89,6 +147,7 @@ import {
   RunEventInput,
   RunEventKind,
   RunEventRecord,
+  RunEventReplay,
   RunEventArtifactRef,
   ToolActivityDetailRef,
   HydratedToolActivityDetail,
@@ -103,7 +162,6 @@ import {
   EnsembleConfig,
   EnsembleParticipant,
   SideChatMode,
-  SideChatLifecycleState,
   RunRecoveryFilter,
   RunRecoveryRecord,
   WorkspaceChangeFilter,
@@ -115,23 +173,15 @@ import {
   ProductCrashInput,
   ProductCrashRecord,
   RuntimeProfile,
-  RuntimeProfileSecretRefs,
   UserMcpServerConfig,
   HandoffCard,
   HandoffCardFilter,
-  ProductUpdateChangelog,
   WorkflowDefinition,
   WorkflowExecutionRecord,
-  WorkflowRunTemplate,
   WorkspaceBoardActivityEntry,
   WorkspaceBoardCard,
   WorkspaceBoardCardLink,
-  WorkspaceBoardColumn,
-  WorkspaceBoardColumnId,
   WorkspaceBoardDefinition,
-  WorkspaceBoardProvenance,
-  WorkspaceBoardProvenanceSourceKind,
-  WORKSPACE_BOARD_CARD_LINK_KINDS,
   PinnedMessageGroup,
   EvidencePackRecord,
   CapabilityLedgerSnapshot,
@@ -145,7 +195,6 @@ import {
   AuditRetentionPurgeReceipt,
   AuditRetentionPurgeRequest,
   AuditRetentionPurgeResult,
-  AuditRetentionSettings,
   AuditRetentionSurface,
   AuditRetentionSurfacePurgeCounts,
   IntrospectionRunRecord,
@@ -154,10 +203,39 @@ import {
   MemoryProposalPack,
   MemoryProposal,
   SubThreadJoinPolicy,
-  ToolActivity
+  ContinuationTitleApplyRequest,
+  ChatMessage
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
-import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
+import {
+  WORKSPACE_BOARD_DEFAULT_COLUMNS,
+  isWorkspaceBoardCardLinkKind,
+  normalizeWorkspaceBoardCardRecord,
+  normalizeWorkspaceBoardDefinitionRecord,
+  workspaceBoardActivityActorFromProvenance
+} from './slices/appStoreNormalizers'
+import {
+  DEFAULT_AUDIT_RETENTION,
+  auditRetentionCutoffMs,
+  capAuditBundleVerificationReceipts,
+  capAuditRetentionPurgeReceipts,
+  emptyAuditRetentionCounts,
+  isBeforeAuditRetentionCutoff,
+  normalizeAuditRetentionSettings,
+  normalizeAuditRunRecord
+} from './slices/auditRetentionNormalizers'
+import {
+  normalizeKeyCommandBindings,
+  normalizeRuntimeProfileSecretRefs,
+  normalizeUpdateChangelog,
+  normalizeUserMcpServers,
+  objectOrUndefined
+} from './slices/settingsNormalizers'
+import {
+  normalizeChatWorkflowMode,
+  normalizeWorkflowDefinitionRecord,
+  normalizeWorkflowExecutionRecord
+} from './slices/workflowNormalizers'
 import {
   createProjectRegistry,
   type ProjectLegacyImportMarker,
@@ -175,7 +253,6 @@ import type {
   ProjectWorkProfile
 } from '../../shared/projects'
 import { createDefaultEnsembleConfig, withMinimumEnsembleRoster } from '../EnsembleDefaults'
-import { discardForeignEnsembleTurnTransition } from '../EnsembleRuntimeIdentity'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrokModelId, isGrokReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
@@ -210,13 +287,16 @@ import {
 } from '../RunQueue'
 import {
   createRunEventRecord,
-  createRunEventReplay,
   filterRunEvents,
   RUN_EVENT_EMPTY_HASH,
   parseRunEventLine,
   safeRunEventFileName,
   serializeRunEventRecord
 } from '../RunEventStore'
+import {
+  getRunEventReplayAsync as getRunEventReplayCachedAsync,
+  getRunEventReplaySync as getRunEventReplayCachedSync
+} from '../RunEventReplayCache'
 import {
   createWorkflowRunEvent,
   filterWorkflowRunEvents,
@@ -253,7 +333,6 @@ import {
   updateMessageFeedbackLedgerForChatSave,
   type MessageFeedbackReceiptFilter
 } from '../MessageFeedbackLedger'
-import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
 import {
   normalizeEvidencePackRecord,
   normalizeRepoConventionIndexSnapshot,
@@ -284,6 +363,11 @@ import {
   recoverExpiredApprovalLedgerRecords,
   resolveApprovalLedgerRecord
 } from '../ApprovalLedger'
+import {
+  ApprovalLedgerEventStore,
+  approvalLedgerEventStorePaths,
+  type ApprovalLedgerEventStoreStats
+} from './ApprovalLedgerEventStore'
 import { filterRunRecoveryRecords, recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import {
   createWorkspaceChangeSet,
@@ -297,11 +381,9 @@ import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
 import {
   MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE,
-  TOOL_DETAIL_EXTERNALIZATION_GENERATION,
-  authoredMutationMentionsActivityIds,
-  externalizeToolActivityDetails,
-  substituteToolActivitiesInAuthoredMutation
+  TOOL_DETAIL_EXTERNALIZATION_GENERATION
 } from './ChatToolDetailExternalization'
+import { prepareChatForPersistence } from './ChatPersistencePreparation'
 import {
   ToolActivityDetailBatchWriter,
   hydrateToolActivityDetails,
@@ -319,7 +401,32 @@ import {
 } from './FanoutCandidatePersistence'
 import { persistWatchedPrPatch } from './WatchedPrPersistence'
 import { persistChatGitWorkflowPatch } from './ChatGitWorkflowPersistence'
+import { ChatComposerSelectionOverlayStore } from './ChatComposerSelectionOverlayPersistence'
+import {
+  applyChatComposerSelectionPatch,
+  type ChatComposerSelectionPatchRequest
+} from '../../shared/chatComposerSelectionPatch'
+import { chatHasReconcilableRun } from '../ChatRunReconciler'
+import { selectOpenRunCandidateChatIds } from './OpenRunChatCandidates'
+import { selectEnsembleWakeupCandidateChatIds } from './EnsembleWakeupCandidates'
+import { countPendingSoloWakeups, selectSoloWakeupCandidateChatIds } from './SoloWakeupCandidates'
+import {
+  selectSubThreadRecoveryCandidateChatIds,
+  type SubThreadRecoveryHint
+} from './SubThreadRecoveryCandidates'
+import {
+  orderSweepStatsByRecency,
+  truncateSweepToBudget,
+  type SweepBudget,
+  type SweepFileStat
+} from './BootSweepBudget'
 import { ChatListIndexStore } from './ChatListIndexStore'
+import {
+  CHAT_RECORD_CACHE_MAX_BYTES,
+  selectChatRecordCacheEvictions
+} from './ChatRecordCacheBudget'
+import { collectOrphanSubThreadCandidates } from './OrphanSubThreadScan'
+import { ChatListRebuildMemo } from './ChatListRebuildMemo'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
@@ -331,7 +438,15 @@ import {
   type SubThreadMailboxEventInput,
   type SubThreadMailboxLedger
 } from '../SubThreadMailbox'
-import { seatFromSoloChat } from '../ThreadMessageSeatCapture'
+import {
+  emptyExecutionResultMailbox,
+  enqueueExecutionResultMailboxEvent as enqueueExecutionResultEvent,
+  normalizeExecutionResultMailboxLedger,
+  type ExecutionResultMailbox,
+  type ExecutionResultMailboxEventInput,
+  type ExecutionResultMailboxLedger
+} from '../ExecutionResultMailbox'
+import { seatFromSoloChatRun } from '../ThreadMessageSeatCapture'
 import {
   acknowledgeThreadMessagesInLedger,
   enqueueThreadMessageInLedger,
@@ -363,6 +478,7 @@ import {
 } from '../ScheduledAttachmentDurability'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { consolidateAgenticWorkspaceGrants } from '../settings/MainSanitizers'
+import { sanitizeCommandRules } from '../command-rules/CommandRuleSchema'
 import {
   DEFAULT_STALL_BACKSTOP_MS,
   findStalledScheduledTasks,
@@ -374,7 +490,6 @@ import {
   type ExtensionSecretOwnerKind,
   type ExtensionSecretRef,
   type ExtensionSecretResolution,
-  type ExtensionSecretSafeStorage,
   type ExtensionSecretStatusSnapshot
 } from '../ExtensionSecretStore'
 import {
@@ -403,6 +518,7 @@ function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
     workSession: undefined,
     lastRoundSummary: undefined,
     roundSummaries: undefined,
+    roundWallMsById: undefined,
     wakeups: undefined,
     blackboard: undefined,
     escalationSignals: undefined,
@@ -410,21 +526,314 @@ function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
   }
 }
 
-function normalizeSideChatLifecycleState(
-  value: unknown,
-  fallback: SideChatLifecycleState
-): SideChatLifecycleState {
-  if (value === 'active' || value === 'closed' || value === 'terminated') return value
-  return fallback
-}
-
-const userDataPath = electron.app.getPath('userData')
+const storeRuntime = requireConfiguredHostStoreRuntime()
+const userDataPath = storeRuntime.profilePath
 const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
 const projectsPath = path.join(userDataPath, 'projects.json')
 const usagePath = path.join(userDataPath, 'usage.json')
 const usageJournalPath = path.join(userDataPath, 'usage-journal.jsonl')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
+const legacyStoreCanWrite = (): boolean => legacyStoreWriterGate.allowsCurrentWrite()
+
+interface HostPersistRebaseState {
+  base: ChatRecord
+  desired: ChatRecord
+}
+
+const hostPersistRebaseByChatId = new Map<string, HostPersistRebaseState>()
+const HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT = 3
+let hostPersistConflictRecoveryListener: ((chat: ChatRecord) => void) | null = null
+
+/**
+ * Bounded catalogue-gate wait for `persistChatComposerSelection`. The renderer
+ * protects an optimistic picker commit with a 15 s claim
+ * (COMPOSER_SELECTION_CLAIM_TTL_MS in renderer/lib/composerSelectionWriteClaims)
+ * and a catalogue recovery hold can park the gate for minutes, so an unbounded
+ * wait settles nothing ever and the chip silently reverts. 10 s lands or
+ * visibly fails inside the claim with margin for the IPC and the overlay write.
+ */
+const COMPOSER_SELECTION_GATE_WAIT_BUDGET_MS = 10_000
+
+function noteHostPersistIntent(base: ChatRecord | null, desired: ChatRecord): void {
+  const existing = hostPersistRebaseByChatId.get(desired.appChatId)
+  if (existing) {
+    existing.desired = desired
+    return
+  }
+  // A create has no ancestor, but the intent is still recorded: a conflict on
+  // the create (the Host reports `Thread is not found` as a revision conflict)
+  // must have the accumulated Desktop record to carry forward, or the chat is
+  // stranded with nothing to rebase.
+  hostPersistRebaseByChatId.set(desired.appChatId, { base: base ?? desired, desired })
+}
+
+function acknowledgeHostPersisted(input: HostThreadRecordPersistInput): void {
+  hostChatCompatibilityPersistence?.acknowledgeRevision(
+    input.chatId,
+    chatPersistenceRevision(input.record)
+  )
+  const state = hostPersistRebaseByChatId.get(input.chatId)
+  if (!state) {
+    hostPersistUnconfirmedChatIds.delete(input.chatId)
+    return
+  }
+  const persistedRevision = chatPersistenceRevision(input.record)
+  if (persistedRevision >= chatPersistenceRevision(state.desired)) {
+    hostPersistRebaseByChatId.delete(input.chatId)
+    hostPersistUnconfirmedChatIds.delete(input.chatId)
+    return
+  }
+  if (persistedRevision >= chatPersistenceRevision(state.base)) state.base = input.record
+  // The cache contains a newer journal-backed record. Do not repeatedly parse
+  // the now-known-older Host file on every hot getChat call; the next explicit
+  // materialization re-arms reconciliation.
+  if (hostChatCompatibilityPersistence?.hasSubmitted(input.chatId)) {
+    hostPersistShadowChatIds.add(input.chatId)
+  } else {
+    hostPersistShadowChatIds.delete(input.chatId)
+  }
+}
+
+/**
+ * Desktop -> Host `thread.record.persist` client. Since the Host cutover the
+ * legacy writer gate is Host-owned, so `AppStore.saveChat` can no longer write
+ * `chats/<id>.json` itself; it enqueues the record here instead and trust
+ * boundaries await `AppStore.awaitChatRecordPersisted`. Constructed lazily so a
+ * test can inject a fake port before the first save.
+ */
+let hostThreadRecordPersistPort: HostThreadRecordPersistPort | null = null
+let hostChatCompatibilityPersistence: HostChatCompatibilityPersistence | null = null
+let hostChatCompatibilityPersistPort: HostThreadRecordPersistPort | null = null
+const hostThreadRecordPersist = (): HostThreadRecordPersistPort => {
+  if (!hostThreadRecordPersistPort) {
+    hostThreadRecordPersistPort = createDesktopHostThreadRecordPersistClient({
+      userDataPath,
+      appVersion: storeRuntime.appVersion || 'unknown',
+      onPersisted: (input) => acknowledgeHostPersisted(input),
+      recoverConflict: (input, error) => AppStore.recoverHostPersistConflict(input, error)
+    })
+  }
+  return hostThreadRecordPersistPort
+}
+
+/** Trap 1: Host command id for persist_barrier/barrier `runId`. Fake ports omit this. */
+function lastPersistBarrierHostCommandId(chatId: string): string | undefined {
+  const client = hostThreadRecordPersist() as HostThreadRecordPersistPort & {
+    lastHostCommandId?: (id: string) => string | undefined
+  }
+  try {
+    const id = client.lastHostCommandId?.(chatId)
+    return typeof id === 'string' && id.trim().length > 0 ? id.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
+  const port = hostThreadRecordPersist()
+  if (!hostChatCompatibilityPersistence || hostChatCompatibilityPersistPort !== port) {
+    // Chained successors are spaced by the policy interval (env-overridable,
+    // see hostChatCompatibilityPolicy.ts); barriers and shutdown never wait.
+    hostChatCompatibilityPersistence = new HostChatCompatibilityPersistence(port, {
+      minIntervalMs: resolveHostMaterializeMinIntervalMs()
+    })
+    hostChatCompatibilityPersistPort = port
+  }
+  return hostChatCompatibilityPersistence
+}
+
+/**
+ * Large-chat compatibility checkpoints deferred off the save path (see
+ * hostChatCompatibilityDeferral.ts). Materialization still happens at the
+ * next barrier, shutdown drain, or the short trailing timer — never silently.
+ */
+let deferredHostMaterialization: DeferredHostMaterialization | null = null
+const deferredHostMaterialize = (): DeferredHostMaterialization => {
+  if (!deferredHostMaterialization) {
+    const envDelay = Number(process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS)
+    deferredHostMaterialization = new DeferredHostMaterialization({
+      // One trailing flush carries BOTH deferred large-record writes: the
+      // journal checkpoint (replay bound) and the Host compatibility
+      // materialize (external-reader copy). checkpointChat no-ops when the
+      // journal had nothing deferred, so small-chat timer fires stay cheap.
+      materialize: (chatId) => {
+        try {
+          incrementalChatPersistence.checkpointChat(chatId)
+        } catch {
+          // The next save, barrier, or shutdown drain retries the checkpoint.
+        }
+        return materializeHostChatCompatibility(chatId)
+      },
+      isDeleted: (chatId) => deletedChatIds.has(chatId),
+      // A catalogue recovery hold is the one transient false the timer must
+      // out-wait; every other false is a settled outcome (nothing staged, a
+      // submission already in flight, or a delete in progress).
+      retryWhen: (chatId) => threadCatalogueWriteGate.isHeld(chatId),
+      // Meter the accumulated-mutation gate on the journal's own count of
+      // bytes appended since the last full checkpoint. Without this the gate
+      // never arms (the entry is unmetered) and the deferral is a bare 5 s
+      // trailing debounce that re-serializes the whole record per fire.
+      getPendingMutationBytes: (chatId) => incrementalChatPersistence.pendingMutationBytes(chatId),
+      ...(Number.isFinite(envDelay) && envDelay >= 0 ? { delayMs: Math.floor(envDelay) } : {})
+    })
+  }
+  return deferredHostMaterialization
+}
+
+/** Publish one latest compatibility checkpoint and mark only that brief Host flight as shadowed. */
+function materializeHostChatCompatibility(chatId: string): boolean {
+  if (threadCatalogueWriteGate.isHeld(chatId)) return false
+  const materialized = hostChatCompatibility().materialize(chatId)
+  if (materialized) hostPersistShadowChatIds.add(chatId)
+  return materialized
+}
+
+/**
+ * One in-flight drain per chat, shared by every awaiter (the orchestrator's
+ * pre-dispatch gate and the IPC call-site barrier must observe the SAME
+ * outcome; two independent drains would race to consume the lane's first
+ * error). The memo entry is dropped as soon as the drain settles.
+ */
+const chatRecordConflictRecoveryBarriers = new Map<
+  string,
+  { targetSequence: number; promise: Promise<void>; token: object }
+>()
+
+/**
+ * Chats whose latest full Host compatibility checkpoint is staged or in
+ * flight. Their incremental journal is independently durable; this set names
+ * compatibility lag in shutdown diagnostics.
+ */
+const hostPersistUnconfirmedChatIds = new Set<string>()
+
+/**
+ * Chats with a materialized Host compatibility record. The legacy coalescer
+ * dirty marker is transient by construction (its deferred callback re-anchors
+ * the stat). Host compatibility flights instead remain dirty until their
+ * acknowledgement or read path re-anchors against the real file. That keeps Host-side writes —
+ * solo run lifecycle, thread.configure — visible to desktop reads and keeps
+ * the next save's expectedRevision honest (no revision-conflict loop).
+ */
+const hostPersistShadowChatIds = new Set<string>()
+
+/**
+ * Last on-disk state a shadow reconcile read and REJECTED, per chat. The
+ * reconcile below reads and normalizes the whole record file, and every
+ * getChat during a Host flight runs it — on a 20MB+ thread that was a
+ * full-file parse per read, 15+ times on a round start alone, pinning main.
+ * The outcome is a pure function of the file and the shadow's revision and
+ * transcript, so while all four are unchanged the answer is still "not
+ * caught up" and the read is skipped. Any Host landing changes the stat.
+ */
+const hostShadowReconcileMissByChatId = new Map<
+  string,
+  { mtimeMs: number; size: number; revision: number; messageCount: number }
+>()
+
+/**
+ * Durability barrier for a trust/dispatch edge. The policy lives in
+ * hostMaterializationBarrier.ts: the journal delta for the current revision
+ * is fsynced before the barrier resolves, the staged checkpoint is only
+ * enqueued when a fresh artifact does not already cover it (never a
+ * duplicate full-record re-serialization), and everything in flight drains
+ * through the compatibility coordinator's barrier.
+ */
+const barrierChatRecordPersist = createHostMaterializationBarrier({
+  awaitJournalDurability: (chatId) => incrementalChatPersistence.awaitDeferredDurability(chatId),
+  compatibility: {
+    hasUnconfirmed: (chatId) => hostChatCompatibility().hasUnconfirmed(chatId),
+    hasSubmitted: (chatId) => hostChatCompatibility().hasSubmitted(chatId),
+    barrier: (chatId) => hostChatCompatibility().barrier(chatId)
+  },
+  materialize: (chatId) => materializeHostChatCompatibility(chatId),
+  clearUnconfirmed: (chatId) => hostPersistUnconfirmedChatIds.delete(chatId)
+})
+
+/**
+ * Explicit upper bound for the shutdown Host-queue drain. Quit is one of the
+ * few places where blocking on durability is correct, but a hung or
+ * unreachable Host must not hold the process open forever: when the bound
+ * expires the still-queued records are abandoned at process exit (lost), and
+ * that outcome is logged with the unconfirmed chat count.
+ */
+const HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000
+
+/**
+ * Structural view of the client's erasure capability (thread.record.delete).
+ * The contract is agreed with the client slice: delete supersedes any queued
+ * persist for the chat before issuing, and a missing record is an idempotent
+ * success. Accessed structurally so this file compiles while the capability
+ * lands; the guard fails loudly if a build ever wires one without the other.
+ */
+type HostThreadRecordErasurePort = {
+  deleteRecord(input: { chatId: string; expectedRevision: number }): Promise<void>
+}
+
+const hostThreadRecordErasure = (): HostThreadRecordErasurePort => {
+  const client: unknown = hostThreadRecordPersist()
+  const deleteRecord = (client as Partial<HostThreadRecordErasurePort>).deleteRecord
+  if (typeof deleteRecord !== 'function') {
+    throw new Error('Host thread-record erasure is unavailable in this build.')
+  }
+  return { deleteRecord: (input) => deleteRecord.call(client, input) }
+}
+
+/**
+ * Desktop -> Host workspace-record client (workspaces.json — the second file
+ * the cutover moved). Constructed lazily so a test can inject a fake port
+ * before the first ViaHost call.
+ */
+let hostWorkspaceRecordPort: HostWorkspaceRecordPort | null = null
+const hostWorkspaceRecord = (): HostWorkspaceRecordPort => {
+  if (!hostWorkspaceRecordPort) {
+    hostWorkspaceRecordPort = createDesktopHostWorkspaceRecordClient({
+      userDataPath,
+      appVersion: storeRuntime.appVersion || 'unknown'
+    })
+  }
+  return hostWorkspaceRecordPort
+}
+
+async function drainHostRecordPersistQueueOnShutdown(timeoutMs?: number): Promise<void> {
+  const bound =
+    Number.isSafeInteger(timeoutMs) && (timeoutMs as number) > 0
+      ? (timeoutMs as number)
+      : HOST_PERSIST_SHUTDOWN_DRAIN_TIMEOUT_MS
+  let timer: ReturnType<typeof setTimeout> | null = null
+  // The drain promise always settles through its own handlers, so a late
+  // settlement after a lost race can never surface as an unhandled rejection
+  // while the process is trying to exit.
+  let drainFailure: unknown
+  const drain = hostChatCompatibility()
+    .shutdown()
+    .then(
+      () => 'drained' as const,
+      (error: unknown) => {
+        drainFailure = error
+        return 'failed' as const
+      }
+    )
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), bound)
+    timer.unref?.()
+  })
+  try {
+    const outcome = await Promise.race([drain, timeout])
+    if (outcome === 'drained') {
+      hostPersistUnconfirmedChatIds.clear()
+      return
+    }
+    console.error(
+      `[persist] Host chat persistence did not fully drain before shutdown ` +
+        `(${outcome}); ${hostPersistUnconfirmedChatIds.size} chat(s) retain a recoverable ` +
+        `incremental checkpoint whose Host compatibility record was not confirmed:`,
+      outcome === 'failed' ? drainFailure : new Error(`drain exceeded ${bound} ms`)
+    )
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 const usageJournalStore = new UsageJournalStore({
   checkpointPath: usagePath,
@@ -456,6 +865,10 @@ const projectRegistry = createProjectRegistry({
 let settingsFileCache: { value: AppSettings; mtimeMs: number; size: number } | null = null
 
 function invalidateSettingsFileCache(): void {
+  // Chat-list rows are settings-derived (normalizeChatRecord resolves an
+  // ensemble roster through getSettings), so a settings write must drop rows
+  // this process memoised under the old settings.
+  chatListRebuildMemo.clear()
   settingsFileCache = null
 }
 
@@ -517,17 +930,49 @@ const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
+const approvalLedgerEventPaths = approvalLedgerEventStorePaths(userDataPath)
+const APPROVAL_LEDGER_EVENT_COMPACT_AFTER_MUTATIONS = 256
+let approvalLedgerEventStore: ApprovalLedgerEventStore | null = null
+let approvalLedgerEventMutationsSinceCompact = 0
 const messageFeedbackLedgerPath = path.join(userDataPath, 'thumbs-ledger.json')
 const auditBundleVerificationReceiptsPath = path.join(
   userDataPath,
   'audit-bundle-verifications.json'
 )
 const auditRetentionPurgesPath = path.join(userDataPath, 'audit-retention-purges.json')
-// Single choke point for approval-ledger writes: cap retained non-live history
-// (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
-// event stays bounded. Live records (pending + active session/workspace grants)
-// are always kept.
-const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
+// Escape hatch for rollback: `0` restores the byte-compatible v1 array store.
+// Event persistence is otherwise default-on and instantiated only on first use.
+function approvalLedgerEventsEnabled(): boolean {
+  return process.env.TASKWRAITH_APPROVAL_LEDGER_EVENTS !== '0'
+}
+
+function getApprovalLedgerEventStore(): ApprovalLedgerEventStore {
+  if (!approvalLedgerEventStore) {
+    approvalLedgerEventStore = new ApprovalLedgerEventStore({ userDataPath })
+    approvalLedgerEventMutationsSinceCompact = approvalLedgerEventStore.stats().replayedEvents
+  }
+  return approvalLedgerEventStore
+}
+
+function noteApprovalLedgerEventMutation(store: ApprovalLedgerEventStore, beforeSequence: number) {
+  const appended = Math.max(0, store.stats().sequence - beforeSequence)
+  if (appended === 0) return
+  approvalLedgerEventMutationsSinceCompact += appended
+  if (approvalLedgerEventMutationsSinceCompact < APPROVAL_LEDGER_EVENT_COMPACT_AFTER_MUTATIONS)
+    return
+  // The just-appended D3 event is already durable. Compaction is maintenance:
+  // its failure must not turn a successfully persisted approval into a false
+  // negative or cause every subsequent approval to retry the full rewrite.
+  approvalLedgerEventMutationsSinceCompact = 0
+  try {
+    store.compact()
+  } catch (error) {
+    console.error('Failed to compact approval ledger event store', error)
+  }
+}
+
+// Byte-compatible v1 writer used only when the event-store escape is disabled.
+const writeApprovalLedgerLegacy = (records: ApprovalLedgerRecord[]): void =>
   writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
 const writeMessageFeedbackLedger = (records: MessageFeedbackReceipt[]): void =>
   writeJson(messageFeedbackLedgerPath, capMessageFeedbackReceipts(records))
@@ -545,8 +990,36 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
   path.join(path.dirname(userDataPath), dirName)
 )
 const chatsDir = path.join(userDataPath, 'chats')
+const chatComposerSelectionOverlayStore = new ChatComposerSelectionOverlayStore(chatsDir)
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
-const chatListIndexStore = new ChatListIndexStore(userDataPath)
+const chatJournalDir = path.join(userDataPath, 'chat-journal')
+const incrementalChatJournalDir = path.join(userDataPath, 'chat-journal-v2')
+const segmentedChatStoreDir = path.join(userDataPath, 'chat-store-v2')
+/**
+ * The chat-list index is a DERIVED, self-invalidating cache, not an
+ * authoritative profile byte the Host owns: every entry vouches for its chat
+ * only while that chat file's mtime+size still match, so a stale entry can
+ * never mis-serve — it simply falls back to a fresh read. It is the sideband
+ * class, exactly like the v2 journal / segmented mirror (`...SidebandWritable`
+ * below): writable when WE own legacy writes OR the Host does.
+ *
+ * Gating it on `legacyStoreCanWrite` alone left it ORPHANED under Host
+ * ownership — the Host never writes the index, and the in-process refresh door
+ * (the getChatList rebuild) was fenced off — so it went stale, its vouch
+ * failed corpus-wide, and every boot scan / first-paint get-chat-list degraded
+ * from a stat to a full-record read+replay. Keeping it fresh under Host
+ * ownership is what makes those reads cheap again.
+ */
+function chatListIndexSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
+const chatListIndexStore = new ChatListIndexStore(userDataPath, {
+  canWrite: chatListIndexSidebandWritable
+})
+/** Rows already derived from the exact bytes on disk, so a chat whose index
+ *  entry cannot be restamped is parsed once per process rather than once per
+ *  getChatList call. See ChatListRebuildMemo for why the restamp can stall. */
+const chatListRebuildMemo = new ChatListRebuildMemo<ChatListItem>()
 /**
  * T3a-1: per-chat save coalescer.
  *
@@ -604,13 +1077,80 @@ const saveCoalescer =
  * whole-file write is what disappears. Anyone reading the comparison report
  * must expect chat-journal bytes to ADD to chat bytes here, not replace them.
  */
-const chatJournal = createChatJournal(path.join(userDataPath, 'chat-journal'))
+const chatJournal = createChatJournal(chatJournalDir, { canWrite: legacyStoreCanWrite })
+let catalogueSourceWriteGuard: ((chatId: string) => void) | null = null
+/**
+ * Stage 2 — sideband writability for the T4 incremental journal.
+ *
+ * `chat-journal-v2` is main-owned, NOT part of the Host's `chats/` store:
+ * Host-owned erasure already retires its files directly
+ * (`purgeChatJournalArtifactsHostOwned`). The coordinator must stay writable
+ * in both durable regimes:
+ *  - gate open: the T4 dual-write mirror of the admitted legacy path;
+ *  - gate host-owned: the Stage 2 mirror for `saveChatThroughHost` mutation
+ *    saves (`persistIncrementalChatForHostSave`), which keeps ID/revision
+ *    mutation provenance durable after the Host cutover.
+ * `draining` and `closed` remain read-only: no new mirror writer may start
+ * mid-drain, and the legacy admission wrapper keeps its own stricter fence.
+ */
+function incrementalJournalSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
 const incrementalChatPersistence = createIncrementalChatPersistence({
-  journal: createIncrementalChatJournal(path.join(userDataPath, 'chat-journal-v2'))
+  journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+    beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
+    maintenanceScope: 'opened',
+    canWrite: incrementalJournalSidebandWritable,
+    // Read-path torn-tail repair stays strictly legacy-admitted: under Host
+    // ownership a torn legacy-era tail must not self-heal as a side effect
+    // of merely reading a chat (the read-only import invariant), while the
+    // explicit Stage 2 mirror writes above remain permitted.
+    canRepairOnRead: legacyStoreCanWrite
+  }),
+  canWrite: incrementalJournalSidebandWritable
+})
+
+/**
+ * Stage 3 — segmented dual-read chat store (ADR §5.1) on a SIBLING versioned
+ * root. The Host scanner rejects anything inside chats/ that is not a plain
+ * *.json ChatRecord (HostProfileDomainStore.sweepChatRecords), so v2 segments
+ * live in `chat-store-v2/` exactly like `chat-journal-v2`.
+ *
+ * DARK (ADR §11.4): `TASKWRAITH_CHAT_STORE_V2=1` opts in. Flag off = inert:
+ * no segment writes, no v2 reads, legacy behavior unchanged.
+ *
+ * Authority split (same discipline as the Stage 2 journal mirror): the legacy
+ * chats/*.json record stays the write authority; every admitted or Host-routed
+ * save mirrors onto the segmented store. Lifecycle ops (purge/clear/re-anchor
+ * after an erasure truncation) stay writable even with the flag off, so a
+ * later disable can never leave erased transcripts recoverable in stale v2
+ * segments (NON-NEGOTIABLE #4).
+ */
+function segmentedStoreSidebandWritable(): boolean {
+  return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
+}
+const segmentedChatStore = createSegmentedChatStore(segmentedChatStoreDir, {
+  beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
+  maintenanceScope: 'opened',
+  enabled: isSegmentedChatStoreEnabled,
+  canWrite: segmentedStoreSidebandWritable,
+  // Quarantine renames and torn-tail trims are read-path side effects; keep
+  // them strictly legacy-admitted under the Host read-only import invariant.
+  canRepairOnRead: legacyStoreCanWrite
 })
 const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
-  incrementalChatPersistence.checkpointIdle()
+  if (!legacyStoreCanWrite()) return
+  try {
+    incrementalChatPersistence.checkpointIdle()
+  } catch (error) {
+    console.error('[incremental-chat] idle checkpoint timer failed', error)
+  }
+  try {
+    segmentedChatStore.checkpointIdle()
+  } catch (error) {
+    console.error('[chat-store-v2] idle checkpoint failed', error)
+  }
 }, 5_000)
 incrementalChatIdleCheckpointTimer.unref()
 
@@ -662,6 +1202,15 @@ installPerfStatsHandle(() => ({
  *     and `readChatRecordCached` returns a dirty entry without stat-ing;
  *   - the decision itself is already durable in `approval-ledger.json`.
  * What remains is the transition, which is the thing a reader must not miss.
+ *
+ * Since the streaming epic, the `approval` reason no longer force-materializes
+ * the whole Host artifact on the transition save: it defers exactly like
+ * `terminal` behind the trailing compatibility timer (barriers and the
+ * shutdown drain still drain synchronously). Nothing above changes — the
+ * renderer push, the APNs fanout, the in-process cache and the approval
+ * ledger carry the transition — so the Host artifact's rendering of the
+ * approval row may trail the journal by one short deferral window, which is
+ * the same freshness contract the terminal checkpoint already accepts.
  */
 const openApprovalSignatureByChatId = new Map<string, string>()
 
@@ -704,9 +1253,13 @@ function deriveSaveFlushReason(chat: ChatRecord): FlushReason {
   // Deferral is only safe while a run is actively streaming: that is both
   // where the measured 8-14 rewrites per 10 s come from, and the only window
   // in which a superseding save is guaranteed to follow. Once no run is
-  // running the chat sits at a terminal/idle boundary, so the next reader —
-  // bridge broadcast, iOS, crash recovery — must find it on disk.
-  return (chat.runs ?? []).some((run) => run.status === 'running') ? 'normal' : 'terminal'
+  // live the chat sits at a terminal/idle boundary, so the next reader —
+  // bridge broadcast, iOS, crash recovery — must find it on disk. Liveness
+  // is the shared predicate, not the raw 'running' string: a seat parked at
+  // 'starting' or 'queued' (the dispatch lane's seed, Muse for its whole run)
+  // is still streaming, and reading it as idle turned every save on such a
+  // thread into a whole-record checkpoint.
+  return (chat.runs ?? []).some((run) => isActiveChatRunStatus(run.status)) ? 'normal' : 'terminal'
 }
 
 /**
@@ -827,10 +1380,22 @@ export function resetPersistenceWriteSeamForTests(): void {
 }
 
 function purgeChatJournalArtifacts(chatId: string): void {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'purge-chat-journal', pathFamily: 'chats' },
+    () => purgeChatJournalArtifactsAdmitted(chatId)
+  )
+}
+
+function purgeChatJournalArtifactsAdmitted(chatId: string): void {
   // V2 is a second durable history source. Unlike the legacy best-effort
   // cleanup below, failure must stop the deletion transaction so transcript
   // mutations cannot survive a reported successful delete.
   incrementalChatPersistence.purge(chatId)
+  // Stage 3: the segmented store is a third durable copy — its purge must
+  // also stop the deletion transaction on failure. Purge is gate-driven, not
+  // flag-driven, so segments from an earlier flag-on session die even when
+  // the flag is now off.
+  segmentedChatStore.purge(chatId)
   chatUpdateProjectionTracker.drop(chatId)
   try {
     chatJournal.delete(chatId)
@@ -855,6 +1420,13 @@ function purgeChatJournalArtifacts(chatId: string): void {
  * separable on the comparison report.
  */
 function appendChatJournalEntry(chatId: string, record: ChatRecord): void {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'append-chat-journal', pathFamily: 'chats' },
+    () => appendChatJournalEntryAdmitted(chatId, record)
+  )
+}
+
+function appendChatJournalEntryAdmitted(chatId: string, record: ChatRecord): void {
   const probing = isPersistenceProbeEnabled()
   const before = probing ? chatJournal.stats().bytesWritten : 0
   const startedAt = probing ? Date.now() : 0
@@ -898,6 +1470,18 @@ function persistIncrementalChat(
   reason: FlushReason,
   authoredTranscript?: AuthoredChatTranscriptMutation
 ): IncrementalChatPersistResult | null {
+  return runLegacyStoreWriteAdmission(
+    { operation: 'persist-incremental-chat', pathFamily: 'chats' },
+    () => persistIncrementalChatAdmitted(previous, next, reason, authoredTranscript)
+  )
+}
+
+function persistIncrementalChatAdmitted(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  reason: FlushReason,
+  authoredTranscript?: AuthoredChatTranscriptMutation
+): IncrementalChatPersistResult | null {
   try {
     return incrementalChatPersistence.persist(
       previous,
@@ -911,7 +1495,89 @@ function persistIncrementalChat(
     return null
   }
 }
+
+/**
+ * Stage 2 — incremental persistence re-homed onto the Host write path.
+ *
+ * Once the legacy writer gate is Host-owned, production saves route through
+ * `saveChatThroughHost`, so the legacy-admitted `persistIncrementalChat`
+ * above is never reached: ID/revision mutations would persist only as whole
+ * Host records and the T4 journal would be write-dead after the cutover.
+ * This path keeps the journal durable and derives one mutation for every save,
+ * with authored transcript operations used when supplied. The complete record
+ * is staged separately as a latest-wins compatibility checkpoint; normal D1
+ * saves do not publish a Host transfer.
+ *
+ * A mirror failure never affects the Host write. The journal self-heals at
+ * the next mutation save exactly like the legacy dual-write's V2-failure
+ * fallback: `ensureBaseline` re-anchors the checkpoint on the authoritative
+ * pre-save record, so a stale head — a non-mutation Host save advanced the
+ * record, or a conflict recovery re-anchored it — is rebuilt, never replayed
+ * against the wrong base.
+ */
+function persistIncrementalChatForHostSave(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  reason: FlushReason,
+  authoredTranscript?: AuthoredChatTranscriptMutation,
+  deferTerminalCheckpoint?: boolean
+): IncrementalChatPersistResult | null {
+  // The admitted path owns its own incremental persist; never double-append.
+  if (legacyStoreCanWrite()) return null
+  if (legacyStoreWriterGate.snapshot().state !== 'host-owned') return null
+  try {
+    return incrementalChatPersistence.persist(
+      previous,
+      next,
+      incrementalPersistenceBoundary(reason),
+      authoredTranscript,
+      deferTerminalCheckpoint ? { deferTerminalCheckpoint: true } : undefined
+    )
+  } catch {
+    // The caller must immediately materialize the staged Host compatibility
+    // record. persist() dropped its verified-baseline marker on failure, so the
+    // next mutation save re-establishes the journal baseline.
+    return null
+  }
+}
+
+/**
+ * Stage 3 — segmented-store mirror. Best-effort by construction: the
+ * incremental journal is already durable (or a full Host fallback is staged),
+ * so a mirror failure never fails the save; the next mirror re-anchors its
+ * baseline exactly like the Stage 2 journal. A no-op while the flag is off.
+ */
+function mirrorSegmentedChatStore(
+  previous: ChatRecord | null,
+  next: ChatRecord,
+  authoredTranscript?: AuthoredChatTranscriptMutation
+): void {
+  if (!isSegmentedChatStoreEnabled()) return
+  try {
+    // Stage 5 — COW fork prefix: a brand-new emulated fork with a known
+    // parent shares the parent's v2 immutable prefix instead of copying
+    // transcript bytes. The fork's snapshot is chrome-only (messages/runs
+    // stripped) and the manifest pins the parent's snapshot by content hash
+    // + parent head revision at fork time. Any parent lifecycle event that
+    // rewrites the pinned bytes (compaction, segment archival, purge,
+    // re-seed) fails the pin → the fork's v2 read fails CLOSED to the v1
+    // authoritative record, and the next fork-side mirrorSave re-seeds
+    // fully via the existing baselineRepair path. Subsequent fork-side
+    // mutations fall through to mirrorSave as normal.
+    if (previous === null && next.forkContext?.kind === 'emulated') {
+      const sourceChatId = next.providerMetadata?.taskwraithForkSourceChatId
+      if (typeof sourceChatId === 'string' && sourceChatId !== next.appChatId) {
+        const result = segmentedChatStore.forkSharePrefix(sourceChatId, next)
+        if (result) return
+      }
+    }
+    segmentedChatStore.mirrorSave(previous, next, authoredTranscript)
+  } catch (error) {
+    console.error('[chat-store-v2] mirror failed', error)
+  }
+}
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
+const executionResultMailboxesPath = path.join(userDataPath, 'execution-result-mailboxes.json')
 const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 // Volatile chat-list-entry churn (search preview, message/diff counters,
 // per-run stats, source stat) lands on disk at most this often per chat. It
@@ -1008,7 +1674,9 @@ type HistoryDeletionStep =
   | 'run-events'
   | 'run-artifacts'
   | 'kimi-seat-state'
+  | 'muse-seat-state'
   | 'chat-records'
+  | 'thread-catalogue'
   | 'chat-list-index'
   | 'project-membership'
 
@@ -1028,7 +1696,9 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   'run-events',
   'run-artifacts',
   'kimi-seat-state',
+  'muse-seat-state',
   'chat-records',
+  'thread-catalogue',
   'chat-list-index',
   'project-membership'
 ]
@@ -1049,6 +1719,7 @@ interface HistoryDeletionIntent {
   workflowIds: string[]
   workflowExecutionIds: string[]
   kimiSeats: Array<{ chatId: string; participantId: string }>
+  museSeats: Array<{ chatId: string; participantId: string }>
   quiescenceTargets: HistoryDeletionQuiescenceTarget[]
   completedQuiescenceTargetIds: string[]
   completedSteps: HistoryDeletionStep[]
@@ -1130,7 +1801,8 @@ const providerIds: ProviderId[] = [
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
@@ -1143,35 +1815,51 @@ function chatPersistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> |
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
 }
 
-function electronSafeStorageOrUnavailable(): ExtensionSecretSafeStorage {
-  try {
-    const storage = (electron as unknown as { safeStorage?: unknown }).safeStorage
-    if (
-      storage &&
-      typeof (storage as { isEncryptionAvailable?: unknown }).isEncryptionAvailable ===
-        'function' &&
-      typeof (storage as { encryptString?: unknown }).encryptString === 'function' &&
-      typeof (storage as { decryptString?: unknown }).decryptString === 'function'
-    ) {
-      return storage as ExtensionSecretSafeStorage
-    }
-  } catch {
-    // Older unit-test Electron mocks do not expose safeStorage.
+/**
+ * True when `candidate`'s transcript is missing at least one message id that
+ * `reference` carries. Content of shared ids is deliberately not compared: the
+ * shadow-reconcile caller only needs coverage, and a full content walk on every
+ * hot read is the cost this check exists to avoid.
+ */
+function chatRecordMissingTranscriptIds(candidate: ChatRecord, reference: ChatRecord): boolean {
+  const referenceMessages = reference.messages || []
+  if (referenceMessages.length === 0) return false
+  const candidateIds = new Set((candidate.messages || []).map((message) => message.id))
+  return referenceMessages.some((message) => !candidateIds.has(message.id))
+}
+
+/**
+ * Last-resort transcript union for Host CAS conflict recovery when the
+ * three-way rebase cannot be computed. The Desktop record stays authoritative
+ * for every row it knows; rows that are Host-native (absent from both the
+ * Desktop base and the Desktop desired record, e.g. a catalogue-refresh system
+ * row the Host appended) are appended in their durable source order. Rows the
+ * Desktop deliberately removed (present in base, absent from desired) stay
+ * removed — reviving them is the 'revive wiped lane cards' failure. This
+ * mirrors rebaseIdentityArray's identity/tombstone semantics, which is not
+ * exported from ChatRecordMutation.
+ */
+function unionHostLineageTranscriptRows(
+  base: ChatRecord,
+  desired: ChatRecord,
+  source: ChatRecord
+): ChatMessage[] {
+  const merged = [...(desired.messages || [])]
+  const known = new Set(merged.map((message) => message.id))
+  const tombstoned = new Set(
+    (base.messages || []).map((message) => message.id).filter((messageId) => !known.has(messageId))
+  )
+  for (const row of source.messages || []) {
+    if (known.has(row.id) || tombstoned.has(row.id)) continue
+    merged.push(row)
+    known.add(row.id)
   }
-  return {
-    isEncryptionAvailable: () => false,
-    encryptString: () => {
-      throw new Error('Electron safeStorage is unavailable.')
-    },
-    decryptString: () => {
-      throw new Error('Electron safeStorage is unavailable.')
-    }
-  }
+  return merged
 }
 
 const extensionSecretStore = new ExtensionSecretStore({
   userDataPath,
-  safeStorage: electronSafeStorageOrUnavailable()
+  safeStorage: storeRuntime.secureStorage
 })
 
 function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): T {
@@ -1180,434 +1868,6 @@ function stripRetiredSettingsKeys<T extends Record<string, unknown>>(input: T): 
     delete next[key]
   }
   return next as T
-}
-
-function normalizeWorkflowExecutionRecord(
-  value: unknown,
-  workflowId: string
-): WorkflowExecutionRecord | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkflowExecutionRecord>
-  if (!input.id || typeof input.id !== 'string') return null
-  const status = input.status || 'queued'
-  if (
-    status !== 'queued' &&
-    status !== 'running' &&
-    status !== 'completed' &&
-    status !== 'failed' &&
-    status !== 'cancelled' &&
-    status !== 'skipped'
-  ) {
-    return null
-  }
-  const now = new Date().toISOString()
-  return {
-    id: input.id,
-    workflowId,
-    plannedFor: typeof input.plannedFor === 'string' && input.plannedFor ? input.plannedFor : now,
-    status,
-    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : now,
-    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : now,
-    ...(typeof input.scheduledTaskId === 'string'
-      ? { scheduledTaskId: input.scheduledTaskId }
-      : {}),
-    ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
-    ...(typeof input.startedAt === 'string' ? { startedAt: input.startedAt } : {}),
-    ...(typeof input.completedAt === 'string' ? { completedAt: input.completedAt } : {}),
-    ...(typeof input.error === 'string' ? { error: input.error } : {})
-  }
-}
-
-function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Record<string, unknown> & Partial<WorkflowRunTemplate>
-  if (
-    !input.workspaceId ||
-    !input.workspacePath ||
-    !input.chatId ||
-    !input.provider ||
-    typeof input.prompt !== 'string'
-  ) {
-    return null
-  }
-  return {
-    ...pickWorkflowRunTemplateFields(input),
-    workspaceId: input.workspaceId,
-    workspacePath: input.workspacePath,
-    chatId: input.chatId,
-    provider: input.provider,
-    prompt: input.prompt,
-    displayPrompt: input.displayPrompt,
-    selectedModelType: input.selectedModelType || 'default',
-    customModel: input.customModel || '',
-    approvalMode: input.approvalMode || 'default',
-    // Missing/legacy workflow posture is the normal product workflow, not a
-    // third authority state. ScheduledTask persistence already canonicalizes
-    // the same omission to `normal`; keep the durable template identical so
-    // exact workflow-occurrence comparisons do not discard valid elevation.
-    workflowMode: normalizeChatWorkflowMode(input.workflowMode),
-    // Persisted workflows are unattended authority. Legacy renderer-authored
-    // Full Access flags are discarded during every read/normalization.
-    sessionTrust: false,
-    imageAttachments: Array.isArray(input.imageAttachments) ? input.imageAttachments : [],
-    externalPathGrants: input.externalPathGrants,
-    geminiWorktree: input.geminiWorktree,
-    codexReasoningEffort: input.codexReasoningEffort,
-    grokReasoningEffort: input.grokReasoningEffort,
-    museReasoningEffort: input.museReasoningEffort,
-    cursorReasoningEffort: input.cursorReasoningEffort,
-    codexServiceTier: input.codexServiceTier,
-    claudeFastMode: input.claudeFastMode,
-    kimiFastMode: input.kimiFastMode,
-    kimiReasoningEffort: input.kimiReasoningEffort,
-    cursorFastMode: input.cursorFastMode,
-    kimiThinkingEnabled: input.kimiThinkingEnabled,
-    runtimeProfileId: input.runtimeProfileId,
-    geminiAuthProfileId: input.geminiAuthProfileId,
-    handoffSourceRunId: input.handoffSourceRunId,
-    kind: input.kind,
-    ensembleSnapshot: input.ensembleSnapshot
-  }
-}
-
-function normalizeWorkflowDefinitionRecord(
-  value: unknown,
-  nowMs: number
-): WorkflowDefinition | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkflowDefinition>
-  const template = normalizeWorkflowTemplate(input.template)
-  if (!template) return null
-  const nowIso = new Date(nowMs).toISOString()
-  const id = typeof input.id === 'string' && input.id ? input.id : randomUUID()
-  const trigger = normalizeWorkflowTrigger(input.trigger, nowMs)
-  const history = Array.isArray(input.history)
-    ? input.history
-        .map((item) => normalizeWorkflowExecutionRecord(item, id))
-        .filter((item): item is WorkflowExecutionRecord => Boolean(item))
-        .slice(-WORKFLOW_HISTORY_LIMIT)
-    : []
-  const enabled = input.enabled !== false
-  const nextRunAt =
-    typeof input.nextRunAt === 'string' && input.nextRunAt
-      ? input.nextRunAt
-      : enabled
-        ? resolveNextWorkflowRunAt(trigger, nowMs, nowMs)
-        : undefined
-  return {
-    id,
-    name:
-      typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : template.prompt.slice(0, 48) || 'Workflow',
-    workspaceId: template.workspaceId,
-    workspacePath: template.workspacePath,
-    enabled,
-    trigger,
-    template,
-    missedRunPolicy: input.missedRunPolicy === 'skip' ? 'skip' : 'coalesce',
-    concurrencyPolicy: input.concurrencyPolicy === 'enqueue' ? 'enqueue' : 'skip',
-    limits: {
-      ...(input.limits || {}),
-      maxConsecutiveFailures:
-        input.limits?.maxConsecutiveFailures && input.limits.maxConsecutiveFailures > 0
-          ? Math.floor(input.limits.maxConsecutiveFailures)
-          : 3
-    },
-    nextRunAt,
-    lastRunAt: typeof input.lastRunAt === 'string' ? input.lastRunAt : undefined,
-    lastCompletedAt: typeof input.lastCompletedAt === 'string' ? input.lastCompletedAt : undefined,
-    lastStatus: input.lastStatus,
-    lastError: typeof input.lastError === 'string' ? input.lastError : undefined,
-    // Slice 7b — preserve the cached loop summary (the normalizer whitelists fields,
-    // and updateWorkflowDefinition re-normalizes, so without this they'd never persist).
-    lastRunIterationCount:
-      typeof input.lastRunIterationCount === 'number' &&
-      Number.isFinite(input.lastRunIterationCount)
-        ? Math.max(0, Math.floor(input.lastRunIterationCount))
-        : undefined,
-    lastRunStopReason:
-      typeof input.lastRunStopReason === 'string' ? input.lastRunStopReason : undefined,
-    lastRunTokens:
-      typeof input.lastRunTokens === 'number' && Number.isFinite(input.lastRunTokens)
-        ? Math.max(0, Math.floor(input.lastRunTokens))
-        : undefined,
-    failureStreak:
-      typeof input.failureStreak === 'number' && Number.isFinite(input.failureStreak)
-        ? Math.max(0, Math.floor(input.failureStreak))
-        : 0,
-    activeExecutionId:
-      typeof input.activeExecutionId === 'string' ? input.activeExecutionId : undefined,
-    history,
-    unattendedElevation: normalizeUnattendedElevationAck(input.unattendedElevation),
-    loop: normalizeWorkflowLoopConfig(input.loop),
-    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
-    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso
-  }
-}
-
-/**
- * Structural decode for a persisted unattended-elevation ack. Keeps the blob
- * only when it is shaped like a real ack — level ∈ {safe,default,full_access}
- * and acknowledgedAt/acknowledgedApprovalMode/signature are non-empty strings.
- * The HMAC is NOT verified here (the store has no secret); cryptographic
- * verification happens at dispatch (resolveUnattendedElevation in index.ts). A
- * malformed value decodes to undefined so a hand-edited workflows.json can never
- * smuggle a partial ack past the dispatch verifier as "present".
- */
-function normalizeUnattendedElevationAck(value: unknown): UnattendedElevationAck | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const ack = value as Partial<UnattendedElevationAck>
-  if (ack.level !== 'safe' && ack.level !== 'default' && ack.level !== 'full_access')
-    return undefined
-  if (typeof ack.acknowledgedAt !== 'string' || !ack.acknowledgedAt) return undefined
-  if (typeof ack.acknowledgedApprovalMode !== 'string' || !ack.acknowledgedApprovalMode)
-    return undefined
-  if (typeof ack.authorityDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(ack.authorityDigest)) {
-    return undefined
-  }
-  if (typeof ack.signature !== 'string' || !ack.signature) return undefined
-  return {
-    level: ack.level,
-    acknowledgedAt: ack.acknowledgedAt,
-    acknowledgedApprovalMode: ack.acknowledgedApprovalMode,
-    authorityDigest: ack.authorityDigest,
-    signature: ack.signature
-  }
-}
-
-const WORKSPACE_BOARD_DEFAULT_COLUMNS: WorkspaceBoardColumn[] = [
-  { id: 'inbox', name: 'Inbox', sortOrder: 0 },
-  { id: 'ready', name: 'Ready', sortOrder: 1 },
-  { id: 'running', name: 'Running', sortOrder: 2 },
-  { id: 'needs-input', name: 'Needs Input', sortOrder: 3 },
-  { id: 'blocked', name: 'Blocked', sortOrder: 4 },
-  { id: 'review-ready', name: 'Review Ready', sortOrder: 5 },
-  { id: 'done', name: 'Done', sortOrder: 6 },
-  { id: 'archived', name: 'Archived', sortOrder: 7 }
-]
-
-const WORKSPACE_BOARD_COLUMN_IDS = new Set<WorkspaceBoardColumnId>(
-  WORKSPACE_BOARD_DEFAULT_COLUMNS.map((column) => column.id)
-)
-const WORKSPACE_BOARD_CARD_LINK_KIND_SET = new Set<WorkspaceBoardCardLink['kind']>(
-  WORKSPACE_BOARD_CARD_LINK_KINDS
-)
-const WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS = new Set<WorkspaceBoardProvenanceSourceKind>([
-  'manual',
-  'capture',
-  'seed',
-  'duplicate',
-  'thread',
-  'goal',
-  'plan',
-  'agent'
-])
-
-function isWorkspaceBoardColumnId(value: unknown): value is WorkspaceBoardColumnId {
-  return (
-    typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
-  )
-}
-
-function isWorkspaceBoardCardLinkKind(value: unknown): value is WorkspaceBoardCardLink['kind'] {
-  return (
-    typeof value === 'string' &&
-    WORKSPACE_BOARD_CARD_LINK_KIND_SET.has(value as WorkspaceBoardCardLink['kind'])
-  )
-}
-
-function normalizeWorkspaceBoardActivityEntry(
-  value: unknown,
-  fallbackAction: string,
-  nowIso: string
-): WorkspaceBoardActivityEntry | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkspaceBoardActivityEntry>
-  const action =
-    typeof input.action === 'string' && input.action.trim() ? input.action.trim() : fallbackAction
-  return {
-    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
-    at: typeof input.at === 'string' && input.at ? input.at : nowIso,
-    actor: input.actor === 'agent' || input.actor === 'system' ? input.actor : 'user',
-    action,
-    detail:
-      typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
-  }
-}
-
-function workspaceBoardActivityActorFromProvenance(
-  provenance: unknown
-): WorkspaceBoardActivityEntry['actor'] {
-  if (!provenance || typeof provenance !== 'object') return 'user'
-  const actor = (provenance as Partial<WorkspaceBoardProvenance>).actor
-  return actor === 'agent' || actor === 'system' ? actor : 'user'
-}
-
-function normalizeWorkspaceBoardProvenance(
-  value: unknown,
-  nowIso: string
-): WorkspaceBoardProvenance | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const input = value as Partial<WorkspaceBoardProvenance>
-  const sourceKind = WORKSPACE_BOARD_PROVENANCE_SOURCE_KINDS.has(
-    input.sourceKind as WorkspaceBoardProvenanceSourceKind
-  )
-    ? (input.sourceKind as WorkspaceBoardProvenanceSourceKind)
-    : 'manual'
-  return {
-    actor: input.actor === 'agent' || input.actor === 'system' ? input.actor : 'user',
-    sourceKind,
-    at: typeof input.at === 'string' && input.at ? input.at : nowIso,
-    trust:
-      input.trust === 'agent-proposed' ||
-      input.trust === 'system-derived' ||
-      input.trust === 'user-confirmed'
-        ? input.trust
-        : undefined,
-    sourceId:
-      typeof input.sourceId === 'string' && input.sourceId.trim()
-        ? input.sourceId.trim()
-        : undefined,
-    sourceTitle:
-      typeof input.sourceTitle === 'string' && input.sourceTitle.trim()
-        ? input.sourceTitle.trim()
-        : undefined,
-    provider:
-      typeof input.provider === 'string' && input.provider.trim()
-        ? input.provider.trim()
-        : undefined,
-    runId: typeof input.runId === 'string' && input.runId.trim() ? input.runId.trim() : undefined,
-    note: typeof input.note === 'string' && input.note.trim() ? input.note.trim() : undefined
-  }
-}
-
-function normalizeWorkspaceBoardColumns(value: unknown): WorkspaceBoardColumn[] {
-  const provided = Array.isArray(value) ? value : []
-  const byId = new Map<WorkspaceBoardColumnId, WorkspaceBoardColumn>()
-  for (const item of provided) {
-    if (!item || typeof item !== 'object') continue
-    const input = item as Partial<WorkspaceBoardColumn>
-    if (!isWorkspaceBoardColumnId(input.id)) continue
-    byId.set(input.id, {
-      id: input.id,
-      name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : input.id,
-      sortOrder:
-        typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
-          ? Math.max(0, Math.floor(input.sortOrder))
-          : WORKSPACE_BOARD_DEFAULT_COLUMNS.find((column) => column.id === input.id)?.sortOrder ||
-            0,
-      wipLimit:
-        typeof input.wipLimit === 'number' && Number.isFinite(input.wipLimit) && input.wipLimit > 0
-          ? Math.floor(input.wipLimit)
-          : undefined
-    })
-  }
-  for (const column of WORKSPACE_BOARD_DEFAULT_COLUMNS) {
-    if (!byId.has(column.id)) byId.set(column.id, column)
-  }
-  return Array.from(byId.values()).sort((a, b) => a.sortOrder - b.sortOrder)
-}
-
-function normalizeWorkspaceBoardLink(value: unknown): WorkspaceBoardCardLink | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const input = value as Partial<WorkspaceBoardCardLink>
-  if (!isWorkspaceBoardCardLinkKind(input.kind)) return undefined
-  if (typeof input.id !== 'string' || !input.id.trim()) return undefined
-  return { kind: input.kind, id: input.id.trim() }
-}
-
-function normalizeWorkspaceBoardDefinitionRecord(
-  value: unknown,
-  nowMs: number
-): WorkspaceBoardDefinition | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkspaceBoardDefinition>
-  if (typeof input.workspaceId !== 'string' || !input.workspaceId.trim()) return null
-  if (typeof input.workspacePath !== 'string' || !input.workspacePath.trim()) return null
-  const nowIso = new Date(nowMs).toISOString()
-  return {
-    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
-    workspaceId: input.workspaceId,
-    workspacePath: input.workspacePath,
-    name:
-      typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Workspace Board',
-    description:
-      typeof input.description === 'string' && input.description.trim()
-        ? input.description.trim()
-        : undefined,
-    columns: normalizeWorkspaceBoardColumns(input.columns),
-    provenance: normalizeWorkspaceBoardProvenance(input.provenance, nowIso),
-    pinned: input.pinned === true,
-    archived: input.archived === true,
-    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
-    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
-    activity: Array.isArray(input.activity)
-      ? input.activity
-          .map((entry) => normalizeWorkspaceBoardActivityEntry(entry, 'updated', nowIso))
-          .filter((entry): entry is WorkspaceBoardActivityEntry => Boolean(entry))
-          .slice(-100)
-      : []
-  }
-}
-
-function normalizeWorkspaceBoardCardRecord(
-  value: unknown,
-  nowMs: number
-): WorkspaceBoardCard | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<WorkspaceBoardCard>
-  if (typeof input.boardId !== 'string' || !input.boardId.trim()) return null
-  if (typeof input.workspaceId !== 'string' || !input.workspaceId.trim()) return null
-  const nowIso = new Date(nowMs).toISOString()
-  const labels = Array.isArray(input.labels)
-    ? input.labels
-        .filter((label): label is string => typeof label === 'string')
-        .map((label) => label.trim())
-        .filter(Boolean)
-        .slice(0, 12)
-    : undefined
-  return {
-    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
-    boardId: input.boardId,
-    workspaceId: input.workspaceId,
-    columnId: isWorkspaceBoardColumnId(input.columnId) ? input.columnId : 'inbox',
-    title:
-      typeof input.title === 'string' && input.title.trim() ? input.title.trim() : 'Untitled card',
-    body: typeof input.body === 'string' && input.body.trim() ? input.body.trim() : undefined,
-    sortOrder:
-      typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
-        ? input.sortOrder
-        : nowMs,
-    humanOwner:
-      typeof input.humanOwner === 'string' && input.humanOwner.trim()
-        ? input.humanOwner.trim()
-        : undefined,
-    labels,
-    link: normalizeWorkspaceBoardLink(input.link),
-    blockedReason:
-      typeof input.blockedReason === 'string' && input.blockedReason.trim()
-        ? input.blockedReason.trim()
-        : undefined,
-    nextStep:
-      typeof input.nextStep === 'string' && input.nextStep.trim()
-        ? input.nextStep.trim()
-        : undefined,
-    reminderAt:
-      typeof input.reminderAt === 'string' && input.reminderAt.trim()
-        ? input.reminderAt.trim()
-        : undefined,
-    provenance: normalizeWorkspaceBoardProvenance(input.provenance, nowIso),
-    archived: input.archived === true,
-    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
-    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
-    activity: Array.isArray(input.activity)
-      ? input.activity
-          .map((entry) => normalizeWorkspaceBoardActivityEntry(entry, 'updated', nowIso))
-          .filter((entry): entry is WorkspaceBoardActivityEntry => Boolean(entry))
-          .slice(-100)
-      : []
-  }
 }
 
 function isInvalidScheduledTaskStatusTransition(
@@ -2143,159 +2403,6 @@ function resolveScheduledAttachmentRefs(
   }
 }
 
-/** Defensive shape-guard for a persisted audit run. Arrays default to empty
- * and the budget/coverage substructures are tolerated-missing so records
- * written by an older build still decode. Returns null only when the record
- * is too malformed to be useful (no id). */
-function normalizeAuditRunRecord(value: unknown): AuditRunRecord | null {
-  if (!value || typeof value !== 'object') return null
-  const input = value as Partial<AuditRunRecord>
-  if (typeof input.id !== 'string' || !input.id) return null
-  const nowIso = new Date().toISOString()
-  const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
-  return {
-    schemaVersion: 1,
-    id: input.id,
-    mode: input.mode === 'deep' || input.mode === 'release' ? input.mode : 'quick',
-    chatId: typeof input.chatId === 'string' ? input.chatId : '',
-    workspaceId: typeof input.workspaceId === 'string' ? input.workspaceId : undefined,
-    workspacePath: typeof input.workspacePath === 'string' ? input.workspacePath : '',
-    status: input.status ?? 'planning',
-    phases: arr<AuditRunRecord['phases'][number]>(input.phases),
-    profile: input.profile,
-    dimensions: arr<string>(input.dimensions),
-    roster: input.roster,
-    participants: arr<AuditParticipant>(input.participants),
-    findings: arr<AuditFinding>(input.findings),
-    verdicts: arr<AuditVerdict>(input.verdicts),
-    gates: arr<AuditGateResult>(input.gates),
-    budget: input.budget ?? {
-      maxAgents: 0,
-      spentAgents: 0,
-      spentTokens: 0,
-      truncated: false
-    },
-    coverage: input.coverage,
-    report: typeof input.report === 'string' ? input.report : undefined,
-    error: typeof input.error === 'string' ? input.error : undefined,
-    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
-    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
-    startedAt: typeof input.startedAt === 'string' ? input.startedAt : undefined,
-    endedAt: typeof input.endedAt === 'string' ? input.endedAt : undefined
-  }
-}
-
-const AUDIT_RETENTION_SURFACES: AuditRetentionSurface[] = [
-  'approvalLedger',
-  'runEvents',
-  'workspaceChanges',
-  'auditRuns',
-  'messageFeedback',
-  'externalPublish',
-  'productCrashes'
-]
-
-const DEFAULT_AUDIT_RETENTION: AuditRetentionSettings = {
-  enabled: false,
-  maxAgeDays: {
-    approvalLedger: 365,
-    runEvents: 180,
-    workspaceChanges: 180,
-    auditRuns: 365,
-    messageFeedback: 365,
-    externalPublish: 365,
-    productCrashes: 90
-  }
-}
-
-const AUDIT_RETENTION_PURGE_RECEIPT_CAP = 250
-const AUDIT_BUNDLE_VERIFICATION_RECEIPT_CAP = 250
-
-function normalizeAuditRetentionSettings(value: unknown): AuditRetentionSettings {
-  const input = value && typeof value === 'object' ? (value as Partial<AuditRetentionSettings>) : {}
-  const rawMaxAge = input.maxAgeDays && typeof input.maxAgeDays === 'object' ? input.maxAgeDays : {}
-  const maxAgeDays: Partial<Record<AuditRetentionSurface, number>> = {}
-  for (const surface of AUDIT_RETENTION_SURFACES) {
-    const value = Number((rawMaxAge as Partial<Record<AuditRetentionSurface, number>>)[surface])
-    if (Number.isFinite(value) && value > 0) {
-      maxAgeDays[surface] = Math.min(3650, Math.max(1, Math.floor(value)))
-    }
-  }
-  return {
-    enabled: input.enabled === true,
-    maxAgeDays: {
-      ...DEFAULT_AUDIT_RETENTION.maxAgeDays,
-      ...maxAgeDays
-    }
-  }
-}
-
-function emptyAuditRetentionCounts(): Record<
-  AuditRetentionSurface,
-  AuditRetentionSurfacePurgeCounts
-> {
-  return AUDIT_RETENTION_SURFACES.reduce(
-    (counts, surface) => {
-      counts[surface] = { scanned: 0, retained: 0, deleted: 0 }
-      return counts
-    },
-    {} as Record<AuditRetentionSurface, AuditRetentionSurfacePurgeCounts>
-  )
-}
-
-function auditRetentionCutoffMs(
-  policy: AuditRetentionSettings,
-  surface: AuditRetentionSurface,
-  nowMs: number
-): number | null {
-  const days = policy.maxAgeDays?.[surface]
-  if (!Number.isFinite(days) || Number(days) <= 0) return null
-  return nowMs - Math.floor(Number(days)) * 24 * 60 * 60 * 1000
-}
-
-function isBeforeAuditRetentionCutoff(value: unknown, cutoffMs: number | null): boolean {
-  if (cutoffMs === null) return false
-  const ms = typeof value === 'number' ? value : Date.parse(String(value || ''))
-  return Number.isFinite(ms) && ms < cutoffMs
-}
-
-function capAuditRetentionPurgeReceipts(
-  receipts: AuditRetentionPurgeReceipt[],
-  cap = AUDIT_RETENTION_PURGE_RECEIPT_CAP
-): AuditRetentionPurgeReceipt[] {
-  const normalized = receipts.filter((receipt): receipt is AuditRetentionPurgeReceipt =>
-    Boolean(receipt?.id && receipt.schemaVersion === 1 && receipt.generatedAt)
-  )
-  return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
-}
-
-function normalizeAuditBundleVerificationReceipt(
-  receipt: unknown
-): ProductAuditBundleVerificationReceipt | null {
-  if (!receipt || typeof receipt !== 'object') return null
-  const candidate = receipt as ProductAuditBundleVerificationReceipt
-  if (
-    candidate.schemaVersion !== 1 ||
-    typeof candidate.id !== 'string' ||
-    !candidate.id ||
-    typeof candidate.verifiedAt !== 'string' ||
-    typeof candidate.ok !== 'boolean'
-  ) {
-    return null
-  }
-  return candidate
-}
-
-function capAuditBundleVerificationReceipts(
-  receipts: unknown[],
-  cap = AUDIT_BUNDLE_VERIFICATION_RECEIPT_CAP
-): ProductAuditBundleVerificationReceipt[] {
-  const normalized = receipts
-    .map(normalizeAuditBundleVerificationReceipt)
-    .filter((receipt): receipt is ProductAuditBundleVerificationReceipt => Boolean(receipt))
-  return normalized.length <= cap ? normalized : normalized.slice(normalized.length - cap)
-}
-
 const defaultSettings: AppSettings = {
   activeProvider: DEFAULT_PROVIDER,
   providerRunPauses: {},
@@ -2351,10 +2458,12 @@ const defaultSettings: AppSettings = {
   closeoutAiSummaryEnabled: true,
   hostAutoCompactEnabled: true,
   ensembleCollapseOlderRounds: true,
+  keepAwakeWhileWorking: true,
   /** Settings → General Max Wave Agents (clamped 2–64 on read/write).
    *  A literal because `defaultSettings` is the shipped settings shape, not a
    *  computed one; kept in step with shared/fleetWave's DEFAULT_MAX_WAVE_AGENTS
-   *  by maxWaveAgentsDefault.test.ts, which reads this line back as source. */
+   *  by maxWaveAgentsDefault.test.ts, which reads the `defaultSettings`
+   *  declaration structurally rather than matching this line as text. */
   maxWaveAgents: 12,
   dashboardStatPrefs: {
     dashboardSize: 'small'
@@ -2411,6 +2520,7 @@ const defaultSettings: AppSettings = {
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],
+  commandRules: [],
   nativeSubAgentRequests: 'ask',
   // Default on — the user-visible win is that delegated sub-threads
   // resume their parent agent automatically when they finish. Users
@@ -2420,7 +2530,7 @@ const defaultSettings: AppSettings = {
   geminiMcpBridgeLastStatus: undefined,
   approvalModeElevationAcknowledgements: {},
   bridgeDaemonEnabled: true,
-  studioCompanionEnabled: true,
+  studioCompanionEnabled: false,
   iosRemoteEnabled: true,
   iosRemoteManualRelayUrl: '',
   codexSandboxFallback: 'ask_rerun',
@@ -2445,6 +2555,13 @@ function readJson<T>(filePath: string, defaultData: T): T {
     }
   } catch (e) {
     console.error(`Failed to read ${filePath}`, e)
+    // Once the standalone Host owns these durable families, a legacy AppStore
+    // read may still project their valid prefix/default in memory but must not
+    // create a `.corrupt-*` side artifact. Settings and schedules deliberately
+    // remain outside this fence for Desktop compatibility.
+    if (hostOwnedReadRepairPathFamily(filePath) && !legacyStoreCanWrite()) {
+      return defaultData
+    }
     try {
       if (fs.existsSync(filePath)) {
         fs.copyFileSync(filePath, `${filePath}.corrupt-${Date.now()}`)
@@ -2454,285 +2571,6 @@ function readJson<T>(filePath: string, defaultData: T): T {
     }
   }
   return defaultData
-}
-
-function objectOrUndefined<T extends object>(value: T | null | undefined): T | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
-}
-
-function normalizeKeyCommandBindings(
-  value: Partial<AppSettings>['keyCommandBindings']
-): AppSettings['keyCommandBindings'] {
-  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
-  if (!record) return {}
-  const normalized: AppSettings['keyCommandBindings'] = {}
-  for (const [id, binding] of Object.entries(record)) {
-    if (binding === null) {
-      normalized[id] = null
-      continue
-    }
-    const bindingRecord = objectOrUndefined(binding as Record<string, unknown> | null | undefined)
-    if (!bindingRecord) continue
-    const key = typeof bindingRecord.key === 'string' ? bindingRecord.key.trim() : ''
-    if (!key) continue
-    const modifiers = Array.isArray(bindingRecord.modifiers)
-      ? bindingRecord.modifiers.filter(
-          (modifier): modifier is 'primary' | 'shift' | 'alt' =>
-            modifier === 'primary' || modifier === 'shift' || modifier === 'alt'
-        )
-      : []
-    normalized[id] = { key, modifiers }
-  }
-  return normalized
-}
-
-function isValidUserMcpRemoteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-function normalizeRuntimeProfileSecretRefs(value: unknown): RuntimeProfileSecretRefs | undefined {
-  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
-  const env = Array.isArray(record?.env)
-    ? Array.from(
-        new Set(
-          record.env.filter(
-            (key): key is string => typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
-          )
-        )
-      ).slice(0, 64)
-    : []
-  return env.length > 0 ? { env } : undefined
-}
-
-function normalizePluginResourceProvenance(
-  value: unknown
-): TaskWraithPluginResourceProvenance | undefined {
-  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
-  if (!record) return undefined
-  const stringField = (key: string): string => {
-    const raw = record[key]
-    return typeof raw === 'string' ? raw.trim() : ''
-  }
-  const source =
-    record.source === 'builtin' || record.source === 'local' || record.source === 'marketplace'
-      ? record.source
-      : undefined
-  const kind =
-    record.kind === 'mcpServer' ||
-    record.kind === 'toolBundle' ||
-    record.kind === 'workflowTemplate' ||
-    record.kind === 'runtimeProfile' ||
-    record.kind === 'connector' ||
-    record.kind === 'localService' ||
-    record.kind === 'providerSetup' ||
-    record.kind === 'remoteProjection'
-      ? record.kind
-      : undefined
-  const pluginId = stringField('pluginId')
-  const publisher = stringField('publisher')
-  const version = stringField('version')
-  const namespace = stringField('namespace')
-  const manifestHash = stringField('manifestHash')
-  const objectId = stringField('objectId')
-  const materializedAt = stringField('materializedAt')
-  if (
-    !pluginId ||
-    !publisher ||
-    !version ||
-    !source ||
-    !namespace ||
-    !manifestHash ||
-    !kind ||
-    !objectId ||
-    !materializedAt
-  ) {
-    return undefined
-  }
-  return {
-    pluginId,
-    publisher,
-    version,
-    source,
-    namespace,
-    manifestHash,
-    kind,
-    objectId,
-    materializedAt
-  }
-}
-
-function normalizePluginReviewState(value: unknown): UserMcpServerConfig['pluginReview'] {
-  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
-  if (!record) return undefined
-  const status =
-    record.status === 'pending' || record.status === 'accepted' ? record.status : undefined
-  const reason =
-    record.reason === 'new-plugin-resource' ||
-    record.reason === 'manifest-update' ||
-    record.reason === 'user-enabled-reviewed-resource'
-      ? record.reason
-      : undefined
-  const manifestHash = typeof record.manifestHash === 'string' ? record.manifestHash.trim() : ''
-  const reviewedAt = typeof record.reviewedAt === 'string' ? record.reviewedAt.trim() : ''
-  if (!status || !reason || !manifestHash) return undefined
-  return {
-    status,
-    reason,
-    manifestHash,
-    ...(reviewedAt ? { reviewedAt } : {})
-  }
-}
-
-function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
-  if (!Array.isArray(value)) return []
-  const seen = new Set<string>()
-  const servers: UserMcpServerConfig[] = []
-  for (const item of value.slice(0, 64)) {
-    const record = objectOrUndefined(item as Record<string, unknown> | null | undefined)
-    if (!record) continue
-    const id = typeof record.id === 'string' ? record.id.trim() : ''
-    const name = typeof record.name === 'string' ? record.name.trim() : ''
-    if (!id || !name || seen.has(id)) continue
-    seen.add(id)
-    const transport =
-      record.transport === 'http' || record.transport === 'sse' ? record.transport : 'stdio'
-    const args = Array.isArray(record.args)
-      ? record.args
-          .filter((arg): arg is string => typeof arg === 'string')
-          .map((arg) => arg.trim())
-          .filter(Boolean)
-          .slice(0, 64)
-      : []
-    const envRecord = objectOrUndefined(record.env as Record<string, unknown> | null | undefined)
-    const env = envRecord
-      ? Object.fromEntries(
-          Object.entries(envRecord)
-            .filter(([key, val]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof val === 'string')
-            .map(([key, val]) => [key, val])
-            .slice(0, 64)
-        )
-      : {}
-    const headersRecord = objectOrUndefined(
-      record.headers as Record<string, unknown> | null | undefined
-    )
-    const headers = headersRecord
-      ? Object.fromEntries(
-          Object.entries(headersRecord)
-            .filter(
-              ([key, val]) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof val === 'string'
-            )
-            .map(([key, val]) => [key, val])
-            .slice(0, 64)
-        )
-      : {}
-    const secretRefsRecord = objectOrUndefined(
-      record.secretRefs as Record<string, unknown> | null | undefined
-    )
-    const secretEnvRefs = Array.isArray(secretRefsRecord?.env)
-      ? Array.from(
-          new Set(
-            secretRefsRecord.env.filter(
-              (key): key is string =>
-                typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
-            )
-          )
-        ).slice(0, 64)
-      : []
-    const secretHeaderRefs = Array.isArray(secretRefsRecord?.headers)
-      ? Array.from(
-          new Set(
-            secretRefsRecord.headers.filter(
-              (key): key is string =>
-                typeof key === 'string' && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key)
-            )
-          )
-        ).slice(0, 64)
-      : []
-    const command = typeof record.command === 'string' ? record.command.trim() : ''
-    const rawUrl = typeof record.url === 'string' ? record.url.trim() : ''
-    const url = rawUrl && isValidUserMcpRemoteUrl(rawUrl) ? rawUrl : ''
-    const bearerTokenEnvVar =
-      typeof record.bearerTokenEnvVar === 'string' &&
-      /^[A-Za-z_][A-Za-z0-9_]*$/.test(record.bearerTokenEnvVar.trim())
-        ? record.bearerTokenEnvVar.trim()
-        : ''
-    const pluginProvenance = normalizePluginResourceProvenance(record.pluginProvenance)
-    const pluginReview = normalizePluginReviewState(record.pluginReview)
-    const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
-    const normalized: UserMcpServerConfig = {
-      id,
-      name,
-      enabled: Boolean(record.enabled && canEnable),
-      transport
-    }
-    if (command) normalized.command = command
-    if (args.length > 0) normalized.args = args
-    if (url) normalized.url = url
-    if (Object.keys(env).length > 0) normalized.env = env
-    if (Object.keys(headers).length > 0) normalized.headers = headers
-    if (secretEnvRefs.length > 0 || secretHeaderRefs.length > 0) {
-      normalized.secretRefs = {
-        ...(secretEnvRefs.length > 0 ? { env: secretEnvRefs } : {}),
-        ...(secretHeaderRefs.length > 0 ? { headers: secretHeaderRefs } : {})
-      }
-    }
-    if (bearerTokenEnvVar) normalized.bearerTokenEnvVar = bearerTokenEnvVar
-    if (typeof record.description === 'string' && record.description.trim()) {
-      normalized.description = record.description.trim()
-    }
-    if (pluginProvenance) normalized.pluginProvenance = pluginProvenance
-    if (pluginReview) normalized.pluginReview = pluginReview
-    if (typeof record.createdAt === 'string' && record.createdAt.trim()) {
-      normalized.createdAt = record.createdAt.trim()
-    }
-    if (typeof record.updatedAt === 'string' && record.updatedAt.trim()) {
-      normalized.updatedAt = record.updatedAt.trim()
-    }
-    servers.push(normalized)
-  }
-  return servers
-}
-
-function normalizeUpdateChangelog(value: unknown): ProductUpdateChangelog | undefined {
-  const record = objectOrUndefined(value as Record<string, unknown> | null | undefined)
-  if (!record || typeof record.version !== 'string' || !record.version.trim()) {
-    return undefined
-  }
-  const releaseNotes = record.releaseNotes
-  const normalized: ProductUpdateChangelog = {
-    version: record.version.trim()
-  }
-  if (typeof record.releaseName === 'string' && record.releaseName.trim()) {
-    normalized.releaseName = record.releaseName.trim()
-  }
-  if (typeof record.releaseDate === 'string' && record.releaseDate.trim()) {
-    normalized.releaseDate = record.releaseDate.trim()
-  }
-  if (typeof releaseNotes === 'string') {
-    normalized.releaseNotes = releaseNotes
-  } else if (Array.isArray(releaseNotes)) {
-    const notes = releaseNotes
-      .map((item) => {
-        const noteRecord = objectOrUndefined(item as Record<string, unknown> | null | undefined)
-        if (!noteRecord || typeof noteRecord.version !== 'string' || !noteRecord.version.trim()) {
-          return null
-        }
-        return {
-          version: noteRecord.version.trim(),
-          note: typeof noteRecord.note === 'string' ? noteRecord.note : null
-        }
-      })
-      .filter((item): item is { version: string; note: string | null } => item !== null)
-    if (notes.length > 0) {
-      normalized.releaseNotes = notes
-    }
-  }
-  return normalized
 }
 
 function normalizeSettingsFontFamily(value: unknown, fallback: string): string {
@@ -2749,7 +2587,49 @@ function normalizeSettingsFontFamily(value: unknown, fallback: string): string {
  */
 const directoryFsyncQueue = createDirectoryFsyncQueue()
 
-function writeJson<T>(filePath: string, data: T) {
+function hostOwnedJsonPathFamily(filePath: string): 'workspaces' | 'chats' | null {
+  if (filePath === workspacesPath) return 'workspaces'
+  if (path.dirname(filePath) === chatsDir && path.extname(filePath) === '.json') return 'chats'
+  return null
+}
+
+/** Durable families the standalone Host owns once the legacy gate closes. */
+function hostOwnedReadRepairPathFamily(filePath: string): boolean {
+  if (filePath === workspacesPath) return true
+  const chatDirectory = path.join(userDataPath, 'chats')
+  if (path.dirname(filePath) === chatDirectory && path.extname(filePath) === '.json') return true
+  const listIndexPath = path.join(userDataPath, 'chat-list-index.jsonl')
+  const legacyListIndexPath = path.join(userDataPath, 'chat-list-index.json')
+  const listSummariesDirectory = path.join(userDataPath, 'chat-list-summaries')
+  if (
+    filePath === listIndexPath ||
+    filePath === legacyListIndexPath ||
+    path.dirname(filePath) === listSummariesDirectory
+  ) {
+    return true
+  }
+  const journalDirectory = path.join(userDataPath, 'chat-journal')
+  const incrementalJournalDirectory = path.join(userDataPath, 'chat-journal-v2')
+  const segmentedChatDirectory = path.join(userDataPath, 'chat-store-v2')
+  return (
+    path.dirname(filePath) === journalDirectory ||
+    path.dirname(filePath) === incrementalJournalDirectory ||
+    path.dirname(filePath) === segmentedChatDirectory
+  )
+}
+
+function writeJson<T>(filePath: string, data: T): void {
+  const pathFamily = hostOwnedJsonPathFamily(filePath)
+  if (!pathFamily) {
+    writeJsonAdmitted(filePath, data)
+    return
+  }
+  runLegacyStoreWriteAdmission({ operation: 'write-json', pathFamily }, () => {
+    writeJsonAdmitted(filePath, data)
+  })
+}
+
+function writeJsonAdmitted<T>(filePath: string, data: T): void {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   let fd: number | null = null
   // T3a probe: null unless PERF_PRELOAD_PROBE=1, so the production path pays a
@@ -2870,6 +2750,12 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   if (!Array.isArray(record.kimiSeats)) {
     throw new Error('History deletion intent Kimi seats is not an array.')
   }
+  // Deliberately tolerant where kimiSeats is strict: an in-flight intent
+  // written before Muse seats existed carries no key, and there is no Muse seat
+  // on disk for it to miss. A PRESENT value is validated exactly as strictly.
+  if (record.museSeats !== undefined && !Array.isArray(record.museSeats)) {
+    throw new Error('History deletion intent Muse seats is not an array.')
+  }
   const chatIds = safeStrings(record.chatIds, 'chat ids', true)
   const runIds = safeStrings(record.runIds, 'run ids')
   // Version-1 intents written before mission facts existed carry no inventory.
@@ -2894,23 +2780,29 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
   }
   const workflowIds = safeStrings(record.workflowIds, 'workflow ids')
   const workflowExecutionIds = safeStrings(record.workflowExecutionIds, 'workflow execution ids')
-  const kimiSeats = record.kimiSeats.map((seat) => {
-    if (
-      !seat ||
-      typeof seat !== 'object' ||
-      Array.isArray(seat) ||
-      !isSafeChatId((seat as { chatId?: unknown }).chatId) ||
-      typeof (seat as { participantId?: unknown }).participantId !== 'string' ||
-      !(seat as { participantId: string }).participantId ||
-      (seat as { participantId: string }).participantId.length > 4096
-    ) {
-      throw new Error('History deletion intent contains an unsafe Kimi seat identity.')
-    }
-    return {
-      chatId: (seat as { chatId: string }).chatId,
-      participantId: (seat as { participantId: string }).participantId
-    }
-  })
+  const safeSeats = (
+    value: unknown[],
+    label: string
+  ): Array<{ chatId: string; participantId: string }> =>
+    value.map((seat) => {
+      if (
+        !seat ||
+        typeof seat !== 'object' ||
+        Array.isArray(seat) ||
+        !isSafeChatId((seat as { chatId?: unknown }).chatId) ||
+        typeof (seat as { participantId?: unknown }).participantId !== 'string' ||
+        !(seat as { participantId: string }).participantId ||
+        (seat as { participantId: string }).participantId.length > 4096
+      ) {
+        throw new Error(`History deletion intent contains an unsafe ${label} seat identity.`)
+      }
+      return {
+        chatId: (seat as { chatId: string }).chatId,
+        participantId: (seat as { participantId: string }).participantId
+      }
+    })
+  const kimiSeats = safeSeats(record.kimiSeats, 'Kimi')
+  const museSeats = record.museSeats === undefined ? [] : safeSeats(record.museSeats, 'Muse')
   if (!Array.isArray(record.quiescenceTargets)) {
     throw new Error('History deletion intent quiescence targets is not an array.')
   }
@@ -3031,6 +2923,7 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
     workflowIds,
     workflowExecutionIds,
     kimiSeats,
+    museSeats,
     quiescenceTargets,
     completedQuiescenceTargetIds,
     completedSteps,
@@ -3346,6 +3239,121 @@ function rewriteArrayHistoryStore(
   }
 }
 
+function isApprovalLedgerManagedArtifactName(name: string, includeCanonical: boolean): boolean {
+  const bases = new Set(
+    Object.values(approvalLedgerEventPaths).map((filePath) => path.basename(filePath))
+  )
+  if (includeCanonical && bases.has(name)) return true
+  for (const base of bases) {
+    if (!name.startsWith(`${base}.`)) continue
+    const suffix = name.slice(base.length + 1)
+    if (
+      suffix.startsWith('corrupt-') ||
+      suffix.startsWith('claimed-') ||
+      suffix.startsWith('spill-') ||
+      suffix.startsWith('quarantine-') ||
+      suffix.startsWith('retired-') ||
+      suffix.endsWith('.tmp')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function removeApprovalLedgerManagedArtifactsStrict(includeCanonical: boolean): void {
+  let names: string[] = []
+  try {
+    names = fs.readdirSync(userDataPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  removePathsStrict(
+    names
+      .filter((name) => isApprovalLedgerManagedArtifactName(name, includeCanonical))
+      .map((name) => ({
+        targetPath: path.join(userDataPath, name),
+        label: `approval ledger artifact ${name}`
+      }))
+  )
+  directoryFsyncQueue.schedule(userDataPath)
+}
+
+function purgeApprovalLedgerHistoryStrict(): void {
+  if (approvalLedgerEventStore) {
+    approvalLedgerEventStore.purge()
+  } else {
+    // A global clear is authoritative even when an uninitialized legacy or v2
+    // artifact is malformed. Do not parse private bytes merely to erase them.
+    removeApprovalLedgerManagedArtifactsStrict(true)
+  }
+  approvalLedgerEventStore = null
+  approvalLedgerEventMutationsSinceCompact = 0
+}
+
+function rewriteApprovalLedgerHistory(intent: HistoryDeletionIntent): void {
+  if (intent.kind === 'global') {
+    purgeApprovalLedgerHistoryStrict()
+    return
+  }
+  if (!approvalLedgerEventsEnabled()) {
+    rewriteArrayHistoryStore(approvalLedgerPath, 'approval ledger history', intent)
+    return
+  }
+  const store = getApprovalLedgerEventStore()
+  const stored = store.getRecords()
+  const retained = stored.filter((record) => !historyRecordMatches(record, intent))
+  if (retained.length !== stored.length) store.replaceProjection(retained)
+  // Physical privacy boundary: publish the filtered snapshot before retiring
+  // the WAL that may still contain the removed rows, then refresh the rollback
+  // mirror. `compact` has exactly that crash-safe ordering.
+  store.compact()
+  approvalLedgerEventMutationsSinceCompact = 0
+  removeApprovalLedgerManagedArtifactsStrict(false)
+
+  if (store.getRecords().some((record) => historyRecordMatches(record, intent))) {
+    throw new Error('Approval ledger event projection still contains deletion-scope records.')
+  }
+  const legacy = readJsonStrictIfPresent(approvalLedgerPath)
+  if (
+    legacy !== null &&
+    (!Array.isArray(legacy) || legacy.some((record) => historyRecordMatches(record, intent)))
+  ) {
+    throw new Error('Approval ledger rollback mirror still contains deletion-scope records.')
+  }
+}
+
+function approvalLedgerRecordsForHistoryDeletion(intent: HistoryDeletionIntent): unknown[] {
+  if (!approvalLedgerEventsEnabled()) {
+    const stored = readJsonStrictIfPresent(approvalLedgerPath)
+    if (stored === null) return []
+    if (!Array.isArray(stored)) {
+      if (intent.kind === 'global') return []
+      throw new Error('Approval ledger is not an array; scoped deletion cannot preserve siblings.')
+    }
+    return stored
+  }
+  const hasV2Authority =
+    approvalLedgerEventStore !== null ||
+    fs.existsSync(approvalLedgerEventPaths.snapshot) ||
+    fs.existsSync(approvalLedgerEventPaths.events)
+  if (hasV2Authority) {
+    try {
+      return getApprovalLedgerEventStore().getRecords()
+    } catch (error) {
+      if (intent.kind === 'global') return []
+      throw error
+    }
+  }
+  const stored = readJsonStrictIfPresent(approvalLedgerPath)
+  if (stored === null) return []
+  if (!Array.isArray(stored)) {
+    if (intent.kind === 'global') return []
+    throw new Error('Approval ledger is not an array; scoped deletion cannot preserve siblings.')
+  }
+  return stored
+}
+
 function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
   const ensemble = chat.ensemble
   const delegation = chat.delegationContext
@@ -3357,6 +3365,7 @@ function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
     chat.taskWraithMcpProfileReceipt ||
     chat.seatGeneration ||
     chat.contextCompactionSummary ||
+    chat.continuityCheckpoints ||
     chat.activeGoal ||
     chat.chatTodos ||
     chat.soloWakeups ||
@@ -3369,6 +3378,7 @@ function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
     ensemble?.bossmanControlState ||
     ensemble?.lastRoundSummary ||
     ensemble?.roundSummaries ||
+    ensemble?.roundWallMsById ||
     ensemble?.wakeups ||
     ensemble?.blackboard ||
     ensemble?.escalationSignals ||
@@ -4077,6 +4087,14 @@ function writeSubThreadMailboxLedger(ledger: SubThreadMailboxLedger): void {
   writeJson(subThreadMailboxesPath, normalizeSubThreadMailboxLedger(ledger))
 }
 
+function readExecutionResultMailboxLedger(): ExecutionResultMailboxLedger {
+  return normalizeExecutionResultMailboxLedger(readJson<unknown>(executionResultMailboxesPath, {}))
+}
+
+function writeExecutionResultMailboxLedger(ledger: ExecutionResultMailboxLedger): void {
+  writeJson(executionResultMailboxesPath, normalizeExecutionResultMailboxLedger(ledger))
+}
+
 function readThreadMessageLedger(): ThreadMessageLedger {
   return normalizeThreadMessageLedger(readJson<unknown>(threadMessagesPath, {}))
 }
@@ -4123,8 +4141,18 @@ function previewText(value: unknown, maxLength: number): string {
   return `${text.slice(0, maxLength - 3)}...`
 }
 
-function normalizeChatWorkflowMode(value: unknown): ChatWorkflowMode {
-  return value === 'plan' ? 'plan' : 'normal'
+/**
+ * Wakeup count for a chat-list row. Defensive because it runs over normalized
+ * records of every vintage: anything that is not a readable wakeup map counts
+ * as zero wakeups on THIS record, which is a statement about bytes we hold,
+ * not a licence to skip — the row only earns a skip once the index can also
+ * vouch for those bytes.
+ */
+function countPersistedEnsembleWakeups(ensemble: unknown): number {
+  if (!ensemble || typeof ensemble !== 'object') return 0
+  const wakeups = (ensemble as { wakeups?: unknown }).wakeups
+  if (!wakeups || typeof wakeups !== 'object') return 0
+  return Object.keys(wakeups as Record<string, unknown>).length
 }
 
 function summarizeLastRun(
@@ -4881,6 +4909,10 @@ function shadowWorkspaceBoardMissionFacts(
 }
 
 export interface ChatSaveOptions {
+  /** Trusted main-process checkpoint update; renderer saves cannot set this. */
+  authoritativeContinuityCheckpoints?: boolean
+  /** Main adapter-observation callback only. */
+  authoritativeContinuityDelivery?: boolean
   /** Exact message operations authored by a trusted main-process producer. */
   authoredTranscript?: AuthoredChatTranscriptMutation
 }
@@ -4897,12 +4929,35 @@ export class AppStore {
     openApprovalSignatureByChatId.clear()
     this.chatRecordCache.clear()
     chatListIndexStore.clearCache()
+    chatListRebuildMemo.clear()
     incrementalChatPersistence.clear()
+    segmentedChatStore.clear()
     chatUpdateProjectionTracker.clear()
     this.orphanSubThreadsReaped = false
     this.orphanSubThreadReapCandidates.clear()
     this.historyDeletionRunning = false
+    this.catalogueErasure = null
+    this.catalogueQuiescence = null
+    this.catalogueResume = null
     historyDeletionFailureStepsForTests.clear()
+    approvalLedgerEventStore = null
+    approvalLedgerEventMutationsSinceCompact = 0
+  }
+
+  static resetApprovalLedgerEventStoreForTests(): void {
+    approvalLedgerEventStore = null
+    approvalLedgerEventMutationsSinceCompact = 0
+  }
+
+  static compactApprovalLedgerEventStoreForTests(): ApprovalLedgerRecord[] | null {
+    if (!approvalLedgerEventsEnabled()) return null
+    const compacted = getApprovalLedgerEventStore().compact()
+    approvalLedgerEventMutationsSinceCompact = 0
+    return compacted
+  }
+
+  static getApprovalLedgerEventStoreStatsForTests(): ApprovalLedgerEventStoreStats | null {
+    return approvalLedgerEventStore?.stats() ?? null
   }
 
   static clearChatRecordCacheForTests(): void {
@@ -5052,6 +5107,14 @@ export class AppStore {
       agenticWorkspaceGrants: Array.isArray(stored.agenticWorkspaceGrants)
         ? consolidateAgenticWorkspaceGrants(stored.agenticWorkspaceGrants)
         : [],
+      // Rules are a separate, exact shell authority. Never infer them from a
+      // broad legacy shell/workspace grant; malformed persisted rows drop at
+      // this read boundary and CommandRuleService revalidates them again before
+      // use.
+      commandRules:
+        sanitizeCommandRules(stored.commandRules, {
+          resolvePath: (value) => path.resolve(value)
+        }) ?? [],
       nativeSubAgentRequests:
         stored.nativeSubAgentRequests === 'provider' ||
         stored.nativeSubAgentRequests === 'taskwraith'
@@ -5378,6 +5441,94 @@ export class AppStore {
     writeJson(workspacesPath, [])
   }
 
+  /**
+   * Host-owned-gate add/update: the record travels via workspace.record.upsert
+   * and the Host's canonical realPath is ADOPTED via read-back — the wire
+   * forbids a caller-asserted realPath and the Host canonicalizes the selected
+   * path itself (on macOS /var -> /private/var), so the returned record comes
+   * from the file the Host just wrote, never from a locally synthesized one.
+   * Callers select this via legacyStoreWritesOpen() so the legacy entry keeps
+   * its synchronous signature and merge semantics exactly.
+   */
+  static async addOrUpdateWorkspaceViaHost(
+    workspacePath: string,
+    partial: Partial<WorkspaceRecord> = {}
+  ): Promise<WorkspaceRecord> {
+    const workspaces = this.getWorkspaces()
+    const existing = workspaces.find((workspace) => workspace.path === workspacePath)
+    const workspaceId = existing?.id ?? randomUUID()
+    const {
+      // Never caller-asserted: the wire forbids it and the Host canonicalizes.
+      realPath: _dropCallerRealPath,
+      ...safePartial
+    } = partial
+    await hostWorkspaceRecord().upsertWorkspaceRecord({
+      workspaceId,
+      path: workspacePath,
+      displayName:
+        safePartial.displayName ??
+        existing?.displayName ??
+        (path.basename(workspacePath) || workspacePath),
+      createdAt: existing?.createdAt ?? Date.now(),
+      lastOpenedAt: Date.now(),
+      pinned: safePartial.pinned ?? existing?.pinned ?? false,
+      ...(safePartial.branch !== undefined ? { branch: safePartial.branch } : {}),
+      ...(safePartial.geminiWorktree !== undefined
+        ? { geminiWorktree: safePartial.geminiWorktree }
+        : {})
+    })
+    const adopted = this.getWorkspaces().find((workspace) => workspace.id === workspaceId)
+    if (!adopted) throw new Error('Host workspace upsert did not produce a record')
+    return adopted
+  }
+
+  /**
+   * Host-owned-gate compare-and-set pin: only a record matching id+path with
+   * no realPath is pinned, preserving the immutable-once-set contract. The CAS
+   * pre-check reads the Host-written file (single desktop writer + Host only
+   * writes on command), then the upsert lets the Host compute the canonical
+   * realPath itself; the returned record is the read-back of that write.
+   */
+  static async pinWorkspaceRealPathViaHost(
+    workspaceId: string,
+    expectedPath: string,
+    realPath: string
+  ): Promise<WorkspaceRecord | null> {
+    const workspaces = this.getWorkspaces()
+    const existing = workspaces.find(
+      (workspace) => workspace.id === workspaceId && workspace.path === expectedPath
+    )
+    if (!existing || existing.realPath) return null
+    await hostWorkspaceRecord().upsertWorkspaceRecord({
+      workspaceId: existing.id,
+      path: existing.path,
+      displayName: existing.displayName,
+      createdAt: existing.createdAt,
+      lastOpenedAt: existing.lastOpenedAt,
+      pinned: existing.pinned,
+      ...(typeof existing.branch === 'string' ? { branch: existing.branch } : {}),
+      ...(existing.geminiWorktree ? { geminiWorktree: existing.geminiWorktree } : {})
+    })
+    void realPath // the Host canonicalizes; the arg documents the expected target
+    const adopted = this.getWorkspaces().find((workspace) => workspace.id === workspaceId)
+    return adopted ?? null
+  }
+
+  /** Host-owned-gate remove via workspace.record.remove (idempotent). */
+  static async removeWorkspaceViaHost(workspaceId: string): Promise<void> {
+    await hostWorkspaceRecord().removeWorkspaceRecord(workspaceId)
+  }
+
+  /** Host-owned-gate clear via workspace.records.clear. */
+  static async clearWorkspacesViaHost(): Promise<void> {
+    await hostWorkspaceRecord().clearWorkspaceRecords()
+  }
+
+  /** Test seam: swap the Host workspace-record port. */
+  static setHostWorkspaceRecordPortForTests(port: HostWorkspaceRecordPort | null): void {
+    hostWorkspaceRecordPort = port
+  }
+
   // Projects (Work surface). Thin delegation to the ProjectRegistry singleton;
   // all record logic lives in shared/projects so renderer optimistic applies
   // and these authoritative applies cannot drift.
@@ -5459,115 +5610,7 @@ export class AppStore {
 
   // Chats
   static normalizeChatRecord(chat: ChatRecord): ChatRecord {
-    const scope = chat.scope === 'global' ? 'global' : 'workspace'
-    const chatKind = chat.chatKind === 'ensemble' ? 'ensemble' : 'single'
-    const workflowMode = normalizeChatWorkflowMode(chat.workflowMode)
-    const parentChatRelation = chat.parentChatId
-      ? chat.parentChatRelation === 'sideChat'
-        ? 'sideChat'
-        : 'subThread'
-      : undefined
-    const providerMetadata = chat.providerMetadata
-      ? canonicalizeExternalPathGrantMetadata(chat.providerMetadata)
-      : chat.providerMetadata
-    const sideChatContext =
-      parentChatRelation === 'sideChat'
-        ? {
-            createdAt:
-              typeof chat.sideChatContext?.createdAt === 'number'
-                ? chat.sideChatContext.createdAt
-                : chat.createdAt || Date.now(),
-            ...(chat.sideChatContext || {}),
-            lifecycleState: normalizeSideChatLifecycleState(
-              chat.sideChatContext?.lifecycleState,
-              chat.archived ? 'terminated' : 'active'
-            )
-          }
-        : chat.sideChatContext
-    const ensemble =
-      chatKind === 'ensemble'
-        ? (() => {
-            const defaults = createDefaultEnsembleConfig(
-              chat.provider || this.getSettings().activeProvider
-            )
-            const stored = chat.ensemble
-            const participants =
-              Array.isArray(stored?.participants) && stored.participants.length > 0
-                ? stored.participants
-                : defaults.participants
-            const authority = normalizeEnsembleAuthority({
-              participants,
-              bossmanParticipantId: stored?.bossmanParticipantId ?? defaults.bossmanParticipantId,
-              captainParticipantIds:
-                stored && Object.prototype.hasOwnProperty.call(stored, 'captainParticipantIds')
-                  ? stored.captainParticipantIds
-                  : stored
-                    ? undefined
-                    : defaults.captainParticipantIds,
-              secondInCommandParticipantId:
-                stored?.secondInCommandParticipantId ??
-                (stored ? undefined : defaults.secondInCommandParticipantId)
-            })
-            const activeRound = stored?.activeRound
-              ? (() => {
-                  const runtimeOwnedRound = discardForeignEnsembleTurnTransition(stored.activeRound)
-                  const roundAuthority = normalizeEnsembleAuthority({
-                    participants: runtimeOwnedRound.participants.map((participant) => ({
-                      id: participant.participantId,
-                      order: participant.order
-                    })),
-                    bossmanParticipantId: runtimeOwnedRound.bossmanParticipantId,
-                    captainParticipantIds: runtimeOwnedRound.captainParticipantIds,
-                    secondInCommandParticipantId: runtimeOwnedRound.secondInCommandParticipantId
-                  })
-                  return {
-                    ...runtimeOwnedRound,
-                    bossmanParticipantId: roundAuthority.bossmanParticipantId,
-                    captainParticipantIds: roundAuthority.captainParticipantIds,
-                    secondInCommandParticipantId: roundAuthority.secondInCommandParticipantId
-                  }
-                })()
-              : undefined
-            return {
-              ...defaults,
-              ...(stored || {}),
-              participants,
-              bossmanParticipantId: authority.bossmanParticipantId,
-              captainParticipantIds: authority.captainParticipantIds,
-              secondInCommandParticipantId: authority.secondInCommandParticipantId,
-              ...(activeRound ? { activeRound } : {})
-            }
-          })()
-        : undefined
-    const activeGoal =
-      chatKind === 'ensemble' ? resolveActiveGoalForEnsemble(chat.activeGoal) : chat.activeGoal
-    if (scope === 'global') {
-      const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = chat
-      return {
-        ...rest,
-        scope,
-        chatKind,
-        parentChatRelation,
-        sideChatContext,
-        workflowMode,
-        ...(activeGoal ? { activeGoal } : {}),
-        ...(ensemble ? { ensemble } : {}),
-        providerMetadata
-      }
-    }
-    return {
-      ...chat,
-      scope,
-      chatKind,
-      parentChatRelation,
-      sideChatContext,
-      workflowMode,
-      ...(activeGoal ? { activeGoal } : {}),
-      ...(ensemble ? { ensemble } : {}),
-      providerMetadata,
-      workspaceId: chat.workspaceId || '',
-      workspacePath: chat.workspacePath || ''
-    }
+    return normalizeCatalogueChatRecord(chat, () => this.getSettings().activeProvider)
   }
 
   /** Mirrors renderer modelUsageTable.runDiffFileCount — keep in sync. */
@@ -5643,6 +5686,7 @@ export class AppStore {
       ensemble,
       ollamaSessionMemory: _dropOllamaSessionMemory,
       ollamaSessionMemories: _dropOllamaSessionMemories,
+      continuityCheckpoints: _dropContinuityCheckpoints,
       ...listProjection
     } = normalizedChat
     const messages = Array.isArray(normalizedChat.messages)
@@ -5671,6 +5715,9 @@ export class AppStore {
       summaryOnly: true,
       messageCount: messages.length,
       runCount: runs.length,
+      runWallMs: projectThreadRunWallMs(runs, ensemble),
+      ensembleWakeupCount: countPersistedEnsembleWakeups(ensemble),
+      soloWakeupCount: countPendingSoloWakeups(normalizedChat.soloWakeups),
       runsSummary: runs.filter((run) => run?.runId).map((run) => this.summarizeRunForChatList(run)),
       ...(lastRun ? { lastRun } : {}),
       ...(sourceStat
@@ -5709,15 +5756,16 @@ export class AppStore {
 
   /** The lean ensemble a chat-list row carries.
    *
-   *  Drops the four sub-blobs that make an entry fat and that no list surface
-   *  reads — seat instructions, round summaries, the blackboard and the
-   *  activity ledger — while keeping activeRound, seat roles/providers and
-   *  escalationSignals so sidebar rows still render. Measured on a 15-seat
+   *  Drops the history-only sub-blobs that make an entry fat and that no list
+   *  surface reads — seat instructions, round summaries/timings, the blackboard
+   *  and the activity ledger — while keeping activeRound, seat roles/providers
+   *  and escalationSignals so sidebar rows still render. Measured on a 15-seat
    *  round: 111 KB -> 3 KB, i.e. 97.3% of the saving of dropping it outright,
    *  without blanking the Ensembles list. */
   static toChatListEnsembleProjection(ensemble: EnsembleConfig): EnsembleConfig {
     const {
       roundSummaries: _roundSummaries,
+      roundWallMsById: _roundWallMsById,
       blackboard: _blackboard,
       blackboardTombstones: _blackboardTombstones,
       wakeups: _wakeups,
@@ -5760,6 +5808,7 @@ export class AppStore {
       ensemble,
       ollamaSessionMemory: _dropOllamaSessionMemory,
       ollamaSessionMemories: _dropOllamaSessionMemories,
+      continuityCheckpoints: _dropContinuityCheckpoints,
       ...listProjection
     } = normalized
     return {
@@ -5770,6 +5819,12 @@ export class AppStore {
       summaryOnly: true,
       messageCount: typeof item.messageCount === 'number' ? item.messageCount : 0,
       runCount: typeof item.runCount === 'number' ? item.runCount : 0,
+      ...(typeof item.ensembleWakeupCount === 'number'
+        ? { ensembleWakeupCount: item.ensembleWakeupCount }
+        : {}),
+      ...(typeof item.soloWakeupCount === 'number'
+        ? { soloWakeupCount: item.soloWakeupCount }
+        : {}),
       runsSummary: Array.isArray(item.runsSummary) ? item.runsSummary : [],
       ...(item.lastRun ? { lastRun: summarizeLastRun(item.lastRun) || item.lastRun } : {}),
       ...(typeof item.sourceChatMtimeMs === 'number'
@@ -5782,6 +5837,7 @@ export class AppStore {
   }
 
   static getChatList(workspaceId?: string): ChatListItem[] {
+    if (this.threadCatalogueMirror) return this.threadCatalogueMirror.list(workspaceId)
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
     const existingIndex = chatListIndexStore.readAll()
@@ -5810,10 +5866,28 @@ export class AppStore {
       ) {
         item = this.normalizeChatListItem(indexed)
       } else {
-        const chat = readJson<ChatRecord | null>(chatPath, null)
-        if (chat) {
-          item = this.toChatListItem(chat, sourceStat)
-          dirtyChatIds.add(chatId)
+        // A rebuild parses the WHOLE record, and the restamp below is gated on
+        // legacyStoreCanWrite() — while the Host owns legacy writes the same
+        // rows rebuild on every call. Serve the row this process already
+        // derived from these exact bytes; correctness rides on the same
+        // mtime+size identity the index entry is judged by.
+        const memoised = chatListRebuildMemo.get(chatId, sourceStat)
+        if (memoised) {
+          // A copy, because every neighbouring seam hands out a fresh object
+          // and this is the only place a row would otherwise be aliased across
+          // calls. It also does NOT rejoin dirtyChatIds: the fresh read below
+          // already offered this row to the index write, and toChatListItem
+          // reads mutable settings (normalizeChatRecord resolves an ensemble
+          // roster through getSettings), so re-offering a memoised row could
+          // persist a settings-stale one.
+          item = { ...memoised }
+        } else {
+          const chat = readJson<ChatRecord | null>(chatPath, null)
+          if (chat) {
+            item = this.toChatListItem(chat, sourceStat)
+            chatListRebuildMemo.set(chatId, sourceStat, item)
+            dirtyChatIds.add(chatId)
+          }
         }
       }
       if (!item) continue
@@ -5827,6 +5901,11 @@ export class AppStore {
     // the same gate as saveChat: a streaming-stale row rebuilds fresh for the
     // caller on every read, but its disk append rides the volatile cadence.
     for (const chatId of dirtyChatIds) {
+      // Refresh the derived index even under Host ownership — the index is a
+      // sideband cache the Host does not maintain, and gating this door on
+      // `legacyStoreCanWrite` alone is what let it rot corpus-wide and turned
+      // every boot scan into a full read.
+      if (!chatListIndexSidebandWritable()) continue
       this.writeChatListIndexEntryIfAllowed(chatId, nextIndex[chatId])
     }
     return items.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -5843,6 +5922,28 @@ export class AppStore {
    *  a fat line per streamed message AND the settle callback appended a
    *  second, stale-content line per flush just to refresh two stat numbers. */
   private static writeChatListIndexEntryIfAllowed(chatId: string, next: ChatListItem): boolean {
+    // Under Host ownership the legacy write admission is closed (admit() returns
+    // null and would throw), and there is no in-process legacy drain to
+    // serialize against — the Host owns the authoritative bytes. The index is a
+    // sideband derived cache, so refresh it directly, exactly like the v2
+    // journal / segmented mirror writes. When WE own legacy writes, keep the
+    // drain-aware admission so an index refresh can never publish mid-drain.
+    // The churn throttle (writeChatListIndexEntryIfAllowedAdmitted →
+    // shouldWriteChatListIndexItem) applies on BOTH paths, so no door escapes
+    // it — the invariant the shared-gate comment above protects.
+    if (!legacyStoreCanWrite()) {
+      return this.writeChatListIndexEntryIfAllowedAdmitted(chatId, next)
+    }
+    return runLegacyStoreWriteAdmission(
+      { operation: 'write-chat-list-index', pathFamily: 'chats' },
+      () => this.writeChatListIndexEntryIfAllowedAdmitted(chatId, next)
+    )
+  }
+
+  private static writeChatListIndexEntryIfAllowedAdmitted(
+    chatId: string,
+    next: ChatListItem
+  ): boolean {
     const previous = chatListIndexStore.readEntry(chatId)
     if (!this.shouldWriteChatListIndexItem(previous, next)) return false
     chatListIndexStore.writeEntry(chatId, next)
@@ -5950,6 +6051,50 @@ export class AppStore {
     string,
     { mtimeMs: number; size: number; record: ChatRecord }
   >()
+
+  /** Cache a parsed record and hold the map inside its byte budget.
+   *
+   * Every write goes through here so the bound cannot be bypassed by adding a
+   * new `.set` site. Insertion order is recency order -- `touchChatRecord`
+   * re-inserts on a hit -- so the budget evicts least-recently-used first and
+   * never touches an unflushed (`mtimeMs === -1`) record. */
+  /** Chats holding at least one run the reconciler could still settle.
+   *
+   * Maintained as a by-product of records passing through the cache, which
+   * every read and every save already does, so it costs no extra I/O. The
+   * startup sweep reads the whole corpus once and thereby seeds it; from then
+   * on the periodic sweep reconciles only these, instead of re-parsing 514
+   * files to discover that ~none of them have open runs. Entries tombstone
+   * themselves: the save that seals a chat's last run removes it here. */
+  private static openRunChatIds = new Set<string>()
+
+  private static rememberChatRecord(
+    chatId: string,
+    entry: { mtimeMs: number; size: number; record: ChatRecord }
+  ): void {
+    if (chatHasReconcilableRun(entry.record)) this.openRunChatIds.add(chatId)
+    else this.openRunChatIds.delete(chatId)
+    this.chatRecordCache.delete(chatId)
+    this.chatRecordCache.set(chatId, entry)
+    if (this.chatRecordCache.size <= 1) return
+    const evictions = selectChatRecordCacheEvictions(
+      [...this.chatRecordCache.entries()].map(([id, held]) => ({
+        chatId: id,
+        size: held.size,
+        mtimeMs: held.mtimeMs
+      })),
+      CHAT_RECORD_CACHE_MAX_BYTES
+    )
+    for (const evicted of evictions) this.chatRecordCache.delete(evicted)
+  }
+
+  /** Move a cache hit to the recency tail so the budget evicts cold records. */
+  private static touchChatRecord(chatId: string): void {
+    const held = this.chatRecordCache.get(chatId)
+    if (!held) return
+    this.chatRecordCache.delete(chatId)
+    this.chatRecordCache.set(chatId, held)
+  }
   /** Serializes only the async binding patch for one chat. Ordinary legacy
    * saveChat callers remain independent, so this is a narrow race guard rather
    * than a new whole-record persistence protocol. */
@@ -5964,6 +6109,12 @@ export class AppStore {
   /** Serializes only the async git-workflow marker patch for one chat. Same
    * narrow race guard as the watched-PR tails. */
   private static chatGitWorkflowWriteTails = new Map<string, Promise<ChatRecord>>()
+  /** Interactive composer selections use a transcript-free adjacent overlay.
+   * Per-chat tails keep rapid model/reasoning/permission batches ordered. */
+  private static chatComposerSelectionWriteTails = new Map<
+    string,
+    Promise<{ chat: ChatRecord; changed: boolean }>
+  >()
 
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
     const cached = this.chatRecordCache.get(chatId)
@@ -5971,7 +6122,70 @@ export class AppStore {
     // through the coalescer and hasn't been flushed to disk yet. Skip the
     // file-stat check and return the cached record directly.
     if (cached && cached.mtimeMs === -1) {
-      return cached.record
+      if (hostPersistShadowChatIds.has(chatId)) {
+        // Host-routed save: the dirty marker has no deferred-write callback to
+        // re-anchor it, and the Host itself also writes this record (solo run
+        // lifecycle, thread.configure). Reconcile against the real file: once
+        // it carries a revision at or beyond ours, the durable record wins and
+        // the cache re-anchors to the real stat — the shadow heals instead of
+        // freezing the transcript or looping revision conflicts.
+        try {
+          const stat = fs.statSync(chatPath)
+          const shadowRevision = chatPersistenceRevision(cached.record)
+          const shadowMessageCount = cached.record.messages?.length ?? 0
+          const miss = hostShadowReconcileMissByChatId.get(chatId)
+          const unchangedSinceMiss =
+            miss !== undefined &&
+            miss.mtimeMs === stat.mtimeMs &&
+            miss.size === stat.size &&
+            miss.revision === shadowRevision &&
+            miss.messageCount === shadowMessageCount
+          const onDiskRaw = unchangedSinceMiss ? null : readJson<ChatRecord | null>(chatPath, null)
+          if (!unchangedSinceMiss) {
+            hostShadowReconcileMissByChatId.set(chatId, {
+              mtimeMs: stat.mtimeMs,
+              size: stat.size,
+              revision: shadowRevision,
+              messageCount: shadowMessageCount
+            })
+          }
+          if (onDiskRaw) {
+            const onDisk = this.normalizeChatRecord(onDiskRaw)
+            if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
+              // Revision alone is not coverage: a Host-lineage record that
+              // landed through the stale-save truncation hole can outrank the
+              // shadow while missing transcript rows the shadow carries.
+              // Re-anchoring to it would bless the regression as canon. Keep
+              // serving the shadow until the durable record covers every
+              // message id the cache already projected; the next save's
+              // conflict recovery re-anchors the lineage instead.
+              if (!chatRecordMissingTranscriptIds(onDisk, cached.record)) {
+                const onDiskRevision = chatPersistenceRevision(onDisk)
+                hostChatCompatibilityPersistence?.acknowledgeRevision(chatId, onDiskRevision)
+                const intent = hostPersistRebaseByChatId.get(chatId)
+                if (intent && onDiskRevision >= chatPersistenceRevision(intent.desired)) {
+                  hostPersistRebaseByChatId.delete(chatId)
+                  hostPersistUnconfirmedChatIds.delete(chatId)
+                }
+                const record = chatComposerSelectionOverlayStore.apply(onDisk)
+                this.rememberChatRecord(chatId, {
+                  mtimeMs: stat.mtimeMs,
+                  size: stat.size,
+                  record
+                })
+                hostPersistShadowChatIds.delete(chatId)
+                hostShadowReconcileMissByChatId.delete(chatId)
+                return record
+              }
+            }
+          }
+        } catch {
+          // The Host has not created/landed the file yet — serve the shadow.
+        }
+      }
+      const record = chatComposerSelectionOverlayStore.apply(cached.record)
+      cached.record = record
+      return record
     }
     let stat: fs.Stats
     try {
@@ -5981,42 +6195,183 @@ export class AppStore {
       return null
     }
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-      return cached.record
+      const record = chatComposerSelectionOverlayStore.apply(cached.record)
+      cached.record = record
+      this.touchChatRecord(chatId)
+      return record
     }
-    const chat = readJson<ChatRecord | null>(chatPath, null)
-    if (!chat) return null
-    const legacyRecord = this.normalizeChatRecord(chat)
-    let record = legacyRecord
-    try {
-      const replayed = incrementalChatPersistence.replay(chatId).record
-      if (replayed) {
-        const incrementalRecord = this.normalizeChatRecord(replayed)
-        const legacyRevision = chatPersistenceRevision(legacyRecord)
-        const incrementalRevision = chatPersistenceRevision(incrementalRecord)
-        if (
-          incrementalRevision > legacyRevision ||
-          (incrementalRevision === legacyRevision &&
-            isDeepStrictEqual(incrementalRecord, legacyRecord))
-        ) {
-          record = incrementalRecord
-        } else if (incrementalRevision === legacyRevision) {
-          console.warn(
-            `[incremental-chat] equal-revision replay mismatch for ${chatId}; ` +
-              'using the compatibility checkpoint'
-          )
-        }
-      }
-    } catch (error) {
-      console.error(
-        `[incremental-chat] replay failed for ${chatId}; using the compatibility checkpoint`,
-        error
-      )
-    }
-    this.chatRecordCache.set(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
+    const canonical = readCanonicalCatalogueChat({
+      chatId,
+      legacyFileExists: true,
+      normalize: (record) => this.normalizeChatRecord(record),
+      readLegacy: () => readJson<ChatRecord | null>(chatPath, null),
+      readIncremental: () => incrementalChatPersistence.replay(chatId).record,
+      pendingReplayState: () => incrementalChatPersistence.pendingReplayState(chatId),
+      ...(isSegmentedChatStoreEnabled()
+        ? { readSegmented: () => segmentedChatStore.readFull(chatId)?.record ?? null }
+        : {})
+    })
+    if (!canonical) return null
+    const record = chatComposerSelectionOverlayStore.apply(canonical)
+    this.rememberChatRecord(chatId, { mtimeMs: stat.mtimeMs, size: stat.size, record })
     return record
   }
 
   private static orphanSubThreadsReaped = false
+  private static threadCatalogueMirror: ThreadCatalogueMirror | null = null
+  private static threadCataloguePublisher: ThreadCatalogueSourcePublisher | null = null
+
+  static installThreadCataloguePublisher(
+    writerId: string,
+    onChanged: (chatId: string) => void,
+    manageHolds = false,
+    repairSource?: (chatId: string) => Promise<string>
+  ): void {
+    this.threadCataloguePublisher = new ThreadCatalogueSourcePublisher({
+      profilePath: userDataPath,
+      writer: 'desktop',
+      writerId,
+      segmented: isSegmentedChatStoreEnabled(),
+      canWrite: incrementalJournalSidebandWritable,
+      canManageRecoveryHolds: () => manageHolds && incrementalJournalSidebandWritable(),
+      onChanged,
+      repairSource,
+      onError: (error) => console.error('[thread-catalogue] source publication failed', error)
+    })
+    catalogueSourceWriteGuard = (chatId) => {
+      threadCatalogueWriteGate.assertAvailable(chatId)
+      this.threadCataloguePublisher?.catalogue.assertRecoveryHoldAllows(chatId)
+    }
+  }
+
+  static async drainThreadCataloguePublications(chatIds?: readonly string[]): Promise<void> {
+    await this.threadCataloguePublisher?.drain(chatIds)
+  }
+  static async disposeThreadCataloguePublisher(): Promise<void> {
+    await this.threadCataloguePublisher?.dispose()
+  }
+  private static catalogueErasure:
+    | ((preparation: HistoryDeletionPreparation) => Promise<void>)
+    | null = null
+  private static catalogueResume: (() => void) | null = null
+  private static catalogueQuiescence:
+    | ((preparation: HistoryDeletionPreparation) => Promise<void>)
+    | null = null
+  static installCatalogueErasure(
+    erase: (preparation: HistoryDeletionPreparation) => Promise<void>,
+    quiesce: (preparation: HistoryDeletionPreparation) => Promise<void>,
+    resume: () => void = () => {}
+  ): void {
+    this.catalogueErasure = erase
+    this.catalogueQuiescence = quiesce
+    this.catalogueResume = resume
+  }
+
+  static getThreadCataloguePublisher(): ThreadCatalogueSourcePublisher | null {
+    return this.threadCataloguePublisher
+  }
+
+  static async quiesceForCatalogueMutation(chatId: string): Promise<void> {
+    if (legacyStoreCanWrite()) this.flushChatSave(chatId)
+    await hostChatCompatibilityPersistence?.barrier(chatId)
+    await hostThreadRecordPersistPort?.drain(chatId)
+    await this.threadCataloguePublisher?.drainChat(chatId)
+    const deadline = Date.now() + 30_000
+    while (outstandingUtilityWriteChatIds.has(chatId)) {
+      if (Date.now() >= deadline) throw new Error('History compatibility writer has not drained')
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+  }
+
+  static pendingPeopleMigrationInventory(): Promise<void> | undefined {
+    return pendingPeopleDonorMutation(userDataPath)
+  }
+
+  static catalogueRecoveryAllowed(chatId: string): boolean {
+    return this.threadCataloguePublisher?.canRecover(chatId) ?? false
+  }
+
+  static hasPendingCatalogueWrites(chatId: string): boolean {
+    return Boolean(
+      this.threadCataloguePublisher?.hasPending(chatId) ||
+      outstandingUtilityWriteChatIds.has(chatId) ||
+      hostThreadRecordPersistPort?.pending(chatId) ||
+      hostChatCompatibilityPersistence?.hasUnconfirmed(chatId)
+    )
+  }
+
+  private static catalogueRecordWrite<T extends ChatRecord | null>(
+    chatId: string,
+    write: () => Promise<T>
+  ): Promise<T> {
+    return this.threadCataloguePublisher
+      ? this.threadCataloguePublisher.writeRecord(chatId, write)
+      : write()
+  }
+
+  static acceptCatalogueMutation(
+    projection: ReturnType<typeof projectThreadCatalogueRecord>
+  ): void {
+    const id = projection.summary.chatId
+    this.chatRecordCache.delete(id)
+    hostChatCompatibilityPersistence?.acknowledgeRevision(id, projection.revision)
+    hostPersistUnconfirmedChatIds.delete(id)
+    hostPersistRebaseByChatId.delete(id)
+    this.threadCatalogueMirror?.observe(projection)
+  }
+
+  static installThreadCatalogue(mirror: ThreadCatalogueMirror): void {
+    this.threadCatalogueMirror = mirror
+    mirror.subscribe((row, id) => {
+      if (!row) {
+        this.orphanSubThreadReapCandidates.delete(id)
+        this.openRunChatIds.delete(id)
+        return
+      }
+      if (row.recovery.unsettledRuns > 0) this.openRunChatIds.add(id)
+      else this.openRunChatIds.delete(id)
+      const parent = row.summary.parentChatId
+      if (
+        row.sourceComplete !== false &&
+        parent &&
+        isSafeChatId(parent) &&
+        !fs.existsSync(chatPathForId(chatsDir, parent))
+      )
+        this.orphanSubThreadReapCandidates.add(id)
+      else this.orphanSubThreadReapCandidates.delete(id)
+    })
+  }
+
+  static getThreadCatalogue(): ThreadCatalogueMirror | null {
+    return this.threadCatalogueMirror
+  }
+
+  static chatRecordExists(chatId: string): boolean {
+    return isSafeChatId(chatId) && fs.existsSync(chatPathForId(chatsDir, chatId))
+  }
+
+  private static catalogueSweepCandidates(
+    family: 'runs' | 'ensemble' | 'solo' | 'subthreads'
+  ): SweepFileStat[] | null {
+    if (!this.threadCatalogueMirror) return null
+    return this.threadCatalogueMirror
+      .projections()
+      .filter(({ recovery: r }) =>
+        family === 'runs'
+          ? r.unsettledRuns > 0
+          : family === 'ensemble'
+            ? r.ensembleWakeups > 0
+            : family === 'solo'
+              ? r.soloWakeups > 0
+              : r.workerEvents > 0 || r.joinPolicies > 0
+      )
+      .map(({ summary: s }) => ({
+        chatId: s.chatId,
+        mtimeMs: s.updatedAt,
+        size: s.chrome?.sourceChatSize ?? 0
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+  }
   private static orphanSubThreadReapCandidates = new Set<string>()
 
   /** One-time-per-process discovery of child chats (sub-threads / side-chats /
@@ -6031,31 +6386,536 @@ export class AppStore {
    * transiently unparseable parent can never cause its children to be reaped.
    * Best-effort: any failure leaves data untouched. */
   private static ensureOrphanSubThreadsReaped(): void {
+    if (this.threadCatalogueMirror) {
+      return
+    }
     if (this.orphanSubThreadsReaped) return
     this.orphanSubThreadsReaped = true
     try {
       if (!fs.existsSync(chatsDir)) return
-      for (const file of fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))) {
-        const chatId = path.basename(file, '.json')
-        const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
-        if (!chat?.parentChatId) continue
-        if (!fs.existsSync(chatPathForId(chatsDir, chat.parentChatId))) {
-          this.orphanSubThreadReapCandidates.add(chat.appChatId)
+      // Reading each ChatRecord here replays that chat's journal, so this scan
+      // used to cost seconds of every boot to answer one field. The chat-list
+      // index carries parentChatId with the mtime/size it was built from; a
+      // stat decides whether that cheap answer is still true, and anything it
+      // cannot vouch for still takes the full read below.
+      const chatListIndex = chatListIndexStore.readAll()
+      const { candidates } = collectOrphanSubThreadCandidates({
+        listChatIds: () =>
+          fs
+            .readdirSync(chatsDir)
+            .filter((f) => f.endsWith('.json'))
+            .map((f) => path.basename(f, '.json')),
+        statChatFile: (chatId) => {
+          try {
+            const stat = fs.statSync(path.join(chatsDir, `${chatId}.json`))
+            return { mtimeMs: stat.mtimeMs, size: stat.size }
+          } catch {
+            return null
+          }
+        },
+        indexEntry: (chatId) => chatListIndex[chatId],
+        // Unknown topology is repair debt, never a reason to decode the corpus
+        // inside an otherwise budgeted read. The catalogue supplies it later.
+        readChatRecord: () => null,
+        parentChatExists: (parentChatId) => {
+          try {
+            return fs.existsSync(chatPathForId(chatsDir, parentChatId))
+          } catch {
+            // chatPathForId rejects an unsafe id. Treat the parent as PRESENT:
+            // the candidate set drives a real subtree deletion, so a corrupt
+            // parentChatId must never reap, and must not abort the scan and
+            // discard every candidate found before it.
+            return true
+          }
         }
+      })
+      for (const candidate of candidates) {
+        this.orphanSubThreadReapCandidates.add(candidate)
       }
     } catch {
       // best-effort cleanup; never block reads
     }
   }
 
-  static getChats(workspaceId?: string): ChatRecord[] {
+  /**
+   * Stage 4 — serve a summary shell from the chat-list index when the index
+   * can vouch for the bytes on disk, and fall back to the full canonical read
+   * otherwise. Same index+stat idiom `getChatList` already uses: an entry
+   * vouches only when its sourceChatMtimeMs/sourceChatSize pair matches the
+   * file EXACTLY. The stat check is mandatory on every serve — a stale index
+   * entry that happens to keep its pair would silently serve wrong shell
+   * fields (title, messageCount, updatedAt). Shells are ChatListItem rows:
+   * messages/runs are empty arrays, so only consumers of list-carried fields
+   * (ids, titles, workspace, chrome, counts) may take this path.
+   */
+  private static readChatShellForSweep(
+    chatId: string,
+    chatPath: string,
+    existingIndex: Record<string, ChatListItem>
+  ): ChatRecord | null {
+    if (this.threadCatalogueMirror) {
+      const row = this.threadCatalogueMirror.get(chatId)
+      return row
+        ? catalogueChatListItem(row, this.threadCatalogueMirror?.sourceWitnessFor(chatId))
+        : null
+    }
+    try {
+      const sourceStat = fs.statSync(chatPath)
+      const indexed = existingIndex[chatId]
+      if (
+        indexed?.summaryOnly === true &&
+        Array.isArray(indexed.runsSummary) &&
+        this.chatListItemMatchesSource(indexed, sourceStat)
+      ) {
+        return this.normalizeChatListItem(indexed)
+      }
+    } catch {
+      // Unreadable/missing file — let the canonical read resolve it.
+    }
+    return this.readChatRecordCached(chatId, chatPath)
+  }
+
+  /**
+   * Records for the chats that could still hold an unsettled run.
+   *
+   * The periodic reconciler's narrow source. `getChats()` reads and parses
+   * EVERY chat file -- measured at 1.16GB across 514 files -- which is why
+   * nothing on a timer may call it.
+   */
+  static getChatsWithOpenRuns(): ChatRecord[] {
+    if (this.openRunChatIds.size === 0) return []
     this.ensureOrphanSubThreadsReaped()
     if (!fs.existsSync(chatsDir)) return []
+    const chats: ChatRecord[] = []
+    for (const chatId of [...this.openRunChatIds]) {
+      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chatPath = path.join(chatsDir, `${chatId}.json`)
+      const chat = this.readChatRecordCached(chatId, chatPath)
+      if (!chat) {
+        // The file is gone; nothing will ever settle it.
+        this.openRunChatIds.delete(chatId)
+        continue
+      }
+      chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * The chat files' stats, most-recently modified first. Every boot sweep
+   * needs these stats for its index vouch anyway, so recency ordering is free
+   * — and it is what lets a bounded pass cover the most recent activity first.
+   * An unreadable file keeps its id with NaN stats: it sorts last, widens to a
+   * candidate, and its read later fails cheaply.
+   */
+  private static sweepFileStatsByRecency(): SweepFileStat[] {
+    if (!fs.existsSync(chatsDir)) return []
+    const stats: SweepFileStat[] = []
+    for (const name of fs.readdirSync(chatsDir)) {
+      if (!name.endsWith('.json')) continue
+      const chatId = name.slice(0, -'.json'.length)
+      try {
+        const stat = fs.statSync(path.join(chatsDir, name))
+        stats.push({ chatId, mtimeMs: stat.mtimeMs, size: stat.size })
+      } catch {
+        stats.push({ chatId, mtimeMs: Number.NaN, size: Number.NaN })
+      }
+    }
+    return orderSweepStatsByRecency(stats)
+  }
+
+  /**
+   * The chat-list index, or null when it cannot be read. A null index widens
+   * every sweep to the full corpus rather than sweeping partially.
+   */
+  private static sweepIndexOrNull(): Record<string, ChatListItem> | null {
+    try {
+      return chatListIndexStore.readAll()
+    } catch {
+      return null
+    }
+  }
+
+  /** Vouch predicate over one listing pass's stats — no re-stat per chat. */
+  private static sweepVouchForStats(
+    index: Record<string, ChatListItem>,
+    stats: readonly SweepFileStat[]
+  ): (chatId: string) => boolean {
+    const byId = new Map(stats.map((stat) => [stat.chatId, stat]))
+    return (chatId: string) => {
+      const indexed = index[chatId]
+      const stat = byId.get(chatId)
+      return Boolean(indexed && stat && this.chatListItemMatchesSource(indexed, stat))
+    }
+  }
+
+  /**
+   * Canonical reads for recency-ordered candidates, optionally truncated to a
+   * budget. Truncation is a deferral, never a skip: the deferred post-paint
+   * sweep reads the remainder with the same predicates. Sorting by updatedAt
+   * preserves the sweep order callers had.
+   */
+  private static readCandidateChats(
+    candidates: readonly SweepFileStat[],
+    budget?: SweepBudget
+  ): ChatRecord[] {
+    const stats = budget ? truncateSweepToBudget(candidates, budget) : candidates
+    const chats: ChatRecord[] = []
+    for (const { chatId } of stats) {
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (chat) chats.push(chat)
+    }
+    return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  private static excludeReapCandidates(candidates: readonly SweepFileStat[]): SweepFileStat[] {
+    this.ensureOrphanSubThreadsReaped()
+    return candidates.filter((stat) => !this.orphanSubThreadReapCandidates.has(stat.chatId))
+  }
+
+  /**
+   * Source records for the stale-run reconciler's whole-corpus sweep.
+   *
+   * `getChats()` reads and parses EVERY chat record. Measured on Chris's
+   * profile 2026-09-07: 1058MB across 509 files parsed on the main thread,
+   * pre-window, to reach unsettled runs on 6 chats -- the bulk of the
+   * multi-minute boot stall. `openRunChatIds` cannot narrow it here because
+   * that set is only populated as records enter the cache, so it is empty on
+   * the boot pass this exists for.
+   *
+   * The index row carries the exact mtime+size its counts were derived from,
+   * and `ChatListIndexStore.writeEntry` writes that row's `runsSummary` side
+   * file in the same call from the same item -- so a row that vouches for the
+   * record on disk vouches for its sibling summary too. A vouched summary
+   * whose runs have all ended cannot hold anything to reconcile.
+   *
+   * Narrowing only, never a substitute predicate: candidates take the
+   * unchanged canonical read and `reconcileStaleChatRuns` still decides on
+   * real bytes. Every uncertainty widens the set (see
+   * `selectOpenRunCandidateChatIds`), and an unreadable index or listing
+   * abandons the narrowing altogether rather than sweeping a partial corpus:
+   * a missed candidate strands a run with nothing left to settle it.
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read. Either way the
+   * candidate SET is unchanged — see `listStaleRunSweepCandidates`.
+   */
+  static getChatsForStaleRunSweep(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listStaleRunSweepCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the stale-run sweep, most-recently modified
+   * first. Index + stats only — zero parses — so the deferred sweep can plan
+   * byte-budgeted slices before reading a byte of transcript.
+   */
+  static listStaleRunSweepCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('runs')
+    if (catalogued) return catalogued
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectOpenRunCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readRunsSummary: (chatId) => {
+          const indexed = index[chatId]
+          return Array.isArray(indexed?.runsSummary) ? indexed.runsSummary : null
+        }
+      }
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
+  }
+
+  /**
+   * Source records for the persisted ensemble-wakeup sweep.
+   *
+   * The boot recovery pass flatMapped `ensemble.wakeups` across a bare
+   * `getChats()`. Measured on Chris's profile 2026-09-07: 1080MB across 516
+   * files parsed pre-window to build an EMPTY list. The lean ensemble
+   * projection cannot answer this — it strips `wakeups` by design — so the row
+   * carries `ensembleWakeupCount` beside `messageCount`/`runCount`, judged by
+   * the same mtime+size vouch.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and the
+   * caller still reads real wakeups off the record. A skip needs a vouching
+   * row AND an explicit zero, so a row predating the field falls through, and
+   * an unreadable index abandons the narrowing rather than sweeping partially.
+   */
+  static getChatsWithEnsembleWakeups(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listEnsembleWakeupCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the ensemble-wakeup sweep, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listEnsembleWakeupCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('ensemble')
+    if (catalogued) return catalogued
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return stats
+    const candidates = selectEnsembleWakeupCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readWakeupCount: (chatId) => {
+          const count = index[chatId]?.ensembleWakeupCount
+          return typeof count === 'number' ? count : null
+        }
+      }
+    )
+    const wanted = new Set(candidates)
+    return stats.filter((stat) => wanted.has(stat.chatId))
+  }
+
+  /**
+   * Source records for the persisted solo-wakeup sweep.
+   *
+   * The boot recovery pass collected `soloWakeups` across a bare `getChats()`
+   * — a whole-corpus parse on the main thread, pre-window, to build a
+   * usually-empty list. Same narrowing idiom as the ensemble twin: the row
+   * carries a pending-`soloWakeups` count beside `messageCount`/`runCount`,
+   * judged by the same mtime+size vouch.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and the
+   * caller still reads real wakeups off the record. A skip needs a vouching
+   * row AND an explicit zero, so a row predating the field falls through, and
+   * an unreadable index abandons the narrowing rather than sweeping partially.
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read.
+   */
+  static getChatsWithSoloWakeups(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listSoloWakeupCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for the solo-wakeup sweep, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listSoloWakeupCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('solo')
+    if (catalogued) return catalogued
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectSoloWakeupCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readWakeupCount: (chatId) => {
+          const count = index[chatId]?.soloWakeupCount
+          return typeof count === 'number' ? count : null
+        }
+      }
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
+  }
+
+  /**
+   * Source records for sub-thread worker-queue recovery and the join-policy
+   * loop. Both iterated a bare `getChats()` — a whole-corpus parse on the main
+   * thread, pre-window — and then skipped every chat that is not a sub-thread
+   * carrying worker control or a join policy. Both answers are list-carried
+   * chrome (`parentChatId` + `delegationContext` survive on the row), so a
+   * vouched row answers them without the canonical read.
+   *
+   * Narrowing only: candidates take the unchanged canonical read and each
+   * caller still applies its own predicate to real bytes. Every uncertainty
+   * widens the set (see `selectSubThreadRecoveryCandidateChatIds`).
+   *
+   * `options.budget` truncates the READS to the most recent candidates for the
+   * pre-window pass; omitted, every candidate is read.
+   */
+  static getSubThreadRecoveryChats(options: { budget?: SweepBudget } = {}): ChatRecord[] {
+    return this.readCandidateChats(this.listSubThreadRecoveryCandidates(), options.budget)
+  }
+
+  /**
+   * Candidate chat files for sub-thread recovery, most-recently modified
+   * first. Index + stats only — zero parses.
+   */
+  static listSubThreadRecoveryCandidates(): SweepFileStat[] {
+    const catalogued = this.catalogueSweepCandidates('subthreads')
+    if (catalogued) return catalogued
+    const stats = this.sweepFileStatsByRecency()
+    const index = this.sweepIndexOrNull()
+    if (!index) return this.excludeReapCandidates(stats)
+    const candidates = selectSubThreadRecoveryCandidateChatIds(
+      stats.map((stat) => stat.chatId),
+      {
+        vouchesForSourceBytes: this.sweepVouchForStats(index, stats),
+        readRecoveryHint: (chatId) => this.subThreadRecoveryHintFromRow(index[chatId])
+      }
+    )
+    const wanted = new Set(candidates)
+    return this.excludeReapCandidates(stats.filter((stat) => wanted.has(stat.chatId)))
+  }
+
+  private static subThreadRecoveryHintFromRow(
+    item: ChatListItem | undefined
+  ): SubThreadRecoveryHint | null {
+    if (!item) return null
+    const parentChatId =
+      typeof item.parentChatId === 'string' && item.parentChatId !== '' ? item.parentChatId : null
+    const delegation = item.delegationContext
+    const workerControl = delegation?.workerControl
+    const events = Array.isArray(workerControl?.events) ? workerControl.events : []
+    return {
+      parentChatId,
+      hasWorkerControl: Boolean(workerControl),
+      hasJoinPolicy:
+        Boolean(delegation?.joinPolicy) || events.some((event) => Boolean(event?.joinPolicy))
+    }
+  }
+
+  /**
+   * The index row for `chatId`, but only when it can vouch for the exact bytes
+   * on disk AND reports content that makes the chat unreapable outright.
+   *
+   * The vouch is the exact mtimeMs+size pair -- the same identity check
+   * `getChatList` judges an entry by, so a matching row's counts were derived
+   * from these exact bytes. Every uncertainty returns null (an absent row, a
+   * stale stat pair, non-numeric counts) and the caller falls back to the
+   * canonical read.
+   *
+   * It deliberately does NOT also require `runsSummary`, which is the one
+   * place this diverges from `readChatShellForSweep`. That helper SERVES the
+   * row, so it needs the shell-shape freshness marker before a consumer can
+   * read run data off it; this asks a single yes/no question and serves
+   * nothing. The divergence is load-bearing, not cosmetic: measured on Chris's
+   * profile 2026-09-07, 446 of 447 index entries predate `runsSummary`, so
+   * requiring it skipped NOTHING -- all 514 files and 1100MB still parsed,
+   * which is exactly the boot stall this method exists to remove. On the stat
+   * pair alone, 370 files (687MB) are skipped. Rows are restamped only when
+   * `legacyStoreCanWrite()` allows it, so a Host-owned profile can sit
+   * indefinitely without the marker ever appearing.
+   *
+   * Both error directions are safe, which is what makes the weaker gate
+   * acceptable inside a module whose contract is paranoia. A count wrongly
+   * above zero skips a chat that was in fact empty, so an abandoned shell
+   * merely survives the sweep. A count wrongly at zero falls through to the
+   * canonical read and the predicate decides on real bytes. Neither direction
+   * can delete a started chat.
+   */
+  private static startedChatFromIndex(
+    chatId: string,
+    chatPath: string,
+    existingIndex: Record<string, ChatListItem>
+  ): ChatListItem | null {
+    try {
+      const indexed = existingIndex[chatId]
+      if (
+        indexed?.summaryOnly !== true ||
+        typeof indexed.messageCount !== 'number' ||
+        typeof indexed.runCount !== 'number'
+      ) {
+        return null
+      }
+      if (indexed.messageCount <= 0 && indexed.runCount <= 0) return null
+      return this.chatListItemMatchesSource(indexed, fs.statSync(chatPath)) ? indexed : null
+    } catch {
+      // Unreadable/missing file — let the canonical read resolve it.
+      return null
+    }
+  }
+
+  /**
+   * Candidate records for the abandoned-chat reaper, plus the parent set
+   * derived from the WHOLE corpus.
+   *
+   * `getChats()` reads and parses EVERY chat file -- measured at 1.16GB across
+   * 514 files -- and the reap handler re-selects after every deletion await,
+   * so a boot-time reap paid that cost several times over. Measured on Chris's
+   * profile 2026-09-06: main pinned at 100-117% with the heap spiking to 3.1GB
+   * for 60-90s before the first window could paint, and tipping the V8 ceiling
+   * aborted the app outright.
+   *
+   * The narrowing is a PREFILTER, never a substitute predicate. A chat is
+   * skipped only when the index vouches for it AND that row reports a message
+   * or a run -- and `isReapableAbandonedChat` already returns false for both,
+   * so skipping one cannot change the reap set. It can only ever protect.
+   *
+   * Everything else takes the unchanged canonical read, so the predicate never
+   * sees a shell. That is load-bearing beyond messages/runs:
+   * `normalizeChatListItem` empties `runs` and drops `ollamaSessionMemory`, so
+   * a shell would shed guards the predicate reads and present a started chat
+   * as an empty, reapable draft. Deleting a real conversation is the single
+   * failure the reaper's paranoid contract exists to prevent.
+   *
+   * `parentChatIds` is derived HERE rather than by the reaper, which otherwise
+   * infers it from the list it is handed: a started parent is skipped above,
+   * so a list-derived set would no longer see the child that makes some other
+   * chat a parent, and would reap a parent it should have protected.
+   */
+  static getAbandonedReapCandidates(): { chats: ChatRecord[]; parentChatIds: Set<string> } {
+    if (this.threadCatalogueMirror) {
+      const rows = this.threadCatalogueMirror.projections()
+      const parentChatIds = new Set(
+        rows.flatMap(({ summary }) => (summary.parentChatId ? [summary.parentChatId] : []))
+      )
+      if (!this.threadCatalogueMirror.complete) return { chats: [], parentChatIds }
+      const chats = rows
+        .filter(({ summary }) => summary.messageCount === 0 && summary.runCount === 0)
+        .flatMap(({ summary }) => {
+          const chat = this.getChat(summary.chatId)
+          return chat ? [chat] : []
+        })
+      return { chats, parentChatIds }
+    }
+    this.ensureOrphanSubThreadsReaped()
+    const parentChatIds = new Set<string>()
+    if (!fs.existsSync(chatsDir)) return { chats: [], parentChatIds }
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
+    const existingIndex = chatListIndexStore.readAll()
     const chats: ChatRecord[] = []
     for (const file of files) {
       const chatId = path.basename(file, '.json')
-      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
+      const chatPath = path.join(chatsDir, file)
+      const started = this.startedChatFromIndex(chatId, chatPath, existingIndex)
+      if (started) {
+        // Skipped for candidacy, but it still votes on parentage — mirroring
+        // the orphan filter getChats applies before deriveParentChatIds sees
+        // the list.
+        const appChatId = started.appChatId ?? chatId
+        if (!this.orphanSubThreadReapCandidates.has(appChatId) && started.parentChatId) {
+          parentChatIds.add(started.parentChatId)
+        }
+        continue
+      }
+      const chat = this.readChatRecordCached(chatId, chatPath)
+      if (!chat || this.orphanSubThreadReapCandidates.has(chat.appChatId)) continue
+      if (chat.parentChatId) parentChatIds.add(chat.parentChatId)
+      chats.push(chat)
+    }
+    return { chats: chats.sort((a, b) => b.updatedAt - a.updatedAt), parentChatIds }
+  }
+
+  static getChats(workspaceId?: string, options: { listShells?: boolean } = {}): ChatRecord[] {
+    if (options.listShells && this.threadCatalogueMirror)
+      return this.threadCatalogueMirror.list(workspaceId)
+    this.ensureOrphanSubThreadsReaped()
+    if (!fs.existsSync(chatsDir)) return []
+    const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
+    // Stage 4: background id/updatedAt/workspaceId-class sweeps opt into
+    // summary shells so a whole-corpus scan no longer parses every chat's
+    // messages. The DEFAULT stays the full canonical read — ChatRecord.messages
+    // keeps its complete-transcript meaning for every content consumer, and
+    // the renderer get-chats channel is untouched.
+    const existingIndex = options.listShells ? chatListIndexStore.readAll() : null
+    const chats: ChatRecord[] = []
+    for (const file of files) {
+      const chatId = path.basename(file, '.json')
+      const chatPath = path.join(chatsDir, file)
+      const chat =
+        options.listShells && existingIndex
+          ? this.readChatShellForSweep(chatId, chatPath, existingIndex)
+          : this.readChatRecordCached(chatId, chatPath)
       if (
         chat &&
         !this.orphanSubThreadReapCandidates.has(chat.appChatId) &&
@@ -6065,6 +6925,59 @@ export class AppStore {
       }
     }
     return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Workspace-scoped, transcript-reduced records for the Commits inspector's
+   * attribution column.
+   *
+   * `getChats` cannot serve this surface. It reads and parses EVERY chat file
+   * in the profile before filtering by workspace, then hands the renderer
+   * complete transcripts across IPC — measured on a real profile, 954MB read
+   * to ship 692MB, synchronously on the main process, to build a map of a few
+   * hundred commit hashes. The whole app froze for the duration. This path
+   * narrows the read to one workspace and drops every message that carries no
+   * commit receipt before the records cross the boundary.
+   */
+  static getWorkspaceCommitAttributionProjections(workspaceId: string): ChatRecord[] {
+    if (!workspaceId) return []
+    this.ensureOrphanSubThreadsReaped()
+    if (!fs.existsSync(chatsDir)) return []
+    const projections: ChatRecord[] = []
+    for (const chatId of this.commitAttributionChatIds(workspaceId)) {
+      if (this.orphanSubThreadReapCandidates.has(chatId)) continue
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, `${chatId}.json`))
+      if (!chat || chat.workspaceId !== workspaceId) continue
+      const projected = projectChatForCommitAttribution(chat)
+      if (projected) projections.push(projected)
+    }
+    return projections.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Chat ids worth parsing for `workspaceId`. The list index carries each
+   * chat's workspace, so it narrows the parse to one workspace's files;
+   * `readdirSync` only yields names, so sweeping it for chats the index has
+   * not seen yet stays cheap and keeps a freshly-created thread visible.
+   */
+  private static commitAttributionChatIds(workspaceId: string): string[] {
+    let indexed: Record<string, ChatListItem> | null = null
+    try {
+      indexed = chatListIndexStore.readAll()
+    } catch {
+      indexed = null
+    }
+    const files = fs.readdirSync(chatsDir).filter((file) => file.endsWith('.json'))
+    if (!indexed || Object.keys(indexed).length === 0) {
+      return files.map((file) => path.basename(file, '.json'))
+    }
+    const scoped = new Set<string>()
+    for (const file of files) {
+      const chatId = path.basename(file, '.json')
+      const item = indexed[chatId]
+      if (!item || item.workspaceId === workspaceId) scoped.add(chatId)
+    }
+    return Array.from(scoped)
   }
 
   static listOrphanSubThreadReapCandidates(): string[] {
@@ -6186,18 +7099,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its isolated worktree could be bound.')
         }
-        const persisted = await persistThreadWorktreeBindingPatch({
-          chatsDir,
-          chatId,
-          binding,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Thread worktree binding persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistThreadWorktreeBindingPatch({
+            chatsDir,
+            chatId,
+            binding,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Thread worktree binding persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         // The patcher deliberately avoids synchronous stat/index maintenance.
         // Let the normal cached read validate from disk on the next consumer.
         this.chatRecordCache.delete(chatId)
@@ -6286,7 +7201,7 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its fan-out candidate could be recorded.')
         }
-        const persisted = await write()
+        const persisted = await this.catalogueRecordWrite(chatId, write)
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6329,18 +7244,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its PR watch could be updated.')
         }
-        const persisted = await persistWatchedPrPatch({
-          chatsDir,
-          chatId,
-          watchedPr,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Watched PR persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistWatchedPrPatch({
+            chatsDir,
+            chatId,
+            watchedPr,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Watched PR persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6383,18 +7300,20 @@ export class AppStore {
         if (deletedChatIds.has(chatId)) {
           throw new Error('This chat was deleted before its git workflow could be recorded.')
         }
-        const persisted = await persistChatGitWorkflowPatch({
-          chatsDir,
-          chatId,
-          gitWorkflow,
-          admitMutation: async (chat) => {
-            await this.assertHistoryMutationAllowedAsync({
-              operation: 'Git workflow marker persistence',
-              chatIds: [chat.appChatId],
-              workspaceIds: [chat.workspaceId]
-            })
-          }
-        })
+        const persisted = await this.catalogueRecordWrite(chatId, () =>
+          persistChatGitWorkflowPatch({
+            chatsDir,
+            chatId,
+            gitWorkflow,
+            admitMutation: async (chat) => {
+              await this.assertHistoryMutationAllowedAsync({
+                operation: 'Git workflow marker persistence',
+                chatIds: [chat.appChatId],
+                workspaceIds: [chat.workspaceId]
+              })
+            }
+          })
+        )
         this.chatRecordCache.delete(chatId)
         return persisted
       })
@@ -6411,6 +7330,75 @@ export class AppStore {
         }
       }
     )
+    return operation
+  }
+
+  static persistChatComposerSelection(
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<{ chat: ChatRecord; changed: boolean }> {
+    if (!isSafeChatId(request.chatId)) {
+      return Promise.reject(new Error('A composer selection can only be recorded on a saved chat.'))
+    }
+    const previous =
+      this.chatComposerSelectionWriteTails.get(request.chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(() =>
+        threadCatalogueWriteGate.admitBounded(
+          request.chatId,
+          COMPOSER_SELECTION_GATE_WAIT_BUDGET_MS,
+          async () => {
+            if (deletedChatIds.has(request.chatId)) {
+              throw new Error(
+                'This chat was deleted before its composer selection could be recorded.'
+              )
+            }
+            const current = this.getChat(request.chatId)
+            if (!current) throw new Error('Chat not found.')
+            if (this.getSettings().storeLocalChatHistory === false) {
+              const chat = applyChatComposerSelectionPatch(current, request)
+              if (chat !== current) {
+                const cached = this.chatRecordCache.get(request.chatId)
+                if (cached) cached.record = chat
+              }
+              return { chat, changed: chat !== current }
+            }
+            await this.assertHistoryMutationAllowedAsync({
+              operation: 'Composer selection persistence',
+              chatIds: [current.appChatId],
+              workspaceIds: [current.workspaceId]
+            })
+            const publication = this.threadCataloguePublisher?.begin(request.chatId)
+            let result: Awaited<ReturnType<ChatComposerSelectionOverlayStore['persist']>>
+            try {
+              result = await chatComposerSelectionOverlayStore.persist(current, request)
+              if (publication) this.threadCataloguePublisher?.finish(publication, result.chat)
+            } catch (error) {
+              if (publication) this.threadCataloguePublisher?.fail(publication)
+              throw error
+            }
+            if (result.changed) {
+              const cached = this.chatRecordCache.get(request.chatId)
+              if (cached) cached.record = result.chat
+              else {
+                this.rememberChatRecord(request.chatId, {
+                  mtimeMs: -1,
+                  size: -1,
+                  record: result.chat
+                })
+              }
+            }
+            return result
+          }
+        )
+      )
+    this.chatComposerSelectionWriteTails.set(request.chatId, operation)
+    const clearTail = (): void => {
+      if (this.chatComposerSelectionWriteTails.get(request.chatId) === operation) {
+        this.chatComposerSelectionWriteTails.delete(request.chatId)
+      }
+    }
+    void operation.then(clearTail, clearTail)
     return operation
   }
 
@@ -6693,8 +7681,12 @@ export class AppStore {
           derived.grokReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'muse') {
           derived.museReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'ollama') {
+          derived.ollamaReasoningEffort = participant.reasoningEffort
         } else if (participant.provider === 'cursor' && isCursorGrokModelId(participant.model)) {
           derived.cursorReasoningEffort = participant.reasoningEffort
+        } else if (participant.provider === 'antigravity') {
+          derived.antigravityReasoningEffort = participant.reasoningEffort
         }
       }
       if (participant.provider === 'cursor' && participant.fastModeEnabled !== undefined) {
@@ -6782,7 +7774,9 @@ export class AppStore {
     claudeReasoningEffort?: string | null
     grokReasoningEffort?: string | null
     museReasoningEffort?: string | null
+    ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
+    antigravityReasoningEffort?: string | null
     cursorFastMode?: boolean
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
@@ -6837,8 +7831,14 @@ export class AppStore {
       ...(args.museReasoningEffort !== undefined
         ? { museReasoningEffort: args.museReasoningEffort }
         : {}),
+      ...(args.ollamaReasoningEffort !== undefined
+        ? { ollamaReasoningEffort: args.ollamaReasoningEffort }
+        : {}),
       ...(args.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: args.cursorReasoningEffort }
+        : {}),
+      ...(args.antigravityReasoningEffort !== undefined
+        ? { antigravityReasoningEffort: args.antigravityReasoningEffort }
         : {}),
       ...(args.cursorFastMode !== undefined ? { cursorFastMode: args.cursorFastMode } : {})
     }
@@ -6930,6 +7930,9 @@ export class AppStore {
     title?: string
     /** Ensemble participant id of the calling seat; omitted on solo chats. */
     spawnedBy?: string
+    /** App run id of the parent run issuing the delegation (for
+     * terminalization cascade). Omitted when the caller has no run id. */
+    parentAppRunId?: string
   }): ChatRecord {
     const parent = this.getChat(args.parentChatId)
     if (!parent) {
@@ -6983,9 +7986,14 @@ export class AppStore {
           ? { lifecycle: args.lifecycle }
           : {}),
         ...(typeof args.role === 'string' && args.role.trim() ? { role: args.role.trim() } : {}),
-        ...(typeof args.label === 'string' && args.label.trim() ? { label: args.label.trim() } : {}),
+        ...(typeof args.label === 'string' && args.label.trim()
+          ? { label: args.label.trim() }
+          : {}),
         ...(typeof args.spawnedBy === 'string' && args.spawnedBy.trim()
           ? { spawnedBy: args.spawnedBy.trim() }
+          : {}),
+        ...(typeof args.parentAppRunId === 'string' && args.parentAppRunId.trim()
+          ? { parentAppRunId: args.parentAppRunId.trim() }
           : {})
       }
     }
@@ -7041,6 +8049,332 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
+    const previous = this.getChat(chat.appChatId)
+    // Stage 6 — escalate-not-reject. A marked summary shell (a paged open, an
+    // LRU demotion, a sidebar row) reaching a whole-record save is rebuilt
+    // onto the canonical transcript HERE, before either fence below, so every
+    // caller degrades to a correct chrome-only write instead of a failed user
+    // action: on a >1,500-message thread the open record is a shell for the
+    // whole session. A summary CREATE (no canonical record), a marked record
+    // that still carries rows, and any UNMARKED windowed page keep failing
+    // closed — the fences and the Stage 1a guard are untouched and still run
+    // on the escalated record. The caller's object is still the one stamped
+    // below: a non-shell input passes through by reference.
+    const authoritativeChat = escalateSummaryChatForSave(chat, () => previous)
+    const titledChat = applyThreadTitlePolicy(authoritativeChat, previous)
+    // Several main-owned callers broadcast the input object they passed rather
+    // than the returned normalized record. Mirror the atomic title pair just
+    // like the persistence revision stamp below so resumed-title repair is
+    // visible immediately in every projection.
+    chat.title = titledChat.title
+    chat.threadTitle = titledChat.threadTitle
+    // When the legacy writer gate is open (or a drain is retaining this exact
+    // writer), persist through the proven admitted path unchanged. Since the
+    // Host cutover the gate is Host-owned and admission throws
+    // LegacyStoreWriterGateClosedError — route the save through the Host
+    // instead (thread.record.persist). Both branches stay synchronous for the
+    // 86 existing call sites.
+    const publication = this.getSettings().storeLocalChatHistory
+      ? this.threadCataloguePublisher?.begin(titledChat.appChatId)
+      : undefined
+    let saved: ChatRecord
+    try {
+      saved = legacyStoreCanWrite()
+        ? runLegacyStoreWriteAdmission(
+            { operation: 'save-chat', pathFamily: 'chats' },
+            (writerAdmission) => this.saveChatAdmitted(titledChat, options, writerAdmission)
+          )
+        : this.saveChatThroughHost(titledChat, options)
+    } catch (error) {
+      if (publication) this.threadCataloguePublisher?.fail(publication)
+      throw error
+    }
+    if (publication)
+      this.threadCataloguePublisher?.finishAfter(
+        publication,
+        saved,
+        incrementalChatPersistence.awaitDeferredDurability(saved.appChatId)
+      )
+    const producerEnvelope = chatUpdateProducerEnvelopeFor(saved)
+    if (producerEnvelope) attachChatUpdateProducerEnvelope(chat, producerEnvelope)
+    chat.persistenceRevision = saved.persistenceRevision
+    chat.updatedAt = saved.updatedAt
+    observeComposerContinuationPersisted(saved.appChatId)
+    this.threadCatalogueMirror?.observe(projectThreadCatalogueRecord(saved))
+    return saved
+  }
+
+  /** Atomic, main-owned semantic-title compare-and-swap. */
+  static applyContinuationTitle(request: ContinuationTitleApplyRequest): ChatRecord | null {
+    const current = this.getChat(request.chatId)
+    if (!current) return null
+    const evidence = buildContinuationEvidenceSnapshot(current, 'title')
+    if (
+      !evidence ||
+      evidence.fingerprint !== request.evidenceFingerprint ||
+      !evidence.title.eligible ||
+      evidence.title.expectedCurrent !== request.expectedTitle ||
+      evidence.title.sourceMessageId !== request.sourceMessageId ||
+      evidence.title.sourceFingerprint !== request.sourceFingerprint
+    ) {
+      return null
+    }
+    const updated = applyLocalAiThreadTitle(current, {
+      title: request.title,
+      sourceMessageId: request.sourceMessageId,
+      sourceFingerprint: request.sourceFingerprint,
+      evidenceFingerprint: request.evidenceFingerprint,
+      expectedTitle: request.expectedTitle
+    })
+    return updated ? this.saveChat(updated) : null
+  }
+
+  /**
+   * Host-owned-gate persistence path. The main-owned incremental journal is the
+   * hot durability path; one latest complete record is retained by reference as
+   * a Host compatibility checkpoint. Normal stream saves never serialize that
+   * full record. Initial creation, journal failure, approval/terminal saves and
+   * explicit barriers materialize it through `thread.record.persist`.
+   *
+   * Durability is raised at explicit barriers (`awaitChatRecordPersisted`) so a
+   * genuine persistence failure still surfaces loudly at round start instead
+   * of silently at 85 call sites.
+   * A revision conflict is not such a failure: the barrier rebases onto the
+   * Host record and, failing that, re-anchors this optimistic revision to the
+   * Host's so the NEXT save can land. The stamp below only ever advances, so
+   * without that re-anchor one rejected write wedges the chat forever.
+   *
+   * Revision contract: creation writes 0. Updates normally advance by one, but
+   * a coalesced compatibility checkpoint may publish the exact greater logical
+   * revision after matching the older Host CAS base. Host-native lifecycle or
+   * configuration writes may advance the record concurrently; the durability
+   * barrier rebases this accumulated Desktop intent within a strict retry bound.
+   */
+  private static saveChatThroughHost(chat: ChatRecord, options: ChatSaveOptions = {}): ChatRecord {
+    this.assertHistoryMutationAllowed({
+      operation: 'Chat persistence',
+      chatIds: [chat.appChatId, chat.parentChatId],
+      workspaceIds: [chat.workspaceId],
+      runIds: (chat.runs || []).map((run) => run.runId)
+    })
+    const settings = this.getSettings()
+    if (!settings.storeLocalChatHistory) return chat
+    if ((chat as Partial<ChatListItem>).summaryOnly === true) {
+      throw new Error('Cannot save a summary-only chat record; hydrate the chat first.')
+    }
+    const chatPath = chatPathForId(chatsDir, chat.appChatId)
+    const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
+    // Stage 1a: the stale-revision merge below only fills missing rows when the
+    // incoming revision is STALE; a current-revision page would otherwise
+    // overwrite the durable prefix. Fail loudly on that shape instead.
+    assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
+    assertPeopleDonorMutationAllowed(userDataPath, previousChatForFeedback, chat)
+    // Same main-owned-field protection as the admitted path: renderer-owned
+    // records can lag main's async patchers, and a lean chat-list ensemble row
+    // must never erase the stored roster.
+    const {
+      threadWorktreeBinding: _rendererThreadWorktreeBinding,
+      watchedPr: _rendererWatchedPr,
+      gitWorkflow: _rendererGitWorkflow,
+      fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
+      continuityCheckpoints: _rendererContinuityCheckpoints,
+      ...rendererOwnedChat
+    } = chat
+    // The admitted path's stale-revision merge, ported 1:1. A writer holding an
+    // older whole record (renderer debounce fallback save, orchestrator flush
+    // tail composed from a pre-mutation getChat) must not drop the
+    // main-appended thread-message projections it never saw; the merge re-adds
+    // ONLY those projections, so intentionally removed rows (wiped lane cards)
+    // stay removed. Current-revision saves remain authoritative, including
+    // deletion.
+    const rendererMessages = chat.messages || []
+    const reconciledMessages =
+      previousChatForFeedback &&
+      chatPersistenceRevision(chat) < chatPersistenceRevision(previousChatForFeedback)
+        ? mergeMissingThreadMessageTranscriptProjections(
+            rendererMessages,
+            previousChatForFeedback.messages || []
+          )
+        : rendererMessages
+    // A revision-stale record never saw the stored goal, so its silence about
+    // one is ignorance rather than a Clear. See durableActiveGoalToRestore.
+    const restoredActiveGoal = durableActiveGoalToRestore(chat, previousChatForFeedback)
+    const chatWithMainOwnedFields: ChatRecord = {
+      ...rendererOwnedChat,
+      ...(restoredActiveGoal ? { activeGoal: restoredActiveGoal } : {}),
+      runs: preserveContinuityRunReceipts(
+        preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
+        previousChatForFeedback?.runs || [],
+        options.authoritativeContinuityDelivery
+      ),
+      continuityCheckpoints: options.authoritativeContinuityCheckpoints
+        ? chat.continuityCheckpoints
+        : previousChatForFeedback?.continuityCheckpoints,
+      messages: reconciledMessages,
+      ...(previousChatForFeedback?.threadWorktreeBinding
+        ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
+        : {}),
+      ...(previousChatForFeedback?.watchedPr
+        ? { watchedPr: { ...previousChatForFeedback.watchedPr } }
+        : {}),
+      ...(previousChatForFeedback?.gitWorkflow
+        ? { gitWorkflow: { ...previousChatForFeedback.gitWorkflow } }
+        : {}),
+      ...(previousChatForFeedback?.fanoutWorktreeCandidates?.length
+        ? {
+            fanoutWorktreeCandidates: previousChatForFeedback.fanoutWorktreeCandidates.map(
+              (candidate) => ({ ...candidate })
+            )
+          }
+        : {}),
+      ...(this.isChatListEnsembleProjection(chat.ensemble)
+        ? previousChatForFeedback?.ensemble
+          ? { ensemble: previousChatForFeedback.ensemble }
+          : { ensemble: this.withoutChatListEnsembleProjectionFlag(chat.ensemble!) }
+        : {})
+    }
+    const preparation = prepareChatForPersistence({
+      chat: chatWithMainOwnedFields,
+      previous: previousChatForFeedback,
+      authoredTranscript: options.authoredTranscript,
+      // Same eligibility rule as the admitted path: once the stale-revision
+      // merge changed the message array, the supplied authored ops no longer
+      // describe it and the mutation must be recomputed from before/after.
+      authoredTranscriptEligible: reconciledMessages === rendererMessages,
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
+      persistDetailCheckpoint: (checkpoint) => {
+        this.appendRunEvent(
+          toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint),
+          {
+            durability: 'strict'
+          }
+        )
+      },
+      maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
+    })
+    const normalizedChat = this.normalizeChatRecord(preparation.chat)
+    normalizedChat.updatedAt = Date.now()
+    const expectedRevision = chatPersistenceRevision(previousChatForFeedback)
+    normalizedChat.persistenceRevision = previousChatForFeedback === null ? 0 : expectedRevision + 1
+    // Tombstone guard: a deleted chat must never be re-saved. The Host-routed
+    // delete is an async round trip, so unlike the legacy path (where the
+    // unlink is synchronous) the window cannot be narrowed by a stat — honor
+    // the tombstone for the whole in-flight erasure, or a late save would
+    // resurrect a chat the user just deleted.
+    if (deletedChatIds.has(normalizedChat.appChatId)) {
+      return previousChatForFeedback || normalizedChat
+    }
+    const flushReason = deriveSaveFlushReason(normalizedChat)
+    // Large terminal saves also skip the journal's eager full checkpoint (and
+    // its whole-record replay-parity verify — measured as the bulk of the
+    // ~790 ms main-thread cost on a 27.5 MB thread). The mutation append stays
+    // synchronous and durable; the checkpoint rides the same trailing flush
+    // as the Host compatibility materialize. Depth stays capped so replay
+    // never walks more than DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP batches.
+    const existingRecordBytes = fs.statSync(chatPath, { throwIfNoEntry: false })?.size ?? 0
+    const deferTerminalCheckpoint =
+      flushReason === 'terminal' &&
+      previousChatForFeedback !== null &&
+      !preparation.externalizationFailed &&
+      existingRecordBytes >= DEFERRED_HOST_MATERIALIZE_MIN_BYTES &&
+      incrementalChatPersistence.appendsSinceCheckpoint(normalizedChat.appChatId) <
+        DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP
+    // Persist BEFORE staging/materializing the complete Host record. On a D1
+    // save this is the only filesystem work: a small mutation append, never a
+    // synchronous full-record transfer artifact.
+    const incrementalResult = persistIncrementalChatForHostSave(
+      previousChatForFeedback,
+      normalizedChat,
+      flushReason,
+      preparation.authoredTranscript,
+      deferTerminalCheckpoint
+    )
+    // In-memory projection: this process reads the new record immediately.
+    this.rememberChatRecord(normalizedChat.appChatId, {
+      mtimeMs: -1,
+      size: -1,
+      record: normalizedChat
+    })
+    noteHostPersistIntent(previousChatForFeedback, normalizedChat)
+    const compatibility = hostChatCompatibility()
+    // Journal or detail-externalization failure: the checkpoint is this save's
+    // only durability. The intent rides the staged entry so that, when the
+    // immediate materialize below can only latch behind an in-flight
+    // submission, the chained successor is published without the interval.
+    const durabilityFallback = incrementalResult === null || preparation.externalizationFailed
+    const stageResult = compatibility.stage(
+      {
+        chatId: normalizedChat.appChatId,
+        record: normalizedChat,
+        expectedRevision
+      },
+      { durabilityFallback }
+    )
+    if (stageResult === 'staged' || stageResult === 'replaced') {
+      hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
+    }
+    const materializeNow =
+      previousChatForFeedback === null ||
+      incrementalResult === null ||
+      preparation.externalizationFailed ||
+      flushReason !== 'normal'
+    if (materializeNow) {
+      // A terminal or approval save of a LARGE record used to serialize the
+      // whole record synchronously here (~seconds on main for a tens-of-MB
+      // thread) and wedge the Host right after — all while the journal
+      // already made the mutation durable (approval appends fsync at save
+      // time; approval decisions render from the in-process projection).
+      // Defer that checkpoint behind the short trailing timer; barriers and
+      // the shutdown drain still materialize synchronously, small records
+      // keep their immediate checkpoint, and a burst coalesces into one
+      // trailing checkpoint. Shutdown and history-deletion flushes stay
+      // immediate:
+      // the first has no event loop left to fire the timer on, the second
+      // must never resurrect a record the deletion is erasing.
+      const deferrableHostMaterialization =
+        previousChatForFeedback !== null &&
+        !durabilityFallback &&
+        (flushReason === 'terminal' || flushReason === 'approval')
+      const deferred = deferrableHostMaterialization
+        ? deferredHostMaterialize().schedule(normalizedChat.appChatId, {
+            existingBytes: existingRecordBytes,
+            flushReason,
+            durabilityFallback
+          })
+        : false
+      if (!deferred) materializeHostChatCompatibility(normalizedChat.appChatId)
+    }
+    const chatUpdateProjection: ChatUpdateProjectionObservation =
+      previousChatForFeedback && incrementalResult?.derived
+        ? chatUpdateProjectionTracker.observe(
+            previousChatForFeedback,
+            normalizedChat,
+            incrementalResult.derived
+          )
+        : {
+            state: chatUpdateProjectionTracker.seed(normalizedChat),
+            delta: null
+          }
+    attachChatUpdateProducerEnvelope(normalizedChat, chatUpdateProjection)
+    attachChatUpdateProducerEnvelope(chat, chatUpdateProjection)
+    chat.persistenceRevision = normalizedChat.persistenceRevision
+    // Stage 3: mirror EVERY Host-routed save (not just authored ones) so the
+    // preferred v2 read stays in sync with the authoritative record while the
+    // Host persist queue drains asynchronously. Flag-gated no-op otherwise.
+    mirrorSegmentedChatStore(
+      previousChatForFeedback,
+      normalizedChat,
+      preparation.authoredTranscript
+    )
+    return normalizedChat
+  }
+
+  private static saveChatAdmitted(
+    chat: ChatRecord,
+    options: ChatSaveOptions,
+    writerAdmission: LegacyStoreWriteAdmissionScope
+  ): ChatRecord {
     this.assertHistoryMutationAllowed({
       operation: 'Chat persistence',
       chatIds: [chat.appChatId, chat.parentChatId],
@@ -7055,6 +8389,11 @@ export class AppStore {
 
     const chatPath = chatPathForId(chatsDir, chat.appChatId)
     const previousChatForFeedback = this.readChatForFeedbackBaseline(chat.appChatId, chatPath)
+    // Stage 1a: same windowed-page fence as the Host path. The stale-revision
+    // merge below only fills missing rows when the incoming revision is STALE;
+    // a current-revision page would otherwise overwrite the durable prefix.
+    assertAuthoritativeChatForSave(chat, previousChatForFeedback, options)
+    assertPeopleDonorMutationAllowed(userDataPath, previousChatForFeedback, chat)
     // These fields are written only by main-owned async patchers. Renderer
     // chat records can lag those writes, so a later whole-record save must not
     // erase a durable isolated-worktree binding, an explicit PR watch, or the
@@ -7065,6 +8404,7 @@ export class AppStore {
       watchedPr: _rendererWatchedPr,
       gitWorkflow: _rendererGitWorkflow,
       fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
+      continuityCheckpoints: _rendererContinuityCheckpoints,
       ...rendererOwnedChat
     } = chat
     const rendererMessages = chat.messages || []
@@ -7076,8 +8416,20 @@ export class AppStore {
             previousChatForFeedback.messages || []
           )
         : rendererMessages
+    // Same staleness test as the transcript reconcile above, for the goal:
+    // a record derived from an older revision cannot delete one by omission.
+    const restoredActiveGoal = durableActiveGoalToRestore(chat, previousChatForFeedback)
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      ...(restoredActiveGoal ? { activeGoal: restoredActiveGoal } : {}),
+      runs: preserveContinuityRunReceipts(
+        preserveSettledRunSeals(chat.runs || [], previousChatForFeedback?.runs || []),
+        previousChatForFeedback?.runs || [],
+        options.authoritativeContinuityDelivery
+      ),
+      continuityCheckpoints: options.authoritativeContinuityCheckpoints
+        ? chat.continuityCheckpoints
+        : previousChatForFeedback?.continuityCheckpoints,
       messages: reconciledMessages,
       ...(previousChatForFeedback?.threadWorktreeBinding
         ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
@@ -7107,60 +8459,25 @@ export class AppStore {
         : {})
     }
 
-    // Tool detail leaves the hot chat record before historical compaction:
-    // whole runs at terminal, and sealed jumbo activities mid-run (T5 hot
-    // case — the raw payload otherwise rides every flush of a live ensemble).
-    // One append-only artifact is fsync'd per run, then a strict run-event
-    // checkpoint binds the byte segment. If either durable step fails, retain
-    // the original full activity rows and retry on a later save.
-    let externalizedChat = chatWithMainOwnedFields
-    let externalizedActivitiesById: ReadonlyMap<string, ToolActivity> = new Map()
-    let externalizationOpRequiredIds: ReadonlySet<string> = new Set()
-    try {
-      const detailWriter = new ToolActivityDetailBatchWriter(runArtifactsDir)
-      const externalization = externalizeToolActivityDetails(
-        chatWithMainOwnedFields,
-        (runId, activity) => detailWriter.stage(runId, activity),
-        {
-          previousChat: previousChatForFeedback,
-          readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
-          maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
-        }
-      )
-      const checkpoints = detailWriter.commit()
-      for (const checkpoint of checkpoints) {
-        this.appendRunEvent(toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint), {
-          durability: 'strict'
-        })
-      }
-      externalizedChat = externalization.chat
-      externalizedActivitiesById = externalization.strippedActivitiesById
-      externalizationOpRequiredIds = externalization.opRequiredActivityIds
-    } catch (error) {
-      console.error('Failed to externalize tool activity detail', error)
-    }
-
-    // Persisted-chat compaction (Step 4): historical runs shed remaining raw
-    // tool events so chat files stay parse-fast and save-cheap.
-    const compactedChat = compactChatForPersist(externalizedChat)
-    // Exact producer operations are valid only while the save pipeline kept
-    // the producer's transcript intact. Externalization is the one sanctioned
-    // rewrite: its strips are substituted into the authored ops so journal
-    // replay reproduces the stripped record, and any strip the ops cannot
-    // express (a stage without an authoring op, a terminal fold) rejects the
-    // authored chain instead. A stale renderer merge or a one-time historical
-    // compaction still falls back to the proven diff derivation.
-    const authoredCandidate =
-      options.authoredTranscript &&
-      reconciledMessages === rendererMessages &&
-      compactedChat.messages === externalizedChat.messages &&
-      authoredMutationMentionsActivityIds(options.authoredTranscript, externalizationOpRequiredIds)
-        ? options.authoredTranscript
-        : undefined
-    const authoredTranscript = authoredCandidate
-      ? substituteToolActivitiesInAuthoredMutation(authoredCandidate, externalizedActivitiesById)
-      : undefined
-    const normalizedChat = this.normalizeChatRecord(compactedChat)
+    const preparation = prepareChatForPersistence({
+      chat: chatWithMainOwnedFields,
+      previous: previousChatForFeedback,
+      authoredTranscript: options.authoredTranscript,
+      authoredTranscriptEligible: reconciledMessages === rendererMessages,
+      createDetailBatch: () => new ToolActivityDetailBatchWriter(runArtifactsDir),
+      readArchivedDetail: (ref) => readToolActivityDetailSync(runArtifactsDir, ref),
+      persistDetailCheckpoint: (checkpoint) => {
+        this.appendRunEvent(
+          toolActivityDetailCheckpointInput(chatWithMainOwnedFields, checkpoint),
+          {
+            durability: 'strict'
+          }
+        )
+      },
+      maxTerminalRunsPerPass: MAX_TERMINAL_TOOL_DETAIL_RUNS_PER_SAVE
+    })
+    const authoredTranscript = preparation.authoredTranscript
+    const normalizedChat = this.normalizeChatRecord(preparation.chat)
     normalizedChat.updatedAt = Date.now()
     normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
@@ -7185,6 +8502,8 @@ export class AppStore {
       // every legacy write, including the synchronous first save.
       appendChatJournalEntry(normalizedChat.appChatId, normalizedChat)
       persistIncrementalChat(null, normalizedChat, flushReason)
+      // Stage 3: seed the segmented store with the same record.
+      mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat)
       chatUpdateProjection = {
         state: chatUpdateProjectionTracker.seed(normalizedChat),
         delta: null
@@ -7196,7 +8515,7 @@ export class AppStore {
         /* writeJson just succeeded; stat failure is a kernel race */
       }
       if (postStat) {
-        this.chatRecordCache.set(normalizedChat.appChatId, {
+        this.rememberChatRecord(normalizedChat.appChatId, {
           mtimeMs: postStat.mtimeMs,
           size: postStat.size,
           record: normalizedChat
@@ -7212,7 +8531,7 @@ export class AppStore {
       }
       // Optimistic cache with mtimeMs: -1 dirty marker — readChatRecordCached
       // skips the compatibility-file stat and returns V2's current record.
-      this.chatRecordCache.set(normalizedChat.appChatId, {
+      this.rememberChatRecord(normalizedChat.appChatId, {
         mtimeMs: -1,
         size: -1,
         record: normalizedChat
@@ -7224,6 +8543,10 @@ export class AppStore {
         flushReason,
         authoredTranscript
       )
+      // Stage 3: mirror the same save (with the same substituted authored
+      // ops) onto the segmented store. The authoritative legacy write is
+      // untouched on any mirror failure.
+      mirrorSegmentedChatStore(previousChatForFeedback, normalizedChat, authoredTranscript)
       chatUpdateProjection = incrementalResult?.derived
         ? chatUpdateProjectionTracker.observe(
             previousChatForFeedback!,
@@ -7238,9 +8561,7 @@ export class AppStore {
       // Normal streaming saves are now complete once their mutation append is
       // fsynced. Keep whole-record writes only at compatibility barriers.
       if (legacyWriteReason !== 'normal') {
-        saveCoalescer.schedule(
-          chatId,
-          () => {
+        const writeLegacyChat = (deferredSettlement: LegacyStoreDeferredSettlement): void => {
           const preStatActual = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
           // Everything that must happen AFTER the bytes land. Kept in one place
           // because the utility-write path runs it in the ACK continuation
@@ -7260,7 +8581,7 @@ export class AppStore {
                 postStatActual.mtimeMs !== preStatActual.mtimeMs ||
                 postStatActual.size !== preStatActual.size
               if (wrote) {
-                this.chatRecordCache.set(chatId, {
+                this.rememberChatRecord(chatId, {
                   mtimeMs: postStatActual.mtimeMs,
                   size: postStatActual.size,
                   record: normalizedChat
@@ -7272,7 +8593,9 @@ export class AppStore {
               indexSourceStat = { mtimeMs: postStatActual.mtimeMs, size: postStatActual.size }
               // When the write was genuinely deferred, the entry already exists
               // and carries the pre-write stat — refresh it now that bytes land.
-              const settled = chatListIndexStore.readEntry(chatId)
+              const settled = this.threadCatalogueMirror
+                ? undefined
+                : chatListIndexStore.readEntry(chatId)
               if (
                 settled &&
                 (settled.sourceChatMtimeMs !== postStatActual.mtimeMs ||
@@ -7298,26 +8621,44 @@ export class AppStore {
             } catch {
               // Cache was already set optimistically; a stale mtimeMs is harmless.
             }
+            if (utilityPublication)
+              this.threadCataloguePublisher?.finish(utilityPublication, normalizedChat)
           }
 
           const enqueueUtilityWrite = utilityWriteEnqueueFor(chatId, legacyWriteReason)
+          const utilityPublication = this.threadCataloguePublisher?.begin(chatId)
           if (!enqueueUtilityWrite) {
-            writeJson(chatPath, normalizedChat)
-            settleAfterDurableWrite()
+            try {
+              writeJson(chatPath, normalizedChat)
+              settleAfterDurableWrite()
+            } catch (error) {
+              if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
+              throw error
+            }
             return
           }
 
           outstandingUtilityWriteChatIds.add(chatId)
-          void enqueueUtilityWrite({
-            chatId,
-            filePath: chatPath,
-            data: normalizedChat,
-            revision: chatPersistenceRevision(normalizedChat)
-          })
+          let utilityWrite: Promise<void>
+          try {
+            utilityWrite = enqueueUtilityWrite({
+              chatId,
+              filePath: chatPath,
+              data: normalizedChat,
+              revision: chatPersistenceRevision(normalizedChat)
+            })
+          } catch (error) {
+            if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
+            outstandingUtilityWriteChatIds.delete(chatId)
+            throw error
+          }
+          deferredSettlement.markAsyncContinuation()
+          void utilityWrite
             .then(() => {
               settleAfterDurableWrite()
             })
             .catch((error) => {
+              if (utilityPublication) this.threadCataloguePublisher?.fail(utilityPublication)
               // No fallback write here on purpose — the queue has already
               // performed it synchronously in FIFO order. Writing again from
               // this callback is the racing-fallback failure its header names.
@@ -7325,9 +8666,15 @@ export class AppStore {
             })
             .finally(() => {
               outstandingUtilityWriteChatIds.delete(chatId)
+              deferredSettlement.asyncSettled()
             })
+        }
+        scheduleLegacyStoreDeferredWrite(
+          writerAdmission,
+          (write, onSettled) => {
+            saveCoalescer.schedule(chatId, write, legacyWriteReason, onSettled)
           },
-          legacyWriteReason
+          writeLegacyChat
         )
       }
     }
@@ -7337,8 +8684,10 @@ export class AppStore {
     // entire JSONL plus a summary file per chat (~485 ms on a large profile),
     // and it ran on every save. Under fan-out each lane arms its own flush, so
     // that cost was multiplied by the number of concurrent lanes.
-    const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
-    this.writeChatListIndexEntryIfAllowed(normalizedChat.appChatId, nextItem)
+    if (!this.threadCatalogueMirror) {
+      const nextItem = this.toChatListItem(normalizedChat, indexSourceStat)
+      this.writeChatListIndexEntryIfAllowed(normalizedChat.appChatId, nextItem)
+    }
     try {
       this.harvestMessageFeedbackReceipts(previousChatForFeedback, normalizedChat)
     } catch (e) {
@@ -7383,20 +8732,314 @@ export class AppStore {
    * to ensure the record is durable before a downstream consumer reads it.
    */
   static flushChatSave(chatId: string): boolean {
+    if (!legacyStoreCanWrite()) return false
     return saveCoalescer.flush(chatId)
   }
 
   /**
-   * T3a-1: Synchronously flush ALL pending coalesced writes. Called at
-   * shutdown (will-quit) to ensure no data is lost.
+   * Immediate CAS-conflict recovery used by the production Host save lane.
+   *
+   * The Host owns `chats/<id>.json`, so whatever that file says is always a
+   * revision this compare-and-swap can actually satisfy. Recovery therefore
+   * never gives up: `saveChatThroughHost` derives its baseline from the
+   * optimistic in-memory shadow, and that shadow only ever advances (+1 per
+   * save) — this function is the ONLY thing that re-anchors it to the Host.
+   * Every early return here strands the chat permanently, because the next
+   * save asks for an even higher revision the Host will never hold.
+   *
+   * 2026-08-29 evidence from `host-runtime/command-receipts`: 496 of 731
+   * `thread.record.persist` commands failed `thread_record_revision_conflict`,
+   * with one ensemble thread pinned at revision 13 across 222 consecutive
+   * attempts — its rebase intent had been dropped by an earlier settled
+   * barrier, so recovery returned null and the shadow was never re-anchored.
    */
-  static flushAllChatSaves(): void {
-    saveCoalescer.flushAll()
+  static recoverHostPersistConflict(
+    input: HostThreadRecordPersistInput,
+    error: HostThreadRecordPersistError
+  ): HostThreadRecordPersistInput | null {
+    if (error.code !== 'revision_conflict') return null
+    const chatId = input.chatId
+    const intent = hostPersistRebaseByChatId.get(chatId)
+    // The accumulated Desktop intent, or — when an earlier settled barrier
+    // dropped it — the record this attempt was already carrying.
+    const desired = intent?.desired ?? input.record
+    const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+    // No Host record at all: `Thread is not found` is reported as a revision
+    // conflict, so a CAS against any non-zero revision can never land. Re-issue
+    // it as the create it actually is instead of wedging the chat forever.
+    if (stored === null) {
+      const created: ChatRecord = { ...desired, persistenceRevision: 0 }
+      return this.adoptHostPersistRecovery(chatId, created, created, 0)
+    }
+
+    const source = chatComposerSelectionOverlayStore.apply(
+      this.normalizeChatRecord(stored as ChatRecord)
+    )
+    const sourceRevision = chatPersistenceRevision(source)
+    // A base ahead of the Host record is a stale optimistic shadow, not a real
+    // ancestor, and rebasing onto it throws. Fall back to the Host record as
+    // the ancestor: everything the Desktop holds is then a local change, which
+    // is exactly the truth once its own writes never landed.
+    const base =
+      intent && chatPersistenceRevision(intent.base) <= sourceRevision ? intent.base : source
+    // rebaseChatRecordUpdate requires desired to sit strictly above base.
+    const rebaseTarget: ChatRecord =
+      chatPersistenceRevision(desired) > chatPersistenceRevision(base)
+        ? desired
+        : { ...desired, persistenceRevision: chatPersistenceRevision(base) + 1 }
+
+    let rebased: ChatRecord
+    try {
+      rebased = rebaseChatRecordUpdate(base, rebaseTarget, source)
+    } catch {
+      // Last resort: force the Desktop record onto the Host's revision. A
+      // three-way merge that cannot be computed is not a reason to refuse to
+      // write — the alternative is a thread that is never persisted again.
+      // The rebase throws exactly when the Host lineage carries rows the
+      // Desktop base never saw ('added independently', 'changed after Host
+      // removal'), so taking the Desktop record wholesale would delete those
+      // Host-native rows from the durable record. Union them back in instead.
+      rebased = {
+        ...rebaseTarget,
+        messages: unionHostLineageTranscriptRows(base, rebaseTarget, source),
+        persistenceRevision: sourceRevision + 1
+      }
+    }
+    return this.adoptHostPersistRecovery(chatId, source, rebased, sourceRevision)
+  }
+
+  /** Re-anchors the shadow onto a recovered record and returns the retry. */
+  private static adoptHostPersistRecovery(
+    chatId: string,
+    base: ChatRecord,
+    rebased: ChatRecord,
+    expectedRevision: number
+  ): HostThreadRecordPersistInput {
+    hostPersistRebaseByChatId.set(chatId, { base, desired: rebased })
+    this.rememberChatRecord(chatId, { mtimeMs: -1, size: -1, record: rebased })
+    hostPersistShadowChatIds.add(chatId)
+    hostPersistUnconfirmedChatIds.add(chatId)
+    const recovered = { chatId, record: rebased, expectedRevision }
+    // Internal client recovery updates the submitted entry in place; recovery
+    // after a surfaced drain error replaces the restored pending entry. Either
+    // way, no pre-rebase snapshot may remain queued for a later overwrite.
+    hostChatCompatibilityPersistence?.rebase(recovered)
+    try {
+      hostPersistConflictRecoveryListener?.(rebased)
+    } catch {
+      // Persistence recovery is authoritative; renderer reseeding is additive.
+    }
+    return recovered
+  }
+
+  /**
+   * Re-anchors a projection the Host never accepted. The record the user is
+   * looking at is kept — dropping it would roll the transcript back to a stale
+   * durable copy — but its revision is reset to the Host's, so the NEXT save
+   * asks for a revision the Host can satisfy. Leaving the shadow ahead is what
+   * turns a single conflict into a permanent one.
+   */
+  private static releaseHostPersistShadow(chatId: string): void {
+    // The failed barrier restored its submitted checkpoint to the pending slot.
+    // Drop that stale pre-rebase record before the next save establishes a new
+    // lineage from the Host's actual revision.
+    hostChatCompatibilityPersistence?.discard(chatId)
+    hostPersistRebaseByChatId.delete(chatId)
+    const cached = this.chatRecordCache.get(chatId)
+    if (!cached || cached.mtimeMs !== -1) return
+    let hostRevision = 0
+    try {
+      hostRevision = chatPersistenceRevision(
+        readJsonStrictIfPresent(chatPathForId(chatsDir, chatId)) as ChatRecord | null
+      )
+    } catch {
+      // An unreadable record leaves the create-case revision, which the next
+      // save's conflict recovery corrects against the real file.
+    }
+    cached.record = { ...cached.record, persistenceRevision: hostRevision }
+    // Renderer targets still hold the optimistic watermark this shadow just
+    // dropped below, so their delivery coordinator would discard every
+    // broadcast of the re-anchored record as stale (staleEnqueueDrops) — the
+    // freeze-then-jump transcript. Reseed exactly like adoptHostPersistRecovery
+    // does: the coordinator drops its optimistic history and sends this
+    // canonical record as an urgent snapshot.
+    try {
+      hostPersistConflictRecoveryListener?.(cached.record)
+    } catch {
+      // Persistence recovery is authoritative; renderer reseeding is additive.
+    }
+  }
+
+  /**
+   * The Host's durable record for a chat, bypassing the optimistic shadow cache
+   * AND the composer-selection overlay. This is the only truthful answer to
+   * "did my mutation land": the shadow can hold unconfirmed content, and the
+   * overlay projects main-local selection state on top of it. Used by callers
+   * that must verify a user-facing mutation actually persisted before reporting
+   * success (e.g. the set-chat-kind durability check). Returns null when no
+   * durable record exists (never persisted, or local history disabled).
+   */
+  static readDurableChatRecord(chatId: string): ChatRecord | null {
+    if (!isSafeChatId(chatId)) return null
+    const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+    return stored ? this.normalizeChatRecord(stored as ChatRecord) : null
+  }
+
+  /**
+   * Durability barrier for the Host-routed persistence path: resolves once the
+   * chat's queued `thread.record.persist` work has landed. Revision conflicts
+   * are rebased onto the latest Host record and retried within a strict bound,
+   * and an unresolved one re-anchors the record and RESOLVES: the Host copy is
+   * intact, so a compare-and-swap bookkeeping fault must never be the reason an
+   * ensemble round refuses to start. Every other typed failure is rethrown.
+   * Awaited before ensemble participant dispatch and on ensemble-chat creation
+   * so a genuine persistence failure surfaces at the exact site where the user
+   * meets it. Concurrent awaiters share one in-flight drain and all observe its
+   * outcome.
+   */
+  static awaitChatRecordPersisted(chatId: string): Promise<void> {
+    return observePersistBarrierSpan(
+      mainWorkSpanSink(),
+      {
+        chatId,
+        reason: 'barrier',
+        resolveRunId: () => lastPersistBarrierHostCommandId(chatId)
+      },
+      () => this.awaitChatRecordPersistedWork(chatId)
+    )
+  }
+
+  /**
+   * Dispatch-edge durability: resolves once the current revision is durable in
+   * the incremental journal — the crash-recovery authority — without the
+   * full-record Host compatibility write, which on a 20MB+ thread is seconds
+   * of clone/serialize/hash/fsync and was the whole Enter-to-first-seat delay.
+   * It also does not FORCE that write: the save that got here already staged
+   * the record, and saveChatThroughHost either materialized it (small records)
+   * or armed the coalescing trailing timer (large terminal/approval saves), so
+   * forcing another would only add a whole-record clone on main per round.
+   * Still rejects fail-closed on an unacknowledged journal flush and still
+   * waits out a catalogue recovery hold.
+   */
+  static awaitChatRecordDispatchDurable(chatId: string): Promise<void> {
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate
+        .wait(chatId)
+        .then(() => this.awaitChatRecordDispatchDurable(chatId))
+    return incrementalChatPersistence.awaitDeferredDurability(chatId)
+  }
+
+  private static awaitChatRecordPersistedWork(chatId: string): Promise<void> {
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate
+        .wait(chatId)
+        .then(() => this.awaitChatRecordPersistedWork(chatId))
+    const compatibility = hostChatCompatibility()
+    const targetSequence = compatibility.latestSequence(chatId)
+    const existing = chatRecordConflictRecoveryBarriers.get(chatId)
+    if (existing && existing.targetSequence >= targetSequence) return existing.promise
+    const predecessor = existing?.promise.catch(() => undefined) ?? Promise.resolve()
+    const token = {}
+    const recovery = predecessor
+      .then(() => this.awaitChatRecordPersistedWithRecovery(chatId))
+      .finally(() => {
+        if (chatRecordConflictRecoveryBarriers.get(chatId)?.token === token) {
+          chatRecordConflictRecoveryBarriers.delete(chatId)
+        }
+      })
+    chatRecordConflictRecoveryBarriers.set(chatId, { targetSequence, promise: recovery, token })
+    return recovery
+  }
+
+  private static async awaitChatRecordPersistedWithRecovery(chatId: string): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await barrierChatRecordPersist(chatId)
+        if (!hostChatCompatibility().hasUnconfirmed(chatId)) {
+          hostPersistRebaseByChatId.delete(chatId)
+        }
+        return
+      } catch (error) {
+        if (
+          !(error instanceof HostThreadRecordPersistError) ||
+          error.code !== 'revision_conflict'
+        ) {
+          throw error
+        }
+        const intent = hostPersistRebaseByChatId.get(chatId)
+        const pending = intent?.desired ?? this.chatRecordCache.get(chatId)?.record ?? null
+        if (attempt >= HOST_PERSIST_REVISION_CONFLICT_RETRY_LIMIT || !pending) {
+          // A revision conflict is a persistence-bookkeeping fault, never a
+          // reason to refuse to start a round: the Host's own record is intact
+          // and the next save rebases onto it. Re-anchor the shadow so the
+          // conflict cannot repeat forever, report it, and let the caller run.
+          this.releaseHostPersistShadow(chatId)
+          console.error(
+            `[host-persist] unresolved revision conflict for chat ${chatId} after ` +
+              `${attempt} rebase attempt(s); re-anchored the record and continued.`
+          )
+          return
+        }
+        const recovered = this.recoverHostPersistConflict(
+          {
+            chatId,
+            record: pending,
+            expectedRevision: chatPersistenceRevision(intent?.base ?? pending)
+          },
+          error
+        )
+        if (!recovered) throw error
+        const compatibility = hostChatCompatibility()
+        if (!compatibility.hasUnconfirmed(chatId)) compatibility.stage(recovered)
+      }
+    }
+  }
+
+  static setHostPersistConflictRecoveryListener(
+    listener: ((chat: ChatRecord) => void) | null
+  ): void {
+    hostPersistConflictRecoveryListener = listener
+  }
+
+  /** Test seam: swap the Host persist port and drop any memoized barriers. */
+  static setHostThreadRecordPersistPortForTests(port: HostThreadRecordPersistPort | null): void {
+    hostThreadRecordPersistPort = port
+    hostChatCompatibilityPersistence = null
+    hostChatCompatibilityPersistPort = null
+    chatRecordConflictRecoveryBarriers.clear()
+    hostPersistRebaseByChatId.clear()
+    hostPersistUnconfirmedChatIds.clear()
+    hostPersistShadowChatIds.clear()
+    hostShadowReconcileMissByChatId.clear()
+    hostPersistConflictRecoveryListener = null
+  }
+
+  /**
+   * T3a-1: Flush ALL pending chat persistence at shutdown (will-quit).
+   * Legacy-gate-open: synchronously flush the coalescer as before. Host-owned
+   * gate: first fold and fsync the incremental journal, then materialize every
+   * latest compatibility record and drain the Host queue, bounded so a hung
+   * Host cannot hold the process open. A drain failure or timeout is reported
+   * loudly and quit proceeds; the incremental checkpoint remains recoverable.
+   */
+  static async flushAllChatSaves(options?: { hostDrainTimeoutMs?: number }): Promise<void> {
+    if (legacyStoreCanWrite()) {
+      saveCoalescer.flushAll()
+      incrementalChatPersistence.checkpointAll()
+      segmentedChatStore.checkpointAll()
+      return
+    }
     incrementalChatPersistence.checkpointAll()
+    segmentedChatStore.checkpointAll()
+    await drainHostRecordPersistQueueOnShutdown(options?.hostDrainTimeoutMs)
   }
 
   static getIncrementalChatPersistenceStats(): IncrementalChatPersistenceStats {
     return incrementalChatPersistence.stats()
+  }
+
+  static getSegmentedChatStoreStats(): SegmentedChatStoreStats {
+    return segmentedChatStore.stats()
   }
 
   /**
@@ -7547,6 +9190,7 @@ export class AppStore {
 
     const runIds = new Set<string>()
     const kimiSeats: Array<{ chatId: string; participantId: string }> = []
+    const museSeats: Array<{ chatId: string; participantId: string }> = []
     for (const chat of allChats) {
       if (!chatIds.has(chat.appChatId)) continue
       const historicalSeatIds = new Set<string>()
@@ -7576,7 +9220,10 @@ export class AppStore {
         ...(chat.ensemble?.participants || []).map((participant) => participant.id),
         ...historicalSeatIds
       ])
-      for (const participantId of seatIds) kimiSeats.push({ chatId: chat.appChatId, participantId })
+      for (const participantId of seatIds) {
+        kimiSeats.push({ chatId: chat.appChatId, participantId })
+        museSeats.push({ chatId: chat.appChatId, participantId })
+      }
     }
     for (const target of input.quiescenceTargets || []) {
       if (target.runId) runIds.add(target.runId)
@@ -7598,6 +9245,7 @@ export class AppStore {
       workflowIds: [],
       workflowExecutionIds: [],
       kimiSeats,
+      museSeats,
       quiescenceTargets: [...(input.quiescenceTargets || [])],
       completedQuiescenceTargetIds: [],
       completedSteps: [],
@@ -7747,11 +9395,10 @@ export class AppStore {
     draft.workflowIds = [...targetWorkflowIds].sort()
     draft.workflowExecutionIds = [...targetWorkflowExecutionIds].sort()
 
-    // Snapshot queued/recovery/approval run ids before any store is rewritten.
+    // Snapshot queued/recovery run ids before any store is rewritten.
     for (const [filePath, label] of [
       [runQueuePath, 'run queue'],
-      [runRecoveryPath, 'run recovery'],
-      [approvalLedgerPath, 'approval ledger']
+      [runRecoveryPath, 'run recovery']
     ] as const) {
       const stored = readJsonStrictIfPresent(filePath)
       if (stored === null) continue
@@ -7766,6 +9413,14 @@ export class AppStore {
         const runId = objectRecord(record)?.runId
         if (typeof runId === 'string' && runId) runIds.add(runId)
       }
+    }
+    // The v1 mirror is intentionally stale between coarse checkpoints. When
+    // event persistence is authoritative, inventory the folded projection so
+    // a scoped clear cannot miss a newly appended approval or its run.
+    for (const record of approvalLedgerRecordsForHistoryDeletion(draft)) {
+      if (!historyRecordMatches(record, draft, { includeRunIds: false })) continue
+      const runId = objectRecord(record)?.runId
+      if (typeof runId === 'string' && runId) runIds.add(runId)
     }
 
     const mailboxValue = readJsonStrictIfPresent(subThreadMailboxesPath)
@@ -7861,13 +9516,206 @@ export class AppStore {
     return normalizeHistoryDeletionIntent(draft)
   }
 
+  /**
+   * The truncate scrub, shared by the legacy write path and the Host-routed
+   * path: history and session/orchestration state are stripped while the
+   * roster and other durable non-history fields are retained. The record is
+   * stamped with the next persistence revision — which the Host's
+   * persistThreadRecord assigns identically (current+1), so both paths agree.
+   */
+  private static buildTruncatedChatRecordForErasure(
+    chat: ChatRecord,
+    intent: HistoryDeletionIntent
+  ): ChatRecord {
+    const {
+      taskWraithMcpProfileReceipt: _dropReceipt,
+      seatGeneration: _dropSeatGeneration,
+      contextCompactionSummary: _dropContextCompaction,
+      continuityCheckpoints: _dropContinuityCheckpoints,
+      linkedGeminiSessionId: _dropGeminiSession,
+      linkedProviderSessionId: _dropProviderSession,
+      activeGoal: _dropGoal,
+      chatTodos: _dropTodos,
+      soloWakeups: _dropSoloWakeups,
+      ollamaSessionMemory: _dropOllamaMemory,
+      ollamaSessionMemories: _dropOllamaMemories,
+      delegationContext: _dropDelegationContext,
+      ...retainedChat
+    } = chat
+    const ensemble = chat.ensemble
+      ? (() => {
+          const {
+            activeRound: _dropActiveRound,
+            workSession: _dropWorkSession,
+            sessionActivityLedger: _dropActivity,
+            bossmanControlState: _dropBossControl,
+            lastRoundSummary: _dropLastSummary,
+            roundSummaries: _dropRoundSummaries,
+            roundWallMsById: _dropRoundWallMsById,
+            wakeups: _dropWakeups,
+            blackboard: _dropBlackboard,
+            escalationSignals: _dropEscalations,
+            ...retainedEnsemble
+          } = chat.ensemble!
+          return {
+            ...retainedEnsemble,
+            participants: retainedEnsemble.participants.map((participant) => {
+              const {
+                taskWraithMcpProfileReceipt: _dropParticipantReceipt,
+                seatGeneration: _dropParticipantGeneration,
+                contextCompactionSummary: _dropParticipantSummary,
+                promptShellVersion: _dropShell,
+                promptDynamicStateVersion: _dropDynamic,
+                tokenTotals: _dropTotals,
+                kimiAcpNativeSession: _dropNativeMarker,
+                kimiAcpPostureVersion: _dropPosture,
+                ...retainedParticipant
+              } = participant
+              return { ...retainedParticipant, linkedProviderSessionId: null }
+            }),
+            updatedAt: intent.createdAt
+          }
+        })()
+      : undefined
+    return compactChatForPersist(
+      this.normalizeChatRecord({
+        ...retainedChat,
+        ...(ensemble ? { ensemble } : {}),
+        ...(chat.threadTitle?.source === 'prompt-fallback' ||
+        chat.threadTitle?.source === 'local-ai'
+          ? {
+              threadTitle: { source: 'user' as const }
+            }
+          : {}),
+        messages: [],
+        runs: [],
+        updatedAt: Date.parse(intent.createdAt),
+        persistenceRevision: chatPersistenceRevision(chat) + 1
+      })
+    )
+  }
+
+  /**
+   * The chat-records step when the Host owns chats/<id>.json. Only the record
+   * removal/rewrite travels through the Host — delete via thread.record.delete
+   * (which supersedes any queued persist for the chat, so a queued save cannot
+   * resurrect a deleted chat), truncate via thread.record.persist with main's
+   * already-scrubbed complete record. Sequenced per chat: erasure is rare and
+   * each Host round trip must settle before the verification sweep reruns.
+   */
+  /**
+   * Journal retirement when the Host owns the gate. The V2 and legacy journal
+   * subsystems are read-only in this mode, but their pre-cutover artifacts are
+   * desktop-owned legacy bytes that must not survive an erasure
+   * (NON-NEGOTIABLE #4), so they are removed directly.
+   */
+  private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
+    // A staged full-record checkpoint is another resurrection source even
+    // before it reaches the Host client's queue. Erasure must retire it with
+    // every journal artifact.
+    hostChatCompatibilityPersistence?.discard(chatId)
+    chatUpdateProjectionTracker.drop(chatId)
+    // Stage 3: erase the segmented-store copy too — a deleted transcript must
+    // not survive in any durable copy (NON-NEGOTIABLE #4). Purge is
+    // gate-driven, so a flag-off disable cannot strand stale v2 segments.
+    segmentedChatStore.purge(chatId)
+    const legacyJournalDir = path.join(userDataPath, 'chat-journal')
+    for (const suffix of ['.tombstone', '.jsonl', '.snapshot.json']) {
+      fs.rmSync(path.join(legacyJournalDir, `${chatId}${suffix}`), { force: true })
+    }
+    const v2JournalDir = path.join(userDataPath, 'chat-journal-v2')
+    for (const suffix of ['.checkpoint.json', '.mutations.jsonl', '.tombstone']) {
+      fs.rmSync(path.join(v2JournalDir, `${chatId}${suffix}`), { force: true })
+    }
+  }
+
+  private static async executeHostChatRecordErasure(intent: HistoryDeletionIntent): Promise<void> {
+    if (intent.kind === 'truncate') {
+      const chatId = intent.rootChatId!
+      const chatPath = chatPathForId(chatsDir, chatId)
+      // A compatibility record may still be staged without any Host queue
+      // entry. Materialize and drain it before reading the record to scrub, or
+      // truncation would preserve stale chrome and a later checkpoint could
+      // resurrect the old transcript.
+      await this.awaitChatRecordPersisted(chatId)
+      const stored = readJsonStrictIfPresent(chatPath)
+      if (stored === null) return
+      const chat = chatComposerSelectionOverlayStore.apply(
+        this.normalizeChatRecord(stored as ChatRecord)
+      )
+      const truncated = this.buildTruncatedChatRecordForErasure(chat, intent)
+      // The chat's journal/V2 artifacts are pure history once truncated —
+      // retire them before the rewrite, mirroring the legacy step's ordering.
+      this.purgeChatJournalArtifactsHostOwned(chatId)
+      if (chatContainsTruncatableHistory(chat)) {
+        await hostThreadRecordPersist().persist({
+          chatId,
+          record: truncated,
+          expectedRevision: chatPersistenceRevision(chat)
+        })
+      }
+      chatComposerSelectionOverlayStore.delete(chatId)
+      this.chatRecordCache.delete(chatId)
+      hostPersistShadowChatIds.delete(chatId)
+      hostPersistRebaseByChatId.delete(chatId)
+      hostChatCompatibilityPersistence?.discard(chatId)
+      const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
+      if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
+        throw new Error('Truncated chat still contains a durable history or orchestration source.')
+      }
+      return
+    }
+    // Fence every target before removing any journal bytes. prepareDelete
+    // discards staged records and drains already-submitted ones; the Host
+    // delete port then supersedes anything remaining in its own lane.
+    for (const chatId of intent.chatIds) {
+      await hostChatCompatibility().prepareDelete(chatId)
+    }
+    if (intent.kind === 'global') {
+      // Same desktop-side retirement order as the legacy step, minus the
+      // chatsDir removal: that directory is the Host's store root, so records
+      // go one delete at a time and the directory stays for the Host. The
+      // journal directories are desktop-owned legacy artifacts (the Host has
+      // its own store), so their removal stays here — erased transcript must
+      // not outlive a global clear in any durable copy.
+      saveCoalescer.discardAll()
+      chatUpdateProjectionTracker.clear()
+      chatComposerSelectionOverlayStore.clearCache()
+      removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
+      removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
+      // Stage 3: the segmented store is a durable transcript copy; a global
+      // clear must retire it (and its in-memory baselines) with the rest.
+      segmentedChatStore.clear()
+    } else {
+      // Discard, never flush, and tombstone the journal before the unlink —
+      // same ordering guarantees as the legacy step.
+      for (const chatId of intent.chatIds) saveCoalescer.discard(chatId)
+      for (const chatId of intent.chatIds) this.purgeChatJournalArtifactsHostOwned(chatId)
+    }
+    for (const chatId of intent.chatIds) {
+      const stored = readJsonStrictIfPresent(chatPathForId(chatsDir, chatId))
+      // Already absent (idempotent recovery re-run): nothing to delete.
+      if (stored !== null) {
+        const expectedRevision = chatPersistenceRevision((stored as ChatRecord | null) ?? null)
+        await hostThreadRecordErasure().deleteRecord({ chatId, expectedRevision })
+      }
+      chatComposerSelectionOverlayStore.delete(chatId)
+      this.chatRecordCache.delete(chatId)
+      hostPersistShadowChatIds.delete(chatId)
+      hostPersistRebaseByChatId.delete(chatId)
+      hostPersistUnconfirmedChatIds.delete(chatId)
+    }
+  }
+
   private static executeHistoryDeletionStep(
     intent: HistoryDeletionIntent,
     step: HistoryDeletionStep
-  ): void {
+  ): void | Promise<void> {
     if (historyDeletionFailureStepsForTests.has(step)) {
       throw new Error(`Injected history deletion failure at ${step}.`)
     }
+    if (step === 'thread-catalogue')
+      return this.catalogueErasure?.(this.historyDeletionPreparation(intent))
     if (step === 'scheduled-orchestration') {
       const occurrenceMutation = readScheduledOccurrenceMutationJournal()
       if (occurrenceMutation.status !== 'none') {
@@ -8004,7 +9852,7 @@ export class AppStore {
       return
     }
     if (step === 'approval-ledger') {
-      rewriteArrayHistoryStore(approvalLedgerPath, 'approval ledger history', intent)
+      rewriteApprovalLedgerHistory(intent)
       return
     }
     if (step === 'message-feedback') {
@@ -8160,7 +10008,47 @@ export class AppStore {
       }
       return
     }
+    if (step === 'muse-seat-state') {
+      // Muse's durable seat home holds the session log — i.e. the transcript —
+      // and, if auth.json teardown ever slips, a live credential. Deleting a
+      // chat while leaving that on disk is the resurrection class this
+      // transaction exists to prevent, so it is swept like Kimi's.
+      if (intent.kind === 'global') {
+        removePathsStrict([
+          { targetPath: museSeatStateRoot(userDataPath), label: 'Muse seat history' },
+          ...legacyMuseSeatStateRoots(userDataPath).map((targetPath) => ({
+            targetPath,
+            label: 'legacy Muse seat history'
+          }))
+        ])
+      } else {
+        removePathsStrict(
+          intent.museSeats.flatMap((seat) => [
+            {
+              targetPath: museSeatStatePath(userDataPath, seat.chatId, seat.participantId),
+              label: `Muse seat history for chat ${seat.chatId}`
+            },
+            ...legacyMuseSeatStatePaths(userDataPath, seat.chatId, seat.participantId).map(
+              (targetPath) => ({
+                targetPath,
+                label: `legacy Muse seat history for chat ${seat.chatId}`
+              })
+            )
+          ])
+        )
+      }
+      return
+    }
     if (step === 'chat-records') {
+      if (!legacyStoreCanWrite()) {
+        // The Host owns chats/<id>.json: only the record removal/rewrite
+        // travels (thread.record.delete / thread.record.persist); every other
+        // erasure ledger above stays in main, exactly as Work1's 84a5d849f
+        // modeling decided. This is the only async step — everything else in
+        // the transaction completes synchronously, preserving the legacy
+        // path's in-tick semantics.
+        return this.executeHostChatRecordErasure(intent)
+      }
       if (intent.kind === 'global') {
         // T3a-1: drop every deferred write BEFORE the directory goes. A
         // pending timer would otherwise recreate a chat file after deletion,
@@ -8168,8 +10056,10 @@ export class AppStore {
         // reappear in the list (NON-NEGOTIABLE #4).
         saveCoalescer.discardAll()
         incrementalChatPersistence.clear()
+        segmentedChatStore.clear()
         chatUpdateProjectionTracker.clear()
         removePathStrict(chatsDir, 'chat history directory')
+        chatComposerSelectionOverlayStore.clearCache()
         // T4a: the journal is a second durable copy of chat history. Deleting
         // the legacy files while leaving the journal intact would leave the
         // deleted transcript recoverable on disk (NON-NEGOTIABLE #4).
@@ -8184,74 +10074,22 @@ export class AppStore {
         saveCoalescer.flush(chatId)
         const stored = readJsonStrictIfPresent(chatPath)
         if (stored === null) return
-        const chat = this.normalizeChatRecord(stored as ChatRecord)
-        const {
-          taskWraithMcpProfileReceipt: _dropReceipt,
-          seatGeneration: _dropSeatGeneration,
-          contextCompactionSummary: _dropContextCompaction,
-          linkedGeminiSessionId: _dropGeminiSession,
-          linkedProviderSessionId: _dropProviderSession,
-          activeGoal: _dropGoal,
-          chatTodos: _dropTodos,
-          soloWakeups: _dropSoloWakeups,
-          ollamaSessionMemory: _dropOllamaMemory,
-          ollamaSessionMemories: _dropOllamaMemories,
-          delegationContext: _dropDelegationContext,
-          ...retainedChat
-        } = chat
-        const ensemble = chat.ensemble
-          ? (() => {
-              const {
-                activeRound: _dropActiveRound,
-                workSession: _dropWorkSession,
-                sessionActivityLedger: _dropActivity,
-                bossmanControlState: _dropBossControl,
-                lastRoundSummary: _dropLastSummary,
-                roundSummaries: _dropRoundSummaries,
-                wakeups: _dropWakeups,
-                blackboard: _dropBlackboard,
-                escalationSignals: _dropEscalations,
-                ...retainedEnsemble
-              } = chat.ensemble!
-              return {
-                ...retainedEnsemble,
-                participants: retainedEnsemble.participants.map((participant) => {
-                  const {
-                    taskWraithMcpProfileReceipt: _dropParticipantReceipt,
-                    seatGeneration: _dropParticipantGeneration,
-                    contextCompactionSummary: _dropParticipantSummary,
-                    promptShellVersion: _dropShell,
-                    promptDynamicStateVersion: _dropDynamic,
-                    tokenTotals: _dropTotals,
-                    kimiAcpNativeSession: _dropNativeMarker,
-                    kimiAcpPostureVersion: _dropPosture,
-                    ...retainedParticipant
-                  } = participant
-                  return { ...retainedParticipant, linkedProviderSessionId: null }
-                }),
-                updatedAt: intent.createdAt
-              }
-            })()
-          : undefined
-        const truncated = compactChatForPersist(
-          this.normalizeChatRecord({
-            ...retainedChat,
-            ...(ensemble ? { ensemble } : {}),
-            messages: [],
-            runs: [],
-            updatedAt: Date.parse(intent.createdAt),
-            persistenceRevision: chatPersistenceRevision(chat) + 1
-          })
+        const chat = chatComposerSelectionOverlayStore.apply(
+          this.normalizeChatRecord(stored as ChatRecord)
         )
+        const truncated = this.buildTruncatedChatRecordForErasure(chat, intent)
         if (chatContainsTruncatableHistory(chat)) {
           writeJson(chatPath, truncated)
           incrementalChatPersistence.replaceAuthoritative(chatId, truncated)
+          segmentedChatStore.replaceAuthoritative(chatId, truncated)
         } else {
           // Idempotent recovery: a prior attempt may have committed the legacy
           // truncation and failed before replacing V2. Reassert the already-
           // truncated record so no old mutation/checkpoint survives the rerun.
           incrementalChatPersistence.replaceAuthoritative(chatId, chat)
+          segmentedChatStore.replaceAuthoritative(chatId, chat)
         }
+        chatComposerSelectionOverlayStore.delete(chatId)
         this.chatRecordCache.delete(chatId)
         const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
         if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
@@ -8274,11 +10112,22 @@ export class AppStore {
             label: `chat record ${chatId}`
           }))
         )
+        for (const chatId of intent.chatIds) chatComposerSelectionOverlayStore.delete(chatId)
         for (const chatId of intent.chatIds) this.chatRecordCache.delete(chatId)
       }
       return
     }
     if (step === 'chat-list-index') {
+      if (!legacyStoreCanWrite()) {
+        // The index store asserts writable and is gate-frozen in this mode.
+        // It is a desktop-local accelerator: its rows self-heal from source
+        // metadata, so once the Host has removed a record the stale row no
+        // longer matches and is dropped on the next read.
+        chatListIndexStore.clearCache()
+        chatListRebuildMemo.clear()
+        for (const chatId of intent.chatIds) this.chatListIndexWriteAtByChatId.delete(chatId)
+        return
+      }
       if (intent.kind === 'global') {
         removePathStrict(chatListIndexPath, 'chat list index')
         // Also remove per-chat summary directory.
@@ -8294,6 +10143,7 @@ export class AppStore {
           // Best effort — summary file removal is non-fatal.
         }
         chatListIndexStore.clearCache()
+        chatListRebuildMemo.clear()
       } else {
         chatListIndexStore.removeEntries(intent.chatIds)
         // Verify removal.
@@ -8327,7 +10177,7 @@ export class AppStore {
     }
   }
 
-  private static executeHistoryDeletion(intent: HistoryDeletionIntent): void {
+  private static executeHistoryDeletion(intent: HistoryDeletionIntent): void | Promise<void> {
     const completedQuiescence = new Set(intent.completedQuiescenceTargetIds)
     const pendingQuiescence = intent.quiescenceTargets
       .map((target) => target.id)
@@ -8349,10 +10199,85 @@ export class AppStore {
     }
 
     const failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }> = []
-    for (const step of HISTORY_DELETION_STEPS) {
+    // Sync drive: only the Host-routed chat-records step returns a promise;
+    // every legacy step completes in-tick, so the legacy transaction keeps
+    // its synchronous completion semantics (and its synchronous throws).
+    for (let index = 0; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
+      if (intent.completedSteps.includes(step)) continue
+      let settled: void | Promise<void>
+      try {
+        settled = this.executeHistoryDeletionStep(intent, step)
+      } catch (error) {
+        failures.push({ step, message: historyDeletionErrorMessage(error) })
+        continue
+      }
+      if (settled) {
+        return settled.then(
+          () => {
+            intent.completedSteps.push(step)
+            intent.failures = []
+            intent.updatedAt = new Date().toISOString()
+            writeHistoryDeletionIntent(intent)
+            return this.executeHistoryDeletionRemainder(intent, failures, index + 1)
+          },
+          (error: unknown) => {
+            failures.push({ step, message: historyDeletionErrorMessage(error) })
+            return this.executeHistoryDeletionRemainder(intent, failures, index + 1)
+          }
+        )
+      }
+      intent.completedSteps.push(step)
+      intent.failures = []
+      intent.updatedAt = new Date().toISOString()
+      writeHistoryDeletionIntent(intent)
+    }
+
+    // Re-run every idempotent boundary once under the still-held lifecycle
+    // authority. This is both final residual verification and a last sweep for
+    // a late writer that raced an earlier store step.
+    for (let index = 0; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
+      let settled: void | Promise<void>
+      try {
+        settled = this.executeHistoryDeletionStep(intent, step)
+      } catch (error) {
+        if (!failures.some((failure) => failure.step === step)) {
+          failures.push({ step, message: historyDeletionErrorMessage(error) })
+        }
+        continue
+      }
+      if (settled) {
+        // Reached only on a recovery re-run where the first loop skipped the
+        // Host-routed step via completedSteps.
+        return settled.then(
+          () => this.executeHistoryDeletionVerificationRemainder(intent, failures, index + 1),
+          (error: unknown) => {
+            if (!failures.some((failure) => failure.step === step)) {
+              failures.push({ step, message: historyDeletionErrorMessage(error) })
+            }
+            return this.executeHistoryDeletionVerificationRemainder(intent, failures, index + 1)
+          }
+        )
+      }
+    }
+
+    this.finishHistoryDeletion(intent, failures)
+  }
+
+  /** Async continuation once a step goes async mid-loop: finish the first
+   * loop, the verification sweep, and the epilogue, in order. */
+  private static async executeHistoryDeletionRemainder(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>,
+    firstLoopStart: number
+  ): Promise<void> {
+    for (let index = firstLoopStart; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
       if (intent.completedSteps.includes(step)) continue
       try {
-        this.executeHistoryDeletionStep(intent, step)
+        const settled = this.executeHistoryDeletionStep(intent, step)
+        if (settled) await settled
         intent.completedSteps.push(step)
         intent.failures = []
         intent.updatedAt = new Date().toISOString()
@@ -8361,20 +10286,32 @@ export class AppStore {
         failures.push({ step, message: historyDeletionErrorMessage(error) })
       }
     }
+    return this.executeHistoryDeletionVerificationRemainder(intent, failures, 0)
+  }
 
-    // Re-run every idempotent boundary once under the still-held lifecycle
-    // authority. This is both final residual verification and a last sweep for
-    // a late writer that raced an earlier store step.
-    for (const step of HISTORY_DELETION_STEPS) {
+  private static async executeHistoryDeletionVerificationRemainder(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>,
+    verificationStart: number
+  ): Promise<void> {
+    for (let index = verificationStart; index < HISTORY_DELETION_STEPS.length; index += 1) {
+      const step = HISTORY_DELETION_STEPS[index]
       try {
-        this.executeHistoryDeletionStep(intent, step)
+        const settled = this.executeHistoryDeletionStep(intent, step)
+        if (settled) await settled
       } catch (error) {
         if (!failures.some((failure) => failure.step === step)) {
           failures.push({ step, message: historyDeletionErrorMessage(error) })
         }
       }
     }
+    this.finishHistoryDeletion(intent, failures)
+  }
 
+  private static finishHistoryDeletion(
+    intent: HistoryDeletionIntent,
+    failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>
+  ): void {
     if (failures.length > 0) {
       intent.failures = failures
       intent.updatedAt = new Date().toISOString()
@@ -8400,6 +10337,7 @@ export class AppStore {
     }
 
     chatListIndexStore.clearCache()
+    chatListRebuildMemo.clear()
     if (intent.kind === 'global') {
       this.chatRecordCache.clear()
       this.chatListIndexWriteAtByChatId.clear()
@@ -8410,7 +10348,7 @@ export class AppStore {
     }
   }
 
-  static recoverPendingHistoryDeletion(): void {
+  static recoverPendingHistoryDeletion(): void | Promise<void> {
     if (this.historyDeletionRunning) return
     const intent = readHistoryDeletionIntent()
     if (!intent) return
@@ -8422,11 +10360,26 @@ export class AppStore {
       throw new HistoryDeletionQuiescenceRequiredError(intent.operationId, pending)
     }
     this.historyDeletionRunning = true
+    let settled: void | Promise<void>
     try {
-      this.executeHistoryDeletion(intent)
-    } finally {
+      settled = this.catalogueQuiescence
+        ? this.catalogueQuiescence(this.historyDeletionPreparation(intent)).then(() =>
+            this.executeHistoryDeletion(intent)
+          )
+        : this.executeHistoryDeletion(intent)
+    } catch (error) {
       this.historyDeletionRunning = false
+      this.catalogueResume?.()
+      throw error
     }
+    if (settled) {
+      return settled.finally(() => {
+        this.historyDeletionRunning = false
+        this.catalogueResume?.()
+      })
+    }
+    this.historyDeletionRunning = false
+    this.catalogueResume?.()
   }
 
   private static historyDeletionPreparation(
@@ -8509,7 +10462,7 @@ export class AppStore {
     writeHistoryDeletionIntent(intent)
   }
 
-  static commitPreparedHistoryDeletion(operationId: string): void {
+  static commitPreparedHistoryDeletion(operationId: string): void | Promise<void> {
     if (this.historyDeletionRunning)
       throw new Error('A history deletion transaction is already running.')
     const intent = readHistoryDeletionIntent()
@@ -8517,32 +10470,100 @@ export class AppStore {
       throw new Error('History deletion commit does not match the pending operation.')
     }
     this.historyDeletionRunning = true
+    let settled: void | Promise<void>
     try {
-      this.executeHistoryDeletion(intent)
-    } finally {
+      settled = this.catalogueQuiescence
+        ? this.catalogueQuiescence(this.historyDeletionPreparation(intent)).then(() =>
+            this.executeHistoryDeletion(intent)
+          )
+        : this.executeHistoryDeletion(intent)
+    } catch (error) {
       this.historyDeletionRunning = false
+      this.catalogueResume?.()
+      throw error
     }
+    if (settled) {
+      return settled.finally(() => {
+        this.historyDeletionRunning = false
+        this.catalogueResume?.()
+      })
+    }
+    this.historyDeletionRunning = false
+    this.catalogueResume?.()
   }
 
-  private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void {
+  private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void | Promise<void> {
     const prepared = this.prepareHistoryDeletion(input)
-    this.commitPreparedHistoryDeletion(prepared.operationId)
+    return this.commitPreparedHistoryDeletion(prepared.operationId)
   }
 
-  static deleteChat(chatId: string, _seen: Set<string> = new Set()): void {
-    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
-    this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+  /** True while the legacy writer gate admits writes (open, or a retained drain admission). */
+  static legacyStoreWritesOpen(): boolean {
+    return legacyStoreCanWrite()
   }
 
-  static truncateChatHistory(chatId: string): ChatRecord | null {
-    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
-    if (!this.getChat(chatId)) return null
-    this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
-    return this.getChat(chatId)
+  static deleteChat(chatId: string, _seen: Set<string> = new Set()): void | Promise<void> {
+    if (this.threadCatalogueMirror) return this.deleteChatViaHost(chatId)
+    runLegacyStoreWriteAdmission({ operation: 'delete-chat', pathFamily: 'chats' }, () => {
+      if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+      this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+    })
   }
 
-  static clearChats(workspaceId?: string): void {
-    this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
+  /**
+   * Host-owned-gate delete: the same transaction, with only the chat-record
+   * removal routed through the Host (thread.record.delete). Callers select
+   * this via legacyStoreWritesOpen() so the legacy entry keeps its
+   * synchronous signature and semantics exactly.
+   */
+  static deleteChatViaHost(chatId: string): Promise<void> {
+    if (!isSafeChatId(chatId)) return Promise.reject(new Error('Chat id must be a safe chat id.'))
+    const settled = this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+    return settled ? settled : Promise.resolve()
+  }
+
+  static truncateChatHistory(chatId: string): ChatRecord | null | Promise<ChatRecord | null> {
+    if (this.threadCatalogueMirror) return this.truncateChatHistoryViaHost(chatId)
+    return runLegacyStoreWriteAdmission(
+      { operation: 'truncate-chat-history', pathFamily: 'chats' },
+      () => {
+        if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+        if (!this.getChat(chatId)) return null
+        this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
+        return this.getChat(chatId)
+      }
+    )
+  }
+
+  /**
+   * Host-owned-gate truncate: the record is scrubbed by the same
+   * buildTruncatedChatRecordForErasure and travels via thread.record.persist
+   * with main's complete record (never delete), per the 84a5d849f modeling.
+   */
+  static truncateChatHistoryViaHost(chatId: string): Promise<ChatRecord | null> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('Chat id must be a safe chat id.'))
+    }
+    if (!this.getChat(chatId)) return Promise.resolve(null)
+    const settled = this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
+    return settled
+      ? settled.then(() => this.getChat(chatId))
+      : Promise.resolve(this.getChat(chatId))
+  }
+
+  static clearChats(workspaceId?: string): void | Promise<void> {
+    if (this.threadCatalogueMirror) return this.clearChatsViaHost(workspaceId)
+    runLegacyStoreWriteAdmission({ operation: 'clear-chats', pathFamily: 'chats' }, () => {
+      this.runHistoryDeletion(workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' })
+    })
+  }
+
+  /** Host-owned-gate clear: repeated thread.record.delete over the frozen intent.chatIds. */
+  static clearChatsViaHost(workspaceId?: string): Promise<void> {
+    const settled = this.runHistoryDeletion(
+      workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' }
+    )
+    return settled ? settled : Promise.resolve()
   }
 
   // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so
@@ -8566,13 +10587,11 @@ export class AppStore {
       runIds: [input.sourceRunId]
     })
     const ledger = readSubThreadMailboxLedger()
-    // Capture the child's seat HERE rather than at each of the six call sites:
-    // this method runs when the child returns, so resolving now IS capture at
-    // return time. Reading it later, when the parent renders the card, would
-    // let a subsequent reconfiguration of the child rewrite what the reader is
-    // told about a result they already received. Never taken from the caller —
-    // a seat supplied as an argument could misattribute the result.
-    const seat = seatFromSoloChat(this.getChat(input.subThreadId))
+    // Capture the exact child RUN here rather than at each of the six call
+    // sites. Its durable requested/actual model and provider metadata are the
+    // only source for a frozen return identity; reading mutable chat settings
+    // later could let a recall or reconfiguration rewrite the result's seat.
+    const seat = seatFromSoloChatRun(this.getChat(input.subThreadId), input.sourceRunId)
     const result = enqueueMailboxEvent(
       ledger.mailboxes[input.parentChatId],
       { ...input, ...(seat ? { subThreadSeat: seat } : {}) },
@@ -8583,6 +10602,46 @@ export class AppStore {
       writeSubThreadMailboxLedger(ledger)
     }
     return result
+  }
+
+  static getExecutionResultMailbox(threadId: string): ExecutionResultMailbox {
+    const ledger = readExecutionResultMailboxLedger()
+    return ledger.mailboxes[threadId] || emptyExecutionResultMailbox(threadId)
+  }
+
+  /**
+   * Durable delivery of a graph's terminal result to its owning thread. The
+   * read-modify-write below has no await in it, so it is atomic with respect to
+   * concurrent in-process callers — the same property the sub-thread mailbox
+   * relies on. A duplicate costs zero disk I/O.
+   */
+  static enqueueExecutionResultMailboxEvent(
+    input: ExecutionResultMailboxEventInput,
+    options: { now?: string } = {}
+  ): ReturnType<typeof enqueueExecutionResultEvent> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Execution result mailbox enqueue',
+      chatIds: [input.threadId],
+      workspaceIds: [this.getChat(input.threadId)?.workspaceId]
+    })
+    const ledger = readExecutionResultMailboxLedger()
+    const result = enqueueExecutionResultEvent(ledger.mailboxes[input.threadId], input, options)
+    if (result.inserted) {
+      ledger.mailboxes[input.threadId] = result.mailbox
+      writeExecutionResultMailboxLedger(ledger)
+    }
+    return result
+  }
+
+  static deleteExecutionResultMailbox(threadId: string): void {
+    const ledger = readExecutionResultMailboxLedger()
+    if (!ledger.mailboxes[threadId]) return
+    delete ledger.mailboxes[threadId]
+    if (Object.keys(ledger.mailboxes).length === 0) {
+      deletePathBestEffort(executionResultMailboxesPath, 'execution result mailbox ledger')
+      return
+    }
+    writeExecutionResultMailboxLedger(ledger)
   }
 
   static deleteSubThreadMailbox(parentChatId: string): void {
@@ -9889,7 +11948,14 @@ export class AppStore {
       })
       recordScan('approvalLedger', approvalRecords.length, retainedApprovals.length)
       if (!dryRun && retainedApprovals.length !== approvalRecords.length) {
-        writeApprovalLedger(retainedApprovals)
+        if (approvalLedgerEventsEnabled()) {
+          const store = getApprovalLedgerEventStore()
+          const beforeSequence = store.stats().sequence
+          store.replaceProjection(retainedApprovals)
+          noteApprovalLedgerEventMutation(store, beforeSequence)
+        } else {
+          writeApprovalLedgerLegacy(retainedApprovals)
+        }
       }
 
       const workspaceChanges = this.readWorkspaceChangeSetsCached()
@@ -12245,7 +14311,15 @@ export class AppStore {
   }
 
   static getRunEventReplay(runId: string) {
-    return createRunEventReplay(runId, readRunEventFile(runEventFilePath(runId)))
+    return getRunEventReplayCachedSync(runId, runEventFilePath(runId), readRunEventFile)
+  }
+
+  /** Async cached twin used by the renderer's `get-run-event-replay` IPC so
+   * N active run cards polling every 2s do not re-read and re-parse unchanged
+   * run-event files on the main event loop. The cache is keyed by mtime+size,
+   * matching the workspace-change cache precedent. */
+  static async getRunEventReplayAsync(runId: string): Promise<RunEventReplay> {
+    return getRunEventReplayCachedAsync(runId, runEventFilePath(runId), readRunEventFileAsync)
   }
 
   /** Cheap forensics-availability check for cross-thread recall: false when a
@@ -12336,11 +14410,25 @@ export class AppStore {
 
   // Approval ledger
   static getApprovalLedger(filter: ApprovalLedgerFilter = {}): ApprovalLedgerRecord[] {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      store.recoverExpired()
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return store.getFilteredRecords(filter)
+    }
     const records = this.recoverExpiredApprovalLedger()
     return filterApprovalLedgerRecords(records, filter)
   }
 
   static recordApprovalRequest(input: ApprovalLedgerRequestInput): ApprovalLedgerRecord {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      const record = store.put(input)
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return record
+    }
     const records = this.recoverExpiredApprovalLedger()
     const record = createApprovalLedgerRecord(input)
     const index = records.findIndex((item) => item.approvalId === record.approvalId)
@@ -12354,7 +14442,7 @@ export class AppStore {
     } else {
       records.push(record)
     }
-    writeApprovalLedger(records)
+    writeApprovalLedgerLegacy(records)
     return index >= 0 ? records[index] : record
   }
 
@@ -12364,6 +14452,13 @@ export class AppStore {
     decisionSource: 'user' | 'system' = 'user',
     extraMetadata: Record<string, unknown> = {}
   ): ApprovalLedgerRecord | null {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      const resolved = store.resolve(approvalId, action, decisionSource, extraMetadata)
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return resolved
+    }
     const records = this.recoverExpiredApprovalLedger()
     const index = records.findIndex((record) => record.approvalId === approvalId)
     // A renderer/phone response is valid only while the durable row is still
@@ -12378,7 +14473,7 @@ export class AppStore {
       extraMetadata
     )
     records[index] = updated
-    writeApprovalLedger(records)
+    writeApprovalLedgerLegacy(records)
     return updated
   }
 
@@ -12391,11 +14486,28 @@ export class AppStore {
   }): ApprovalLedgerRecord[] {
     const records = this.recoverExpiredApprovalLedger()
     const updated = expireScopedApprovalLedgerRecords(records, filter)
-    writeApprovalLedger(updated)
+    if (approvalLedgerEventsEnabled()) {
+      const changed = updated.some((record, index) => record !== records[index])
+      if (changed) {
+        const store = getApprovalLedgerEventStore()
+        const beforeSequence = store.stats().sequence
+        store.replaceProjection(updated)
+        noteApprovalLedgerEventMutation(store, beforeSequence)
+      }
+    } else {
+      writeApprovalLedgerLegacy(updated)
+    }
     return updated
   }
 
   static recoverExpiredApprovalLedger(): ApprovalLedgerRecord[] {
+    if (approvalLedgerEventsEnabled()) {
+      const store = getApprovalLedgerEventStore()
+      const beforeSequence = store.stats().sequence
+      store.recoverExpired()
+      noteApprovalLedgerEventMutation(store, beforeSequence)
+      return store.getRecords()
+    }
     const stored = readJson<ApprovalLedgerRecord[] | unknown>(approvalLedgerPath, [])
     const records = Array.isArray(stored) ? stored : []
     const recovered = recoverExpiredApprovalLedgerRecords(records)
@@ -12407,7 +14519,7 @@ export class AppStore {
       capped.length !== records.length ||
       capped.some((record, index) => record !== records[index])
     if (changed) {
-      writeApprovalLedger(capped)
+      writeApprovalLedgerLegacy(capped)
     }
     return capped
   }
@@ -12422,7 +14534,7 @@ export class AppStore {
     const records = readJson<ProductCrashRecord[] | unknown>(productCrashesPath, [])
     const current = Array.isArray(records) ? records : []
     const record = createProductCrashRecord(input, {
-      appVersion: electron.app.getVersion() || 'unknown',
+      appVersion: storeRuntime.appVersion || 'unknown',
       platform: process.platform,
       arch: process.arch
     })

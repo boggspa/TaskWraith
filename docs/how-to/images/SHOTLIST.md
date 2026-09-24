@@ -1,15 +1,16 @@
 # How-To Manual — Screenshot Shot List
 
-86 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+90 screenshots, one per feature guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
 
-Current inventory, reconciled 2026-08-16 against the 2026-07-18 latest-source capture pass: **61 captured, 25 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set. The count is 86 guide pages minus the 25 with no capture on disk.
+Current inventory, reconciled 2026-09-03 (second pass): **69 captured, 21 pending**, over 90 feature guide pages. Every page is covered by exactly one of an embedded image or a `screenshot-pending` marker. Two superseded PNGs are retained on disk without a referencing page; see [`REMAINING.md`](REMAINING.md), which also grades the captures that are on disk but stale.
 
 The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
 ## Capture settings
 
 - **Format:** PNG at native display resolution. Do not upscale a small capture.
-- **Theme:** use a consistent current theme unless the page specifically documents Appearance or dark mode.
+- **Theme and shell: vary them deliberately.** The manual is no longer pinned to one look. TaskWraith ships 25 themes plus four app-icon styles and several composer shells, and a manual shot entirely in one theme undersells that. Mix Light and Dark across pages, and vary the composer shell, so the reader sees the range. Two rules still bind: a page that documents a *specific* appearance must show that appearance, and a page whose point is a control's layout should not pick a theme that obscures it. Record the theme used in a shot only when it is load-bearing for the page.
+- **Window size:** capture at roughly 1834x1320 (a conventional desktop aspect). Avoid very tall windows — they are a personal working preference, not what most readers run, and they leave large dead bands in a cropped shot.
 - **Scope:** capture or crop to the relevant panel/control so the detail remains legible. Include surrounding chrome only when it explains where the feature lives.
 - **State:** put the UI in the state the caption describes (e.g. a popover open, a chip active, an ensemble running).
 - **Privacy:** use only the authorized `Test 1` through `Test 4` workspaces for live examples. Workspace names, agent/task metrics, usage telemetry, and live demo transcripts are acceptable; full private file paths, secrets, pairing QR codes, and unrelated personal content are not. Crop or redact before committing when necessary.
@@ -22,7 +23,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `approvals-and-permissions__approval-ledger.png` | Electron | Approval Ledger panel with filter and export controls | **Settings → Automation → Approvals & Grants.** |
-| `approvals-and-permissions__approval-timeouts.png` | Electron | Settings panel showing approval timeout fields per provider | Settings → **Behavior** tab → **Timeout windows** section. |
+| `approvals-and-permissions__approval-timeouts.png` | Electron | Settings panel showing approval timeout fields per provider | Settings → **General** tab → **Timeout windows** section. |
 | `approvals-and-permissions__pending-approval-modal.png` | Electron | Pending approval modal showing Accept / Decline options with countdown | Appears automatically above the composer for the chat that triggered the request, whenever an agent's action needs your approval. |
 | `approvals-and-permissions__permission-elevation-sheet.png` | Electron | Permission elevation sheet showing posture options | Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Accept Edits, Full WS Access, or Full Access. |
 | `approvals-and-permissions__provider-agentic-policies.png` | Electron | Provider settings showing agentic policy matrix | **Settings → AI & Providers → Providers → Agentic services.** A read-only summary ("Policy posture") also appears on **Settings → Data → Safety & Privacy**, with an **Edit policies** button that jumps back here. |
@@ -31,9 +32,10 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with the address bar and a loaded page | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
+| `canvas-and-previews__canvas-browser.png` | Electron | Canvas Browser in the right dock with its address bar and navigation controls. Keep private paths, vault URLs, and signed-in site content out of frame. | Open the right dock and select **Canvas**, or ask the agent to browse — a navigation request opens Canvas automatically in the active task. |
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
-| `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) from the composer's Plus Tools menu. |
+| `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (1-8 panes) with the Multiview layout picker in the composer's telemetry row, then pick a surface card in an empty pane's Thread Home. |
+| `canvas-and-previews__emulator-canvas.png` | Electron | Homebrew Emulator demo in Canvas with the Play control and key mapping. Source-ahead feature. | In a chat's right Inspector, open **Canvas** and choose **Homebrew Emulator**. Source-ahead feature. |
 | `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
 | `canvas-and-previews__ios-canvas-preview.png` | iOS | iOS canvas preview card in the companion app | Open a chat in the companion app that has an open Canvas on the desktop. |
 
@@ -42,29 +44,30 @@ The current refresh uses latest-source development apps, not an installed releas
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `chats-and-threads__chat-types.png` | Electron | Chat surface with the Chat / Code / Work switcher and chat, Channels, and Ensemble sections. **The capture on disk is stale** — it predates the Channels rename and still shows a "Shared" sidebar section; recapture. | Use **Chat** for General chats, **Code** for workspace-scoped threads/workflows/boards, and **Work** for Projects; Pinned, Recents, Ensembles, and Channels are scoped to the active Chat or Code surface. |
-| `chats-and-threads__in-chat-search.png` | Electron | In-chat search bar with highlighted results in the transcript | In any chat, press **⌘F** on macOS or **Ctrl+F** on Windows/Linux to open the search bar above the transcript. |
+| `chats-and-threads__in-chat-search.png` | Electron | In-chat search with the active match highlighted in the transcript and the match counter in the search bar. Use a single-word query — see REMAINING. | In any chat, press **⌘F** on macOS or **Ctrl+F** on Windows/Linux to open the search bar above the transcript. |
 | `chats-and-threads__pinned-messages.png` | Electron | Pinned messages panel in the right dock | Pin a message from its hover action chip or right-click context menu in any transcript. |
-| `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Open the **linked chat menu** (the split-pane icon with a chevron, in the chat header next to the other corner buttons) and choose how to open it: - **Open isolated side split** — docks a sidecar pane beside the current chat with a copied parent snapshot. |
+| `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Click the split-pane corner control (**Open isolated side chat**), or run `/side`, to dock a sidecar pane beside the current chat. |
 | `chats-and-threads__sub-thread-delegation.png` | Electron | Sub-thread delegation card and return card in a chat transcript | Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread**. |
 
 ### composer
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `composer__ensemble-mode-picker.png` | Electron | Composer ensemble mode picker showing Turn / Continuous options | In an **ensemble chat**, look at the **composer's action row** above the input box. |
+| `composer__ensemble-mode-picker.png` | Electron | Ensemble Orchestration Row showing the Fan-Out, Isolate, and Turns controls | In an **ensemble chat**, in the **Roster Presets** section above the composer input, on the second row. |
 | `composer__goal-button.png` | Electron | Composer goal button popover showing objective and status | In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. |
-| `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, multiview, screen watch | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
+| `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, screen watch, and workspace tools | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
 | `composer__provider-model-permissions-pickers.png` | Electron | Composer inline pickers row with provider, model+reasoning, and permissions chips | In the **composer's inline pickers row**, just below the prompt input. |
 | `composer__schedule-prompt.png` | Electron | Composer schedule button with quick offset options | In the **composer's control row** (the icon row beneath the prompt box), next to the Goal button. |
 | `composer__slash-commands.png` | Electron | Composer slash command menu open with available commands | Open it from the **chat composer** in three ways: - Type `/` at the start of a word in the composer. |
+| `composer__ultratask.png` | Electron | Composer reasoning ladder with the UltraTask stop selected on a supporting model | Click the **model chip** under the prompt box; **UltraTask** is the top stop on the **Reasoning** ladder, above **Ultracode**. Only shown on models that support it. |
 
 ### ensemble-mode
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous mode picker, whenever Continuous mode is active for the current round. |
+| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, in the Turn Budget cell of the orchestration row (always shown — ensembles are Continuous-only). |
 | `ensemble-mode__create-ensemble-chat.png` | Electron | Active new Ensemble draft with roster controls and participant chips | Create a new draft, turn **Ensemble** on before first send, and capture the active Ensemble composer plus its roster controls. |
-| `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous orchestration mode picker in the composer's action row. |
+| `ensemble-mode__fan-out.png` | Electron | Fan-out On/Off toggle chip | In an ensemble chat, it sits in the Fan-Out cell of the orchestration row above the composer input. |
 | `ensemble-mode__ios-ensemble-ui.png` | iOS | iOS companion showing ensemble strip and roster sheet | Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. |
 | `ensemble-mode__mention-yield-routing.png` | Electron | Composer showing an @-mention being typed with role autocomplete | Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. |
 | `ensemble-mode__participant-chip-strip.png` | Electron | Participant chip strip above composer with multiple provider chips | In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. |
@@ -84,7 +87,9 @@ The current refresh uses latest-source development apps, not an installed releas
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `getting-started__add-workspace.png` | Electron | Workspaces section header with its Add workspace plus button | Select **Code**, then click the **+** button on the **Workspaces** section header, or go to **Settings → Workspaces → Workspaces**. |
+| `getting-started__external-provider-thread-import.png` | Electron | Settings → Archived showing the Import an external provider thread panel | Open **Settings → Archived**, then use **Import an external provider thread**. |
 | `getting-started__first-launch-sheet.png` | Electron | Top of the First Launch Sheet showing provider status and authentication actions | It appears automatically the first time you launch TaskWraith. |
+| `getting-started__first-run-ensemble-task.png` | Electron | Welcome sheet "Try this first: a governed workspace review" card with Copy task and Show the sample task | In the Welcome sheet, under **8. Try Ensemble chats**. |
 | `getting-started__sidebar-onboarding-hint.png` | Electron | Sidebar onboarding hint card under the + button | In the **Sidebar**, directly under the **+** (Add workspace) button, when no workspaces are loaded. |
 | `getting-started__welcome-screen.png` | Electron | General welcome draft with greeting, composer, and Weather/Sky backdrop | Appears in the **center stage** when a selected General draft is pristine and idle; workspace drafts can additionally show usage and activity dashboards. |
 
@@ -114,13 +119,12 @@ The current refresh uses latest-source development apps, not an installed releas
 | `notifications-and-status__participant-health.png` | Electron | ParticipantHealthCard showing ok/warning states for multiple providers | Participant health cards appear automatically, inline in the transcript, in any Ensemble chat — they're inserted just before a round dispatches, as the orchestrator's pre-flight check on each participant. |
 | `notifications-and-status__provider-health-chips.png` | Electron | OllamaHealthChip showing green/connected state next to provider picker | Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. |
 | `notifications-and-status__push-notifications.png` | iOS | iOS push notification from TaskWraith on the lock screen | Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. |
-| `notifications-and-status__sub-thread-status-ticker.png` | Electron | SubThreadStatusTicker showing running/completed sub-thread states | It renders inline above the transcript of the parent chat, and only appears while at least one of that chat's sub-threads is running — it disappears again once all sub-threads finish or stop. |
 
 ### settings-and-configuration
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `settings-and-configuration__appearance-tab.png` | Electron | Appearance tab showing theme selector, accent color picker, and FX Labs section | Open **Settings → App → Appearance**. |
+| `settings-and-configuration__appearance-tab.png` | Electron | Appearance tab showing the app-icon styles and the full theme grid with live preview cards | Open **Settings → App → Appearance**. |
 | `settings-and-configuration__devices-tab.png` | Electron | Devices tab showing QR code, paired devices list, and networking options | **Settings → Integrations → Devices**. |
 | `settings-and-configuration__general-tab.png` | Electron | General tab showing behavior settings, context turns slider, and product ops section | Open **Settings → App → General**. |
 | `settings-and-configuration__keyboard-shortcuts-tab.png` | Electron | Keyboard shortcuts tab showing editable keybinding list | Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail. |
@@ -132,7 +136,7 @@ The current refresh uses latest-source development apps, not an installed releas
 | `settings-and-configuration__provider-tools-tab.png` | Electron | Provider tools tab showing MCP bridge audit and tool catalog | **Settings → Integrations → Provider Tools**. |
 | `settings-and-configuration__providers-tab.png` | Electron | Providers tab showing provider sign-in cards and agentic policy matrix | Open **Settings → AI & Providers → Providers**. |
 | `settings-and-configuration__safety-and-privacy-tab.png` | Electron | Safety and privacy tab showing risk posture overview and deep-links | Open **Settings → Data → Safety & Privacy**. |
-| `settings-and-configuration__channels-tab.png` | Electron | Channels tab showing the hosted/joined channel list with member and revoke controls. Use a demo or redacted membership state; never publish a live invite code or member credential. | **Settings → Integrations → Channels** |
+| `settings-and-configuration__channels-tab.png` | Electron | Channels overview in Settings with no active channels yet and the audit log entry. An honest empty state: creating a real channel would mean issuing a live invite. Never publish an invite code or member credential. | **Settings → Integrations → Channels** |
 | `settings-and-configuration__workspaces-tab.png` | Electron | Workspaces tab showing loaded workspace list with pin/remove controls | **Settings → Workspaces → Workspaces**. |
 
 ### sidebar-navigation
@@ -141,9 +145,10 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `sidebar-navigation__overflow-menus.png` | Electron | Sidebar overflow menu expanded on a workspace or chat item | In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflow) button or right-click the item. |
 | `sidebar-navigation__project-reference-library.png` | Electron | Selected Project detail showing the metadata-only file, folder, and link References controls | Select **Work**, then select a Project; the References controls appear in its expanded detail panel. |
+| `sidebar-navigation__project-references-studio.png` | Electron | Project library dock showing the Studio row and a generated draft with Save to library and Discard | Select **Work**, choose a Project, open the **Refs** tab in the right dock, mark at least one reference **Use next**, then generate a **Briefing**, **FAQ**, or **Decision log**. |
 | `sidebar-navigation__settings-entry.png` | Electron | Sidebar footer with Settings button highlighted | In the **Sidebar footer** — click the **Settings** (gear) button. |
 | `sidebar-navigation__sidebar-search.png` | Electron | Surface-scoped sidebar search focused with results | Select **Chat**, **Code**, or **Work**, then focus the search field below the switcher; capture text/results appropriate to that surface. |
-| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |
+| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy, captured in the Light theme | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |
 | `sidebar-navigation__update-pill.png` | Electron | Sidebar update pill above the masthead | In the **Sidebar**, directly above the masthead (workspace name / + button area), for as long as an update is available, downloading, downloaded, or has hit an error. |
 | `sidebar-navigation__workspace-and-chat-tree.png` | Electron | Tight crop of an expanded authorized test workspace with a parent and linked child | Select **Code**, expand a workspace in **Workspaces**, then expand a thread with a linked side chat or sub-thread. Keep full filesystem paths and unrelated workspace names out of frame. |
 
@@ -161,7 +166,6 @@ The current refresh uses latest-source development apps, not an installed releas
 | `transcript-and-search__proposed-plan-cards.png` | Electron | Proposed plan card in the transcript | Appears automatically in the **transcript**, attached to the assistant message that contains the plan, whenever the active permission preset is **Plan** (set via the composer's permissions chip) and the agent's reply is plan-shaped — either an explicit plan block, or (while in plan mode) a substantive turn with real structure. |
 | `transcript-and-search__queued-messages-row.png` | Electron | Queued messages row above the composer input | Above the composer input, in the same stack that holds the ensemble participant chips and the Create-PR row. |
 | `transcript-and-search__right-dock-rim.png` | Electron | Right dock rim tabs in the chat corner | It appears at the top of the right dock whenever the dock is open. |
-| `transcript-and-search__run-cockpit-panel.png` | Electron | Run cockpit panel in the right dock | Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) to open it for the current pane. |
 | `transcript-and-search__transcript-message-stream.png` | Electron | Main chat transcript showing a multi-message conversation thread | It fills the center stage whenever a chat is open. |
 
 ### workflows-and-boards

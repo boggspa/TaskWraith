@@ -25,7 +25,8 @@ const providerLabels: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
 }
 
 const providerIds = new Set<ProviderId>([
@@ -38,9 +39,10 @@ const providerIds = new Set<ProviderId>([
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
-const providerMcpMethodPattern = /^(gemini|codex|claude|kimi|grok|cursor|ollama|pi|mistral|muse)-mcp\//
+const providerMcpMethodPattern = /^(gemini|codex|claude|kimi|grok|cursor|ollama|pi|mistral|muse|devin)-mcp\//
 
 export interface ApprovalTitleBackfillChange {
   index: number
@@ -226,7 +228,7 @@ export function expirationForApprovalAction(
   if (scope === 'session') {
     return {
       mode: 'session_end' as const,
-      description: 'Session approval expires when the active provider runtime session ends.'
+      description: 'This run-scoped approval expires when the current TaskWraith run reaches a terminal state.'
     }
   }
   if (scope === 'run') {

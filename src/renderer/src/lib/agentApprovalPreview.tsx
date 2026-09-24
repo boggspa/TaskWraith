@@ -1,3 +1,5 @@
+import { memo } from 'react'
+
 const formatApprovalChangePreview = (changes: any): string => {
   if (!Array.isArray(changes) || changes.length === 0) return ''
   return changes
@@ -482,5 +484,17 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
     </div>
   )
 }
+
+interface AgentApprovalPreviewProps {
+  preview: unknown
+}
+
+const AgentApprovalPreviewComponent = function AgentApprovalPreview({
+  preview
+}: AgentApprovalPreviewProps): React.JSX.Element | null {
+  return renderAgentApprovalPreview(preview)
+}
+
+export const AgentApprovalPreview = memo(AgentApprovalPreviewComponent)
 
 export { formatApprovalChangePreview, renderAgentApprovalPreview }

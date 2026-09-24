@@ -59,9 +59,18 @@ describe('project reference context dispatch acceptance', () => {
 
   it('enables the Composer for an explicit reference-only solo or ensemble send', () => {
     expect(composerSource).toContain('hasProjectReferenceContext = false')
-    expect(composerSource).toContain(
-      'hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext'
+    const sendableContent = sourceBetween(
+      composerSource,
+      'const hasSendablePromptContent =',
+      // Was `const scheduledNowMs =` until that clock was extracted into
+      // ScheduledTaskCountdown / GoalRuntimeLabel, which deleted the anchor.
+      // `goalControlDisabled` is the next declaration after it, so the slice is
+      // preserved almost exactly — and it is a plain derived boolean with no
+      // hook form to churn, unlike its predecessor.
+      'const goalControlDisabled ='
     )
+    expect(sendableContent).toContain('hasAttachmentPromptContent(prompt, imageAttachments)')
+    expect(sendableContent).toContain('hasProjectReferenceContext')
     expect(appSource).toContain('currentProjectReferenceContextSelection?.referenceIds.length')
     expect(appSource).not.toContain(
       'currentProjectReferenceContextSelection?.referenceIds.length && !isCurrentEnsembleChat'

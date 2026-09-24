@@ -1,4 +1,5 @@
 import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
+import { carriesAssistantRunItemText, runItemEventMatchesWireRoute } from './runItemProjection'
 import { resolveToolEventName } from '../../../shared/toolEventNaming'
 import type { ClaudeWorkflowTelemetry } from '../../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../../shared/codexReview'
@@ -84,6 +85,20 @@ export type NormalizedEvent =
   | { type: 'raw_event'; data: any }
   | { type: 'malformed_json'; text: string }
 
+/**
+ * Wire `result` lines are NOT always terminal. The Pi/host lane emits
+ * `{"type":"result","status":"running"}` as a NON-terminal turn boundary
+ * (mirror of `ChannelAgentRunEventCollector.resultStatus`, which returns
+ * null — "keep waiting" — for a running result). Emitting `run_finished`
+ * for those sealed the ChatRun with `endedAt` + a literal
+ * `status: 'running'` — the endedAt-set-but-still-running ghost that made
+ * the close-out read "The run ended with status running", blanked the Task
+ * Complete receipts, and (after main's unsealed copy clobbered the seal on
+ * broadcast) vanished the card on thread switch. Only a genuinely terminal
+ * status may emit `run_finished`; the provider-exit seal owns the rest.
+ */
+const NON_TERMINAL_RESULT_STATUSES = new Set(['running', 'starting', 'cancelling'])
+
 export class GeminiStreamAdapter {
   private buffer = ''
 
@@ -110,30 +125,71 @@ export class GeminiStreamAdapter {
   }
 
   private parseLine(line: string) {
+    let parsed: any
     try {
-      const parsed = JSON.parse(line)
-      const runItemEvents = coerceRunItemEvents(parsed?.runItemEvents)
-      const projectedAssistantDeltaFromRunItem = runItemEvents.some(
-        (event) =>
-          event.kind === 'item/delta' && event.channel === 'assistant' && event.delta.length > 0
-      )
-      // Same contract as the assistant flag: a tool sidecar riding THIS line
-      // means the run_item_event lane is the sole applier for the tool row, so
-      // the legacy normalization below must be skipped. `projectRunItemToolEvents`
-      // renders exactly these two kinds — keep the predicates in step.
-      const projectedToolEventFromRunItem = runItemEvents.some(
-        (event) => event.kind === 'tool/progress' || event.kind === 'tool/outputDelta'
-      )
-      for (const event of runItemEvents) {
-        this.onEvent({ type: 'run_item_event', event })
-      }
-      this.normalizeEvent(parsed, {
-        projectedAssistantDeltaFromRunItem,
-        projectedToolEventFromRunItem
-      })
-      this.onEvent({ type: 'raw_event', data: parsed })
+      parsed = JSON.parse(line)
     } catch {
-      this.onEvent({ type: 'malformed_json', text: line })
+      // ONLY a genuine parse failure is malformed provider output. This used to
+      // share one try/catch with every consumer dispatch below, so a fault in
+      // the renderer's own handler was reported as provider garbage — and, far
+      // worse, silently deleted the rest of the line.
+      this.emit({ type: 'malformed_json', text: line })
+      return
+    }
+    const runItemEvents = coerceRunItemEvents(parsed?.runItemEvents)
+    // The dual-lane skip is a HAND-OFF, not an assumption. The legacy twin
+    // emitted by `normalizeEvent` is this text's only other copy, so it may be
+    // suppressed only for a sidecar the run_item_event lane can actually own
+    // AND actually received. Two ways that used to fail silently — both
+    // observed as a solo turn whose entire written answer never reached the
+    // transcript, leaving only the activity header and the close-out:
+    //   - a sidecar addressed to a different chat/run than the line's own
+    //     route: App's sidecar applier is keyed on the RUN's chat and drops it,
+    //     while the legacy twin (which IS applied to the run's chat) was
+    //     skipped on the strength of the sidecar merely being present;
+    //   - a consumer fault while applying the sidecar: the old whole-line
+    //     try/catch swallowed it and abandoned the remaining sidecars, the
+    //     ENTIRE legacy normalization, and the raw_event for that line.
+    // Both now leave the flag unset, so the legacy lane carries the text.
+    let projectedAssistantDeltaFromRunItem = false
+    // Same contract as the assistant flag: a tool sidecar riding THIS line
+    // means the run_item_event lane is the sole applier for the tool row, so
+    // the legacy normalization below must be skipped. `projectRunItemToolEvents`
+    // renders exactly these two kinds — keep the predicates in step.
+    let projectedToolEventFromRunItem = false
+    for (const event of runItemEvents) {
+      const routed = runItemEventMatchesWireRoute(event, parsed)
+      const delivered = this.emit({ type: 'run_item_event', event })
+      if (!delivered || !routed) continue
+      if (carriesAssistantRunItemText(event)) projectedAssistantDeltaFromRunItem = true
+      if (event.kind === 'tool/progress' || event.kind === 'tool/outputDelta') {
+        projectedToolEventFromRunItem = true
+      }
+    }
+    this.normalizeEvent(parsed, {
+      projectedAssistantDeltaFromRunItem,
+      projectedToolEventFromRunItem
+    })
+    this.emit({ type: 'raw_event', data: parsed })
+  }
+
+  /**
+   * Deliver one normalized event. A fault in the consumer must never delete the
+   * other events on the same line — least of all the legacy twin that is the
+   * assistant text's only remaining copy.
+   *
+   * Returns false when the consumer threw, which is exactly what disarms the
+   * dual-lane skip above. The recovery is behavioural (the legacy lane still
+   * carries the text); the console line is the diagnostic, deliberately NOT a
+   * transcript surface.
+   */
+  private emit(event: NormalizedEvent): boolean {
+    try {
+      this.onEvent(event)
+      return true
+    } catch (error) {
+      console.error('[GeminiStreamAdapter] consumer failed handling', event.type, error)
+      return false
     }
   }
 
@@ -157,7 +213,7 @@ export class GeminiStreamAdapter {
         parsed.workflow && typeof parsed.workflow === 'object' && !Array.isArray(parsed.workflow)
           ? parsed.workflow
           : {}
-      this.onEvent({
+      this.emit({
         type: 'workflow_telemetry',
         ...(typeof parsed.tool_id === 'string' && parsed.tool_id
           ? { toolUseId: parsed.tool_id }
@@ -178,7 +234,7 @@ export class GeminiStreamAdapter {
         parsed.review && typeof parsed.review === 'object' && !Array.isArray(parsed.review)
           ? parsed.review
           : {}
-      this.onEvent({
+      this.emit({
         type: 'review_telemetry',
         ...(typeof parsed.tool_id === 'string' && parsed.tool_id
           ? { toolUseId: parsed.tool_id }
@@ -201,7 +257,7 @@ export class GeminiStreamAdapter {
         !Array.isArray(parsed.multiAgent)
           ? parsed.multiAgent
           : {}
-      this.onEvent({
+      this.emit({
         type: 'multi_agent_telemetry',
         ...(typeof parsed.tool_id === 'string' && parsed.tool_id
           ? { toolUseId: parsed.tool_id }
@@ -234,7 +290,7 @@ export class GeminiStreamAdapter {
         !Array.isArray(compaction.telemetry)
           ? compaction.telemetry
           : {}
-      this.onEvent({
+      this.emit({
         type: 'compaction_notice',
         kind,
         telemetry:
@@ -251,7 +307,7 @@ export class GeminiStreamAdapter {
 
     switch (parsed.type) {
       case 'init':
-        this.onEvent({
+        this.emit({
           type: 'run_started',
           session_id:
             parsed.session_id || parsed.providerThreadId || parsed.provider_thread_id || '',
@@ -290,7 +346,7 @@ export class GeminiStreamAdapter {
           // End-of-item sentinel — no payload to render. Skip.
           break
         }
-        this.onEvent({
+        this.emit({
           type: 'assistant_message_delta',
           content: text,
           ...(itemId ? { itemId } : {}),
@@ -308,7 +364,7 @@ export class GeminiStreamAdapter {
       }
       case 'media_refs':
         if (Array.isArray(parsed.mediaRefs)) {
-          this.onEvent({
+          this.emit({
             type: 'assistant_media_refs',
             mediaRefs: parsed.mediaRefs
           })
@@ -316,28 +372,35 @@ export class GeminiStreamAdapter {
         break
       case 'message':
         if (parsed.role === 'user') {
-          this.onEvent({
+          this.emit({
             type: 'user_message',
             content: parsed.content || '',
             timestamp: parsed.timestamp || new Date().toISOString()
           })
         } else if (parsed.role === 'assistant') {
           if (parsed.delta) {
-            this.onEvent({
+            this.emit({
               type: 'assistant_message_delta',
               content: parsed.content || '',
               ...(hints.projectedAssistantDeltaFromRunItem ? { projectedFromRunItem: true } : {})
             })
           } else {
-            this.onEvent({
+            this.emit({
               type: 'assistant_message_complete',
               content: parsed.content || ''
             })
           }
         }
         break
-      case 'result':
-        this.onEvent({
+      case 'result': {
+        // Non-terminal Wire result (running/starting/cancelling) — a turn
+        // boundary, not completion. Drop it silently; the provider-exit lane
+        // (agent-exit → handleProviderExit) owns the real seal.
+        const resultStatus = String(parsed.status ?? '')
+          .trim()
+          .toLowerCase()
+        if (NON_TERMINAL_RESULT_STATUSES.has(resultStatus)) break
+        this.emit({
           type: 'run_finished',
           status: parsed.status || 'unknown',
           stats: parsed.stats || {},
@@ -349,8 +412,9 @@ export class GeminiStreamAdapter {
             parsed.sessionId
         })
         break
+      }
       case 'error':
-        this.onEvent({
+        this.emit({
           type: 'error',
           message: parsed.message || parsed.error || 'Unknown error',
           timestamp: parsed.timestamp || new Date().toISOString()
@@ -363,7 +427,7 @@ export class GeminiStreamAdapter {
         // maybe it's just text chunks, but we map 'assistant_message_delta' from 'delta: true' messages.
         // If the CLI emits `{ "type": "token", "content": "..." }`, we can map it to delta:
         if (parsed.type === 'token') {
-          this.onEvent({
+          this.emit({
             type: 'assistant_message_delta',
             content: parsed.content || '',
             ...(hints.projectedAssistantDeltaFromRunItem ? { projectedFromRunItem: true } : {})
@@ -392,7 +456,7 @@ export class GeminiStreamAdapter {
                   `${toolName}-${Date.now()}`
               }
             : parsed
-          this.onEvent({
+          this.emit({
             type: 'tool_event',
             name: toolName,
             data: normalizedData,
@@ -458,7 +522,7 @@ export class GeminiStreamAdapter {
       ...(payload && typeof payload === 'object' ? this.stripHiddenProgressFields(payload) : {})
     }
 
-    this.onEvent({
+    this.emit({
       type: 'tool_event',
       name: toolName,
       data: {
@@ -475,7 +539,7 @@ export class GeminiStreamAdapter {
     })
 
     if (output) {
-      this.onEvent({
+      this.emit({
         type: 'tool_event',
         name: toolName,
         data: {

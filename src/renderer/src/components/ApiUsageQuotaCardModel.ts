@@ -7,10 +7,12 @@ import {
 export interface ApiUsageBillingDrafts {
   deepseekTotalTopUp: string
   deepseekMonthlyBudgetUsd: string
+  deepseekResetAt: string
   cerebrasPurchasedCredits: string
   cerebrasCurrentBalance: string
   cerebrasCurrency: ApiUsageBillingCurrency
   cerebrasMonthlyBudgetUsd: string
+  cerebrasResetAt: string
   metaPreloadCredits: string
   metaRemainingBalance: string
   metaPaymentThreshold: string
@@ -19,15 +21,20 @@ export interface ApiUsageBillingDrafts {
   metaResetAt: string
   metaPlanName: string
   metaMonthlyBudgetUsd: string
+  openrouterMonthlyBudgetUsd: string
+  openrouterCurrency: ApiUsageBillingCurrency
+  openrouterResetAt: string
 }
 
 export const EMPTY_API_USAGE_BILLING_DRAFTS: ApiUsageBillingDrafts = {
   deepseekTotalTopUp: '',
   deepseekMonthlyBudgetUsd: '',
+  deepseekResetAt: '',
   cerebrasPurchasedCredits: '',
   cerebrasCurrentBalance: '',
   cerebrasCurrency: 'USD',
   cerebrasMonthlyBudgetUsd: '',
+  cerebrasResetAt: '',
   metaPreloadCredits: '',
   metaRemainingBalance: '',
   metaPaymentThreshold: '',
@@ -35,7 +42,10 @@ export const EMPTY_API_USAGE_BILLING_DRAFTS: ApiUsageBillingDrafts = {
   metaCurrency: 'USD',
   metaResetAt: '',
   metaPlanName: '',
-  metaMonthlyBudgetUsd: ''
+  metaMonthlyBudgetUsd: '',
+  openrouterMonthlyBudgetUsd: '',
+  openrouterCurrency: 'USD',
+  openrouterResetAt: ''
 }
 
 function draftNumber(value: number | undefined): string {
@@ -48,10 +58,12 @@ export function apiUsageBillingDraftsFromSettings(
   return {
     deepseekTotalTopUp: draftNumber(settings?.deepseek?.totalTopUp),
     deepseekMonthlyBudgetUsd: draftNumber(settings?.deepseek?.monthlyBudgetUsd),
+    deepseekResetAt: settings?.deepseek?.resetAt?.slice(0, 10) ?? '',
     cerebrasPurchasedCredits: draftNumber(settings?.cerebras?.purchasedCredits),
     cerebrasCurrentBalance: draftNumber(settings?.cerebras?.currentBalance),
     cerebrasCurrency: settings?.cerebras?.currency ?? 'USD',
     cerebrasMonthlyBudgetUsd: draftNumber(settings?.cerebras?.monthlyBudgetUsd),
+    cerebrasResetAt: settings?.cerebras?.resetAt?.slice(0, 10) ?? '',
     metaPreloadCredits: draftNumber(settings?.meta?.preloadCredits),
     metaRemainingBalance: draftNumber(settings?.meta?.remainingBalance),
     metaPaymentThreshold: draftNumber(settings?.meta?.paymentThreshold),
@@ -59,7 +71,10 @@ export function apiUsageBillingDraftsFromSettings(
     metaCurrency: settings?.meta?.currency ?? 'USD',
     metaResetAt: settings?.meta?.resetAt?.slice(0, 10) ?? '',
     metaPlanName: settings?.meta?.planName ?? '',
-    metaMonthlyBudgetUsd: draftNumber(settings?.meta?.monthlyBudgetUsd)
+    metaMonthlyBudgetUsd: draftNumber(settings?.meta?.monthlyBudgetUsd),
+    openrouterMonthlyBudgetUsd: draftNumber(settings?.openrouter?.monthlyBudgetUsd),
+    openrouterCurrency: settings?.openrouter?.currency ?? 'USD',
+    openrouterResetAt: settings?.openrouter?.resetAt?.slice(0, 10) ?? ''
   }
 }
 
@@ -73,11 +88,11 @@ function optionalAmount(value: string, label: string, positive = false): number 
   return parsed
 }
 
-function canonicalResetDate(value: string): string | undefined {
+function canonicalResetDate(value: string, label = 'Meta'): string | undefined {
   const trimmed = value.trim()
   if (!trimmed) return undefined
   const parsed = Date.parse(`${trimmed}T00:00:00.000Z`)
-  if (!Number.isFinite(parsed)) throw new Error('Meta reset date is invalid.')
+  if (!Number.isFinite(parsed)) throw new Error(`${label} reset date is invalid.`)
   return new Date(parsed).toISOString()
 }
 
@@ -104,7 +119,8 @@ export function apiUsageBillingFromDrafts(
       drafts.deepseekMonthlyBudgetUsd,
       'DeepSeek monthly budget',
       true
-    )
+    ),
+    resetAt: canonicalResetDate(drafts.deepseekResetAt, 'DeepSeek')
   }
 
   const cerebrasPurchasedCredits = optionalAmount(
@@ -124,14 +140,18 @@ export function apiUsageBillingFromDrafts(
     'Cerebras monthly budget',
     true
   )
+  const cerebrasResetAt = canonicalResetDate(drafts.cerebrasResetAt, 'Cerebras')
   const cerebrasHasReading =
-    cerebrasPurchasedCredits !== undefined || cerebrasMonthlyBudgetUsd !== undefined
+    cerebrasPurchasedCredits !== undefined ||
+    cerebrasMonthlyBudgetUsd !== undefined ||
+    cerebrasResetAt !== undefined
   const cerebras = cerebrasHasReading
     ? {
         purchasedCredits: cerebrasPurchasedCredits,
         currentBalance: cerebrasCurrentBalance,
         currency: drafts.cerebrasCurrency,
-        monthlyBudgetUsd: cerebrasMonthlyBudgetUsd
+        monthlyBudgetUsd: cerebrasMonthlyBudgetUsd,
+        resetAt: cerebrasResetAt
       }
     : undefined
 
@@ -163,17 +183,34 @@ export function apiUsageBillingFromDrafts(
       }
     : undefined
 
+  const openrouterMonthlyBudgetUsd = optionalAmount(
+    drafts.openrouterMonthlyBudgetUsd,
+    'OpenRouter monthly budget',
+    true
+  )
+  const openrouterResetAt = canonicalResetDate(drafts.openrouterResetAt, 'OpenRouter')
+  const openrouterHasReading =
+    openrouterMonthlyBudgetUsd !== undefined || openrouterResetAt !== undefined
+  const openrouter = openrouterHasReading
+    ? {
+        monthlyBudgetUsd: openrouterMonthlyBudgetUsd,
+        currency: drafts.openrouterCurrency,
+        resetAt: openrouterResetAt
+      }
+    : undefined
+
   return normalizeApiUsageBillingSettings({
     deepseek,
     cerebras,
-    meta
+    meta,
+    openrouter
   })
 }
 
 export function configuredApiUsageProviderCount(
   settings: ApiUsageBillingSettings | null | undefined
 ): number {
-  return ['deepseek', 'cerebras', 'meta'].filter(
+  return ['deepseek', 'cerebras', 'meta', 'openrouter'].filter(
     (provider) => settings?.[provider as keyof ApiUsageBillingSettings]
   ).length
 }

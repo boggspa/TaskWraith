@@ -98,10 +98,20 @@ export interface TuiGlyphSet {
   seatDisabled: string
   /** A staged model/reasoning change that applies on the next send. */
   pendingChange: string
+  /** A model billed using the user's API key rather than a subscription. */
+  apiKey: string
 
   // Reasoning ladder.
   reasoningOn: string
   reasoningOff: string
+
+  // Git overlay.
+  /** The current branch marker. */
+  gitBranch: string
+  /** A diff line the Host added (+). */
+  diffAdd: string
+  /** A diff line the Host removed (-). */
+  diffRemove: string
 
   // Empty-state sky.
   star: string
@@ -144,9 +154,14 @@ export const TUI_GLYPHS_UNICODE: TuiGlyphSet = {
   seatEnabled: '■',
   seatDisabled: '□',
   pendingChange: '→',
+  apiKey: '🔑',
 
   reasoningOn: '✦',
   reasoningOff: '·',
+
+  gitBranch: '⎇',
+  diffAdd: '+',
+  diffRemove: '-',
 
   star: '✦',
 
@@ -192,9 +207,14 @@ export const TUI_GLYPHS_ASCII: TuiGlyphSet = {
   seatEnabled: 'x',
   seatDisabled: '.',
   pendingChange: '>',
+  apiKey: 'k',
 
   reasoningOn: '#',
   reasoningOff: '.',
+
+  gitBranch: '*',
+  diffAdd: '+',
+  diffRemove: '-',
 
   star: '.',
 
@@ -222,6 +242,20 @@ export function detectTuiUnicode(env: NodeJS.ProcessEnv = process.env): boolean 
 
 export function resolveTuiGlyphs(unicode: boolean): TuiGlyphSet {
   return unicode ? TUI_GLYPHS_UNICODE : TUI_GLYPHS_ASCII
+}
+
+/**
+ * Which vocabulary a resolved glyph set belongs to.
+ *
+ * Surfaces that draw multi-line art (the home banner) need the same answer
+ * `resolveTuiGlyphs` was given, but they only ever receive the resolved set.
+ * The question is answered here rather than by each caller sniffing a
+ * character, and deliberately *not* by adding a boolean to `TuiGlyphSet`:
+ * that interface is a map of drawable glyphs, and the ASCII set is checked
+ * elsewhere by iterating its values and asserting each is one column wide.
+ */
+export function tuiGlyphsAreUnicode(glyphs: TuiGlyphSet): boolean {
+  return glyphs.ghost === TUI_GLYPHS_UNICODE.ghost
 }
 
 /* -------------------------------------------------------------------------
@@ -360,10 +394,10 @@ export function resolveTuiDensity(width: number): TuiDensity {
  * There is no masthead — the terminal's own title bar is the masthead.
  */
 export const TUI_LAYOUT = {
-  /** Footer rows for a solo thread: HUD + composer. */
-  soloFooterRows: 2,
-  /** Footer rows for an ensemble thread: baton + HUD + composer. */
-  ensembleFooterRows: 3,
+  /** Footer rows for a solo thread: permission rule + composer + rule + HUD. */
+  soloFooterRows: 4,
+  /** Footer rows for an ensemble thread: baton + permission-framed composer + HUD. */
+  ensembleFooterRows: 5,
   /** Left gutter for transcript speaker + prose. */
   transcriptGutter: 1,
   /** Left gutter for indented tool / thinking lines. */
@@ -389,5 +423,22 @@ export const TUI_MOTION = {
   /** Blend amount one cell behind the head. */
   shimmerMid: 0.28,
   /** Trailing gap so the sweep reads as a loop rather than a scroll. */
-  shimmerTailPadding: 5
+  shimmerTailPadding: 5,
+  /**
+   * Quiet cells between one home-banner sweep and the next. The banner sweeps
+   * its block on a `column + row` diagonal, so a 21x11 mark has a longest
+   * phase of 30 cells. A tail this long leaves the mark at rest for roughly a
+   * third of each loop, which is what separates a sweep from a surface being
+   * continuously scanned.
+   */
+  bannerSweepTailPadding: 14,
+  /**
+   * Frame interval for the home-frame banner sweep. Deliberately slower than
+   * the working shimmer: a working thread is already repainting, whereas the
+   * home frame repaints for no other reason, so every frame here is CPU spent
+   * while the user is doing nothing. Keep it an exact multiple of the working
+   * shimmer's interval — that is what lets one timer drive both frames by
+   * skipping ticks, rather than a second timer running against the first.
+   */
+  bannerSweepIntervalMs: 240
 } as const

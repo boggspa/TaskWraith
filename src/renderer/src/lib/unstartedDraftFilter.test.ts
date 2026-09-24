@@ -30,6 +30,18 @@ describe('isHideableUnstartedDraft', () => {
     expect(isHideableUnstartedDraft(draft({ title: 'Renamed' }))).toBe(false)
     expect(isHideableUnstartedDraft(draft({ chatTodos: { a: [{}] } }))).toBe(false)
   })
+  it('uses title provenance before placeholder spelling', () => {
+    expect(
+      isHideableUnstartedDraft(
+        draft({ title: 'New Chat', threadTitle: { source: 'user' } })
+      )
+    ).toBe(false)
+    expect(
+      isHideableUnstartedDraft(
+        draft({ title: 'Automatic title', threadTitle: { source: 'prompt-fallback' } })
+      )
+    ).toBe(true)
+  })
   it('keeps started chats visible (messages / runs / child)', () => {
     expect(isHideableUnstartedDraft(draft({ messages: [{ role: 'user' } as never] }))).toBe(false)
     expect(

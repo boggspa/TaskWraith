@@ -2,8 +2,8 @@
  * Host Arc Wave 4.3d — the first view that actually reads Host.
  *
  * WHAT THIS IS. The compact Desktop Host surface in the approvals popover. It
- * reports connection/provider/approval status and owns the collapsible Mission
- * Control projection over Host missions, rounds, runs, routing, and every seat.
+ * reports connection/provider/approval status. Mission Control now lives in
+ * Thread Home, where the same Host projection has room for a dedicated pane.
  * Until this existed, 4.3c mounted the provider but nothing consumed it:
  * Desktop *could* project Host state and never did. This call site makes the
  * mount real.
@@ -15,8 +15,8 @@
  * under `renderToStaticMarkup`, which does not run effects.
  *
  * WHY THIS POPOVER. Host reachability determines whether nearby approvals and
- * questions are current, and the same scrollable surface can reveal mission
- * detail without adding domain logic to Sidebar or App.
+ * questions are current, so these compact facts remain useful after Mission
+ * Control moves into Thread Home.
  *
  * THE DISTINCTION THIS ROW EXISTS TO PRESERVE. "We cannot reach Host" and
  * "this is what Host last told us" are DIFFERENT CLAIMS, and this is the only
@@ -24,16 +24,14 @@
  * lying by omission, so `unavailable` and `cached` get different words —
  * enforced by a test, not by convention.
  *
- * Mission Control also receives the renderer-lifetime governed command
- * controller. It authors only Host command intents; authority and durable
- * receipts remain Host-owned.
+ * Mission Control still authors only governed Host command intents from its
+ * new pane; authority and durable receipts remain Host-owned.
  */
 
 import { useEffect, useRef, useState } from 'react'
 
 import { useHostProjection } from '../hooks/useHostProjection'
-import { useHostCommandController, useHostProjectionStore } from './HostProjectionProvider'
-import { HostMissionControl } from './HostMissionControl'
+import { useHostProjectionStore } from './HostProjectionProvider'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import { HostLifecycleIpcClient } from '../lib/host/hostLifecycleIpcClient'
 import { HOST_WARNING_PROVIDER_SOURCE_NOT_READY } from '../../../shared/hostProtocol'
@@ -223,7 +221,7 @@ export function describeHostLifecycleControl(
 
 /** Providers as Host reports them, or an honest absence. */
 export interface HostProvidersView {
-  /** False whenever the numbers are not a LIVE measured fact. */
+  /** True for a live snapshot or its continuously validated display projection. */
   readonly known: boolean
   readonly available?: number
   readonly total?: number
@@ -240,9 +238,10 @@ export interface HostProvidersView {
  * both must land on "Unknown":
  *
  *  1. the client could not reach Host at all (`status !== 'live'`);
- *  2. Host answered, but said the projection it served was ITSELF cached —
- *     `projectHostSnapshot` forces `freshness: 'cached'` in that case, so
- *     `status` can be 'live' while the data underneath is stale.
+ *  2. Host served a cached snapshot without a live baseline. This differs
+ *     from a connected client applying contiguous deltas to a live snapshot:
+ *     those rows remain suitable for display (as in the provider picker),
+ *     while their cached freshness still fences command authority.
  *
  * Checking only (1) is the easy mistake, and it would paint Host's own stale
  * answer as a fresh measurement. Rendering either as "0 providers" would be
@@ -251,7 +250,11 @@ export interface HostProvidersView {
  */
 export function describeHostProviders(state: HostProjectionState): HostProvidersView {
   const projection = state.projection
-  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+  if (
+    !projection ||
+    state.status !== 'live' ||
+    (projection.freshness !== 'live' && state.liveBaselineContinuity !== true)
+  ) {
     return { known: false, label: 'Unknown' }
   }
 
@@ -314,7 +317,11 @@ export function describeHostAwaitingApprovals(
   state: HostProjectionState
 ): HostAwaitingApprovalsView {
   const projection = state.projection
-  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+  if (
+    !projection ||
+    state.status !== 'live' ||
+    (projection.freshness !== 'live' && state.liveBaselineContinuity !== true)
+  ) {
     return { known: false, label: 'Unknown' }
   }
 
@@ -331,7 +338,7 @@ export function describeHostAwaitingApprovals(
 }
 
 /**
- * Compact Host status and Mission Control surface for the approvals popover.
+ * Compact Host status surface for the approvals popover.
  *
  * Reads the app-scope store through context. With no provider above it the
  * hook reports `idle`, which renders as "Not checked" rather than inventing a
@@ -346,7 +353,6 @@ export function HostStatusRow({
   lifecycleClient: injectedLifecycleClient
 }: HostStatusRowProps = {}) {
   const store = useHostProjectionStore()
-  const commands = useHostCommandController()
   const sourceState = useHostProjection(store)
   const [lifecycleClient] = useState(() => injectedLifecycleClient ?? new HostLifecycleIpcClient())
   const [lifecycle, setLifecycle] = useState<HostLifecycleSnapshot | null>(null)
@@ -450,7 +456,6 @@ export function HostStatusRow({
         <span className="sidebar-footer-device-name">Host approvals</span>
         <span className="sidebar-footer-device-status">{approvals.label}</span>
       </div>
-      <HostMissionControl state={state} commands={commands} />
     </>
   )
 }

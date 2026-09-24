@@ -3,8 +3,8 @@ import {
   CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS,
   CODEX_STAGED_ROLLOUT_MODEL_IDS,
   CODEX_WIRE_REASONING_EFFORTS,
-  codexReasoningEffortsForModel,
   codexModelContextConfig,
+  codexReasoningEffortsForModel,
   codexWireReasoningEffort,
   claudeModelSupportsFastMode,
   appendKimiModelArgs,
@@ -12,6 +12,7 @@ import {
   kimiAcpThinkingConfigValue,
   getStaticProviderModels,
   KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K3_256K_CLI_MODEL,
   KIMI_K3_CLI_MODEL,
   KIMI_STANDARD_CLI_MODEL,
   mergeCodexLiveModelRows,
@@ -22,6 +23,7 @@ import {
   concreteModelForPreviewPlaceholder,
   isPreviewCatalogModelId
 } from '../../shared/previewModelCatalog'
+import { normalizeMistralThinkingLevel } from '../mistral/MistralCliArgs'
 
 describe('codexModelContextConfig', () => {
   const longContextConfig = {
@@ -30,6 +32,9 @@ describe('codexModelContextConfig', () => {
   }
 
   it('returns the explicit 1M config for long-context Codex models', () => {
+    expect(codexModelContextConfig('gpt-6-astra')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6-sol')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6-luna')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.4')).toEqual(longContextConfig)
     // GPT-5.6 trio (GA) — same long-context override as gpt-5.5 for parity.
@@ -50,8 +55,65 @@ describe('codexModelContextConfig', () => {
   })
 })
 
+describe('getStaticProviderModels (Mistral hosted GLM-5.2 thinking correlation)', () => {
+  const glm = getStaticProviderModels('mistral').find((model) => model.id === 'glm-5-2') as
+    | { defaultReasoningEffort?: string; supportedReasoningEfforts?: { reasoningEffort: string }[] }
+    | undefined
+
+  it('defaults the hosted GLM-5.2 to high, matching its Vibe-native default', () => {
+    expect(glm?.defaultReasoningEffort).toBe('high')
+  })
+
+  it('maps every offered effort 1:1 onto the Vibe thinking ladder (no silent downgrade)', () => {
+    // The seat sends `set_config_option { thinking }` computed by
+    // normalizeMistralThinkingLevel(reasoningEffort); a null there is OMITTED,
+    // silently leaving the run on the model default. So every effort TaskWraith
+    // offers for this model (and its default) must map to a real Vibe level.
+    const efforts = (glm?.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort)
+    expect(efforts).toEqual(['off', 'low', 'medium', 'high', 'max'])
+    for (const effort of efforts) {
+      expect(normalizeMistralThinkingLevel(effort)).toBe(effort)
+    }
+    expect(normalizeMistralThinkingLevel(glm?.defaultReasoningEffort)).toBe('high')
+  })
+})
+
+describe('getStaticProviderModels (Muse catalogue)', () => {
+  it('offers both Spark 1.3 routes ahead of 1.2 while keeping Spark 1.2 the default', () => {
+    expect(getStaticProviderModels('muse')).toEqual([
+      {
+        id: 'muse-spark-1.3',
+        label: 'Muse Spark 1.3',
+        description: '1M context - $1.25/$4.25 per Mtok',
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-spark-1.3-contributor',
+        label: 'Muse Contributor Spark 1.3',
+        description:
+          '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-spark-1.2',
+        label: 'Muse Spark 1.2',
+        description: '1M context - $1.25/$4.25 per Mtok',
+        isDefault: true,
+        ultraTaskSupported: true
+      },
+      {
+        id: 'muse-spark-1.2-contributor',
+        label: 'Muse Contributor Spark 1.2',
+        description:
+          '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+        ultraTaskSupported: true
+      }
+    ])
+  })
+})
+
 describe('getStaticProviderModels (Pi lifecycle)', () => {
-  it('warns before Cerebras GLM-4.7 retires and removes it on the date', () => {
+  it('warns before Pi model sunsets and removes each model on its retirement date', () => {
     const before = getStaticProviderModels('pi', {
       now: new Date(2026, 7, 16, 23, 59)
     })
@@ -59,13 +121,104 @@ describe('getStaticProviderModels (Pi lifecycle)', () => {
       label: 'GLM-4.7 (Cerebras)',
       retiresAt: '2026-08-17'
     })
+    expect(before.find((model) => model.id === 'openrouter/stealth/ox-alpha')).toMatchObject({
+      label: 'Ox Alpha',
+      retiresAt: '2026-08-28'
+    })
 
-    const retired = getStaticProviderModels('pi', {
+    const cerebrasRetired = getStaticProviderModels('pi', {
       now: new Date(2026, 7, 17, 0, 0)
     })
-    expect(retired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
-    expect(retired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
-    expect(retired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    expect(cerebrasRetired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
+    expect(cerebrasRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      true
+    )
+
+    const oxAlphaRetired = getStaticProviderModels('pi', {
+      now: new Date(2026, 7, 28, 0, 0)
+    })
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/stealth/ox-alpha')).toBe(
+      false
+    )
+    expect(oxAlphaRetired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
+    expect(oxAlphaRetired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    expect(oxAlphaRetired.some((model) => model.id === 'openrouter/z-ai/glm-5.2')).toBe(true)
+    expect(
+      oxAlphaRetired
+        .filter((model) =>
+          [
+            'openrouter/cohere/north-mini-code:free',
+            'openrouter/minimax/minimax-m3:free',
+            'openrouter/thinkingmachines/inkling:free',
+            'openrouter/thinkingmachines/inkling-small:free'
+          ].includes(model.id)
+        )
+        .map((model) => [model.id, model.label])
+    ).toEqual([
+      ['openrouter/cohere/north-mini-code:free', 'North Mini Code'],
+      ['openrouter/minimax/minimax-m3:free', 'M3 (OpenRouter)'],
+      ['openrouter/thinkingmachines/inkling:free', 'Inkling'],
+      ['openrouter/thinkingmachines/inkling-small:free', 'Inkling Small']
+    ])
+  })
+
+  it('projects the new OpenRouter reasoning ladders and defaults into picker rows', () => {
+    const models = new Map(
+      getStaticProviderModels('pi', { now: new Date(2026, 7, 30) }).map((model) => [
+        model.id,
+        model
+      ])
+    )
+    for (const modelId of [
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free'
+    ]) {
+      expect(models.get(modelId), modelId).toMatchObject({
+        supportedReasoningEfforts: [{ reasoningEffort: 'off' }, { reasoningEffort: 'high' }],
+        defaultReasoningEffort: 'high'
+      })
+    }
+    for (const modelId of [
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free'
+    ]) {
+      expect(models.get(modelId), modelId).toMatchObject({
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'off' },
+          { reasoningEffort: 'minimal' },
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'medium' },
+          { reasoningEffort: 'high' },
+          { reasoningEffort: 'max' }
+        ],
+        defaultReasoningEffort: 'high'
+      })
+    }
+  })
+})
+
+describe('normalizeCliProviderModel (muse)', () => {
+  it('resolves every sentinel to the concrete catalogue default', () => {
+    // 'cli-default' is TaskWraith-internal. Muse had no branch here, so it fell
+    // through to the generic tail and became 'default' — a second sentinel that
+    // is equally not a model id, and which the MSP lane put on the wire.
+    for (const sentinel of ['cli-default', 'default', 'auto', '', '  ', 'CLI-DEFAULT']) {
+      expect(normalizeCliProviderModel('muse', sentinel)).toBe('muse-spark-1.2')
+    }
+    expect(normalizeCliProviderModel('muse', null)).toBe('muse-spark-1.2')
+    expect(normalizeCliProviderModel('muse', undefined)).toBe('muse-spark-1.2')
+  })
+
+  it('resolves to whichever catalogue row carries isDefault, not a hardcoded id', () => {
+    const flagged = getStaticProviderModels('muse').find((model) => model.isDefault)
+    expect(flagged?.id).toBe(normalizeCliProviderModel('muse', 'cli-default'))
+  })
+
+  it('passes a real Muse model id through untouched', () => {
+    expect(normalizeCliProviderModel('muse', 'muse-spark-1.3')).toBe('muse-spark-1.3')
+    expect(normalizeCliProviderModel('muse', 'muse-spark-1.2-contributor')).toBe(
+      'muse-spark-1.2-contributor'
+    )
   })
 })
 
@@ -77,18 +230,21 @@ describe('normalizeCliProviderModel (claude)', () => {
     // Opus 5 ships 1M by default with no -1m picker row, but a stray suffixed
     // id (forged/persisted) still strips to the runnable base id.
     expect(normalizeCliProviderModel('claude', 'claude-opus-5-1m')).toBe('claude-opus-5')
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5-5-1m')).toBe('claude-opus-5-5')
   })
 
   it('passes through base claude ids and bare family aliases unchanged', () => {
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-8')).toBe('claude-opus-4-8')
     expect(normalizeCliProviderModel('claude', 'claude-opus-5')).toBe('claude-opus-5')
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5-5')).toBe('claude-opus-5-5')
     for (const alias of ['sonnet', 'opus', 'haiku']) {
       expect(normalizeCliProviderModel('claude', alias)).toBe(alias)
     }
   })
 
   it('keeps returned Fable and Mythos ids runnable', () => {
-    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-fable-5')
+    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-fable-5-1')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1')).toBe('claude-fable-5-1')
     expect(normalizeCliProviderModel('claude', 'mythos')).toBe('claude-mythos-5')
     expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-fable-5')
     expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-fable-5')
@@ -124,6 +280,7 @@ describe('normalizeCliProviderModel (claude)', () => {
 
 describe('claudeModelSupportsFastMode', () => {
   it('allows supported Opus variants but rejects Fable 5', () => {
+    expect(claudeModelSupportsFastMode('claude-opus-5-5')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-5')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-8-1m')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-7')).toBe(true)
@@ -199,23 +356,31 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(antigravity.every((id) => id.startsWith('gemini-api:'))).toBe(true)
     expect(gemini).toContain('flash')
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
-    expect(grok).toEqual(['grok-4.6', 'grok-4.5', 'grok-composer-2.5-fast'])
-    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6', 'grok-4.5'])
+    // No grok-composer-2.5-fast: retired from the lineup 2026-09-18. Cursor's
+    // own composer pair below is a DIFFERENT provider and is unaffected.
+    expect(grok).toEqual(['grok-4.7', 'grok-4.7-fast', 'grok-4.6', 'grok-4.5'])
+    // No grok-4.5: Cursor's catalogue retired the family, and offering an id
+    // cursor-agent rejects costs the whole run (exit 1, "Cannot use this model").
+    expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6'])
   })
 
-  it('publishes Grok 4.6 as the 500K Extra High-capable default', () => {
+  it('publishes Grok 4.7 as the 500K Extra High-capable default, with a Fast pair', () => {
     const grok = getStaticProviderModels('grok') as StaticModelShape[]
-    expect(grok.find((model) => model.id === 'grok-4.6')).toMatchObject({
-      label: 'Grok 4.6 Fast',
+    expect(grok.find((model) => model.id === 'grok-4.7')).toMatchObject({
+      label: 'Grok 4.7',
       description: '500K context - low/medium/high/extra-high reasoning',
       isDefault: true,
       defaultReasoningEffort: 'high'
     })
     expect(
       grok
-        .find((model) => model.id === 'grok-4.6')
+        .find((model) => model.id === 'grok-4.7')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(grok.find((model) => model.id === 'grok-4.7-fast')).toMatchObject({
+      label: 'Grok 4.7 Fast'
+    })
+    expect(grok.find((model) => model.id === 'grok-4.6')?.isDefault).not.toBe(true)
     expect(grok.find((model) => model.id === 'grok-4.5')?.isDefault).not.toBe(true)
   })
 
@@ -235,29 +400,58 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         .find((model) => model.id === 'grok-4.6')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
-    expect(cursor.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Cursor Grok 4.5'
-    })
+    expect(cursor.find((model) => model.id === 'grok-4.5')).toBeUndefined()
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.7')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
     expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
   })
 
-  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
-    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
+  it('migrates the retired Qwen 3.8 preview wire id to the GA Pi model', () => {
+    expect(normalizeCliProviderModel('pi', 'qwen-token-plan/qwen3.8-max-preview')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+    expect(normalizeCliProviderModel('pi', 'qwen-token-plan/qwen3.8-max')).toBe(
+      'qwen-token-plan/qwen3.8-max'
+    )
+  })
+
+  it('migrates every retired Cursor Grok 4.5 wire id onto Grok 4.6', () => {
+    // Cursor dropped the 4.5 family from its catalogue, so a seat still pinned
+    // to one of these fails hard at dispatch. Migrating to 4.6 keeps the user's
+    // Grok intent (superset ladder) instead of silently becoming Composer.
+    for (const retired of [
+      'grok-4.5',
+      'cursor-grok-4.5',
+      'grok-4.5-medium',
+      'grok-4.5-high',
+      'grok-4.5-xhigh',
+      'grok-4.5-fast-medium',
+      'grok-4.5-fast-high',
+      'grok-4.5-fast-xhigh'
+    ]) {
+      expect(normalizeCliProviderModel('cursor', retired)).toBe('grok-4.6')
+    }
+    // The standalone xAI provider is untouched — it still offers Grok 4.5.
+    expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
+  })
+
+  it('uses Grok 4.7 as the default while retaining the 4.7 Fast, 4.6 and 4.5 rows', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-4.7')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-4.7-fast')).toBe('grok-4.7-fast')
     expect(normalizeCliProviderModel('grok', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
-    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
-      'grok-composer-2.5-fast'
-    )
-    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('cursor', 'grok-4.5-fast-xhigh')).toBe('grok-4.5')
+    // Retired 2026-09-18. The id still starts with `grok`, so without an
+    // explicit migration the passthrough would hand it straight back and the
+    // seat would launch a model that is no longer in the catalogue.
+    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.7')
     expect(normalizeCliProviderModel('cursor', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'cursor-grok-4.6-xhigh-fast')).toBe('grok-4.6')
   })
@@ -271,11 +465,14 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'qwen3.8:27b-mlx',
+      'qwen3.8-flash-next:125b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'gemma4:31b-mlx',
       'ornith:9b',
       'ornith:35b',
+      'ornith-1.5:9b',
+      'ornith-1.5:35b',
       'laguna-xs-2.1:q8_0',
       'gpt-oss:20b',
       'lfm2.5-thinking:1.2b',
@@ -284,10 +481,14 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'granite4:3b',
       'granite4.1:3b',
       'granite4.1:30b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
+      'mistral-medium-3.5:128b',
       'ministral-3:3b',
       'ministral-3:14b',
       'muse-glimmer:30b-mlx',
@@ -309,13 +510,76 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
     const ids = models.map((model) => model.id)
-    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
+    // shipped it "without changing the default model".
+    // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
+    expect(ids.slice(0, 6)).toEqual([
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
+    expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
   })
 
+  it('offers GPT-6 Astra with its official ladder without taking the default', () => {
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    const astra = models.find((model) => model.id === 'gpt-6-astra')
+    expect(astra).toBeDefined()
+    expect(astra?.label).toBe('GPT-6-Astra')
+    expect(astra?.defaultReasoningEffort).toBe('low')
+    // Upstream ladder is low..max plus `ultra`, which TaskWraith carries as its
+    // internal `ultracode` token — and the canonical ladder decides the order,
+    // not the order the tiers happen to be appended in.
+    expect(astra?.supportedReasoningEfforts?.map((e) => e.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(astra?.isDefault).toBeFalsy()
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+    expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-6-astra')).toBe(true)
+  })
+
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
+    ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
+  ])(
+    'offers %s on the documented low..max ladder with a Medium default, staged, not the default',
+    (id, label, description) => {
+      const models = getStaticProviderModels('codex') as StaticModelShape[]
+      const row = models.find((model) => model.id === id)
+      expect(row).toBeDefined()
+      expect(row).toMatchObject({
+        label,
+        description,
+        defaultReasoningEffort: 'medium',
+        additionalSpeedTiers: ['fast']
+      })
+      // The official model pages document none..max and no `ultra`, so the
+      // internal `ultracode` tier is withheld until the live catalog lists it.
+      expect(row?.supportedReasoningEfforts?.map((e) => e.reasoningEffort)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(row?.isDefault).toBeFalsy()
+      expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(true)
+    }
+  )
+
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    for (const modelId of ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+    for (const modelId of ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
       expect(
         models
           .find((model) => model.id === modelId)
@@ -334,7 +598,31 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it('repairs stale live Spark metadata to its full reasoning ladder', () => {
+  it('drops the user-retired Codex rows from the picker entirely', () => {
+    // The four ids the user retired on 2026-09-18 must be absent from every
+    // offer surface, not merely undefaulted. Asserted positively (find() ===
+    // undefined per id) rather than with an `every`/`not.toContain` sweep,
+    // which would pass vacuously if the catalogue ever came back empty.
+    const codex = getStaticProviderModels('codex') as StaticModelShape[]
+    expect(codex.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(codex.find((model) => model.id === modelId)).toBeUndefined()
+    }
+    // Neighbours survive, so this is a targeted retirement and not an empty list.
+    expect(codex.find((model) => model.id === 'gpt-5.5')).toBeDefined()
+
+    const grok = getStaticProviderModels('grok') as StaticModelShape[]
+    expect(grok.length).toBeGreaterThan(0)
+    expect(grok.find((model) => model.id === 'grok-composer-2.5-fast')).toBeUndefined()
+    expect(grok.find((model) => model.id === 'grok-4.6')).toBeDefined()
+
+    // Cursor's own Composer pair is a different provider and stays put.
+    const cursor = getStaticProviderModels('cursor') as StaticModelShape[]
+    expect(cursor.find((model) => model.id === 'composer-2.5-fast')).toBeDefined()
+    expect(cursor.find((model) => model.id === 'composer-2.5')).toBeDefined()
+  })
+
+  it('repairs stale live Codex metadata to its full reasoning ladder', () => {
     expect(
       codexReasoningEffortsForModel('gpt-5.3-codex-spark', [
         { reasoningEffort: 'low' },
@@ -342,12 +630,18 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       ]).map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
 
+    // Spark itself is retired, so its static row is gone; the repair helper
+    // above is still exercised by every live model that carries a short ladder.
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(
       models
-        .find((model) => model.id === 'gpt-5.3-codex-spark')
+        .find((model) => model.id === 'gpt-5.5')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(
+      (models.find((model) => model.id === 'gpt-5.5') as { ultraTaskSupported?: boolean })
+        ?.ultraTaskSupported
+    ).toBe(true)
   })
 
   it('carries official GA metadata on the GPT-5.6 trio rows', () => {
@@ -390,10 +684,10 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     }
   })
 
-  it('retains the Fast tier on GPT-5.5 and GPT-5.4', () => {
+  it('retains the Fast tier on GPT-5.5', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
 
-    for (const modelId of ['gpt-5.5', 'gpt-5.4']) {
+    for (const modelId of ['gpt-5.5']) {
       expect(models.find((model) => model.id === modelId)?.additionalSpeedTiers).toEqual(['fast'])
     }
   })
@@ -420,13 +714,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('keeps explicitly runnable rows available when CLI discovery omits them', () => {
-    // 5.4 / 5.4-mini dropped from model/list at CLI 0.144.0; the Spark
-    // research-preview row was dropped by a later catalog update the same way.
-    // None have a published sunset, so TaskWraith keeps offering them.
-    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS).toEqual(
-      new Set(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark'])
-    )
+  it('carries no explicitly runnable rows now that the 5.4 family is retired', () => {
+    // 5.4 / 5.4-mini / Spark were this set's only members — kept offered while
+    // CLI discovery omitted them and no sunset existed. The user retired all
+    // three on 2026-09-18, so the set is empty. It is NOT dead code: the
+    // discovery-gap problem it solves recurs with every CLI catalog update.
+    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS.size).toBe(0)
   })
 
   it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
@@ -464,6 +757,31 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
+  it('offers a free Devin plan only SWE-1.6 Slow, and every family otherwise', () => {
+    const ungated = getStaticProviderModels('devin')
+    const gated = getStaticProviderModels('devin', { devinFreePlan: true })
+    const paid = getStaticProviderModels('devin', { devinFreePlan: false })
+    expect(ungated.length).toBeGreaterThan(1)
+    expect(ungated.map((m) => m.id)).toContain('claude-opus-5')
+    expect(gated.map((m) => m.id)).toEqual(['swe-1-6-slow'])
+    // Fail-open: an unknown plan must never narrow a paying seat's catalogue.
+    expect(paid.length).toBe(ungated.length)
+  })
+
+  it('orders a live catalog onto the canonical ladder, not catalog order', () => {
+    // A live `model/list` may list rungs in any order. `persistent` sits above
+    // `ultracode` and below `ultratask`; catalog order must not decide that.
+    const efforts = codexReasoningEffortsForModel('gpt-5.6-sol', [
+      { reasoningEffort: 'persistent' },
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'ultra' },
+      { reasoningEffort: 'high' }
+    ])
+    const order = efforts.map((option) => option.reasoningEffort)
+    expect(order).toEqual(['low', 'high', 'max', 'ultracode', 'persistent'])
+    expect(order.indexOf('persistent')).toBeGreaterThan(order.indexOf('ultracode'))
+  })
+
   it("clamps above-xhigh tiers to 'xhigh' for the Codex wire (API enum ceiling)", () => {
     // The reasoning.effort enum is {none,minimal,low,medium,high,xhigh}; the API
     // 400s on 'max'/'ultra'/'ultracode' ("Codex failed · exit 1"), so each
@@ -472,6 +790,13 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(codexWireReasoningEffort('Ultracode')).toBe('xhigh')
     expect(codexWireReasoningEffort('ultra')).toBe('xhigh')
     expect(codexWireReasoningEffort('max')).toBe('xhigh')
+    // 'persistent' is Codex's tier above 'ultra' (CLI 0.153.0 effort enum) and
+    // sits under 'ultratask' on TaskWraith's ladder. It is equally absent from
+    // the API enum, so it clamps rather than falling back to the model default
+    // — a fallback here would be a silent downgrade, not a safe no-op.
+    expect(codexWireReasoningEffort('persistent')).toBe('xhigh')
+    expect(codexWireReasoningEffort('Persistent')).toBe('xhigh')
+    expect(codexWireReasoningEffort('ultratask')).toBe('xhigh')
     // Accepted tiers pass through untouched.
     expect(codexWireReasoningEffort('xhigh')).toBe('xhigh')
     expect(codexWireReasoningEffort('high')).toBe('high')
@@ -538,14 +863,17 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: false
     })
+    // Staged-rollout rows only. The three explicitly-runnable appends were
+    // retired 2026-09-18 and mergeCodexLiveModelRows filters retired ids, so
+    // re-adding a row to the static fallback cannot resurrect one here.
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex-spark'
+      'gpt-5.6-luna'
     ])
     // The live row object itself is preserved (not replaced by a static row).
     expect(merged?.[0]).toBe(live[0])
@@ -567,6 +895,9 @@ describe('mergeCodexLiveModelRows', () => {
 
   it('appends nothing extra once live discovery carries every managed row', () => {
     const live = [
+      { id: 'gpt-6-astra' },
+      { id: 'gpt-6-sol' },
+      { id: 'gpt-6-luna' },
       { id: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna' },
@@ -578,8 +909,11 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(7)
+    expect(merged).toHaveLength(10)
     expect(merged?.map((model) => model.id)).toEqual([
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -592,90 +926,123 @@ describe('mergeCodexLiveModelRows', () => {
 })
 
 describe('normalizeCliProviderModel (kimi)', () => {
-  it('uses K2.7 Coding as the CLI default and maps legacy aliases to it', () => {
-    expect(normalizeCliProviderModel('kimi', '')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'cli-default')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'kimi-k2.6')).toBe('kimi-k2.7-code')
-    expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.7-code')
+  it('uses K2.8 Preview as the CLI default and maps legacy aliases to it', () => {
+    expect(normalizeCliProviderModel('kimi', '')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2.6')).toBe('kimi-k2.8-preview')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2-thinking')).toBe('kimi-k2.8-preview')
+    // The retired combined row. Its standard tier IS today's K2.8 route, so a
+    // seat pinned to it keeps dispatching exactly what it always dispatched.
+    expect(normalizeCliProviderModel('kimi', 'kimi-k2.7-code')).toBe('kimi-k2.8-preview')
   })
 
   it('resolves K3 ids to the canonical row instead of the default', () => {
     expect(normalizeCliProviderModel('kimi', 'kimi-k3')).toBe('kimi-k3')
     expect(normalizeCliProviderModel('kimi', 'k3')).toBe('kimi-k3')
     expect(normalizeCliProviderModel('kimi', KIMI_K3_CLI_MODEL)).toBe('kimi-k3')
+    expect(normalizeCliProviderModel('kimi', 'kimi-k3-256k')).toBe('kimi-k3-256k')
+    expect(normalizeCliProviderModel('kimi', 'k3-256k')).toBe('kimi-k3-256k')
+    expect(normalizeCliProviderModel('kimi', KIMI_K3_256K_CLI_MODEL)).toBe('kimi-k3-256k')
   })
 
-  it('preserves the managed Kimi CLI Standard and HighSpeed aliases', () => {
-    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe(
-      KIMI_STANDARD_CLI_MODEL
-    )
+  it('resolves both managed upstream spellings onto their own picker rows', () => {
+    // Highspeed has been a row rather than a speed tier since 2026-09-11, so an
+    // upstream spelling must land on that row; leaving it to pass through gave
+    // a selected model id with no row behind it.
+    expect(normalizeCliProviderModel('kimi', KIMI_STANDARD_CLI_MODEL)).toBe('kimi-k2.8-preview')
     expect(normalizeCliProviderModel('kimi', KIMI_HIGHSPEED_CLI_MODEL)).toBe(
-      KIMI_HIGHSPEED_CLI_MODEL
+      'kimi-k2.7-code-highspeed'
     )
   })
 
-  it('maps raw Kimi Code API ids onto the managed CLI aliases', () => {
-    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe(
-      KIMI_STANDARD_CLI_MODEL
-    )
+  it('maps raw Kimi Code API ids onto their picker rows', () => {
+    expect(normalizeCliProviderModel('kimi', 'kimi-for-coding')).toBe('kimi-k2.8-preview')
     expect(normalizeCliProviderModel('kimi', 'kimi-for-coding-highspeed')).toBe(
-      KIMI_HIGHSPEED_CLI_MODEL
+      'kimi-k2.7-code-highspeed'
     )
   })
 
-  it('routes K2.7 Coding Fast mode to the exact managed Kimi CLI alias', () => {
-    const standardArgs: string[] = []
+  it('dispatches each managed route by its own row, ignoring a stale speed tier', () => {
+    const k28Args: string[] = []
+    const k28StaleFastArgs: string[] = []
     const highSpeedArgs: string[] = []
 
-    appendKimiModelArgs(standardArgs, 'kimi-k2.7-code', 'standard')
-    appendKimiModelArgs(highSpeedArgs, 'kimi-k2.7-code', 'fast')
+    appendKimiModelArgs(k28Args, 'kimi-k2.8-preview', 'standard')
+    // The Fast toggle retired with the split. A seat still carrying the flag
+    // must not be re-routed off the row its picker is showing.
+    appendKimiModelArgs(k28StaleFastArgs, 'kimi-k2.8-preview', 'fast')
+    appendKimiModelArgs(highSpeedArgs, 'kimi-k2.7-code-highspeed', 'standard')
 
-    expect(standardArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
+    expect(k28Args).toEqual(['--model', 'kimi-code/kimi-for-coding'])
+    expect(k28StaleFastArgs).toEqual(['--model', 'kimi-code/kimi-for-coding'])
     expect(highSpeedArgs).toEqual(['--model', 'kimi-code/kimi-for-coding-highspeed'])
-    expect(kimiAcpModelConfigValue('kimi-k2.7-code')).toBe('kimi-code/kimi-for-coding')
-    expect(kimiAcpModelConfigValue('kimi-k2.7-code', 'fast')).toBe(
+    expect(kimiAcpModelConfigValue('kimi-k2.8-preview')).toBe('kimi-code/kimi-for-coding')
+    expect(kimiAcpModelConfigValue('kimi-k2.7-code-highspeed')).toBe(
       'kimi-code/kimi-for-coding-highspeed'
     )
   })
 
-  it('maps K3 to its managed CLI alias and ignores stale speed tiers', () => {
+  it('maps both K3 routes to their managed CLI aliases and ignores stale speed tiers', () => {
     const plainArgs: string[] = []
     const staleFastArgs: string[] = []
     const rawApiArgs: string[] = []
+    const shortArgs: string[] = []
+    const shortStaleFastArgs: string[] = []
 
     appendKimiModelArgs(plainArgs, 'kimi-k3')
     // K3 has no speed tiers — a stale/queued Fast flag must not reroute the
     // run onto the K2.7 HighSpeed alias.
     appendKimiModelArgs(staleFastArgs, 'kimi-k3', 'fast')
     appendKimiModelArgs(rawApiArgs, 'k3')
+    appendKimiModelArgs(shortArgs, 'kimi-k3-256k')
+    appendKimiModelArgs(shortStaleFastArgs, 'k3-256k', 'fast')
 
     expect(plainArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
     expect(staleFastArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
     expect(rawApiArgs).toEqual(['--model', KIMI_K3_CLI_MODEL])
+    expect(shortArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
+    expect(shortStaleFastArgs).toEqual(['--model', KIMI_K3_256K_CLI_MODEL])
+    expect(kimiAcpModelConfigValue('kimi-k3-256k')).toBe(KIMI_K3_256K_CLI_MODEL)
   })
 })
 
 describe('getStaticProviderModels (kimi)', () => {
-  it('advertises K2.7 Coding as Fast-capable without adding a duplicate model row', () => {
+  it('leads with K2.8 Preview and gives Highspeed its own row, not a Fast tier', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
 
-    expect(models).toHaveLength(2)
+    expect(models).toHaveLength(4)
     expect(models[0]).toMatchObject({
-      id: 'kimi-k2.7-code',
-      label: 'K2.7 Coding',
-      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-      defaultReasoningEffort: 'on',
-      additionalSpeedTiers: ['fast']
+      id: 'kimi-k2.8-preview',
+      label: 'K2.8 Preview',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ],
+      defaultReasoningEffort: 'max'
     })
+    expect(models[1]).toMatchObject({
+      id: 'kimi-k2.7-code-highspeed',
+      label: 'K2.7 Code Highspeed',
+      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+      defaultReasoningEffort: 'on'
+    })
+    // No Kimi row carries a speed tier any more: a Fast toggle beside an
+    // explicit Highspeed row would silently re-route the selected model.
+    expect(models).not.toHaveLength(0)
+    for (const model of models) {
+      expect(model.additionalSpeedTiers).toBeUndefined()
+    }
   })
 
-  it('lists K3 with Low, High, and Max thinking but no speed tiers', () => {
+  it('lists both K3 routes with Low, High, and Max thinking but no speed tiers', () => {
     const models = getStaticProviderModels('kimi') as StaticModelShape[]
     const k3 = models.find((model) => model.id === 'kimi-k3')
+    const k3Short = models.find((model) => model.id === 'kimi-k3-256k')
 
     expect(k3).toMatchObject({
       id: 'kimi-k3',
-      label: 'K3',
+      label: 'K3 (1M)',
       defaultReasoningEffort: 'max',
       supportedReasoningEfforts: [
         { reasoningEffort: 'low' },
@@ -686,15 +1053,34 @@ describe('getStaticProviderModels (kimi)', () => {
     expect(k3?.isDefault).toBeUndefined()
     expect(k3?.additionalSpeedTiers).toBeUndefined()
     expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
+    expect(k3Short).toMatchObject({
+      id: 'kimi-k3-256k',
+      label: 'K3 (256K)',
+      defaultReasoningEffort: 'max',
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ]
+    })
+    expect(k3Short?.additionalSpeedTiers).toBeUndefined()
     expect(models[0]?.isDefault).toBe(true)
   })
 
-  it('normalizes K3 effort and keeps K2.7 Coding on its fixed thinking setting', () => {
+  it('normalizes effort on every laddered route and only fixes Highspeed', () => {
     expect(normalizeKimiReasoningEffort('kimi-k3', 'low')).toBe('low')
     expect(normalizeKimiReasoningEffort('kimi-k3', 'off')).toBe('max')
-    expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBeNull()
+    expect(normalizeKimiReasoningEffort('kimi-k3-256k', 'high')).toBe('high')
+    expect(normalizeKimiReasoningEffort('k3-256k', 'off')).toBe('max')
+    // K2.8 took K3's axis with it. Keyed on "is K3" this returned null and the
+    // dispatch fell back to a fixed `thinking: on` under a live effort slider.
+    expect(normalizeKimiReasoningEffort('kimi-k2.8-preview', 'low')).toBe('low')
+    expect(normalizeKimiReasoningEffort('kimi-k2.7-code', 'high')).toBe('high')
+    expect(normalizeKimiReasoningEffort('kimi-k2.7-code-highspeed', 'high')).toBeNull()
     expect(kimiAcpThinkingConfigValue('kimi-k3', 'high')).toBe('high')
-    expect(kimiAcpThinkingConfigValue('kimi-k2.7-code', 'off')).toBe('on')
+    expect(kimiAcpThinkingConfigValue('kimi-k3-256k', 'low')).toBe('low')
+    expect(kimiAcpThinkingConfigValue('kimi-k2.8-preview', 'low')).toBe('low')
+    expect(kimiAcpThinkingConfigValue('kimi-k2.7-code-highspeed', 'off')).toBe('on')
   })
 })
 
@@ -705,6 +1091,7 @@ describe('getStaticProviderModels (claude)', () => {
   it('hides Claude preview placeholders unless explicitly requested', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
+    expect(ids).toContain('claude-fable-5-1')
     expect(ids).toContain('claude-fable-5')
     expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
@@ -716,6 +1103,7 @@ describe('getStaticProviderModels (claude)', () => {
     // Opus 5 is 1M by default — the base id is the picker row.
     expect(ids).toContain('claude-opus-5')
     expect(ids).not.toContain('claude-opus-5-1m')
+    expect(ids).toContain('claude-opus-5-5')
     // Sonnet 5 and Fable 5 are selectable rows; Mythos 5 stays runnable as a
     // historical/tombstoned model but is no longer offered in pickers.
     expect(ids).toContain('claude-sonnet-5')
@@ -746,11 +1134,52 @@ describe('getStaticProviderModels (claude)', () => {
     })
   })
 
+  it('offers Fable 5.1 as the current Fable row and relabels Fable 5 as Legacy', () => {
+    expect(byId.get('claude-fable-5-1')).toMatchObject({
+      label: 'Fable 5.1',
+      description: '1M context window — adaptive thinking'
+    })
+    expect(byId.get('claude-fable-5')).toMatchObject({
+      label: 'Fable 5 Legacy',
+      description: '1M context window — legacy Fable'
+    })
+    // Current models first, then the Legacy cluster — Fable 5 leads it.
+    expect(models.map((m) => m.id)).toEqual([
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-fable-5-1',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-sonnet-4-6',
+      'claude-opus-4-8-1m',
+      'claude-opus-4-7-1m',
+      'claude-haiku-4-5',
+      'custom'
+    ])
+  })
+
   it('keeps the paid Fast tier on supported Opus rows but not Fable 5', () => {
+    expect(byId.get('claude-opus-5-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
+  it('offers Opus 5.5 as the leading Claude row on the full Opus ladder with a Medium default', () => {
+    expect(models[0]?.id).toBe('claude-opus-5-5')
+    expect(byId.get('claude-opus-5-5')).toMatchObject({
+      label: 'Opus 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(byId.get('claude-opus-5-5')?.isDefault).toBeFalsy()
+    expect(
+      (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
   it('offers family-specific Claude reasoning efforts', () => {

@@ -49,8 +49,8 @@ const PREVIEW_PROVIDER: ProviderId = 'codex'
 // Post-GA (2026-07-09) the trio lives in CODEX_STATIC_MODELS, not the preview
 // catalog — the safety/patch-quality comparison vs the 5.5 baseline stays
 // useful while OpenAI's staged rollout ramps accounts onto the family.
-const gpt56Placeholders = CODEX_STATIC_MODELS.filter((entry) =>
-  CODEX_STAGED_ROLLOUT_MODEL_IDS.has(entry.id)
+const gpt56Placeholders = CODEX_STATIC_MODELS.filter(
+  (entry) => CODEX_STAGED_ROLLOUT_MODEL_IDS.has(entry.id) && entry.id.startsWith(CANDIDATE_FAMILY)
 ).map((entry) => ({
   placeholderId: entry.id,
   label: entry.label,

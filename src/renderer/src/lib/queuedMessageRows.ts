@@ -1,8 +1,11 @@
+import type { DiscordContextSelection } from '../../../main/channels/DiscordContextService'
 import type {
+  ChatMessage,
   ChatRecord,
   EnsembleQueuedPromptState,
   RunQueueJob
 } from '../../../main/store/types'
+import { midRunQueuedMessageId } from '../../../shared/midRunSteeringQueue'
 import type { QueuedMessageRowEntry } from '../components/QueuedMessagesAboveRow'
 import type { ImageAttachment } from './imageAttachments'
 import {
@@ -25,8 +28,19 @@ export const collectRunQueueJobIds = (jobs: RunQueueJob[]): Set<string> => {
 export const queuedRunRequestChatId = (request: QueuedRunRequest): string | undefined =>
   request.chatRecord?.appChatId
 
+export const discordContextSelectionSummary = (
+  selection: DiscordContextSelection | null | undefined
+): string => {
+  if (!selection) return ''
+  const channel = selection.channelName?.trim() || selection.channelId
+  const guild = selection.guildName?.trim()
+  return `Discord context${guild ? ` from ${guild}` : ''}: #${channel} (last ${selection.limit} messages)`
+}
+
 export const queuedRunDisplayPrompt = (request: QueuedRunRequest): string =>
-  request.displayPrompt || request.prompt || ''
+  request.displayPrompt ||
+  request.prompt ||
+  discordContextSelectionSummary(request.discordContextSelection)
 
 export const queuedRunScheduledRunAt = (request: QueuedRunRequest): string | undefined =>
   request.scheduledRunAt
@@ -226,6 +240,83 @@ export const appendLocalQueuedRunEntries = ({
   return merged
 }
 
+/**
+ * Keep a promoted Steer at the head of the renderer's request mirror until
+ * main reports a terminal queue state. The durable queue sorter consults this
+ * mirror, so this is scheduling state as well as optimistic UI state. Reusing
+ * the same run id replaces the older copy instead of creating a second turn.
+ */
+export const reserveQueuedRunAtFront = (
+  queuedRuns: QueuedRunRequest[],
+  request: QueuedRunRequest,
+  queuedRunFallbackId: (request: QueuedRunRequest) => string
+): QueuedRunRequest[] => {
+  const runId = request.appRunId
+  const fallbackId = queuedRunFallbackId(request)
+  const remaining = queuedRuns.filter((candidate) =>
+    runId ? candidate.appRunId !== runId : queuedRunFallbackId(candidate) !== fallbackId
+  )
+  const ownerToken = (request as unknown as Record<string, unknown>).steerOwnerToken
+  if (typeof ownerToken !== 'string' || !ownerToken.trim()) return [request, ...remaining]
+
+  // Steering reservations outrank ordinary queue work, but remain FIFO with
+  // one another. Blind prepending let later text jump an earlier structured
+  // steer waiting for a provider boundary.
+  const firstOrdinary = remaining.findIndex((candidate) => {
+    const candidateOwner = (candidate as unknown as Record<string, unknown>).steerOwnerToken
+    return typeof candidateOwner !== 'string' || !candidateOwner.trim()
+  })
+  const insertionIndex = firstOrdinary < 0 ? remaining.length : firstOrdinary
+  return [
+    ...remaining.slice(0, insertionIndex),
+    request,
+    ...remaining.slice(insertionIndex)
+  ]
+}
+
+/**
+ * A solo Steer is projected into the transcript before its durable queue job
+ * reaches the provider. Boundary-only delivery can then move that job back to
+ * `queued`, while the renderer-local request mirror may briefly coexist before
+ * the durable echo. Neither is a second user message, so neither should render
+ * as a duplicate row above the composer once the exact transcript projection
+ * exists.
+ *
+ * Validate the full correlation rather than hiding by queue status or prompt
+ * text: ordinary queued requests remain visible, and a malformed/foreign row
+ * cannot suppress one merely by borrowing a run id.
+ */
+export const filterTranscriptBackedQueuedRunEntries = (
+  entries: QueuedMessageRowEntry[],
+  messages: readonly ChatMessage[] | null | undefined,
+  options: { preserveRunIds?: ReadonlySet<string> } = {}
+): QueuedMessageRowEntry[] => {
+  if (entries.length === 0 || !messages?.length) return entries
+
+  const transcriptBackedRunIds = new Set<string>()
+  for (const message of messages) {
+    const runId = message.metadata?.midRunQueueRunId
+    if (
+      message.role !== 'user' ||
+      message.metadata?.kind !== 'midRunSteering' ||
+      message.metadata?.midRunQueueSource !== 'soloSteer' ||
+      typeof runId !== 'string' ||
+      !runId ||
+      message.id !== midRunQueuedMessageId(runId)
+    ) {
+      continue
+    }
+    transcriptBackedRunIds.add(runId)
+  }
+  if (transcriptBackedRunIds.size === 0) return entries
+
+  const filtered = entries.filter(
+    (entry) =>
+      options.preserveRunIds?.has(entry.id) === true || !transcriptBackedRunIds.has(entry.id)
+  )
+  return filtered.length === entries.length ? entries : filtered
+}
+
 export const preserveOptimisticEnsembleQueue = (
   incoming: ChatRecord,
   local: ChatRecord | null | undefined
@@ -245,6 +336,22 @@ export const preserveOptimisticEnsembleQueue = (
   const incomingQueue = ensembleQueuedPromptsFromRound(incomingRound)
   const localQueue = ensembleQueuedPromptsFromRound(localRound)
   if (localQueue.length <= incomingQueue.length) return incoming
+
+  // An EMPTY authoritative queue is a statement, not a gap: main queued
+  // nothing for this round. Preserving a local-only tail against it mints a
+  // row main has no FIFO slot for -- and the placeholder minted below is
+  // itself `optimistic-queued-tail-...`, which satisfies the
+  // `startsWith('optimistic-queued')` test on the NEXT merge, so the row
+  // re-qualifies forever. Its Delete/Steer/Edit then address an index main
+  // does not have: `resolveQueuedPrompt` answers "Queued item no longer
+  // exists", the renderer logs that to the raw-log ring and the row never
+  // goes away. Observed as five identical undeletable rows against a round
+  // whose durable `queuedPrompts` was `[]`.
+  //
+  // Cost of being right here: the first queued row waits one IPC hop for
+  // main's echo instead of painting instantly. No prompt is lost either way
+  // -- when main really did queue it, the echo restores the row.
+  if (incomingQueue.length === 0) return incoming
 
   // Only preserve when main's queue is a true prefix of local. A shorter
   // authoritative queue that removed a steered/deleted item (or cleared)

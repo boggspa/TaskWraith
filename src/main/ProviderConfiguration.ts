@@ -34,6 +34,12 @@ export interface DetectConfiguredProvidersDependencies {
    * admission. Binary alone must not admit an unauthenticated seat.
    */
   getMuseConfiguredCredentialPresent?: () => boolean
+  /**
+   * True when a Devin credential lane is present (WINDSURF_API_KEY /
+   * DEVIN_API_KEY env or ~/.local/share/devin/credentials.toml). Binary alone
+   * must not admit an unauthenticated seat.
+   */
+  getDevinConfiguredCredentialPresent?: () => boolean
   /** True when a direct Mistral API key is stored. */
   getMistralConfiguredApiKeyPresent?: () => boolean
   /** Official `agy models` probe; only called after opt-in or API-key admission. */
@@ -238,6 +244,21 @@ function configuredProviderProbes(
           Boolean(dependencies.getMuseConfiguredCredentialPresent?.())
       }))
   })
+  probes.push({
+    provider: 'devin',
+    // Configured = devin binary resolvable AND a credential lane (env key or
+    // stored credentials.toml) present. Binary alone would surface a picker
+    // entry that cannot run; fail-closed on unresolved probes, modelled on
+    // muse — the credentials.toml lives on the user's real home and is never
+    // read here without the injected probe.
+    includeWhenUnknown: false,
+    run: () =>
+      resolveProviderBinary('devin').then((resolved) => ({
+        configured:
+          Boolean(resolved.binaryPath) &&
+          Boolean(dependencies.getDevinConfiguredCredentialPresent?.())
+      }))
+  })
   let apiKeyConfigured = false
   try {
     apiKeyConfigured = hasConfiguredGeminiApiKey(
@@ -332,6 +353,11 @@ function configuredProviderCacheKey(
     kimiBinaryPath: settings.kimiBinaryPath || '',
     ollamaBaseUrl: settings.ollamaBaseUrl || '',
     ollamaDefaultModel: settings.ollamaDefaultModel || '',
+    // The remembered `ollama signin` decides whether Cloud rows count as
+    // configured, so a sign-in or sign-out starts a new discovery generation
+    // instead of leaving the snapshot frozen on the answer from before it.
+    // Flag only: a re-stamped plan or timestamp is not a new generation.
+    ollamaCliSignedIn: settings.ollamaCliSignIn?.signedIn === true,
     antigravityEnabled: settings.antigravityEnabled === true,
     antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt || null,
     antigravityGeminiApiDisclosureAcceptedAt:
@@ -366,6 +392,10 @@ export function createConfiguredProviderDetector(
       ? Math.floor(dependencies.probeDeadlineMs!)
       : CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
   let generation = 0
+  // The current generation's not-yet-fired probe timers. A new generation
+  // clears them, so a probe of superseded settings never starts: after a
+  // consent withdrawal, an old timer must not launch `agy models`.
+  let pendingProbeTimers: Array<ReturnType<typeof setTimeout>> = []
   let startedKey: string | null = null
   let completedKey: string | null = null
   let rosterConfigured = new Set<ProviderId>()
@@ -376,6 +406,8 @@ export function createConfiguredProviderDetector(
     const key = configuredProviderCacheKey(settings, dependencies)
     if (startedKey === key) return
     startedKey = key
+    for (const timer of pendingProbeTimers) clearTimeout(timer)
+    pendingProbeTimers = []
     completedKey = null
     rosterConfigured = settingsConfiguredProviders(settings)
     confirmedConfigured = new Set()
@@ -415,6 +447,7 @@ export function createConfiguredProviderDetector(
           })
         }, index * staggerMs)
         timer.unref?.()
+        pendingProbeTimers.push(timer)
       }
     )
   }

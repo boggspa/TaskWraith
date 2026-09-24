@@ -10,7 +10,7 @@
  *
  * Boundary: it must NEVER enter relay/src/server.ts's import graph (the relay
  * bundled into Electron main does no sending and holds no key). Enforced by
- * scripts/guard-no-bundled-secrets.cjs. See docs/ios-push-gateway-design.md §7.
+ * scripts/guard-no-bundled-secrets.cjs. See the APNs gateway design §7.
  */
 
 import { createSign } from 'crypto'

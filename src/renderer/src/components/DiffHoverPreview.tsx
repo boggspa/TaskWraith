@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
+import {
+  diffLineDisplayText,
+  isRenderableDiffLine,
+  parseUnifiedDiff,
+  type ParsedDiffLine
+} from '../lib/unifiedDiffParser'
+import { renderHighlightedSpans } from './DiffDetail'
+import {
+  ensureEditorHighlightStylesMounted,
+  highlightCodeToLineSpans,
+  languageFromPath,
+  type HighlightSpan
+} from './highlightCodeLines'
 
 export type DiffHoverPreviewSource = 'commit-reference' | 'run-summary' | 'tool-call'
 
@@ -259,12 +271,20 @@ function diffHoverPreviewLineClass(line: ParsedDiffLine): string {
   return 'context'
 }
 
-function DiffHoverPreviewLine({ line }: { line: ParsedDiffLine }) {
+export function DiffHoverPreviewLine({
+  line,
+  spans
+}: {
+  line: ParsedDiffLine
+  spans?: HighlightSpan[]
+}) {
   return (
     <div className={`diff-hover-preview-line ${diffHoverPreviewLineClass(line)}`}>
       <span className="diff-hover-preview-gutter old">{line.oldLine ?? ''}</span>
       <span className="diff-hover-preview-gutter new">{line.newLine ?? ''}</span>
-      <span className="diff-hover-preview-code">{line.text || ' '}</span>
+      <span className="diff-hover-preview-code">
+        {renderHighlightedSpans(spans, diffLineDisplayText(line))}
+      </span>
     </div>
   )
 }
@@ -430,6 +450,28 @@ export function DiffHoverPreviewOverlay({
         : null,
     [preparedDiff]
   )
+  const language = useMemo(
+    () => languageFromPath(preview?.summary.path),
+    [preview?.summary.path]
+  )
+  const highlightSpansByLine = useMemo(() => {
+    const map = new Map<ParsedDiffLine, HighlightSpan[]>()
+    if (!parsed) return map
+    const renderableLines: ParsedDiffLine[] = []
+    parsed.sections.forEach((section) => {
+      section.lines.forEach((line) => {
+        if (isRenderableDiffLine(line)) renderableLines.push(line)
+      })
+    })
+    if (renderableLines.length === 0) return map
+    ensureEditorHighlightStylesMounted()
+    const spanLines = highlightCodeToLineSpans(
+      renderableLines.map((line) => diffLineDisplayText(line)).join('\n'),
+      language
+    )
+    renderableLines.forEach((line, index) => map.set(line, spanLines[index] ?? []))
+    return map
+  }, [language, parsed])
   const fileWindow = useMemo(
     () =>
       getDiffHoverPreviewFileWindow(
@@ -612,8 +654,12 @@ export function DiffHoverPreviewOverlay({
           parsed.sections.map((section, sectionIndex) => (
             <div key={sectionIndex} className="diff-hover-preview-section">
               {section.header && <div className="diff-hover-preview-hunk">{section.header}</div>}
-              {section.lines.map((line, lineIndex) => (
-                <DiffHoverPreviewLine key={`${sectionIndex}-${lineIndex}`} line={line} />
+              {section.lines.filter(isRenderableDiffLine).map((line, lineIndex) => (
+                <DiffHoverPreviewLine
+                  key={`${sectionIndex}-${lineIndex}`}
+                  line={line}
+                  spans={highlightSpansByLine.get(line)}
+                />
               ))}
             </div>
           ))

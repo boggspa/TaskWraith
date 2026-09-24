@@ -5,9 +5,10 @@ import {
   SIMULATOR_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS
 } from '../TaskWraithMcpTools'
+import type { TaskWraithMcpProfileId } from '../store/types'
 import { createTaskWraithMcpToolDefinitions } from '../McpToolCatalog'
 import { AUDIT_MCP_TOOL_NAMES } from './AuditToolExecutors'
-import { gatewayToolDefinitions } from './McpToolGateway'
+import { gatewayToolDefinitions, validateGatewayToolArguments } from './McpToolGateway'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
   CORE_MCP_ADVERTISE_TOOLS,
@@ -104,12 +105,27 @@ import {
   GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V18_ADDED_TOOL_NAMES,
+  GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V18_MCP_DIRECT_TOOLS,
+  GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
+  stripGatewaySchemaExamplesForTransport,
   filterTaskWraithMcpToolDefinitionsForProfile,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
@@ -118,6 +134,20 @@ import {
   taskWraithMcpAdvertisedToolNamesForProfile,
   shouldUseCoreMcpProfile
 } from './McpToolProfiles'
+import {
+  FULL_V3_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V19_ADDED_TOOL_NAMES,
+  GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V19_MCP_DIRECT_TOOLS,
+  GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V19_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES
+} from './McpToolProfiles'
+import { EMULATOR_MCP_TOOL_NAMES } from '../TaskWraithMcpTools'
 
 function nameHash(names: readonly string[]): string {
   return createHash('sha256').update(JSON.stringify(names)).digest('hex')
@@ -138,6 +168,7 @@ describe('immutable v1 MCP profile snapshots', () => {
     for (const profile of [
       FULL_MCP_ADVERTISE_TOOLS,
       FULL_V2_MCP_ADVERTISE_TOOLS,
+      FULL_V3_MCP_ADVERTISE_TOOLS,
       CORE_MCP_ADVERTISE_TOOLS,
       CORE_V2_MCP_ADVERTISE_TOOLS,
       GATEWAY_MCP_DIRECT_TOOLS,
@@ -176,7 +207,31 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
       GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
-      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V18_ADDED_TOOL_NAMES,
+      GATEWAY_V18_MCP_DIRECT_TOOLS,
+      GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V19_ADDED_TOOL_NAMES,
+      GATEWAY_V19_MCP_DIRECT_TOOLS,
+      GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V19_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -198,9 +253,12 @@ describe('immutable v1 MCP profile snapshots', () => {
     // through that same V1_HIDDEN filter, so advisory wave ownership needed no
     // v18 receipt and spent no DIRECT slot. CORE was deliberately skipped: it
     // sits at 59/60 and does not advertise delegate_wave either.
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(161)
+    // 2026-08-20: five structured verbs + report/verify — 161 → 168.
+    // 2026-08-23: ultra_task — 168 → 169. Source literal landed with this
+    // re-pin (the original commit bumped only the length expectation).
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(171)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      '1f0d7d302a45fe2a2deafd6e09bb6ab873c8521b3a10d98801e1123b3e10dcee'
+      '5f04dcb9f959a6cb6cf804763ef8f8501494c2701cd1910e587bf9808d052073'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -242,9 +300,11 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
   it('keeps gateway-v1 hidden membership exact while v2 adds only the proposal tool', () => {
     // 2026-08-07: appshots + appshots_status — 120 → 122 via FULL filter().
     // 2026-08-20: claim_fleet_wave — 122 → 123, same FULL filter() route.
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(123)
+    // 2026-08-20: five structured verbs + report/verify — 123 → 130.
+    // 2026-08-23: ultra_task — 130 → 131 via FULL filter() (discoverable).
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(133)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      '6104ec8133a3ea218c37de475f6e76565ba15a89d00b0b4666f58bcc064a4ce1'
+      'fb8ee2a415192871177a9d1e3c5e3b9c2b7513b100ccb27a6667676bc693fb61'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -364,6 +424,14 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshGatewayChars = serializedChars(
       GATEWAY_V17_MCP_DIRECT_TOOLS,
+      gatewayToolDefinitions(),
+      (selected) =>
+        compactGatewayV17ToolDefinitionsForTransport(
+          compactGatewayV13ToolDefinitionsForTransport(selected)
+        )
+    )
+    const soloGatewayChars = serializedChars(
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       (selected) =>
         compactGatewayV17ToolDefinitionsForTransport(
@@ -574,17 +642,37 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // surface also carries the uncompacted prose). Fresh keeps 1,823 chars of
     // 40k headroom, mesh 781; the over-ceiling inventory is unchanged.
     //
+    // Re-measured 2026-08-27 after ensemble_control / ensemble_bossman_control
+    // catalogue hygiene shrank descriptions/examples and extended pre-approval
+    // coverage. Both fresh profiles and the full/gateway ratios dropped.
+    //
+    // Re-measured 2026-09-10. 41ab0d4c0 (per-lane fan-out briefs) added the
+    // laneBriefs schema to ensemble_fanout: +61 chars on the mesh transport
+    // (39960 -> 40021), breaching the ceiling. The mesh compactor strips
+    // property descriptions but keeps schema shape, and the anyOf union is
+    // load-bearing for the Gemini declaration mapper, so the growth itself is
+    // irreducible prose-side. The payback (-35 -> 39986) comes from git_commit's
+    // uncompacted contribution/patch prose: "captured" already entails
+    // "Git-eligible", "current" adds nothing to "the task's", and the patch
+    // records' "when needed" is tautological. The tw_history_*/tw_checkpoint
+    // additions are hidden-only and contribute nothing to this transport.
+    // Headroom is 14 chars; the ceiling asserts below stay the tripwire.
+    //
     // Growth is the direction this guard exists to question, so it is justified
     // rather than absorbed: both fresh profiles remain under the 40k ceiling
     // asserted below, which is the real budget — these exact pins are the
     // tripwire that forces someone to look.
-    // expect(fullChars).toBe(147_191)
-    // expect(gatewayChars).toBe(43_723)
-    // expect(freshGatewayChars).toBe(38_177)
-    // expect(freshMeshGatewayChars).toBe(39_219)
+    // expect(fullChars).toBe(157_284)
+    // expect(gatewayChars).toBe(44_657)
+    // expect(freshGatewayChars).toBe(35_149)
+    // expect(freshMeshGatewayChars).toBe(39_157)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
-    // expect(freshGatewayChars).toBeLessThan(40_000)
-    // expect(freshMeshGatewayChars).toBeLessThan(40_000)
+    expect(freshGatewayChars).toBeLessThan(40_000)
+    expect(freshMeshGatewayChars).toBeLessThan(40_000)
+    // Measured at 18,048 on birth: keep a meaningful ceiling while allowing
+    // direct-tool schema guidance to evolve without a ceremonial byte re-pin.
+    expect(soloGatewayChars).toBeLessThan(20_000)
+    expect(soloGatewayChars).toBeLessThan(freshGatewayChars)
 
     // Transports currently over the hard 40,000-char transport ceiling. This
     // list may SHRINK, never grow — same ratchet the control-byte and
@@ -593,10 +681,106 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // and take the win. Trimming `ensemble_yield` / `blackboard_post` prose back
     // under budget remains the owning features' call, not this test's.
     expect(
-      Object.entries({ gatewayChars, freshGatewayChars, freshMeshGatewayChars })
+      Object.entries({ gatewayChars, freshGatewayChars, freshMeshGatewayChars, soloGatewayChars })
         .filter(([, chars]) => chars >= 40_000)
         .map(([name]) => name)
     ).toEqual(['gatewayChars'])
+  })
+
+  // Schema `examples` are read by validateMcpToolArgumentsBeforeApproval out of
+  // the CANONICAL catalogue (mcpToolDefinitions()), never out of a transport.
+  // So they can be paid for once, on the full surface, and stripped everywhere
+  // the 40,000-char ceiling is measured. This is the test that keeps the two
+  // halves honest: add an example without extending the strip set and the
+  // gateway transports start paying for a hint they never deliver.
+  describe('schema examples never reach a gateway transport', () => {
+    const EXAMPLE_BEARING_WORKSPACE_TOOLS = [
+      'read_file',
+      'write_file',
+      'replace',
+      'run_shell_command',
+      'delete_path',
+      'ask_user_question'
+    ] as const
+
+    const withoutExamples = <T extends { name: string; inputSchema?: Record<string, unknown> }>(
+      definitions: readonly T[]
+    ): T[] =>
+      definitions.map((definition) => {
+        if (!EXAMPLE_BEARING_WORKSPACE_TOOLS.includes(definition.name as never)) return definition
+        if (!definition.inputSchema || !('examples' in definition.inputSchema)) return definition
+        const { examples: _examples, ...rest } = definition.inputSchema
+        return { ...definition, inputSchema: rest }
+      })
+
+    it('carries the example canonically, which is where the repair hint reads it', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      for (const name of EXAMPLE_BEARING_WORKSPACE_TOOLS) {
+        const definition = definitions.find((entry) => entry.name === name)
+        expect(Array.isArray(definition?.inputSchema?.examples)).toBe(true)
+      }
+    })
+
+    it('spends zero transport bytes on every gateway profile', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      const transport = (names: readonly string[], transform = (d: typeof definitions) => d) =>
+        JSON.stringify({
+          tools: [
+            ...stripGatewaySchemaExamplesForTransport(
+              transform(definitions.filter((entry) => names.includes(entry.name)))
+            ),
+            ...gatewayToolDefinitions()
+          ]
+        })
+
+      const compactFresh = (d: typeof definitions) =>
+        compactGatewayV17ToolDefinitionsForTransport(
+          compactGatewayV13ToolDefinitionsForTransport(d)
+        )
+
+      // A catalogue in which these examples were never authored is the baseline
+      // every frozen receipt was calibrated against. Byte-identical means v1..v19
+      // send exactly what they sent before the examples existed.
+      const baseline = (names: readonly string[], transform = (d: typeof definitions) => d) =>
+        JSON.stringify({
+          tools: [
+            ...withoutExamples(
+              transform(definitions.filter((entry) => names.includes(entry.name)))
+            ),
+            ...gatewayToolDefinitions()
+          ]
+        })
+
+      for (const [label, names, transform] of [
+        ['immutable v1', GATEWAY_MCP_DIRECT_TOOLS, (d: typeof definitions) => d],
+        ['fresh v17', GATEWAY_V17_MCP_DIRECT_TOOLS, compactFresh],
+        ['solo v1', GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, compactFresh]
+      ] as const) {
+        expect(`${label}:${transport(names, transform).length}`).toBe(
+          `${label}:${baseline(names, transform).length}`
+        )
+        // Not a blanket "no examples" check: ensemble_bossman_control's example
+        // predates this and IS part of the v1 wire. Only the payloads authored
+        // for the pre-approval repair hint must be absent.
+        for (const payload of [
+          'src/main/thing.ts',
+          'npm test',
+          'tmp/scratch.txt',
+          'Which database should I target?'
+        ]) {
+          expect(`${label}:${transport(names, transform).includes(payload)}`).toBe(`${label}:false`)
+        }
+      }
+    })
+
+    it('keeps the example on the full surface, where no ceiling is measured', () => {
+      const definitions = createTaskWraithMcpToolDefinitions()
+      const full = JSON.stringify({
+        tools: definitions.filter((entry) => FULL_MCP_ADVERTISE_TOOLS.includes(entry.name as never))
+      })
+      expect(full).toContain('"examples"')
+      expect(full).toContain('src/main/thing.ts')
+    })
   })
 
   it('compacts only Mesh and Sketch prose for the combined v8 transport', () => {
@@ -790,6 +974,7 @@ describe('catalogue reachability', () => {
     const reachable = new Set<string>([
       ...FULL_MCP_ADVERTISE_TOOLS,
       ...FULL_V2_MCP_ADVERTISE_TOOLS,
+      ...FULL_V3_MCP_ADVERTISE_TOOLS,
       ...CORE_MCP_ADVERTISE_TOOLS,
       ...CORE_V2_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_MCP_ADVERTISE_TOOLS,
@@ -837,8 +1022,23 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V17_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V17_MESH_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES,
-      ...GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V18_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V19_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_SOLO_V3_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES
     ])
+    for (const profile of ['taskwraith-gateway-v21', 'taskwraith-gateway-v21-mesh', 'taskwraith-gateway-solo-v5'] as const) {
+      for (const name of [...taskWraithGatewayDirectToolNamesForProfile(profile), ...taskWraithGatewayHiddenToolNamesForProfile(profile)]) reachable.add(name)
+    }
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
     )
@@ -879,7 +1079,8 @@ describe('catalogue reachability', () => {
       'scout_brief',
       'ensemble_await',
       'ensemble_lane_result',
-      'delegate_wave'
+      'delegate_wave',
+      'ultra_task'
     ])
     expect(GATEWAY_V13_MCP_DIRECT_TOOLS).toEqual([
       ...GATEWAY_V12_MCP_DIRECT_TOOLS,
@@ -960,6 +1161,227 @@ describe('catalogue reachability', () => {
     ])
     expect(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MCP_HIDDEN_TOOL_NAMES)
     expect(GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V16_MESH_MCP_HIDDEN_TOOL_NAMES)
+  })
+
+  it('adds direct opaque opportunity redemption only to fresh v18 and solo-v2 births', () => {
+    expect(GATEWAY_V18_ADDED_TOOL_NAMES).toEqual(['redeem_permission_opportunity'])
+    expect(GATEWAY_V17_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V17_MESH_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V18_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V17_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_V18_MESH_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_V17_MESH_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      'redeem_permission_opportunity'
+    ])
+    expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).toEqual(
+      GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES.filter((name) => name !== 'request_tool_permission')
+    )
+    expect(GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(
+      GATEWAY_V17_MESH_MCP_HIDDEN_TOOL_NAMES.filter(
+        (name) => name !== 'request_tool_permission'
+      )
+    )
+    expect(GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES).toContain('request_tool_permission')
+    expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).not.toContain('request_tool_permission')
+    expect(GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES).not.toContain('request_tool_permission')
+    expect(GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES).not.toContain('redeem_permission_opportunity')
+    expect(GATEWAY_V18_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_V18_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_V18_MESH_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_V18_MESH_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_SOLO_V2_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+  })
+
+  it('adds the fixed emulator family only to immutable v3/v19 discovery successors', () => {
+    expect(GATEWAY_V19_ADDED_TOOL_NAMES).toEqual([...EMULATOR_MCP_TOOL_NAMES])
+    expect(FULL_V3_MCP_ADVERTISE_TOOLS).toEqual([
+      ...FULL_V2_MCP_ADVERTISE_TOOLS,
+      ...EMULATOR_MCP_TOOL_NAMES
+    ])
+    expect(GATEWAY_V19_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V18_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_V19_MESH_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V18_MESH_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS).toEqual(GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS)
+    for (const tool of EMULATOR_MCP_TOOL_NAMES) {
+      expect(FULL_V2_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V18_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V18_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_V18_MESH_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_SOLO_V2_MCP_HIDDEN_TOOL_NAMES).not.toContain(tool)
+      expect(GATEWAY_V19_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V19_MESH_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_SOLO_V3_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V19_MESH_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_SOLO_V3_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v3')).toContain(tool)
+    }
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v19')).toEqual(
+      GATEWAY_V19_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v19')).toEqual(
+      GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES
+    )
+  })
+
+  it('keeps every frozen pre-v18 profile free of direct or hidden opportunity redemption', () => {
+    for (const profileId of [
+      'taskwraith-full-v1',
+      'taskwraith-full-v2',
+      'taskwraith-core-v1',
+      'taskwraith-core-v2',
+      ...Array.from({ length: 17 }, (_, index) => `taskwraith-gateway-v${index + 1}`),
+      ...Array.from({ length: 11 }, (_, index) => `taskwraith-gateway-v${index + 7}-mesh`),
+      'taskwraith-gateway-solo-v1'
+    ] as unknown as TaskWraithMcpProfileId[]) {
+      const direct = taskWraithGatewayDirectToolNamesForProfile(profileId)
+      const hidden = taskWraithGatewayHiddenToolNamesForProfile(profileId)
+      const advertised = taskWraithMcpAdvertisedToolNamesForProfile(profileId)
+      expect(direct, profileId).not.toContain('redeem_permission_opportunity')
+      expect(hidden, profileId).not.toContain('redeem_permission_opportunity')
+      expect(advertised, profileId).not.toContain('redeem_permission_opportunity')
+    }
+  })
+
+  it('gives the fresh direct redemption tool one strict opaque-id schema', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'redeem_permission_opportunity'
+    )
+    expect(definition).toBeDefined()
+    if (!definition) throw new Error('Expected redeem_permission_opportunity definition.')
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, {
+        permissionOpportunityId: `twp_${'a'.repeat(43)}`
+      })
+    ).toMatchObject({ ok: true })
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, {
+        permissionOpportunityId: `twp_${'a'.repeat(43)}`,
+        toolName: 'write_file'
+      })
+    ).toMatchObject({ ok: false })
+    expect(
+      validateGatewayToolArguments(definition.inputSchema, { permissionOpportunityId: 'twp_short' })
+    ).toMatchObject({ ok: false })
+  })
+
+  it('pins the lean solo direct birth catalogue to the retained v17 order', () => {
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toEqual([
+      'read_file',
+      'list_directory',
+      'find_files',
+      'workspace_search',
+      'workspace_symbols',
+      'write_file',
+      'replace',
+      'apply_patch',
+      'create_directory',
+      'move_path',
+      'delete_path',
+      'run_shell_command',
+      'run_task',
+      'git_status',
+      'git_diff',
+      'git_stage',
+      'git_commit',
+      'ask_user_question',
+      'todo_write',
+      'goal_read',
+      'update_goal',
+      'goal_complete',
+      'goal_blocked',
+      'delegate_to_subthread',
+      'ensemble_await',
+      'ensemble_lane_result',
+      'delegate_wave',
+      'ultra_task',
+      'image_view'
+    ])
+    expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toHaveLength(29)
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toEqual([
+      ...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES
+    ])
+    expect(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS).toHaveLength(31)
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-solo-v1')).toBe(
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-solo-v1')).toBe(
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS
+    )
+  })
+
+  it('keeps solo specialist demotions discoverable without narrowing v17 eligibility', () => {
+    expect(GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES).toEqual([
+      'ensemble_yield',
+      'ensemble_send',
+      'ensemble_fanout',
+      'ensemble_poll_response',
+      'ensemble_propose_goal_complete',
+      'ensemble_roster_edit',
+      'ensemble_brief_update',
+      'list_ensemble_participants',
+      'schedule_wakeup',
+      'cancel_wakeup',
+      'blackboard_post',
+      'blackboard_read',
+      'blackboard_delete',
+      'ensemble_control',
+      'canvas_sketch_open',
+      'canvas_sketch_get',
+      'canvas_sketch_update',
+      'scout_brief'
+    ])
+    expect(
+      GATEWAY_V17_MCP_DIRECT_TOOLS.filter(
+        (tool) => !GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS.includes(tool)
+      )
+    ).toEqual(GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES)
+
+    const discoverable = taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-solo-v1')
+    const callable = new Set(
+      filterTaskWraithMcpToolDefinitionsForProfile(
+        'taskwraith-gateway-solo-v1',
+        createTaskWraithMcpToolDefinitions()
+      ).map((definition) => definition.name)
+    )
+    expect(discoverable).toBe(GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES)
+    for (const tool of GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES) {
+      expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(discoverable).toContain(tool)
+      expect(callable).toContain(tool)
+    }
+
+    const canonicalUniverse = [
+      ...new Set([...GATEWAY_V17_MCP_DIRECT_TOOLS, ...GATEWAY_V17_MCP_HIDDEN_TOOL_NAMES])
+    ].sort()
+    const soloUniverse = [
+      ...new Set([...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, ...GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES])
+    ].sort()
+    expect(soloUniverse).toEqual(canonicalUniverse)
+
+    for (const profile of [
+      GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+      GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+      GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+      GATEWAY_SOLO_V1_MCP_HIDDEN_TOOL_NAMES
+    ]) {
+      expect(Object.isFrozen(profile)).toBe(true)
+      expect(new Set(profile).size).toBe(profile.length)
+    }
   })
 
   it('grows the newest gateway generation rather than mutating a frozen one', () => {
@@ -1332,12 +1754,15 @@ describe('catalogue reachability', () => {
     // off FULL, so a FULL-only tool reaches every version's discovery surface.
     // 2026-08-07: 142 → 144 (appshots + appshots_status).
     // 2026-08-20: 144 → 145 (claim_fleet_wave), same FULL-only route.
-    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(145)
+    // 2026-08-20: five structured verbs + report/verify — 145 → 152.
+    // 2026-08-23: 152 → 153 (ultra_task), same FULL-only route.
+    // 2026-08-29: 153 → 155 (web_login_list, web_login_open), same FULL-only route.
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(155)
     expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'eb69a91cf50450b08a274d85cfc3be6438ee60f9a43f4b0f4e8dca6807858d82'
+      'f3c0a24fee36f91d9a600d511c07d10e40418a6c8974704a05a5536eabce391a'
     )
     expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'eb69a91cf50450b08a274d85cfc3be6438ee60f9a43f4b0f4e8dca6807858d82'
+      'f3c0a24fee36f91d9a600d511c07d10e40418a6c8974704a05a5536eabce391a'
     )
   })
 

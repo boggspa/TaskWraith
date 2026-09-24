@@ -22,7 +22,8 @@ export const APPROVAL_TIMEOUT_PROVIDER_IDS = [
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ] as const
 
 export const DEFAULT_APPROVAL_TIMEOUTS_MS = {
@@ -36,7 +37,8 @@ export const DEFAULT_APPROVAL_TIMEOUTS_MS = {
   antigravity: 240_000,
   pi: 240_000,
   mistral: 120_000,
-  muse: 240_000
+  muse: 240_000,
+  devin: 240_000
 } as const
 
 export const DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS = 120_000

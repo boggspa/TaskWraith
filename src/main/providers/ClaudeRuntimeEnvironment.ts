@@ -6,6 +6,11 @@ import {
 import type { AuditToolContext } from '../mcp/AuditToolExecutors'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { AuditRunIdentity, ChatScope, RuntimeProfile } from '../store/types'
+import {
+  resolveClaudeContextPreference,
+  type ClaudeContextPreference,
+  type ClaudeContextPreferenceDependencies
+} from './ClaudeContextPreference'
 
 export interface ClaudeRuntimeRouteEnvironmentInput {
   readonly scope: ChatScope
@@ -26,6 +31,7 @@ export interface ClaudeEnvironmentAuthoritySnapshot {
   readonly runtimeProfileId: string
   readonly binaryPath: string | null
   readonly hasAnthropicApiKey: boolean
+  readonly contextPreference: Readonly<ClaudeContextPreference>
 }
 
 export class ClaudeEnvironmentAuthorityError extends Error {
@@ -213,7 +219,8 @@ export function resolveClaudeRuntimeProfile(input: {
  */
 export function prepareClaudeEnvironmentAuthority(
   input: ClaudeEnvironmentAuthorityInput,
-  deps?: CliProviderRuntimeDependencies
+  deps?: CliProviderRuntimeDependencies,
+  contextDependencies?: ClaudeContextPreferenceDependencies
 ): ClaudeEnvironmentAuthoritySnapshot {
   if (input.runtimeProfile.provider !== 'claude' || input.runtimeProfile.scope !== input.scope) {
     throw new ClaudeEnvironmentAuthorityError(
@@ -221,7 +228,7 @@ export function prepareClaudeEnvironmentAuthority(
     )
   }
   try {
-    const env = Object.freeze(
+    const context = resolveClaudeContextPreference(
       createResolvedProviderEnv(
         {
           FORCE_COLOR: '0',
@@ -232,12 +239,15 @@ export function prepareClaudeEnvironmentAuthority(
         input.binaryPath,
         deps,
         input.runtimeProfile
-      )
+      ),
+      contextDependencies
     )
+    const env = Object.freeze(context.env)
     return Object.freeze({
       env,
       runtimeProfileId: input.runtimeProfile.id,
       binaryPath: input.binaryPath || null,
+      contextPreference: Object.freeze(context.preference),
       hasAnthropicApiKey: Boolean(env.ANTHROPIC_API_KEY)
     })
   } catch (error) {

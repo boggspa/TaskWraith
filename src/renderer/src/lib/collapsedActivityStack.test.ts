@@ -5,6 +5,7 @@ import {
   collapsedStackDiffAriaLabel,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
+  shouldAutoCollapseActivityStackForView,
   summarizeCollapsedActivityStack,
   summarizeCollapsedSuperGroup
 } from './collapsedActivityStack'
@@ -36,6 +37,39 @@ const write = (path: string, additions: number, deletions: number): ToolActivity
   })
 
 describe('summarizeCollapsedActivityStack', () => {
+  it('excludes hidden infrastructure activities (antigravity_init, generic, provider_diagnostic) from the fold', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
+      activity({ toolName: 'generic', displayName: 'Used Generic' }),
+      activity({ toolName: 'provider_diagnostic', displayName: 'Used Provider Diagnostic' }),
+      write('src/a.ts', 3, 1)
+    ])
+    expect(summary.activityCount).toBe(1)
+    expect(summary.label).not.toContain('tool')
+    expect(summary.label).toContain('Edited')
+  })
+
+  it('excludes MCP transport wrappers from the folded row and activity count', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({
+        toolName: 'callmcptool',
+        displayName: 'Used callmcptool',
+        status: 'error'
+      }),
+      activity({
+        toolName: 'unknown',
+        displayName: 'Used unknown',
+        parameters: { server: 'taskwraith', mcpToolName: 'workspace_search' }
+      }),
+      write('src/a.ts', 3, 1)
+    ])
+
+    expect(summary.activityCount).toBe(1)
+    expect(summary.label).toBe('Edited 1 file')
+    expect(summary.errorCount).toBe(0)
+    expect(summary.diff).toEqual({ additions: 3, deletions: 1, estimated: false })
+  })
+
   it('leads with thinking duration and follows tool families in first-appearance order', () => {
     const summary = summarizeCollapsedActivityStack([
       activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 8_000 }),
@@ -211,6 +245,56 @@ describe('shouldAutoCollapseActivityStack', () => {
     ).toBe(false)
     expect(activityStackHasLiveWork(streaming)).toBe(true)
   })
+
+  it('does not collapse a stack made only of hidden infrastructure activity', () => {
+    const hidden = [
+      activity({ toolName: 'antigravity_init', displayName: 'Used AntiGravity Init' }),
+      activity({ toolName: 'generic', displayName: 'Used Generic' }),
+      activity({ toolName: 'provider_diagnostic', displayName: 'Used Provider Diagnostic' })
+    ]
+    expect(
+      shouldAutoCollapseActivityStack({ activities: hidden, isLiveRow: false, isLastRow: false })
+    ).toBe(false)
+  })
+
+  it('does not let hidden live infrastructure keep visible settled work open', () => {
+    expect(
+      shouldAutoCollapseActivityStack({
+        activities: [
+          activity({ toolName: 'antigravity_init', status: 'running' }),
+          activity({ category: 'read', filePath: '/a/x.ts' })
+        ],
+        isLiveRow: false,
+        isLastRow: false
+      })
+    ).toBe(true)
+  })
+
+  it.each(['ensemble_yield', 'mcp_TaskWraith_ensemble_yield', 'mcp__TaskWraith__ensemble_yield'])(
+    'keeps the %s lifecycle handoff at full transcript priority',
+    (toolName) => {
+      expect(
+        shouldAutoCollapseActivityStack({
+          activities: [activity({ toolName, category: 'task' })],
+          isLiveRow: false,
+          isLastRow: false
+        })
+      ).toBe(false)
+    }
+  )
+
+  it('keeps a mixed settled stack open when it contains a lifecycle handoff', () => {
+    expect(
+      shouldAutoCollapseActivityStack({
+        activities: [
+          activity({ category: 'read', filePath: '/a/x.ts' }),
+          activity({ toolName: 'mcp_TaskWraith_ensemble_yield', category: 'task' })
+        ],
+        isLiveRow: false,
+        isLastRow: false
+      })
+    ).toBe(false)
+  })
 })
 
 describe('summarizeCollapsedSuperGroup', () => {
@@ -289,5 +373,114 @@ describe('collapsedStackDiffAriaLabel', () => {
     expect(collapsedStackDiffAriaLabel({ additions: 4, deletions: 0, estimated: true })).toBe(
       'about 4 lines added, 0 lines removed'
     )
+  })
+})
+
+describe('shouldAutoCollapseActivityStackForView', () => {
+  const settled = [activity({ category: 'read', filePath: '/a/x.ts' })]
+  const running = [activity({ category: 'shell', status: 'running' })]
+  const live = { isLiveRow: true, isLastRow: true }
+
+  it('folds a stack whose work is still RUNNING, under minimal', () => {
+    // The headline. Clearing only isLiveRow/isLastRow would not do this:
+    // the liveness refusal is evaluated afterwards and unconditionally, so a
+    // bypass that cleared one refusal would fold nothing in exactly the case
+    // Minimal exists for. Proven against the strict predicate below.
+    expect(shouldAutoCollapseActivityStack({ activities: running, ...live })).toBe(false)
+    expect(
+      shouldAutoCollapseActivityStack({ activities: running, isLiveRow: false, isLastRow: false })
+    ).toBe(false)
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: running, ...live }, 'minimal')
+    ).toBe(true)
+  })
+
+  it('leaves a running stack open under tools and standard', () => {
+    // Positive control: proves the fold is the VIEW's doing, not the wrapper's.
+    expect(shouldAutoCollapseActivityStackForView({ activities: running, ...live }, 'tools')).toBe(
+      false
+    )
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: running, ...live }, 'standard')
+    ).toBe(false)
+  })
+
+  it('still refuses a stack made only of hidden infrastructure, under minimal', () => {
+    // Keeping this refusal is what stops CollapsedActivityStackRow hitting its
+    // `activityCount === 0` guard and rendering NOTHING for a live turn — the
+    // summary counts the same filtered array this predicate does.
+    const hidden = [
+      activity({
+        toolName: 'antigravity_init',
+        displayName: 'Used AntiGravity Init',
+        status: 'running'
+      }),
+      activity({ toolName: 'provider_diagnostic', displayName: 'Used Provider Diagnostic' })
+    ]
+    expect(shouldAutoCollapseActivityStackForView({ activities: hidden, ...live }, 'minimal')).toBe(
+      false
+    )
+    expect(summarizeCollapsedActivityStack(hidden).activityCount).toBe(0)
+  })
+
+  it('still refuses a priority activity, under minimal', () => {
+    // `ensemble_yield` is conversation structure, not tool noise — the same
+    // rule that exempts a failure from every fold.
+    const yielding = [
+      activity({ toolName: 'ensemble_yield', displayName: 'Yielding', status: 'running' }),
+      activity({ category: 'read', filePath: '/a/x.ts' })
+    ]
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: yielding, ...live }, 'minimal')
+    ).toBe(false)
+  })
+
+  it('folds a live stack the VIEW emptied, even outside minimal', () => {
+    // Without this a live thinking-only stack under `tools` renders as a blank
+    // row: the filter removes every segment and no fold produces a one-liner
+    // to fall back on. The caller supplies the emptiness answer.
+    const thinking = [activity({ toolName: 'reasoning', status: 'running' })]
+    expect(shouldAutoCollapseActivityStackForView({ activities: thinking, ...live }, 'tools')).toBe(
+      false
+    )
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: thinking, ...live }, 'tools', true)
+    ).toBe(true)
+  })
+
+  it('never folds under standard, whatever the caller claims', () => {
+    // Standard hides nothing, so an emptiness claim is incoherent there. The
+    // guard is redundant today and load-bearing the moment anyone passes it.
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: running, ...live }, 'standard', true)
+    ).toBe(false)
+  })
+
+  it('still refuses a priority activity even when told the view emptied it', () => {
+    const yielding = [
+      activity({ toolName: 'ensemble_yield', displayName: 'Yielding', status: 'running' })
+    ]
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: yielding, ...live }, 'minimal', true)
+    ).toBe(false)
+  })
+
+  it('agrees with the strict predicate for every settled stack, in every view', () => {
+    // The wrapper delegates first, so Standard and Tools cannot drift from
+    // today's behaviour and Minimal cannot UN-fold something already folded.
+    for (const view of ['minimal', 'tools', 'standard'] as const) {
+      for (const isLiveRow of [true, false]) {
+        for (const isLastRow of [true, false]) {
+          const input = { activities: settled, isLiveRow, isLastRow }
+          if (shouldAutoCollapseActivityStack(input)) {
+            expect(shouldAutoCollapseActivityStackForView(input, view)).toBe(true)
+          }
+        }
+      }
+    }
+    // and the case that makes the loop above non-vacuous
+    expect(
+      shouldAutoCollapseActivityStack({ activities: settled, isLiveRow: false, isLastRow: false })
+    ).toBe(true)
   })
 })

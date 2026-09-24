@@ -65,7 +65,25 @@ describe('SimulatorHostControl', () => {
     const lease = new SimulatorControllerLease({ createId: () => 'tok-1' })
     const sessions = new SimulatorSessionStore({ now: () => 'now' })
     const gate = new SimulatorHostControl({ host, controllerLease: lease, sessionStore: sessions })
-    const minted = lease.mint({ chatId: 'chat-a', runId: 'run-1' })
+    expect(
+      lease.authorizeUserLease({
+        chatId: 'chat-a',
+        runId: 'run-1',
+        provider: 'codex',
+        surfaceId: `simulator:${UDID}:-`,
+        verb: 'simulator_boot',
+        allowedVerbs: ['simulator_boot'],
+        target: { udid: UDID },
+        approvedBy: 'user'
+      }).ok
+    ).toBe(true)
+    const minted = lease.mint({
+      chatId: 'chat-a',
+      runId: 'run-1',
+      provider: 'codex',
+      surfaceId: `simulator:${UDID}:-`,
+      verb: 'simulator_boot'
+    })
     expect(minted.ok).toBe(true)
     if (!minted.ok) return
     const control = { chatId: 'chat-a', controllerTokenId: minted.token.tokenId }
@@ -76,6 +94,11 @@ describe('SimulatorHostControl', () => {
     expect((await gate.openSimulatorApp(control)).ok).toBe(true)
     expect(sessions.get('chat-a')?.simulatorAppOpen).toBe(true)
     expect(sessions.get('chat-a')?.ownedSimulatorPid).toBe(99)
+
+    expect((await gate.launch(UDID, 'com.example.App', control)).ok).toBe(true)
+    expect(sessions.get('chat-a')?.bundleId).toBe('com.example.App')
+    expect((await gate.terminate(UDID, 'com.example.App', control)).ok).toBe(true)
+    expect(sessions.get('chat-a')?.bundleId).toBeUndefined()
 
     // Screenshot remains readable without a controller.
     expect((await gate.screenshot(UDID, { chatId: 'chat-a' })).ok).toBe(true)

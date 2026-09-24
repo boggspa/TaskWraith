@@ -1,15 +1,19 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
 import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
+import { TranscriptStallNotice } from './TranscriptStallNotice'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
+import { useCurrentChatTranscriptWindow } from '../lib/currentChatTranscriptWindow'
+import { shouldDeferTranscriptPresentation } from '../lib/approvalPresentationGate'
 import { transcriptPendingApprovalsSignature } from '../lib/transcriptPanelMemoProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
-import { MainPaneActionPill } from './MainPaneActionPill'
-import { buildWorkspaceStatsContext } from './workspaceStatsContext'
+import { MainPaneActionPill, type MainPaneActionPillHandle } from './MainPaneActionPill'
+import { buildWorkspaceStatsContext, type WorkspaceStatsContext } from './workspaceStatsContext'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { TranscriptJumpToLatestPill } from './TranscriptJumpToLatestPill'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
@@ -142,6 +146,8 @@ export interface ChatViewPaneProps extends Omit<
   ) => void
   /** Local pane activation. It never projects the chat into the App singleton. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
+  /** Non-destructive pane close. The thread remains available in the sidebar. */
+  onClosePane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
 }
 
@@ -239,6 +245,15 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.compactDensity === b.compactDensity &&
     a.liveActivityViewport === b.liveActivityViewport &&
     a.fanoutLaneLayout === b.fanoutLaneLayout &&
+    // Inherited from BuildChatViewPropsInput, so TypeScript never asked for it
+    // here. Unlisted, a pane that is not the focused one keeps rendering the
+    // OLD Appearance default until an unrelated prop happens to change.
+    a.defaultTranscriptView === b.defaultTranscriptView &&
+    // Inherited the same way, and worse to miss: this one resolves to the
+    // number the pane's own virtualiser is calibrated for, so an unlisted pane
+    // renders AND estimates at the old size while its neighbours move.
+    a.transcriptTextSize === b.transcriptTextSize &&
+    a.transcriptWidth === b.transcriptWidth &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
@@ -315,11 +330,17 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.gitSnapshotPath === b.gitSnapshotPath &&
     a.gitPrCiStore === b.gitPrCiStore &&
     a.onFocusPane === b.onFocusPane &&
+    a.onClosePane === b.onClosePane &&
     a.ariaLabel === b.ariaLabel
   )
 }
 
-function ChatViewPaneChrome(props: ChatViewPaneProps) {
+interface ChatViewPaneChromeProps extends ChatViewPaneProps {
+  actionPillRef: RefObject<MainPaneActionPillHandle | null>
+  workspaceStats?: WorkspaceStatsContext
+}
+
+function ChatViewPaneChrome(props: ChatViewPaneChromeProps) {
   const [panePopoutMenuOpen, setPanePopoutMenuOpen] = useState(false)
   const panePopoutMenuRef = useRef<HTMLDivElement>(null)
   if (props.topLeftChrome || props.topRightChrome) {
@@ -333,14 +354,6 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const chatId = props.chat?.appChatId ?? ''
   const title = props.chat?.title || props.welcomeWorkspaceName || 'New Chat'
   const workspaceLabel = props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName
-  const workspaceStats = buildWorkspaceStatsContext({
-    chatId,
-    baseWorkspacePath: props.currentWorkspacePath || props.chat?.workspacePath,
-    worktreeSelection: props.composerProps?.composerWorktreeSelection,
-    snapshot: props.composerProps?.primaryGitSnapshot,
-    label: workspaceLabel,
-    isGlobalChat: props.welcomeIsGlobalChat
-  })
   const defaultLeftAction: ChatViewPaneChromeAction = {
     id: 'pane-chat',
     title: 'Focus pane',
@@ -366,6 +379,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const firstLaunchAction = actionById.get('help')
   const bugReportAction = actionById.get('bug-report')
   const popoutAction = actionById.get('popout-chat')
+  const compactCompanionAction = actionById.get('compact-companion')
   const workbenchPopoutAction = actionById.get('popout-workbench')
   const diffStudioPopoutAction = actionById.get('popout-diff-studio')
   const fileEditorPopoutAction = actionById.get('popout-file-editor')
@@ -448,6 +462,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
       </div>
       {props.topRightChromeActions && props.topRightChromeActions.length > 0 && (
         <MainPaneActionPill
+          ref={props.actionPillRef}
           idScope={`multiview-pane-${props.paneIndex}`}
           className="multiview-pane-corner-controls"
           fxEnabled={Boolean(
@@ -464,7 +479,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onToggleChangelog={() => invokeAction(changelogAction)}
           onToggleFirstLaunch={() => invokeAction(firstLaunchAction)}
           onToggleBugReport={() => invokeAction(bugReportAction)}
-          workspaceStats={workspaceStats}
+          workspaceStats={props.workspaceStats}
           popoutMenuOpen={panePopoutMenuOpen}
           setPopoutMenuOpen={setPanePopoutMenuOpen}
           popoutMenuRef={panePopoutMenuRef}
@@ -476,6 +491,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onOpenDiffStudio={() => invokePopoutAction(diffStudioPopoutAction)}
           onOpenFileEditor={() => invokePopoutAction(fileEditorPopoutAction)}
           onOpenChatPopout={() => invokePopoutAction(popoutAction)}
+          onOpenCompactCompanion={() => invokePopoutAction(compactCompanionAction)}
           runTitle={runAction?.title || 'Preview unavailable'}
           runMenuOpen={Boolean(runAction?.menuOpen)}
           runHasMenu={Boolean(runAction?.menu)}
@@ -484,6 +500,12 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onRun={() => invokeAction(runAction)}
           homeOpen={Boolean(homeAction?.active)}
           onToggleHome={() => invokeAction(homeAction)}
+          onCloseThread={
+            props.onClosePane && chatId
+              ? () => props.onClosePane?.(props.paneIndex, chatId)
+              : undefined
+          }
+          closeThreadLabel="Close pane"
         />
       )}
     </>
@@ -493,7 +515,26 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
 function ChatViewPaneInner(props: ChatViewPaneProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const paneComposerAreaRef = useRef<HTMLDivElement | null>(null)
+  const paneActionPillRef = useRef<MainPaneActionPillHandle>(null)
+  const requestPaneWorkspaceStats = useCallback(
+    () => paneActionPillRef.current?.openWorkspaceStats(),
+    []
+  )
   const chatId = props.chat?.appChatId ?? ''
+  // Stage 1b parity — a paged shell strips `messages`/`runs` from the record
+  // (chrome + store window by design). Read the loaded window for this pane's
+  // chat, exactly as the focused surface does via the same hook: the window is
+  // the transcript source, and a shell must never present as a welcome pane
+  // (App derives pane welcome-ness from `messages.length === 0`, which reads
+  // true for every shell). Subscribes only while the chat is actually paged.
+  const paneTranscript = useCurrentChatTranscriptWindow(props.chat ?? null, {
+    deferPresentation: shouldDeferTranscriptPresentation({
+      running: props.isThinking === true,
+      approvalOpen: Boolean(props.composerProps?.pendingAgentApproval)
+    })
+  })
+  const paneMessages = paneTranscript.paged ? paneTranscript.messages : props.messages
+  const paneIsWelcomeChat = props.isWelcomeChat && !paneTranscript.paged
   const paneGitSnapshot = useWorkspaceGitSnapshot(props.gitSnapshotStore, props.gitSnapshotPath)
   const panePrCi = useWorkspacePrCi(props.gitPrCiStore, props.gitSnapshotPath)
   const effectiveComposerProps = useMemo<ComposerProps | undefined>(() => {
@@ -524,12 +565,37 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     props.gitSnapshotPath,
     props.gitSnapshotStore
   ])
+  const workspaceStats = buildWorkspaceStatsContext({
+    chatId,
+    baseWorkspacePath: props.currentWorkspacePath || props.chat?.workspacePath,
+    worktreeSelection: effectiveComposerProps?.composerWorktreeSelection,
+    snapshot: effectiveComposerProps?.primaryGitSnapshot,
+    label: props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName,
+    isGlobalChat: props.welcomeIsGlobalChat
+  })
+  const ownsDefaultActionPill = Boolean(
+    !props.topLeftChrome && !props.topRightChrome && props.topRightChromeActions?.length
+  )
+  const canOpenPaneWorkspaceStats = ownsDefaultActionPill && Boolean(workspaceStats)
+  const compactCompanionAction = props.topRightChromeActions?.find(
+    (action) => action.id === 'compact-companion'
+  )
+  const canOpenPaneCompactChat = Boolean(
+    chatId && compactCompanionAction?.onClick && !compactCompanionAction.disabled
+  )
+  const requestPaneCompactChat = useCallback(() => {
+    const action = props.topRightChromeActions?.find(
+      (candidate) => candidate.id === 'compact-companion'
+    )
+    if (!chatId || !action?.onClick || action.disabled) return
+    action.onClick(props.paneIndex, chatId)
+  }, [chatId, props.paneIndex, props.topRightChromeActions])
   const hasComposerProps = Boolean(effectiveComposerProps)
   const paneScrollState = useTranscriptScrollState({
     chatId: chatId || null,
-    messages: props.messages,
+    messages: paneMessages,
     runCompleteNotice: props.runCompleteNotice,
-    transcriptMounted: !props.isWelcomeChat,
+    transcriptMounted: !paneIsWelcomeChat,
     streamingActive: props.isThinking,
     ownsRootKeyboardScroll: props.ownsRootKeyboardScroll === true,
     transcriptScrollRef: props.refs.scrollRef,
@@ -558,7 +624,7 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     `provider-${props.providerClass}`,
     props.isEnsemble ? 'chat-kind-ensemble' : '',
     props.welcomeIsGlobalChat ? 'chat-scope-global' : '',
-    props.isWelcomeChat ? 'welcome-mode' : ''
+    paneIsWelcomeChat ? 'welcome-mode' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -611,8 +677,13 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         />
       )}
       {props.showSky && <SkyWeatherVisual weather={props.weather ?? null} />}
-      <ChatViewPaneChrome {...props} composerProps={effectiveComposerProps} />
-      {props.isWelcomeChat &&
+      <ChatViewPaneChrome
+        {...props}
+        actionPillRef={paneActionPillRef}
+        composerProps={effectiveComposerProps}
+        workspaceStats={workspaceStats}
+      />
+      {paneIsWelcomeChat &&
         props.showWelcomeUsageDashboard &&
         props.welcomeUsageDashboardData && (
           <div className="welcome-usage-region welcome-usage-region-small multiview-pane-welcome-usage">
@@ -628,17 +699,23 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
             />
           </div>
         )}
-      {props.isWelcomeChat && props.reserveWelcomeUsageDashboard && (
+      {paneIsWelcomeChat && props.reserveWelcomeUsageDashboard && (
         <div
           className="welcome-usage-region welcome-usage-region-small welcome-usage-region-reserved multiview-pane-welcome-usage"
           aria-hidden
         />
       )}
-      {!props.isWelcomeChat && (
+      {!paneIsWelcomeChat && (
         <div className="multiview-pane-content">
+          <TranscriptStallNotice chatId={props.chat?.appChatId} />
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,
+              messages: paneMessages,
+              isWelcomeChat: paneIsWelcomeChat,
+              // Window runs back the run-evidence projections while paged; a
+              // hydrated record keeps its own arrays (input default).
+              runs: paneTranscript.paged ? paneTranscript.runs : undefined,
               autoFollowRef: paneScrollState.autoFollowRef,
               getUserScrollGestureLive: paneScrollState.getUserScrollGestureLive,
               externalRestoreAnchorMessageId: paneScrollState.externalRestoreAnchorMessageId,
@@ -665,10 +742,20 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           />
         </div>
       )}
+      <TranscriptJumpToLatestPill
+        visible={!paneIsWelcomeChat && paneScrollState.showJumpToLatestPill}
+        unreadCount={paneScrollState.unreadFromBottomCount}
+        provider={props.provider}
+        onJumpToLatest={paneScrollState.handleJumpToLatest}
+      />
       {effectiveComposerProps && (
         <Composer
           {...effectiveComposerProps}
           composerAreaRef={paneComposerAreaRef}
+          onOpenCompactChat={canOpenPaneCompactChat ? requestPaneCompactChat : undefined}
+          onOpenWorkspaceStats={
+            canOpenPaneWorkspaceStats ? requestPaneWorkspaceStats : undefined
+          }
           showWelcomeNotifications={false}
         />
       )}

@@ -401,6 +401,45 @@ describe('Execution-run event fold', () => {
     expect(projection.activations['activation-1'].state).toBe('waiting_approval')
   })
 
+  // A durable graph must name an accountable parent. `tenant`/`rootChatId`
+  // associate an execution with a thread but never make that thread its
+  // lifecycle owner, and `anchorRunRef` inverts the dependency (the graph waits
+  // on that run). `owner` is the distinct binding: who is answerable for this
+  // execution, and whose disappearance must pause it.
+  it('projects the durable owner envelope, and leaves legacy ledgers unowned', () => {
+    const owned = foldExecutionRun('execution-owned', [
+      createExecutionRunEvent(
+        {
+          executionId: 'execution-owned',
+          kind: 'execution_created',
+          title: 'UltraTask',
+          workspaceId: 'workspace-1',
+          tenant: { kind: 'workflow', tenantId: 'workflow-1' },
+          rootChatId: 'chat-1',
+          owner: {
+            threadId: 'chat-1',
+            initiatingRunId: 'run-parent-1',
+            seatId: 'antigravity:gemini-3.1-pro'
+          },
+          permissionCeilingRef: ceiling
+        },
+        1,
+        now
+      )
+    ])
+    expect(owned.owner).toEqual({
+      threadId: 'chat-1',
+      initiatingRunId: 'run-parent-1',
+      seatId: 'antigravity:gemini-3.1-pro'
+    })
+
+    // Ledgers written before the owner contract stay readable and valid, but
+    // they decode as unowned rather than being grandfathered into an owner.
+    const legacy = foldExecutionRun('execution-legacy', [creation('execution-legacy')])
+    expect(legacy.owner).toBeUndefined()
+    expect(legacy.integrity).toBe('valid')
+  })
+
   it('pins an immutable base revision and fails closed when it is missing or mismatched', () => {
     const compiled = compileExecutionGraphRevision({
       graphId: 'saved-graph',

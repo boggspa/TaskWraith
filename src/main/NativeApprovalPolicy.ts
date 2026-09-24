@@ -11,6 +11,8 @@ import type {
   AppSettings,
   EffectiveRunPermissions
 } from './store/types'
+import { shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
+import { isHostDestructiveShellCommand } from './shell-policy/HostDestructiveShellDeny'
 
 export { canonicalTaskWraithToolName } from './TaskWraithMcpTools'
 
@@ -135,10 +137,10 @@ export function resolveNativeApprovalPreflightDecision(args: {
   sessionYoloEnabled?: boolean
   readOnly?: boolean
   /**
-   * Hard "never automatically allow" flag for signed-elevated services
-   * (canvas_eval / RCE). When set, the decision is clamped to `ask` regardless of
-   * policy, grant, or session-YOLO — only an explicit `deny` short-circuits above
-   * it. The caller (resolveNativeApprovalPreflight) sets this for `canvasEval`.
+   * Ambient-auto-allow hold for services with their own scoped approval path.
+   * For canvas_eval this clamps policy/grant/session-YOLO to `ask`; the native
+   * gate may then resolve through the exact-live-surface 12h window. An explicit
+   * deny still short-circuits before either path.
    */
   neverAutoAllow?: boolean
   /**
@@ -160,9 +162,21 @@ export function resolveNativeApprovalPreflightDecision(args: {
    * reads auto-approve there by owner spec; writes keep the external-path ask.
    */
   externalPathReadAutoAllowed?: boolean
+  /**
+   * Raw native/broker shell command, when the service is shellCommands.
+   * Host-destructive shapes (disk wipe, power-off) deny before YOLO/grants.
+   */
+  shellCommand?: unknown
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
+  if (
+    isHostDestructiveShellCommand(
+      shellCommandFromRawCommand(args.shellCommand) ?? args.shellCommand
+    )
+  ) {
+    return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
+  }
   if (
     args.readOnlyShellFastPath &&
     !args.neverAutoAllow &&

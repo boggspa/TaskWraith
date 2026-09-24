@@ -44,9 +44,15 @@
 import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import {
+  parseRemoteImageAttachmentMeta,
+  type RemoteImageMarkup
+} from './RemoteAttachmentPersistence'
+import {
   isReservedBranchName,
   isReservedWorktreeName
 } from '../shared/worktreeNamespace'
+import { isEnsembleSeatProvider } from '../shared/retiredProviders'
+import type { ChatMessageOrigin } from '../shared/messageOrigin'
 
 /** Wire mirror of the store's `AgentApprovalAction` — kept literal (this
  * module deliberately avoids store imports) with a lockstep test in
@@ -83,6 +89,10 @@ export interface BridgeActionMetadata {
 
 const BRIDGE_QUESTION_ANSWER_MAX_CHARS = 8000
 const BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS = 1000
+/** Phone-originated sub-thread prompts remain below the worker-control cap.
+ * The host applies its own admission, permission and delegation budgets before
+ * a child is created. */
+export const BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS = 20_000
 const BRIDGE_QUESTION_RECEIPT_ID_MAX_CHARS = 512
 const BRIDGE_THREAD_ROW_ID_MAX_CHARS = 4096
 /** Matches MAX_THREAD_MESSAGE_CHARS so the phone cannot post a body the desktop
@@ -160,8 +170,10 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   claudeReasoningEffort?: string | null
   /** Grok-specific reasoning effort override. Valid only for supported Grok models. */
   grokReasoningEffort?: string | null
-  /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|ultra). */
+  /** Muse-specific reasoning effort override (minimal|low|medium|high|xhigh|max|ultra). */
   museReasoningEffort?: string | null
+  /** Ollama boolean thinking (`off`/`on`) or GPT-OSS effort level. */
+  ollamaReasoningEffort?: string | null
   /** Cursor-specific reasoning effort override. Valid only for supported Cursor Grok models. */
   cursorReasoningEffort?: string | null
   /** Cursor Fast tier toggle. Valid only for supported Cursor Grok models. */
@@ -192,6 +204,12 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
    * pending, so a second device tapping Approve in the projection-latency
    * window cannot fire a duplicate write-capable implement run. */
   proposedPlanImplementOf?: string
+  /** HOST-STAMPED provenance for a prompt that arrived through a machine
+   * channel (the local-control socket). Never accepted from the wire —
+   * `decodeBridgeActionPayload` strips it — so a paired device cannot dress
+   * a send up as another process. The seeded user row carries it as
+   * `metadata.origin`; see `ChatMessageOrigin`. */
+  origin?: ChatMessageOrigin
 }
 
 export interface BridgeComposerQueuePromptAction
@@ -295,6 +313,12 @@ export interface BridgeImageAttachment {
   name?: string
   mimeType: string
   dataBase64: string
+  /** Phone attachment identity. Required when `markup` is present. */
+  id?: string
+  /** Validated MarkupPayload mirror. Rejected unless schemaVersion is 1,
+   * attachmentId is non-empty and matches `id`, coordinates are finite 0..1,
+   * and the encoded JSON stays within 16 KiB. */
+  markup?: RemoteImageMarkup
 }
 
 /** On-demand bounded transcript window for one thread. The phone sends
@@ -578,6 +602,43 @@ export interface BridgeGithubCreatePrAction extends BridgeActionMetadata {
   title?: string
   body?: string
   draft?: boolean
+}
+
+/** Merge the current branch's GitHub PR via `gh pr merge`.
+ *
+ * Destructive and irreversible from the phone — riding ordinary
+ * `githubCreatePr` / `externalPublish` authority would be a security
+ * defect. Dual-gated, matching `terminalOpen` / the deferred
+ * `workflowDelete` elevation contract:
+ *
+ * 1. Phone confirmation sheet. `elevationAcknowledged: true` must ride
+ *    the frame; decode refuses a missing or false receipt. This bit is
+ *    the phone's claim that it showed the sheet. It is NOT host consent
+ *    — a paired client can stamp `true` without any Mac involvement.
+ * 2. Host-verified approval at execution. The executor calls an injected
+ *    `requestGithubMergePrApprovalFn` that MUST go through
+ *    `requestAgenticServiceApproval` (the same path `terminalOpen` uses
+ *    for `shellCommands`). It must NOT use `beginExternalPublishReceipt`,
+ *    which auto-allows `origin: 'ios-bridge'`. A wired `githubMergePrFn`
+ *    without that host callback is refused; a forged phone bit never
+ *    reaches the merge callback.
+ *
+ * The Mac derives the PR from the workspace's current branch. A payload
+ * that names a PR number, URL, or path is REFUSED, not sanitised — the
+ * phone is not entitled to pick a merge target.
+ *
+ * Host `githubMergePrFn` and `requestGithubMergePrApprovalFn` remain
+ * optional on the executor type. Live `src/main/index.ts` injects both.
+ * The executor still fail-closes if either is missing: `notWired`
+ * (merge fn absent) or a refusal (approval fn absent). Phone merge
+ * must stay hidden unless the projected `githubMergePr` capability is
+ * true — derived from both callbacks AND workspace `externalPublish`. */
+export interface BridgeGithubMergePrAction extends BridgeActionMetadata {
+  kind: 'githubMergePr'
+  workspaceId: string
+  /** Phone confirmation-sheet claim. Must be literal true to decode.
+   * Not host consent — see the dual-gate comment above. */
+  elevationAcknowledged: boolean
 }
 
 /** Create an empty chat thread without starting a run. Used by the iOS
@@ -987,9 +1048,31 @@ export interface BridgeCreateSideChatAction extends BridgeActionMetadata {
   claudeReasoningEffort?: string | null
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
   cursorFastMode?: boolean
   mode?: 'singleProvider' | 'ensembleClone' | 'fanOut'
+}
+
+/**
+ * Spawn one fresh, context-isolated child under an existing parent thread.
+ *
+ * provider is a phone proposal, not authority. The wire decoder admits only
+ * known seat-provider identifiers, and the Mac MUST revalidate the proposal
+ * against current provider admission, credentials, and delegation policy before
+ * it creates a run. This action is intentionally spawn-only: a later recall
+ * surface must use a distinct action rather than letting a phone supply an
+ * arbitrary existing child id.
+ */
+export interface BridgeCreateSubThreadAction extends BridgeActionMetadata {
+  kind: 'createSubThread'
+  workspaceId: string
+  /** Parent thread the new child belongs to. */
+  threadId: string
+  provider: string
+  prompt: string
+  /** Persist the terminal child result back into the parent mailbox. */
+  returnResult?: boolean
 }
 
 export interface BridgeEnsembleQueueItemAction extends BridgeActionMetadata {
@@ -1042,6 +1125,8 @@ export interface BridgeEnsembleSteerAction extends BridgeActionMetadata {
   message?: string
   /** Phone-attached images — same shape/caps as composerPrompt's. */
   imageAttachments?: BridgeImageAttachment[]
+  /** HOST-STAMPED provenance; stripped from the wire exactly as on composerPrompt. */
+  origin?: ChatMessageOrigin
 }
 
 export interface BridgeSetYoloModeAction extends BridgeActionMetadata {
@@ -1168,6 +1253,7 @@ export type BridgeActionPayload =
   | BridgeGithubPrStatusAction
   | BridgeGithubPrReadinessAction
   | BridgeGithubCreatePrAction
+  | BridgeGithubMergePrAction
   | BridgeCancelRunAction
   | BridgeWorkflowSetEnabledAction
   | BridgeWorkflowRunNowAction
@@ -1181,6 +1267,7 @@ export type BridgeActionPayload =
   | BridgeEnsembleSettingsUpdateAction
   | BridgeEnsembleQueueItemAction
   | BridgeCreateSideChatAction
+  | BridgeCreateSubThreadAction
   | BridgeSetThreadNotesAction
   | BridgeSetThreadTitleAction
   | BridgeSetChatKindAction
@@ -1276,8 +1363,21 @@ export function decodeBridgeActionPayload(payloadBase64: string): DecodedActionP
     )
   }
 
+  stripHostStampedFields(parsed)
   const payload = coerceToPayload(parsed)
   return { payload, rawJson: parsed }
+}
+
+/**
+ * Fields the host stamps on an action AFTER decoding — provenance it observed
+ * itself — must never arrive over the wire, or a paired device could claim
+ * them. Stripped in place, before the type gate, so neither the payload nor
+ * `rawJson` carries a value the sender chose.
+ */
+function stripHostStampedFields(parsed: unknown): void {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    delete (parsed as Record<string, unknown>).origin
+  }
 }
 
 /** Extract the workspace id from a payload variant for allowlist lookups.
@@ -1326,6 +1426,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'cancelRun':
     case 'ensembleCancelRound':
     case 'ensembleSkipActiveParticipant':
@@ -1337,6 +1438,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1425,6 +1527,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'cancelRun':
     case 'workflowSetEnabled':
     case 'workflowRunNow':
@@ -1438,6 +1541,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1539,6 +1643,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'ensembleSettingsUpdate':
     case 'ensembleQueueItem':
     case 'createSideChat':
+    case 'createSubThread':
     case 'setThreadNotes':
     case 'setThreadTitle':
     case 'setChatKind':
@@ -1569,6 +1674,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitCreateWorktree':
     case 'githubWatchPr':
     case 'githubCreatePr':
+    case 'githubMergePr':
     case 'registerApnsToken':
     case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
@@ -1757,6 +1863,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isGithubCreatePr(parsed)
         ? (parsed as unknown as BridgeGithubCreatePrAction)
         : { kind: 'unknown', rawKind: 'githubCreatePr', raw: parsed }
+    case 'githubMergePr':
+      return isGithubMergePr(parsed)
+        ? (parsed as unknown as BridgeGithubMergePrAction)
+        : { kind: 'unknown', rawKind: 'githubMergePr', raw: parsed }
     case 'cancelRun':
       return isCancelRun(parsed)
         ? (parsed as unknown as BridgeCancelRunAction)
@@ -1809,6 +1919,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isCreateSideChat(parsed)
         ? (parsed as unknown as BridgeCreateSideChatAction)
         : { kind: 'unknown', rawKind: 'createSideChat', raw: parsed }
+    case 'createSubThread':
+      return isCreateSubThread(parsed)
+        ? (parsed as unknown as BridgeCreateSubThreadAction)
+        : { kind: 'unknown', rawKind: 'createSubThread', raw: parsed }
     case 'setThreadNotes':
       return isSetThreadNotes(parsed)
         ? (parsed as unknown as BridgeSetThreadNotesAction)
@@ -2006,6 +2120,8 @@ function isImageAttachments(value: unknown): boolean {
     if (typeof entry.dataBase64 !== 'string' || entry.dataBase64.length === 0) return false
     if (entry.dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return false
     if (entry.name !== undefined && typeof entry.name !== 'string') return false
+    const meta = parseRemoteImageAttachmentMeta(entry)
+    if (!meta.ok) return false
     combined += entry.dataBase64.length
   }
   return combined <= MAX_IMAGE_ATTACHMENT_COMBINED_BASE64
@@ -2034,6 +2150,9 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
     (v.museReasoningEffort === undefined ||
       v.museReasoningEffort === null ||
       typeof v.museReasoningEffort === 'string') &&
+    (v.ollamaReasoningEffort === undefined ||
+      v.ollamaReasoningEffort === null ||
+      typeof v.ollamaReasoningEffort === 'string') &&
     (v.cursorReasoningEffort === undefined ||
       v.cursorReasoningEffort === null ||
       typeof v.cursorReasoningEffort === 'string') &&
@@ -2431,6 +2550,19 @@ function isGithubCreatePr(v: Record<string, unknown>): boolean {
   )
 }
 
+function isGithubMergePr(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    v.elevationAcknowledged === true &&
+    v.prNumber === undefined &&
+    v.number === undefined &&
+    v.prUrl === undefined &&
+    v.url === undefined &&
+    v.path === undefined
+  )
+}
+
 function isWorkspaceFileRead(v: Record<string, unknown>): boolean {
   return (
     hasValidActionMetadata(v) &&
@@ -2796,6 +2928,18 @@ function isCreateSideChat(v: Record<string, unknown>): boolean {
   )
 }
 
+function isCreateSubThread(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.provider === 'string' &&
+    isEnsembleSeatProvider(v.provider) &&
+    typeof v.prompt === 'string' &&
+    v.prompt.trim().length > 0 &&
+    v.prompt.length <= BRIDGE_CREATE_SUB_THREAD_PROMPT_MAX_CHARS &&
+    v.subThreadId === undefined &&
+    (v.returnResult === undefined || typeof v.returnResult === 'boolean')
+  )
+}
 function isEnsembleQueueItem(v: Record<string, unknown>): boolean {
   return (
     isWorkspaceThreadAction(v) &&

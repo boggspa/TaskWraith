@@ -19,12 +19,28 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "qwen3.8:27b-mlx")?.modelLabel
                 == "Qwen 3.8 (27B-MLX)")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "qwen3.8-flash-next:125b-mlx")
+                == OllamaDisplayBrand(
+                    providerLabel: "Alibaba", providerClass: "alibaba",
+                    modelLabel: "Qwen 3.8 Flash Next (125B-MLX)"))
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "ornith:35b", modelLabel: "Ornith 1.0 (35B Param)")?
                 .providerLabel == "Deep Reinforce")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "ornith-1.5:35b")?.providerLabel
+                == "Deep Reinforce")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "ornith-1.5:35b")?.modelLabel
+                == "Ornith 1.5 (35B Param)")
         #expect(
             OllamaDisplayBrands.resolve(modelId: "gemma4:12b")?.providerClass == "google")
         #expect(
             OllamaDisplayBrands.resolve(modelId: "granite4.1:30b")?.providerLabel == "IBM")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "granite4.2:8b")
+                == OllamaDisplayBrand(
+                    providerLabel: "IBM", providerClass: "ibm",
+                    modelLabel: "Granite 4.2 (8B Param)"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "lfm2.5:8b")?.providerClass == "liquid")
         #expect(
@@ -45,6 +61,11 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.resolve(modelId: "devstral-small-2:24b")?.providerLabel
                 == "Mistral")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "mistral-medium-3.5:128b")
+                == OllamaDisplayBrand(
+                    providerLabel: "Mistral", providerClass: "mistral",
+                    modelLabel: "Mistral Medium 3.5 (128B Param)"))
         // `ministral` carries its own needle — 'mistral' is NOT a substring of it.
         #expect(
             OllamaDisplayBrands.resolve(modelId: "ministral-3:14b")?.providerClass == "mistral")
@@ -64,17 +85,35 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.resolve(modelId: "north-mini-code-1.0:q4_K_M")?.providerClass
                 == "cohere")
         #expect(
+            OllamaDisplayBrands.resolve(modelId: "glm-5.3-flash:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "Z.ai", providerClass: "zai", modelLabel: "GLM 5.3 Flash"))
+        #expect(
             OllamaDisplayBrands.resolve(modelId: "glm-5.2:cloud")
                 == OllamaDisplayBrand(
                     providerLabel: "Z.ai", providerClass: "zai", modelLabel: "GLM 5.2"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "minimax-m3:cloud")
                 == OllamaDisplayBrand(
-                    providerLabel: "MiniMax", providerClass: "minimax", modelLabel: "MiniMax M3"))
+                    providerLabel: "MiniMax", providerClass: "minimax", modelLabel: "M3"))
         #expect(
             OllamaDisplayBrands.resolve(modelId: "kimi-k2.7-code:cloud")
                 == OllamaDisplayBrand(
-                    providerLabel: "Kimi", providerClass: "kimi", modelLabel: "Kimi K2.7 Code"))
+                    providerLabel: "Kimi", providerClass: "kimi", modelLabel: "K2.7 Code"))
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "deepseek-v4-pro:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "DeepSeek", providerClass: "deepseek",
+                    modelLabel: "V4 Pro"))
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "deepseek-v4-flash:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "DeepSeek", providerClass: "deepseek",
+                    modelLabel: "V4 Flash"))
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "gemma4:cloud")
+                == OllamaDisplayBrand(
+                    providerLabel: "Google", providerClass: "google", modelLabel: "Gemma 4"))
     }
 
     @Test("reuses existing upstream hues for the lightweight catalog")
@@ -136,6 +175,10 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "nemotron-3.5-lightning:30b-mlx") == "nvidia")
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "glm-5.3-flash:cloud")
+                == "zai")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "glm-5.2:cloud")
                 == "zai")

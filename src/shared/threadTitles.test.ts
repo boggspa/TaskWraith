@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  derivePromptFallbackThreadTitle,
   isPlaceholderThreadTitle,
+  isKnownPromptFallbackThreadTitle,
+  normalizeLocalAiThreadTitle,
   normalizeThreadTitle,
+  THREAD_TITLE_LOCAL_AI_MAX_CHARS,
   THREAD_TITLE_MAX_CHARS
 } from './threadTitles'
 
@@ -43,3 +47,34 @@ describe('placeholder title detection', () => {
   })
 })
 
+describe('prompt fallback titles', () => {
+  it('uses the first meaningful markdown-free line and truncates at a word boundary', () => {
+    expect(
+      derivePromptFallbackThreadTitle(
+        '\n## Repair the resumed thread naming lifecycle without breaking manual titles\n\nDetails'
+      )
+    ).toBe('Repair the resumed thread naming lifecycle without breaking manual…')
+  })
+
+  it('recognises current and legacy automatic first-prompt shapes', () => {
+    const prompt = 'Explain why resumed placeholder threads keep their factory title'
+    expect(isKnownPromptFallbackThreadTitle(prompt, prompt)).toBe(true)
+    expect(isKnownPromptFallbackThreadTitle(`${prompt.slice(0, 30)}...`, prompt)).toBe(true)
+    expect(isKnownPromptFallbackThreadTitle('My manual name', prompt)).toBe(false)
+  })
+})
+
+describe('local AI title normalization', () => {
+  it('accepts a plain three-to-seven-word title', () => {
+    expect(normalizeLocalAiThreadTitle('  Resilient Thread Title Lifecycle  ')).toBe(
+      'Resilient Thread Title Lifecycle'
+    )
+  })
+
+  it('rejects placeholders, prose, and oversized results', () => {
+    expect(normalizeLocalAiThreadTitle('New Chat')).toBeNull()
+    expect(normalizeLocalAiThreadTitle('Too short')).toBeNull()
+    expect(normalizeLocalAiThreadTitle('word '.repeat(8))).toBeNull()
+    expect(normalizeLocalAiThreadTitle('x'.repeat(THREAD_TITLE_LOCAL_AI_MAX_CHARS + 1))).toBeNull()
+  })
+})

@@ -36,9 +36,7 @@ export function MistralApiKeyControlsView({
           />
           <strong>Mistral API key (BYOK)</strong>
           <span className="settings-pi-upstream-hint">
-            {configured
-              ? 'Stored for metered API runs'
-              : 'Optional alternative to Vibe subscription'}
+            {configured ? 'Stored for key-marked models' : 'Required for key-marked models'}
           </span>
         </label>
         <div className="settings-pi-upstream-controls">

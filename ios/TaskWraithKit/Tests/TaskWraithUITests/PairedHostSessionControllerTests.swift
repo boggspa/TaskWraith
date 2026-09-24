@@ -141,6 +141,48 @@ struct PairedHostSessionControllerTests {
     #expect(!store.contains("mac-b"))
   }
 
+  @Test("reconnect replaces an offline cache when the Host generation resets")
+  func reconnectAfterHostGenerationReset() throws {
+    let store = MemoryHostSnapshotStore()
+    store.seed(
+      createEmptyHostSnapshot(
+        generation: 8,
+        cursor: 30,
+        freshness: .live,
+        generatedAt: "2026-08-09T20:00:00Z"),
+      hostIdentity: "mac-a")
+    let controller = PairedHostSessionController(snapshotStore: store)
+    let identity = try #require(makeIdentity())
+
+    controller.prepareOffline(hostIdentity: "mac-a", phoneIdentity: identity)
+    #expect(controller.snapshot?.generation == 8)
+    #expect(controller.snapshot?.freshness == .stale)
+    controller.activate(
+      hostIdentity: "mac-a",
+      phoneIdentity: identity,
+      transport: FakePairedHostTransport())
+
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.welcome,
+        params: try JSONEncoder().encode(welcome(identity: identity))) == .updated)
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.snapshot,
+        params: try JSONEncoder().encode(snapshotFrame())) == .updated)
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.state,
+        params: try JSONEncoder().encode(
+          PairedHostProjectionStateMessage(
+            phase: .live, generation: 7, cursor: 0))) == .updated)
+    #expect(controller.phase == .live)
+    #expect(controller.snapshot?.generation == 7)
+    #expect(controller.snapshot?.cursor == 0)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(store.saveCount == 1)
+  }
+
   @Test("a cursor gap pulls one full snapshot and converges atomically")
   func gapTriggersResnapshot() async throws {
     let full = SnapshotResponseFixture(kind: .snapshotGet, frame: snapshotFrame(cursor: 3))
@@ -171,11 +213,81 @@ struct PairedHostSessionControllerTests {
       return
     }
 
-    await waitUntil { controller.snapshot?.cursor == 3 && !controller.resyncInFlight }
+    await waitUntil {
+      controller.snapshot?.cursor == 3 && controller.phase == .live && !controller.resyncInFlight
+    }
     #expect(controller.snapshot?.cursor == 3)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(controller.health?.freshness == .live)
+    #expect(controller.phase == .live)
     let requests = await transport.requests()
     #expect(requests.count == 1)
     #expect(requests[0].method == PairedHostProjectionMethods.request)
+    let request = try #require(
+      JSONSerialization.jsonObject(with: requests[0].params) as? [String: Any])
+    #expect(request["kind"] as? String == "snapshot.get")
+  }
+
+  @Test("matching live state cannot certify a missed fresh snapshot")
+  func missedFreshSnapshotRequiresResyncBeforeLive() async throws {
+    let store = MemoryHostSnapshotStore()
+    store.seed(snapshotFrame().snapshot, hostIdentity: "mac-a")
+    let fresh = SnapshotResponseFixture(kind: .snapshotGet, frame: snapshotFrame())
+    let transport = FakePairedHostTransport(
+      replies: [
+        AckResult(
+          ok: true,
+          result: try JSONEncoder().encode(fresh),
+          error: nil)
+      ])
+    let controller = PairedHostSessionController(snapshotStore: store)
+    let identity = try #require(makeIdentity())
+
+    controller.activate(
+      hostIdentity: "mac-a",
+      phoneIdentity: identity,
+      transport: transport)
+    #expect(controller.phase == .connecting)
+    #expect(controller.snapshot?.freshness == .stale)
+    #expect(controller.health?.freshness == .stale)
+    #expect(controller.health?.connectionPhase == .staleCache)
+
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.welcome,
+        params: try JSONEncoder().encode(welcome(identity: identity))) == .updated)
+
+    // Deliberately omit the fresh snapshot push. The cached snapshot has the
+    // same generation/cursor, so cursor equality alone used to promote these
+    // explicitly stale bytes to `.live` and suppress the recovery fallback.
+    let liveState = controller.receive(
+      method: PairedHostProjectionMethods.state,
+      params: try JSONEncoder().encode(
+        PairedHostProjectionStateMessage(
+          phase: .live,
+          generation: 7,
+          cursor: 0)))
+    #expect(liveState == .requireSnapshot(reason: "live_state_stale_snapshot"))
+    #expect(controller.phase == .reconnecting)
+
+    await waitUntil {
+      controller.phase == .live && controller.snapshot?.freshness == .live
+        && controller.health?.freshness == .live && !controller.resyncInFlight
+    }
+
+    #expect(controller.phase == .live)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(controller.health?.freshness == .live)
+    let liveness = HostLiveness.derive(
+      sessionPhase: .connected,
+      projectionPhase: controller.phase,
+      healthProjection: controller.health,
+      probeLedger: HostLivenessProbeLedger())
+    #expect(liveness == .live)
+    #expect(liveness?.warrantsBanner == false)
+
+    let requests = await transport.requests()
+    #expect(requests.count == 1)
     let request = try #require(
       JSONSerialization.jsonObject(with: requests[0].params) as? [String: Any])
     #expect(request["kind"] as? String == "snapshot.get")

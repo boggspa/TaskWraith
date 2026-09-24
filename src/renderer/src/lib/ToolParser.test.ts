@@ -6,6 +6,7 @@ import {
   extractToolKind,
   extractResultOutput,
   extractStatus,
+  isErroredToolStatus,
   getToolCategory,
   isReasoningToolName,
   mapToolKindToCategory,
@@ -118,6 +119,19 @@ describe('ToolParser', () => {
     })
     it('returns success by default', () => {
       expect(extractStatus({})).toBe('success')
+    })
+    // The compat wire's own error flag. RunItemEventCompat has always honoured
+    // it, so before this the SAME failed call was an error through the run-item
+    // lane and a success through the legacy pairToolResult lane.
+    it('returns error for the compat wire is_error flag', () => {
+      expect(extractStatus({ is_error: true })).toBe('error')
+    })
+    it('does not treat a falsy or non-boolean is_error as a failure', () => {
+      expect(extractStatus({ is_error: false })).toBe('success')
+      expect(extractStatus({ is_error: 'false' })).toBe('success')
+    })
+    it('keeps a failed is_error result out of the diff via isErroredToolStatus', () => {
+      expect(isErroredToolStatus(extractStatus({ is_error: true }))).toBe(true)
     })
   })
 
@@ -698,6 +712,68 @@ describe('ToolParser', () => {
       expect(summary?.files).toHaveLength(2)
     })
 
+    it('derives per-change Codex patch envelopes when numeric counts are absent', () => {
+      const summary = deriveToolDiffSummary('edit_file', {
+        changes: [
+          {
+            kind: 'update',
+            path: 'src/a.ts',
+            diff: '*** Begin Patch\n*** Update File: src/a.ts\n-old\n+new\n+next\n*** End Patch'
+          }
+        ]
+      })
+
+      expect(summary).toMatchObject({
+        additions: 2,
+        deletions: 1,
+        files: [{ path: 'src/a.ts', additions: 2, deletions: 1 }]
+      })
+    })
+
+    it('accepts Cursor result aliases for line counts and diffString', () => {
+      expect(
+        deriveToolDiffSummary('edit', {
+          path: 'src/cursor.ts',
+          linesAdded: 3,
+          linesRemoved: 2,
+          diffString: '@@ -1,2 +1,3 @@\n-old one\n-old two\n+new one\n+new two\n+new three'
+        })
+      ).toMatchObject({ additions: 3, deletions: 2 })
+    })
+
+    it('reads create and delete from /dev/null markers, not just git mode lines', () => {
+      // A plain unified diff carries the operation ONLY in its /dev/null
+      // markers; `new file mode` / `deleted file mode` are git-specific. Without
+      // this the file kept the `diff --git` header's default of 'modified', so a
+      // DELETION reached the close-out card badged "Edited".
+      const deleted = parseUnifiedDiffSummary(
+        [
+          'diff --git a/build_output.txt b/build_output.txt',
+          '--- a/build_output.txt',
+          '+++ /dev/null',
+          '@@ -1,2 +0,0 @@',
+          '-gone one',
+          '-gone two'
+        ].join('\n')
+      )
+      expect(deleted?.files?.[0]).toMatchObject({
+        path: 'build_output.txt',
+        status: 'deleted'
+      })
+
+      const created = parseUnifiedDiffSummary(
+        [
+          'diff --git a/fresh.txt b/fresh.txt',
+          '--- /dev/null',
+          '+++ b/fresh.txt',
+          '@@ -0,0 +1,2 @@',
+          '+new one',
+          '+new two'
+        ].join('\n')
+      )
+      expect(created?.files?.[0]).toMatchObject({ path: 'fresh.txt', status: 'created' })
+    })
+
     it('parses unified diffs when changes do not carry stats', () => {
       const summary = parseUnifiedDiffSummary(
         [
@@ -863,6 +939,39 @@ describe('ToolParser', () => {
       expect(activity.filePath).toBe('src/main.py')
       expect(activity.diffSummary?.additions).toBe(3)
       expect(activity.diffSummary?.deletions).toBe(2)
+    })
+  })
+
+  describe('AntiGravity (TitleCase) argument shapes', () => {
+    it('counts a TitleCase string-replace edit', () => {
+      expect(estimateLineChanges({ OldString: 'a\nb', NewString: 'a\nb\nc' })).toEqual({
+        additions: 3,
+        deletions: 2
+      })
+    })
+
+    it('derives a string_replace summary with the TitleCase path', () => {
+      const summary = deriveToolDiffSummary('Edit main.py', {
+        filePath: 'src/main.py',
+        OldString: 'a\nb',
+        NewString: 'a\nb\nc',
+        replaceAll: false
+      })
+
+      expect(summary).toMatchObject({
+        additions: 3,
+        deletions: 2,
+        source: 'string_replace',
+        confidence: 'estimated',
+        files: [{ path: 'src/main.py', additions: 3, deletions: 2, status: 'modified' }]
+      })
+    })
+
+    it('counts TitleCase OldText/NewText variants', () => {
+      expect(estimateLineChanges({ OldText: 'x\ny', NewText: 'x\ny\nz' })).toEqual({
+        additions: 3,
+        deletions: 2
+      })
     })
   })
 
@@ -1061,5 +1170,170 @@ describe('ToolParser', () => {
       expect(isToolResultEvent({ type: 'tool_output' })).toBe(true)
       expect(isToolResultEvent({ type: 'other' })).toBe(false)
     })
+  })
+
+  /**
+   * Diff stats may only be DERIVED for edit-like calls. Providers whose
+   * tool_result lines carry the whole output as a string `content` field
+   * (Muse `exec --json` compat lines duplicate `output` into `content`)
+   * pollute the merged presentation parameters, and `estimateLineChanges`
+   * then read a 656-line file READ as a `+656 -0` edit. The same class let a
+   * shell result whose transcript happened to contain `diff --git` markers
+   * (git diff / git show output) surface as a phantom patch on a
+   * run_shell_command row.
+   */
+  describe('diff derivation gating (edit-like tools only)', () => {
+    it('never derives a diff for a read tool whose merged parameters carry result content', () => {
+      expect(
+        deriveToolDiffSummary('read_file', {
+          file_path: 'src/App.tsx',
+          content: Array.from({ length: 656 }, (_, i) => `line ${i}`).join('\n')
+        })
+      ).toBeUndefined()
+    })
+
+    it('never derives a diff for an MCP tool with a string content result', () => {
+      expect(
+        deriveToolDiffSummary('mcp__taskwraith__ensemble_control', { content: 'ok' })
+      ).toBeUndefined()
+    })
+
+    it('never parses a shell result transcript as a patch preview', () => {
+      const gitDiffOutput = [
+        'diff --git a/a.ts b/a.ts',
+        '--- a/a.ts',
+        '+++ b/a.ts',
+        '@@ -1,2 +1,3 @@',
+        ' line',
+        '-old',
+        '+new'
+      ].join('\n')
+      expect(
+        deriveToolDiffSummary('run_shell_command', { command: 'git diff' }, gitDiffOutput)
+      ).toBeUndefined()
+    })
+
+    it('still derives for an unrecognised name when the activity CATEGORY is write', () => {
+      // ACP tool_kind 'edit' classifies rows whose human title resolution
+      // cannot ("Apply my change") — the category evidence must keep the pill.
+      expect(
+        deriveToolDiffSummary('Apply my change', { filePath: 'a.ts', content: 'one\ntwo' }, undefined, {
+          category: 'write'
+        })
+      ).toMatchObject({ additions: 2, deletions: 0 })
+    })
+
+    it('keeps read pairing free of diffs end-to-end (Muse compat tool_result shape)', () => {
+      const activity = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'call_r1',
+        tool_name: 'read_file',
+        parameters: { path: 'src/App.tsx' },
+        provider: 'muse'
+      })
+      const paired = pairToolResult(activity, {
+        type: 'tool_result',
+        tool_id: 'call_r1',
+        output: 'a\nb\nc\nd',
+        content: 'a\nb\nc\nd',
+        provider: 'muse'
+      })
+      expect(paired.category).toBe('read')
+      expect(paired.diffSummary).toBeUndefined()
+      // The result output must not persist inside parameters either — that is
+      // the storage-bloat half of the same defect (a 1327-line read used to
+      // save its whole body under `parameters.content`).
+      expect(paired.parameters).not.toHaveProperty('content')
+      expect(paired.parameters).not.toHaveProperty('output')
+    })
+
+    it('keeps write pairing deriving from its own input after a string result merges in', () => {
+      const activity = createToolActivity({
+        type: 'tool_use',
+        tool_id: 'call_w1',
+        tool_name: 'write_file',
+        parameters: { file_path: 'notes.md', content: 'one\ntwo\nthree' },
+        provider: 'muse'
+      })
+      const paired = pairToolResult(activity, {
+        type: 'tool_result',
+        tool_id: 'call_w1',
+        output: 'Wrote notes.md',
+        content: 'Wrote notes.md',
+        provider: 'muse'
+      })
+      expect(paired.diffSummary).toMatchObject({ additions: 3, deletions: 0 })
+      // The INPUT body stays the persisted `content`; the result's status echo
+      // ("Wrote notes.md") must not replace or accompany it.
+      expect(paired.parameters?.content).toBe('one\ntwo\nthree')
+    })
+  })
+})
+
+describe('shell-command edit evidence (shell-only model families)', () => {
+  const heredocWrite = "cat > src/app.py << 'HEREDOC'\nline1\nline2\nline3\nHEREDOC"
+
+  it('derives an estimated content summary from a heredoc write command', () => {
+    expect(deriveToolDiffSummary('run_shell_command', { command: heredocWrite })).toEqual({
+      additions: 3,
+      deletions: 0,
+      files: [{ path: 'src/app.py', status: 'modified', additions: 3, deletions: 0 }],
+      source: 'content',
+      confidence: 'estimated'
+    })
+  })
+
+  it('derives patch counts from a git apply heredoc', () => {
+    const command = [
+      "git apply <<'PATCH'",
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1,2 +1,3 @@',
+      ' line',
+      '-old',
+      '+new',
+      '+more',
+      'PATCH'
+    ].join('\n')
+    expect(deriveToolDiffSummary('run_shell_command', { command })).toMatchObject({
+      additions: 2,
+      deletions: 1,
+      source: 'patch_preview',
+      confidence: 'estimated'
+    })
+  })
+
+  it('ignores result text on shell rows even when the command carries evidence', () => {
+    const gitDiffOutput = [
+      'diff --git a/z.ts b/z.ts',
+      '--- a/z.ts',
+      '+++ b/z.ts',
+      '@@ -1,9 +1,9 @@',
+      '-a',
+      '-b',
+      '-c',
+      '+d',
+      '+e',
+      '+f',
+      '+g'
+    ].join('\n')
+    expect(
+      deriveToolDiffSummary('run_shell_command', { command: heredocWrite }, gitDiffOutput)
+    ).toMatchObject({ additions: 3, deletions: 0, source: 'content' })
+  })
+
+  it('honours execute-kind rows whose names cannot be resolved', () => {
+    expect(
+      deriveToolDiffSummary('Executed command', { command: heredocWrite }, undefined, {
+        category: 'shell'
+      })
+    ).toMatchObject({ additions: 3, deletions: 0, confidence: 'estimated' })
+  })
+
+  it('stays silent for shell commands whose only evidence is uncounted', () => {
+    expect(
+      deriveToolDiffSummary('run_shell_command', { command: 'sort data.txt > sorted.txt' })
+    ).toBeUndefined()
   })
 })

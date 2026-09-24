@@ -27,7 +27,8 @@ import {
 import {
   PEOPLE_TO_CHANNEL_EXECUTION_STORE_VERSION,
   PeopleToChannelMigrationExecutionStore,
-  type PeopleToChannelMigrationExecution
+  type PeopleToChannelMigrationExecution,
+  type PeopleToChannelMigrationExecutionDurablePublish
 } from './PeopleToChannelMigrationExecutionStore'
 import {
   materializePeopleToChannelMigrationHistory,
@@ -68,6 +69,8 @@ export interface PeopleToChannelMigrationProductionRunnerOptions {
   listChats: () => readonly PeopleToChannelInventoryChat[]
   listWorkflowChatIds?: () => readonly string[]
   now?: () => number
+  /** Observability rendezvous inside the immutable execution write window. */
+  beforeDurablePublish?: (event: PeopleToChannelMigrationExecutionDurablePublish) => void
   /** Test/observability seam invoked only after the named state is durable. */
   afterStage?: (stage: PeopleToChannelMigrationProductionRunnerStage) => void
 }
@@ -358,6 +361,7 @@ export class PeopleToChannelMigrationProductionRunner {
     const execution = new PeopleToChannelMigrationExecutionStore({
       userDataPath: this.options.userDataPath,
       safeStorage: this.options.safeStorage,
+      beforeDurablePublish: this.options.beforeDurablePublish,
       afterDurableWrite: () => this.options.afterStage?.('execution_durable')
     })
     const admissions = new PeopleToChannelMigrationAdmissionReissue({

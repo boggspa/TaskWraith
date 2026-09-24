@@ -122,6 +122,11 @@ describe('EnsembleOrchestrator.skipFanoutLane', () => {
       expect(skipped).toBe(true)
       expect(harness.cancelRun.mock.calls).toEqual([['claude', claudeRun.appRunId]])
 
+      await vi.waitFor(() =>
+        expect(
+          harness.chat.ensemble?.activeRound?.lanes?.[geminiRun.ensembleRun!.laneId!]?.status
+        ).toBe('running')
+      )
       const lanes = harness.chat.ensemble?.activeRound?.lanes || {}
       expect(lanes[claudeLaneId as string]?.status).toBe('cancelled')
       expect(lanes[geminiRun.ensembleRun!.laneId!]?.status).toBe('running')
@@ -153,9 +158,7 @@ describe('EnsembleOrchestrator.skipFanoutLane', () => {
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
     try {
       const harness = makeHarness()
-      expect(await harness.orchestrator.skipFanoutLane('ensemble-chat', 'missing-lane')).toBe(
-        false
-      )
+      expect(await harness.orchestrator.skipFanoutLane('ensemble-chat', 'missing-lane')).toBe(false)
 
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
@@ -176,6 +179,48 @@ describe('EnsembleOrchestrator.skipFanoutLane', () => {
       })
       expect(await harness.orchestrator.skipFanoutLane('ensemble-chat', laneId)).toBe(false)
       expect(harness.cancelRun).not.toHaveBeenCalled()
+    } finally {
+      if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+      else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+    }
+  })
+
+  it('cascades a skipped promoted lane through all owned descendants', async () => {
+    const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Fan out nested ownership.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      const claude = harness.dispatched.find((payload) => payload.provider === 'claude')!
+      const gemini = harness.dispatched.find((payload) => payload.provider === 'gemini')!
+      const runs = (
+        harness.orchestrator as unknown as {
+          runsByRunId: Map<string, { ownedFanoutRunIds?: Set<string> }>
+        }
+      ).runsByRunId
+      runs.get(claude.appRunId || '')!.ownedFanoutRunIds = new Set([gemini.appRunId || ''])
+
+      await expect(
+        harness.orchestrator.skipFanoutLane('ensemble-chat', claude.ensembleRun?.laneId || '')
+      ).resolves.toBe(true)
+      expect(harness.cancelRun.mock.calls).toEqual(
+        expect.arrayContaining([
+          ['claude', claude.appRunId],
+          ['gemini', gemini.appRunId]
+        ])
+      )
+      expect(
+        harness.chat.ensemble?.activeRound?.lanes?.[claude.ensembleRun?.laneId || '']?.status
+      ).toBe('cancelled')
+      expect(
+        harness.chat.ensemble?.activeRound?.lanes?.[gemini.ensembleRun?.laneId || '']?.status
+      ).toBe('cancelled')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
       else process.env.TASKWRAITH_CONCURRENT_LANES = previous

@@ -17,19 +17,19 @@
  *     accent border to signal selection.
  *   - Drag horizontally → reorder the speaking sequence (HTML5
  *     native drag-and-drop, persisted via onChatChange).
- *   - On the selected chip only, a `⋯` overflow button surfaces an
- *     inline mini-popover for the two affordances that don't have
- *     a natural home in the composer pickers: `enabled` toggle and
- *     `role` rename.
- *   - Disabled participants render dimmed; they're still selectable
- *     so the user can re-enable from the overflow.
+ *   - Chips are stateful, draggable roster markers only. The compact Ensemble
+ *     roster popover is the one editing surface for authority, stage, role,
+ *     and orchestration brief work; keeping that work out of per-chip flyouts
+ *     lets a fleet be authored as one coherent panel.
+ *   - Disabled participants render dimmed; they're still selectable so the
+ *     roster popover can re-enable them.
  *
  * Selection state lives in the parent (App.tsx) so the composer
  * pickers can read it. Auto-follow-active-speaker logic also lives
  * upstream — this component is otherwise display-only beyond click +
  * drag + the overflow editor.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   BossmanCrownIcon,
   CaptainHatIcon,
@@ -39,7 +39,8 @@ import { createPortal } from 'react-dom'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import {
   MAX_ENSEMBLE_CAPTAINS,
-  normalizeEnsembleAuthority
+  normalizeEnsembleAuthority,
+  type EnsembleParticipantAuthority as SharedEnsembleParticipantAuthority
 } from '../../../shared/ensembleAuthority'
 import type {
   ChatRecord,
@@ -96,6 +97,7 @@ import {
 } from './ComposerProviderPicker'
 import {
   CombinedModelPicker,
+  type CombinedModelPickerCustomTrigger,
   type CombinedModelPickerProviderGroup,
   type CombinedModelPickerReasoningOption
 } from './CombinedModelPicker'
@@ -107,7 +109,11 @@ import { getProviderName } from './Sidebar'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
-import { FAST_MODEL_IDS, antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
+import {
+  FAST_MODEL_IDS,
+  antigravityEffortForModelId,
+  antigravityReasoningLadderOptions
+} from '../../../shared/antigravityAgyModelGrouping'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
@@ -147,7 +153,7 @@ export const ENSEMBLE_CHIP_GRID_TRACKS = 60
 export const BOSS_AUTO_APPROVAL_CONSENT_MESSAGE =
   'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; only the current acting Captain can use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. If an eligible shell/file request still opens a modal and the authority is idle, TaskWraith opens a read-only Boss/Captain review turn; the first human, authority, or timeout decision wins. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
 
-export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
+export type EnsembleParticipantAuthority = SharedEnsembleParticipantAuthority
 export type EnsembleParticipantStageChoice =
   | 'any'
   | NonNullable<EnsembleParticipant['stageRole']>
@@ -373,14 +379,23 @@ export function getEnsembleAddReasoningOptions(
   const modelOptions =
     providerGroups.find((group) => group.provider === provider)?.modelOptions || []
   const modelOption = findEnsembleAddModelOption(provider, model, modelOptions)
-  if (provider === 'antigravity' && modelOption?.antigravityVariants) {
-    return modelOption.antigravityVariants.map((variant) => ({
-      value: variant.effort,
-      label: reasoningOptionLabel(provider, variant.effort)
-    }))
+  let baseOptions: CombinedModelPickerReasoningOption[]
+  if (provider === 'antigravity') {
+    // AntiGravity owns its whole ladder in the shared helper, UltraTask
+    // included: a variant family lists its variants and a fixed-reasoning row
+    // (claude-sonnet-4-6, claude-opus-4-6-thinking, gpt-oss-120b-medium) lists
+    // its ONE real Thinking/Medium stop rather than falling through to the
+    // generic injection below, which offered those models a fake Off instead.
+    // The grouped row carries the family's variants; the row id itself covers
+    // the fixed-reasoning case, which has none.
+    return antigravityReasoningLadderOptions(
+      [{ id: model }, ...(modelOption?.antigravityVariants ?? [])],
+      model,
+      modelOption?.ultraTaskSupported === true
+    )
   }
   if (modelOption?.supportedReasoningEfforts) {
-    return modelOption.supportedReasoningEfforts.map((option) => {
+    baseOptions = modelOption.supportedReasoningEfforts.map((option) => {
       const value = normalizeReasoningOptionValue(option.reasoningEffort)
       return {
         value,
@@ -389,20 +404,45 @@ export function getEnsembleAddReasoningOptions(
         ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
       }
     })
+  } else {
+    // The provider helper returns shared catalogue arrays for several
+    // providers. Add owns a derived ladder, so clone before appending the
+    // synthetic UltraTask stop.
+    baseOptions = [...getEnsembleReasoningOptions(provider, model, modelOption)]
   }
-  return getEnsembleReasoningOptions(provider, model)
+  // Inject UltraTask option for models that support it. Seed empty ladders
+  // with an Off bottom stop so UltraTask is opt-in at the top of a movable
+  // two-stop ladder rather than the ladder's only (locked/defaulted) stop.
+  if (modelOption?.ultraTaskSupported === true) {
+    if (baseOptions.length === 0) {
+      baseOptions.push({
+        value: 'off',
+        label: 'Off'
+      })
+    }
+    if (!baseOptions.some((option) => option.value.toLowerCase() === 'ultratask')) {
+      baseOptions.push({
+        value: 'ultraTask',
+        label: 'UltraTask'
+      })
+    }
+  }
+  return baseOptions
 }
 
 /**
- * Resolve a fresh provider/model choice to canonical execution defaults. A
- * model switch starts clean instead of carrying reasoning/Fast state from the
- * previously previewed provider. The user can then tune this draft before the
- * single Add confirmation persists it.
+ * Resolve a fresh provider/model choice to canonical execution defaults.
+ * Fast and ordinary reasoning still start clean so a previewed provider does
+ * not leak into the draft. UltraTask is the exception: when `previous` is
+ * UltraTask and the destination still supports it, keep the synthetic stop
+ * (matching ensemble seat-change carry-over). Otherwise snap/drop it so it
+ * cannot become the destination default.
  */
 export function createEnsembleParticipantAddConfiguration(
   provider: ProviderId,
   requestedModel?: string,
-  providerGroups?: readonly CombinedModelPickerProviderGroup[]
+  providerGroups?: readonly CombinedModelPickerProviderGroup[],
+  previous?: Pick<EnsembleParticipantAddConfiguration, 'reasoningEffort'> | null
 ): EnsembleParticipantAddConfiguration {
   const participantDefaults = getDefaultEnsembleParticipantConfig(provider)
   const modelDefaults = getEnsembleModelDefaults(provider)
@@ -428,13 +468,69 @@ export function createEnsembleParticipantAddConfiguration(
     ? requestedModel!
     : defaultOption?.id || participantDefaults.model
   const modelOption = selectableRequestedOption || defaultOption
-  const normalized = normalizeProviderModelSelection(provider, model, modelOption)
+  const previousUltraTask =
+    String(previous?.reasoningEffort ?? '')
+      .trim()
+      .toLowerCase() === 'ultratask'
+      ? { reasoningEffort: 'ultraTask' }
+      : undefined
+  const normalized = normalizeProviderModelSelection(
+    provider,
+    model,
+    modelOption,
+    previousUltraTask
+  )
 
   return {
     provider,
     ...normalized,
     model
   }
+}
+
+/** Apply one reasoning-ladder choice to the Add Participant draft. AntiGravity
+ * encodes real effort in its concrete model id, so UltraTask moves the family
+ * to its High variant while retaining the explicit synthetic selection. */
+export function applyEnsembleAddReasoningSelection(
+  current: EnsembleParticipantAddConfiguration,
+  value: string,
+  providerGroups: readonly CombinedModelPickerProviderGroup[]
+): EnsembleParticipantAddConfiguration {
+  if (current.provider === 'antigravity') {
+    const modelOptions =
+      providerGroups.find((group) => group.provider === 'antigravity')?.modelOptions || []
+    const targetEffort = value === 'ultraTask' ? 'high' : value
+    const target = findEnsembleAddModelOption(
+      'antigravity',
+      current.model,
+      modelOptions
+    )?.antigravityVariants?.find((variant) => variant.effort === targetEffort)
+    if (value === 'ultraTask') {
+      const next =
+        target && target.id !== current.model
+          ? createEnsembleParticipantAddConfiguration(
+              'antigravity',
+              target.id,
+              providerGroups
+            )
+          : current
+      return { ...next, reasoningEffort: 'ultraTask' }
+    }
+    if (target && target.id !== current.model) {
+      const next = createEnsembleParticipantAddConfiguration(
+        'antigravity',
+        target.id,
+        providerGroups
+      )
+      return { ...next, reasoningEffort: '' }
+    }
+    return current.reasoningEffort === 'ultraTask'
+      ? { ...current, reasoningEffort: '' }
+      : current
+  }
+  return current.provider === 'kimi'
+    ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
+    : { ...current, reasoningEffort: value }
 }
 
 export function createEnsembleParticipantAddDetails(
@@ -775,6 +871,46 @@ export function resolveParticipantSelectionAfterRemoval(
   return participants[removedIndex - 1]?.id ?? participants[removedIndex + 1]?.id ?? null
 }
 
+type EnsembleAddMutation = Extract<EnsembleUserRosterMutation, { action: 'add' }>
+type EnsembleRemoveMutation = Extract<EnsembleUserRosterMutation, { action: 'remove' }>
+
+export function buildEnsembleParticipantAddMutation(
+  participants: EnsembleParticipant[],
+  selectedParticipantId: string | null,
+  configuration: EnsembleParticipantAddDraft
+): { mutation: EnsembleAddMutation; participantId: string } {
+  const { participant, insertIndex } = buildEnsembleParticipantAddition(
+    participants,
+    selectedParticipantId,
+    configuration
+  )
+  return {
+    mutation: {
+      action: 'add',
+      participant: { ...participant, order: insertIndex + 1 },
+      authority: configuration.authority,
+      autoApprovalsEnabled: configuration.autoApprovalsEnabled
+    },
+    participantId: participant.id
+  }
+}
+
+export function buildEnsembleParticipantRemoveMutation(
+  participants: EnsembleParticipant[],
+  selectedParticipantId: string | null
+): { mutation: EnsembleRemoveMutation; nextSelection: string | null } | null {
+  if (!selectedParticipantId) return null
+  if (!participants.some((participant) => participant.id === selectedParticipantId)) return null
+  return {
+    mutation: { action: 'remove', participantId: selectedParticipantId },
+    nextSelection: resolveParticipantSelectionAfterRemoval(
+      participants,
+      selectedParticipantId,
+      selectedParticipantId
+    )
+  }
+}
+
 export function EnsembleParticipantsAboveRow({
   chat,
   participantProjection,
@@ -799,6 +935,13 @@ export function EnsembleParticipantsAboveRow({
   const chipsContainerRef = useRef<HTMLDivElement | null>(null)
   const pendingFocusParticipantIdRef = useRef<string | null>(null)
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null)
+  /* Double-click seat-role picker (2026-08 tactile roles). The compact
+   * permissions-style role picker opens when the user double-clicks a chip;
+   * single taps keep the select gesture. `rolePickerTapRef` timestamps the
+   * last tap so two taps on the same chip inside the window toggle it open
+   * instead of re-selecting. */
+  const [rolePickerOpenId, setRolePickerOpenId] = useState<string | null>(null)
+  const rolePickerTapRef = useRef<{ id: string; at: number } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragGhost, setDragGhost] = useState<ChipDragGhostState | null>(null)
@@ -1276,24 +1419,28 @@ export function EnsembleParticipantsAboveRow({
               isSelected={isSelected}
               isDragOver={dragOverId === participant.id && dragId !== participant.id}
               isDragging={dragId === participant.id}
-              overflowOpen={overflowOpenId === participant.id}
+              overflowOpen={false}
+              rolePickerOpen={rolePickerOpenId === participant.id}
+              onCloseRolePicker={() => setRolePickerOpenId(null)}
               onClick={() => {
-                // 1.0.5-EW22 — Second-click-on-selected opens the
-                // popover (replacing the ⋯ overflow button that
-                // used to live inline on the chip and overlapped
-                // into the next chip). First click selects.
-                // Click outside the chip + popover dismisses
-                // (handled by OverflowPopover's outside-click).
-                if (participant.id === selectedParticipantId) {
-                  setOverflowOpenId((curr) => (curr === participant.id ? null : participant.id))
-                } else {
-                  onSelectParticipant(participant.id)
-                  if (overflowOpenId && overflowOpenId !== participant.id) {
-                    setOverflowOpenId(null)
-                  }
+                const now = Date.now()
+                const lastTap = rolePickerTapRef.current
+                if (lastTap && lastTap.id === participant.id && now - lastTap.at <= 400) {
+                  // Double-click on a chip → toggle the compact seat-role
+                  // picker instead of re-selecting.
+                  rolePickerTapRef.current = null
+                  setRolePickerOpenId((current) =>
+                    current === participant.id ? null : participant.id
+                  )
+                  return
                 }
+                rolePickerTapRef.current = { id: participant.id, at: now }
+                // A lone tap that isn't the start of a double-click closes
+                // any open picker for this chip before (re-)selecting.
+                setRolePickerOpenId((current) => (current === participant.id ? null : current))
+                onSelectParticipant(participant.id)
               }}
-              onCloseOverflow={() => setOverflowOpenId(null)}
+              onCloseOverflow={() => undefined}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
               isBossman={
                 participant.stageRole !== 'background' &&
@@ -1567,8 +1714,9 @@ export function EnsembleParticipantsAboveRow({
   )
 }
 
-function EnsembleAddParticipantButton({
+export function EnsembleAddParticipantButton({
   disabled,
+  addDisabled = false,
   title,
   composerStyle,
   grokAvailable,
@@ -1581,9 +1729,13 @@ function EnsembleAddParticipantButton({
   captainAssignmentDisabled,
   bossmanAutoApprovals,
   initialProvider,
-  onAdd
+  onAdd,
+  customTrigger,
+  popoverClassName,
+  managementContent
 }: {
   disabled: boolean
+  addDisabled?: boolean
   title: string
   composerStyle: ComposerStyle
   grokAvailable: boolean
@@ -1597,12 +1749,17 @@ function EnsembleAddParticipantButton({
   bossmanAutoApprovals?: NonNullable<ChatRecord['ensemble']>['bossmanAutoApprovals']
   initialProvider: ProviderId
   onAdd: (configuration: EnsembleParticipantAddDraft) => void
+  customTrigger?: CombinedModelPickerCustomTrigger
+  popoverClassName?: string
+  managementContent?: ReactNode
 }): React.JSX.Element {
   const availableProviderGroups = useMemo(
     () => resolveEnsembleAddProviderGroups(providerGroups, grokAvailable, cursorAvailable),
     [cursorAvailable, grokAvailable, providerGroups]
   )
-  const pickerDisabled = disabled || availableProviderGroups.length === 0
+  const pickerDisabled =
+    disabled || (availableProviderGroups.length === 0 && managementContent === undefined)
+  const addCommitDisabled = pickerDisabled || addDisabled || availableProviderGroups.length === 0
   const duplicableProviderIds = useMemo(
     () =>
       new Set(
@@ -1663,7 +1820,9 @@ function EnsembleAddParticipantButton({
   )
   const selectedReasoning =
     draft.provider === 'antigravity'
-      ? (antigravityEffortForModelId(draft.model) ?? '')
+      ? draft.reasoningEffort === 'ultraTask'
+        ? 'ultraTask'
+        : (antigravityEffortForModelId(draft.model) ?? '')
       : draft.provider === 'kimi'
         ? resolveKimiReasoningPickerSelection(draft.model, draft.reasoningEffort)
         : draft.reasoningEffort || ''
@@ -1716,8 +1875,13 @@ function EnsembleAddParticipantButton({
           )
         )
       }
-      setDraft(
-        createEnsembleParticipantAddConfiguration(provider, model, availableProviderGroups)
+      setDraft((current) =>
+        createEnsembleParticipantAddConfiguration(
+          provider,
+          model,
+          availableProviderGroups,
+          current
+        )
       )
     },
     [availableProviderGroups, bossmanAutoApprovals, draft.provider, participants]
@@ -1725,28 +1889,9 @@ function EnsembleAddParticipantButton({
   const handleReasoningSelection = useCallback(
     (value: string) => {
       setDuplicateSourceId(null)
-      setDraft((current) => {
-        if (current.provider === 'antigravity') {
-          const modelOptions =
-            availableProviderGroups.find((group) => group.provider === 'antigravity')
-              ?.modelOptions || []
-          const target = findEnsembleAddModelOption(
-            'antigravity',
-            current.model,
-            modelOptions
-          )?.antigravityVariants?.find((variant) => variant.effort === value)
-          return target && target.id !== current.model
-            ? createEnsembleParticipantAddConfiguration(
-                'antigravity',
-                target.id,
-                availableProviderGroups
-              )
-            : current
-        }
-        return current.provider === 'kimi'
-          ? { ...current, ...buildKimiReasoningPickerPatch(current.model, value) }
-          : { ...current, reasoningEffort: value }
-      })
+      setDraft((current) =>
+        applyEnsembleAddReasoningSelection(current, value, availableProviderGroups)
+      )
     },
     [availableProviderGroups]
   )
@@ -1826,10 +1971,10 @@ function EnsembleAddParticipantButton({
   }, [])
 
   const commitDraft = useCallback((): boolean => {
-    if (pickerDisabled) return false
+    if (addCommitDisabled) return false
     onAdd({ ...draft, ...detailsDraft })
     return true
-  }, [detailsDraft, draft, onAdd, pickerDisabled])
+  }, [addCommitDisabled, detailsDraft, draft, onAdd])
 
   const handleAddAnother = useCallback(() => {
     if (!commitDraft()) return
@@ -1930,36 +2075,49 @@ function EnsembleAddParticipantButton({
         />
       }
       bottomContent={
-        participants.length > 0 ? (
-          <EnsembleParticipantDuplicateRow
-            participants={participants}
-            selectedSourceId={duplicateSourceId}
-            duplicableProviderIds={duplicableProviderIds}
-            disabled={pickerDisabled}
-            onDuplicate={handleDuplicate}
-          />
+        participants.length > 0 || managementContent ? (
+          <div className="ensemble-add-participant-bottom-row">
+            {participants.length > 0 ? (
+              <EnsembleParticipantDuplicateRow
+                participants={participants}
+                selectedSourceId={duplicateSourceId}
+                duplicableProviderIds={duplicableProviderIds}
+                disabled={pickerDisabled}
+                onDuplicate={handleDuplicate}
+              />
+            ) : null}
+            {managementContent ? (
+              <div className="ensemble-add-participant-management-action">{managementContent}</div>
+            ) : null}
+          </div>
         ) : undefined
       }
-      popoverClassName="is-ensemble-add-participant"
+      popoverClassName={`is-ensemble-add-participant${
+        popoverClassName ? ` ${popoverClassName}` : ''
+      }`}
       dialogAriaLabel="Configure and add Ensemble participant"
-      customTrigger={{
-        className: 'ensemble-above-add-participant',
-        content: '+',
-        title:
-          !disabled && availableProviderGroups.length === 0
-            ? 'Connect a provider before adding a participant.'
-            : title,
-        ariaLabel: 'Add Ensemble participant'
-      }}
+      customTrigger={
+        customTrigger || {
+          className: 'ensemble-above-add-participant',
+          content: '+',
+          title:
+            !disabled && availableProviderGroups.length === 0
+              ? 'Connect a provider before adding a participant.'
+              : title,
+          ariaLabel: 'Add Ensemble participant'
+        }
+      }
       confirmActions={[
         {
           label: 'Add',
           onConfirm: handleAddAnother,
+          disabled: addCommitDisabled,
           keepOpen: true
         },
         {
           label: 'Done',
           onConfirm: commitDraft,
+          disabled: pickerDisabled,
           submitOnEnter: true
         }
       ]}
@@ -2168,6 +2326,11 @@ interface ParticipantChipProps {
   isDragOver: boolean
   isDragging: boolean
   overflowOpen: boolean
+  /* 2026-08 tactile roles — compact permissions-style seat-role picker,
+   * opened by double-clicking the chip. Mutually exclusive with the
+   * (currently unused) legacy overflow popover. */
+  rolePickerOpen: boolean
+  onCloseRolePicker: () => void
   onClick: () => void
   /* 1.0.5-EW22 — `onToggleOverflow` removed; the parent now toggles
    * overflowOpenId directly when the user clicks an already-selected
@@ -2241,6 +2404,8 @@ function ParticipantChip({
   isDragOver,
   isDragging,
   overflowOpen,
+  rolePickerOpen,
+  onCloseRolePicker,
   onClick,
   onCloseOverflow,
   onPatch,
@@ -2353,7 +2518,13 @@ function ParticipantChip({
       // the popover shut before the menu action runs — leaving every
       // context-menu option inert.
       const target = event.target as HTMLElement | null
-      if (target?.closest('.ensemble-above-overflow, .composer-textarea-context-menu')) return
+      if (
+        target?.closest(
+          '.ensemble-above-overflow, .ensemble-chip-role-picker, .composer-textarea-context-menu'
+        )
+      ) {
+        return
+      }
       // A press means the user is selecting/dragging — the hover
       // tooltip (pending or shown) would just get in the way.
       dismissTooltip()
@@ -2577,7 +2748,30 @@ function ParticipantChip({
         strip's overflow — app-global CSS tokens only, per the other
         body-portaled composer popovers.
       */}
-      {tooltipPosition && !overflowOpen && !isDragging
+      {/*
+        2026-08 tactile roles — double-clicking a chip opens this compact
+        permissions-style seat-role picker (Enabled / Auto, then Boss /
+        Captain / Agent, a divider, then Scout / Work / Review / BG).
+        Rendered inside the chip like the legacy overflow popover so it
+        inherits the anchor + unmount-on-chip-unmount behavior.
+      */}
+      {rolePickerOpen && (
+        <EnsembleChipRolePicker
+          anchor={chipAnchor}
+          participant={participant}
+          isBossman={isBossman}
+          isSecondInCommand={isSecondInCommand}
+          captainAssignmentDisabled={captainAssignmentDisabled}
+          hasLeadership={hasLeadership}
+          autoApprovalsEnabled={autoApprovalsEnabled}
+          onPatch={onPatch}
+          onSetAuthority={onSetAuthority}
+          onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
+          locked={locked}
+          onClose={onCloseRolePicker}
+        />
+      )}
+      {tooltipPosition && !overflowOpen && !rolePickerOpen && !isDragging
         ? createPortal(
             <div
               className={`ensemble-above-chip-tooltip provider-${providerClass}`}
@@ -2695,7 +2889,7 @@ export function EnsembleParticipantAuthorityControls({
         </PillButton>
         <PillButton
           size="compact"
-          className="ensemble-above-overflow-toggle is-auto"
+          className="ensemble-above-overflow-toggle is-auto thread-auto-approvals-pill"
           aria-label="Thread-wide Auto Approvals"
           aria-pressed={effectiveAutoApprovalsEnabled}
           title={
@@ -2802,6 +2996,460 @@ export function EnsembleParticipantStageControl({
       />
     </div>
   )
+}
+
+/** One selectable row of the double-click seat-role picker. */
+export interface EnsembleChipRolePickerRow {
+  value: string
+  label: string
+  disabled: boolean
+  title?: string
+}
+
+/** Generic participant glyph for the role-agnostic `Any` stage choice. */
+export function EnsembleAnyStageIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 19c.8-4 3.1-6 6.5-6s5.7 2 6.5 6" />
+    </svg>
+  )
+}
+
+export function resolveEnsembleChipStageRolePatch(
+  currentStageRole: EnsembleParticipant['stageRole'],
+  nextStageRole: EnsembleParticipantStageChoice
+): Pick<EnsembleParticipant, 'stageRole'> {
+  return {
+    stageRole:
+      nextStageRole === 'any' || currentStageRole === nextStageRole
+        ? undefined
+        : nextStageRole
+  }
+}
+
+/**
+ * Pure row model for the double-click seat-role picker, split at the
+ * authority/stage divider: authority rows (Boss / Captain / Agent) first,
+ * stage rows (Any / Scout / Work / Review / BG) second. Mirrors the disabled /
+ * title rules of `EnsembleParticipantAuthorityControls` and
+ * `EnsembleParticipantStageControl` so both surfaces stay consistent.
+ */
+export function resolveEnsembleChipRolePickerRows({
+  isBossman,
+  captainAssignmentDisabled,
+  backgroundRestricted,
+  locked,
+  maxCaptains = MAX_ENSEMBLE_CAPTAINS
+}: {
+  isBossman: boolean
+  captainAssignmentDisabled: boolean
+  backgroundRestricted: boolean
+  locked: boolean
+  maxCaptains?: number
+}): { authorityRows: EnsembleChipRolePickerRow[]; stageRows: EnsembleChipRolePickerRow[] } {
+  return {
+    authorityRows: [
+      {
+        value: 'boss',
+        label: 'Boss',
+        disabled: locked || backgroundRestricted,
+        title: backgroundRestricted
+          ? 'BG seats cannot own Boss or Captain authority.'
+          : "Assign as the thread's only Boss."
+      },
+      {
+        value: 'captain',
+        label: 'Captain',
+        disabled:
+          locked || backgroundRestricted || isBossman || captainAssignmentDisabled,
+        title: backgroundRestricted
+          ? 'BG seats cannot own Boss or Captain authority.'
+          : isBossman
+            ? 'Assign another Boss before changing this participant\'s authority.'
+            : captainAssignmentDisabled
+              ? `This panel already has ${maxCaptains} Captains.`
+              : `Assign as one of up to ${maxCaptains} Captains.`
+      },
+      {
+        value: 'agent',
+        label: 'Agent',
+        disabled: locked || isBossman,
+        title: isBossman
+          ? 'Assign another Boss before changing this participant\'s authority.'
+          : 'Use standard Agent authority.'
+      }
+    ],
+    stageRows: [
+      { value: 'any', label: 'Any', disabled: locked },
+      { value: 'scout', label: 'Scout', disabled: locked },
+      { value: 'worker', label: 'Work', disabled: locked },
+      { value: 'reviewer', label: 'Review', disabled: locked },
+      {
+        value: 'background',
+        label: 'BG',
+        disabled: locked || isBossman,
+        title: isBossman
+          ? 'Assign another Boss before moving this participant to background.'
+          : undefined
+      }
+    ]
+  }
+}
+
+interface EnsembleChipRolePickerProps {
+  anchor: HTMLElement | null
+  participant: EnsembleParticipant
+  isBossman: boolean
+  isSecondInCommand: boolean
+  captainAssignmentDisabled: boolean
+  hasLeadership: boolean
+  autoApprovalsEnabled: boolean
+  onPatch: (patch: Partial<EnsembleParticipant>) => void
+  onSetAuthority: (
+    participantId: string,
+    authority: EnsembleParticipantAuthority
+  ) => void
+  onToggleBossmanAutoApprovals: (enabled: boolean) => void
+  locked: boolean
+  onClose: () => void
+}
+
+interface EnsembleChipNameFieldProps {
+  participantId: string
+  name: string
+  providerLabel: string
+  locked: boolean
+  onPatch: (patch: Partial<EnsembleParticipant>) => void
+}
+
+export function resolveEnsembleParticipantNamePatch(
+  committedName: string,
+  draftName: string,
+  locked: boolean
+): Pick<EnsembleParticipant, 'role'> | null {
+  if (locked || draftName === committedName) return null
+  return { role: draftName }
+}
+
+/**
+ * The compact picker's participant name editor. Participant names are stored
+ * in the roster's `role` field, matching the inline editor in the full roster
+ * popover. Keep keystrokes local and persist at an edit boundary so a chat-save
+ * echo cannot replace the controlled value while the user is typing.
+ */
+export function EnsembleChipNameField({
+  participantId,
+  name,
+  providerLabel,
+  locked,
+  onPatch
+}: EnsembleChipNameFieldProps): React.JSX.Element {
+  const [nameDraft, setNameDraft] = useState(name)
+  const onPatchRef = useRef(onPatch)
+  onPatchRef.current = onPatch
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
+  const nameDraftRef = useRef(nameDraft)
+  nameDraftRef.current = nameDraft
+  const committedNameRef = useRef(name)
+
+  useEffect(() => {
+    setNameDraft(name)
+    committedNameRef.current = name
+  }, [participantId, name])
+
+  const commitName = useCallback((): void => {
+    const patch = resolveEnsembleParticipantNamePatch(
+      committedNameRef.current,
+      nameDraftRef.current,
+      lockedRef.current
+    )
+    if (!patch) return
+    committedNameRef.current = nameDraftRef.current
+    onPatchRef.current(patch)
+  }, [])
+
+  // Outside-click and Escape unmount the portaled picker before a blur is
+  // guaranteed, so flush the final draft as a safety net just like the full
+  // roster popover does for its freely typed fields.
+  useEffect(() => {
+    return () => {
+      commitName()
+    }
+  }, [commitName])
+
+  return (
+    <label className="ensemble-chip-role-picker-name">
+      <span className="ensemble-above-overflow-label">Edit name</span>
+      <input
+        type="text"
+        value={nameDraft}
+        disabled={locked}
+        data-composer-control="participant-name"
+        aria-label={`Edit name for ${providerLabel}`}
+        placeholder={`${providerLabel} name`}
+        onChange={(event) => setNameDraft(event.target.value)}
+        onBlur={commitName}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          commitName()
+          event.currentTarget.blur()
+        }}
+      />
+    </label>
+  )
+}
+
+/**
+ * 2026-08 tactile roles — the compact seat-role picker that opens when the
+ * user double-clicks a participant chip in the above row.
+ *
+ * Visual contract: identical frosted-glass material to the composer's
+ * permissions/approval popover. That is achieved by REUSING the
+ * `.composer-combined-picker-popover` shell class (glass bg + backdrop
+ * material tokens, sheen/refraction pseudo-elements, degrade chain, and the
+ * 10060 portaled band all come along for free) with a narrow
+ * `.ensemble-chip-role-picker` modifier for geometry. Rows reuse
+ * `.composer-combined-picker-row` so hover/selected/disabled states match
+ * the permissions list exactly.
+ *
+ * Layout: participant name, Enabled + Auto quick toggles (existing pill
+ * styles), then a vertical authority list (Boss / Captain / Agent), a divider,
+ * then the stage list (Any / Scout / Work / Review / BG).
+ */
+export function EnsembleChipRolePicker({
+  anchor,
+  participant,
+  isBossman,
+  isSecondInCommand,
+  captainAssignmentDisabled,
+  hasLeadership,
+  autoApprovalsEnabled,
+  onPatch,
+  onSetAuthority,
+  onToggleBossmanAutoApprovals,
+  locked,
+  onClose
+}: EnsembleChipRolePickerProps): React.JSX.Element | null {
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [position, setPosition] = useState<{
+    left: number
+    top: number
+    above: boolean
+  } | null>(null)
+
+  // Anchor below the chip (the strip sits above the composer, so downward
+  // is the natural reading direction); flip above when there isn't room.
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled || !anchor) return
+      const rect = anchor.getBoundingClientRect()
+      const flyoutWidth = 208
+      const left = Math.max(8, Math.min(window.innerWidth - flyoutWidth - 8, rect.left))
+      // Name field + toggles + 8 list rows ≈ 430px; only used for the flip
+      // test, never as an explicit height.
+      const estimatedHeight = 430
+      const fitsBelow = rect.bottom + 6 + estimatedHeight <= window.innerHeight - 8
+      setPosition(
+        fitsBelow
+          ? { left, top: rect.bottom + 6, above: false }
+          : { left, top: rect.top - 8, above: true }
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [anchor])
+
+  // Capture-phase outside-mousedown + Escape close, mirroring the legacy
+  // overflow popover. Anchor-chip clicks fall through so the chip's own tap
+  // pipeline owns the toggle gesture without close/reopen flicker.
+  useEffect(() => {
+    const handleClick = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target)) return
+      if (anchor && anchor.contains(target)) return
+      onClose()
+    }
+    const handleKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true)
+      document.removeEventListener('keydown', handleKey, true)
+    }
+  }, [onClose, anchor])
+
+  if (!position) return null
+
+  const providerLabel = getProviderName(participant.provider)
+  const authority: EnsembleParticipantAuthority = isBossman
+    ? 'boss'
+    : isSecondInCommand
+      ? 'captain'
+      : 'agent'
+  const backgroundRestricted = participant.stageRole === 'background'
+  const effectiveAutoApprovalsEnabled = hasLeadership && autoApprovalsEnabled
+
+  const { authorityRows, stageRows } = resolveEnsembleChipRolePickerRows({
+    isBossman,
+    captainAssignmentDisabled,
+    backgroundRestricted,
+    locked
+  })
+
+  const content = (
+    <div
+      ref={popoverRef}
+      className={`composer-combined-picker-popover ensemble-chip-role-picker provider-${resolveProviderHueClass(participant.provider, participant.model)}`}
+      style={{
+        position: 'fixed',
+        left: `${position.left}px`,
+        top: `${position.top}px`,
+        transform: position.above ? 'translateY(-100%)' : undefined
+      }}
+      role="dialog"
+      aria-label={`Seat roles for ${participant.role || providerLabel}`}
+    >
+      <div className="composer-combined-picker-column ensemble-chip-role-picker-column">
+        <EnsembleChipNameField
+          participantId={participant.id}
+          name={participant.role}
+          providerLabel={providerLabel}
+          locked={locked}
+          onPatch={onPatch}
+        />
+        <div
+          className="ensemble-above-overflow-quick-toggles ensemble-chip-role-picker-toggles"
+          role="group"
+          aria-label={`Round participation and approvals for ${providerLabel}`}
+        >
+          <PillButton
+            size="compact"
+            className="ensemble-above-overflow-toggle is-enabled"
+            aria-label={`Enabled in ensemble rounds for ${providerLabel}`}
+            aria-pressed={participant.enabled}
+            title={participant.enabled ? 'Included in Ensemble rounds.' : 'Excluded from Ensemble rounds.'}
+            disabled={locked}
+            onClick={() => onPatch({ enabled: !participant.enabled })}
+          >
+            Enabled
+          </PillButton>
+          <PillButton
+            size="compact"
+            className="ensemble-above-overflow-toggle is-auto thread-auto-approvals-pill"
+            aria-label="Thread-wide Auto Approvals"
+            aria-pressed={effectiveAutoApprovalsEnabled}
+            title={
+              hasLeadership
+                ? effectiveAutoApprovalsEnabled
+                  ? 'Disable thread-wide Boss/Captain Auto Approvals.'
+                  : 'Enable thread-wide Boss/Captain Auto Approvals.'
+                : 'Assign a Boss before enabling Auto Approvals.'
+            }
+            disabled={locked || !hasLeadership}
+            onClick={() => onToggleBossmanAutoApprovals(!effectiveAutoApprovalsEnabled)}
+          >
+            Auto
+          </PillButton>
+        </div>
+        {authorityRows.map((row) => (
+          <button
+            key={row.value}
+            type="button"
+            className={`composer-combined-picker-row ensemble-chip-role-picker-row ${authority === row.value ? 'is-selected' : ''}`}
+            onClick={() =>
+              onSetAuthority(participant.id, row.value as EnsembleParticipantAuthority)
+            }
+            disabled={row.disabled}
+            title={row.title}
+          >
+            <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
+              {row.value === 'boss' && (
+                <BossmanCrownIcon className="ensemble-chip-role-picker-icon" />
+              )}
+              {row.value === 'captain' && (
+                <CaptainHatIcon className="ensemble-chip-role-picker-icon" />
+              )}
+              <span>{row.label}</span>
+            </span>
+            {authority === row.value && (
+              <span className="composer-combined-picker-check" aria-hidden>
+                ✓
+              </span>
+            )}
+          </button>
+        ))}
+        <div className="ensemble-chip-role-picker-divider" role="separator" />
+        {stageRows.map((row) => {
+          const selected =
+            row.value === 'any'
+              ? participant.stageRole === undefined
+              : participant.stageRole === row.value
+          return (
+            <button
+              key={row.value}
+              type="button"
+              className={`composer-combined-picker-row ensemble-chip-role-picker-row ${selected ? 'is-selected' : ''}`}
+              onClick={() =>
+                onPatch(
+                  resolveEnsembleChipStageRolePatch(
+                    participant.stageRole,
+                    row.value as EnsembleParticipantStageChoice
+                  )
+                )
+              }
+              disabled={row.disabled}
+              title={
+                row.title ||
+                ENSEMBLE_PARTICIPANT_STAGE_OPTIONS.find((option) => option.value === row.value)
+                  ?.title
+              }
+            >
+              <span className="composer-combined-picker-row-label ensemble-chip-role-picker-label">
+                {row.value === 'any' ? (
+                  <EnsembleAnyStageIcon className="ensemble-chip-role-picker-icon" />
+                ) : (
+                  <EnsembleStageRoleIcon
+                    stageRole={row.value as NonNullable<EnsembleParticipant['stageRole']>}
+                    className="ensemble-chip-role-picker-icon"
+                  />
+                )}
+                <span>{row.label}</span>
+              </span>
+              {selected && (
+                <span className="composer-combined-picker-check" aria-hidden>
+                  ✓
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  return createPortal(content, document.body)
 }
 
 export function EnsembleParticipantOverflowPopover({

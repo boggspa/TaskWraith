@@ -36,11 +36,14 @@ describe('light-mode user bubble CSS', () => {
   it('keeps named Settings choices on the dedicated tint override path', () => {
     const css = readCss('02-transcript-messages-fx.css')
 
-    expect(css).toContain(
-      '[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user'
+    // Whitespace- and quote-tolerant: prettier may wrap `:is(...)` / `:not(...)`
+    // argument lists across lines and format attribute selectors with either
+    // quote style.
+    expect(css).toMatch(
+      /\[data-user-bubble-color\]:not\(\s*\[data-user-bubble-color=["']system["']\]\s*\)\s*\.message-bubble\.user/
     )
-    expect(css).toContain(
-      ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user'
+    expect(css).toMatch(
+      /:is\(\s*\[data-theme=["']light["']\]\s*,\s*\[data-theme=["']mist["']\]\s*,\s*\[data-theme=["']sage["']\]\s*\)\s*\[data-user-bubble-color\]:not\(\s*\[data-user-bubble-color=["']system["']\]\s*\)\s*\.message-bubble\.user/
     )
   })
 
@@ -48,7 +51,7 @@ describe('light-mode user bubble CSS', () => {
     const css = readCss('02-transcript-messages-fx.css')
     const sharedBubble = cssBlockStartingAt(css, '\n.message-bubble.user {')
 
-    expect(sharedBubble).toContain('--user-bubble-padding: 4px 14px')
+    expect(sharedBubble).toContain('--user-bubble-padding: 7px 17px')
     expect(sharedBubble).toContain('padding: var(--user-bubble-padding)')
 
     for (const provider of ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {

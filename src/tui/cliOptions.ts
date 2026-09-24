@@ -6,6 +6,9 @@ import {
 } from '../shared/taskWraithControlPaths.node'
 import { detectAnsiColorMode, type AnsiColorMode } from './ansi'
 import type { TuiHostLaunchProfile } from './hostProcessManager'
+import { TuiUsageError } from './tuiUsageError'
+
+export const TASKWRAITH_NODE_PACKAGE_ENV = 'TASKWRAITH_CLI_PACKAGE'
 
 export interface TaskWraithTuiCliOptions {
   demo: boolean
@@ -21,6 +24,12 @@ export interface TaskWraithTuiCliOptions {
   hostLaunchProfile: TuiHostLaunchProfile
   /** Force ASCII chrome; TASKWRAITH_TUI_ASCII is handled by detectTuiUnicode. */
   ascii: boolean
+  /**
+   * Requested colour theme, by name or alias. `undefined` means "unspecified",
+   * which resolves to the default theme — not to "no theme". An unrecognised
+   * name resolves to the default too rather than refusing to start.
+   */
+  themeName?: string
   threadId?: string
   userDataPath?: string
   exportPath?: string
@@ -35,6 +44,22 @@ export function taskWraithTuiUsage(version: string): string {
 Usage:
   taskwraith [options]
   tw [options]
+  tw threads [--query <text>] [--cwd <path>] [--all] [--json]
+  tw send <thread|title> <text…> [--from <label>] [--cwd <path>] [--all] [--json]
+  tw read <thread|title> [--limit <rows>] [--cwd <path>] [--all] [--json]
+  tw mcp [--cwd <path>]
+
+Commands (non-interactive, for scripts and coding agents):
+  threads                List threads in this working tree (--all: everywhere)
+  send                   Send one prompt into a thread; a live Ensemble round
+                         absorbs it as a steer. With no text, reads stdin.
+                         The host labels the row with the sending process —
+                         set --from or TW_CLIENT_LABEL to name your tool.
+  read                   Print the newest messages in a thread, so a sender can
+                         collect the reply it asked for.
+  mcp                    Serve those verbs as MCP tools over stdio, so
+                         a Claude Code or Codex session can call them. Register
+                         it as an MCP server: command "tw", args ["mcp"].
 
 Options:
   --demo                 Run the self-contained presentation demo
@@ -47,11 +72,13 @@ Options:
   --width <columns>      Snapshot/replay width (default: terminal or 80)
   --height <rows>        Snapshot/replay height (default: terminal or 24)
   --thread <id>          Open a specific TaskWraith thread
-  --user-data <path>     Override Electron's TaskWraith userData directory
-  --no-start-host        Connect only; do not start the app Host when offline
+  --user-data <path>     Use this standalone Node Host profile directory
+  --no-start-host        Connect only; do not launch a Node Host when offline
   --no-color             Disable ANSI colour
   --color <mode>         truecolor, ansi256, or none
   --ascii                Force ASCII chrome (also: TASKWRAITH_TUI_ASCII=1)
+  --theme <name>         Colour theme, or 'auto' to follow the terminal
+                         (also: TASKWRAITH_TUI_THEME)
   --no-animation         Use the static working indicator
   --version              Print the TUI version
   --help                 Show this help
@@ -61,28 +88,29 @@ Interactive keys:
   PgUp/PgDn scroll  Enter send/open  Ctrl+C clear/quit  /cancel active run
   y/n             Answer a pending Host approval ask
 
-The normal sidecar connects to the authenticated TaskWraith Host v2 socket.
-Snapshots, ordered deltas, commands, receipts and .twmission export use that
-same connection. Imported .twmission files are detached replay projections:
+The standalone TUI connects to the authenticated pure-Node TaskWraith Host.
+Unless --no-start-host is set, it starts that Host when offline. Snapshots,
+ordered deltas, commands, receipts and .twmission export use the same connection.
+Imported .twmission files are detached replay projections:
 they cannot issue commands or write live Host state.`
 }
 
 function positiveInteger(raw: string | undefined, flag: string): number {
   const value = Number(raw)
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${flag} expects a positive integer.`)
+    throw new TuiUsageError(`${flag} expects a positive integer.`)
   }
   return value
 }
 
 function parseColorMode(raw: string | undefined): AnsiColorMode {
   if (raw === 'truecolor' || raw === 'ansi256' || raw === 'none') return raw
-  throw new Error('--color expects truecolor, ansi256, or none.')
+  throw new TuiUsageError('--color expects truecolor, ansi256, or none.')
 }
 
 function takeValue(args: string[], index: number, flag: string): [string, number] {
   const value = args[index + 1]
-  if (!value || value.startsWith('--')) throw new Error(`${flag} expects a value.`)
+  if (!value || value.startsWith('--')) throw new TuiUsageError(`${flag} expects a value.`)
   return [value, index + 1]
 }
 
@@ -106,6 +134,8 @@ export function parseTaskWraithTuiArgs(
     help: false,
     version: false
   }
+  const envTheme = String(env.TASKWRAITH_TUI_THEME || '').trim()
+  if (envTheme) options.themeName = envTheme
   let explicitUserData = Boolean(String(env.TASKWRAITH_USER_DATA || '').trim())
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
@@ -127,6 +157,10 @@ export function parseTaskWraithTuiArgs(
       const [value, consumed] = inline ? [inline, index] : takeValue(args, index, flag)
       options[flag === '--width' ? 'width' : 'height'] = positiveInteger(value, flag)
       index = consumed
+    } else if (flag === '--theme') {
+      const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--theme')
+      options.themeName = value
+      index = consumed
     } else if (flag === '--color') {
       const [value, consumed] = inline ? [inline, index] : takeValue(args, index, '--color')
       options.colorMode = parseColorMode(value)
@@ -146,7 +180,7 @@ export function parseTaskWraithTuiArgs(
       else options.replayPath = resolve(value)
       index = consumed
     } else {
-      throw new Error(`Unknown option: ${argument}`)
+      throw new TuiUsageError(`Unknown option: ${argument}`)
     }
   }
 
@@ -156,6 +190,7 @@ export function parseTaskWraithTuiArgs(
   if (!options.userDataPath)
     options.userDataPath = defaultTaskWraithUserDataPath(process.platform, env)
   const packageSmoke = env.TASKWRAITH_TUI_PACKAGE_SMOKE === '1'
+  const nodePackage = env[TASKWRAITH_NODE_PACKAGE_ENV] === '1'
   options.hostLaunchProfile =
     packageSmoke && explicitUserData
       ? 'package-smoke'
@@ -163,24 +198,28 @@ export function parseTaskWraithTuiArgs(
         ? 'custom'
         : options.dev
           ? 'development'
-          : 'production'
+          : nodePackage
+            ? 'node-package'
+            : 'production'
   if (options.json && options.snapshot) {
-    throw new Error('--json and --snapshot select different output formats.')
+    throw new TuiUsageError('--json and --snapshot select different output formats.')
   }
   if (options.exportPath && options.replayPath) {
-    throw new Error('--export and --replay cannot be combined.')
+    throw new TuiUsageError('--export and --replay cannot be combined.')
   }
   if (
     options.exportPath &&
     (options.demo || options.snapshot || options.json || options.threadId)
   ) {
-    throw new Error('--export cannot be combined with --demo, --snapshot, --json, or --thread.')
+    throw new TuiUsageError(
+      '--export cannot be combined with --demo, --snapshot, --json, or --thread.'
+    )
   }
   if (options.replayPath && (options.demo || options.dev)) {
-    throw new Error('--replay cannot be combined with --demo or --dev.')
+    throw new TuiUsageError('--replay cannot be combined with --demo or --dev.')
   }
   if (options.force && !options.exportPath) {
-    throw new Error('--force is only valid with --export.')
+    throw new TuiUsageError('--force is only valid with --export.')
   }
   return options
 }

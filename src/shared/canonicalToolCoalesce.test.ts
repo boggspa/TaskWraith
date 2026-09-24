@@ -18,6 +18,9 @@ describe('canonicalToolCoalesce', () => {
   it('strips broker namespaces before alias lookup', () => {
     expect(stripToolNamespace('mcp__TaskWraith__read_file')).toBe('read_file')
     expect(stripToolNamespace('taskwraith-broker__write_file')).toBe('write_file')
+    expect(stripToolNamespace('taskwraith-mistral_capability_invoke')).toBe(
+      'capability_invoke'
+    )
   })
 
   it('maps Cursor-native PascalCase tools to catalog names', () => {
@@ -39,6 +42,8 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveCatalogToolName('replace_file_content')).toBe('replace')
     expect(resolveCatalogToolName('view_file')).toBe('read_file')
     expect(resolveCatalogToolName('run_terminal_command')).toBe('run_shell_command')
+    expect(resolveCatalogToolName('/bin/zsh')).toBe('run_shell_command')
+    expect(resolveCatalogToolName('exec')).toBe('run_shell_command')
     expect(resolveCatalogToolName('view_image')).toBe('image_view')
     expect(resolveCatalogToolName('InspectImage')).toBe('image_view')
   })
@@ -121,7 +126,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
       'get_diagnostics',
       'launch_start',
       'launch_stop'
-    ]) {
+    ] as const) {
       expect(catalogToolAgenticService(tool)).toBe('shellCommands')
     }
     // launch reads stay on the softer bucket
@@ -145,7 +150,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
       'apply_patch',
       'git_stage',
       'git_commit'
-    ]) {
+    ] as const) {
       expect(catalogToolAgenticService(tool)).toBe('fileChanges')
     }
   })
@@ -182,7 +187,7 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('simulator_tap')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_type')).toBe('simulatorCanvas')
     expect(catalogToolAgenticService('simulator_scroll')).toBe('simulatorCanvas')
-    for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events']) {
+    for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events'] as const) {
       expect(catalogToolAgenticService(tool)).toBe('crossThreadRead')
     }
   })
@@ -201,5 +206,74 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('list_active_runs')).toBe('mcpTools')
     expect(catalogToolAgenticServiceForDisplay('some_other_tool')).toBe('mcpTools')
     expect(catalogToolAgenticServiceForRawName('some_other_tool')).toBeNull()
+  })
+})
+
+// AGY (AntiGravity/Gemini) tool coalescing tests
+describe('Antigravity tool coalescing', () => {
+  it('resolves all AGY native tool names to TaskWraith catalog equivalents', () => {
+    // grep_search -> workspace_search
+    const grepResult = resolveStrictProviderNativeToolAction('antigravity', 'grep_search')
+    expect(grepResult).toMatchObject({
+      ok: true,
+      catalogTool: 'workspace_search',
+      action: 'workspace.search'
+    })
+    // view_file -> read_file
+    const viewResult = resolveStrictProviderNativeToolAction('antigravity', 'view_file')
+    expect(viewResult).toMatchObject({
+      ok: true,
+      catalogTool: 'read_file',
+      action: 'workspace.read'
+    })
+    // read_file -> read_file
+    const readResult = resolveStrictProviderNativeToolAction('antigravity', 'read_file')
+    expect(readResult).toMatchObject({
+      ok: true,
+      catalogTool: 'read_file',
+      action: 'workspace.read'
+    })
+    // list_dir -> list_directory
+    const listResult = resolveStrictProviderNativeToolAction('antigravity', 'list_dir')
+    expect(listResult).toMatchObject({
+      ok: true,
+      catalogTool: 'list_directory',
+      action: 'workspace.read'
+    })
+    // find_by_name -> find_files
+    const findResult = resolveStrictProviderNativeToolAction('antigravity', 'find_by_name')
+    expect(findResult).toMatchObject({
+      ok: true,
+      catalogTool: 'find_files',
+      action: 'workspace.search'
+    })
+    // run_command -> run_shell_command
+    const runResult = resolveStrictProviderNativeToolAction('antigravity', 'run_command')
+    expect(runResult).toMatchObject({
+      ok: true,
+      catalogTool: 'run_shell_command',
+      action: 'shell.execute'
+    })
+    // read_url_content -> web_fetch
+    const fetchResult = resolveStrictProviderNativeToolAction('antigravity', 'read_url_content')
+    expect(fetchResult).toMatchObject({
+      ok: true,
+      catalogTool: 'web_fetch',
+      action: 'network.read'
+    })
+    // search_web -> web_search
+    const searchResult = resolveStrictProviderNativeToolAction('antigravity', 'search_web')
+    expect(searchResult).toMatchObject({
+      ok: true,
+      catalogTool: 'web_search',
+      action: 'network.read'
+    })
+    // ask_question -> ask_user_question
+    const askResult = resolveStrictProviderNativeToolAction('antigravity', 'ask_question')
+    expect(askResult).toMatchObject({
+      ok: true,
+      catalogTool: 'ask_user_question',
+      action: 'user.elicit'
+    })
   })
 })

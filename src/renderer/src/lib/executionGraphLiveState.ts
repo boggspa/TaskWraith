@@ -1,5 +1,9 @@
 import type { ExecutionRunProjection } from '../../../main/executionGraph/ExecutionGraphRun'
 import {
+  executionGhostCardView,
+  type ExecutionGhostCardView
+} from '../../../shared/executionGraphGhost'
+import {
   buildExecutionGraphProjection,
   type ExecutionGraphProjection
 } from './executionGraphProjection'
@@ -8,6 +12,53 @@ const TERMINAL_EXECUTION_STATES = new Set(['succeeded', 'failed', 'cancelled'])
 
 export function isTerminalExecutionRun(run: ExecutionRunProjection): boolean {
   return TERMINAL_EXECUTION_STATES.has(run.state)
+}
+
+/**
+ * Threads that still own an execution which has not settled.
+ *
+ * `requires_action` counts as live on purpose: a paused graph is unfinished
+ * work the thread is still accountable for, so its thread has not completed its
+ * task even though no provider run is going.
+ *
+ * Keyed on `owner.threadId`, never `rootChatId`. Association is not
+ * accountability — and an unowned legacy graph is permanently stuck by design,
+ * so letting it suppress a thread's close-out forever would be a bug, not
+ * caution. Those surface through the Execution Map instead.
+ */
+export function liveOwnedExecutionThreadIds(
+  runsById: Record<string, ExecutionRunProjection>
+): Set<string> {
+  const threadIds = new Set<string>()
+  for (const run of Object.values(runsById)) {
+    const threadId = run.owner?.threadId
+    if (!threadId || isTerminalExecutionRun(run)) continue
+    threadIds.add(threadId)
+  }
+  return threadIds
+}
+
+/**
+ * Ghost-strip views for every OWNED execution, grouped by the thread that owns
+ * it — terminal ones included, because a settled result card still wants to
+ * show how its graph actually fanned out.
+ *
+ * Keyed on `owner.threadId` for the same reason as
+ * `liveOwnedExecutionThreadIds`: association is not accountability, and an
+ * unowned legacy graph belongs to no transcript.
+ */
+export function ownedExecutionViewsByThread(
+  runsById: Record<string, ExecutionRunProjection>
+): Map<string, ExecutionGhostCardView[]> {
+  const byThread = new Map<string, ExecutionGhostCardView[]>()
+  for (const run of Object.values(runsById)) {
+    const threadId = run.owner?.threadId
+    if (!threadId) continue
+    const views = byThread.get(threadId) || []
+    views.push(executionGhostCardView(run))
+    byThread.set(threadId, views)
+  }
+  return byThread
 }
 
 export function executionRunTimestamp(run: ExecutionRunProjection): number {

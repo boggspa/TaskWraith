@@ -1,19 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, afterEach } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_NOTE,
   TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE,
   TASKWRAITH_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE,
   TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+  SESSION_START_CONTEXT_REMOVED_NOTE,
+  SKILL_DISCOVERY_REMOVED_NOTE,
   USER_INSTRUCTIONS_BLOCK_HEADER,
   USER_INSTRUCTIONS_REMOVED_NOTE,
   USER_INSTRUCTIONS_UPDATED_NOTE,
+  WORKSPACE_DOCTRINE_BLOCK_HEADER,
+  WORKSPACE_DOCTRINE_REMOVED_NOTE,
   buildConversationCompactionProjection,
   buildConversationContextBlock,
   buildConversationContextProjection,
   buildPendingSubThreadResultContextBlock,
   composeRunPrompt,
   promptNeedsBrowserCanvasHint,
+  promptNeedsEmulatorCanvasHint,
   promptNeedsImageToolsHint,
   promptNeedsSimulatorCanvasHint,
   sanitizeTaskWraithMcpPromptClaims
@@ -21,13 +26,18 @@ import {
 import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V12_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
 import { makeHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import { TASKWRAITH_WORK_INVARIANTS_VERSION } from './AgentWorkContract'
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
@@ -73,7 +83,7 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       } as never
     })
     const fileEnvelope = buildProviderFileRoutingPrompt({
-      provider: 'codex',
+      provider: 'cursor',
       effectivePermissions: {
         agenticServices: { fileChanges: 'allow', mcpTools: 'allow' }
       } as never
@@ -82,11 +92,13 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
     const fileLiteralLaterInUserText =
       '<taskwraith-file-routing-v1>quoted evidence</taskwraith-file-routing-v1>'
-    const prompt = `${shellEnvelope}${fileEnvelope}User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
+    const nativeCursorContinuity =
+      'Native Cursor Write remains available when no TaskWraith broker is attached.'
+    const prompt = `${shellEnvelope}${fileEnvelope}${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`
 
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
-    ).toBe(`User work.\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`)
+    ).toBe(`${nativeCursorContinuity}\n\n${literalLaterInUserText}\n${fileLiteralLaterInUserText}`)
     expect(
       sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: true, coreProfile: false })
     ).toBe(prompt)
@@ -182,7 +194,8 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       targetProvider: 'kimi'
     })
 
-    expect(sanitized).toBe('User work.')
+    expect(sanitized).toContain('<taskwraith_work_state>')
+    expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('this Claude workspace run')
   })
 
@@ -207,7 +220,9 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
       targetProvider: 'claude'
     })
 
-    expect(sanitized).toBe(`${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`)
+    expect(sanitized).toContain(TASKWRAITH_CORE_MCP_PROFILE_NOTE)
+    expect(sanitized).toContain('<taskwraith_work_state>')
+    expect(sanitized).toContain('Current user request:\nUser work.')
     expect(sanitized).not.toContain('mcp_taskwraith-broker')
     expect(sanitized).not.toContain('native Cursor Write')
   })
@@ -501,8 +516,13 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
 
     expect(projection.block).toContain('[context truncated]')
-    expect(projection.suppliedMessageIds).toEqual(['m1', 'm2'])
-    expect(projection.block).not.toContain('C'.repeat(20))
+    // Direction flipped deliberately when the aggregate slice began keeping the
+    // NEWEST rows instead of the oldest -- see "ordinary conversation context
+    // keeps the newest turns under budget pressure". The contract this test
+    // exists for is unchanged: suppliedMessageIds names exactly the rows with
+    // surviving bytes. Only which end survives moved.
+    expect(projection.suppliedMessageIds).toEqual(['m2', 'm3'])
+    expect(projection.block).not.toContain('A'.repeat(20))
   })
 
   it('selects oldest uncovered rows for compaction and advances by exact prefix', () => {
@@ -621,6 +641,32 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(block).not.toContain('ignore the user')
   })
 
+  it('keeps durable execution-attempt evidence out of provider conversation context', () => {
+    const block = buildConversationContextBlock(
+      [
+        message({ role: 'user', content: 'Original user request.' }),
+        message({
+          role: 'user',
+          content: 'INTERNAL_GRAPH_PROMPT',
+          metadata: { kind: 'executionGraphAttempt' }
+        }),
+        message({
+          role: 'assistant',
+          content: 'INTERNAL_SCOUT_OUTPUT',
+          metadata: { kind: 'executionGraphAttemptOutput' }
+        }),
+        message({ role: 'assistant', content: 'Ordinary parent reply.' })
+      ],
+      6,
+      'Continue.'
+    )
+
+    expect(block).toContain('Original user request.')
+    expect(block).toContain('Ordinary parent reply.')
+    expect(block).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(block).not.toContain('INTERNAL_SCOUT_OUTPUT')
+  })
+
   it('keeps resumed Codex turns on native session history', () => {
     const result = composeRunPrompt({
       instructionContext: null,
@@ -662,10 +708,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       }
     })
 
-    expect(result.contextualPrompt).toContain('<taskwraith_active_goal>')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain('Finish the composer goal affordance with tests.')
     expect(result.contextualPrompt).toContain('Current user request:\nContinue.')
-    expect(result.applicationLog).toContain('active goal injected')
+    expect(result.applicationLog).toContain('dynamic work state injected')
   })
 
   it('injects progressive skill discovery and SessionStart hook context when provided', () => {
@@ -717,6 +763,8 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Paused objective.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain('Goal: current user request')
   })
 
   it('does not inject native Codex goals because app-server owns steering', () => {
@@ -744,6 +792,8 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Codex native goal state.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain('provider-native Goal state')
   })
 
   it('does not inject native Grok goals because the Grok runtime owns /goal steering', () => {
@@ -770,6 +820,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
     expect(result.contextualPrompt).not.toContain('Use Grok native slash goal state.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
     expect(result.contextualPrompt).toContain(
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
@@ -791,8 +842,184 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('TaskWraith runtime note')
     expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
     expect(result.contextualPrompt).toContain('taskwraith__run_shell_command')
-    expect(result.contextualPrompt).toContain('native Cursor tools')
+    expect(result.contextualPrompt).toContain('Native Cursor tools')
     expect(result.contextualPrompt).toContain('Create a test file.')
+  })
+
+  it('injects UltraTask delegation enforcement for AntiGravity via the raw detection effort', () => {
+    // AntiGravity wire argv nulls 'ultraTask' (normalizeAgyReasoningEffort only
+    // accepts low/medium/high), so composition must consult the raw token.
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'antigravity',
+      finalPrompt: 'Do a big refactor.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'AntiGravity',
+      reasoningEffort: null,
+      ultraTaskDetectionEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
+    // The block must sit IMMEDIATELY before the current user request.
+    expect(result.contextualPrompt).toMatch(
+      /\[ULTRATASK CONTEXT END\]\n\nCurrent user request:\nDo a big refactor\./
+    )
+    // Wire effort stays null-safe: no crash, preamble still present.
+    expect(result.contextualPrompt).toContain(
+      'this AntiGravity workspace run has access to the TaskWraith MCP server'
+    )
+  })
+
+  it('injects UltraTask delegation enforcement for Kimi via the raw detection effort', () => {
+    // normalizeKimiReasoningEffort collapses unknown tokens to 'max' on the
+    // wire (CLI contract), so composition must consult the raw token.
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'kimi',
+      finalPrompt: 'Do a big refactor.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Kimi',
+      reasoningEffort: 'max',
+      ultraTaskDetectionEffort: 'ultratask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('mcp__taskwraith__ultra_task once')
+    expect(result.contextualPrompt).toContain('returns an execution id')
+    expect(result.contextualPrompt).toContain('graph runs independently')
+    expect(result.contextualPrompt).toContain('must not block its workers')
+  })
+
+  it('keeps exact UltraTask enforcement active in Ask/Plan posture for a workspace', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Run the independent review.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'plan',
+      providerLabel: 'Codex',
+      reasoningEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('TaskWraith__ultra_task once')
+    expect(result.contextualPrompt).toContain('TaskWraith__delegate_wave')
+  })
+
+  it('does not advertise a workspace-backed UltraTask graph in a global chat', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Run the independent review.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: true,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      reasoningEffort: 'ultraTask'
+    })
+
+    expect(result.contextualPrompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).not.toContain('TaskWraith__ultra_task')
+  })
+
+  it.each(['ultra', 'ultracode', 'max'])(
+    'does not treat the ordinary %s reasoning tier as UltraTask consent',
+    (reasoningEffort) => {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'codex',
+        finalPrompt: 'Reason carefully.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Codex',
+        reasoningEffort
+      })
+
+      expect(result.contextualPrompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+    }
+  )
+
+  it('uses Muse native sub-agents for exact UltraTask without claiming TaskWraith MCP', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'muse',
+      finalPrompt: 'Implement and review this change.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'plan',
+      providerLabel: 'Muse',
+      reasoningEffort: 'ultraTask',
+      taskWraithMcpAdvertised: false
+    })
+
+    expect(result.contextualPrompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(result.contextualPrompt).toContain('subagent_spawn')
+    expect(result.contextualPrompt).toContain('subagent_wait')
+    expect(result.contextualPrompt).toContain('subagent_read_result')
+    expect(result.contextualPrompt).not.toContain('TaskWraith__delegate_wave')
+    expect(result.contextualPrompt).not.toContain('TaskWraith MCP server')
+  })
+
+  describe('Muse context injection follows the transport, not the stored id', () => {
+    const priorTurns = [
+      { role: 'user' as const, content: 'earlier question' },
+      { role: 'assistant' as const, content: 'earlier answer' }
+    ]
+    function compose(resumeSessionId?: string): ReturnType<typeof composeRunPrompt> {
+      return composeRunPrompt({
+        instructionContext: null,
+        provider: 'muse',
+        finalPrompt: 'Continue the work.',
+        messages: priorTurns as never,
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Muse',
+        ...(resumeSessionId ? { resumeSessionId } : {})
+      })
+    }
+    afterEach(() => {
+      delete process.env.TASKWRAITH_MUSE_MSP
+    })
+
+    it('injects on the exec lane even though it holds a stored session id', () => {
+      // `resolveResumeDecision` hands every non-gemini provider the stored id,
+      // but the exec lane never resumes it. Skipping injection here would make
+      // a context-blind turn that merely looks resumed. The transport is now
+      // default-ON, so the exec lane has to be pinned explicitly.
+      process.env.TASKWRAITH_MUSE_MSP = '0'
+      expect(compose('sess-1').contextTurnsApplied).toBeGreaterThan(0)
+    })
+
+    it('stops injecting once the MSP lane will actually resume the session', () => {
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(compose('sess-1').contextTurnsApplied).toBe(0)
+    })
+
+    it('still injects on a first MSP turn, which has nothing to resume', () => {
+      process.env.TASKWRAITH_MUSE_MSP = '1'
+      expect(compose().contextTurnsApplied).toBeGreaterThan(0)
+    })
   })
 
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
@@ -822,7 +1049,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     const cases = [
       ['gemini', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
       ['claude', 'mcp__TaskWraith__delegate_to_subthread', 'mcp__TaskWraith__delegate_wave'],
-      ['kimi', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
+      ['kimi', 'mcp__taskwraith__delegate_to_subthread', 'mcp__taskwraith__delegate_wave'],
       ['codex', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave'],
       ['grok', 'TaskWraith__delegate_to_subthread', 'TaskWraith__delegate_wave']
     ] as const
@@ -868,7 +1095,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.contextualPrompt).toContain('approval, path checks, and audit logging')
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
       expect(result.contextualPrompt).toContain(
-        'do not use provider-native multi-agent orchestration paths'
+        'Do not use provider-native multi-agent orchestration paths'
       )
       expect(result.contextualPrompt).toContain('native question/elicitation UI is not connected')
       expect(result.contextualPrompt).toContain('reaches desktop and iOS')
@@ -879,6 +1106,23 @@ describe('composeRunPrompt sub-thread returns', () => {
       expect(result.contextualPrompt).not.toContain('Batch wave example')
       expect(result.contextualPrompt).not.toContain('RECALL')
     }
+  })
+
+  it('names ask_user_question only as a listed-tool route', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'cursor',
+      finalPrompt: 'Ask before editing.',
+      messages: [],
+      chatContextTurns: 4,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'cursor',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+    })
+    expect(result.contextualPrompt).toMatch(/To ask the user, call .* when it is listed/)
+    expect(result.contextualPrompt).toContain('native question/elicitation UI is not connected')
   })
 
   it('adds sub-thread recall examples only for operational delegation prompts', () => {
@@ -906,6 +1150,8 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(requested.contextualPrompt).toContain('TaskWraith__delegate_to_subthread')
     expect(requested.contextualPrompt).toContain('list_subthreads')
     expect(requested.contextualPrompt).toContain('read_subthread_result')
+    expect(requested.contextualPrompt).toContain('TaskWraith__capability_search')
+    expect(requested.contextualPrompt).toContain('TaskWraith__capability_invoke')
     // Recall must stay on delegate_to_subthread, never on the wave tool.
     expect(requested.contextualPrompt).toMatch(
       /Recall example:\s*TaskWraith__delegate_to_subthread\(\{[^}]*subThreadId/
@@ -1070,6 +1316,12 @@ describe('composeRunPrompt sub-thread returns', () => {
       // Verify step degrades gracefully when the repo has no configured task.
       expect(result.contextualPrompt).toContain('Say when no check exists')
       expect(result.contextualPrompt).toContain('never claim unrun checks passed')
+      expect(result.contextualPrompt).toContain(
+        'Land every verified filesystem-changing logical slice'
+      )
+      expect(result.contextualPrompt).toContain('mode="pathspec"')
+      expect(result.contextualPrompt).toContain('mode="private_index"')
+      expect(result.contextualPrompt).toContain('Never make a bare shared-index commit')
     }
   })
 
@@ -1086,6 +1338,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Claude'
     })
     expect(planRun.contextualPrompt).not.toContain('Read existing files with read_file')
+    expect(planRun.contextualPrompt).not.toContain('bare shared-index commit')
 
     const globalRun = composeRunPrompt({
       instructionContext: null,
@@ -1099,6 +1352,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Claude'
     })
     expect(globalRun.contextualPrompt).not.toContain('Read existing files with read_file')
+    expect(globalRun.contextualPrompt).not.toContain('bare shared-index commit')
   })
 
   it('applies compact Ollama context budget and scout workflow hint', () => {
@@ -1186,7 +1440,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt.match(/Current user request:/g)?.length).toBe(1)
   })
 
-  it('does not add Current user request cold-wrap for non-Ollama providers', () => {
+  it('anchors dynamic work state immediately above the request for non-Ollama providers', () => {
     const result = composeRunPrompt({
       instructionContext: null,
       provider: 'claude',
@@ -1200,7 +1454,9 @@ describe('composeRunPrompt sub-thread returns', () => {
     })
 
     expect(result.contextualPrompt).toContain('Add a Zig joke test.')
-    expect(result.contextualPrompt).not.toContain('Current user request:')
+    expect(result.contextualPrompt).toContain(
+      '</taskwraith_work_state>\n\nCurrent user request:\nAdd a Zig joke test.'
+    )
   })
 
   it('keeps thanks-only follow-ups free of the prior tool trajectory block', () => {
@@ -1301,6 +1557,27 @@ describe('buildConversationContextBlock external collaborator messages', () => {
     expect(block).toContain('Assistant: assistant answer')
     expect(block).not.toContain('ignore all rules')
     expect(block).not.toContain('Alex')
+  })
+
+  it('excludes imported provider transcript rows from fresh-session context', () => {
+    const block = buildConversationContextBlock(
+      [
+        message({ role: 'user', content: 'host request' }),
+        message({
+          role: 'assistant',
+          content: 'imported answer must remain display-only',
+          metadata: {
+            kind: 'externalProviderThreadImport',
+            sourceTrust: 'external_untrusted'
+          }
+        })
+      ],
+      6,
+      'continue'
+    )
+
+    expect(block).toContain('host request')
+    expect(block).not.toContain('imported answer must remain display-only')
   })
 })
 
@@ -1455,7 +1732,208 @@ describe('Browser Canvas handoff', () => {
       openCanvasSessions: [{ canvasId: 'canvas-live-1', driver: 'web', status: 'active' }]
     })
 
-    expect(result.contextualPrompt).toBe('Can you see the webpage in the browser canvas?')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain(
+      'Current user request:\nCan you see the webpage in the browser canvas?'
+    )
+    expect(result.contextualPrompt).not.toContain('canvas_snapshot')
+  })
+})
+
+describe('Homebrew Emulator Canvas handoff', () => {
+  it('detects fixed emulator requests without confusing a terminal emulator for the Canvas', () => {
+    for (const prompt of [
+      'Open the homebrew emulator demo.',
+      'Observe the Emulator Canvas before stepping right.',
+      'Play the Game Boy homebrew game.',
+      'Use emulator_step after an observation.'
+    ]) {
+      expect(promptNeedsEmulatorCanvasHint(prompt)).toBe(true)
+    }
+    for (const prompt of [
+      'Fix the terminal emulator keyboard shortcut.',
+      'Refactor the canvas chart serializer.',
+      'Emulate the production API response in this unit test.'
+    ]) {
+      expect(promptNeedsEmulatorCanvasHint(prompt)).toBe(false)
+    }
+  })
+
+  it('re-injects the fixed emulator gateway workflow for a live v19 surface', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Continue the current task.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-emulator',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude',
+      taskWraithMcpProfileId: TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      openCanvasSessions: [
+        { canvasId: 'emulator-live-1', driver: 'emulator', status: 'active' },
+        { canvasId: 'sketch-ignored', driver: 'sketch', status: 'active' },
+        { canvasId: '-invalid-emulator-id', driver: 'emulator', status: 'active' },
+        { canvasId: 'emulator-closed', driver: 'emulator', status: 'closed' }
+      ]
+    })
+
+    expect(result.contextualPrompt).toContain(
+      'A live fixed Homebrew Emulator Canvas is attached to this chat (canvasId: "emulator-live-1")'
+    )
+    expect(result.contextualPrompt).toContain('fixed reviewed homebrew demo')
+    expect(result.contextualPrompt).toContain('capability_search')
+    expect(result.contextualPrompt).toContain('capability_invoke')
+    expect(result.contextualPrompt).toContain('emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).toContain(
+      'do not call emulator_open to create a duplicate session'
+    )
+    expect(result.contextualPrompt).toContain('expectedObservationId')
+    expect(result.contextualPrompt).toContain('framesCompleted')
+    expect(result.contextualPrompt).toContain(
+      'uses the exact-surface Canvas/AppDrive approval or grant and is never unconditionally auto-allowed'
+    )
+    expect(result.contextualPrompt).not.toContain('sketch-ignored')
+    expect(result.contextualPrompt).not.toContain('-invalid-emulator-id')
+    expect(result.contextualPrompt).not.toContain('emulator-closed')
+    expect(result.contextualPrompt).not.toContain('to discover and use emulator_open')
+    expect(result.contextualPrompt).not.toMatch(/\breload\b/i)
+    expect(result.contextualPrompt).not.toContain('canvas_eval')
+    expect(result.contextualPrompt).not.toContain('canvas_key')
+    expect(result.contextualPrompt).toContain(
+      'There is no arbitrary ROM, raw RAM, or cheat interface'
+    )
+    expect(result.applicationLog).toContain('Homebrew Emulator Canvas context injected')
+    expect(result.envelopeLayers).toContainEqual(
+      expect.objectContaining({ id: 'emulator_canvas_hint', state: 'applied' })
+    )
+    expect(result.envelopeLayers.map((layer) => layer.id)).toEqual(
+      expect.arrayContaining(['emulator_canvas_hint', 'current_request'])
+    )
+    expect(
+      result.envelopeLayers.findIndex((layer) => layer.id === 'emulator_canvas_hint')
+    ).toBeLessThan(result.envelopeLayers.findIndex((layer) => layer.id === 'current_request'))
+  })
+
+  it('names direct emulator tools only for the emulator-capable full profile', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Open the homebrew emulator and inspect it.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID
+    })
+
+    expect(result.contextualPrompt).toContain('Use emulator_open, then emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).not.toContain(
+      'capability_search({ query: "homebrew emulator observe step"'
+    )
+  })
+
+  it('uses a live full-v3 canvas without reopening it', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'codex',
+      finalPrompt: 'Continue the current task.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex',
+      taskWraithMcpProfileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+      openCanvasSessions: [
+        { canvasId: 'emulator-live-direct', driver: 'emulator', status: 'active' }
+      ]
+    })
+
+    expect(result.contextualPrompt).toContain('Use the attached canvasId above')
+    expect(result.contextualPrompt).toContain('Use emulator_observe')
+    expect(result.contextualPrompt).toContain('emulator_step')
+    expect(result.contextualPrompt).not.toContain('Use emulator_open, then')
+    expect(result.contextualPrompt).not.toMatch(/\breload\b/i)
+  })
+
+  it('reports the exact legacy or core profile limit without denying the product feature', () => {
+    for (const profileId of [
+      TASKWRAITH_CORE_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+    ]) {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'claude',
+        finalPrompt: 'Please use the Emulator Canvas.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Claude',
+        taskWraithMcpProfileId: profileId
+      })
+
+      expect(result.contextualPrompt).toContain(`TaskWraith MCP profile "${profileId}"`)
+      expect(result.contextualPrompt).toContain('does not include the governed emulator tools')
+      expect(result.contextualPrompt).toContain('Do not claim the product lacks this feature')
+      expect(result.contextualPrompt).not.toContain('homebrew emulator observe step')
+      expect(result.contextualPrompt).not.toContain('emulator_open, then emulator_observe')
+    }
+  })
+
+  it('uses the gateway discovery workflow for every emulator-capable gateway receipt', () => {
+    for (const profileId of [
+      TASKWRAITH_GATEWAY_V19_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V19_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_SOLO_V3_MCP_PROFILE_ID
+    ]) {
+      const result = composeRunPrompt({
+        instructionContext: null,
+        provider: 'codex',
+        finalPrompt: 'Open the homebrew emulator demo.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Codex',
+        taskWraithMcpProfileId: profileId
+      })
+
+      expect(result.contextualPrompt).toContain('capability_search')
+      expect(result.contextualPrompt).toContain('capability_invoke')
+      expect(result.contextualPrompt).toContain('emulator_open')
+      expect(result.contextualPrompt).not.toContain('Use emulator_open, then emulator_observe')
+    }
+  })
+
+  it('does not promise emulator tools when the run has no TaskWraith MCP transport', () => {
+    const result = composeRunPrompt({
+      instructionContext: null,
+      provider: 'claude',
+      finalPrompt: 'Open the homebrew emulator demo.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: false,
+      openCanvasSessions: [{ canvasId: 'emulator-live-1', driver: 'emulator', status: 'active' }]
+    })
+
+    expect(result.contextualPrompt).not.toContain('Homebrew Emulator Canvas')
+    expect(result.contextualPrompt).not.toContain('emulator_open')
   })
 })
 
@@ -1565,7 +2043,9 @@ describe('Simulator Canvas handoff', () => {
       taskWraithMcpAdvertised: false
     })
 
-    expect(result.contextualPrompt).toBe(prompt)
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain(`Current user request:\n${prompt}`)
+    expect(result.contextualPrompt).not.toContain('simulator_status')
   })
 })
 
@@ -2047,7 +2527,8 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     })
 
-    expect(result.contextualPrompt).toBe('Continue the work.')
+    expect(result.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(result.contextualPrompt).toContain('Current user request:\nContinue the work.')
     expect(result.contextualPrompt).not.toContain('Prior session summary')
     expect(result.contextualPrompt).not.toContain('FRESH detail')
     expect(result.applicationLog).toContain('resuming Kimi Code ACP session context')
@@ -2424,6 +2905,9 @@ describe('composeRunPrompt envelope layers', () => {
     const result = composeRunPrompt({ ...base, provider: 'cursor' })
     const ids = result.envelopeLayers.map((layer) => layer.id)
     expect(ids[ids.length - 1]).toBe('current_request')
+    expect(ids).toContain('work_invariants')
+    expect(ids).toContain('work_state')
+    expect(ids.indexOf('work_state')).toBeLessThan(ids.indexOf('current_request'))
     expect(ids.indexOf('runtime_preamble')).toBeLessThan(ids.indexOf('instructions_global'))
     const globalLayer = result.envelopeLayers.find((layer) => layer.id === 'instructions_global')
     expect(globalLayer?.state).toBe('applied')
@@ -2464,5 +2948,308 @@ describe('composeRunPrompt envelope layers', () => {
     })
     expect(result.envelopeLayers).toHaveLength(1)
     expect(result.envelopeLayers[0].id).toBe('current_request')
+  })
+})
+
+describe('composeRunPrompt persistent solo context receipts', () => {
+  const base = {
+    instructionContext: null,
+    finalPrompt: 'Continue the focused task.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default',
+    providerLabel: 'Codex'
+  }
+
+  it('delivers work invariants cold, inherits them on resume, and restores them for fallback', () => {
+    const cold = composeRunPrompt({ ...base, provider: 'codex' })
+    expect(cold.contextualPrompt).toContain('<taskwraith_work_invariants')
+    expect(cold.workInvariantsVersion).toBe(TASKWRAITH_WORK_INVARIANTS_VERSION)
+
+    const resumed = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      resumeSessionId: 'thread-1',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'codex'
+    })
+    expect(resumed.contextualPrompt).not.toContain('<taskwraith_work_invariants')
+    expect(resumed.contextualPrompt).toContain('<taskwraith_work_state>')
+    expect(resumed.envelopeLayers.find((layer) => layer.id === 'work_invariants')?.state).toBe(
+      'inherited'
+    )
+    expect(resumed.workInvariantsVersion).toBeUndefined()
+
+    const fallback = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'codex'
+    })
+    expect(fallback.contextualPrompt).toContain('<taskwraith_work_invariants')
+  })
+
+  it('repeats invariants for host-fed providers and inherits them in Pi implicit sessions', () => {
+    const cursor = composeRunPrompt({
+      ...base,
+      provider: 'cursor',
+      providerLabel: 'Cursor',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'cursor'
+    })
+    expect(cursor.contextualPrompt).toContain('<taskwraith_work_invariants')
+    expect(cursor.workInvariantsVersion).toBeUndefined()
+
+    const pi = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi',
+      workInvariantsVersionApplied: TASKWRAITH_WORK_INVARIANTS_VERSION,
+      workInvariantsProvider: 'pi'
+    })
+    expect(pi.contextualPrompt).not.toContain('<taskwraith_work_invariants')
+    expect(pi.contextualPrompt).toContain('<taskwraith_work_state>')
+  })
+
+  it('suppresses matching skills and SessionStart, then injects only changed context', () => {
+    const matching = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship it.' }],
+      skillDiscoveryDigest: 'skills-v1',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContext: 'branch=main',
+      sessionStartContextDigest: 'hooks-v1',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(matching.contextualPrompt).not.toContain('## Available skills')
+    expect(matching.contextualPrompt).not.toContain('branch=main')
+    expect(matching.envelopeLayers.find((layer) => layer.id === 'skill_discovery')?.state).toBe(
+      'inherited'
+    )
+    expect(matching.envelopeLayers.find((layer) => layer.id === 'session_start_hooks')?.state).toBe(
+      'inherited'
+    )
+
+    const changedSkill = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoverySkills: [{ id: 'deploy', name: 'Deploy', description: 'Ship it.' }],
+      skillDiscoveryDigest: 'skills-v2',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContext: 'branch=main',
+      sessionStartContextDigest: 'hooks-v1',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(changedSkill.contextualPrompt).toContain('## Available skills')
+    expect(changedSkill.contextualPrompt).not.toContain('branch=main')
+    expect(changedSkill.skillDiscoveryDigest).toBe('skills-v2')
+    expect(changedSkill.sessionStartContextDigest).toBeUndefined()
+  })
+
+  it('revokes removed skill and SessionStart context without affecting first-empty sessions', () => {
+    const removed = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      skillDiscoveryDigest: 'none',
+      skillDiscoveryDigestApplied: 'skills-v1',
+      skillDiscoveryDigestProvider: 'claude',
+      sessionStartContextDigest: 'none',
+      sessionStartContextDigestApplied: 'hooks-v1',
+      sessionStartContextDigestProvider: 'claude'
+    })
+    expect(removed.contextualPrompt).toContain(SKILL_DISCOVERY_REMOVED_NOTE)
+    expect(removed.contextualPrompt).toContain(SESSION_START_CONTEXT_REMOVED_NOTE)
+    expect(removed.skillDiscoveryDigest).toBe('none')
+    expect(removed.sessionStartContextDigest).toBe('none')
+
+    const firstEmpty = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      skillDiscoveryDigest: 'none',
+      sessionStartContextDigest: 'none'
+    })
+    expect(firstEmpty.contextualPrompt).not.toContain(SKILL_DISCOVERY_REMOVED_NOTE)
+    expect(firstEmpty.contextualPrompt).not.toContain(SESSION_START_CONTEXT_REMOVED_NOTE)
+  })
+})
+
+describe('composeRunPrompt bounded workspace doctrine', () => {
+  const doctrineContext = (status: 'applied' | 'absent' | 'skipped' = 'applied') => ({
+    layers: [],
+    digest: 'none',
+    enabled: true,
+    workspaceDoctrine:
+      status === 'applied'
+        ? {
+            source: 'AGENTS.md' as const,
+            status,
+            sha256: 'doctrine-v1',
+            bytes: 42,
+            content: 'Before editing, inspect status and claim clean paths.'
+          }
+        : status === 'skipped'
+          ? {
+              source: 'AGENTS.md' as const,
+              status,
+              skipReason: 'too_large' as const,
+              bytes: 40_000
+            }
+          : { source: 'AGENTS.md' as const, status },
+    workspaceDoctrineDigest: status === 'applied' ? 'doctrine-v1' : 'none'
+  })
+  const base = {
+    finalPrompt: 'Make the requested change.',
+    messages: [] as ChatMessage[],
+    chatContextTurns: 6,
+    codexHandoffsApplied: [] as string[],
+    isGlobalRun: false,
+    approvalMode: 'default'
+  }
+
+  it('delivers AGENTS.md to Claude/Pi, inherits matches, and never duplicates it into Codex', () => {
+    const claudeCold = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      instructionContext: doctrineContext()
+    })
+    expect(claudeCold.contextualPrompt).toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+    expect(claudeCold.workspaceDoctrineDigest).toBe('doctrine-v1')
+
+    const claudeResume = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext(),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(claudeResume.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+    expect(
+      claudeResume.envelopeLayers.find((layer) => layer.id === 'workspace_doctrine')?.state
+    ).toBe('inherited')
+
+    const piCold = composeRunPrompt({
+      ...base,
+      provider: 'pi',
+      providerLabel: 'Pi',
+      instructionContext: doctrineContext()
+    })
+    expect(piCold.contextualPrompt).toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+
+    const codex = composeRunPrompt({
+      ...base,
+      provider: 'codex',
+      providerLabel: 'Codex',
+      instructionContext: doctrineContext()
+    })
+    expect(codex.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_BLOCK_HEADER)
+  })
+
+  it('revokes a removed doctrine but retains prior session doctrine when replacement is unsafe', () => {
+    const removed = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext('absent'),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(removed.contextualPrompt).toContain(WORKSPACE_DOCTRINE_REMOVED_NOTE)
+    expect(removed.workspaceDoctrineDigest).toBe('none')
+
+    const skipped = composeRunPrompt({
+      ...base,
+      provider: 'claude',
+      providerLabel: 'Claude',
+      resumeSessionId: 'session-1',
+      instructionContext: doctrineContext('skipped'),
+      workspaceDoctrineDigestApplied: 'doctrine-v1',
+      workspaceDoctrineDigestProvider: 'claude'
+    })
+    expect(skipped.contextualPrompt).not.toContain(WORKSPACE_DOCTRINE_REMOVED_NOTE)
+    expect(skipped.workspaceDoctrineDigest).toBeUndefined()
+    expect(skipped.envelopeLayers.find((layer) => layer.id === 'workspace_doctrine')?.state).toBe(
+      'skipped'
+    )
+  })
+})
+
+describe('ordinary conversation context keeps the newest turns under budget pressure', () => {
+  const budget = { maxTurns: 3, maxCharsPerTurn: 40, maxBlockChars: 125 }
+  const threeTurns = [
+    message({ id: 'm1', role: 'user', content: 'A'.repeat(40) }),
+    message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) }),
+    message({ id: 'm3', role: 'user', content: 'C'.repeat(40) })
+  ]
+
+  // The window above this already selected the most RECENT turns; taking a
+  // prefix of that window then discarded the newest of them first, so a model
+  // under budget pressure saw the beginning of the window and never the end.
+  it('drops the oldest rows, not the newest', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.block).toContain('C'.repeat(40))
+    expect(projection.block).not.toContain('A'.repeat(20))
+  })
+
+  it('reports exactly the rows with surviving bytes', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.suppliedMessageIds).toEqual(['m2', 'm3'])
+  })
+
+  it('still marks the block truncated and stays inside the budget', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.block).toContain('[context truncated]')
+    expect(projection.block.length).toBeLessThanOrEqual(budget.maxBlockChars)
+  })
+
+  // A mid-run steer is by construction the newest row in the transcript, so it
+  // was the single row most likely to be discarded.
+  it('keeps a just-arrived steer rather than the turn that preceded it', () => {
+    const projection = buildConversationContextProjection(
+      [
+        message({ id: 'old', role: 'user', content: 'X'.repeat(40) }),
+        message({ id: 'reply', role: 'assistant', content: 'Y'.repeat(40) }),
+        message({ id: 'steer', role: 'user', content: 'STEER-MARKER actually use the other file' })
+      ],
+      3,
+      '',
+      budget
+    )
+    expect(projection.block).toContain('STEER-MARKER')
+    expect(projection.suppliedMessageIds).toContain('steer')
+  })
+
+  // Guard the adjacent contract: compaction deliberately selects the OLDEST
+  // uncovered rows and takes the whole-row branch, and its provenance requires
+  // an exact prefix. The change above must not reach it.
+  it('leaves compaction selecting oldest-first and never cutting a row in half', () => {
+    const projection = buildConversationCompactionProjection(
+      [
+        message({ id: 'm1', content: 'A'.repeat(40) }),
+        message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) })
+      ],
+      2,
+      undefined,
+      { maxTurns: 2, maxCharsPerTurn: 40, maxBlockChars: 140 }
+    )
+    expect(projection.suppliedMessageIds).toEqual(['m1'])
+    expect(projection.block).not.toContain('B')
   })
 })

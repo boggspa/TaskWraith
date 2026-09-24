@@ -15,6 +15,7 @@
 
 const path = require('path')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
+const { execFile } = require('child_process')
 const { listListeningPidsForPort, getProcessIdentity } = require('./portGuard.cjs')
 
 const DEFAULT_BRIDGE_BUILD_COMMAND = 'npm run prebuild:bridge-daemon'
@@ -94,6 +95,7 @@ function resolveElectronBinary(options = {}) {
  * @param {string} [options.userDataPath] — recorded for provenance; Electron derives via INSTANCE_ID + HOME
  * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
  * @param {string} [options.packagedExecutablePath] — signed packaged app executable; omits the dev entry argv
+ * @param {Record<string, string>} [options.extraEnv] — additive TASKWRAITH_PERF_* child env only (inert when unset; all other keys refused)
  * @param {NodeJS.Platform} [options.platform=process.platform]
  * @param {{ resolveElectronPath?: Function, requireElectron?: Function }} [options.adapters]
  */
@@ -105,7 +107,8 @@ function buildElectronSpawnPlan(options) {
     workload: options.workload,
     fxPosture: options.fxPosture,
     repoRoot: options.repoRoot,
-    home: options.home
+    home: options.home,
+    platform: options.platform
   })
   const mainInspectorPort = base.mainInspectorPort
   if (
@@ -132,6 +135,38 @@ function buildElectronSpawnPlan(options) {
     // own userData authority and would make the inspector proof meaningless).
     if ((options.platform || process.platform) === 'darwin') {
       env.CFFIXED_USER_HOME = base.home
+    }
+  }
+
+  // Additive perf-harness env injection (M1 host span transport), INERT WHEN
+  // UNSET: only `TASKWRAITH_PERF_*` keys with non-empty string values are
+  // accepted, so this option can never override isolation-critical env
+  // (HOME, CFFIXED_USER_HOME, TASKWRAITH_INSTANCE_ID, IOS_REMOTE_TRUE, PATH,
+  // ELECTRON_RUN_AS_NODE, ...). The T2 runner uses it to pass
+  // TASKWRAITH_PERF_HOST_SNAPSHOT_PATH into the spawned app, which main's
+  // bootstrap forwards to the external Host launch (env: process.env),
+  // arming the Host perf snapshot writer at an absolute artifact path.
+  const extraEnvKeys = []
+  if (options.extraEnv !== undefined) {
+    if (
+      !options.extraEnv ||
+      typeof options.extraEnv !== 'object' ||
+      Array.isArray(options.extraEnv)
+    ) {
+      throw new Error('extraEnv must be a plain object of non-empty string values')
+    }
+    for (const key of Object.keys(options.extraEnv).sort()) {
+      const value = options.extraEnv[key]
+      if (!/^TASKWRAITH_PERF_[A-Z0-9_]+$/.test(key)) {
+        throw new Error(
+          `extraEnv refuses key ${JSON.stringify(key)}: only TASKWRAITH_PERF_* keys may be injected`
+        )
+      }
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new Error(`extraEnv value for ${key} must be a non-empty string`)
+      }
+      env[key] = value
+      extraEnvKeys.push(key)
     }
   }
 
@@ -162,11 +197,17 @@ function buildElectronSpawnPlan(options) {
   ]
 
   const binaryForShell = electronBinary || '<resolve-require-electron-at-spawn>'
+  // Provenance fidelity: the recorded command is derived from the SAME `env`
+  // the plan records, so the two cannot drift. A hand-listed subset presented
+  // itself as the command that ran while carrying five of nine variables —
+  // PERF_PRELOAD_PROBE among the missing — which means anyone reproducing the
+  // run by pasting it got a different environment than the one measured.
+  // Sorted for a stable diff; extraEnv keys appear here exactly as the spawned
+  // child receives them because they are in `env` like everything else.
   const shellCommand = [
-    `TASKWRAITH_INSTANCE_ID=${shellQuote(env.TASKWRAITH_INSTANCE_ID)}`,
-    'IOS_REMOTE_TRUE=0',
-    ...(env.HOME ? [`HOME=${shellQuote(env.HOME)}`] : []),
-    ...(env.CFFIXED_USER_HOME ? [`CFFIXED_USER_HOME=${shellQuote(env.CFFIXED_USER_HOME)}`] : []),
+    ...Object.keys(env)
+      .sort()
+      .map((key) => `${key}=${shellQuote(env[key])}`),
     `${shellQuote(binaryForShell)}${usesMockKeychain ? ' --use-mock-keychain' : ''}${entry ? ` ${shellQuote(entry)}` : ''} --remote-debugging-port=${base.remoteDebuggingPort} --inspect=${mainInspectorPort}`
   ].join(' ')
 
@@ -380,7 +421,7 @@ function spawnExactElectronChild(options) {
   }
 
   const wrapped = wrapChild(child)
-  return {
+  const session = {
     ...wrapped,
     pgid: useProcessGroup ? child.pid : undefined,
     electronBinary,
@@ -391,6 +432,16 @@ function spawnExactElectronChild(options) {
     instanceId: spawnPlan.instanceId,
     spawnCommand: electronBinary
   }
+  // Live exit tracking, on the object the caller actually holds — the spread
+  // above copies wrapChild's values, so setting the flag there would never
+  // reach this object. `exitCode` below is a snapshot taken at spawn time and
+  // is always null; this is the one that moves.
+  if (typeof child.on === 'function') {
+    child.on('exit', () => {
+      session.exited = true
+    })
+  }
+  return session
 }
 
 /**
@@ -409,14 +460,27 @@ function wrapChild(child) {
       if (typeof child.on === 'function') child.on(event, handler)
     },
     exitCode: child.exitCode != null ? child.exitCode : null,
-    killed: Boolean(child.killed)
+    killed: Boolean(child.killed),
+    // Set by spawnExactElectronChild once the child has actually exited.
+    exited: false
   }
 }
 
 /**
  * Terminate only the exact recorded child / process group. Never broad process search.
  * @param {object} session
- * @param {{ signal?: string, waitMs?: number, forceSignal?: string, sleep?: Function, killProcessGroup?: Function }} [options]
+ * @param {{
+ *   signal?: string,
+ *   waitMs?: number,
+ *   forceSignal?: string,
+ *   sleep?: Function,
+ *   killProcessGroup?: Function,
+ *   killPid?: Function,
+ *   listListeningPidsForPort?: Function,
+ *   listPidsMatchingCommandNeedle?: Function,
+ *   userDataPath?: string,
+ *   portAdapters?: object
+ * }} [options]
  */
 async function terminateExactChild(session, options = {}) {
   if (!session || typeof session.pid !== 'number' || session.pid <= 0) {
@@ -432,9 +496,17 @@ async function terminateExactChild(session, options = {}) {
         setTimeout(r, ms)
       }))
 
-  let exited = false
+  // A child that has ALREADY exited never re-emits 'exit', so waiting on it
+  // burns the full waitMs and then SIGKILLs a corpse — measured at 8,501 ms,
+  // and the corpse-kill is reported as usedForce: true, which is a false claim
+  // in the artifact. This is the ordinary shape of the cleanup block's
+  // terminate after an abort handler already ran one. Sessions that do not
+  // track `exited` (test doubles, older callers) keep the previous behaviour.
+  let exited = session.exited === true
   const exitPromise = new Promise((resolve) => {
-    if (typeof session.on === 'function') {
+    if (exited) {
+      resolve({ code: null, signal: null })
+    } else if (typeof session.on === 'function') {
       session.on('exit', (code, sig) => {
         exited = true
         resolve({ code, signal: sig })
@@ -468,14 +540,141 @@ async function terminateExactChild(session, options = {}) {
     await sleep(500)
   }
 
+  const reap = await reapOwnedStrays(session, {
+    forceSignal,
+    killPid: options.killPid,
+    listListeningPidsForPort: options.listListeningPidsForPort,
+    listPidsMatchingCommandNeedle: options.listPidsMatchingCommandNeedle,
+    userDataPath: options.userDataPath,
+    portAdapters: options.portAdapters,
+    ...(options.platform === undefined ? {} : { platform: options.platform })
+  })
+  const strayKills = reap.killed
+
   return {
     pid: session.pid,
     pgid: session.pgid || null,
     terminated: true,
     neverAutoDeletedArtifacts: true,
-    usedForce: Boolean(raced && raced.timeout),
-    killedProcessGroup: Boolean(session.pgid)
+    usedForce: Boolean(raced && raced.timeout) || strayKills.length > 0,
+    killedProcessGroup: Boolean(session.pgid),
+    strayKills,
+    strayReapSupported: reap.supported === true
   }
+}
+
+/**
+ * After the recorded child/group is signalled, kill anything still listening
+ * on the owned CDP/inspector ports and helpers whose command line still
+ * names the isolated userData path. Not a broad pgrep: ports and path are
+ * the ones this session recorded.
+ *
+ * @param {object} session
+ * @param {object} options
+ * @returns {Promise<{ supported: boolean, killed: Array<{ pid: number, reason: string }> }>}
+ */
+async function reapOwnedStrays(session, options = {}) {
+  const platform = typeof options.platform === 'string' ? options.platform : process.platform
+  // Both probes are POSIX tools (lsof for the ports, ps for the command line).
+  // On win32 they return nothing, so an empty `killed` would read as "searched
+  // the owned ports and every command line, found no strays" for a search that
+  // never ran. Refuse instead: an artifact must not report a check it could not
+  // perform. Building netstat/wmic equivalents is deliberately out of scope.
+  if (platform === 'win32') return { supported: false, killed: [] }
+  const forceSignal = options.forceSignal || 'SIGKILL'
+  const killPid =
+    typeof options.killPid === 'function'
+      ? options.killPid
+      : (pid, sig) => {
+          process.kill(pid, sig)
+        }
+  const listPorts =
+    typeof options.listListeningPidsForPort === 'function'
+      ? options.listListeningPidsForPort
+      : listListeningPidsForPort
+  const listNeedle =
+    typeof options.listPidsMatchingCommandNeedle === 'function'
+      ? options.listPidsMatchingCommandNeedle
+      : defaultListPidsMatchingCommandNeedle
+  /** @type {Array<{ pid: number, reason: string }>} */
+  const killed = []
+  const seen = new Set()
+
+  const tryKill = (pid, reason) => {
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return
+    if (seen.has(pid)) return
+    seen.add(pid)
+    try {
+      killPid(pid, forceSignal)
+      killed.push({ pid, reason })
+    } catch {
+      // ESRCH: already gone
+    }
+  }
+
+  const ports = [session.remoteDebuggingPort, session.mainInspectorPort].filter(
+    (port) => Number.isInteger(port) && port >= 1 && port <= 65535
+  )
+  for (const port of ports) {
+    let pids = []
+    try {
+      pids = await listPorts(port, options.portAdapters || {})
+    } catch {
+      continue
+    }
+    if (!Array.isArray(pids)) continue
+    for (const pid of pids) tryKill(pid, `listen:${port}`)
+  }
+
+  const needle =
+    typeof options.userDataPath === 'string' && options.userDataPath.trim().length >= 12
+      ? options.userDataPath.trim()
+      : ''
+  if (needle) {
+    let helpers = []
+    try {
+      helpers = await listNeedle(needle)
+    } catch {
+      helpers = []
+    }
+    if (Array.isArray(helpers)) {
+      for (const pid of helpers) {
+        if (pid === session.pid) continue
+        tryKill(pid, 'userData-command')
+      }
+    }
+  }
+
+  return { supported: true, killed }
+}
+
+/**
+ * @param {string} needle
+ * @returns {Promise<number[]>}
+ */
+function defaultListPidsMatchingCommandNeedle(needle) {
+  if (typeof needle !== 'string' || needle.length < 12) return Promise.resolve([])
+  if (process.platform === 'win32') return Promise.resolve([])
+  return new Promise((resolve) => {
+    execFile(
+      'ps',
+      ['-ax', '-o', 'pid=,command='],
+      { encoding: 'utf8', timeout: 5000 },
+      (err, stdout) => {
+        if (err || typeof stdout !== 'string') {
+          resolve([])
+          return
+        }
+        const pids = []
+        for (const line of stdout.split('\n')) {
+          if (!line.includes(needle)) continue
+          const match = line.trim().match(/^(\d+)\s/)
+          if (match) pids.push(Number(match[1]))
+        }
+        resolve(pids)
+      }
+    )
+  })
 }
 
 /**
@@ -768,6 +967,7 @@ module.exports = {
   createDirectCliBuildAdapter,
   spawnExactElectronChild,
   terminateExactChild,
+  reapOwnedStrays,
   assertExactChildAttach,
   assertExactChildOwnsDebugPorts,
   isPidInOwnedElectronTree,

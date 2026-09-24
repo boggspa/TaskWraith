@@ -5,6 +5,15 @@ const preservedIndexStat = vi.hoisted(() => ({
   value: null as unknown
 }))
 
+/**
+ * Records every readFileSync path while enabled, so a test can assert HOW MUCH
+ * durable I/O a single call performed rather than only what it returned.
+ */
+const readFileProbe = vi.hoisted(() => ({
+  enabled: false,
+  paths: [] as string[]
+}))
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
   return {
@@ -14,6 +23,12 @@ vi.mock('fs', async (importOriginal) => {
         return preservedIndexStat.value as never
       }
       return actual.statSync(...args)
+    },
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+      if (readFileProbe.enabled && typeof args[0] === 'string') {
+        readFileProbe.paths.push(args[0])
+      }
+      return actual.readFileSync(...args) as never
     }
   }
 })
@@ -80,6 +95,41 @@ function fatEnsemble() {
       }))
     }
   }
+}
+
+type TreeSnapshot = Record<
+  string,
+  {
+    type: 'directory' | 'file'
+    mtimeMs: number
+    bytes?: string
+  }
+>
+
+/** Capture every durable byte and mtime beneath a test store root. */
+function snapshotTree(root: string): TreeSnapshot {
+  const snapshot: TreeSnapshot = {}
+
+  const visit = (currentPath: string): void => {
+    const stat = fs.statSync(currentPath)
+    const relativePath = path.relative(root, currentPath) || '.'
+    if (stat.isDirectory()) {
+      snapshot[relativePath] = { type: 'directory', mtimeMs: stat.mtimeMs }
+      for (const child of fs.readdirSync(currentPath).sort()) {
+        visit(path.join(currentPath, child))
+      }
+      return
+    }
+
+    snapshot[relativePath] = {
+      type: 'file',
+      mtimeMs: stat.mtimeMs,
+      bytes: fs.readFileSync(currentPath).toString('base64')
+    }
+  }
+
+  if (fs.existsSync(root)) visit(root)
+  return snapshot
 }
 
 describe('ChatListIndexStore cache + projection', () => {
@@ -297,5 +347,266 @@ describe('ChatListIndexStore cache + projection', () => {
 
     expect(store.isCacheValid()).toBe(false)
     expect(store.readAll()['chat-a']?.title).toBe('External')
+  })
+
+  it('does not create a missing store or permit mutations while dynamically read-only', () => {
+    const missingDir = path.join(dir, 'missing')
+    const readOnly = new ChatListIndexStore(missingDir, { canWrite: () => false })
+    const before = snapshotTree(missingDir)
+
+    expect(readOnly.readAll()).toEqual({})
+    expect(readOnly.readEntry('chat-a')).toBeUndefined()
+    expect(() => readOnly.writeEntry('chat-a', makeItem('chat-a'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(() => readOnly.removeEntries([])).toThrow('Chat list index is read-only')
+    expect(snapshotTree(missingDir)).toEqual(before)
+    expect(fs.existsSync(missingDir)).toBe(false)
+  })
+
+  it('migrates a writable legacy index to JSONL and summaries, then survives restart', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    const jsonlPath = path.join(dir, 'chat-list-index.jsonl')
+    const item = makeItem('chat-legacy', {
+      title: 'Legacy chat',
+      lastRun: {
+        runId: 'run-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        endedAt: '2026-01-01T00:01:00.000Z'
+      },
+      runsSummary: [
+        {
+          runId: 'run-1',
+          diffFileCount: 0
+        }
+      ]
+    })
+    fs.writeFileSync(legacyPath, JSON.stringify({ 'chat-legacy': item }), 'utf-8')
+
+    const migrated = new ChatListIndexStore(dir)
+    expect(migrated.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(migrated.readEntry('chat-legacy')?.lastRun?.runId).toBe('run-1')
+    expect(fs.existsSync(jsonlPath)).toBe(true)
+    expect(fs.existsSync(legacyPath)).toBe(false)
+
+    const restarted = new ChatListIndexStore(dir)
+    expect(restarted.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(restarted.readEntry('chat-legacy')?.lastRun?.runId).toBe('run-1')
+    expect(fs.existsSync(legacyPath)).toBe(false)
+  })
+
+  it('skips a torn JSONL line and keeps the last good last-line-wins entry across restart', () => {
+    const jsonlPath = path.join(dir, 'chat-list-index.jsonl')
+    const good = makeItem('chat-keep', { title: 'Keep me' })
+    fs.writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({ chatId: 'chat-keep', entry: good })}\n{"torn":\n${JSON.stringify({
+        chatId: 'chat-keep',
+        entry: makeItem('chat-keep', { title: 'Latest good' })
+      })}\n`,
+      'utf-8'
+    )
+
+    const first = new ChatListIndexStore(dir)
+    expect(first.readEntry('chat-keep')?.title).toBe('Latest good')
+    const restarted = new ChatListIndexStore(dir)
+    expect(restarted.readAll()['chat-keep']?.title).toBe('Latest good')
+  })
+
+  it('reads an unmigrated legacy index in memory without migrating or changing durable bytes', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    const legacy = { 'chat-legacy': makeItem('chat-legacy', { title: 'Legacy chat' }) }
+    fs.writeFileSync(legacyPath, JSON.stringify(legacy), 'utf-8')
+    const before = snapshotTree(dir)
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    expect(readOnly.readAll()['chat-legacy']?.title).toBe('Legacy chat')
+    expect(readOnly.readEntry('chat-legacy')?.appChatId).toBe('chat-legacy')
+    expect(fs.existsSync(path.join(dir, 'chat-list-index.jsonl'))).toBe(false)
+    expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  it('projects compaction-worthy legacy ensemble data without compacting it while read-only', () => {
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    const fatEntry = {
+      ...makeItem('chat-fat', { chatKind: 'ensemble' }),
+      ensemble: fatEnsemble()
+    }
+    fs.writeFileSync(
+      indexPath,
+      JSON.stringify({ chatId: 'chat-fat', entry: fatEntry }) + '\n',
+      'utf-8'
+    )
+    const before = snapshotTree(dir)
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    const entry = readOnly.readEntry('chat-fat')
+    expect(entry?.ensemble?.participants).toHaveLength(40)
+    expect(JSON.stringify(entry)).not.toContain(ROSTER_MARKER)
+    expect(fs.readFileSync(indexPath, 'utf-8')).toContain(ROSTER_MARKER)
+    expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  it('honours authority changes dynamically while preserving the default writable behavior', () => {
+    let writable = false
+    const gated = new ChatListIndexStore(dir, { canWrite: () => writable })
+    const before = snapshotTree(dir)
+
+    expect(() => gated.writeEntry('chat-a', makeItem('chat-a'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(snapshotTree(dir)).toEqual(before)
+
+    writable = true
+    gated.writeEntry('chat-a', makeItem('chat-a'))
+    expect(gated.readEntry('chat-a')?.title).toBe('Chat chat-a')
+
+    writable = false
+    const afterWrite = snapshotTree(dir)
+    expect(() => gated.removeEntries(['chat-a'])).toThrow('Chat list index is read-only')
+    expect(gated.readEntry('chat-a')?.appChatId).toBe('chat-a')
+    expect(snapshotTree(dir)).toEqual(afterWrite)
+
+    // Existing callers that pass no option retain the historical writable default.
+    const defaultStore = new ChatListIndexStore(path.join(dir, 'default'))
+    defaultStore.writeEntry('chat-default', makeItem('chat-default'))
+    expect(defaultStore.readEntry('chat-default')?.appChatId).toBe('chat-default')
+  })
+
+  it('treats a write-authority callback failure as read-only', () => {
+    store.writeEntry('chat-a', makeItem('chat-a'))
+    const before = snapshotTree(dir)
+    const unavailable = new ChatListIndexStore(dir, {
+      canWrite: () => {
+        throw new Error('authority unavailable')
+      }
+    })
+
+    expect(unavailable.readAll()['chat-a']?.appChatId).toBe('chat-a')
+    expect(() => unavailable.writeEntry('chat-b', makeItem('chat-b'))).toThrow(
+      'Chat list index is read-only'
+    )
+    expect(() => unavailable.removeEntries(['chat-a'])).toThrow('Chat list index is read-only')
+    expect(snapshotTree(dir)).toEqual(before)
+  })
+
+  /**
+   * Runs `fn` with the readFileSync probe on and returns both its result and
+   * every path read. Enabled narrowly so the test file's own snapshotTree
+   * reads never pollute a measurement.
+   */
+  function recordReads<T>(fn: () => T): { result: T; paths: string[] } {
+    readFileProbe.enabled = true
+    readFileProbe.paths = []
+    try {
+      return { result: fn(), paths: [...readFileProbe.paths] }
+    } finally {
+      readFileProbe.enabled = false
+      readFileProbe.paths = []
+    }
+  }
+
+  it('cold readAll reads each chat summary file once, not once per stale JSONL line', () => {
+    const chatIds = Array.from({ length: 20 }, (_, i) => `chat-${i}`)
+    // 5 revisions x 20 chats = 100 append-only lines over 20 live chats.
+    // shouldCompact needs >100 lines, so nothing compacts mid-measurement.
+    for (let revision = 0; revision < 5; revision++) {
+      for (const chatId of chatIds) {
+        store.writeEntry(
+          chatId,
+          makeItem(chatId, {
+            title: `${chatId} v${revision}`,
+            runsSummary: [{ runId: `${chatId}-r${revision}`, diffFileCount: revision }]
+          })
+        )
+      }
+    }
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    expect(fs.readFileSync(indexPath, 'utf-8').trim().split('\n')).toHaveLength(100)
+
+    store.clearCache()
+    const { result, paths } = recordReads(() => store.readAll())
+
+    // One summary read per LIVE chat. Reading inside the record loop made this
+    // one per LINE (100), and 80 of those parses were discarded immediately.
+    const summaryReads = paths.filter((p) => p.includes('chat-list-summaries'))
+    expect(summaryReads).toHaveLength(20)
+    expect(new Set(summaryReads).size).toBe(20)
+
+    // The dedupe must still resolve the LAST line for each chat.
+    expect(Object.keys(result)).toHaveLength(20)
+    expect(result['chat-7']?.title).toBe('chat-7 v4')
+    expect(result['chat-7']?.runsSummary?.[0]?.runId).toBe('chat-7-r4')
+  })
+
+  it('resolves last-line-wins across tombstones when deduping the cold parse', () => {
+    const indexPath = path.join(dir, 'chat-list-index.jsonl')
+    const line = (chatId: string, entry: unknown): string =>
+      JSON.stringify({ chatId, entry }) + '\n'
+    fs.writeFileSync(
+      indexPath,
+      line('chat-a', makeItem('chat-a', { title: 'A v1' })) +
+        line('chat-b', makeItem('chat-b', { title: 'B v1' })) +
+        line('chat-a', null) +
+        line('chat-b', makeItem('chat-b', { title: 'B v2' })) +
+        line('chat-a', makeItem('chat-a', { title: 'A v2' })) +
+        line('chat-c', makeItem('chat-c', { title: 'C v1' })) +
+        line('chat-c', null),
+      'utf-8'
+    )
+
+    store.clearCache()
+    const all = store.readAll()
+    // chat-a: tombstoned then rewritten => the rewrite is the last word.
+    expect(all['chat-a']?.title).toBe('A v2')
+    expect(all['chat-b']?.title).toBe('B v2')
+    // chat-c: tombstoned last => stays gone.
+    expect(all['chat-c']).toBeUndefined()
+    expect(Object.keys(all).sort()).toEqual(['chat-a', 'chat-b'])
+  })
+
+  it('a read-only Host caches the legacy projection instead of re-parsing per call', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ 'chat-legacy': makeItem('chat-legacy', { title: 'Legacy chat' }) }),
+      'utf-8'
+    )
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+
+    const cold = recordReads(() => readOnly.readAll())
+    expect(cold.result['chat-legacy']?.title).toBe('Legacy chat')
+    expect(cold.paths.filter((p) => p === legacyPath)).toHaveLength(1)
+    expect(readOnly.isCacheValid()).toBe(true)
+
+    // Repeat reads must not touch the legacy file again.
+    const warm = recordReads(() => {
+      readOnly.readAll()
+      return readOnly.readEntry('chat-legacy')
+    })
+    expect(warm.result?.title).toBe('Legacy chat')
+    expect(warm.paths.filter((p) => p === legacyPath)).toHaveLength(0)
+  })
+
+  it('a JSONL arriving after a legacy-sourced cache invalidates that cache', () => {
+    const legacyPath = path.join(dir, 'chat-list-index.json')
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({ 'chat-x': makeItem('chat-x', { title: 'From legacy' }) }),
+      'utf-8'
+    )
+    const readOnly = new ChatListIndexStore(dir, { canWrite: () => false })
+    expect(readOnly.readAll()['chat-x']?.title).toBe('From legacy')
+    expect(readOnly.isCacheValid()).toBe(true)
+
+    // Another process migrates: the JSONL exists now and must win at once.
+    fs.writeFileSync(
+      path.join(dir, 'chat-list-index.jsonl'),
+      JSON.stringify({ chatId: 'chat-x', entry: makeItem('chat-x', { title: 'From JSONL' }) }) +
+        '\n',
+      'utf-8'
+    )
+    expect(readOnly.isCacheValid()).toBe(false)
+    expect(readOnly.readAll()['chat-x']?.title).toBe('From JSONL')
   })
 })

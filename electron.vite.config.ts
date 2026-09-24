@@ -47,6 +47,8 @@ export default defineConfig(({ mode }) => {
         rollupOptions: {
           input: {
             index: resolve('src/main/bootstrap.ts'),
+            threadCatalogueWorker: resolve('src/main/workers/threadCatalogueWorker.ts'),
+            threadCatalogueDecoder: resolve('src/main/workers/threadCatalogueDecoder.ts'),
             // utilityProcess entry: the 90-day external-activity scan runs
             // off the main event loop (see ExternalActivityWorkerScan.ts).
             externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts'),
@@ -60,6 +62,9 @@ export default defineConfig(({ mode }) => {
             // Bundle it as its own utilityProcess entry so the renderer's
             // 90-day heatmap only ever reads a main-process cache.
             workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts'),
+            // Detailed status/numstat parsing must not share Electron main's
+            // event loop with transcript delivery.
+            gitSnapshotWorker: resolve('src/main/workers/gitSnapshotWorker.ts'),
             // Work-provenance sampling brackets Git state and fingerprints
             // dirty paths. Keep that synchronous audited core out of main.
             workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts'),
@@ -68,7 +73,11 @@ export default defineConfig(({ mode }) => {
             // hot chat record can be ~16 MB. Unlike the scan workers above this
             // one is LONG-LIVED: a fork per chat save would cost more than the
             // fsync it avoids. Off unless TASKWRAITH_UTILITY_WRITE=1.
-            persistenceWriteWorker: resolve('src/main/workers/persistenceWriteWorker.ts')
+            persistenceWriteWorker: resolve('src/main/workers/persistenceWriteWorker.ts'),
+            // Portable Node worker, shared by Desktop and the standalone Host.
+            HostThreadRecordTransferWorkerEntry: resolve(
+              'src/host-runtime/HostThreadRecordTransferWorkerEntry.ts'
+            )
           },
           output: {
             // bootstrap.ts deliberately defers the full main graph behind a
@@ -82,6 +91,14 @@ export default defineConfig(({ mode }) => {
     },
     preload: {},
     renderer: {
+      build: {
+        rollupOptions: {
+          input: {
+            index: resolve('src/renderer/index.html'),
+            updater: resolve('src/renderer/updater.html')
+          }
+        }
+      },
       define: {
         __IOS_REMOTE_TRUE__: JSON.stringify(iosRemoteEnabled),
         __TASKWRAITH_ACTIVITY_REPORTING_CONFIGURED__: JSON.stringify(

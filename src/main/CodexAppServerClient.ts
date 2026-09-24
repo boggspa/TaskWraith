@@ -26,6 +26,7 @@ import {
   requireAbsoluteCodexHome
 } from './codex/CodexHome'
 import { isCodexAppServerThreadId } from './CodexSessionIdentity'
+import { providerRuntimeVersion } from '../shared/providerContextPolicy'
 import { waitForProviderOperationSettlement } from './run/ProviderOperationRegistry'
 export { isCodexAppServerThreadId }
 export {
@@ -201,6 +202,41 @@ export function compareCodexVersions(
 }
 
 type JsonRpcId = number | string
+
+/**
+ * A response-level JSON-RPC error returned by the Codex app-server.
+ *
+ * Keep the protocol code and data structured. Flattening this response into a
+ * plain Error message loses the only reliable distinction between a request
+ * Codex definitely rejected before admission (invalid method/params) and an
+ * internal/server failure that may have happened after the operation landed.
+ */
+export class CodexAppServerJsonRpcError extends Error {
+  readonly code: number
+  readonly data: unknown
+
+  constructor(error: { code: number; message?: unknown; data?: unknown }) {
+    const detail =
+      typeof error.message === 'string' && error.message.trim()
+        ? error.message.trim()
+        : `Codex app-server JSON-RPC error ${error.code}.`
+    super(detail)
+    this.name = 'CodexAppServerJsonRpcError'
+    this.code = error.code
+    this.data = error.data
+  }
+}
+
+/** A request fenced before any bytes were written to the app-server. */
+export class CodexAppServerNotRunningError extends Error {
+  readonly method: string
+
+  constructor(method: string) {
+    super(`Codex app-server is not running; ${method} was not sent.`)
+    this.name = 'CodexAppServerNotRunningError'
+    this.method = method
+  }
+}
 
 interface PendingRequest {
   resolve: (value: any) => void
@@ -513,7 +549,27 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
       '-c',
       `mcp_servers.TaskWraith.args=[${args}]`,
       '-c',
-      `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`
+      `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`,
+      // Codex refuses any MCP tool call that needs its approval when
+      // `approval_policy` is `never` ("MCP tool call requires approval, but
+      // approval policy is never", core/src/mcp_tool_call.rs) and offers no
+      // retry. A Full WS Access / Full Access seat resolves to exactly that
+      // policy via codexApprovalPolicyForMode, and the app-server transport
+      // carries only applyPatchApproval / execCommandApproval — there is no
+      // MCP approval RPC for TaskWraith to answer. Without this the brokered
+      // tools are unreachable on precisely the most-elevated presets.
+      //
+      // `approve` is safe here because it does not widen TaskWraith authority:
+      // every broker call still routes through requestAgenticServiceApproval
+      // and is recorded in the Approval Ledger. It only stops Codex from
+      // double-gating a call TaskWraith already governs. `auto` is NOT enough:
+      // it still classifies non-read-only MCP tools (including delegate_wave)
+      // as approval-required, which strands them when the thread-level policy
+      // is `never`. Deliberately NOT applied to user MCP servers below — those
+      // have no TaskWraith mediation. The official Codex config values are
+      // auto|prompt|writes|approve.
+      '-c',
+      `mcp_servers.TaskWraith.default_tools_approval_mode="approve"`
     )
   }
   for (const server of config.userMcpServers ?? []) {
@@ -637,6 +693,12 @@ export class CodexAppServerClient {
 
   supportsNativeGoalControl(): boolean {
     return codexInitializeAdvertisesNativeGoalControl(this.initializeResult)
+  }
+
+  getRuntimeVersion(): string | undefined {
+    const init = isRecord(this.initializeResult) ? this.initializeResult : {}
+    const server = isRecord(init.serverInfo) ? init.serverInfo : {}
+    return providerRuntimeVersion(server.version) || providerRuntimeVersion(init.userAgent)
   }
 
   setNotificationHandler(handler: ((message: any) => void) | null) {
@@ -787,7 +849,7 @@ export class CodexAppServerClient {
 
   async request<T = any>(method: string, params: any = {}, timeoutMs = 30_000): Promise<T> {
     if (!this.proc || this.proc.killed || !this.proc.stdin.writable) {
-      throw new Error('Codex app-server is not running.')
+      throw new CodexAppServerNotRunningError(method)
     }
     const requestThreadId =
       params && typeof params.threadId === 'string' && isCodexAppServerThreadId(params.threadId)
@@ -800,6 +862,13 @@ export class CodexAppServerClient {
           `Codex thread ${requestThreadId} is not available in TaskWraith's private Codex home (${continuity}).`
         )
       }
+    }
+
+    // Thread continuity can await disk migration. Re-check immediately before
+    // allocating a pending request so a daemon that stopped during that await
+    // is reported as definitely not sent, rather than timing out ambiguously.
+    if (!this.proc || this.proc.killed || !this.proc.stdin.writable) {
+      throw new CodexAppServerNotRunningError(method)
     }
 
     const id = this.nextId++
@@ -1157,7 +1226,18 @@ export class CodexAppServerClient {
       clearTimeout(pending.timeout)
       this.pending.delete(id)
       if (parsed.error) {
-        pending.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)))
+        const error = parsed.error
+        if (isRecord(error) && typeof error.code === 'number' && Number.isFinite(error.code)) {
+          pending.reject(
+            new CodexAppServerJsonRpcError({
+              code: error.code,
+              message: error.message,
+              data: error.data
+            })
+          )
+        } else {
+          pending.reject(new Error(JSON.stringify(error)))
+        }
       } else {
         pending.resolve(parsed.result)
       }

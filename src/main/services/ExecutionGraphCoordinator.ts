@@ -3,13 +3,19 @@ import type { RunSessionChangeEvent, RunSessionStatus } from '../RunManager'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import type {
   ExecutionEffect,
+  ExecutionGraphRevision,
+  ExecutionOwnerRef,
   ExecutionPermissionCeilingRef,
   ExecutionStepDefinition,
   ExecutionStepResult,
+  ExecutionTenantRef,
   StepActivation,
   StepAttempt
 } from '../executionGraph/ExecutionGraphModel'
-import { stableExecutionGraphStringify } from '../executionGraph/ExecutionGraphCompiler'
+import {
+  executionGraphRevisionRef,
+  stableExecutionGraphStringify
+} from '../executionGraph/ExecutionGraphCompiler'
 import {
   executionTopologyFrontier,
   isExecutionRunTerminal,
@@ -83,8 +89,24 @@ export interface MaterializeExecutionQueueJobInput {
   readonly rootChatId: string
   readonly provider: ProviderId
   readonly runTemplate: ExecutionGraphRunTemplate
+  /** Exact structured predecessor results bound through this step's data edges. */
+  readonly inputs?: Readonly<Record<string, ExecutionStepResult>>
   /** Main-minted authority root inherited from the execution creation event. */
   readonly permissionCeilingAuthorityDigest: string
+}
+
+export interface StartExecutionGraphInput {
+  readonly executionId: string
+  readonly title: string
+  readonly workspaceId: string
+  readonly rootChatId: string
+  readonly tenant: ExecutionTenantRef
+  readonly revision: ExecutionGraphRevision
+  readonly permissionCeilingRef: ExecutionPermissionCeilingRef
+  readonly anchorRunRef?: string
+  /** The thread/seat answerable for this execution. Unowned graphs never
+   * dispatch — see the owner gate in `drainOne`. */
+  readonly owner?: ExecutionOwnerRef
 }
 
 /**
@@ -114,8 +136,16 @@ export interface ExecutionGraphCoordinatorRepository {
   readExecutionEvents: ExecutionGraphRepository['readExecutionEvents']
   getExecution: ExecutionGraphRepository['getExecution']
   listExecutions: ExecutionGraphRepository['listExecutions']
+  getRevision: ExecutionGraphRepository['getRevision']
   getRunTemplate: ExecutionGraphRepository['getRunTemplate']
 }
+
+/**
+ * Whether the thread/seat accountable for an execution is still reachable.
+ * Deliberately two-valued: an execution either has somewhere to report back to
+ * or it does not. There is no "detached" state — a graph with no owner pauses.
+ */
+export type ExecutionGraphOwnerStatus = 'live' | 'missing'
 
 export interface ExecutionGraphCoordinatorDeps {
   repository: ExecutionGraphCoordinatorRepository
@@ -136,6 +166,15 @@ export interface ExecutionGraphCoordinatorDeps {
    * RunManager event emitted synchronously while this call runs is also
    * authoritative confirmation.
    */
+  /**
+   * Main-owned truth for whether a graph's accountable thread/seat is still
+   * present and able to receive its result. `missing` means the graph has
+   * nobody to answer for it and must pause rather than dispatch further work.
+   * This checks the THREAD only. For an anchor-less run-initiated graph the
+   * initiating run terminalizing is handled separately by the owning-run
+   * tether, which cancels the graph outright rather than pausing it.
+   */
+  resolveOwnerStatus: (owner: ExecutionOwnerRef) => ExecutionGraphOwnerStatus
   cancelActiveRun: (runId: string) => Promise<boolean> | boolean
   /** Notify the main-owned dispatcher after a queued attempt is durable. */
   onAttemptQueued?: (runId: string) => void
@@ -144,7 +183,28 @@ export interface ExecutionGraphCoordinatorDeps {
   createId?: () => string
 }
 
+/**
+ * A user-authored Stack is owned by the thread it was written in, and by the
+ * seat that will execute it. It has no initiating agent turn, so it carries an
+ * anchor run only when main bound one.
+ */
+function stackOwner(input: AppendExecutionStackStepInput): ExecutionOwnerRef {
+  return {
+    threadId: input.rootChatId,
+    seatId: input.model?.trim() ? `${input.provider}:${input.model.trim()}` : input.provider,
+    ...(input.anchorRunRef ? { initiatingRunId: input.anchorRunRef } : {})
+  }
+}
+
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
+const CONCURRENCY_SLOT_ACTIVATION_STATES = new Set([
+  'claimed',
+  'queued',
+  'running',
+  'waiting_input',
+  'waiting_approval',
+  'waiting_retry'
+])
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
@@ -193,6 +253,45 @@ function startupRecoveryUncertainty(job: RunQueueJob): string | undefined {
     return 'Startup recovery found an interrupted steer promotion whose dispatch boundary is uncertain.'
   }
   return 'Startup recovery rewrote the claimed queue job without authoritative provider outcome evidence.'
+}
+
+/**
+ * Admission profile for the first structured-data graph runtime. It remains
+ * deliberately narrower than the generic compiler: solo agents, all-joins,
+ * and terminal outputs only; one attempt; no unenforced time/token/cost limits.
+ */
+function assertBoundExecutionGraphSupported(revision: ExecutionGraphRevision): void {
+  if (revision.steps.length === 0) throw new Error('Bound execution graph requires steps.')
+  if (
+    revision.limits.maxWallClockMs !== undefined ||
+    revision.limits.maxTokens !== undefined ||
+    revision.limits.maxCostUsd !== undefined
+  ) {
+    throw new Error('Bound execution graph cannot start with unenforced budgets.')
+  }
+  for (const step of revision.steps) {
+    if (step.retry.maxAttempts !== 1 || step.retry.backoffMs !== undefined) {
+      throw new Error('Bound execution graph currently admits one attempt per step.')
+    }
+    if (step.timeoutMs !== undefined) {
+      throw new Error('Bound execution graph cannot start with an unenforced step timeout.')
+    }
+    if (step.kind === 'join') {
+      if (step.join.mode !== 'all') {
+        throw new Error('Bound execution graph currently admits only all-joins.')
+      }
+      continue
+    }
+    if (step.kind !== 'solo_agent' && step.kind !== 'output') {
+      throw new Error(`Bound execution graph cannot execute ${step.kind} steps.`)
+    }
+    if (step.kind === 'output' && (step.inputs?.length !== 1 || step.inputs[0]?.required !== true)) {
+      throw new Error('Bound execution graph output steps require one required data input.')
+    }
+    if (step.kind === 'solo_agent' && !step.agent.runTemplateRef?.trim()) {
+      throw new Error('Bound execution graph solo-agent steps require a run template.')
+    }
+  }
 }
 
 function canonicalPart(value: string): string {
@@ -271,6 +370,24 @@ function terminalSession(status: RunSessionStatus): status is 'completed' | 'fai
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
+function owningRunTerminalReason(status: 'completed' | 'failed' | 'cancelled'): string {
+  if (status === 'completed') return 'The owning run ended before this execution settled.'
+  if (status === 'failed') return 'The owning run failed before this execution settled.'
+  return 'Cancelled with the owning parent run.'
+}
+
+/**
+ * Whether an execution's life is tethered to the run that started it. Only
+ * anchor-less run-initiated graphs qualify: `ultra_task` instructs the parent
+ * to hold its turn open (`ensemble_await`) and synthesize, so the graph must
+ * never outlive that turn. An anchored Stack's initiating run is a trigger
+ * whose completion STARTS the graph, and a user-authored Stack has no
+ * initiating run at all — both stay owned by their thread instead.
+ */
+function tetheredOwningRunId(projection: ExecutionRunProjection): string | undefined {
+  return projection.anchorRunRef ? undefined : projection.owner?.initiatingRunId
+}
+
 /**
  * Main-owned V1 scheduler for implicit linear Stacks.
  *
@@ -283,6 +400,18 @@ export class ExecutionGraphCoordinator {
   private readonly now: () => string
   private readonly createId: () => string
   private readonly draining = new Set<string>()
+  /**
+   * Graph runs this process's main-owned dispatcher has leased and not seen
+   * fail before a provider session; see `noteDispatchLease`.
+   */
+  private readonly dispatchLeasedRunIds = new Set<string>()
+  /**
+   * Executions this process created. Memory that dies with the process, so no
+   * earlier process, and no pid reused since, can ever be counted as this one.
+   * Startup recovery reconciles what a previous process left behind and skips
+   * these: they are live here, and their own lifecycle owns them.
+   */
+  private readonly createdExecutionIds = new Set<string>()
   private readonly cancellationOperations = new Map<string, Promise<void>>()
   private readonly cancellationContexts = new Map<
     string,
@@ -332,6 +461,90 @@ export class ExecutionGraphCoordinator {
   }
 
   /**
+   * Start a precompiled graph whose revision is already durably registered in
+   * the repository. Product adapters (UltraTask, Workflow, Audit) own graph
+   * construction; the coordinator owns only exact activation/runtime state.
+   */
+  startExecutionGraph(input: StartExecutionGraphInput): ExecutionRunProjection {
+    assertBoundExecutionGraphSupported(input.revision)
+    for (const step of input.revision.steps) {
+      if (
+        step.permissionRequestRef &&
+        (step.permissionRequestRef.ceilingReferenceId !== input.permissionCeilingRef.referenceId ||
+          !step.permissionRequestRef.authorityDigest?.trim())
+      ) {
+        throw new Error(
+          `Execution graph step "${step.id}" has an invalid permission request binding.`
+        )
+      }
+    }
+    const baseRevision = executionGraphRevisionRef(input.revision)
+    const timestamp = this.now()
+    const activations = input.revision.steps.map((step) => ({
+      executionId: input.executionId,
+      kind: 'activation_created' as const,
+      activationId: this.id('activation'),
+      stepId: step.id,
+      timestamp
+    }))
+    const state = input.anchorRunRef ? 'waiting' : 'running'
+    const projection = this.repository.createExecution(
+      {
+        executionId: input.executionId,
+        kind: 'execution_created',
+        title: input.title,
+        workspaceId: input.workspaceId,
+        rootChatId: input.rootChatId,
+        tenant: input.tenant,
+        baseRevision,
+        permissionCeilingRef: input.permissionCeilingRef,
+        ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
+        ...(input.owner ? { owner: input.owner } : {}),
+        timestamp
+      },
+      [
+        ...activations,
+        {
+          executionId: input.executionId,
+          kind: 'execution_state_changed',
+          state,
+          reason: input.anchorRunRef
+            ? 'Waiting for the execution anchor run to finish.'
+            : 'Compiled execution graph is ready.',
+          timestamp
+        }
+      ]
+    )
+    this.createdExecutionIds.add(projection.executionId)
+    this.changed(
+      projection,
+      'execution-created',
+      input.revision.steps.map((step) => step.id)
+    )
+    if (!input.anchorRunRef) this.drain(input.executionId)
+    return this.requireExecution(input.executionId)
+  }
+
+  /**
+   * The main-owned dispatcher leased this exact graph run in THIS process.
+   *
+   * Startup recovery reconciles what a previous process left behind, and it
+   * reads a claimed attempt whose queue row is past `queued` as a dispatch that
+   * may have crossed the side-effect boundary before restart, so it parks the
+   * stack. A row leased here is live here instead: the boot sweep can lease a
+   * queued attempt before the deferred launch pass runs, and a later pass can
+   * meet a stack dispatched since. Recovery leaves such an attempt to its run
+   * lifecycle rather than parking a stack whose provider run carries on, but
+   * only while its queue row is live. A row that has settled while the attempt
+   * has not means the settlement could not be written, and a dispatch that
+   * failed before its session withdraws the note (see
+   * `recordPreSessionDispatchFailure`), so either is parked like any other.
+   */
+  noteDispatchLease(runId: string): void {
+    this.dispatchLeasedRunIds.add(runId)
+  }
+
+  /**
    * Fail-closed main-boundary check for the lease and provider-start seams.
    * Call this immediately before either boundary for graph-owned queue rows.
    */
@@ -373,6 +586,8 @@ export class ExecutionGraphCoordinator {
    * success/failure result.
    */
   recordPreSessionDispatchFailure(runId: string, reason: string): ExecutionRunProjection {
+    // The dispatch this lease stood for is over, whatever can be written below.
+    this.dispatchLeasedRunIds.delete(runId)
     const detail = reason.trim()
     if (!detail) throw new Error('Pre-session dispatch failure requires a reason.')
     const job = this.deps.getQueueJob(runId)
@@ -518,6 +733,7 @@ export class ExecutionGraphCoordinator {
         workspaceId: input.workspaceId,
         tenant: { kind: 'stack', tenantId: input.rootChatId },
         rootChatId: input.rootChatId,
+        owner: stackOwner(input),
         ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
         permissionCeilingRef: input.permissionCeilingRef,
         timestamp: this.now()
@@ -615,6 +831,7 @@ export class ExecutionGraphCoordinator {
     }
     if (creationInput) {
       projection = this.repository.createExecution(creationInput, events)
+      this.createdExecutionIds.add(projection.executionId)
       this.changed(projection, 'execution-created')
     } else {
       this.append(projection!, events)
@@ -711,6 +928,30 @@ export class ExecutionGraphCoordinator {
         if (disposition !== 'rejected') disposition = 'accepted'
         continue
       }
+      if (
+        tetheredOwningRunId(projection) === runId &&
+        projection.owner &&
+        terminalSession(event.session.status)
+      ) {
+        // The owning turn is this graph's lease on life. Whatever ended it —
+        // natural completion, failure, or cancel — the graph goes down with it
+        // rather than keep agents working for a parent that can no longer
+        // receive, steer, or stop them.
+        if (event.session.appChatId !== projection.owner.threadId) {
+          this.requireExecutionAction(
+            projection,
+            'The owning run terminal event did not match the durable owner thread.'
+          )
+          disposition = 'rejected'
+          continue
+        }
+        this.cancelWithOwningRun(
+          projection.executionId,
+          owningRunTerminalReason(event.session.status)
+        )
+        if (disposition !== 'rejected') disposition = 'accepted'
+        continue
+      }
       const attempt = Object.values(projection.attempts).find(
         (candidate) => candidate.providerRunRef === runId
       )
@@ -721,7 +962,11 @@ export class ExecutionGraphCoordinator {
         continue
       }
       if (disposition !== 'rejected') disposition = 'accepted'
-      if (event.session.status === 'starting' || event.session.status === 'running') {
+      // `starting` is provisional lifecycle ownership, not provider execution.
+      // Keep the attempt queued so the adapter launch boundary can still
+      // validate and adopt it. Only a real running session consumes the graph
+      // step's active state.
+      if (event.session.status === 'running') {
         this.markAttemptRunning(projection, attempt)
       } else if (terminalSession(event.session.status)) {
         const terminal = resolveExecutionGraphTerminalBarrier({
@@ -757,6 +1002,79 @@ export class ExecutionGraphCoordinator {
     })
     this.cancellationOperations.set(executionId, operation)
     return operation
+  }
+
+  /**
+   * Fire the owning-run tether from a synchronous observation path. Cleanup
+   * failures inside the cancellation park attempts on their own; this catch
+   * only covers the ledger refusing the operation outright, where pausing
+   * loudly beats losing the tether silently.
+   */
+  private cancelWithOwningRun(executionId: string, reason: string): void {
+    this.cancelExecution(executionId, reason).catch((error) => {
+      try {
+        this.requireExecutionAction(
+          this.requireExecution(executionId),
+          `Cancellation with the owning run failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      } catch {
+        // The ledger refused both writes; startup recovery reconciles later.
+      }
+    })
+  }
+
+  /**
+   * Bring a paused graph back into flight.
+   *
+   * Until this existed, the ONLY thing that re-evaluated a `requires_action`
+   * execution was `recover()` at app start — so a thread that came back inside
+   * the same session left its graph stopped with no route forward but an app
+   * restart. The owner's acceptance test asks for a graph that "can be
+   * cancelled or resumed by the user"; cancel already had a control and this is
+   * the other half.
+   *
+   * Ownership is re-checked FIRST, and refusal is loud rather than silent:
+   * resuming into a missing owner would simply re-pause on the very next drain,
+   * and a control that appears to do nothing is worse than one that says why.
+   *
+   * Paused activations go back to `ready` (the only non-terminal transition out
+   * of `requires_action`), which is what lets the next drain claim them and, for
+   * a step that failed, create a fresh attempt.
+   */
+  resumeExecution(executionId: string, reason = 'Resumed by user.'): ExecutionRunProjection {
+    const projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) {
+      throw new Error(`Execution ${executionId} has already finished.`)
+    }
+    if (projection.state !== 'requires_action') {
+      throw new Error(`Execution ${executionId} is not paused.`)
+    }
+    const ownerBlock = this.ownerDispatchBlock(projection)
+    if (ownerBlock) throw new Error(ownerBlock)
+
+    const events: ExecutionRunEventInput[] = []
+    for (const activation of Object.values(projection.activations)) {
+      if (activation.state !== 'requires_action') continue
+      events.push({
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'ready',
+        reason,
+        timestamp: this.now()
+      })
+    }
+    events.push({
+      executionId,
+      kind: 'execution_state_changed',
+      state: 'running',
+      reason,
+      timestamp: this.now()
+    })
+    this.append(projection, events)
+    this.changed(this.requireExecution(executionId), 'execution-progressed')
+    this.drain(executionId)
+    return this.requireExecution(executionId)
   }
 
   private async cancelExecutionOnce(executionId: string, reason: string): Promise<void> {
@@ -992,10 +1310,101 @@ export class ExecutionGraphCoordinator {
     return this.requireExecution(executionId)
   }
 
+  /**
+   * Close a stack the user has given up on, so startup recovery stops
+   * reconciling it at every launch.
+   *
+   * Cancellation runs first because it owns exact transport cleanup. It
+   * refuses silently when it cannot PROVE containment, and for a stack whose
+   * queue rows were pruned long ago that proof is unobtainable — which is
+   * precisely the unowned legacy graph that re-raises at every launch. Archival
+   * then closes the ledger with the ordinary cancelled events, but only when
+   * nothing can still be in flight: every open activation must carry no
+   * attempt or a terminal one, and no owned queue row may still be leaseable.
+   * Anything else is refused with the reason, never closed over.
+   */
+  async archiveExecution(
+    executionId: string,
+    reason = 'Archived by user.'
+  ): Promise<ExecutionRunProjection> {
+    let projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) return projection
+    await this.cancelExecution(executionId, reason)
+    projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) return projection
+
+    const events: ExecutionRunEventInput[] = []
+    for (const activation of Object.values(projection.activations)) {
+      if (isStepActivationTerminal(activation.state)) continue
+      const attempt = latestAttemptForActivation(projection, activation)
+      if (attempt && !isStepAttemptTerminal(attempt.state)) {
+        throw new Error(
+          `Archive refused: step "${activation.stepId}" still has an unsettled attempt. Cancel the Stack first.`
+        )
+      }
+      const runId = attempt?.providerRunRef
+      const job = runId ? this.deps.getQueueJob(runId) : null
+      if (
+        attempt &&
+        job &&
+        !TERMINAL_QUEUE_STATUSES.has(job.status) &&
+        this.queueJobOwnsAttempt(projection, attempt, job)
+      ) {
+        throw new Error(
+          `Archive refused: step "${activation.stepId}" still holds a live queue row. Cancel the Stack first.`
+        )
+      }
+      events.push({
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'cancelled',
+        reason,
+        timestamp: this.now()
+      })
+    }
+    events.push({
+      executionId,
+      kind: 'execution_state_changed',
+      state: 'cancelled',
+      reason,
+      timestamp: this.now()
+    })
+    this.append(projection, events)
+    projection = this.requireExecution(executionId)
+    this.changed(projection, 'execution-terminal')
+    return projection
+  }
+
   recover(): readonly ExecutionGraphRecoveryDiagnostic[] {
-    const allExecutions = this.listExecutions({ includeTerminal: true })
+    return this.recoverProjections(this.listExecutions({ includeTerminal: true }))
+  }
+
+  /**
+   * Re-run startup recovery for exactly these executions, through the same
+   * verify-then-append ledger path `recover()` takes. A refused recovery write
+   * used to be reported once at launch and never retried inside the session,
+   * so the stack sat paused until the next restart. An id that no longer
+   * resolves (deleted, or quarantined by the repository) yields no diagnostic
+   * here; quarantine is reported on the repository's own channel.
+   */
+  recoverExecutions(executionIds: readonly string[]): readonly ExecutionGraphRecoveryDiagnostic[] {
+    const projections = [...new Set(executionIds)].flatMap((executionId) => {
+      const projection = this.repository.getExecution(executionId)
+      return projection ? [projection] : []
+    })
+    return this.recoverProjections(projections)
+  }
+
+  private recoverProjections(
+    projections: readonly ExecutionRunProjection[]
+  ): readonly ExecutionGraphRecoveryDiagnostic[] {
     const diagnostics: ExecutionGraphRecoveryDiagnostic[] = []
-    for (const projection of allExecutions) {
+    for (const projection of projections) {
+      // Created by this process, so not left behind by a previous one: a turn
+      // here can start a graph before the launch pass has finished its owner
+      // preload, and that graph's own lifecycle owns it.
+      if (this.createdExecutionIds.has(projection.executionId)) continue
       try {
         this.reconcileTerminalAttemptQueueRows(projection)
         // The graph ledger is authoritative. If it is already terminal, no
@@ -1019,6 +1428,26 @@ export class ExecutionGraphCoordinator {
 
   private recoverExecution(projection: ExecutionRunProjection): void {
     if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
+
+    // No provider turn survives a restart, so a graph tethered to its owning
+    // run has necessarily lost it: close the graph instead of resuming
+    // dispatch for a parent that no longer exists to receive the result.
+    if (tetheredOwningRunId(projection)) {
+      this.cancelWithOwningRun(
+        projection.executionId,
+        'The owning run did not survive the restart.'
+      )
+      return
+    }
+
+    // Restart is the moment an orphaned graph would otherwise resume dispatching
+    // into a thread that no longer exists. Check accountability before anything
+    // else, so a lost owner surfaces as attention rather than as silent work.
+    const ownerBlock = this.ownerDispatchBlock(projection)
+    if (ownerBlock) {
+      this.requireExecutionAction(projection, `${ownerBlock} Recovered after restart.`)
+      return
+    }
 
     if (this.isWaitingForAnchor(projection)) {
       this.recoverAnchor(projection)
@@ -1071,6 +1500,15 @@ export class ExecutionGraphCoordinator {
         break
       }
       const job = this.deps.getQueueJob(providerRunRef)
+      if (
+        job &&
+        !TERMINAL_QUEUE_STATUSES.has(job.status) &&
+        this.dispatchLeasedRunIds.has(providerRunRef)
+      ) {
+        // Leased by this process and still live: its run lifecycle owns it.
+        changed = true
+        continue
+      }
       if (!job) {
         this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
         changed = true
@@ -1147,6 +1585,15 @@ export class ExecutionGraphCoordinator {
           return
         }
 
+        // Accountability gate. Sits above every claim so that an execution
+        // without a reachable owner creates no activation, no attempt, and no
+        // queue row — it pauses for a human instead of running unattributed.
+        const ownerBlock = this.ownerDispatchBlock(projection)
+        if (ownerBlock) {
+          this.requireExecutionAction(projection, ownerBlock)
+          return
+        }
+
         const dormant = Object.values(projection.activations).find(
           (activation) => activation.state === 'dormant'
         )
@@ -1201,8 +1648,17 @@ export class ExecutionGraphCoordinator {
             return
           }
           if (step.kind === 'solo_agent') {
+            const occupiedSlots = Object.values(projection.activations).filter((activation) =>
+              CONCURRENCY_SLOT_ACTIVATION_STATES.has(activation.state)
+            ).length
+            if (occupiedSlots >= this.concurrencyLimit(projection)) return
             this.claimSoloStep(projection, ready, step)
-            return
+            // A graph may expose several independent roots at once. Keep
+            // draining until its compiled concurrency ceiling is full; the
+            // provider queue owns the actual launches from here. Returning
+            // after the first claim silently serialized UltraTask scouts even
+            // though their revision explicitly admitted parallel execution.
+            continue
           }
           if (step.kind === 'human_gate') {
             this.append(projection, [
@@ -1233,16 +1689,47 @@ export class ExecutionGraphCoordinator {
             )
             return
           }
-          if (step.kind === 'deterministic_check' || step.kind === 'join') {
+          if (step.kind === 'deterministic_check') {
             this.requireActivationAction(
               projection,
               ready,
-              `${step.kind === 'join' ? 'Join' : 'Deterministic check'} executor is not bound for this V1 Stack.`
+              'Deterministic check executor is not bound for this execution graph.'
             )
             return
           }
-          this.completeDeterministicStep(projection, ready)
-          continue
+          if (step.kind === 'join') {
+            this.completeDeterministicStep(projection, ready)
+            continue
+          }
+          if (step.kind === 'output') {
+            const boundInputs = this.resolveStepInputResults(projection, step)
+            if (!boundInputs.ok) {
+              this.requireActivationAction(projection, ready, boundInputs.reason)
+              return
+            }
+            const sourceResult = Object.values(boundInputs.inputs)[0]
+            this.completeDeterministicStep(
+              projection,
+              ready,
+              sourceResult
+                ? {
+                    schemaVersion: 1,
+                    ...(sourceResult.output !== undefined ? { output: sourceResult.output } : {}),
+                    ...(sourceResult.summary ? { summary: sourceResult.summary } : {}),
+                    artifactRefs: [],
+                    trust: sourceResult.trust,
+                    ...(sourceResult.evidenceRefs
+                      ? { evidenceRefs: sourceResult.evidenceRefs }
+                      : {}),
+                    ...(sourceResult.providerRunRef
+                      ? { providerRunRef: sourceResult.providerRunRef }
+                      : {}),
+                    ...(sourceResult.threadRef ? { threadRef: sourceResult.threadRef } : {})
+                  }
+                : undefined
+            )
+            continue
+          }
         }
 
         const activations = Object.values(projection.activations)
@@ -1273,6 +1760,11 @@ export class ExecutionGraphCoordinator {
     activation: StepActivation,
     step: Extract<ExecutionStepDefinition, { kind: 'solo_agent' }>
   ): void {
+    const boundInputs = this.resolveStepInputResults(projection, step)
+    if (!boundInputs.ok) {
+      this.requireActivationAction(projection, activation, boundInputs.reason)
+      return
+    }
     const templateRef = step.agent.runTemplateRef
     const template = templateRef ? this.repository.getRunTemplate(templateRef) : undefined
     if (!template) {
@@ -1281,6 +1773,15 @@ export class ExecutionGraphCoordinator {
     }
     const attemptId = this.id('attempt')
     const runId = this.id('graph-run')
+    const permissionAuthorityDigest = this.permissionAuthorityDigestForStep(projection, step)
+    if (!permissionAuthorityDigest) {
+      this.requireActivationAction(
+        projection,
+        activation,
+        'Graph step permission request is unavailable or exceeds the execution ceiling.'
+      )
+      return
+    }
 
     // Persist the exact graph <-> queue run correlation before touching the
     // queue store. A crash can leave a claimed attempt without a job, which is
@@ -1326,7 +1827,8 @@ export class ExecutionGraphCoordinator {
         rootChatId: projection.rootChatId!,
         provider: step.agent.provider as ProviderId,
         runTemplate: template,
-        permissionCeilingAuthorityDigest: projection.permissionCeilingRef!.authorityDigest
+        ...(Object.keys(boundInputs.inputs).length > 0 ? { inputs: boundInputs.inputs } : {}),
+        permissionCeilingAuthorityDigest: permissionAuthorityDigest
       })
     } catch (error) {
       this.requireAction(
@@ -1364,6 +1866,83 @@ export class ExecutionGraphCoordinator {
       return
     }
     this.appendAttemptQueued(projection, attempt)
+  }
+
+  private resolveStepInputResults(
+    projection: ExecutionRunProjection,
+    step: ExecutionStepDefinition
+  ): { ok: true; inputs: Record<string, ExecutionStepResult> } | { ok: false; reason: string } {
+    const inputs: Record<string, ExecutionStepResult> = {}
+    for (const port of step.inputs || []) {
+      const edges = projection.topology.edges.filter(
+        (edge): edge is Extract<typeof edge, { kind: 'data' }> =>
+          edge.kind === 'data' && edge.to.stepId === step.id && edge.to.port === port.name
+      )
+      if (edges.length === 0) {
+        if (port.required) {
+          return {
+            ok: false,
+            reason: `Required graph input "${port.name}" has no data binding.`
+          }
+        }
+        continue
+      }
+      if (edges.length !== 1) {
+        return {
+          ok: false,
+          reason: `Graph input "${port.name}" has ${edges.length} data bindings; exactly one is required.`
+        }
+      }
+      const edge = edges[0]!
+      const sourceActivation = latestActivationForStep(projection, edge.from.stepId)
+      const sourceAttempt = sourceActivation
+        ? latestAttemptForActivation(projection, sourceActivation)
+        : undefined
+      if (
+        sourceActivation?.state !== 'succeeded' ||
+        sourceAttempt?.state !== 'succeeded' ||
+        !sourceAttempt.result
+      ) {
+        return {
+          ok: false,
+          reason:
+            `Graph input "${port.name}" is missing the terminal structured result from ` +
+            `step "${edge.from.stepId}".`
+        }
+      }
+      inputs[port.name] = sourceAttempt.result
+    }
+    return { ok: true, inputs }
+  }
+
+  private permissionAuthorityDigestForStep(
+    projection: ExecutionRunProjection,
+    step: ExecutionStepDefinition
+  ): string | null {
+    const ceiling = projection.permissionCeilingRef
+    if (!ceiling) return null
+    const request = step.permissionRequestRef
+    if (!request) return ceiling.authorityDigest
+    if (
+      request.ceilingReferenceId !== ceiling.referenceId ||
+      !request.authorityDigest?.trim()
+    ) {
+      return null
+    }
+    return request.authorityDigest
+  }
+
+  private concurrencyLimit(projection: ExecutionRunProjection): number {
+    const ref = projection.baseRevision
+    const revision = ref ? this.repository.getRevision(ref.graphId, ref.revision) : undefined
+    if (!revision || revision.definitionDigest !== ref?.definitionDigest) {
+      // Append-only user Stacks predate persisted compiled revisions and are
+      // deliberately serial. Workflow graphs (including UltraTask) must have
+      // their immutable revision available before concurrency can be trusted.
+      if (projection.tenant?.kind === 'stack') return 1
+      throw new Error('Execution graph concurrency authority is unavailable.')
+    }
+    return revision.limits.maxConcurrentSteps
   }
 
   private appendAttemptQueued(projection: ExecutionRunProjection, attempt: StepAttempt): void {
@@ -1426,7 +2005,8 @@ export class ExecutionGraphCoordinator {
       binding.activationId === activation.id &&
       binding.attemptId === attempt.id &&
       binding.runTemplateRef === step.agent.runTemplateRef &&
-      binding.permissionCeilingAuthorityDigest === projection.permissionCeilingRef.authorityDigest
+      binding.permissionCeilingAuthorityDigest ===
+        this.permissionAuthorityDigestForStep(projection, step)
     )
   }
 
@@ -1832,6 +2412,26 @@ export class ExecutionGraphCoordinator {
     )
   }
 
+  /**
+   * Why an execution may not dispatch right now, or null if it may.
+   *
+   * Ownership is mandatory and checked on every drain, not only at creation: a
+   * thread can be deleted while its graph is mid-flight, and the next stage
+   * must not be dispatched into a thread that can no longer answer for it.
+   */
+  private ownerDispatchBlock(projection: ExecutionRunProjection): string | null {
+    if (!projection.owner) {
+      return 'This execution names no owning thread, so no seat is accountable for it.'
+    }
+    return this.deps.resolveOwnerStatus(projection.owner) === 'missing'
+      ? 'The owning thread is no longer available to receive this execution\u2019s result.'
+      : null
+  }
+
+  private requireExecutionAction(projection: ExecutionRunProjection, reason: string): void {
+    this.requireAnchorAction(projection, reason)
+  }
+
   private requireAnchorAction(projection: ExecutionRunProjection, reason: string): void {
     this.append(projection, [
       {
@@ -1847,10 +2447,11 @@ export class ExecutionGraphCoordinator {
 
   private completeDeterministicStep(
     projection: ExecutionRunProjection,
-    activation: StepActivation
+    activation: StepActivation,
+    suppliedResult?: ExecutionStepResult
   ): void {
     const attemptId = this.id('attempt')
-    const result: ExecutionStepResult = {
+    const result: ExecutionStepResult = suppliedResult || {
       schemaVersion: 1,
       artifactRefs: [],
       trust: 'deterministic'

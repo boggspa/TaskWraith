@@ -120,6 +120,37 @@ describe('closeoutSummaryDigest', () => {
     expect(digest.warnings).toEqual(['Sandbox denied one command.'])
   })
 
+  it('keeps an exact recorded K2.7 model distinct from the current K2.8 route', () => {
+    const recordedRun = {
+      runId: 'run-kimi-recorded',
+      provider: 'kimi',
+      startedAt: '2026-08-09T22:02:00.000Z',
+      status: 'success',
+      actualModel: 'kimi-k2.7-code'
+    } satisfies ChatRun
+    const currentRun = {
+      ...recordedRun,
+      runId: 'run-kimi-current',
+      startedAt: '2026-09-12T12:00:00.000Z',
+      actualModel: 'kimi-k2.8-preview'
+    } satisfies ChatRun
+
+    expect(
+      buildRunCloseoutSummaryDigest({
+        chat: chat({ runs: [recordedRun] }),
+        run: recordedRun,
+        completedAt: '2026-08-09T22:03:00.000Z'
+      }).model
+    ).toBe('K2.7 Coding')
+    expect(
+      buildRunCloseoutSummaryDigest({
+        chat: chat({ runs: [currentRun] }),
+        run: currentRun,
+        completedAt: '2026-09-12T12:01:00.000Z'
+      }).model
+    ).toBe('K2.8 Preview')
+  })
+
   it('omits empty sections and clamps oversized text', () => {
     const run: ChatRun = {
       runId: 'run-2',

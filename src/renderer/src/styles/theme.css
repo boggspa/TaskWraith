@@ -213,8 +213,15 @@
   --provider-grok-color: #757575;
   /* Cursor (Composer 2.5) — saturated golden yellow (leans yellow, not orange). */
   --provider-cursor-color: #8C7508;
-  /* Ollama / Local — green-teal for on-device inference. */
-  --provider-ollama-color: #1A8562;
+  /* Ollama / Local — walnut brown for on-device inference. The old green-teal
+   * #1A8562 sat only CIEDE2000 dE 7.89 from Xiaomi's #008844, barely over the
+   * dE 7.6 bar this palette uses for a new hue and the tightest pair in the
+   * green band. Brown is the one warm family with headroom left: at this
+   * palette's luminance a brown is a LOW-CHROMA orange (C* 25 against Claude's
+   * 63), and it is that chroma gap, not hue, that buys the separation the
+   * crowded 6-32 degree orange band could not. Nearest neighbours are cerebras
+   * dE 12.9 and claude dE 13.0. */
+  --provider-ollama-color: #976C52;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */
   --provider-antigravity-color: #308713;
   /* Pi — cold slate. Every other hue in this palette sits at ~4.58 contrast
@@ -225,9 +232,11 @@
    * below carries the identity. Low chroma keeps it clear of Grok's pure
    * neutral gray. */
   --provider-pi-color: #68768C;
-  /* Muse Code — Meta Model API blue (same reviewed Meta swatch). */
-  --provider-muse-color: #1671EA;
-  /* Ensemble — aggregate provider roster in a soft white-gray pink. */
+   /* Muse Code — Meta Model API blue (same reviewed Meta swatch). */
+   --provider-muse-color: #1671EA;
+   /* Devin — TaskWraith design token: steel blue at the AA-on-both-grounds luminance. */
+   --provider-devin-color: #4878AE;
+   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #986781;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these
    * presentation aliases let local models wear their upstream brand hue. */
@@ -261,14 +270,93 @@
    *    from openbmb; it wears its OWN published SECONDARY cyan (#0AAFC8).
    *  - Z.ai ships an indigo (#3859FF) all but identical to DeepSeek's, so it
    *    moves to azure and DeepSeek keeps the royal blue it is known for.
+   *  - OpenRouter's multi-colour identity gets a distinct route rose, held at
+   *    the same AA-readable luminance as the rest of this palette.
    * `qwen-token-plan` maps to the EXISTING --provider-qwen-color, so Qwen
    * reads the same whether it arrives via Ollama or via Pi. */
   --provider-deepseek-color: #4E6AEE;
   --provider-zai-color: #177DAA;
   --provider-minimax-color: #C044A4;
   --provider-mistral-color: #D44404;
+  /* Xiaomi MiMo token plan — a THIRD forced departure, on the same grounds as
+   * Groq and Z.ai above. Xiaomi's brand orange darkens to #B36004 at this
+   * palette's luminance, which sat 0.6 degrees of hue from Claude's #B16105 at
+   * identical luminance: CIEDE2000 dE 0.7, i.e. the same colour. The warm 6-32
+   * degree band already holds openbmb, cerebras, mistral, deep-reinforce and
+   * Claude, so the orange family has no room left. This is Cohere's sea green
+   * pivoted 4 degrees (154 -> 150) and taken to full chroma (S 0.14 -> 1.0),
+   * which clears every neighbour by dE 7.6+ (nearest: ollama, antigravity).
+   * Same both-sides AA band as every other seat colour. */
+  --provider-xiaomi-color: #008844;
+  --provider-mimo-color: var(--provider-xiaomi-color);
   --provider-cerebras-color: #BB584A;
   --provider-groq-color: #088482;
+  --provider-openrouter-color: #E02948;
+  /* Thinking Machines has not published this as a corporate brand colour.
+   * TaskWraith previously derived the token from the flagship Inkling card
+   * blue (#0155BF), which landed on #016EF6 — a royal blue only CIEDE2000
+   * dE 1.73 from Meta/Muse's #1671EA and dE 1.88 from Gemini's #346EEC at
+   * identical luminance, i.e. the same colour on a chip strip. The blue band
+   * (gemini, kimi, meta/muse, deepseek, ibm, zai, codex) is full, so Inkling
+   * moves to a rose of its own. It is held clear of the two pinks it could be
+   * confused with: liquid dE 9.3, and openrouter dE 9.5 — #E02948 stays the
+   * generic OpenRouter fallback rather than becoming Inkling's colour. */
+  --provider-thinkingmachines-color: #C24E68;
+  /* Tencent corporate blue (Hunyuan / Hy4) raised to this palette's
+   * AA-on-both-grounds luminance — same hue and saturation as the brand's
+   * #3458B0, which sat at 3.17:1 on black. */
+  --provider-tencent-color: #4E73CA;
+  /* Inception Labs purple (Mercury dLLM) lowered into the same AA band —
+   * the brand's #9675FF sat at 3.34:1 on white. */
+  --provider-inception-color: #7C5BE9;
+  /* Nex AGI ships a strictly monochrome mark (black fill, white stroke), so
+   * there is no brand hue to honour. This is the most perceptually distinct
+   * near-neutral available inside the palette's iso-luminant AA band — dE 26
+   * from its closest neighbour (cohere), and deliberately not another violet,
+   * because Mercury 2.5 lands in the same picker section wearing inception. */
+  --provider-nexagi-color: #747A42;
+  /* Sakana AI's mark is a vivid red fish (favicon #E10600). Raising that hue
+   * straight into this palette's band gives #EC0600, which lands dE 2.2 from
+   * openbmb (#E22B17) — indistinguishable in a transcript, which is the one
+   * job these accents have. So the hue is pulled ~10 degrees off the brand's
+   * fire-red toward crimson: it still reads as Sakana red, and it sits dE 6.3
+   * from BOTH openbmb and openrouter, its two nearest neighbours. Wider than
+   * most of the palette already manages (kimi/meta are dE 1.5 apart). */
+  --provider-sakana-color: #EA0C2D;
+  /* OpenRouter's `stealth` namespace has no brand to borrow from — the whole
+   * point is that the lab is anonymous during the preview — so this is a
+   * TaskWraith design token like nexagi's, not a vendor value. Gold, because
+   * it reads as "limited-time preview" next to the vendor reds and blues, and
+   * it is the most saturated gold this palette's band can hold: at relative
+   * luminance 0.179 a true yellow is out of gamut, so hue 41 deg at HLS
+   * saturation 100% is the sRGB edge. Placed between claude (#B16105) and
+   * cursor (#8C7508), the two accents it could be confused with, at dE 9.20
+   * and 8.88 — roughly six times the palette's tightest existing pair
+   * (kimi/meta, dE 1.5). 4.57:1 on white, 4.60:1 on black. */
+  --provider-stealth-color: #9E6C00;
+  /* Unbiased (Pareto) ships a vermilion mark. The earlier full-CHROMA sweep
+   * concluded the red band was full (sakana #EA0C2D, openrouter #E02948,
+   * openbmb #E22B17) and moved Pareto to magenta; that sweep only tried
+   * saturations 0.70/0.85/1.00, which is why it found nothing. Re-swept
+   * 2026-09-18 down to HLS saturation 0.30: a real window opens at hue 17 /
+   * saturation 0.55, because dropping chroma walks the hue out from under the
+   * three vivid reds without leaving orange. #B85A35 is a burnt vermilion that
+   * still reads as the brand's mark, and it clears its nearest neighbours by
+   * dE 7.2 (mistral #D44404), 7.2 (cerebras #BB584A) and 7.4 (deep-reinforce
+   * #BE5809) — above the ~6 this palette treats as respectable and far above
+   * its tightest existing pair (kimi/meta, dE 1.5). 4.61:1 on white, 4.55:1 on
+   * black, luminance 0.1776. The magenta this replaces moved to TypeSafe. */
+  --provider-unbiased-color: #B85A35;
+  /* TypeSafe (Jev) wears the magenta. It was minted as a design token for
+   * Pareto, not derived from a TypeSafe asset — but TypeSafe's mark is a vivid
+   * pink, so on this brand it lands as an honest accent rather than an
+   * arbitrary one, which is why the two swapped on 2026-09-18. The value is
+   * unchanged, so its measured separation is too: dE 11.0 from its nearest,
+   * alibaba (#8C52EF), and 11.1 from minimax (#C044A4), seven times the
+   * palette's tightest pair (kimi/meta, dE 1.5). 4.62:1 on white, 4.55:1 on
+   * black, luminance 0.1774, and dE 42 from the Unbiased vermilion it shares a
+   * picker section with. */
+  --provider-typesafe-color: #C700E4;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill
@@ -371,10 +459,21 @@
   --font-compact: "SF Compact", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif;
   --font-serif: "New York", "Times New Roman", Georgia, serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Monaco, "Courier New", ui-monospace, monospace;
-  --font-size-xs: calc(0.936rem * 1);
-  --font-size-sm: calc(1.066rem * 1);
-  --font-size-md: calc(1.196rem * 1);
-  --font-size-lg: calc(1.365rem * 1);
+  /* The four base sizes, extracted so a scoped rescale can compose against them
+   * instead of re-typing them. `--font-size-md: calc(var(--font-size-md) * S)`
+   * is a cycle and resolves to nothing, so the alternative for the transcript's
+   * text-size scope was a second copy of `1.196rem` in another shard — two
+   * literals for one size, which is the drift this extraction exists to avoid.
+   * `:root` composes them at the same `* 1` these declarations always carried,
+   * so every computed value here is unchanged. */
+  --font-size-xs-base: 0.936rem;
+  --font-size-sm-base: 1.066rem;
+  --font-size-md-base: 1.196rem;
+  --font-size-lg-base: 1.365rem;
+  --font-size-xs: calc(var(--font-size-xs-base) * 1);
+  --font-size-sm: calc(var(--font-size-sm-base) * 1);
+  --font-size-md: calc(var(--font-size-md-base) * 1);
+  --font-size-lg: calc(var(--font-size-lg-base) * 1);
   --sidebar-row-font-size: calc(1.066rem * 1.2);
   --sidebar-row-meta-font-size: calc(0.936rem * 1.2);
   --sidebar-thread-title-font-size: calc(var(--sidebar-row-font-size) * 0.72);
@@ -445,7 +544,7 @@
  * sidebar on a light theme) is intentionally excluded so it keeps that dark
  * chrome. Obsidian (light sidebar on a dark theme) flips in its .app-sidebar
  * block below. */
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"]) {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="xcode-light"]) {
   --sidebar-chrome-color: var(--sidebar-bg-solid);
   --sidebar-chrome-rim: rgba(18, 21, 27, 0.08);
   --tw-sidebar-neutral-material-bg: var(--tw-neutral-material-bg-light);
@@ -458,7 +557,8 @@
 
 /* Theme palettes ported from the Swift shared theme choices */
 [data-theme="light"],
-[data-theme="citrus"] {
+[data-theme="citrus"],
+[data-theme="xcode-light"] {
   --app-bg: #f8fafc;
   --app-bg-elevated: #ffffff;
   --app-bg-sunken: #e9edf2;
@@ -1164,6 +1264,61 @@
     radial-gradient(120% 50% at 50% 100%, rgba(140, 120, 200, 0.04), transparent 70%);
 }
 
+/* ───── Xcode-inspired High Contrast (Dark) ─────
+ * Deep opaque editor surface, saturated Xcode-palette syntax
+ * tokens, prominent blue-band active-line highlight, and a
+ * seamless gutter that merges with the editor background.
+ * Paired with xcode-light below. */
+[data-theme="xcode-dark"] {
+  --cm-keyword: #fc5fa3;
+  --cm-name: #d0d0d0;
+  --cm-property: #4eb0cc;
+  --cm-function: #67b7a4;
+  --cm-type: #5dd8ff;
+  --cm-number: #d0bf69;
+  --cm-string: #fc6a5d;
+  --cm-regexp: #fc6a5d;
+  --cm-comment: #6c7986;
+  --cm-meta: #a167e6;
+  --cm-heading: #ffffff;
+  --cm-invalid: #ff3b30;
+  --cm-gutter-bg: transparent;
+  --cm-gutter-border: transparent;
+  --cm-active-line: rgba(44, 48, 80, 0.85);
+  --cm-bracket-match: rgba(100, 130, 255, 0.25);
+}
+
+[data-theme="xcode-dark"] .cm-activeLineGutter {
+  color: #ffffff !important;
+}
+
+/* ───── Xcode-inspired High Contrast (Light) ─────
+ * Clean white editor surface, saturated Xcode-palette syntax
+ * tokens for light backgrounds, light-blue active-line band,
+ * and a seamless gutter. Paired with xcode-dark above. */
+[data-theme="xcode-light"] {
+  --cm-keyword: #ad3da4;
+  --cm-name: #262626;
+  --cm-property: #4b21b0;
+  --cm-function: #326d74;
+  --cm-type: #0b4f79;
+  --cm-number: #272ad8;
+  --cm-string: #d12f1b;
+  --cm-regexp: #d12f1b;
+  --cm-comment: #707f8c;
+  --cm-meta: #643820;
+  --cm-heading: #000000;
+  --cm-invalid: #d12f1b;
+  --cm-gutter-bg: transparent;
+  --cm-gutter-border: transparent;
+  --cm-active-line: rgba(212, 222, 245, 0.7);
+  --cm-bracket-match: rgba(0, 70, 200, 0.15);
+}
+
+[data-theme="xcode-light"] .cm-activeLineGutter {
+  color: #000000 !important;
+}
+
 /* Paint the cool lavender ambient gradient behind the app on
  * alabaster. Fixed (doesn't scroll with content), feathered
  * into transparency at the edges. */
@@ -1487,9 +1642,16 @@
 [data-user-bubble-color="yellow"]   { --user-bubble-base: #f2c94c; }
 [data-user-bubble-color="graphite"] { --user-bubble-base: #9da6b8; }
 
-/* Settings → Appearance now supplies one custom accent. The message bubble
- * aliases it rather than retaining a second user-facing colour choice. */
-[data-user-bubble-color="shared"] { --user-bubble-base: var(--accent); }
+/* Settings → Appearance → "Message bubble" supplies this colour directly, as
+ * `--message-bubble-accent` (set inline on :root by useAppearance).
+ *
+ * `--accent` is NOT the same colour any more: it follows the host OS accent,
+ * so aliasing it here would drag the bubble back onto the desktop's blue. It
+ * survives only as the last-resort fallback for a renderer that painted
+ * before the inline token was written. */
+[data-user-bubble-color="shared"] {
+  --user-bubble-base: var(--message-bubble-accent, var(--accent));
+}
 
 [data-corners="hard"] {
   --radius-sm: 3px;

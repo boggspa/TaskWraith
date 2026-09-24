@@ -5,10 +5,16 @@ import {
   BOSS_AUTO_APPROVAL_CONSENT_MESSAGE,
   ENSEMBLE_CHIP_GRID_TRACKS,
   EnsembleAddParticipantFields,
+  EnsembleAnyStageIcon,
+  EnsembleChipNameField,
   EnsembleParticipantDuplicateRow,
   EnsembleParticipantAuthorityControls,
   EnsembleParticipantStageControl,
   EnsembleParticipantsAboveRow,
+  resolveEnsembleChipRolePickerRows,
+  resolveEnsembleChipStageRolePatch,
+  resolveEnsembleParticipantNamePatch,
+  applyEnsembleAddReasoningSelection,
   buildEnsembleAddProviderGroups,
   buildEnsembleParticipantAddition,
   computeEnsembleChipGridSpans,
@@ -79,6 +85,137 @@ describe('EnsembleParticipantsAboveRow', () => {
       'This will not grant session/workspace approval'
     )
   })
+
+  describe('double-click chip seat-role picker', () => {
+    it('edits the participant name through a buffered field above the picker controls', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleChipNameField
+          participantId="ensemble-claude"
+          name="Explorer"
+          providerLabel="Claude"
+          locked={false}
+          onPatch={() => undefined}
+        />
+      )
+
+      expect(html).toContain('class="ensemble-chip-role-picker-name"')
+      expect(html).toContain('>Edit name</span>')
+      expect(html).toContain('data-composer-control="participant-name"')
+      expect(html).toContain('aria-label="Edit name for Claude"')
+      expect(html).toContain('value="Explorer"')
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Boardmaster', false)).toEqual({
+        role: 'Boardmaster'
+      })
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Explorer', false)).toBeNull()
+      expect(resolveEnsembleParticipantNamePatch('Explorer', 'Boardmaster', true)).toBeNull()
+
+      const source = readFileSync(
+        new URL('./EnsembleParticipantsAboveRow.tsx', import.meta.url),
+        'utf8'
+      )
+      const pickerSource = source.slice(
+        source.indexOf('export function EnsembleChipRolePicker('),
+        source.indexOf('export function EnsembleParticipantOverflowPopover(')
+      )
+      expect(pickerSource.indexOf('<EnsembleChipNameField')).toBeLessThan(
+        pickerSource.indexOf('ensemble-chip-role-picker-toggles')
+      )
+
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      expect(css).toMatch(
+        /\.ensemble-chip-role-picker-name\s*\{[^}]*flex-direction: column;[^}]*border-bottom:/
+      )
+      expect(css).toMatch(
+        /\.ensemble-chip-role-picker-name input\s*\{[^}]*width: 100%;[^}]*background: var\(--input-bg\);/
+      )
+    })
+
+    it('lists authority roles, then stage roles, in the tactile-picker order', () => {
+      const { authorityRows, stageRows } = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: false
+      })
+      expect(authorityRows.map((row) => row.label)).toEqual(['Boss', 'Captain', 'Agent'])
+      // The divider sits between these two lists — authority first, stages second.
+      expect(stageRows.map((row) => row.label)).toEqual([
+        'Any',
+        'Scout',
+        'Work',
+        'Review',
+        'BG'
+      ])
+      expect(resolveEnsembleChipStageRolePatch('worker', 'any')).toEqual({
+        stageRole: undefined
+      })
+      expect(resolveEnsembleChipStageRolePatch(undefined, 'scout')).toEqual({
+        stageRole: 'scout'
+      })
+
+      const anyIcon = renderToStaticMarkup(
+        <EnsembleAnyStageIcon className="ensemble-chip-role-picker-icon" />
+      )
+      expect(anyIcon).toContain('class="ensemble-chip-role-picker-icon"')
+      expect(anyIcon).toContain('<circle')
+    })
+
+    it('restricts Boss/Captain for BG seats and BG while the seat is Boss', () => {
+      const background = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: true,
+        locked: false
+      })
+      expect(
+        background.authorityRows
+          .filter((row) => row.value === 'boss' || row.value === 'captain')
+          .map((row) => row.disabled)
+      ).toEqual([true, true])
+      expect(background.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(
+        false
+      )
+      expect(background.stageRows.find((row) => row.value === 'background')?.disabled).toBe(
+        false
+      )
+
+      const bossman = resolveEnsembleChipRolePickerRows({
+        isBossman: true,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: false
+      })
+      // A configured Boss cannot demote itself through the picker, and cannot
+      // move itself to BG.
+      expect(bossman.authorityRows.find((row) => row.value === 'agent')?.disabled).toBe(true)
+      expect(bossman.stageRows.find((row) => row.value === 'background')?.disabled).toBe(true)
+    })
+
+    it('blocks Captain assignment at the panel cap and everything while locked', () => {
+      const capped = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: true,
+        backgroundRestricted: false,
+        locked: false
+      })
+      expect(capped.authorityRows.find((row) => row.value === 'captain')?.title).toContain(
+        'Captains'
+      )
+
+      const locked = resolveEnsembleChipRolePickerRows({
+        isBossman: false,
+        captainAssignmentDisabled: false,
+        backgroundRestricted: false,
+        locked: true
+      })
+      expect(
+        [...locked.authorityRows, ...locked.stageRows].every((row) => row.disabled)
+      ).toBe(true)
+    })
+  });
 
   describe('participant authority controls', () => {
     const autoApprovals = {
@@ -511,6 +648,23 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('>GPT-5.6-Sol</span>')
     })
 
+    it('renders duplicate seats without pill chrome', () => {
+      const css = readFileSync(
+        new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+        'utf8'
+      )
+      const duplicateSeatRule = css.match(
+        /\.ensemble-add-participant-duplicate-chip\s*\{([^}]*)\}/
+      )?.[1]
+
+      expect(duplicateSeatRule).toBeDefined()
+      expect(duplicateSeatRule).toContain('border: 0;')
+      expect(duplicateSeatRule).toContain('border-bottom: 1px solid transparent;')
+      expect(duplicateSeatRule).toContain('border-radius: 0;')
+      expect(duplicateSeatRule).toContain('background: transparent;')
+      expect(duplicateSeatRule).not.toContain('999px')
+    })
+
     it('keeps unavailable legacy providers visible but disables their duplicate action', () => {
       const html = renderToStaticMarkup(
         <EnsembleParticipantDuplicateRow
@@ -609,9 +763,17 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(css).toContain(
         '.composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant'
       )
-      expect(css).toContain('grid-template-columns: minmax(0, 1fr) 124px')
-      expect(css).toContain('grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto')
-      expect(css).toContain('height: min(570px, calc(100dvh - 16px))')
+      expect(css).toContain(
+        'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 124px'
+      )
+      expect(css).toContain(
+        'grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto'
+      )
+      // The provider tab rail sits in its own column beside the model list.
+      expect(css).toMatch(
+        /\.is-ensemble-add-participant > \.composer-combined-picker-provider-tabs\s*\{[^}]*grid-column: 1;[^}]*grid-row: 2;/
+      )
+      expect(css).toContain('height: min(610px, calc(100dvh - 16px))')
       expect(css).toContain('.is-ensemble-add-participant > .composer-combined-picker-top-content')
       expect(css).toContain('border-bottom: 1px solid')
       expect(css).toContain('.ensemble-add-participant-fields-primary')
@@ -636,7 +798,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         buildEnsembleAddProviderGroups(false, false, {
           snapshot: { ready: true, providerIds: ['codex', 'claude', 'kimi', 'ollama'] }
         }).map((group) => group.provider)
-      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
       const expanded = buildEnsembleAddProviderGroups(true, true, {
         snapshot: {
           ready: true,
@@ -652,7 +814,8 @@ describe('EnsembleParticipantsAboveRow', () => {
         'ollama',
         'pi',
         'mistral',
-        'muse'
+        'muse',
+        'devin'
       ])
       expect(
         expanded.every((group) => group.modelOptions.every((model) => model.id !== 'custom'))
@@ -679,9 +842,23 @@ describe('EnsembleParticipantsAboveRow', () => {
         model: 'composer-2.5',
         fastModeEnabled: false
       })
+      // The seat default is the standard route under its current name; it
+      // carries K3's Low/High/Max axis and defaults to Max, not the fixed `on`
+      // the retired combined row had.
       expect(createEnsembleParticipantAddConfiguration('kimi')).toMatchObject({
         provider: 'kimi',
-        model: 'kimi-k2.7-code',
+        model: 'kimi-k2.8-preview',
+        fastModeEnabled: false,
+        thinkingEnabled: true,
+        reasoningEffort: 'max',
+        serviceTier: 'standard'
+      })
+      // Highspeed is the one Kimi row left on a fixed thinking stop.
+      expect(
+        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k2.7-code-highspeed')
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code-highspeed',
         fastModeEnabled: false,
         thinkingEnabled: true,
         reasoningEffort: 'on',
@@ -695,6 +872,29 @@ describe('EnsembleParticipantsAboveRow', () => {
         fastModeEnabled: false,
         serviceTier: 'standard'
       })
+      expect(createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3-256k')).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k3-256k',
+        reasoningEffort: 'max',
+        thinkingEnabled: true,
+        fastModeEnabled: false,
+        serviceTier: 'standard'
+      })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'ornith:35b')).toMatchObject({
+        provider: 'ollama',
+        model: 'ornith:35b',
+        reasoningEffort: 'on'
+      })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'gpt-oss:20b')).toMatchObject({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: 'high'
+      })
+      expect(createEnsembleParticipantAddConfiguration('ollama', 'gemma3:4b')).toMatchObject({
+        provider: 'ollama',
+        model: 'gemma3:4b',
+        reasoningEffort: undefined
+      })
       expect(createEnsembleParticipantAddConfiguration('claude', 'claude-haiku-4-5')).toMatchObject(
         {
           model: 'claude-haiku-4-5',
@@ -704,20 +904,120 @@ describe('EnsembleParticipantsAboveRow', () => {
       )
     })
 
-    it('offers the full Spark ladder in the Add Participant popover fallback', () => {
+    it('preserves UltraTask across Add Participant model switches when the destination still supports it', () => {
+      const kimiUltra = {
+        ...createEnsembleParticipantAddConfiguration('kimi', 'kimi-k2.7-code'),
+        reasoningEffort: 'ultraTask'
+      }
+      expect(
+        createEnsembleParticipantAddConfiguration('kimi', 'kimi-k3', undefined, kimiUltra)
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        reasoningEffort: 'ultraTask'
+      })
+      expect(
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.5', undefined, kimiUltra)
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'ultraTask',
+        fastModeEnabled: false
+      })
+      expect(
+        createEnsembleParticipantAddConfiguration(
+          'claude',
+          'claude-haiku-4-5',
+          undefined,
+          kimiUltra
+        )
+      ).toMatchObject({
+        model: 'claude-haiku-4-5',
+        reasoningEffort: undefined,
+        fastModeEnabled: false
+      })
+    })
+
+    it('still starts ordinary reasoning and Fast clean on Add Participant model switches', () => {
+      const highDraft = {
+        ...createEnsembleParticipantAddConfiguration('codex', 'gpt-5.5'),
+        reasoningEffort: 'high',
+        fastModeEnabled: true,
+        serviceTier: 'fast'
+      }
+      expect(
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.6-sol', undefined, highDraft)
+      ).toMatchObject({
+        provider: 'codex',
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'low',
+        fastModeEnabled: false,
+        serviceTier: ''
+      })
+    })
+
+    it('offers the full ladder in the Add Participant popover fallback', () => {
+      // Was pinned on Spark until the user retired it on 2026-09-18; gpt-5.5
+      // carries the same low/medium/high/xhigh ladder plus UltraTask.
       const providerGroups = [
         {
           provider: 'codex' as const,
           label: 'Codex',
-          modelOptions: CODEX_DEFAULT_MODELS.filter((model) => model.id === 'gpt-5.3-codex-spark')
+          modelOptions: CODEX_DEFAULT_MODELS.filter((model) => model.id === 'gpt-5.5')
         }
       ]
 
+      expect(providerGroups[0].modelOptions).toHaveLength(1)
       expect(
-        getEnsembleAddReasoningOptions('codex', 'gpt-5.3-codex-spark', providerGroups).map(
+        getEnsembleAddReasoningOptions('codex', 'gpt-5.5', providerGroups).map(
           (option) => option.value
         )
-      ).toEqual(['low', 'medium', 'high', 'xhigh'])
+      ).toEqual(['low', 'medium', 'high', 'xhigh', 'ultraTask'])
+    })
+
+    it('derives UltraTask options without mutating shared provider ladders', () => {
+      const providerGroups = [
+        {
+          provider: 'mistral' as const,
+          label: 'Mistral',
+          modelOptions: [
+            { id: 'devstral-small', label: 'Devstral Small', ultraTaskSupported: true }
+          ]
+        },
+        {
+          provider: 'pi' as const,
+          label: 'Pi',
+          modelOptions: [
+            {
+              id: 'mistral/devstral-small',
+              label: 'Devstral Small (Pi)',
+              ultraTaskSupported: true
+            }
+          ]
+        }
+      ]
+
+      const first = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const second = getEnsembleAddReasoningOptions(
+        'mistral',
+        'devstral-small',
+        providerGroups
+      )
+      const pi = getEnsembleAddReasoningOptions(
+        'pi',
+        'mistral/devstral-small',
+        providerGroups
+      )
+
+      for (const options of [first, second, pi]) {
+        expect(options.filter((option) => option.value === 'ultraTask')).toHaveLength(1)
+      }
+      expect(first).not.toBe(second)
+      expect(first).not.toBe(pi)
     })
 
     it('keeps live models and honors their reasoning metadata', () => {
@@ -755,6 +1055,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         thinkingEnabled: undefined,
         serviceTier: ''
       })
+      expect(
+        getEnsembleAddReasoningOptions('codex', 'gpt-next-live', providerGroups).map(
+          (option) => option.value
+        )
+      ).toEqual(['low', 'high'])
     })
 
     it('uses AntiGravity model variants as an effort ladder and preserves the selected wire id', () => {
@@ -763,9 +1068,21 @@ describe('EnsembleParticipantsAboveRow', () => {
           provider: 'antigravity' as const,
           label: 'AntiGravity',
           modelOptions: groupAntigravityModelRows([
-            { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' },
-            { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
-            { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' }
+            {
+              id: 'gemini-3.6-flash-high',
+              label: 'gemini-3.6-flash-high',
+              ultraTaskSupported: true
+            },
+            {
+              id: 'gemini-3.6-flash-medium',
+              label: 'gemini-3.6-flash-medium',
+              ultraTaskSupported: true
+            },
+            {
+              id: 'gemini-3.6-flash-low',
+              label: 'gemini-3.6-flash-low',
+              ultraTaskSupported: true
+            }
           ])
         }
       ]
@@ -775,7 +1092,8 @@ describe('EnsembleParticipantsAboveRow', () => {
       ).toEqual([
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
-        { value: 'high', label: 'High' }
+        { value: 'high', label: 'High' },
+        { value: 'ultraTask', label: 'UltraTask' }
       ])
       expect(
         createEnsembleParticipantAddConfiguration(
@@ -787,6 +1105,21 @@ describe('EnsembleParticipantsAboveRow', () => {
         provider: 'antigravity',
         model: 'gemini-3.6-flash-medium',
         reasoningEffort: undefined
+      })
+      expect(
+        applyEnsembleAddReasoningSelection(
+          createEnsembleParticipantAddConfiguration(
+            'antigravity',
+            'gemini-3.6-flash-medium',
+            providerGroups
+          ),
+          'ultraTask',
+          providerGroups
+        )
+      ).toMatchObject({
+        provider: 'antigravity',
+        model: 'gemini-3.6-flash-high',
+        reasoningEffort: 'ultraTask'
       })
     })
 
@@ -1975,5 +2308,19 @@ describe('seat-change failure supersede display', () => {
       />
     )
     expect(html).toContain('status-speaking')
+  })
+
+  it('keeps composer chips free of the retired participant editor popover', () => {
+    const chat = makeChat([makeParticipant({ id: 'ensemble-claude', role: 'Explorer' })])
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId="ensemble-claude"
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+
+    expect(html).not.toContain('ensemble-above-overflow')
   })
 })

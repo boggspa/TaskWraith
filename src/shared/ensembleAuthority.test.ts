@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from './ensembleAuthority'
+import {
+  ensembleAuthorityRoleLabel,
+  legacyEnsembleAuthorityRole,
+  MAX_ENSEMBLE_CAPTAINS,
+  normalizeEnsembleAuthority,
+  normalizeEnsembleAuthorityRole
+} from './ensembleAuthority'
 
 const participants = [
   { id: 'boss', order: 1, enabled: false },
@@ -123,5 +129,21 @@ describe('normalizeEnsembleAuthority', () => {
       captainParticipantIds: ['captain-a'],
       secondInCommandParticipantId: 'captain-a'
     })
+  })
+})
+
+describe('canonical Ensemble authority roles', () => {
+  it('normalizes the legacy second-in-command spelling at compatibility boundaries', () => {
+    expect(normalizeEnsembleAuthorityRole('boss')).toBe('boss')
+    expect(normalizeEnsembleAuthorityRole('captain')).toBe('captain')
+    expect(normalizeEnsembleAuthorityRole('second_in_command')).toBe('captain')
+    expect(normalizeEnsembleAuthorityRole('worker')).toBeUndefined()
+  })
+
+  it('round-trips canonical roles to legacy bossman-control spelling and labels', () => {
+    expect(legacyEnsembleAuthorityRole('boss')).toBe('boss')
+    expect(legacyEnsembleAuthorityRole('captain')).toBe('second_in_command')
+    expect(ensembleAuthorityRoleLabel('boss')).toBe('Boss')
+    expect(ensembleAuthorityRoleLabel('captain')).toBe('Captain')
   })
 })

@@ -107,12 +107,13 @@ struct ComposerProviderAdmissionTests {
             TWTheme.liveSelectableProviderIds
                 == [
                     "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
-                    "muse",
+                    "muse", "devin",
                 ])
         #expect(Set(firstLaunchFallbackProviderIds) == TWTheme.liveSelectableProviderIds)
         #expect(TWTheme.isLiveSelectableProvider("cursor"))
         #expect(TWTheme.isLiveSelectableProvider("pi"))
         #expect(TWTheme.isLiveSelectableProvider("muse"))
+        #expect(TWTheme.isLiveSelectableProvider("devin"))
         #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
         #expect(!TWTheme.isLiveSelectableProvider("gemini"))
     }
@@ -214,5 +215,17 @@ struct ComposerProviderAdmissionTests {
         #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
         #expect(TWTheme.isRetiredProvider("gemini"))
         #expect(!TWTheme.liveSelectableProviderIds.contains("gemini"))
+    }
+
+    @Test func kimiCatalogDecodesPlanSpecificContextWindows() throws {
+        let message = try JSONDecoder().decode(
+            ProviderModelsMessage.self,
+            from: Data(
+                #"{"providers":[{"provider":"kimi","models":[{"id":"kimi-k3","label":"K3 (1M)","contextWindow":1048576},{"id":"kimi-k3-256k","label":"K3 (256K)","contextWindow":262144}]}]}"#.utf8
+            ))
+        let models = message.providers.first?.models ?? []
+
+        #expect(models.first { $0.id == "kimi-k3" }?.contextWindow == 1_048_576)
+        #expect(models.first { $0.id == "kimi-k3-256k" }?.contextWindow == 262_144)
     }
 }

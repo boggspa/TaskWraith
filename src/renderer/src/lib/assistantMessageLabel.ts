@@ -1,5 +1,9 @@
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
-import { humaniseModelId } from './modelDisplayName'
+import {
+  canonicalModelIdForProvider,
+  humaniseModelId,
+  humaniseRecordedModelIdCompact
+} from './modelDisplayName'
 import {
   resolveOllamaDisplayBrand,
   resolveProviderBrandLabel,
@@ -11,6 +15,7 @@ import type {
   PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
+import { KIMI_K27_MODEL_ID } from '../../../shared/kimiModels'
 
 type AssistantMessageLabelPresentation = {
   label: string
@@ -19,6 +24,45 @@ type AssistantMessageLabelPresentation = {
   modelBadge: string | null
   agentAccent?: string
   pooledAgentIdentity?: PooledAgentIdentitySnapshot
+}
+
+interface RunModelCandidate {
+  provider?: string
+  requestedModel?: string
+  actualModel?: string
+}
+
+/**
+ * Solo-chat branding fallback. A follow-up assistant row whose run record is
+ * missing or never attached (`msg.runId` lookup misses, run lacks
+ * actualModel/requestedModel) leaves the brand resolvers without a wire id —
+ * for Pi that means `resolveProviderHueClass('pi', '')` paints the plain seat
+ * color and drops the upstream override (deepseek/qwen/…). Scan the chat's
+ * considers only an unambiguous same-provider history. A missing attribution
+ * is preferable to borrowing another seat's model and brand, or rewriting an
+ * old bubble to a later model from that same seat.
+ */
+export function mostRecentSoloRunModel(
+  runs: ReadonlyArray<RunModelCandidate> | null | undefined,
+  provider?: string | null
+): string | null {
+  if (!Array.isArray(runs)) return null
+  let modelForProvider: string | null = null
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const run = runs[index]
+    const model =
+      [run.actualModel, run.requestedModel].find(
+        (value): value is string => typeof value === 'string' && value.trim() !== ''
+      ) ?? null
+    if (!model) continue
+    // A model owned by another provider is never an acceptable branding
+    // fallback. Reusing it can make an old Pi/Ollama bubble take on a later
+    // Claude/Codex model or brand as the chat evolves.
+    if (provider && run.provider !== provider) continue
+    if (modelForProvider && modelForProvider !== model) return null
+    modelForProvider = model
+  }
+  return modelForProvider
 }
 
 type FormatAssistantMessageLabelOptions = {
@@ -33,6 +77,37 @@ type FormatAssistantMessageLabelOptions = {
    * does not carry provider model metadata. */
   soloModelId?: string | null
   soloModelLabel?: string | null
+  /**
+   * The seat's OWN configured model (`chat.requestedModel`), used only to
+   * expand a legacy `cli-default` row. Never overrides a concrete recorded
+   * model — a settled run's model is a fact, the seat config is only a guess
+   * about a row that never recorded one.
+   */
+  seatModelId?: string | null
+}
+
+const DEFAULT_MODEL_SENTINELS = new Set(['default', 'cli-default'])
+
+/**
+ * Expand the legacy `cli-default` sentinel to a concrete wire id before brand
+ * resolution.
+ *
+ * The sentinel means "whatever this seat was configured to", so the seat's own
+ * model is the only honest expansion. Going straight to the provider-wide
+ * default — what `canonicalModelIdForProvider` returns, and which drifts as new
+ * models ship — re-brands an old row with today's pick: an Ollama seat running
+ * DeepSeek R1 was painted Alibaba purple because the humanised sentinel label
+ * read "Qwen 3". Prefer the seat, keep the provider default as the floor.
+ */
+function expandDefaultModelSentinel(
+  provider: ProviderId | null,
+  modelId: string,
+  seatModelId?: string | null
+): string {
+  if (!modelId || !DEFAULT_MODEL_SENTINELS.has(modelId.trim().toLowerCase())) return modelId
+  const seat = String(seatModelId || '').trim()
+  if (seat && !DEFAULT_MODEL_SENTINELS.has(seat.toLowerCase())) return seat
+  return provider ? canonicalModelIdForProvider(provider, modelId) || modelId : modelId
 }
 
 const ollamaBrandPresentation = (
@@ -69,6 +144,81 @@ function seatSnapshot(message: ChatMessage): Record<string, unknown> | null {
 
 function textValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity',
+  'pi',
+  'mistral',
+  'muse',
+  'devin'
+])
+
+function assistantProviderForMessage(message: ChatMessage): ProviderId | null {
+  const provider = textValue(message.metadata?.assistantProvider)
+  return PROVIDER_IDS.has(provider as ProviderId) ? (provider as ProviderId) : null
+}
+
+function transcriptShortModelName(
+  provider: ProviderId,
+  modelLabel: string,
+  modelId: string
+): string {
+  if (provider === 'kimi' && modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID) {
+    return humaniseRecordedModelIdCompact(provider, modelId)
+  }
+  // `shortModelName` preserves the wire id for legacy `cli-default` rows.
+  // Resolve the provider-aware concrete default first so an assistant header
+  // never says the raw sentinel or an old sibling model name.
+  const canonicalModelId = canonicalModelIdForProvider(provider, modelId) || modelId
+  return shortModelName(provider, modelLabel, canonicalModelId)
+}
+
+function transcriptReasoningLabel(input: {
+  provider: ProviderId
+  modelId: string
+  reasoningEffort?: string | null
+  thinkingEnabled?: boolean
+}): string {
+  const { provider, modelId, reasoningEffort, thinkingEnabled } = input
+  const normalizedEffort = String(reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (
+    provider === 'kimi' &&
+    modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID &&
+    (normalizedEffort === '' || normalizedEffort === 'on') &&
+    (thinkingEnabled === true || normalizedEffort === 'on')
+  ) {
+    return 'Thinking'
+  }
+  return reasoningDisplayLabel({
+    provider,
+    composerStyle: 'default',
+    modelId,
+    modelLabel: '',
+    codexReasoningEffort: provider === 'codex' ? reasoningEffort || undefined : undefined,
+    claudeReasoningEffort: provider === 'claude' ? reasoningEffort || undefined : undefined,
+    grokReasoningEffort: provider === 'grok' ? reasoningEffort || undefined : undefined,
+    cursorReasoningEffort: provider === 'cursor' ? reasoningEffort || undefined : undefined,
+    kimiReasoningEffort: provider === 'kimi' ? reasoningEffort || undefined : undefined,
+    kimiThinkingEnabled: provider === 'kimi' ? thinkingEnabled : undefined,
+    museReasoningEffort: provider === 'muse' ? reasoningEffort || undefined : undefined,
+    mistralReasoningEffort:
+      provider === 'mistral' || provider === 'pi' ? reasoningEffort || undefined : undefined,
+    devinReasoningEffort: provider === 'devin' ? reasoningEffort || undefined : undefined,
+    piReasoningEffort: provider === 'pi' ? reasoningEffort || undefined : undefined,
+    ollamaReasoningEffort: provider === 'ollama' ? reasoningEffort || undefined : undefined,
+    antigravityReasoningEffort:
+      provider === 'antigravity' ? reasoningEffort || undefined : undefined
+  })
 }
 
 const pooledAgentIdentityForMessage = (
@@ -162,7 +312,8 @@ const formatAssistantMessageLabel = (
       providerClass: guestProvider
         ? resolveProviderHueClass(guestProvider, guestModel)
         : null,
-      modelBadge: guestProvider && guestModel ? shortModelName(guestProvider, '', guestModel) : null
+      modelBadge:
+        guestProvider && guestModel ? transcriptShortModelName(guestProvider, '', guestModel) : null
     })
   }
   const snapshot = seatSnapshot(message)
@@ -171,8 +322,10 @@ const formatAssistantMessageLabel = (
       | ProviderId
       | null
   if (!provider) {
+    const assistantProvider = assistantProviderForMessage(message)
+    const soloProvider = assistantProvider || fallbackProvider
     const allowSoloModel = !options?.isEnsembleChat
-    const soloModel =
+    const recordedSoloModel =
       allowSoloModel &&
       typeof message.metadata?.providerModel === 'string' &&
       message.metadata.providerModel
@@ -180,6 +333,11 @@ const formatAssistantMessageLabel = (
         : allowSoloModel
           ? options?.soloModelId || ''
           : ''
+    const soloModel = expandDefaultModelSentinel(
+      soloProvider,
+      recordedSoloModel,
+      options?.seatModelId
+    )
     const soloModelLabel =
       allowSoloModel &&
       typeof message.metadata?.providerModelLabel === 'string' &&
@@ -188,26 +346,45 @@ const formatAssistantMessageLabel = (
         : allowSoloModel
           ? options?.soloModelLabel || ''
           : ''
-    if (!options?.isEnsembleChat && fallbackProvider === 'ollama') {
+    const soloReasoningEffort = textValue(message.metadata?.assistantReasoningEffort)
+    const soloThinkingEnabled =
+      typeof message.metadata?.assistantThinkingEnabled === 'boolean'
+        ? message.metadata.assistantThinkingEnabled
+        : undefined
+    if (!options?.isEnsembleChat && soloProvider === 'ollama') {
       const modelLabel = soloModelLabel || humaniseModelId('ollama', soloModel)
       const branded = ollamaBrandPresentation(soloModel, modelLabel)
       if (branded) return withPooledIdentity(branded)
     }
-    const brandedProviderLabel = fallbackProvider
-      ? resolveProviderBrandLabel(fallbackProvider, soloModel, soloModelLabel)
+    const brandedProviderLabel = soloProvider
+      ? resolveProviderBrandLabel(soloProvider, soloModel, soloModelLabel)
       : null
-    const soloModelBadge =
-      fallbackProvider && (soloModel || soloModelLabel)
-        ? shortModelName(fallbackProvider, soloModelLabel, soloModel || soloModelLabel)
+    const soloModelName =
+      soloProvider && (soloModel || soloModelLabel)
+        ? transcriptShortModelName(soloProvider, soloModelLabel, soloModel || soloModelLabel)
         : null
-    // Solo chats: use the chat-level provider as the colouring hook and
-    // include the run model when one is known, matching the provider/model
-    // identity used elsewhere in the transcript.
+    const soloReasoningSuffix =
+      soloProvider && soloModelName
+        ? transcriptReasoningLabel({
+            provider: soloProvider,
+            modelId: soloModel,
+            reasoningEffort: soloReasoningEffort,
+            thinkingEnabled: soloThinkingEnabled
+          })
+        : ''
+    const soloModelBadge = soloModelName
+      ? soloReasoningSuffix
+        ? `${soloModelName} ${soloReasoningSuffix}`
+        : soloModelName
+      : null
+    // New rows carry an immutable speaker identity; older rows retain the
+    // chat-level fallback. Either way the header and hue derive from the same
+    // provider/model pair.
     return withPooledIdentity({
       label: brandedProviderLabel || fallbackLabel,
-      provider: fallbackProvider,
-      providerClass: fallbackProvider
-        ? resolveProviderHueClass(fallbackProvider, soloModel, soloModelLabel)
+      provider: soloProvider,
+      providerClass: soloProvider
+        ? resolveProviderHueClass(soloProvider, soloModel, soloModelLabel)
         : null,
       modelBadge: soloModelBadge
     })
@@ -220,8 +397,11 @@ const formatAssistantMessageLabel = (
   // the only thing that visually distinguishes them in the transcript.
   // Falls back to no badge when the participant doesn't carry a model
   // (legacy ensemble chats from before this metadata existed).
-  const ensembleModel =
-    textValue(message.metadata?.ensembleModel) || textValue(snapshot?.model)
+  const ensembleModel = expandDefaultModelSentinel(
+    provider,
+    textValue(message.metadata?.ensembleModel) || textValue(snapshot?.model),
+    textValue(snapshot?.model)
+  )
   const ensembleReasoningEffort =
     textValue(message.metadata?.ensembleReasoningEffort) || textValue(snapshot?.reasoningEffort)
   const ensembleThinkingEnabled =
@@ -230,27 +410,18 @@ const formatAssistantMessageLabel = (
       : typeof snapshot?.thinkingEnabled === 'boolean'
         ? snapshot.thinkingEnabled
       : undefined
-  const modelName = ensembleModel ? shortModelName(provider, '', ensembleModel) : null
+  const modelName = ensembleModel ? transcriptShortModelName(provider, '', ensembleModel) : null
   // Append a reasoning/thinking suffix when the participant carried one
   // through dispatch so the header mirrors the composer chip the user
   // picked ("5.5 Extra High", "Opus 4.7 · Max", "K2.7 Coding Thinking"). The
   // reasoning helper short-circuits to '' for providers without a
   // reasoning axis (Gemini) or when the effort is 'off'.
   const reasoningSuffix = modelName
-    ? reasoningDisplayLabel({
+    ? transcriptReasoningLabel({
         provider,
-        // `reasoningDisplayLabel` doesn't read `composerStyle` — only the
-        // sibling `formatComposerModelChip` does — but the shared
-        // `ComposerChipContext` interface requires it. Any valid value
-        // works; `'default'` is the most neutral.
-        composerStyle: 'default',
         modelId: ensembleModel,
-        modelLabel: '',
-        codexReasoningEffort: provider === 'codex' ? ensembleReasoningEffort : undefined,
-        claudeReasoningEffort: provider === 'claude' ? ensembleReasoningEffort : undefined,
-        mistralReasoningEffort: provider === 'mistral' ? ensembleReasoningEffort : undefined,
-        kimiReasoningEffort: provider === 'kimi' ? ensembleReasoningEffort : undefined,
-        kimiThinkingEnabled: provider === 'kimi' ? ensembleThinkingEnabled : undefined
+        reasoningEffort: ensembleReasoningEffort,
+        thinkingEnabled: ensembleThinkingEnabled
       })
     : ''
   const modelBadge = modelName

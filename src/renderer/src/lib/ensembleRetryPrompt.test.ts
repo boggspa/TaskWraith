@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord, EnsembleRoundState } from '../../../main/store/types'
 import {
   lastRetryableEnsembleUserPrompt,
-  resolveEnsembleParticipantRetryDispatch
+  resolveEnsembleParticipantRetryDispatch,
+  retryEnsembleParticipant
 } from './ensembleRetryPrompt'
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
@@ -154,5 +155,87 @@ describe('resolveEnsembleParticipantRetryDispatch', () => {
       kind: 'none',
       reason: 'Retry: no prior user prompt on this chat to re-dispatch with.'
     })
+  })
+})
+
+describe('retryEnsembleParticipant lands the steer or says why it could not', () => {
+  const liveChat = (): ChatRecord =>
+    retryChat({
+      activeParticipantId: 'codex-builder',
+      participants: [
+        { participantId: 'codex-builder', provider: 'codex', order: 1, status: 'running' }
+      ]
+    } as Partial<EnsembleRoundState>)
+
+  function stubApi(responses: unknown[]): Array<Record<string, unknown>> {
+    const calls: Array<Record<string, unknown>> = []
+    let index = 0
+    ;(globalThis as unknown as { window: unknown }).window = {
+      api: {
+        runEnsembleRound: (input: Record<string, unknown>) => {
+          calls.push(input)
+          const response = responses[Math.min(index, responses.length - 1)]
+          index += 1
+          return response instanceof Error ? Promise.reject(response) : Promise.resolve(response)
+        }
+      }
+    }
+    return calls
+  }
+
+  afterEach(() => {
+    delete (globalThis as unknown as { window?: unknown }).window
+  })
+
+  // The lane is picked with `isEnsembleActiveRoundDispatchLive`, which
+  // chatBusyState re-exports from isEnsembleRoundPresentationLive -- the
+  // PRESENTATION predicate under a "dispatch" name. It returns true during a
+  // turnTransition handoff, where main's absorb gate (the weaker dispatch
+  // predicate) refuses. The dispatch was voided, so that refusal was invisible
+  // and the retry evaporated.
+  it('falls back to a fresh DM round when main refuses the steer', async () => {
+    const calls = stubApi([{ status: 'ignored' }, { status: 'started' }])
+    expect(retryEnsembleParticipant(liveChat(), 'grok-work')).toEqual({ ok: true, lane: 'steer' })
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[0].mode).toBe('steer')
+    expect(calls[1].mode).toBe('normal')
+    expect(calls[1].dmTargetParticipantId).toBe('grok-work')
+    expect(calls[1].prompt).toBe(calls[0].prompt)
+  })
+
+  it('does not re-dispatch anything main accepted', async () => {
+    for (const status of ['steered', 'queued', 'started']) {
+      const calls = stubApi([{ status }])
+      retryEnsembleParticipant(liveChat(), 'grok-work')
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      expect(calls).toHaveLength(1)
+    }
+  })
+
+  it('surfaces a refusal the fallback could not rescue', async () => {
+    const calls = stubApi([{ status: 'ignored' }, { status: 'busy' }])
+    const reasons: string[] = []
+    retryEnsembleParticipant(liveChat(), 'grok-work', {
+      onRefused: (refusal) => reasons.push(refusal.reason)
+    })
+    await vi.waitFor(() => expect(reasons).toHaveLength(1))
+    expect(reasons[0]).toBe('busy')
+    expect(calls).toHaveLength(2)
+  })
+
+  // EXACTLY-ONCE. A classified refusal proves main did not retain the prompt,
+  // so re-dispatching cannot duplicate. A thrown IPC proves nothing -- the
+  // steer may already have been accepted -- so it must be surfaced, never
+  // retried, which is the same rule RunRecovery applies to an ambiguous steer.
+  it('never re-dispatches after a rejection, and never leaves it unhandled', async () => {
+    const calls = stubApi([new Error('ipc down')])
+    const refusals: Array<{ reason: string }> = []
+    expect(() =>
+      retryEnsembleParticipant(liveChat(), 'grok-work', {
+        onRefused: (refusal) => refusals.push(refusal)
+      })
+    ).not.toThrow()
+    await vi.waitFor(() => expect(refusals).toHaveLength(1))
+    expect(calls).toHaveLength(1)
   })
 })

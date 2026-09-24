@@ -25,12 +25,17 @@ import {
   isReadOnlyAdvertisedTool
 } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
-import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
+import {
+  GATEWAY_MCP_ADVERTISE_TOOLS,
+  taskWraithMcpAdvertisedToolNamesForProfile
+} from '../mcp/McpToolProfiles'
 import {
   MCP_BRIDGE_ENDPOINT_ENV_KEYS,
   MCP_BRIDGE_PROFILE_ENV_KEYS,
   MCP_BRIDGE_ROUTE_ENV_KEYS
 } from '../mcp/McpBridgeRoute'
+import { ULTRATASK_DELEGATION_TOOL_NAMES } from '../UltraTaskDelegationConsent'
+import type { TaskWraithMcpProfileId } from '../store/types'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -130,6 +135,33 @@ export const CURSOR_BROKER_PLAN_MCP_ALLOW_RULES: readonly string[] = [
   )
 ]
 
+const CURSOR_SIGNED_DELEGATION_DIRECT_TOOL_NAME_SET: ReadonlySet<string> = new Set(
+  ULTRATASK_DELEGATION_TOOL_NAMES
+)
+
+/**
+ * Build exact canonical-broker rules from the immutable profile a native
+ * Cursor session observed at birth. Capability discovery remains visible in
+ * both scoped modes; ordinary direct tools must also be eligible for the
+ * current read-only/plan bridge. Delegation routes stay behind the separately
+ * verified UltraTask overlay applied by CursorPathBLaunchPlan.
+ */
+export function buildCursorCanonicalBrokerMcpAllowRulesForProfile(input: {
+  readonly profileId: TaskWraithMcpProfileId
+  readonly planSeat: boolean
+}): readonly string[] {
+  const isEligible = input.planSeat ? isPlanAdvertisedTool : isReadOnlyAdvertisedTool
+  const toolNames = taskWraithMcpAdvertisedToolNamesForProfile(input.profileId).filter(
+    (toolName) =>
+      isCapabilityGatewayToolName(toolName) ||
+      (isEligible(toolName) && !CURSOR_SIGNED_DELEGATION_DIRECT_TOOL_NAME_SET.has(toolName))
+  )
+  return Object.freeze([
+    ...toolNames.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}:${tool})`),
+    ...toolNames.map((tool) => `Mcp(${CURSOR_MCP_SERVER_NAME}-${tool})`)
+  ])
+}
+
 /** Allow rules for the READ-ONLY gateway broker. The bridge combines
  *  `--gateway-subset` with `--safe-subset`, so direct tools are the intersection
  *  of the stable gateway profile and the gate-skip safe set. The two virtual
@@ -163,15 +195,32 @@ export function isReservedCursorMcpServerName(name: string): boolean {
  * temp `.cjs` at runtime — no extraResources / packaged-path resolution needed.
  *
  * Protocol: stdio, newline-delimited JSON-RPC 2.0 (the MCP stdio transport).
- * Tools: `web_fetch(url)` — a READ-ONLY network fetch (http/https), 20s timeout,
- * 20KB body cap, follows redirects. No filesystem or shell access. Avoids
- * template literals + `${}` so it embeds cleanly in this TS template string
- * (newlines in emitted strings are written as the escaped `\n` sequence).
+ * Tools: `web_fetch(url)` / `web_search(query)` (read-only network) plus
+ * workspace `run_shell_command`, `write_file`, `read_file`, and `list_directory`
+ * bound to `process.cwd()`.
+ * Avoids template literals + `${}` so it embeds cleanly in this TS template
+ * string (newlines in emitted strings are written as the escaped `\n` sequence).
  */
 export const CURSOR_WEB_FETCH_MCP_SERVER_SOURCE = `// TaskWraith Cursor web_fetch MCP server (generated; do not edit).
 'use strict'
 const readline = require('readline')
+const { spawn } = require('child_process')
+const fs = require('fs')
+const path = require('path')
 function send(m) { try { process.stdout.write(JSON.stringify(m) + '\\n') } catch (e) {} }
+function workspaceRoot() {
+  return fs.realpathSync(process.cwd())
+}
+function resolveInWorkspace(p) {
+  if (typeof p !== 'string' || !p.trim()) throw new Error('path must be a non-empty string')
+  const root = workspaceRoot()
+  const abs = path.resolve(root, p)
+  const rel = path.relative(root, abs)
+  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
+    throw new Error('path must stay inside the workspace cwd')
+  }
+  return abs
+}
 const WEB_FETCH_TOOL = {
   name: 'web_fetch',
   description: 'Fetch the live text contents of an absolute http(s) URL. Use this whenever you need to read a web page or pull current online information and you already have a URL — it is the working way to access the web here. Returns the HTTP status + (truncated) body. Read-only network; cannot write files or run shell.',
@@ -237,6 +286,119 @@ async function doSearch(query) {
     clearTimeout(timer)
   }
 }
+const RUN_SHELL_TOOL = {
+  name: 'run_shell_command',
+  description: 'Run a shell command in the current Cursor workspace cwd. Optional cwd must stay inside that workspace. Returns exit code plus truncated stdout/stderr. Native Cursor Shell is enabled; this is the working way to run commands here.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'The shell command to run.' },
+      cwd: { type: 'string', description: 'Optional workspace-relative or in-workspace absolute cwd.' }
+    },
+    required: ['command']
+  }
+}
+function doShell(command, cwdArg) {
+  if (typeof command !== 'string' || !command.trim()) throw new Error('command must be a non-empty string')
+  const cwd = cwdArg ? resolveInWorkspace(cwdArg) : workspaceRoot()
+  return new Promise(function (resolve, reject) {
+    const shellBin = process.env.SHELL || '/bin/sh'
+    const child = spawn(shellBin, ['-c', command], { cwd: cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    const cap = 20000
+    function take(soFar, chunk) {
+      if (soFar.length >= cap) return soFar
+      const next = soFar + String(chunk)
+      return next.length > cap ? next.slice(0, cap) + '\\n...[truncated]' : next
+    }
+    child.stdout.on('data', function (b) { stdout = take(stdout, b) })
+    child.stderr.on('data', function (b) { stderr = take(stderr, b) })
+    const timer = setTimeout(function () {
+      try { child.kill('SIGKILL') } catch (e) {}
+    }, 30000)
+    child.on('error', function (e) {
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', function (code, signal) {
+      clearTimeout(timer)
+      const lines = ['exit ' + String(code === null ? 'null' : code) + (signal ? ' signal ' + signal : '')]
+      if (stdout) lines.push('stdout:\\n' + stdout)
+      if (stderr) lines.push('stderr:\\n' + stderr)
+      resolve(lines.join('\\n\\n'))
+    })
+  })
+}
+const WRITE_FILE_TOOL = {
+  name: 'write_file',
+  description: 'Write a UTF-8 text file inside the current Cursor workspace cwd. Path must stay inside the workspace. Use this when native Write is blocked.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Workspace-relative or in-workspace absolute path.' },
+      content: { type: 'string', description: 'UTF-8 file contents.' }
+    },
+    required: ['path', 'content']
+  }
+}
+function doWrite(filePath, content) {
+  if (typeof content !== 'string') throw new Error('content must be a string')
+  if (Buffer.byteLength(content, 'utf8') > 1000000) throw new Error('content exceeds 1MB')
+  const abs = resolveInWorkspace(filePath)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, content, 'utf8')
+  return 'Wrote ' + abs + ' (' + String(Buffer.byteLength(content, 'utf8')) + ' bytes)'
+}
+const READ_FILE_TOOL = {
+  name: 'read_file',
+  description: 'Read a UTF-8 text file inside the current Cursor workspace cwd. Path must stay inside the workspace. Truncates large files. Read-only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Workspace-relative or in-workspace absolute path.' }
+    },
+    required: ['path']
+  }
+}
+function doRead(filePath) {
+  const abs = resolveInWorkspace(filePath)
+  const st = fs.statSync(abs)
+  if (!st.isFile()) throw new Error('path is not a file')
+  const raw = fs.readFileSync(abs, 'utf8')
+  const cap = 100000
+  return raw.length > cap ? raw.slice(0, cap) + '\\n...[truncated]' : raw
+}
+const LIST_DIRECTORY_TOOL = {
+  name: 'list_directory',
+  description: 'List one directory inside the current Cursor workspace cwd (not recursive). Path defaults to the workspace root and must stay inside the workspace. Read-only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Workspace-relative or in-workspace absolute directory. Defaults to .' }
+    }
+  }
+}
+function doList(dirPath) {
+  const abs = resolveInWorkspace(dirPath && String(dirPath).trim() ? dirPath : '.')
+  const st = fs.statSync(abs)
+  if (!st.isDirectory()) throw new Error('path is not a directory')
+  const names = fs.readdirSync(abs)
+  const cap = 200
+  const lines = []
+  for (let i = 0; i < names.length && lines.length < cap; i++) {
+    let kind = 'file'
+    try {
+      const cst = fs.lstatSync(path.join(abs, names[i]))
+      if (cst.isDirectory()) kind = 'dir'
+      else if (cst.isSymbolicLink()) kind = 'link'
+    } catch (e) {}
+    lines.push(kind + '  ' + names[i])
+  }
+  let out = lines.join('\\n')
+  if (names.length > cap) out += '\\n...[' + String(names.length - cap) + ' more]'
+  return out || '(empty directory)'
+}
 readline.createInterface({ input: process.stdin }).on('line', async function (line) {
   line = (line || '').trim()
   if (!line) return
@@ -254,7 +416,7 @@ readline.createInterface({ input: process.stdin }).on('line', async function (li
   } else if (method === 'notifications/initialized') {
     // notification, no response
   } else if (method === 'tools/list') {
-    send({ jsonrpc: '2.0', id: id, result: { tools: [WEB_FETCH_TOOL, WEB_SEARCH_TOOL] } })
+    send({ jsonrpc: '2.0', id: id, result: { tools: [WEB_FETCH_TOOL, WEB_SEARCH_TOOL, RUN_SHELL_TOOL, WRITE_FILE_TOOL, READ_FILE_TOOL, LIST_DIRECTORY_TOOL] } })
   } else if (method === 'tools/call') {
     const name = params.name
     const args = params.arguments || {}
@@ -271,6 +433,34 @@ readline.createInterface({ input: process.stdin }).on('line', async function (li
         send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: text }] } })
       } catch (e) {
         send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: 'web_search error: ' + String((e && e.message) || e) }], isError: true } })
+      }
+    } else if (name === 'run_shell_command') {
+      try {
+        const text = await doShell(args.command, args.cwd)
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: text }] } })
+      } catch (e) {
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: 'run_shell_command error: ' + String((e && e.message) || e) }], isError: true } })
+      }
+    } else if (name === 'write_file') {
+      try {
+        const text = doWrite(args.path, args.content)
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: text }] } })
+      } catch (e) {
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: 'write_file error: ' + String((e && e.message) || e) }], isError: true } })
+      }
+    } else if (name === 'read_file') {
+      try {
+        const text = doRead(args.path)
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: text }] } })
+      } catch (e) {
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: 'read_file error: ' + String((e && e.message) || e) }], isError: true } })
+      }
+    } else if (name === 'list_directory') {
+      try {
+        const text = doList(args.path)
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: text }] } })
+      } catch (e) {
+        send({ jsonrpc: '2.0', id: id, result: { content: [{ type: 'text', text: 'list_directory error: ' + String((e && e.message) || e) }], isError: true } })
       }
     } else {
       send({ jsonrpc: '2.0', id: id, error: { code: -32601, message: 'Unknown tool: ' + name } })

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import type { HostProjectionState } from '../lib/host/HostProjectionStore'
 import type {
   HostCommandController,
@@ -12,8 +13,13 @@ import type {
   HostProjectedParticipant,
   HostProjectedQuestion,
   HostProjectedRound,
+  HostProjectedRouting,
   HostProjectedRun
 } from '../lib/host/hostSnapshotProjection'
+import type { HostLifecycleControlView, HostProvidersView } from './HostStatusRow'
+import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
+import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
+import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 
 export interface HostMissionControlParticipantGroup {
   readonly threadId: string
@@ -38,7 +44,13 @@ export interface HostMissionControlModel {
 export interface HostMissionControlProps {
   readonly state: HostProjectionState
   readonly commands?: HostCommandController | null
+  readonly presentation?: 'disclosure' | 'pane'
+  readonly lifecycleControl?: HostLifecycleControlView
+  readonly providers?: HostProvidersView
+  readonly onLifecycleAction?: () => void
 }
+
+export const HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT = 12
 
 function missionPriority(status: HostProjectedMission['status']): number {
   return status === 'active' ? 0 : 1
@@ -130,6 +142,12 @@ export function projectHostMissionControl(state: HostProjectionState): HostMissi
   }
 }
 
+export function formatHostMissionControlSummary(model: HostMissionControlModel): string {
+  return `${model.activeMissionCount} active · ${model.participantCount} participant${
+    model.participantCount === 1 ? '' : 's'
+  }${model.channels ? ` · ${model.channels.length} channel${model.channels.length === 1 ? '' : 's'}` : ''}`
+}
+
 function statusClass(status: string): string {
   if (status === 'active' || status === 'running' || status === 'completed') return status
   if (status === 'blocked' || status === 'failed') return status
@@ -142,15 +160,49 @@ function participantDetail(participant: HostProjectedParticipant): string {
     .join(' · ')
 }
 
-function roundProviderOutcomes(
-  round: HostProjectedRound,
-  runById: ReadonlyMap<string, HostProjectedRun>
-): string {
-  return round.providerRunIds
-    .map((runId) => runById.get(runId))
-    .filter((run): run is HostProjectedRun => Boolean(run))
-    .map((run) => `${run.providerId}: ${run.providerOutcome}`)
-    .join(' · ')
+function participantSeatState(
+  participant: HostProjectedParticipant,
+  authority?: SeatChangeSeatState['authority']
+): SeatChangeSeatState {
+  return {
+    provider: participant.providerId,
+    model: participant.modelId || '',
+    role: participant.role,
+    seatNumber: participant.order + 1,
+    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    ...(participant.thinkingEnabled !== undefined
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {}),
+    ...(participant.permissionPresetId
+      ? { permissionPresetId: participant.permissionPresetId }
+      : {}),
+    ...(participant.stage && participant.stage !== 'any' ? { stageRole: participant.stage } : {}),
+    ...(authority ? { authority } : {})
+  }
+}
+
+function participantAuthority(
+  participantId: string,
+  routing: HostProjectedRouting | undefined
+): SeatChangeSeatState['authority'] | undefined {
+  if (routing?.bossParticipantId === participantId) return 'boss'
+  if (routing?.captainParticipantId === participantId) return 'captain'
+  return undefined
+}
+
+function participantStatus(participant: HostProjectedParticipant): {
+  key: string
+  label: string
+} {
+  const key = participant.active ? 'running' : participant.status || 'idle'
+  return {
+    key,
+    label: participant.enabled
+      ? participant.active
+        ? 'Active'
+        : participant.status || 'Idle'
+      : 'Disabled'
+  }
 }
 
 function commandStateFor(commands: HostCommandController | null | undefined) {
@@ -160,20 +212,25 @@ function commandStateFor(commands: HostCommandController | null | undefined) {
   )
 }
 
-export function HostMissionControl({ state, commands }: HostMissionControlProps) {
+export function HostMissionControl({
+  state,
+  commands,
+  presentation = 'disclosure',
+  lifecycleControl,
+  providers,
+  onLifecycleAction
+}: HostMissionControlProps) {
   const [commandState, setCommandState] = useState<HostCommandControllerState>(() =>
     commandStateFor(commands)
   )
+  const [showAllRosters, setShowAllRosters] = useState(false)
   useEffect(() => {
     setCommandState(commandStateFor(commands))
     return commands?.subscribe(setCommandState)
   }, [commands])
 
   const model = projectHostMissionControl(state)
-  const summary = `${model.activeMissionCount} active · ${model.participantCount} participant${
-    model.participantCount === 1 ? '' : 's'
-  }${model.channels ? ` · ${model.channels.length} channel${model.channels.length === 1 ? '' : 's'}` : ''}`
-  const runById = new Map(model.runs.map((run) => [run.runId, run]))
+  const summary = formatHostMissionControlSummary(model)
   const activeRunThreadIds = [
     ...new Set(
       model.runs.filter((run) => run.providerOutcome === 'running').map((run) => run.threadId)
@@ -182,6 +239,64 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
   const canMutate =
     Boolean(commands) && state.status === 'live' && state.projection?.freshness === 'live'
   const threadTitle = new Map(state.projection?.threads.map((thread) => [thread.id, thread.title]))
+  const threadUpdatedAt = new Map(
+    state.projection?.threads.map((thread) => [thread.id, thread.updatedAt])
+  )
+  const routingByThread = new Map<string, HostProjectedRouting>()
+  for (const round of model.rounds) {
+    if (round.routing && !routingByThread.has(round.threadId)) {
+      routingByThread.set(round.threadId, round.routing)
+    }
+  }
+  if (model.participantGroups.length === 1 && state.projection?.routing) {
+    routingByThread.set(model.participantGroups[0]!.threadId, state.projection.routing)
+  }
+  const activeParticipantCount = model.participantGroups.reduce(
+    (total, group) => total + group.participants.filter((participant) => participant.active).length,
+    0
+  )
+  const overviewMetrics = [
+    { label: 'Active missions', value: model.activeMissionCount },
+    {
+      label: 'Running rounds',
+      value: model.rounds.filter((round) => round.status === 'running').length
+    },
+    {
+      label: 'Provider runs',
+      value: model.runs.filter((run) => run.providerOutcome === 'running').length
+    },
+    { label: 'Active seats', value: activeParticipantCount },
+    { label: 'Participants', value: model.participantCount },
+    { label: 'Channels', value: model.channels?.length ?? '—' },
+    {
+      label: 'Open questions',
+      value:
+        state.projection?.questions.filter((question) => question.status === 'open').length ?? '—'
+    }
+  ]
+  const orderedParticipantGroups = [...model.participantGroups].sort((left, right) => {
+    const leftActive = left.participants.some((participant) => participant.active)
+    const rightActive = right.participants.some((participant) => participant.active)
+    if (leftActive !== rightActive) return rightActive ? 1 : -1
+    const updatedAt =
+      (threadUpdatedAt.get(right.threadId) ?? 0) - (threadUpdatedAt.get(left.threadId) ?? 0)
+    if (updatedAt !== 0) return updatedAt
+    return left.title.localeCompare(right.title) || left.threadId.localeCompare(right.threadId)
+  })
+  const visibleParticipantGroups = showAllRosters
+    ? orderedParticipantGroups
+    : orderedParticipantGroups.slice(0, HOST_MISSION_CONTROL_ROSTER_PREVIEW_LIMIT)
+  const hiddenRosterCount = orderedParticipantGroups.length - visibleParticipantGroups.length
+  const positionDetail =
+    model.generation !== undefined && model.cursor !== undefined
+      ? `Generation ${model.generation} · Cursor ${model.cursor}`
+      : 'Waiting for a Host snapshot'
+  const hostRunning = lifecycleControl
+    ? lifecycleControl.stateLabel === 'Running in this app'
+    : model.phase === 'Live'
+  const providerCount = providers?.known
+    ? `${providers.available ?? 0} of ${providers.total ?? 0}`
+    : '—'
 
   const submitRunCancel = (threadId: string): void => {
     if (!commands || !canMutate) return
@@ -214,33 +329,80 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
     })
   }
 
-  return (
-    <details className="host-mission-control" aria-label="Mission Control">
-      <summary aria-label={`Mission Control, ${summary}`}>
-        <span className="host-mission-control-summary-copy">
-          <span className="host-mission-control-title">Mission Control</span>
-          <span className="host-mission-control-summary">{summary}</span>
-        </span>
-        <span className="host-mission-control-chevron" aria-hidden>
-          ›
-        </span>
-      </summary>
+  const body = (
+    <>
+      <div
+        className={`host-mission-control-body${
+          presentation === 'pane' ? ' host-mission-control-body--pane' : ''
+        }`}
+      >
+        {presentation !== 'pane' ? (
+          <div className="host-mission-control-position" role="status" aria-live="polite">
+            <span
+              className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
+              aria-hidden
+            />
+            <span>{model.phase}</span>
+            <span className="host-mission-control-cursor">{positionDetail}</span>
+          </div>
+        ) : (
+          <section
+            className="host-mission-control-host-row"
+            aria-label="TaskWraith Host control"
+            title={positionDetail}
+          >
+            <div
+              className="host-mission-control-host-lifecycle"
+              {...(lifecycleControl?.detail ? { title: lifecycleControl.detail } : {})}
+            >
+              <span
+                className={`host-mission-control-dot is-${hostRunning ? 'live' : 'stale'}`}
+                aria-hidden
+              />
+              <span className="host-mission-control-host-copy">
+                <strong>TaskWraith Host</strong>
+                <span>{lifecycleControl?.stateLabel ?? model.phase}</span>
+                <small>
+                  {lifecycleControl?.note ?? 'Runs only while TaskWraith is open'} · {model.phase}{' '}
+                  projection
+                </small>
+              </span>
+              {lifecycleControl?.actionLabel && onLifecycleAction ? (
+                <button
+                  type="button"
+                  className="host-lifecycle-toggle"
+                  disabled={lifecycleControl.disabled}
+                  onClick={onLifecycleAction}
+                  aria-label={`${lifecycleControl.actionLabel}. Host runs only while TaskWraith is open.`}
+                >
+                  {lifecycleControl.actionLabel}
+                </button>
+              ) : null}
+            </div>
+            <div
+              className="host-mission-control-provider-satellite"
+              title={providers?.label ?? 'Provider configuration unavailable'}
+            >
+              <strong>{providerCount}</strong>
+              <span>Providers configured</span>
+            </div>
+          </section>
+        )}
 
-      <div className="host-mission-control-body">
-        <div className="host-mission-control-position" role="status" aria-live="polite">
-          <span
-            className={`host-mission-control-dot is-${model.phase === 'Live' ? 'live' : 'stale'}`}
-            aria-hidden
-          />
-          <span>{model.phase}</span>
-          {model.generation !== undefined && model.cursor !== undefined ? (
-            <span className="host-mission-control-cursor">
-              Generation {model.generation} · Cursor {model.cursor}
-            </span>
-          ) : (
-            <span className="host-mission-control-cursor">Waiting for a Host snapshot</span>
-          )}
-        </div>
+        {presentation === 'pane' && state.projection ? (
+          <div
+            className="host-mission-control-overview-metrics"
+            role="list"
+            aria-label="Mission Control overview"
+          >
+            {overviewMetrics.map((metric) => (
+              <div key={metric.label} role="listitem">
+                <strong>{metric.value}</strong>
+                <span>{metric.label}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {commandState.notice ? (
           <div
@@ -253,7 +415,10 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
         ) : null}
 
         {commandState.pending ? (
-          <section className="host-mission-control-section" aria-labelledby="host-command-title">
+          <section
+            className="host-mission-control-section host-mission-control-section--priority"
+            aria-labelledby="host-command-title"
+          >
             <h3 id="host-command-title">Host approval</h3>
             <div className="host-mission-control-command-card">
               <span>
@@ -299,7 +464,7 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
           <>
             {activeRunThreadIds.length > 0 ? (
               <section
-                className="host-mission-control-section"
+                className="host-mission-control-section host-mission-control-section--priority"
                 aria-labelledby="host-actions-title"
               >
                 <h3 id="host-actions-title">Governed actions</h3>
@@ -322,11 +487,25 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
             ) : null}
 
             {model.channels !== undefined ? (
-              <section
-                className="host-mission-control-section"
-                aria-labelledby="host-channels-title"
+              <details
+                className="host-mission-control-section host-mission-control-section--channels"
+                aria-label={`Channels, ${model.channels.length}`}
               >
-                <h3 id="host-channels-title">Channels</h3>
+                <summary>
+                  <span className="host-mission-control-channels-copy">
+                    <strong>Channels</strong>
+                    <small>
+                      {model.channels.length} shared channel
+                      {model.channels.length === 1 ? '' : 's'}
+                    </small>
+                  </span>
+                  <span className="host-mission-control-channels-count">
+                    {model.channels.length}
+                  </span>
+                  <span className="host-mission-control-channels-chevron" aria-hidden>
+                    ›
+                  </span>
+                </summary>
                 {model.channels.length === 0 ? (
                   <div className="host-mission-control-empty">No shared Channels yet.</div>
                 ) : (
@@ -385,80 +564,12 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
                     ))}
                   </div>
                 )}
-              </section>
-            ) : null}
-
-            <section className="host-mission-control-section" aria-labelledby="host-missions-title">
-              <h3 id="host-missions-title">Mission timeline</h3>
-              {model.missions.length === 0 ? (
-                <div className="host-mission-control-empty">No Host missions yet.</div>
-              ) : (
-                <div className="host-mission-control-timeline">
-                  {model.missions.map((mission) => (
-                    <article
-                      className="host-mission-control-row"
-                      key={mission.missionId}
-                      aria-label={`${mission.title}, ${mission.status}`}
-                    >
-                      <span
-                        className={`host-mission-control-dot is-${statusClass(mission.status)}`}
-                        aria-hidden
-                      />
-                      <span className="host-mission-control-row-copy">
-                        <strong>{mission.title}</strong>
-                        <span>
-                          {mission.status}
-                          {mission.activeRoundId ? ` · ${mission.activeRoundId}` : ''}
-                        </span>
-                      </span>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {model.rounds.length > 0 ? (
-              <section className="host-mission-control-section" aria-labelledby="host-rounds-title">
-                <h3 id="host-rounds-title">Round timeline</h3>
-                <div className="host-mission-control-timeline">
-                  {model.rounds.map((round) => {
-                    const routing = round.routing ?? state.projection?.routing
-                    const outcomes = roundProviderOutcomes(round, runById)
-                    return (
-                      <article
-                        className="host-mission-control-row"
-                        key={round.roundId}
-                        aria-label={`Round ${round.status}, ${round.participantIds.length} participants`}
-                      >
-                        <span
-                          className={`host-mission-control-dot is-${statusClass(round.status)}`}
-                          aria-hidden
-                        />
-                        <span className="host-mission-control-row-copy">
-                          <strong>
-                            {round.status} · {round.participantIds.length} seats
-                          </strong>
-                          {routing ? (
-                            <span>
-                              {routing.mode} · {routing.fanout}
-                              {routing.continuationHops !== undefined &&
-                              routing.maxContinuationHops !== undefined
-                                ? ` · ${routing.continuationHops}/${routing.maxContinuationHops}`
-                                : ''}
-                            </span>
-                          ) : null}
-                          {outcomes ? <span>{outcomes}</span> : null}
-                        </span>
-                      </article>
-                    )
-                  })}
-                </div>
-              </section>
+              </details>
             ) : null}
 
             {model.questionReceipts.length > 0 ? (
               <section
-                className="host-mission-control-section"
+                className="host-mission-control-section host-mission-control-section--receipts"
                 aria-labelledby="host-question-receipts-title"
               >
                 <h3 id="host-question-receipts-title">Recent question receipts</h3>
@@ -486,55 +597,193 @@ export function HostMissionControl({ state, commands }: HostMissionControlProps)
               </section>
             ) : null}
 
-            {model.participantGroups.map((group) => (
+            {model.participantGroups.length > 0 ? (
               <section
-                className="host-mission-control-section"
-                aria-labelledby={`host-participants-${group.threadId}`}
-                key={group.threadId}
+                className="host-mission-control-rosters"
+                aria-labelledby="host-rosters-title"
               >
-                <h3 id={`host-participants-${group.threadId}`}>
-                  {group.title} · {group.participants.length}
-                </h3>
-                <div className="host-mission-control-participants" role="list">
-                  {group.participants.map((participant) => (
-                    <div
-                      className={`host-mission-control-participant${
-                        participant.enabled ? '' : ' is-disabled'
-                      }`}
-                      key={`${participant.threadId}:${participant.id}`}
-                      role="listitem"
-                      aria-label={`${participant.role}, ${participant.providerId}, ${
-                        participant.active ? 'active' : (participant.status ?? 'idle')
-                      }, ${participant.enabled ? 'enabled' : 'disabled'}`}
-                    >
-                      <span
-                        className={`host-mission-control-dot is-${
-                          participant.active ? 'running' : 'muted'
-                        }`}
-                        aria-hidden
-                      />
-                      <span className="host-mission-control-row-copy">
-                        <strong>{participant.role}</strong>
-                        <span>{participantDetail(participant)}</span>
-                      </span>
-                      {commands ? (
-                        <button
-                          type="button"
-                          className="host-mission-control-seat-toggle"
-                          disabled={!canMutate || commandState.busy}
-                          onClick={() => submitSeatToggle(participant)}
-                        >
-                          {participant.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
+                <div className="host-mission-control-rosters-heading">
+                  <h3 id="host-rosters-title">Rosters</h3>
+                  <span>
+                    {model.participantGroups.length} threads · {model.participantCount} seats
+                  </span>
                 </div>
+                <div className="host-mission-control-roster-list">
+                  {visibleParticipantGroups.map((group) => {
+                    const routing = routingByThread.get(group.threadId)
+                    const activeCount = group.participants.filter(
+                      (participant) => participant.active
+                    ).length
+                    const providerCount = new Set(
+                      group.participants.map((participant) => participant.providerId)
+                    ).size
+                    return (
+                      <details
+                        className="host-mission-control-roster"
+                        key={group.threadId}
+                        open={activeCount > 0}
+                      >
+                        <summary
+                          aria-label={`${group.title} roster, ${group.participants.length} seats, ${activeCount} active`}
+                        >
+                          <span
+                            className={`host-mission-control-dot is-${
+                              activeCount > 0 ? 'running' : 'muted'
+                            }`}
+                            aria-hidden
+                          />
+                          <span className="host-mission-control-roster-copy">
+                            <strong title={group.title}>{group.title}</strong>
+                            <small>
+                              {providerCount} provider{providerCount === 1 ? '' : 's'}
+                            </small>
+                          </span>
+                          <span className="host-mission-control-roster-counts">
+                            {activeCount > 0 ? `${activeCount} active · ` : ''}
+                            {group.participants.length} seats
+                          </span>
+                          <span className="host-mission-control-roster-chevron" aria-hidden>
+                            ›
+                          </span>
+                        </summary>
+                        <div
+                          className="host-mission-control-seat-table run-complete-epic-list"
+                          role="table"
+                          aria-label={`${group.title} participants`}
+                        >
+                          <div
+                            className="run-complete-epic-row is-header host-mission-control-seat-row"
+                            role="row"
+                          >
+                            <span role="columnheader">Seat</span>
+                            <span className="run-complete-epic-work" role="columnheader">
+                              State &amp; control
+                            </span>
+                          </div>
+                          {group.participants.map((participant) => {
+                            const seat = participantSeatState(
+                              participant,
+                              participantAuthority(participant.id, routing)
+                            )
+                            const status = participantStatus(participant)
+                            const statusClassName = status.key
+                              .toLowerCase()
+                              .replace(/[^a-z0-9]+/g, '-')
+                            return (
+                              <div
+                                className={`run-complete-epic-row host-mission-control-seat-row${
+                                  participant.enabled ? '' : ' is-disabled'
+                                }`}
+                                key={`${participant.threadId}:${participant.id}`}
+                                role="row"
+                                aria-label={`${participant.role}, ${participant.providerId}, ${
+                                  participant.active ? 'active' : (participant.status ?? 'idle')
+                                }, ${participant.enabled ? 'enabled' : 'disabled'}`}
+                              >
+                                <span
+                                  className="run-complete-epic-seat host-mission-control-seat-identity"
+                                  role="cell"
+                                  title={participantDetail(participant)}
+                                >
+                                  <span
+                                    className="host-mission-control-seat-role"
+                                    style={{ color: seatAccentVar(seat) }}
+                                    title={
+                                      participantRoleIconTitle(seat.authority, seat.stageRole) ||
+                                      participant.role
+                                    }
+                                  >
+                                    <ParticipantRoleIcon
+                                      authority={seat.authority}
+                                      stageRole={seat.stageRole}
+                                      className="host-mission-control-seat-role-icon"
+                                    />
+                                    <strong>
+                                      #{participant.order + 1} {participant.role}
+                                    </strong>
+                                  </span>
+                                  <SeatStateChips
+                                    seat={seat}
+                                    className="host-mission-control-seat-chips"
+                                  />
+                                </span>
+                                <span
+                                  className="run-complete-epic-work host-mission-control-seat-state"
+                                  role="cell"
+                                >
+                                  <span
+                                    className={`ensemble-above-chip-status status-${statusClassName} host-mission-control-seat-status-icon`}
+                                    role="img"
+                                    aria-label={status.label}
+                                    title={status.label}
+                                  >
+                                    <ParticipantStatusIcon status={status.key} />
+                                  </span>
+                                  <span className="host-mission-control-seat-status-label">
+                                    {status.label}
+                                  </span>
+                                  {commands ? (
+                                    <button
+                                      type="button"
+                                      className="host-mission-control-seat-toggle"
+                                      disabled={!canMutate || commandState.busy}
+                                      onClick={() => submitSeatToggle(participant)}
+                                    >
+                                      {participant.enabled ? 'Disable' : 'Enable'}
+                                    </button>
+                                  ) : null}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </details>
+                    )
+                  })}
+                </div>
+                {hiddenRosterCount > 0 || showAllRosters ? (
+                  <button
+                    type="button"
+                    className="host-mission-control-roster-more"
+                    aria-expanded={showAllRosters}
+                    onClick={() => setShowAllRosters((current) => !current)}
+                  >
+                    {showAllRosters
+                      ? 'Show fewer rosters'
+                      : `Show ${hiddenRosterCount} more roster${hiddenRosterCount === 1 ? '' : 's'}`}
+                  </button>
+                ) : null}
               </section>
-            ))}
+            ) : null}
           </>
         )}
       </div>
+    </>
+  )
+
+  if (presentation === 'pane') {
+    return (
+      <section
+        className="host-mission-control host-mission-control--pane"
+        aria-label={`Mission Control, ${summary}`}
+      >
+        {body}
+      </section>
+    )
+  }
+
+  return (
+    <details className="host-mission-control" aria-label="Mission Control">
+      <summary aria-label={`Mission Control, ${summary}`}>
+        <span className="host-mission-control-summary-copy">
+          <span className="host-mission-control-title">Mission Control</span>
+          <span className="host-mission-control-summary">{summary}</span>
+        </span>
+        <span className="host-mission-control-chevron" aria-hidden>
+          ›
+        </span>
+      </summary>
+      {body}
     </details>
   )
 }

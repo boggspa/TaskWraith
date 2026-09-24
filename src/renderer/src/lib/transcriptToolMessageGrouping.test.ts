@@ -11,6 +11,7 @@ import {
   isEnsembleFanoutResultMessage,
   readEnsembleFanoutTranscriptParts
 } from '../components/EnsembleFanoutResultCardModel'
+import { inlineStatsForActivity } from './ActivityInlineStats'
 import { summarizeCollapsedActivityStack } from './collapsedActivityStack'
 
 function activity(
@@ -142,6 +143,12 @@ describe('groupAdjacentToolMessages', () => {
         endedAt: '2026-08-14T10:16:54.343Z',
         durationMs: 1,
         parameters: { ...parameters, cwd: '/workspace' },
+        diffSummary: {
+          additions: 7,
+          deletions: 3,
+          source: 'git_numstat',
+          confidence: 'exact'
+        },
         resultSummary,
         metadata: { provider: 'claude', ensembleProvider: 'claude' }
       }
@@ -155,6 +162,11 @@ describe('groupAdjacentToolMessages', () => {
     expect(grouped).toHaveLength(1)
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_fanout'])
     expect(grouped[0].toolActivities?.[0].durationMs).toBe(123)
+    expect(grouped[0].toolActivities?.[0].diffSummary).toMatchObject({
+      additions: 7,
+      deletions: 3,
+      confidence: 'exact'
+    })
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['provider-row', 'host-row'])
   })
 
@@ -187,6 +199,52 @@ describe('groupAdjacentToolMessages', () => {
     ])
 
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['toolu_images'])
+  })
+
+  it('keeps the enriched Mistral host receipt when a TaskWraith wrapper proves its mirror', () => {
+    const providerActivity = activity('MtlNbiz6L', 'unknown', {
+      toolName: 'TaskWraith_replace',
+      displayName: 'Ran replace',
+      status: 'success',
+      startedAt: '2026-08-24T02:16:29.026Z',
+      endedAt: '2026-08-24T02:16:29.537Z',
+      durationMs: 511,
+      parameters: {},
+      resultSummary: 'Ran replace',
+      metadata: { provider: 'mistral', ensembleProvider: 'mistral' }
+    })
+    const hostActivity = activity('mistral-mcp-replace-1787451389069-nk41h7ege1', 'write', {
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      status: 'success',
+      startedAt: '2026-08-24T02:16:29.069Z',
+      endedAt: '2026-08-24T02:16:29.531Z',
+      durationMs: 462,
+      parameters: { path: 'src/a.ts', old_string: 'before', new_string: 'after\nnext' },
+      filePath: 'src/a.ts',
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'string_replace',
+        confidence: 'estimated'
+      },
+      resultSummary: 'Ran replace',
+      metadata: { provider: 'mistral', ensembleProvider: 'mistral' }
+    })
+
+    const grouped = groupAdjacentToolMessages([
+      toolMessage('provider-row', [providerActivity]),
+      toolMessage('host-row', [hostActivity])
+    ])
+
+    expect(grouped[0].toolActivities).toMatchObject([
+      {
+        id: hostActivity.id,
+        filePath: 'src/a.ts',
+        diffSummary: { additions: 2, deletions: 1 },
+        durationMs: 511
+      }
+    ])
   })
 
   it('coalesces Kimi empty ACP wrappers into their enriched host MCP activities', () => {
@@ -276,10 +334,17 @@ describe('groupAdjacentToolMessages', () => {
       diffSummary: { additions: 33, deletions: 14 },
       durationMs: 25_948
     })
+    expect(inlineStatsForActivity(grouped[0].toolActivities![0])).toMatchObject({
+      visible: true,
+      additions: 33,
+      deletions: 14,
+      confidence: 'exact'
+    })
     expect(summarizeCollapsedActivityStack(grouped[0].toolActivities || [])).toMatchObject({
       label: 'Edited 1 file · Ran 1 command · 1 error',
       activityCount: 2,
-      errorCount: 1
+      errorCount: 1,
+      diff: { additions: 33, deletions: 14, estimated: false }
     })
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual([
       'provider-row',
@@ -737,5 +802,63 @@ describe('groupFanoutLaneMessages', () => {
       'c1'
     ])
     expect(groupedTranscriptMessageIds(grouped[0])).toEqual(['tool-group-t1', 't1', 't2', 'c1'])
+  })
+})
+
+describe('mirror coalescing inside a single ungrouped tool message', () => {
+  // A solo turn batches every activity into ONE tool message; only an ensemble
+  // round emits one message per activity. These shapes are the real Muse MSP
+  // twin measured off a run-events ledger: the provider streams its own
+  // `call_…` row and TaskWraith mirrors it as a `muse-mcp-…` host receipt.
+  const PARAMETERS = { args: [], task: 'test', timeoutMs: 600_000 }
+  const HOST_OUTPUT = '{"ok":false,"tool":"run_task","code":"invalid-call"}'
+
+  const museNative = (): ToolActivity =>
+    activity('call_01a088d084da7113b8f4e1f0a6dfac88', 'shell', {
+      toolName: 'mcp__taskwraith__run_task',
+      status: 'error',
+      startedAt: '2026-09-10T00:56:02.527Z',
+      endedAt: '2026-09-10T00:56:02.570Z',
+      parameters: PARAMETERS,
+      resultSummary: `tool failed: ${HOST_OUTPUT}`,
+      metadata: { provider: 'muse' }
+    })
+
+  const museHost = (): ToolActivity =>
+    activity('muse-mcp-run_task-1789001762549-yxnwxusaqv', 'shell', {
+      toolName: 'run_task',
+      status: 'error',
+      startedAt: '2026-09-10T00:56:02.550Z',
+      endedAt: '2026-09-10T00:56:02.553Z',
+      durationMs: 3,
+      parameters: { ...PARAMETERS, cwd: '/Users/chrisizatt/Documents/Test 1' },
+      resultSummary: HOST_OUTPUT,
+      metadata: { provider: 'muse' }
+    })
+
+  it('collapses a twin that arrives inside one tool message', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual([
+      'muse-mcp-run_task-1789001762549-yxnwxusaqv'
+    ])
+  })
+
+  it('does not double the error tally for a single errored call', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    const errors = (grouped[0].toolActivities || []).filter((entry) => entry.status === 'error')
+    expect(errors).toHaveLength(1)
+  })
+
+  it('leaves the lone message its own identity — one message is not a group', () => {
+    const grouped = groupAdjacentToolMessages([toolMessage('m1', [museNative(), museHost()])])
+    expect(grouped[0].id).toBe('m1')
+    expect(grouped[0].metadata?.groupedToolMessageIds).toBeUndefined()
+  })
+
+  it('returns an unmirrored message untouched, allocating nothing', () => {
+    const message = toolMessage('m1', [activity('a1'), activity('a2', 'write')])
+    const grouped = groupAdjacentToolMessages([message])
+    expect(grouped[0]).toBe(message)
   })
 })

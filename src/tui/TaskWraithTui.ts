@@ -1,10 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { emitKeypressEvents } from 'node:readline'
+import { isAbsolute } from 'node:path'
 import type { ReadStream, WriteStream } from 'node:tty'
+import { HostLeaseClient } from '../host-client/HostLeaseClient'
+import { HOST_TERMINATION_SUCCESS_KINDS } from '../host-client/HostProcessTermination'
 import {
   HostProjectionClient,
-  HostProjectionIncompatibleProtocolError
-} from '../main/host/HostProjectionClient'
+  HostProjectionIncompatibleProtocolError,
+  HostProjectionTransportError
+} from '../host-client/HostProjectionClient'
+import { canonicalHostProfilePath } from '../host-runtime/HostRegistry'
 import {
   HOST_QUESTION_ANSWER_MAX_CHARS,
   type HostDeltasFrame,
@@ -15,13 +20,23 @@ import {
   type HostCommandName,
   type HostCommandReceipt,
   type HostQuestionProjection,
-  type HostSnapshot
+  type HostSnapshot,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
+import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
+import type {
+  HostPermissionPostureOffer,
+  HostProviderModelOffer,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection
+} from '../shared/hostSetupProtocol'
 import { applyHostSnapshotDeltas } from '../shared/hostSnapshotApply'
-import { defaultTaskWraithUserDataPath } from '../shared/taskWraithControlPaths.node'
+import {
+  defaultTaskWraithUserDataPath,
+  taskWraithControlSocketPath
+} from '../shared/taskWraithControlPaths.node'
 import type {
   TaskWraithControlModelOffer,
-  TaskWraithControlParticipant,
   TaskWraithControlSnapshot,
   TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
@@ -30,22 +45,104 @@ import type {
 import { Ansi, sanitizeTerminalText, type AnsiColorMode } from './ansi'
 import {
   buildHostCommand,
+  buildProviderAuthBeginCommand,
+  buildThreadConfigureCommand,
+  buildThreadArchiveCommand,
+  buildThreadCreateCommand,
+  buildWorkspaceRegisterCommand,
   describeHostReceipt,
   isTerminalHostReceiptStatus,
   pollHostReceiptUntilTerminal
 } from './hostCommandFlow'
-import { renderTaskWraithTui } from './render'
 import {
+  acknowledgeColdStartPosture,
+  applyColdStartReceipt,
+  beginColdStartProviderAuth,
+  coldStartAuthFlows,
+  coldStartConfigure,
+  coldStartIdle,
+  coldStartOffers,
+  coldStartPending,
+  coldStartSelectProvider,
+  coldStartThreadCreated,
+  coldStartWorkspaceRegistered,
+  selectColdStartConfiguration,
+  type ColdStartPendingCommand
+} from './coldStartFlow'
+import {
+  TUI_AUTO_THEME_NAME,
+  TUI_UNPAINTED_THEME,
+  isAutoThemeName,
+  resolveAutoTheme,
+  resolveTuiTheme,
+  tuiThemeForColorMode,
+  tuiThemeNames,
+  type TuiTheme
+} from './palette'
+import { resolveTuiAppearanceWithoutProbe } from './appearance'
+import { renderTaskWraithTui } from './render'
+import type { TuiProfileSettings } from './settings'
+import {
+  filterTuiSlashCommands,
+  parseLeadingTuiSlashToken,
+  resolveTuiSlashCommand
+} from './slashCommands'
+import {
+  resolveStartupModel,
+  resolveStartupPosture,
+  resolveStartupProvider,
+  resolveStartupReasoning,
+  resolveStartupWorkspaceId
+} from './startupDefaults'
+import {
+  mapHostHistoryEntriesToTranscriptRows,
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
 import {
   createTaskWraithTuiDemoState,
+  tuiSeatsRoster,
+  visibleThreadRows,
   type TaskWraithTuiState,
   type TuiOverlay,
-  type TuiPendingHostMutation
+  type TuiPendingHostMutation,
+  type TuiPendingSelection,
+  type TuiQueuedDraft
 } from './state'
-import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import {
+  liveThreadWorkIds,
+  nextDispatchableDraft,
+  projectedThreadWorkIds,
+  queuedDraftsForThread,
+  removeQueuedDraft,
+  replaceQueuedDraft
+} from './promptQueue'
+import { matchProviderStatus } from './providerLoginFlow'
+import { projectTuiFullAccessPresence, type TuiFullAccessPresence } from './fullAccessConsent'
+import { classifyHistoryResult, preserveAuthoritativeHistoryRows } from './historyReconcile'
+import {
+  buildHostStatusPanel,
+  buildRestartConfirmPanel,
+  buildStopAllPlanPanel,
+  buildStopAllResultPanel,
+  hostIdentitySegments,
+  parseTuiHostCommand,
+  type TuiHostLeaseState
+} from './hostLens'
+import type {
+  EnsureTuiHostAvailableResult,
+  TuiHostControl,
+  TuiHostStopAllPlan,
+  TuiHostStopAllRequest
+} from './hostProcessManager'
+import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
+import {
+  findTuiModelChoiceIndex,
+  nextAvailableTuiPosture,
+  resolveTuiHomePostureDetail,
+  tuiModelChoices,
+  type TuiModelChoice
+} from './modelPicker'
 
 interface Keypress {
   name?: string
@@ -55,15 +152,66 @@ interface Keypress {
   sequence?: string
 }
 
+const SHIFT_TAB_SEQUENCES = new Set(['\u001b[Z', '\u001b[1;2Z', '\u001b[9;2u'])
+
+/**
+ * Node readline decodes the traditional xterm sequence as tab + shift, but
+ * newer terminals may send Kitty's CSI-u form. Node 22 preserves that raw
+ * sequence while naming the key "undefined", so the semantic check alone
+ * silently drops a real Shift+Tab press.
+ */
+function isShiftTabKey(key: Keypress | undefined): key is Keypress {
+  if (!key) return false
+  if (key.name === 'btab' || key.name === 'backtab') return true
+  if (key.name === 'tab' && key.shift === true) return true
+  return Boolean(key.sequence && SHIFT_TAB_SEQUENCES.has(key.sequence))
+}
+
 export interface TaskWraithTuiOptions {
   clientVersion: string
   userDataPath?: string
   initialThreadId?: string
   demo?: boolean
+  /**
+   * Re-arms the standalone Host launcher (ensureTuiHostAvailable). Invoked by
+   * the reconnect loop once failures exceed HOST_REVIVE_FAILURE_THRESHOLD so a
+   * dead Host process is relaunched instead of retried forever. The TUI class
+   * itself stays launcher-agnostic; the CLI injects this.
+   */
+  reviveHost?: () => Promise<EnsureTuiHostAvailableResult>
+  /** `/host restart` and `/host stop-all`, injected by the CLI like `reviveHost`. */
+  hostControl?: TuiHostControl
+  /** Opaque launch-bound signer; never persisted or exposed to provider code. */
+  fullAccessPresence?: TuiFullAccessPresence
+  /** One-shot notice on the first frame, e.g. that a stale Host was restarted. */
+  startupNotice?: string
+  /** Base reconnect delay; doubles per attempt up to RECONNECT_MAX_DELAY_MS. */
+  reconnectBaseDelayMs?: number
+  /** Interval between guided-setup auth status polls; sized for web sign-ins. */
+  authPollIntervalMs?: number
+  /** Failed reconnects before reviveHost is invoked. */
+  reviveFailureThreshold?: number
   colorMode: AnsiColorMode
   animationEnabled?: boolean
   /** Override glyph set; defaults to env/locale detection via detectTuiUnicode. */
   glyphs?: TuiGlyphSet
+  /**
+   * Palette to paint in. Defaults to the unpainted theme so the class stays a
+   * library: choosing to paint is a product decision, and `cli.ts` makes it.
+   */
+  theme?: TuiTheme
+  /**
+   * The name the theme was chosen by, which `auto` cannot be recovered from the
+   * resolved theme alone. Carried so the picker marks the right row and so
+   * `auto` persists as `auto` rather than as whatever it resolved to today.
+   */
+  themeName?: string
+  /** Persist a confirmed theme. Omitted in tests and in one-shot renders. */
+  persistTheme?: (name: string) => boolean
+  /** Best-effort startup memory for the resolved Host profile. */
+  profileSettings?: TuiProfileSettings
+  /** Persist startup memory for this Host profile. Omitted in tests unless under test. */
+  persistProfileSettings?: (changes: TuiProfileSettings) => boolean
   input?: ReadStream
   output?: WriteStream
   now?: () => number
@@ -72,9 +220,124 @@ export interface TaskWraithTuiOptions {
 }
 
 const RECONNECT_DELAY_MS = 1_800
+const RECONNECT_MAX_DELAY_MS = 15_000
+/** Consecutive failed reconnects before the loop re-arms the Host launcher. */
+const HOST_REVIVE_FAILURE_THRESHOLD = 5
+const ESCAPE_CANCEL_MAX_RECOVERY_ATTEMPTS = 4
+const ESCAPE_CANCEL_RECOVERY_BASE_MS = 200
 const ANIMATION_INTERVAL_MS = 120
+/** `/status` and `/host status` wait this long for `host.status`, then show what is known. */
+const HOST_STATUS_READ_TIMEOUT_MS = 1_500
+
+/**
+ * Whether this timer tick should advance the shared animation frame.
+ *
+ * Two animations ride one timer, and this is the whole of what separates them.
+ * The working shimmer advances on every tick. The home-frame banner sweep
+ * advances on every `stride`-th, because the home frame repaints for no other
+ * reason — every frame drawn there is CPU spent while the user is idle, so the
+ * sweep is deliberately the slower of the two.
+ *
+ * Nothing advances anywhere else. A settled thread and any raised overlay must
+ * both stay still, which is why `homeFrame` is not simply "no thread": the
+ * canvas only falls through to the banner while no overlay is up.
+ *
+ * Extracted rather than left inline because it is the single line that decides
+ * whether the banner sweep is a feature or dead code, and inline in a
+ * `setInterval` it is unreachable by any test — every existing TUI test
+ * constructs the client with `animationEnabled: false`, so the timer never
+ * runs at all.
+ */
+export function shouldAdvanceAnimationFrame(input: {
+  working: boolean
+  homeFrame: boolean
+  tick: number
+  stride: number
+}): boolean {
+  if (input.working) return true
+  if (!input.homeFrame) return false
+  return input.tick % Math.max(1, input.stride) === 0
+}
+
+export function hostDeltasMayReleaseQueuedDraft(frame: HostDeltasFrame): boolean {
+  if (frame.result.kind !== 'deltas') return true
+  return frame.result.deltas.some((delta) => {
+    if (delta.family !== 'run' && delta.family !== 'round') return false
+    if (delta.kind === 'remove' || delta.kind === 'tombstone') return true
+    if (!delta.payload || typeof delta.payload !== 'object' || Array.isArray(delta.payload)) {
+      return false
+    }
+    const payload = delta.payload as Record<string, unknown>
+    if (delta.family === 'round') {
+      return (
+        typeof payload.endedAt === 'number' ||
+        payload.status === 'completed' ||
+        payload.status === 'cancelled' ||
+        payload.status === 'failed'
+      )
+    }
+    if (typeof payload.endedAt === 'number') return true
+    return (
+      typeof payload.providerOutcome === 'string' &&
+      payload.providerOutcome !== 'running' &&
+      payload.providerOutcome !== 'requires_action' &&
+      payload.providerOutcome !== 'unknown'
+    )
+  })
+}
+
+export function terminalRunIdsFromHostDeltas(frame: HostDeltasFrame): Set<string> {
+  const ids = new Set<string>()
+  if (frame.result.kind !== 'deltas') return ids
+  for (const delta of frame.result.deltas) {
+    if (delta.family !== 'run' || !delta.entityId) continue
+    if (delta.kind === 'remove' || delta.kind === 'tombstone') {
+      ids.add(delta.entityId)
+      continue
+    }
+    if (!delta.payload || typeof delta.payload !== 'object' || Array.isArray(delta.payload))
+      continue
+    const payload = delta.payload as Record<string, unknown>
+    if (
+      typeof payload.endedAt === 'number' ||
+      payload.providerOutcome === 'completed' ||
+      payload.providerOutcome === 'failed' ||
+      payload.providerOutcome === 'cancelled'
+    ) {
+      ids.add(delta.entityId)
+    }
+  }
+  return ids
+}
 const TRANSCRIPT_PAGE_ROWS = 8
 const HOST_FULL_REFRESH_MS = 5_000
+
+/**
+ * The Host's typed seat-toggle refusal in plain language. The authority
+ * reason (or the receipt's error code) is the typed truth; unknown codes
+ * fall back to the receipt's own message — the Host's words, never invented
+ * ones. The Host remains the authority: the lens never pre-empts these
+ * refusals with client-side mirrors that could drift from the server's.
+ */
+function describeSeatToggleRefusal(receipt: HostCommandReceipt): string {
+  const code = receipt.authority.reason ?? receipt.errorCode ?? ''
+  if (code.includes('last_seat_required')) {
+    return 'Host refused · an ensemble thread keeps at least one enabled seat'
+  }
+  if (code.includes('round_active')) {
+    return 'Host refused · seats cannot change while a round is running'
+  }
+  if (code.includes('participant_not_found')) {
+    return 'Host refused · that participant is no longer on this thread'
+  }
+  if (code.includes('thread_required') || code.includes('thread_not_found')) {
+    return 'Host refused · the Host no longer treats this as an ensemble thread'
+  }
+  if (code.includes('revision_conflict')) {
+    return 'Host conflict · the roster changed mid-toggle — refresh and try again'
+  }
+  return receipt.errorMessage?.trim() || describeHostReceipt(receipt).text
+}
 
 function emptyState(): TaskWraithTuiState {
   return {
@@ -87,7 +350,8 @@ function emptyState(): TaskWraithTuiState {
     missionParticipantOffset: 0,
     scrollOffset: 0,
     animationFrame: 0,
-    tuneEffortIndex: 0
+    tuneEffortIndex: 0,
+    queuedDrafts: []
   }
 }
 
@@ -145,6 +409,11 @@ export class TaskWraithTui {
     >
   private readonly ansi: Ansi
   private readonly glyphs: TuiGlyphSet
+  /** Mutable: the /theme picker previews by repainting in the hovered theme. */
+  private theme: TuiTheme
+  /** The theme to restore if the picker is dismissed rather than confirmed. */
+  private themeBeforePreview: TuiTheme | undefined
+  private profileSettings: TuiProfileSettings
   private readonly client: HostProjectionClient | null
   private state: TaskWraithTuiState
   private stopped = false
@@ -158,16 +427,69 @@ export class TaskWraithTui {
   private mutationInFlight = false
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
+  private commandPaletteAutomatic = false
+  /** Retained across reconnect so an accepted lazy setup command is never reminted. */
+  private unresolvedLazySetupCommand: HostCommand | undefined
   private lastError = ''
   /** Serialises full snapshots and push deltas into one atomic apply lane. */
   private projectionQueue: Promise<void> = Promise.resolve()
+  /** Serialises polling and pushed transcript deltas so cursor order cannot race. */
+  private historyQueue: Promise<void> = Promise.resolve()
   /** Last live HostSnapshot — authority for local thread detail + approvals. */
   private hostSnapshot: HostSnapshot | null = null
   /** Whether a `welcome` has ever been received. Distinguishes a first-time
    *  "offline" state (App never found) from a "reconnecting" state (App was
    *  reachable and the connection dropped). */
   private everConnected = false
+  /** Consecutive failed connect attempts since the last successful welcome. */
+  private reconnectAttempts = 0
   private clientId = `tui-${randomUUID()}`
+  /** Monotonic workspace-git read generation — the staleness guard's backbone. */
+  private gitReadGeneration = 0
+  /** Monotonic seat-lens read/toggle generation — the staleness guard's backbone. */
+  private seatsReadGeneration = 0
+  /** One client command at a time drains the in-session draft FIFO. */
+  private queueDrainScheduled = false
+  private queueDrainActive = false
+  private queueFreshReadInFlight = false
+  private queueFreshReadRequested = false
+  private readonly queuedDraftCommands = new Map<string, HostCommand>()
+  private readonly queueRetryFences = new Map<string, string>()
+  private readonly queueRetryAttempts = new Map<string, number>()
+  private readonly queueRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly acceptedQueueRuns = new Map<
+    string,
+    { commandId: string; observedLive: boolean }
+  >()
+  private readonly cancelRequestedWorkIds = new Set<string>()
+  private pendingEscapeCancel:
+    | { threadId: string; liveWorkId: string; command?: HostCommand }
+    | undefined
+  private escapeRefreshInFlight = false
+  private escapeCancelRecoveryInFlight = false
+  private escapeCancelRecoveryAttempts = 0
+  private escapeCancelRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private connectionEpoch = 0
+  private homeTuneReadGeneration = 0
+  private providerLoginReadGeneration = 0
+  private fullAccessPresence: TuiFullAccessPresence | null
+  private retainHomeForNextThread = false
+  /** This TUI's Host lease: acquired on every welcome, renewed on its own timer. */
+  private readonly hostLease: HostLeaseClient | null
+  private hostLeaseState: TuiHostLeaseState = 'none'
+  /** Consecutive lease failures that forced a reconnect; they lengthen its backoff. */
+  private hostLeaseFailures = 0
+  /** An armed /host confirmation. Only an explicit `y` acts on it; any other input cancels. */
+  private hostConfirmation:
+    | { readonly kind: 'stop-all'; readonly plan: TuiHostStopAllPlan }
+    | { readonly kind: 'restart' }
+    | undefined
+  /** A restart or stop-all is running: the reconnect loop must not relaunch meanwhile. */
+  private hostOperation: 'restart' | 'stop-all' | undefined
+  /** `/host stop-all` stopped this TUI's own Host: reconnect, but never relaunch it unasked. */
+  private hostStoppedByUser = false
+  private hostPanelGeneration = 0
+  private statusReadGeneration = 0
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -179,7 +501,12 @@ export class TaskWraithTui {
     }
     this.ansi = new Ansi(this.options.colorMode)
     this.glyphs = options.glyphs ?? resolveTuiGlyphs(detectTuiUnicode())
+    this.theme = options.theme ?? TUI_UNPAINTED_THEME
+    this.profileSettings = { ...(options.profileSettings ?? {}) }
+    this.fullAccessPresence = options.fullAccessPresence ?? null
     this.state = options.demo ? createTaskWraithTuiDemoState(this.options.now()) : emptyState()
+    this.state.themeName = options.themeName ?? this.theme.name
+    this.state.activeWorkspaceId = this.profileSettings.workspaceId
     this.client = options.demo
       ? null
       : new HostProjectionClient({
@@ -199,8 +526,19 @@ export class TaskWraithTui {
             'commands',
             'receipts'
           ],
+          optionalCapabilities: [
+            'provider-catalog',
+            'provider-auth',
+            'history',
+            'setup',
+            'workspace-git',
+            'ensemble'
+          ],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
+    // Built before bindClient() adds the TUI's own listeners, so on every
+    // welcome the lease client has already reset for the new socket.
+    this.hostLease = this.client ? new HostLeaseClient({ client: this.client }) : null
   }
 
   async start(): Promise<void> {
@@ -211,9 +549,29 @@ export class TaskWraithTui {
     try {
       this.enterTerminal()
       this.bindInput()
+      if (this.options.startupNotice) {
+        this.setNotice(this.options.startupNotice, 'neutral', 12_000)
+      }
       if (this.options.animationEnabled && this.ansi.enabled) {
+        const bannerTickStride = Math.round(
+          TUI_MOTION.bannerSweepIntervalMs / ANIMATION_INTERVAL_MS
+        )
+        let tick = 0
         this.animationTimer = setInterval(() => {
-          if (this.state.thread?.thread.status !== 'working') return
+          tick += 1
+          if (
+            !shouldAdvanceAnimationFrame({
+              working: this.state.thread?.thread.status === 'working',
+              // `renderTranscriptCanvas` falls through to the home frame
+              // exactly when there is no thread snapshot, and only while no
+              // overlay is up.
+              homeFrame: !this.state.thread && this.state.overlay === 'none',
+              tick,
+              stride: bannerTickStride
+            })
+          ) {
+            return
+          }
           this.state.animationFrame += 1
           this.render()
         }, ANIMATION_INTERVAL_MS)
@@ -240,10 +598,20 @@ export class TaskWraithTui {
     if (this.projectionRefreshTimer) clearTimeout(this.projectionRefreshTimer)
     if (this.animationTimer) clearInterval(this.animationTimer)
     if (this.demoReplyTimer) clearTimeout(this.demoReplyTimer)
+    for (const timer of this.queueRetryTimers.values()) clearTimeout(timer)
+    this.queueRetryTimers.clear()
+    this.clearEscapeCancelRecovery()
     this.reconnectTimer = null
     this.projectionRefreshTimer = null
     this.animationTimer = null
     this.demoReplyTimer = null
+    this.hostConfirmation = undefined
+    this.replaceFullAccessPresence()
+    // One release frame before the socket closes, so the Host counts one holder
+    // fewer at once; it would also notice the close, but this path is synchronous
+    // on purpose (signal and exit handlers call stop()).
+    this.hostLease?.releaseSync()
+    this.hostLease?.dispose()
     this.client?.close()
     this.options.input.off('keypress', this.onKeypress)
     this.options.output.off('resize', this.onResize)
@@ -295,11 +663,24 @@ export class TaskWraithTui {
 
   private bindClient(): void {
     if (!this.client) return
+    this.bindHostLease()
     this.client.on('welcome', (welcome) => {
+      this.connectionEpoch += 1
+      if (
+        this.fullAccessPresence &&
+        !this.fullAccessPresence.matches(this.client?.discoveryProcessIdentity ?? null)
+      ) {
+        this.replaceFullAccessPresence()
+      }
       this.state.hostVersion = welcome.hostVersion
       this.state.connection = 'connected'
       this.everConnected = true
+      this.reconnectAttempts = 0
       this.lastError = ''
+      this.hostStoppedByUser = false
+      // Every welcome, including a reconnect to a replaced Host, takes a lease:
+      // while this TUI is connected its Host does not exit at last-lease grace.
+      this.acquireHostLease()
       this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
       this.render()
     })
@@ -308,22 +689,91 @@ export class TaskWraithTui {
         this.surfaceProjectionSyncError(error)
       })
     })
+    this.client.on('history', (frame) => {
+      void this.enqueueHistoryUpdate(() => this.applyHistoryEvent(frame)).catch((error) =>
+        this.surfaceProjectionSyncError(error)
+      )
+    })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
+      const cancelled = this.cancelHostConfirmation()
+      this.hostLeaseState = 'none'
       // The host was reachable before, so this is a drop-and-retry rather
       // than "the App was never found" — distinct terminal states.
       this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
+      this.reconnectAttempts += 1
       this.lastError = error?.message ?? 'TaskWraith Host disconnected.'
       this.markHostProjectionStale()
       this.setNotice(
-        this.everConnected
-          ? 'TaskWraith Host disconnected · reconnecting'
-          : 'Electron Host offline · retrying',
+        cancelled
+          ? 'TaskWraith Host disconnected · the /host request was cancelled, nothing was stopped'
+          : (this.hostOperationNotice() ??
+              (this.everConnected
+                ? this.revivePending()
+                  ? 'TaskWraith Host unreachable · restarting the standalone Host…'
+                  : 'TaskWraith Host disconnected · reconnecting'
+                : 'Standalone Host offline · retrying')),
         'warning'
       )
       this.scheduleReconnect()
       this.render()
     })
+  }
+
+  private bindHostLease(): void {
+    const lease = this.hostLease
+    if (!lease) return
+    lease.on('held', () => {
+      this.hostLeaseState = 'held'
+      this.hostLeaseFailures = 0
+    })
+    lease.on('legacy', () => {
+      this.hostLeaseState = 'legacy'
+      this.hostLeaseFailures = 0
+    })
+    // A lapse is answered by the lease client itself: it re-acquires at once.
+    lease.on('lapsed', () => {
+      this.hostLeaseState = 'none'
+    })
+    lease.on('released', () => {
+      this.hostLeaseState = 'none'
+    })
+    lease.on('failed', (error) => this.onHostLeaseFailed(error))
+  }
+
+  private acquireHostLease(): void {
+    const lease = this.hostLease
+    if (!lease || this.stopped) return
+    this.hostLeaseState = 'none'
+    void lease.acquire().catch((error: unknown) => this.onHostLeaseFailed(error))
+  }
+
+  /**
+   * A renewal (or an acquire) that fails while the socket is still open means
+   * the Host may no longer count this TUI as a holder, and a wedged socket
+   * would never recover on its own: take a fresh socket, whose welcome
+   * acquires again. `close()` is client-initiated and fires no 'disconnected',
+   * so this path schedules the reconnect itself; repeated failures back off.
+   */
+  private onHostLeaseFailed(error: unknown): void {
+    const client = this.client
+    if (this.stopped || !client?.connected) return
+    const cancelled = this.cancelHostConfirmation()
+    this.hostLeaseState = 'none'
+    this.hostLeaseFailures += 1
+    client.close()
+    this.state.connection = 'reconnecting'
+    this.reconnectAttempts = Math.max(this.reconnectAttempts, this.hostLeaseFailures)
+    this.lastError = error instanceof Error ? error.message : String(error)
+    this.markHostProjectionStale()
+    this.setNotice(
+      cancelled
+        ? 'Host lease lost · the /host request was cancelled, nothing was stopped'
+        : 'Host lease could not be renewed · reconnecting',
+      'warning'
+    )
+    this.scheduleReconnect()
+    this.render()
   }
 
   private applyHostSnapshot(snapshot: HostSnapshot): TaskWraithControlSnapshot {
@@ -334,8 +784,58 @@ export class TaskWraithTui {
     const selectedThreadId = this.state.selectedThreadId
     if (selectedThreadId) {
       const detail = mapHostSnapshotToThreadDetail(snapshot, selectedThreadId)
-      this.state.thread = detail?.thread
+      this.state.thread = detail
+        ? preserveAuthoritativeHistoryRows(this.state.thread, detail.thread, this.state.history)
+        : undefined
     }
+    const liveIds = new Set([
+      ...snapshot.runs
+        .filter(
+          (run) =>
+            run.endedAt === undefined &&
+            (run.providerOutcome === 'running' ||
+              run.providerOutcome === 'requires_action' ||
+              run.providerOutcome === 'unknown')
+        )
+        .map((run) => run.runId),
+      ...snapshot.rounds
+        .filter(
+          (round) =>
+            round.endedAt === undefined &&
+            (round.status === 'running' || round.status === 'unknown')
+        )
+        .map((round) => round.roundId)
+    ])
+    for (const id of this.cancelRequestedWorkIds) {
+      if (!liveIds.has(id)) this.cancelRequestedWorkIds.delete(id)
+    }
+    for (const [threadId, barrier] of this.acceptedQueueRuns) {
+      const run = snapshot.runs.find(
+        (candidate) => candidate.threadId === threadId && candidate.runId === barrier.commandId
+      )
+      const live = Boolean(
+        run &&
+        run.endedAt === undefined &&
+        (run.providerOutcome === 'running' ||
+          run.providerOutcome === 'requires_action' ||
+          run.providerOutcome === 'unknown')
+      )
+      const terminal = Boolean(
+        run &&
+        (run.endedAt !== undefined ||
+          run.providerOutcome === 'completed' ||
+          run.providerOutcome === 'failed' ||
+          run.providerOutcome === 'cancelled')
+      )
+      if (terminal || (barrier.observedLive && !run)) {
+        this.acceptedQueueRuns.delete(threadId)
+      } else if (live && !barrier.observedLive) {
+        this.acceptedQueueRuns.set(threadId, { ...barrier, observedLive: true })
+      }
+    }
+    this.restoreBlockedDraftIfSafe()
+    if (this.pendingEscapeCancel) queueMicrotask(() => this.flushPendingEscapeCancel())
+    else this.scheduleQueuedDraftDrain()
     return mapped
   }
 
@@ -363,7 +863,17 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    const terminalRunIds = terminalRunIdsFromHostDeltas(frame)
+    for (const [threadId, barrier] of this.acceptedQueueRuns) {
+      if (terminalRunIds.has(barrier.commandId)) this.acceptedQueueRuns.delete(threadId)
+    }
     this.applyHostSnapshot(applied.snapshot)
+    // Applied deltas are intentionally marked cached. A queued send may drain
+    // only from a fresh Host read, so terminal-looking cache state triggers one
+    // bounded resnapshot instead of being promoted as live authority.
+    if ((this.state.queuedDrafts?.length ?? 0) > 0 && hostDeltasMayReleaseQueuedDraft(frame)) {
+      await this.fetchAndApplyHostSnapshot()
+    }
     this.render()
   }
 
@@ -374,20 +884,65 @@ export class TaskWraithTui {
     try {
       const welcome = await this.client.connect()
       this.state.hostVersion = welcome.hostVersion
+      this.reconnectAttempts = 0
       await this.refreshHostSnapshot()
+      await this.resumeColdStartPending()
+      await this.resumeProviderLoginPending()
       const mapped = this.state.snapshot
       if (!mapped) throw new Error('TaskWraith Host snapshot was not available after connect.')
       this.state.connection = 'connected'
       this.everConnected = true
-      const threadId = preferredThread(
-        mapped,
-        this.state.selectedThreadId ?? this.options.initialThreadId
-      )
+      // A thread opens on connect only when one was actually ASKED FOR: `--thread`,
+      // or a thread this session already selected. Falling back to "newest" for an
+      // unasked reader picks whichever thread some other surface touched last, so
+      // the home frame gets replaced a beat after it paints — and every reconnect
+      // repeats the jump. Requesting a thread that has since gone still falls back
+      // to an available one; that is an answer to a question the reader asked.
+      const requestedThreadId = this.state.selectedThreadId ?? this.options.initialThreadId
+      const threadId = requestedThreadId ? preferredThread(mapped, requestedThreadId) : undefined
+      const hasOpenableThread = mapped.threads.some((thread) => !thread.archived)
       if (threadId) {
-        await this.openThread(threadId)
+        await this.openThread(threadId, { reattach: threadId === this.state.selectedThreadId })
+      } else if (hasOpenableThread) {
+        // Threads exist and the reader has not chosen one: rest on the home frame
+        // rather than entering setup, which is for a profile with nothing to open.
+        this.state.selectedThreadId = undefined
+        this.state.thread = undefined
+      } else if (mapped.workspaces.length > 0 && !this.state.coldStart) {
+        // A registered workspace is enough for a fresh lazy draft. Provider,
+        // model and posture are validated only when the first prompt is sent.
+        this.state.selectedThreadId = undefined
+        this.state.thread = undefined
+        this.state.overlay = 'none'
       } else {
         this.state.selectedThreadId = undefined
         this.state.thread = undefined
+        if (this.client.supports('setup') && this.client.supports('provider-catalog')) {
+          if (!this.state.coldStart) {
+            const workspace = mapped.workspaces[0]
+            this.state.coldStart = workspace
+              ? coldStartWorkspaceRegistered(workspace.id)
+              : coldStartIdle()
+          }
+          this.state.coldStartIntent = 'required'
+          this.state.overlay = 'setup'
+          this.setNotice('Host setup required before composing.', 'warning')
+        } else if (!this.state.coldStart) {
+          this.state.coldStart = { kind: 'legacy', reason: 'setup_unavailable' }
+          this.state.coldStartIntent = 'required'
+          this.state.overlay = 'setup'
+          this.setNotice('Host setup capability is unavailable · read-only legacy mode.', 'warning')
+        }
+      }
+      if (this.unresolvedLazySetupCommand) {
+        this.setNotice('Connection restored · press Enter to resume the first prompt.', 'neutral')
+      }
+      if (
+        !this.state.selectedThreadId &&
+        this.state.overlay === 'none' &&
+        this.client.supports('provider-catalog')
+      ) {
+        void this.loadHomeTuneProviders(false)
       }
       this.render()
     } catch (error) {
@@ -401,13 +956,17 @@ export class TaskWraithTui {
         }
       } else {
         this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
+        this.reconnectAttempts += 1
         const message = error instanceof Error ? error.message : String(error)
         if (message !== this.lastError) {
           this.lastError = message
           this.setNotice(
-            this.everConnected
-              ? 'TaskWraith Host disconnected · reconnecting'
-              : 'Electron Host offline · retrying locally',
+            this.hostOperationNotice() ??
+              (this.everConnected
+                ? this.revivePending()
+                  ? 'TaskWraith Host unreachable · restarting the standalone Host…'
+                  : 'TaskWraith Host disconnected · reconnecting'
+                : 'Standalone Host offline · retrying locally'),
             'warning'
           )
         }
@@ -417,12 +976,69 @@ export class TaskWraithTui {
     }
   }
 
+  private revivePending(): boolean {
+    const threshold = this.options.reviveFailureThreshold ?? HOST_REVIVE_FAILURE_THRESHOLD
+    return (
+      this.everConnected &&
+      Boolean(this.options.reviveHost) &&
+      // A /host restart relaunches on its own, and a Host the user stopped
+      // stays stopped until they ask for one.
+      !this.hostOperation &&
+      !this.hostStoppedByUser &&
+      this.reconnectAttempts >= threshold
+    )
+  }
+
+  /** What the offline notice says while a /host operation owns the Host's lifecycle. */
+  private hostOperationNotice(): string | undefined {
+    if (this.hostOperation === 'restart') return 'Restarting the TaskWraith Host…'
+    if (this.hostOperation === 'stop-all') return 'Stopping TaskWraith Hosts…'
+    if (this.hostStoppedByUser) return 'TaskWraith Host stopped · /host restart starts it again'
+    return undefined
+  }
+
+  /** Reconnects now instead of waiting out the backoff, when a retry is pending. */
+  private reconnectPromptly(): void {
+    if (this.stopped || !this.client || !this.reconnectTimer) return
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.reconnectAttempts = 0
+    void this.reconnect()
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer || this.stopped || !this.client) return
+    // Exponential backoff from the base delay up to RECONNECT_MAX_DELAY_MS so
+    // a permanently dead Host does not busy-spin an identical retry forever.
+    const baseMs = this.options.reconnectBaseDelayMs ?? RECONNECT_DELAY_MS
+    const attempt = Math.max(1, this.reconnectAttempts)
+    const delayMs = Math.min(RECONNECT_MAX_DELAY_MS, baseMs * 2 ** (attempt - 1))
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      void this.connect()
-    }, RECONNECT_DELAY_MS)
+      void this.reconnect()
+    }, delayMs)
+  }
+
+  /**
+   * One reconnect attempt. Once failures exceed the threshold and a launcher
+   * was injected, re-arm the windowless Host before the next plain connect.
+   * ensureTuiHostAvailable is a no-op while a live authenticating Host answers,
+   * so this only launches when the process is actually gone.
+   */
+  private async reconnect(): Promise<void> {
+    if (this.stopped || !this.client) return
+    if (this.revivePending() && this.options.reviveHost) {
+      try {
+        const revived = await this.options.reviveHost()
+        if (revived.kind === 'launched') {
+          this.replaceFullAccessPresence(revived.fullAccessPresence)
+        }
+      } catch {
+        // The launcher surfaces its own diagnostics; fall through to a plain
+        // reconnect attempt either way.
+      }
+    }
+    await this.connect()
   }
 
   private scheduleProjectionRefresh(): void {
@@ -436,6 +1052,7 @@ export class TaskWraithTui {
       this.projectionRefreshTimer = null
       const refresh = this.client?.connected
         ? this.refreshHostSnapshot()
+            .then(() => this.refreshSelectedHistory())
             .then(() => this.render())
             .catch((error) => this.surfaceProjectionSyncError(error))
         : Promise.resolve()
@@ -444,8 +1061,22 @@ export class TaskWraithTui {
     this.projectionRefreshTimer.unref?.()
   }
 
-  private async openThread(threadId: string): Promise<void> {
+  /**
+   * `reattach` marks the re-open a reconnect performs on the thread that is
+   * already on screen. It is not a navigation, so it must not close the
+   * reader's overlay, drop the seat lens, scroll them back, or re-announce a
+   * thread they never left.
+   */
+  private async openThread(
+    threadId: string,
+    options: { reattach?: boolean; preserveHome?: boolean } = {}
+  ): Promise<void> {
     if (!threadId || this.selectingThread || this.mutationInFlight) return
+    const reattach = options.reattach === true && threadId === this.state.selectedThreadId
+    if (!reattach) {
+      this.state.homeContinuationThreadId = options.preserveHome ? threadId : undefined
+    }
+    const preservedScrollOffset = this.state.scrollOffset
     if (threadId !== this.state.selectedThreadId) {
       // Offers and staged selections are per-thread state.
       this.state.offers = undefined
@@ -455,6 +1086,8 @@ export class TaskWraithTui {
     if (!this.client) {
       this.state.selectedThreadId = threadId
       this.state.overlay = 'none'
+      // The seat lens is keyed to the thread it was opened for.
+      this.state.seats = undefined
       this.state.scrollOffset = 0
       this.render()
       return
@@ -470,6 +1103,16 @@ export class TaskWraithTui {
       this.render()
       return
     }
+    if (!this.client.supports('commands')) {
+      this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
+      await this.loadThreadHistory(threadId)
+      if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
+      else if (this.state.thread?.thread.workspaceId) {
+        this.rememberWorkspaceId(this.state.thread.thread.workspaceId)
+      }
+      this.render()
+      return
+    }
     this.selectingThread = true
     try {
       const command = this.buildMutation('thread.select', { threadId }, {})
@@ -477,24 +1120,48 @@ export class TaskWraithTui {
       await this.runHostMutation(command, {
         onSucceeded: async () => {
           await this.refreshHostSnapshot()
-          this.applyLocalThread(threadId, { previewNotice: true })
+          this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
+          await this.loadThreadHistory(threadId)
+          if (reattach) this.restoreScrollOffset(threadId, preservedScrollOffset)
+          else if (this.state.thread?.thread.workspaceId) {
+            this.rememberWorkspaceId(this.state.thread.thread.workspaceId)
+          }
         }
       })
     } finally {
       this.selectingThread = false
       this.render()
+      this.scheduleQueuedDraftDrain()
     }
   }
 
-  private applyLocalThread(threadId: string, options: { previewNotice?: boolean } = {}): void {
+  private applyLocalThread(
+    threadId: string,
+    options: { previewNotice?: boolean; preserveView?: boolean } = {}
+  ): void {
     const host = this.hostSnapshot
     if (!host) return
     const detail = mapHostSnapshotToThreadDetail(host, threadId)
     if (!detail) return
+    const preserveView = options.preserveView === true && this.state.selectedThreadId === threadId
     this.state.selectedThreadId = threadId
     this.state.thread = detail.thread
-    this.state.overlay = 'none'
-    this.state.scrollOffset = 0
+    if (!preserveView) {
+      this.state.overlay = 'none'
+      // The seat lens is keyed to the thread it was opened for.
+      this.state.seats = undefined
+      this.state.scrollOffset = 0
+    }
+    if (!this.client?.supports('history')) {
+      this.state.history = {
+        threadId,
+        generation: 0,
+        cursor: 0,
+        previewOnly: true
+      }
+    } else if (this.state.history?.threadId !== threadId) {
+      this.state.history = undefined
+    }
     if (options.previewNotice) {
       this.setNotice(
         detail.previewOnly
@@ -504,14 +1171,144 @@ export class TaskWraithTui {
         1_800
       )
     }
+    this.restoreBlockedDraftIfSafe()
   }
 
-  private readonly onResize = (): void => {
+  /** Puts a re-attached reader back where they were reading, never at the end. */
+  private restoreScrollOffset(threadId: string, scrollOffset: number): void {
+    if (this.state.selectedThreadId !== threadId) return
+    this.state.scrollOffset = scrollOffset
+  }
+
+  /**
+   * Reads one bounded history page. Host history is an optional capability;
+   * when it is absent the ordinary projection preview remains explicitly
+   * labelled as such instead of being mistaken for a transcript.
+   */
+  private async loadThreadHistory(
+    threadId: string,
+    before?: { generation: number; cursor: number }
+  ): Promise<void> {
+    if (!this.client?.connected || !this.client.supports('history')) {
+      if (this.state.selectedThreadId === threadId) {
+        this.state.history = { threadId, generation: 0, cursor: 0, previewOnly: true }
+      }
+      return
+    }
+    const page = await this.client.getThreadHistory({
+      threadId,
+      limit: 50,
+      ...(before ? { before } : {})
+    })
+    if (page.threadId !== threadId) throw new Error('Host returned history for a different thread.')
+    if (this.state.selectedThreadId !== threadId) return
+    const pageRows = mapHostHistoryEntriesToTranscriptRows(page.entries, this.state.thread?.thread)
+    const current = this.state.history
+    const currentRows =
+      current?.threadId === threadId && !current.previewOnly ? (this.state.thread?.rows ?? []) : []
+    const rows = before ? mergeTranscriptRows(pageRows, currentRows) : pageRows
+    if (this.state.thread) this.state.thread = { ...this.state.thread, rows }
+    this.state.history = {
+      threadId,
+      generation: page.generation,
+      cursor: page.cursor,
+      ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
+      previewOnly: false
+    }
+    if (!before) this.state.scrollOffset = 0
+  }
+
+  /** Polling reconciliation for Hosts that do not yet publish history events. */
+  private async refreshSelectedHistory(): Promise<void> {
+    await this.enqueueHistoryUpdate(async () => {
+      const history = this.state.history
+      if (
+        !history ||
+        history.previewOnly ||
+        history.loadingOlder ||
+        !this.client?.connected ||
+        !this.client.supports('history')
+      ) {
+        return
+      }
+      const result = await this.client.getHistorySince({
+        threadId: history.threadId,
+        since: { generation: history.generation, cursor: history.cursor }
+      })
+      await this.applyHistoryResult(history.threadId, result)
+    })
+  }
+
+  /** Future-safe event handling; production presently reaches this through polling above. */
+  private async applyHistoryEvent(frame: HostHistoryDeltasFrame): Promise<void> {
+    await this.applyHistoryResult(frame.threadId, frame.result)
+  }
+
+  private async applyHistoryResult(
+    threadId: string,
+    result: HostHistorySinceResult
+  ): Promise<void> {
+    const history = this.state.history
+    if (!history || history.previewOnly || history.threadId !== threadId) return
+    const decision = classifyHistoryResult(history, result)
+    if (decision === 'ignore') return
+    if (decision === 'reload') {
+      await this.loadThreadHistory(threadId)
+      return
+    }
+    if (result.kind !== 'deltas') return
+    if (!this.state.thread || this.state.selectedThreadId !== threadId) return
+    let rows = [...this.state.thread.rows]
+    for (const delta of result.deltas) {
+      const id =
+        delta.kind === 'remove'
+          ? `host-history:${delta.entryId}`
+          : `host-history:${delta.entry.entryId}`
+      if (delta.kind === 'remove') {
+        rows = rows.filter((row) => row.id !== id)
+        continue
+      }
+      const row = mapHostHistoryEntriesToTranscriptRows([delta.entry], this.state.thread.thread)[0]
+      const existing = rows.findIndex((candidate) => candidate.id === id)
+      if (existing >= 0) rows.splice(existing, 1, row)
+      else rows.push(row)
+    }
+    this.state.thread = { ...this.state.thread, rows }
+    this.state.history = {
+      ...history,
+      generation: result.generation,
+      cursor: result.toCursor,
+      previewOnly: false
+    }
     this.render()
   }
 
-  private readonly onKeypress = (input: string, key: Keypress): void => {
+  private readonly onResize = (): void => {
+    // A resize reflows the lens, so the rows the user was asked about may no
+    // longer be the rows on screen: an armed /host confirmation is cancelled.
+    if (this.cancelHostConfirmation()) {
+      this.setNotice(
+        'Terminal resized · the /host request was cancelled, nothing was stopped',
+        'neutral',
+        5_000
+      )
+    }
+    this.render()
+  }
+
+  private readonly onKeypress = (input: string, key: Keypress | undefined): void => {
     if (this.stopped) return
+    if (isShiftTabKey(key)) {
+      key = { ...key, name: 'tab', shift: true }
+    }
+    if (!key) return
+    // An armed /host confirmation takes the very next key, ahead of every other
+    // binding: `y` acts, anything else (Esc and Ctrl+C included) cancels. A
+    // paste cancels too, then pastes as it otherwise would.
+    if (this.hostConfirmation) {
+      this.answerHostConfirmation(input, key)
+      if (key.name !== 'paste-start') return
+    }
     if (key.name === 'paste-start') {
       this.bracketedPaste = true
       this.bracketedPasteBuffer = ''
@@ -522,6 +1319,7 @@ export class TaskWraithTui {
         this.bracketedPaste = false
         this.insertComposerText(this.bracketedPasteBuffer)
         this.bracketedPasteBuffer = ''
+        this.syncCommandPaletteAfterInput()
         this.render()
       } else {
         this.bracketedPasteBuffer += input
@@ -529,9 +1327,10 @@ export class TaskWraithTui {
       return
     }
     if (key.ctrl && key.name === 'c') {
-      if (this.state.input) {
+      if (this.state.input || this.state.overlay === 'help') {
         this.state.input = ''
         this.state.inputCursor = 0
+        this.dismissCommandPalette()
         this.render()
       } else {
         this.stop()
@@ -540,6 +1339,22 @@ export class TaskWraithTui {
     }
     if ((key.ctrl && key.name === 'd' && !this.state.input) || (key.meta && key.name === 'q')) {
       this.stop()
+      return
+    }
+    if (
+      this.state.coldStart &&
+      this.state.coldStart.kind !== 'ready' &&
+      this.state.overlay !== 'setup'
+    ) {
+      this.state.overlay = 'setup'
+      void this.handleColdStartKey(input, key).catch((error) => {
+        this.setNotice(
+          `Host setup failed · ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          4_000
+        )
+        this.render()
+      })
       return
     }
     // Wave 4.2b: while a Host mutation is pending an ask, y/n answers it.
@@ -554,12 +1369,13 @@ export class TaskWraithTui {
         return
       }
     }
-    // A projected provider approval is independently actionable when the
-    // composer is empty. Never steal y/n from an in-progress user message.
+    // A projected provider approval is independently actionable. The approval
+    // decision owns y/n while it is outstanding, even when the composer already
+    // contains text; leaving the text gate here turns a visible Host approval
+    // into an accidental composer insertion and lets the provider time out.
     if (
       !this.state.pendingHostMutation &&
       this.state.overlay === 'none' &&
-      !this.state.input &&
       !key.ctrl &&
       !key.meta
     ) {
@@ -578,6 +1394,7 @@ export class TaskWraithTui {
     if (key.ctrl && key.name === 'u') {
       this.state.input = ''
       this.state.inputCursor = 0
+      this.dismissCommandPalette()
       this.render()
       return
     }
@@ -604,7 +1421,16 @@ export class TaskWraithTui {
       return
     }
     if (key.ctrl && key.name === 'p') {
-      this.toggleOverlay('help')
+      if (this.state.overlay === 'help') {
+        this.dismissCommandPalette()
+        this.render()
+      } else {
+        this.state.overlay = 'help'
+        this.state.overlayIndex = 0
+        this.state.commandPaletteQuery = ''
+        this.commandPaletteAutomatic = false
+        this.render()
+      }
       return
     }
     if (key.ctrl && key.name === 'g') {
@@ -612,8 +1438,79 @@ export class TaskWraithTui {
       return
     }
     if (key.name === 'escape') {
+      if (this.state.coldStartIntent === 'new-thread' && this.state.overlay === 'setup') {
+        this.cancelNewSoloThread()
+        return
+      }
+      if (this.state.coldStart && this.state.coldStart.kind !== 'ready') {
+        this.state.overlay = 'setup'
+        this.render()
+        return
+      }
+      // Escape is handled globally, ahead of every per-overlay key handler, so
+      // an overlay that needs teardown has to be named here. The theme picker
+      // has already repainted the frame by the time Escape arrives: closing it
+      // without reverting would silently apply the theme the user backed out of.
+      if (this.state.overlay === 'theme') {
+        this.dismissThemePreview()
+        return
+      }
+      if (this.state.overlay === 'help') {
+        this.dismissCommandPalette()
+        this.render()
+        return
+      }
+      if (this.state.overlay === 'login') {
+        this.providerLoginReadGeneration += 1
+        this.state.providerLogin = undefined
+        this.state.overlay = 'none'
+        this.render()
+        return
+      }
+      if (this.state.overlay === 'none') {
+        const threadId = this.state.selectedThreadId
+        if (this.pendingEscapeCancel) {
+          this.setNotice('Cancellation already requested · waiting for the Host', 'warning', 2_000)
+          this.render()
+          return
+        }
+        const live = threadId ? liveThreadWorkIds(this.hostSnapshot, threadId) : []
+        if (live.length > 0) {
+          const draft = this.state.input.trim()
+          if (threadId && draft && !draft.startsWith('/') && !this.selectedOpenQuestion()) {
+            this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+            this.state.input = ''
+            this.state.inputCursor = 0
+            this.state.pendingSelection = undefined
+            this.state.scrollOffset = 0
+            this.scheduleQueuedDraftDrain()
+          }
+          void this.cancelRun({ shortcut: true, liveWorkIds: live })
+          return
+        }
+        if (threadId && this.hostSnapshot?.freshness === 'cached') {
+          void this.refreshThenHandleEscape(threadId, this.state.input)
+          return
+        }
+        if (threadId && this.hostSnapshot?.freshness !== 'live') {
+          this.retainEscapeIntent(threadId, this.state.input)
+          return
+        }
+      }
+      this.commandPaletteAutomatic = false
       this.state.overlay = 'none'
       this.render()
+      return
+    }
+    if (this.state.overlay === 'setup') {
+      void this.handleColdStartKey(input, key).catch((error) => {
+        this.setNotice(
+          `Host setup failed · ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          4_000
+        )
+        this.render()
+      })
       return
     }
     if (this.state.overlay === 'threads') {
@@ -628,6 +1525,30 @@ export class TaskWraithTui {
       this.handleTuneKey(key)
       return
     }
+    if (this.state.overlay === 'git') {
+      this.handleGitKey(key)
+      return
+    }
+    if (this.state.overlay === 'seats') {
+      this.handleSeatsKey(key)
+      return
+    }
+    if (this.state.overlay === 'workspaces') {
+      this.handleWorkspacePickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'theme') {
+      this.handleThemePickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'help') {
+      this.handleCommandPaletteKey(input, key)
+      return
+    }
+    if (this.state.overlay === 'login') {
+      void this.handleProviderLoginKey(key)
+      return
+    }
     if (this.state.overlay !== 'none') {
       if (key.name === 'return' || key.name === 'enter') {
         this.state.overlay = 'none'
@@ -635,8 +1556,29 @@ export class TaskWraithTui {
       }
       return
     }
+    if (key.name === 'tab' && key.shift) {
+      void this.cycleThreadPermission()
+      return
+    }
     if (key.name === 'pageup') {
-      this.state.scrollOffset += TRANSCRIPT_PAGE_ROWS
+      const history = this.state.history
+      const transcriptRows = this.state.thread?.rows.length ?? 0
+      const transcriptViewportRows = Math.max(1, this.options.output.rows - 3)
+      const atTop = this.state.scrollOffset >= Math.max(0, transcriptRows - transcriptViewportRows)
+      if (history?.nextBefore && !history.loadingOlder && atTop) {
+        this.state.history = { ...history, loadingOlder: true }
+        void this.loadThreadHistory(history.threadId, history.nextBefore)
+          .catch((error) => this.surfaceProjectionSyncError(error))
+          .finally(() => {
+            if (this.state.history)
+              this.state.history = { ...this.state.history, loadingOlder: false }
+            this.render()
+          })
+      }
+      this.state.scrollOffset = Math.min(
+        Math.max(0, transcriptRows - 1),
+        this.state.scrollOffset + TRANSCRIPT_PAGE_ROWS
+      )
       this.render()
       return
     }
@@ -693,6 +1635,7 @@ export class TaskWraithTui {
     }
     if (!key.ctrl && !key.meta && input) {
       this.insertComposerText(input.replace(/\r?\n/g, ' '))
+      this.syncCommandPaletteAfterInput()
       this.render()
     }
   }
@@ -709,20 +1652,670 @@ export class TaskWraithTui {
     this.state.inputCursor = Math.min(characters.length, this.state.inputCursor + inserted.length)
   }
 
-  private toggleOverlay(overlay: Exclude<TuiOverlay, 'none'>): void {
-    this.state.overlay = this.state.overlay === overlay ? 'none' : overlay
-    if (overlay === 'threads' && this.state.overlay === 'threads') {
-      const threads = (this.state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+  private dismissCommandPalette(): void {
+    if (this.state.overlay === 'help') this.state.overlay = 'none'
+    this.state.commandPaletteQuery = undefined
+    this.commandPaletteAutomatic = false
+  }
+
+  private commandPaletteFilterText(): string {
+    return this.state.commandPaletteQuery ?? (this.commandPaletteAutomatic ? this.state.input : '')
+  }
+
+  private syncCommandPaletteAfterInput(): void {
+    const leadingTokenOnly = /^\s*\/[^\s]*$/.test(this.state.input)
+    if (leadingTokenOnly) {
+      this.state.overlay = 'help'
+      this.state.overlayIndex = 0
+      this.state.commandPaletteQuery = this.state.input
+      this.commandPaletteAutomatic = true
+      return
+    }
+    const slashWithArguments = Boolean(parseLeadingTuiSlashToken(this.state.input))
+    if (this.commandPaletteAutomatic || (this.state.overlay === 'help' && slashWithArguments)) {
+      this.dismissCommandPalette()
+    }
+  }
+
+  private handleCommandPaletteKey(input: string, key: Keypress): void {
+    const commands = filterTuiSlashCommands(this.commandPaletteFilterText())
+    const lastIndex = Math.max(0, commands.length - 1)
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(lastIndex, this.state.overlayIndex + 1)
+      this.render()
+      return
+    }
+    if (key.name === 'pageup' || key.name === 'pagedown') {
+      const page = Math.max(1, (this.options.output.rows || 24) - 4)
       this.state.overlayIndex = Math.max(
         0,
-        threads.findIndex((thread) => thread.id === this.state.selectedThreadId)
+        Math.min(lastIndex, this.state.overlayIndex + (key.name === 'pageup' ? -page : page))
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'return' || key.name === 'enter' || key.name === 'tab') {
+      const selected = commands[Math.max(0, Math.min(this.state.overlayIndex, lastIndex))]
+      if (!selected) {
+        this.dismissCommandPalette()
+        this.render()
+        return
+      }
+      if ((key.name === 'return' || key.name === 'enter') && !selected.destructive) {
+        if (this.commandPaletteAutomatic) {
+          this.state.input = ''
+          this.state.inputCursor = 0
+        }
+        this.dismissCommandPalette()
+        void this.runCommand(selected.name)
+        return
+      }
+      this.state.input = selected.name
+      this.state.inputCursor = Array.from(selected.name).length
+      this.dismissCommandPalette()
+      this.render()
+      return
+    }
+    if (key.name === 'left') {
+      this.state.inputCursor = Math.max(0, this.state.inputCursor - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'right') {
+      this.state.inputCursor = Math.min(
+        Array.from(this.state.input).length,
+        this.state.inputCursor + 1
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'home') {
+      this.state.inputCursor = 0
+      this.render()
+      return
+    }
+    if (key.name === 'end') {
+      this.state.inputCursor = Array.from(this.state.input).length
+      this.render()
+      return
+    }
+    if (key.name === 'backspace') {
+      if (!this.commandPaletteAutomatic) {
+        const query = Array.from(this.state.commandPaletteQuery ?? '')
+        query.pop()
+        this.state.commandPaletteQuery = query.join('')
+        this.state.overlayIndex = 0
+        this.render()
+        return
+      }
+      const characters = Array.from(this.state.input)
+      if (this.state.inputCursor > 0) {
+        characters.splice(this.state.inputCursor - 1, 1)
+        this.state.input = characters.join('')
+        this.state.inputCursor -= 1
+      }
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+      return
+    }
+    if (key.name === 'delete') {
+      if (!this.commandPaletteAutomatic) return
+      const characters = Array.from(this.state.input)
+      if (this.state.inputCursor < characters.length) {
+        characters.splice(this.state.inputCursor, 1)
+        this.state.input = characters.join('')
+      }
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+      return
+    }
+    if (!key.ctrl && !key.meta && input) {
+      if (!this.commandPaletteAutomatic) {
+        const appended = sanitizeTerminalText(input.replace(/\r?\n/g, ' '))
+        this.state.commandPaletteQuery = `${this.state.commandPaletteQuery ?? ''}${appended}`.slice(
+          0,
+          256
+        )
+        this.state.overlayIndex = 0
+        this.render()
+        return
+      }
+      this.insertComposerText(input.replace(/\r?\n/g, ' '))
+      this.state.overlayIndex = 0
+      this.syncCommandPaletteAfterInput()
+      this.render()
+    }
+  }
+
+  private async handleColdStartKey(input: string, key: Keypress): Promise<void> {
+    const cold = this.state.coldStart
+    const actor = this.actorIdentity()
+    if (!cold || !actor || !this.client) return
+    if (cold.kind === 'workspace' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartProviderIndex = cycleIndex(
+        this.state.coldStartProviderIndex ?? 0,
+        this.state.coldStartProviderChoices?.length ?? 0,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'auth' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartAuthFlowIndex = cycleIndex(
+        this.state.coldStartAuthFlowIndex ?? 0,
+        cold.flows.length,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && (key.name === 'up' || key.name === 'down')) {
+      this.state.coldStartModelIndex = cycleIndex(
+        this.state.coldStartModelIndex ?? 0,
+        cold.offers.models.filter((candidate) => candidate.available).length,
+        key.name === 'up' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && (key.name === 'left' || key.name === 'right')) {
+      this.state.coldStartPostureIndex = cycleAvailableIndex(
+        cold.offers.postures,
+        this.state.coldStartPostureIndex ?? 0,
+        key.name === 'left' ? -1 : 1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'configure' && key.name === 'tab') {
+      const model = cold.offers.models.filter((candidate) => candidate.available)[
+        this.state.coldStartModelIndex ?? 0
+      ]
+      this.state.coldStartReasoningIndex = cycleIndex(
+        this.state.coldStartReasoningIndex ?? 0,
+        model?.reasoning.filter((candidate) => candidate.available).length ?? 0,
+        1
+      )
+      this.render()
+      return
+    }
+    if (cold.kind === 'idle') {
+      if (key.name === 'return' || key.name === 'enter') {
+        const path = this.state.input.trim()
+        if (!isAbsolute(path)) {
+          this.setNotice('Enter an absolute workspace path.', 'warning', 3_000)
+        } else {
+          this.state.input = ''
+          this.state.inputCursor = 0
+          await this.runColdStartCommand(buildWorkspaceRegisterCommand({ actor, path }))
+        }
+      } else if (!key.ctrl && !key.meta && input) {
+        this.insertComposerText(input)
+      }
+      this.render()
+      return
+    }
+    if (key.name === 'space' && cold.kind === 'configure') {
+      const posture = cold.offers.postures[this.state.coldStartPostureIndex ?? 0]
+      if (posture && !posture.available) {
+        this.setNotice(posture.detail || `${posture.label} is unavailable.`, 'warning', 4_000)
+        this.render()
+        return
+      }
+      if (posture?.requiresExplicitConsent)
+        this.state.coldStart = acknowledgeColdStartPosture(cold, posture.postureId)
+      this.render()
+      return
+    }
+    if (key.name !== 'return' && key.name !== 'enter') return
+    if (cold.kind === 'workspace') {
+      if (!this.state.coldStartProviderChoices?.length) {
+        await this.loadColdStartProviders()
+        this.setNotice('Use ↑/↓ to choose a provider, then Enter.', 'neutral')
+        this.render()
+        return
+      }
+      const status = this.state.coldStartProviderChoices[this.state.coldStartProviderIndex ?? 0]
+      if (!status) throw new Error('No Host provider is currently available.')
+      await this.confirmColdStartProvider(status)
+    } else if (cold.kind === 'auth') {
+      if (cold.operationId) {
+        await this.refreshColdStartAuth(cold.providerId)
+        this.render()
+        return
+      }
+      const flow = cold.flows[this.state.coldStartAuthFlowIndex ?? 0]
+      if (!flow) throw new Error('No provider auth flow is currently available.')
+      const command = buildProviderAuthBeginCommand({
+        actor,
+        providerId: cold.providerId,
+        flowId: flow.flowId
+      })
+      this.state.coldStart = beginColdStartProviderAuth(
+        cold,
+        flow.flowId,
+        this.pendingFrom(command)
+      )
+      await this.runColdStartCommand(command, { preserveColdPending: true })
+    } else if (cold.kind === 'offers') {
+      await this.runColdStartCommand(
+        buildThreadCreateCommand({
+          actor,
+          scope: cold.workspaceId ? 'workspace' : 'global',
+          workspaceId: cold.workspaceId
+        })
+      )
+    } else if (cold.kind === 'thread') {
+      this.state.coldStart = coldStartConfigure(cold)
+    } else if (cold.kind === 'configure') {
+      const model = cold.offers.models.filter((candidate) => candidate.available)[
+        this.state.coldStartModelIndex ?? 0
+      ]
+      const posture = cold.offers.postures[this.state.coldStartPostureIndex ?? 0]
+      if (!model || !posture) throw new Error('Host offers contain no available configuration.')
+      if (!posture.available) {
+        this.setNotice(posture.detail || `${posture.label} is unavailable.`, 'warning', 4_000)
+        this.render()
+        return
+      }
+      const consented =
+        !posture.requiresExplicitConsent || cold.acknowledgedPostureIds.includes(posture.postureId)
+      const selection = selectColdStartConfiguration(cold, {
+        providerId: cold.providerId,
+        modelId: model.modelId,
+        postureId: posture.postureId,
+        offerRevision: cold.offers.offerRevision,
+        ...(consented && posture.requiresExplicitConsent ? { postureConsent: true } : {}),
+        ...(model.reasoning.filter((candidate) => candidate.available)[
+          this.state.coldStartReasoningIndex ?? 0
+        ]
+          ? {
+              reasoningId: model.reasoning.filter((candidate) => candidate.available)[
+                this.state.coldStartReasoningIndex ?? 0
+              ].reasoningId
+            }
+          : {})
+      })
+      this.state.coldStart = selection
+      if (selection.kind !== 'configure' || !selection.selection) return
+      await this.runColdStartCommand(
+        this.authorizeConfigureCommand(
+          buildThreadConfigureCommand({ actor, selection: selection.selection })
+        )
       )
     }
     this.render()
   }
 
+  private pendingFrom(command: HostCommand): ColdStartPendingCommand {
+    return {
+      commandId: command.commandId,
+      idempotencyKey: command.idempotencyKey,
+      name: command.name as ColdStartPendingCommand['name'],
+      submittedAt: new Date(this.options.now()).toISOString()
+    }
+  }
+
+  private async runColdStartCommand(
+    command: HostCommand,
+    options: { preserveColdPending?: boolean } = {}
+  ): Promise<void> {
+    if (!this.state.coldStart) return
+    if (!options.preserveColdPending)
+      this.state.coldStart = coldStartPending(this.state.coldStart, this.pendingFrom(command))
+    await this.runHostMutation(command, {
+      onTerminalReceipt: (receipt) => {
+        if (this.state.coldStart)
+          this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+      },
+      onSucceeded: async () => {
+        const cold = this.state.coldStart
+        if (cold?.kind === 'workspace') {
+          this.rememberWorkspaceId(cold.workspaceId)
+          this.setNotice('Workspace registered · choose provider', 'good')
+        }
+        if (cold?.kind === 'thread') this.setNotice('Thread created · configure it', 'good')
+        // Detached on purpose: a provider web sign-in routinely takes minutes,
+        // and this callback runs inside the mutation window — awaiting the
+        // poll here would freeze every other Host command until it settled.
+        if (cold?.kind === 'auth' && cold.operationId) void this.pollColdStartAuth(cold.providerId)
+        if (cold?.kind === 'ready') {
+          this.state.overlay = 'none'
+          this.state.coldStartIntent = undefined
+          this.state.selectedThreadId = cold.threadId
+          if (this.retainHomeForNextThread) this.state.homeContinuationThreadId = cold.threadId
+          this.retainHomeForNextThread = false
+          await this.refreshHostSnapshot()
+          this.applyLocalThread(cold.threadId, { previewNotice: true })
+          await this.loadThreadHistory(cold.threadId)
+          const workspaceId = this.state.thread?.thread.workspaceId
+          if (workspaceId) this.rememberWorkspaceId(workspaceId)
+          if (command.name === 'thread.configure') {
+            const providerId = command.arguments.providerId
+            const modelId = command.arguments.modelId
+            const reasoningId = command.arguments.reasoningId
+            if (typeof providerId === 'string' && typeof modelId === 'string') {
+              this.rememberProfileSettings({
+                providerId,
+                modelId,
+                ...(typeof reasoningId === 'string' ? { reasoningId } : { reasoningId: undefined })
+              })
+            }
+          }
+        }
+      }
+    })
+  }
+
+  private async refreshColdStartAuth(providerId: string): Promise<void> {
+    if (!this.client?.connected || !this.state.coldStart || this.state.coldStart.kind !== 'auth')
+      return
+    const status = await this.client.getProviderAuthStatus(providerId)
+    if (status.state !== 'authenticated') {
+      this.setNotice(
+        'Authentication is still pending · complete the provider flow, then reconnect or press Enter to refresh.',
+        'warning'
+      )
+      this.render()
+      return
+    }
+    this.state.coldStart = coldStartOffers(
+      this.state.coldStart,
+      this.effectiveProviderOffers(await this.client.getProviderOffers(providerId))
+    )
+    this.resetColdStartConfigureIndices()
+    this.setNotice('Provider authenticated · choose thread creation.', 'good')
+    this.render()
+  }
+
+  /**
+   * Polls bounded status reads; a handoff opening is never success. The window
+   * is sized for a real provider web sign-in (browser round trip, ~minutes),
+   * and every tick re-checks that the guided auth stage is still on screen so
+   * an abandoned flow stops polling immediately.
+   */
+  private async pollColdStartAuth(providerId: string): Promise<void> {
+    const intervalMs = this.options.authPollIntervalMs ?? 1_500
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      if (this.stopped || !this.client?.connected) return
+      if (this.state.coldStart?.kind !== 'auth') return
+      await this.refreshColdStartAuth(providerId)
+      if (this.state.coldStart?.kind !== 'auth') return
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, intervalMs)
+        timer.unref?.()
+      })
+    }
+    if (this.state.coldStart?.kind === 'auth') {
+      this.setNotice(
+        'Authentication is still pending · press Enter to refresh when complete.',
+        'warning',
+        4_000
+      )
+    }
+  }
+
+  private resetColdStartConfigureIndices(): void {
+    const cold = this.state.coldStart
+    const offers =
+      cold?.kind === 'offers' || cold?.kind === 'thread' || cold?.kind === 'configure'
+        ? cold.offers
+        : undefined
+    const models = offers?.models.filter((candidate) => candidate.available) ?? []
+    const savedForProvider = this.profileSettings.providerId === offers?.providerId
+    const model = offers
+      ? resolveStartupModel(offers, savedForProvider ? this.profileSettings.modelId : undefined)
+      : undefined
+    this.state.coldStartModelIndex = Math.max(
+      0,
+      model ? models.findIndex((candidate) => candidate.modelId === model.modelId) : 0
+    )
+    const reasoning = resolveStartupReasoning(
+      model,
+      savedForProvider ? this.profileSettings.reasoningId : undefined
+    )
+    const reasoningOffers = model?.reasoning.filter((candidate) => candidate.available) ?? []
+    this.state.coldStartReasoningIndex = Math.max(
+      0,
+      reasoning
+        ? reasoningOffers.findIndex((candidate) => candidate.reasoningId === reasoning.reasoningId)
+        : 0
+    )
+    const postures = offers?.postures ?? []
+    const posture = offers ? resolveStartupPosture(offers) : undefined
+    this.state.coldStartPostureIndex = Math.max(
+      0,
+      posture ? postures.findIndex((candidate) => candidate.postureId === posture.postureId) : 0
+    )
+  }
+
+  private async resumeColdStartPending(): Promise<void> {
+    const pending = this.state.coldStart?.pending
+    if (!pending || !this.client?.connected) return
+    const receipt = await this.client.lookupReceipt({ commandId: pending.commandId })
+    if (this.state.coldStart)
+      this.state.coldStart = applyColdStartReceipt(this.state.coldStart, receipt)
+    if (this.state.coldStart?.kind === 'auth' && this.state.coldStart.operationId) {
+      await this.refreshColdStartAuth(this.state.coldStart.providerId)
+    }
+  }
+
+  private toggleOverlay(overlay: Exclude<TuiOverlay, 'none'>): void {
+    this.state.overlay = this.state.overlay === overlay ? 'none' : overlay
+    if (overlay === 'threads' && this.state.overlay === 'threads') {
+      const threads = visibleThreadRows(this.state)
+      this.state.overlayIndex = Math.max(
+        0,
+        threads.findIndex((thread) => thread.id === this.state.selectedThreadId)
+      )
+    }
+    if (overlay === 'theme' && this.state.overlay === 'theme') {
+      const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+      this.themeBeforePreview = this.theme
+      this.state.overlayIndex = Math.max(0, names.indexOf(this.state.themeName ?? this.theme.name))
+    }
+    if (overlay === 'workspaces' && this.state.overlay === 'workspaces') {
+      const workspaces = this.state.snapshot?.workspaces ?? []
+      const resolved = this.resolveWorkspaceId()
+      this.state.overlayIndex = Math.max(
+        0,
+        workspaces.findIndex((workspace) => workspace.id === resolved)
+      )
+    }
+    this.render()
+  }
+
+  /**
+   * Which workspace a new thread lands in. Profile-scoped last-open memory wins,
+   * then the current thread, then the most recently updated registered workspace.
+   * Every remembered id is revalidated against the current Host projection.
+   */
+  private resolveWorkspaceId(): string | undefined {
+    const workspaces = this.state.snapshot?.workspaces ?? []
+    return resolveStartupWorkspaceId({
+      workspaces,
+      savedWorkspaceId: this.state.activeWorkspaceId ?? this.profileSettings.workspaceId,
+      currentThreadWorkspaceId: this.state.thread?.thread.workspaceId
+    })
+  }
+
+  private rememberProfileSettings(changes: TuiProfileSettings): boolean {
+    this.profileSettings = { ...this.profileSettings, ...changes }
+    return this.options.persistProfileSettings?.(changes) ?? true
+  }
+
+  private rememberWorkspaceId(workspaceId: string): void {
+    this.state.activeWorkspaceId = workspaceId
+    this.rememberProfileSettings({ workspaceId })
+  }
+
+  private handleWorkspacePickerKey(key: Keypress): void {
+    const workspaces = this.state.snapshot?.workspaces ?? []
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+    } else if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(
+        Math.max(0, workspaces.length - 1),
+        this.state.overlayIndex + 1
+      )
+    } else if (key.name === 'return' || key.name === 'enter') {
+      const workspace = workspaces[this.state.overlayIndex]
+      if (workspace) {
+        this.rememberWorkspaceId(workspace.id)
+        this.state.overlay = 'none'
+        this.setNotice(`New threads will use ${workspace.name}.`, 'neutral', 3_000)
+      }
+      this.render()
+      return
+    } else {
+      return
+    }
+    this.render()
+  }
+
+  /**
+   * Resolve a theme name and paint in it.
+   *
+   * `auto` resolves from the synchronous appearance rungs only. The OSC 11
+   * probe owns terminal input while it runs, which is safe once at startup and
+   * never safe here — the reader is attached and would lose the keystroke.
+   */
+  private resolveThemeByName(name: string): TuiTheme {
+    const chosen = isAutoThemeName(name)
+      ? resolveAutoTheme(
+          resolveTuiAppearanceWithoutProbe(process.env, process.platform, () => undefined)
+        )
+      : resolveTuiTheme(name)
+    return tuiThemeForColorMode(chosen, this.options.colorMode)
+  }
+
+  /** Repaint in `name` without committing it. Used for picker previews. */
+  private previewTheme(name: string): void {
+    this.theme = this.resolveThemeByName(name)
+  }
+
+  /**
+   * Commit a theme.
+   *
+   * An unknown name is answered rather than swallowed: `resolveTuiTheme` falls
+   * back silently by design so a stale config cannot block startup, but a name
+   * the user just typed deserves to be told it did not land.
+   */
+  private applyTheme(name: string, options: { persist: boolean }): void {
+    const known = isAutoThemeName(name) || tuiThemeNames().includes(name.trim().toLowerCase())
+    const resolved = this.resolveThemeByName(name)
+    if (!known && resolved.name !== name.trim().toLowerCase()) {
+      this.setNotice(
+        `Unknown theme "${name}". Try: ${[TUI_AUTO_THEME_NAME, ...tuiThemeNames()].join(', ')}`,
+        'warning',
+        5_000
+      )
+      this.render()
+      return
+    }
+    const canonical = isAutoThemeName(name) ? TUI_AUTO_THEME_NAME : resolved.name
+    this.theme = resolved
+    this.state.themeName = canonical
+    this.themeBeforePreview = undefined
+    this.state.overlay = 'none'
+    if (options.persist && this.options.persistTheme) {
+      const stored = this.options.persistTheme(canonical)
+      this.setNotice(
+        stored
+          ? `Theme set to ${canonical}.`
+          : `Theme set to ${canonical} for this session — could not save it.`,
+        stored ? 'neutral' : 'warning',
+        3_000
+      )
+    } else {
+      this.setNotice(`Theme set to ${canonical}.`, 'neutral', 3_000)
+    }
+    this.render()
+  }
+
+  /** Close the picker and put back the theme the preview replaced. */
+  private dismissThemePreview(): void {
+    if (this.themeBeforePreview) this.theme = this.themeBeforePreview
+    this.themeBeforePreview = undefined
+    this.state.overlay = 'none'
+    this.render()
+  }
+
+  private handleThemePickerKey(key: Keypress): void {
+    const names = [TUI_AUTO_THEME_NAME, ...tuiThemeNames()]
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+    } else if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(names.length - 1, this.state.overlayIndex + 1)
+    } else if (key.name === 'return' || key.name === 'enter') {
+      this.applyTheme(names[this.state.overlayIndex] as string, { persist: true })
+      return
+    } else if (key.name === 'escape') {
+      // Unreachable while the global Escape branch runs first; kept so the
+      // handler stays correct on its own terms if that ordering ever changes.
+      this.dismissThemePreview()
+      return
+    } else {
+      return
+    }
+    this.previewTheme(names[this.state.overlayIndex] as string)
+    this.render()
+  }
+
+  /**
+   * `/workspace <absolute-path>` — the only route to workspace.register once a
+   * workspace already exists. The cold-start flow offers a path step, but only
+   * when no workspace resolves at all, so a profile with one registered
+   * workspace could never add a second from the CLI.
+   */
+  private async registerWorkspace(path: string): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot register workspaces.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    // workspace.register is a setup mutation, but setup mutations are dispatched
+    // over the command channel -- the `setup` capability covers the guided setup
+    // projection, not mutation delivery. Gating on it would refuse on a Host that
+    // advertises commands and would have registered the workspace happily.
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise workspace commands.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const command = buildWorkspaceRegisterCommand({ actor, path })
+    await this.runHostMutation(command, {
+      onSucceeded: async (receipt) => {
+        const registered =
+          receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : undefined
+        await this.refreshHostSnapshot()
+        if (registered) {
+          // Registering is an explicit act of intent, so adopt it immediately
+          // rather than making the user register and then pick it as well.
+          this.rememberWorkspaceId(registered)
+          this.setNotice(`Registered ${path}; new threads will use it.`, 'neutral', 4_000)
+        }
+        this.state.overlay = 'workspaces'
+      }
+    })
+    this.render()
+  }
+
   private handleThreadPickerKey(key: Keypress): void {
-    const threads = (this.state.snapshot?.threads ?? []).filter((thread) => !thread.archived)
+    const threads = visibleThreadRows(this.state)
     if (key.name === 'up') {
       this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
     } else if (key.name === 'down') {
@@ -730,13 +2323,82 @@ export class TaskWraithTui {
         Math.max(0, threads.length - 1),
         this.state.overlayIndex + 1
       )
+    } else if (key.name === 'a') {
+      // Revealing archived chats is what keeps /archive from being a one-way
+      // door: this CLI must not need the desktop app to undo its own action.
+      this.state.showArchivedThreads = !this.state.showArchivedThreads
+      this.state.overlayIndex = 0
     } else if (key.name === 'return' || key.name === 'enter') {
       const thread = threads[this.state.overlayIndex]
-      if (thread) void this.openThread(thread.id)
+      if (!thread) return
+      // An archived thread cannot be selected — the Host refuses thread.select
+      // for one — so Enter restores it instead of failing in the user's face.
+      if (thread.archived) {
+        void this.setThreadArchived(thread.id, false, thread.title)
+        return
+      }
+      void this.openThread(thread.id)
       return
     } else {
       return
     }
+    this.render()
+  }
+
+  /** `/archive` retires the open thread; the picker's `a` reveal restores it. */
+  private async archiveOpenThread(): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    const title = this.state.thread?.thread.title
+    if (!threadId || !title) {
+      this.setNotice('Open a thread before archiving.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    await this.setThreadArchived(threadId, true, title)
+  }
+
+  private async setThreadArchived(
+    threadId: string,
+    archived: boolean,
+    title: string
+  ): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot archive threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    // Setup mutations travel the command channel, exactly as thread.create does
+    // in createSoloThread. Gating on the `setup` capability would refuse on a
+    // Host that advertises commands and would have accepted this happily.
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread commands.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const command = buildThreadArchiveCommand({ actor, threadId, archived })
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (!archived) {
+          this.setNotice(`Restored ${title}.`, 'neutral', 3_000)
+          await this.openThread(threadId)
+          return
+        }
+        this.setNotice(`Archived ${title} · /threads then a reveals it.`, 'neutral', 4_000)
+        // The archived thread can no longer be selected, so land somewhere real
+        // rather than leaving the transcript pointed at a thread that is gone.
+        const next = [...(this.state.snapshot?.threads ?? [])]
+          .filter((thread) => !thread.archived)
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0]
+        if (next) await this.openThread(next.id)
+      }
+    })
     this.render()
   }
 
@@ -804,29 +2466,34 @@ export class TaskWraithTui {
     this.render()
   }
 
-  /** The tune lens: seat enable/disable on ensembles, model/reasoning staging
-   * on solo threads. Both are host-validated; this surface only picks among
-   * what the facade projected. */
+  /** The tune lens stages model/reasoning for the next send. Host-validated. */
   private toggleTuneOverlay(): void {
     if (this.state.overlay === 'tune') {
       this.state.overlay = 'none'
+      this.homeTuneReadGeneration += 1
+      if (this.state.homeTune?.loading) this.state.homeTune = undefined
       this.render()
       return
     }
-    if (!this.state.thread) {
-      this.setNotice('Open a thread before tuning.', 'warning', 2_500)
+    if (this.state.thread && (!this.client || !this.client.supports('provider-catalog'))) {
+      this.state.homeTune = undefined
+      this.state.overlay = 'tune'
+      this.state.overlayIndex = 0
+      this.state.tuneEffortIndex = 0
+      void this.loadOffers()
       this.render()
       return
     }
     this.state.overlay = 'tune'
-    this.state.overlayIndex = 0
-    this.state.tuneEffortIndex = 0
-    if (!this.state.thread.thread.ensemble) void this.loadOffers()
+    this.state.homeTune = {
+      loading: true,
+      providers: [],
+      providerIndex: 0,
+      modelIndex: 0,
+      reasoningIndex: -1
+    }
+    void this.loadHomeTuneProviders(true)
     this.render()
-  }
-
-  private tuneSeats(): TaskWraithControlParticipant[] {
-    return this.state.thread?.thread.ensemble?.participants ?? []
   }
 
   private effortIndexFor(offers: TaskWraithControlThreadOffers, modelIndex: number): number {
@@ -896,22 +2563,8 @@ export class TaskWraithTui {
   }
 
   private handleTuneKey(key: Keypress): void {
-    if (this.state.thread?.thread.ensemble) {
-      const seats = this.tuneSeats()
-      if (!seats.length) return
-      const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, seats.length - 1))
-      if (key.name === 'up') {
-        this.state.overlayIndex = Math.max(0, safeIndex - 1)
-      } else if (key.name === 'down') {
-        this.state.overlayIndex = Math.min(seats.length - 1, safeIndex + 1)
-      } else if (key.name === 'return' || key.name === 'enter' || key.name === 'space') {
-        const seat = seats[safeIndex]
-        if (seat) void this.toggleSeat(seat)
-        return
-      } else {
-        return
-      }
-      this.render()
+    if (this.state.homeTune) {
+      this.handleHomeTuneKey(key)
       return
     }
     const models = this.state.offers?.models ?? []
@@ -938,6 +2591,367 @@ export class TaskWraithTui {
     } else {
       return
     }
+    this.render()
+  }
+
+  private resetHomeTuneSelection(
+    preferredProviderId?: string,
+    preferredModelId?: string,
+    preferredReasoningId?: string
+  ): void {
+    const home = this.state.homeTune
+    if (!home) return
+    const choices = tuiModelChoices(home.providers)
+    const selectedIndex = findTuiModelChoiceIndex(choices, preferredProviderId, preferredModelId)
+    const modelIndex = Math.max(0, selectedIndex)
+    const selected = choices[modelIndex]
+    const reasoningRows = selected?.model.reasoning.filter((candidate) => candidate.available) ?? []
+    const reasoningIndex = preferredReasoningId
+      ? reasoningRows.findIndex((candidate) => candidate.reasoningId === preferredReasoningId)
+      : -1
+    this.state.homeTune = {
+      ...home,
+      providerIndex: selected?.providerIndex ?? 0,
+      modelIndex,
+      reasoningIndex
+    }
+  }
+
+  private async loadHomeTuneProviders(_showOverlay: boolean): Promise<void> {
+    const generation = ++this.homeTuneReadGeneration
+    if (!this.client?.connected || !this.client.supports('provider-catalog')) {
+      this.state.homeTune = {
+        providers: [],
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        error: 'Connected Host does not advertise provider model setup.'
+      }
+      this.render()
+      return
+    }
+    try {
+      const statuses = (await this.client.getProviderStatuses()).filter(
+        (status) => status.status === 'ready'
+      )
+      const loaded = (
+        await Promise.all(
+          statuses.map(async (status) => {
+            try {
+              return {
+                status,
+                offers: this.effectiveProviderOffers(
+                  await this.client!.getProviderOffers(status.providerId)
+                )
+              }
+            } catch {
+              return null
+            }
+          })
+        )
+      ).filter((provider): provider is NonNullable<typeof provider> => provider !== null)
+      if (generation !== this.homeTuneReadGeneration) return
+      const providers = loaded.filter(
+        ({ status, offers }) =>
+          offers.providerId === status.providerId && offers.models.some((model) => model.available)
+      )
+      this.state.homeTune = {
+        providers,
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        ...(providers.length ? {} : { error: 'No ready provider has selectable model offers.' })
+      }
+      const thread = this.state.thread?.thread
+      this.resetHomeTuneSelection(
+        thread?.provider.runtimeProvider ?? this.profileSettings.providerId,
+        thread?.provider.model ?? this.profileSettings.modelId,
+        thread?.reasoning ?? this.profileSettings.reasoningId
+      )
+    } catch (error) {
+      if (generation !== this.homeTuneReadGeneration) return
+      this.state.homeTune = {
+        providers: [],
+        providerIndex: 0,
+        modelIndex: 0,
+        reasoningIndex: -1,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private handleHomeTuneKey(key: Keypress): void {
+    const home = this.state.homeTune
+    if (!home || home.loading || !home.providers.length) return
+    const choices = tuiModelChoices(home.providers)
+    const selected = choices[home.modelIndex]
+    if (key.name === 'up' || key.name === 'down') {
+      const next = cycleIndex(home.modelIndex, choices.length, key.name === 'up' ? -1 : 1)
+      const nextChoice = choices[next]
+      if (nextChoice?.provider.status.providerId !== selected?.provider.status.providerId) {
+        this.state.homePermission = undefined
+      }
+      this.state.homeTune = {
+        ...home,
+        providerIndex: nextChoice?.providerIndex ?? 0,
+        modelIndex: next,
+        reasoningIndex: -1
+      }
+    } else if (key.name === 'left' || key.name === 'right') {
+      const reasoning = selected?.model.reasoning.filter((candidate) => candidate.available) ?? []
+      const slot = cycleIndex(
+        home.reasoningIndex + 1,
+        reasoning.length + 1,
+        key.name === 'left' ? -1 : 1
+      )
+      this.state.homeTune = { ...home, reasoningIndex: slot - 1 }
+    } else if (key.name === 'return' || key.name === 'enter') {
+      if (!selected) return
+      const reasoning = selected.model.reasoning.filter((candidate) => candidate.available)[
+        home.reasoningIndex
+      ]
+      if (this.state.selectedThreadId) {
+        void this.configureThreadModel(selected, reasoning?.reasoningId)
+        return
+      }
+      const persisted = this.rememberProfileSettings({
+        providerId: selected.provider.status.providerId,
+        modelId: selected.model.modelId,
+        ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
+      })
+      this.state.overlay = 'none'
+      this.setNotice(
+        `${persisted ? 'Default' : 'Session default'} · ${selected.provider.status.label} / ${selected.model.label}${
+          reasoning ? ` / ${reasoning.label}` : ''
+        }`,
+        persisted ? 'good' : 'warning',
+        4_000
+      )
+    } else {
+      return
+    }
+    this.render()
+  }
+
+  private async configureThreadModel(choice: TuiModelChoice, reasoningId?: string): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId || !this.client?.connected || this.mutationInFlight) return
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(threadId),
+        this.client.getProviderOffers(choice.provider.status.providerId)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === choice.model.modelId && candidate.available
+      )
+      if (!model) throw new Error('That model is no longer offered by the Host.')
+      const requestedPosture =
+        current.currentPostureId ?? this.state.thread?.context.permission ?? 'default'
+      const posture =
+        offers.postures.find(
+          (candidate) => candidate.postureId === requestedPosture && candidate.available
+        ) ??
+        offers.postures.find(
+          (candidate) => candidate.postureId === 'default' && candidate.available
+        )
+      if (!posture) throw new Error('The selected provider has no compatible permission tier.')
+      await this.configureThreadSelection({
+        threadId,
+        providerId: offers.providerId,
+        providerLabel: choice.provider.status.label,
+        offers,
+        model,
+        reasoningId,
+        posture,
+        closeTune: true,
+        ...(posture.postureId !== requestedPosture ? { downgradedFrom: requestedPosture } : {})
+      })
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'warning', 4_000)
+      this.render()
+    }
+  }
+
+  private async configureThreadSelection(input: {
+    threadId: string
+    providerId: string
+    providerLabel: string
+    offers: HostProviderOffersProjection
+    model: HostProviderModelOffer
+    reasoningId?: string
+    posture: HostPermissionPostureOffer
+    closeTune?: boolean
+    downgradedFrom?: string
+  }): Promise<void> {
+    const actor = this.actorIdentity()
+    if (!actor) return
+    const command = this.authorizeConfigureCommand(
+      buildThreadConfigureCommand({
+        actor,
+        selection: {
+          threadId: input.threadId,
+          providerId: input.providerId,
+          modelId: input.model.modelId,
+          postureId: input.posture.postureId,
+          offerRevision: input.offers.offerRevision,
+          ...(input.reasoningId ? { reasoningId: input.reasoningId } : {}),
+          ...(input.posture.requiresExplicitConsent ? { postureConsent: true } : {})
+        }
+      })
+    )
+    let configured = false
+    await this.runHostMutation(command, {
+      onSucceeded: async () => {
+        configured = true
+        await this.refreshHostSnapshot()
+      }
+    })
+    if (!configured) return
+    this.state.pendingSelection = undefined
+    if (input.closeTune) this.state.overlay = 'none'
+    const effort = input.reasoningId ? ` ${this.glyphs.separator} ${input.reasoningId}` : ''
+    const downgrade = input.downgradedFrom
+      ? ` ${this.glyphs.separator} ${input.posture.label} (compatible tier)`
+      : ''
+    this.setNotice(
+      `${input.providerLabel} ${input.model.label}${effort}${downgrade}`,
+      input.downgradedFrom ? 'warning' : 'good',
+      4_000
+    )
+    this.render()
+  }
+
+  private async cycleThreadPermission(): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    const thread = this.state.thread?.thread
+    if (!threadId || !thread) {
+      await this.cycleHomePermission()
+      return
+    }
+    if (!this.client) {
+      this.setNotice('Demo mode cannot change Host permissions.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(threadId),
+        this.client.getProviderOffers(thread.provider.runtimeProvider)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const modelId = current.currentModel ?? thread.provider.model
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === modelId && candidate.available
+      )
+      if (!model) throw new Error('The active model is no longer offered by the Host.')
+      const currentPosture =
+        current.currentPostureId ?? this.state.thread?.context.permission ?? 'default'
+      const posture = nextAvailableTuiPosture(offers.postures, currentPosture)
+      if (!posture) throw new Error('No permission tier is available for the active model.')
+      await this.configureThreadSelection({
+        threadId,
+        providerId: offers.providerId,
+        providerLabel: thread.provider.displayProvider,
+        offers,
+        model,
+        reasoningId: current.currentReasoningEffort ?? thread.reasoning,
+        posture
+      })
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'warning', 4_000)
+      this.render()
+    }
+  }
+
+  private async cycleHomePermission(): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot configure the next Host thread.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('provider-catalog')) {
+      this.setNotice(
+        'Connected Host does not advertise provider permission setup.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    if (this.mutationInFlight) {
+      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+      this.render()
+      return
+    }
+    if (!this.state.homeTune || this.state.homeTune.loading) {
+      await this.loadHomeTuneProviders(false)
+    }
+    const home = this.state.homeTune
+    if (!home || home.loading || home.error) {
+      this.setNotice(
+        home?.error || 'Provider permission offers are still loading.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    const choice = tuiModelChoices(home.providers)[home.modelIndex]
+    if (!choice) {
+      this.setNotice('Choose a ready provider model before changing permissions.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const resolved = resolveTuiHomePostureDetail(
+      home.providers,
+      home.modelIndex,
+      this.state.homePermission
+    )
+    const current = resolved.posture
+    const posture = nextAvailableTuiPosture(choice.provider.offers.postures, current?.postureId)
+    if (!posture) {
+      this.setNotice('No permission tier is available for the Home model.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    this.state.homePermission = {
+      providerId: choice.provider.status.providerId,
+      postureId: posture.postureId
+    }
+    // A lapsed explicit pick is named rather than quietly replaced. Without
+    // this the tier the user chose simply stopped being in effect, and the
+    // next Shift+Tab looked like it had skipped a tier on its own.
+    const lapsed = resolved.downgradedFrom
+      ? `${
+          choice.provider.offers.postures.find(
+            (candidate) => candidate.postureId === resolved.downgradedFrom
+          )?.label ?? resolved.downgradedFrom
+        } is no longer offered · `
+      : ''
+    this.setNotice(
+      posture.postureId === current?.postureId
+        ? `${lapsed}${posture.label} is the only available permission tier.`
+        : `${lapsed}Next thread · ${posture.label}`,
+      posture.requiresExplicitConsent || resolved.downgradedFrom ? 'warning' : 'good',
+      3_000
+    )
     this.render()
   }
 
@@ -973,7 +2987,9 @@ export class TaskWraithTui {
         ...(effort ? { reasoningEffort: effort.id } : {})
       }
       this.setNotice(
-        `Next send uses ${offer.label ?? offer.id}${effort ? ` · ${effort.id}` : ''}`,
+        `Next send uses ${offer.label ?? offer.id}${
+          effort ? ` ${this.glyphs.separator} ${effort.id}` : ''
+        }`,
         'good',
         3_000
       )
@@ -981,35 +2997,15 @@ export class TaskWraithTui {
     this.render()
   }
 
-  private async toggleSeat(seat: TaskWraithControlParticipant): Promise<void> {
-    const threadId = this.state.selectedThreadId
-    if (!threadId || this.mutationInFlight) return
-    const nextEnabled = !seat.enabled
-    if (!this.client) {
-      seat.enabled = nextEnabled
-      this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role} (demo)`, 'good', 2_000)
-      this.render()
-      return
-    }
-    const command = this.buildMutation(
-      'ensemble.seat.toggle',
-      { threadId },
-      { participantId: seat.id, enabled: nextEnabled }
-    )
-    if (!command) return
-    await this.runHostMutation(command, {
-      onSucceeded: async () => {
-        await this.refreshHostSnapshot()
-        seat.enabled = nextEnabled
-        this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role}`, 'good', 2_000)
-      }
-    })
-  }
-
   private async submit(): Promise<void> {
     const original = this.state.input
     const text = original.trim()
     if (!text) return
+    if (this.state.coldStart && this.state.coldStart.kind !== 'ready') {
+      this.setNotice('Complete Host setup before using the composer.', 'warning', 3_000)
+      this.render()
+      return
+    }
     const question = this.selectedOpenQuestion()
     if (question && (this.sendingPrompt || this.mutationInFlight)) {
       this.setNotice('A Host command is already in flight.', 'warning', 2_000)
@@ -1042,14 +3038,32 @@ export class TaskWraithTui {
       await this.answerProjectedQuestion(question, original, 'answer', text)
       return
     }
-    const threadId = this.state.selectedThreadId
-    if (!threadId) {
-      this.setNotice('Choose a thread with Ctrl+K before sending.', 'warning', 3_000)
+    if (this.sendingPrompt && !this.state.selectedThreadId) {
+      this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
       this.render()
       return
     }
-    if (this.sendingPrompt || this.mutationInFlight) {
-      this.setNotice('The previous prompt is still being accepted.', 'warning', 2_000)
+    let threadId = this.state.selectedThreadId
+    if (!threadId && this.client) {
+      this.sendingPrompt = true
+      try {
+        threadId = await this.prepareDefaultThreadForPrompt(original)
+      } finally {
+        this.sendingPrompt = false
+      }
+      if (!threadId) return
+      if (this.state.input !== original) {
+        this.sendingPrompt = false
+        this.setNotice(
+          'Draft changed while the thread was prepared · press Enter to send.',
+          'neutral'
+        )
+        this.render()
+        return
+      }
+    }
+    if (!threadId) {
+      this.setNotice('Choose a thread with Ctrl+K before sending.', 'warning', 3_000)
       this.render()
       return
     }
@@ -1061,31 +3075,253 @@ export class TaskWraithTui {
       return
     }
     const selection = this.state.pendingSelection
-    const args: Record<string, unknown> = { text }
-    if (selection?.model) args.model = selection.model
-    if (selection?.reasoningEffort) args.reasoningEffort = selection.reasoningEffort
-    const command = this.buildMutation('composer.send', { threadId }, args)
-    if (!command) {
-      this.restoreComposerText(original)
+    const liveWork = this.enqueuePromptDraft(threadId, text, selection)
+    this.state.pendingSelection = undefined
+    this.restoreBlockedDraftIfSafe()
+    const depth = queuedDraftsForThread(this.state, threadId).length
+    this.setNotice(
+      liveWork.length > 0 || this.queueDrainActive || this.mutationInFlight
+        ? `Queued ${depth} draft${depth === 1 ? '' : 's'} · Esc steers with the oldest`
+        : 'Sending queued draft',
+      'neutral',
+      2_500
+    )
+    this.scheduleQueuedDraftDrain()
+    this.render()
+  }
+
+  private async prepareDefaultThreadForPrompt(original: string): Promise<string | undefined> {
+    if (!this.client || !this.client.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
       this.render()
-      return
+      return undefined
     }
-    this.sendingPrompt = true
+    if (
+      !this.client.supports('commands') ||
+      !this.client.supports('setup') ||
+      !this.client.supports('provider-catalog')
+    ) {
+      this.setNotice(
+        'This Host cannot prepare a fresh default thread · choose one with Ctrl+K.',
+        'warning',
+        4_000
+      )
+      this.render()
+      return undefined
+    }
+    const actor = this.actorIdentity()
+    if (!actor) return undefined
+    let workspaceId = this.resolveWorkspaceId()
+    if (!workspaceId) {
+      await this.startNewSoloThread()
+      return undefined
+    }
+
+    let recoveredCreatedThreadId: string | undefined
+    const unresolved = this.unresolvedLazySetupCommand
+    if (unresolved) {
+      let recovered: HostCommandReceipt | undefined
+      try {
+        recovered = await this.client.lookupReceipt({ commandId: unresolved.commandId })
+      } catch {
+        recovered = undefined
+      }
+      if (!recovered || !isTerminalHostReceiptStatus(recovered.status)) {
+        this.setNotice('The first prompt setup is still being recovered from the Host.', 'warning')
+        this.render()
+        return undefined
+      }
+      this.unresolvedLazySetupCommand = undefined
+      if (recovered.status === 'succeeded' && unresolved.name === 'thread.configure') {
+        const recoveredThreadId = unresolved.target.threadId
+        this.state.homeContinuationThreadId = recoveredThreadId
+        await this.refreshHostSnapshot()
+        this.applyLocalThread(recoveredThreadId, { previewNotice: true })
+        await this.loadThreadHistory(recoveredThreadId)
+        const recoveredWorkspaceId = this.state.thread?.thread.workspaceId
+        if (recoveredWorkspaceId) this.rememberWorkspaceId(recoveredWorkspaceId)
+        const providerId = unresolved.arguments.providerId
+        const modelId = unresolved.arguments.modelId
+        const reasoningId = unresolved.arguments.reasoningId
+        if (typeof providerId === 'string' && typeof modelId === 'string') {
+          this.rememberProfileSettings({
+            providerId,
+            modelId,
+            ...(typeof reasoningId === 'string' ? { reasoningId } : { reasoningId: undefined })
+          })
+        }
+        return recoveredThreadId
+      }
+      if (
+        recovered.status === 'succeeded' &&
+        unresolved.name === 'thread.create' &&
+        recovered.resultRef?.kind === 'thread'
+      ) {
+        recoveredCreatedThreadId = recovered.resultRef.threadId
+        if (typeof unresolved.arguments.workspaceId === 'string') {
+          workspaceId = unresolved.arguments.workspaceId
+        }
+      }
+    }
+
+    // The Home identity banner renders the tune-lens cursor whenever it is
+    // loaded. The lazy first prompt must dispatch that exact visible selection;
+    // profile memory is only the fallback when no banner selection exists.
+    const preferred = this.homeBannerPreference()
+    let status: HostProviderStatusProjection | undefined
     try {
-      await this.runHostMutation(command, {
+      status = resolveStartupProvider(
+        await this.client.getProviderStatuses(),
+        preferred?.providerId ?? this.profileSettings.providerId
+      )
+    } catch {
+      status = undefined
+    }
+    if (!status) {
+      await this.startNewSoloThread(this.profileSettings.providerId)
+      return undefined
+    }
+
+    let offers: HostProviderOffersProjection
+    try {
+      offers = this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
+    } catch {
+      await this.startNewSoloThread(status.providerId)
+      return undefined
+    }
+    const preferredForProvider = preferred?.providerId === status.providerId ? preferred : undefined
+    const savedForProvider = this.profileSettings.providerId === status.providerId
+    const model = resolveStartupModel(
+      offers,
+      preferredForProvider?.modelId ?? (savedForProvider ? this.profileSettings.modelId : undefined)
+    )
+    const homePermission =
+      this.state.homePermission?.providerId === status.providerId
+        ? this.state.homePermission
+        : undefined
+    const posture = homePermission
+      ? offers.postures.find(
+          (candidate) => candidate.postureId === homePermission.postureId && candidate.available
+        )
+      : resolveStartupPosture(offers)
+    const reasoning = resolveStartupReasoning(
+      model,
+      preferredForProvider && model && preferredForProvider.modelId === model.modelId
+        ? preferredForProvider.reasoningId
+        : savedForProvider
+          ? this.profileSettings.reasoningId
+          : undefined
+    )
+    if (!model || !posture) {
+      if (homePermission) {
+        this.setNotice(
+          'The selected Home permission is no longer available · choose another tier.',
+          'warning',
+          4_000
+        )
+        this.render()
+        return undefined
+      }
+      await this.startNewSoloThread(status.providerId)
+      return undefined
+    }
+
+    let createdThreadId = recoveredCreatedThreadId
+    if (!createdThreadId) {
+      const createCommand = buildThreadCreateCommand({
+        actor,
+        scope: 'workspace',
+        workspaceId
+      })
+      this.unresolvedLazySetupCommand = createCommand
+      await this.runHostMutation(createCommand, {
         composerRestore: original,
-        onSucceeded: async () => {
-          this.state.pendingSelection = undefined
-          await this.refreshHostSnapshot()
-          if (this.state.selectedThreadId) {
-            this.applyLocalThread(this.state.selectedThreadId)
-          }
+        onTerminalReceipt: () => {
+          this.unresolvedLazySetupCommand = undefined
+        },
+        onSucceeded: (receipt) => {
+          createdThreadId =
+            receipt.resultRef?.kind === 'thread' ? receipt.resultRef.threadId : undefined
         }
       })
-    } finally {
-      this.sendingPrompt = false
-      this.render()
     }
+    if (!createdThreadId) return undefined
+    const newThreadId = createdThreadId
+
+    const selection = {
+      threadId: newThreadId,
+      providerId: status.providerId,
+      modelId: model.modelId,
+      postureId: posture.postureId,
+      offerRevision: offers.offerRevision,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {}),
+      ...(homePermission && posture.requiresExplicitConsent
+        ? { postureConsent: true as const }
+        : {})
+    }
+    let configured = false
+    const configureCommand = this.authorizeConfigureCommand(
+      buildThreadConfigureCommand({ actor, selection })
+    )
+    this.unresolvedLazySetupCommand = configureCommand
+    await this.runHostMutation(configureCommand, {
+      composerRestore: original,
+      onTerminalReceipt: () => {
+        this.unresolvedLazySetupCommand = undefined
+      },
+      onSucceeded: async () => {
+        configured = true
+        this.state.homeContinuationThreadId = newThreadId
+        await this.refreshHostSnapshot()
+        this.applyLocalThread(newThreadId, { previewNotice: true })
+        await this.loadThreadHistory(newThreadId)
+      }
+    })
+    if (!configured) {
+      let refreshedStatus: HostProviderStatusProjection | undefined
+      let refreshedOffers: HostProviderOffersProjection | undefined
+      try {
+        refreshedStatus = (await this.client.getProviderStatuses()).find(
+          (candidate) => candidate.providerId === status.providerId && candidate.status === 'ready'
+        )
+        if (refreshedStatus) {
+          refreshedOffers = this.effectiveProviderOffers(
+            await this.client.getProviderOffers(refreshedStatus.providerId)
+          )
+        }
+      } catch {
+        refreshedStatus = undefined
+        refreshedOffers = undefined
+      }
+      if (!refreshedStatus || !refreshedOffers) {
+        this.setNotice(
+          'Could not refresh current Host defaults · the first draft is still in the composer.',
+          'warning'
+        )
+        this.render()
+        return undefined
+      }
+      const selectedProvider = coldStartSelectProvider(
+        coldStartWorkspaceRegistered(workspaceId),
+        refreshedStatus
+      )
+      const withOffers = coldStartOffers(selectedProvider, refreshedOffers)
+      this.state.coldStart = coldStartConfigure(coldStartThreadCreated(withOffers, newThreadId))
+      this.state.coldStartIntent = 'new-thread'
+      this.state.overlay = 'setup'
+      this.resetColdStartConfigureIndices()
+      this.setNotice('Host defaults changed · review the current setup choices.', 'warning')
+      this.render()
+      return undefined
+    }
+
+    this.rememberWorkspaceId(workspaceId)
+    this.rememberProfileSettings({
+      providerId: status.providerId,
+      modelId: model.modelId,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : { reasoningId: undefined })
+    })
+    return newThreadId
   }
 
   private restoreComposerText(value: string): void {
@@ -1094,8 +3330,29 @@ export class TaskWraithTui {
     this.state.inputCursor = Array.from(value).length
   }
 
+  /** The provider/model/reasoning selection the Home identity banner shows. */
+  private homeBannerPreference():
+    | { providerId: string; modelId: string; reasoningId?: string }
+    | undefined {
+    const home = this.state.homeTune
+    if (!home || home.loading || !home.providers.length) return undefined
+    const choice = tuiModelChoices(home.providers)[home.modelIndex]
+    if (!choice) return undefined
+    const reasoning = choice.model.reasoning.filter((candidate) => candidate.available)[
+      home.reasoningIndex
+    ]
+    return {
+      providerId: choice.provider.status.providerId,
+      modelId: choice.model.modelId,
+      ...(reasoning ? { reasoningId: reasoning.reasoningId } : {})
+    }
+  }
+
   private async runCommand(raw: string): Promise<void> {
-    const command = raw.trim().toLowerCase()
+    const parsed = parseLeadingTuiSlashToken(raw)
+    const resolved = resolveTuiSlashCommand(raw)
+    const arguments_ = [...(parsed?.arguments ?? [])]
+    const command = resolved?.command.name ?? parsed?.normalizedToken ?? '/'
     if (command === '/quit' || command === '/q') {
       this.stop()
       return
@@ -1108,6 +3365,26 @@ export class TaskWraithTui {
       this.toggleOverlay('threads')
       return
     }
+    if (command === '/workspace' || command === '/ws') {
+      // Re-join on spaces: workspace paths routinely contain them, and the
+      // dispatcher split the raw line on whitespace before we ever saw it.
+      const path = parsed?.argumentText ?? arguments_.join(' ').trim()
+      if (!path) {
+        this.toggleOverlay('workspaces')
+        return
+      }
+      await this.registerWorkspace(path)
+      return
+    }
+    if (command === '/theme') {
+      const requested = parsed?.argumentText ?? arguments_.join(' ').trim()
+      if (!requested) {
+        this.toggleOverlay('theme')
+        return
+      }
+      this.applyTheme(requested, { persist: true })
+      return
+    }
     if (command === '/missions') {
       this.toggleMissionOverlay('active')
       return
@@ -1117,6 +3394,8 @@ export class TaskWraithTui {
       return
     }
     if (command === '/help') {
+      this.commandPaletteAutomatic = false
+      this.state.commandPaletteQuery = ''
       this.toggleOverlay('help')
       return
     }
@@ -1124,16 +3403,1645 @@ export class TaskWraithTui {
       await this.cancelRun()
       return
     }
-    if (command === '/model' || command === '/seats' || command === '/tune') {
+    if (command === '/goal') {
+      this.toggleOverlay('goal')
+      return
+    }
+    if (command === '/archive') {
+      await this.archiveOpenThread()
+      return
+    }
+    if (command === '/dismiss') {
+      // A pending question is intercepted before the dispatcher, so reaching
+      // here means there is nothing to dismiss. /help advertises the command,
+      // and answering an advertised command with "Unknown command" reads as a
+      // broken CLI rather than an empty queue.
+      this.setNotice('Nothing to dismiss - no Host question is pending.', 'neutral', 3_000)
+      this.render()
+      return
+    }
+    if (command === '/clear') {
+      this.state.scrollOffset = 0
+      this.setNotice('Scrollback reset for this TUI session.', 'neutral', 2_000)
+      this.render()
+      return
+    }
+    if (command === '/status') {
+      await this.showStatus()
+      return
+    }
+    if (command === '/host') {
+      await this.runHostCommand(parsed?.argumentText ?? '')
+      return
+    }
+    if (command === '/login') {
+      if (arguments_.length > 1) {
+        this.setNotice('/login expects at most one provider id.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.openProviderLoginHub(arguments_[0])
+      return
+    }
+    if (command === '/new' || command === '/provider') {
+      if (arguments_.length > 1) {
+        this.setNotice(
+          `${command} expects at most one provider id, not "${arguments_.join(' ')}".`,
+          'warning',
+          3_000
+        )
+        this.render()
+        return
+      }
+      await this.startNewSoloThread(arguments_[0])
+      return
+    }
+    if (command === '/model' || command === '/m') {
+      if (!arguments_.length) {
+        this.toggleTuneOverlay()
+        return
+      }
+      if (arguments_.length !== 1) {
+        this.setNotice('/model expects one offered model id.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.stageModel(arguments_[0])
+      return
+    }
+    if (command === '/think' || command === '/reasoning') {
+      if (arguments_.length > 1) {
+        this.setNotice(
+          `/think expects one offered level, not "${arguments_.join(' ')}".`,
+          'warning',
+          3_000
+        )
+        this.render()
+        return
+      }
+      await this.stageReasoning(arguments_[0])
+      return
+    }
+    if (command === '/tune') {
       this.toggleTuneOverlay()
+      return
+    }
+    if (command === '/seats') {
+      if (arguments_.length) {
+        this.setNotice('/seats takes no arguments.', 'warning', 3_000)
+        this.render()
+        return
+      }
+      await this.openSeatsOverlay()
+      return
+    }
+    if (command === '/git') {
+      await this.runGitCommand(arguments_)
       return
     }
     this.setNotice(`Unknown command: ${raw}`, 'warning', 3_000)
     this.render()
   }
 
-  private async cancelRun(): Promise<void> {
+  /**
+   * `/git [status|diff|log] [path]` — a capability-gated workspace-git READ.
+   * `available: false` is a first-class calm state (a Host without git is a
+   * normal configuration), and a Host-truncated result is bannered by the
+   * renderer, never presented as complete. Interactive only: demo mode shows
+   * a notice and never fabricates git data.
+   */
+  private async runGitCommand(arguments_: string[]): Promise<void> {
+    const scopeArgument = arguments_[0]?.toLowerCase()
+    let scope: 'status' | 'diff' | 'log'
+    if (scopeArgument === undefined) {
+      scope = this.state.git?.scope ?? 'status'
+    } else if (scopeArgument === 'status' || scopeArgument === 'diff' || scopeArgument === 'log') {
+      scope = scopeArgument
+    } else {
+      this.setNotice(
+        `/git expects status, diff, or log — not "${arguments_.join(' ')}".`,
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    await this.openGitOverlay(scope, arguments_[1])
+  }
+
+  private async openGitOverlay(scope: 'status' | 'diff' | 'log', path?: string): Promise<void> {
+    this.state.overlay = 'git'
+    this.state.git = { scope, ...(path ? { path } : {}), loading: true }
+    this.render()
+    await this.loadGitRead(scope, path)
+  }
+
+  private async loadGitRead(scope: 'status' | 'diff' | 'log', path?: string): Promise<void> {
+    if (!this.client) return // demo mode: the renderer shows the notice.
     const threadId = this.state.selectedThreadId
+    const threadWorkspaceId =
+      this.state.thread?.thread.workspaceId ??
+      this.state.snapshot?.threads.find((thread) => thread.id === threadId)?.workspaceId
+    if (!threadId || !threadWorkspaceId) {
+      this.state.git = {
+        scope,
+        ...(path ? { path } : {}),
+        error: 'Open a thread in a workspace to read its git state.'
+      }
+      this.render()
+      return
+    }
+    const generation = ++this.gitReadGeneration
+    try {
+      const outcome = await this.client.getWorkspaceGitRead({
+        workspaceId: threadWorkspaceId,
+        scope,
+        ...(path ? { path } : {})
+      })
+      if (!this.gitReadIsCurrent(generation, scope, threadId, threadWorkspaceId, path)) return
+      this.state.git = { scope, ...(path ? { path } : {}), outcome }
+      this.render()
+    } catch (error) {
+      if (!this.gitReadIsCurrent(generation, scope, threadId, threadWorkspaceId, path)) return
+      this.state.git = {
+        scope,
+        ...(path ? { path } : {}),
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.render()
+    }
+  }
+
+  /**
+   * Staleness guard for workspace-git reads. COVERED: a result is dropped
+   * unless it is still the newest dispatch (monotonic generation) AND its
+   * thread, workspace, scope, and path all still match the overlay's current
+   * request — an older answer can never land under a newer header, including
+   * another repository's diff after a thread switch, a path change on the
+   * same scope, or an out-of-order refresh. NOT covered, by design (decision
+   * 5 — no watcher): a workspace rebound while the overlay sits open with no
+   * new dispatch stays stale until the overlay is reopened or refreshed (r);
+   * and a thread switch closes the overlay entirely (openThread), which this
+   * guard also double-checks.
+   */
+  private gitReadIsCurrent(
+    generation: number,
+    scope: 'status' | 'diff' | 'log',
+    threadId: string,
+    workspaceId: string,
+    path?: string
+  ): boolean {
+    return (
+      generation === this.gitReadGeneration &&
+      this.state.overlay === 'git' &&
+      this.state.git?.scope === scope &&
+      this.state.selectedThreadId === threadId &&
+      (this.state.thread?.thread.workspaceId ??
+        this.state.snapshot?.threads.find((thread) => thread.id === this.state.selectedThreadId)
+          ?.workspaceId) === workspaceId &&
+      (this.state.git?.path ?? undefined) === path
+    )
+  }
+
+  private handleGitKey(key: Keypress): void {
+    const git = this.state.git
+    if (!git) return
+    if (key.name === 'r') {
+      this.state.git = { ...git, loading: true }
+      this.render()
+      void this.loadGitRead(git.scope, git.path)
+      return
+    }
+    const scope =
+      key.name === 's'
+        ? ('status' as const)
+        : key.name === 'd'
+          ? ('diff' as const)
+          : key.name === 'l'
+            ? ('log' as const)
+            : null
+    if (scope === null || scope === git.scope) return
+    this.state.git = { scope, loading: true }
+    this.render()
+    void this.loadGitRead(scope)
+  }
+
+  /**
+   * `/seats` — the ensemble seat lens: a capability-gated roster read plus
+   * seat toggles through `ensemble.seat.toggle`. A Host without the
+   * 'ensemble' capability is a first-class calm state, exactly like /git's
+   * git-less Host — never an error. The roster always renders from the
+   * coherent projection; round execution stays desktop-only and the
+   * renderer says so. Interactive only: demo mode shows a notice and never
+   * fabricates a roster.
+   */
+  private async openSeatsOverlay(): Promise<void> {
+    this.state.overlay = 'seats'
+    this.state.overlayIndex = 0
+    const threadId = this.state.selectedThreadId
+    this.state.seats = threadId ? { threadId, loading: true } : undefined
+    this.render()
+    await this.loadSeatsRoster()
+  }
+
+  private async loadSeatsRoster(): Promise<void> {
+    if (!this.client) return // demo mode: the renderer shows the notice.
+    const threadId = this.state.seats?.threadId
+    if (!threadId) return
+    if (!this.client.welcome?.capabilities.includes('ensemble')) {
+      this.state.seats = {
+        threadId,
+        unavailable: 'seat control is unavailable on this Host'
+      }
+      this.render()
+      return
+    }
+    const generation = ++this.seatsReadGeneration
+    try {
+      // The roster has no dedicated read: it rides the coherent snapshot.
+      await this.refreshHostSnapshot()
+      if (!this.seatsReadIsCurrent(generation, threadId)) return
+      this.state.seats = { threadId }
+      this.render()
+    } catch (error) {
+      if (!this.seatsReadIsCurrent(generation, threadId)) return
+      this.state.seats = {
+        threadId,
+        error: error instanceof Error ? error.message : String(error)
+      }
+      this.render()
+    }
+  }
+
+  /**
+   * Staleness guard for seat-lens reads and toggle outcomes. COVERED: a
+   * roster read or toggle outcome lands only if it is still the newest
+   * dispatch (monotonic generation) AND the lens is still open on the same
+   * selected thread — a late answer after a thread switch can never repoint
+   * the lens at another thread's roster, even transiently, which would
+   * invite toggling the WRONG participant (the Host would faithfully obey a
+   * well-formed command). openThread/applyLocalThread close the lens and
+   * clear this state on a switch; the overlay and selectedThreadId checks
+   * here are the double-check. NOT covered, by design (decision 5 — no
+   * watcher): the roster renders from the coherent projection, so a thread
+   * rebound with no new read keeps showing the last projected roster until
+   * the lens is reopened or refreshed (r); live deltas update it freely.
+   */
+  private seatsReadIsCurrent(generation: number, threadId: string): boolean {
+    return (
+      generation === this.seatsReadGeneration &&
+      this.state.overlay === 'seats' &&
+      this.state.seats?.threadId === threadId &&
+      this.state.selectedThreadId === threadId
+    )
+  }
+
+  private handleSeatsKey(key: Keypress): void {
+    const seats = this.state.seats
+    if (!seats) return
+    if (key.name === 'r') {
+      this.state.seats = { threadId: seats.threadId, loading: true }
+      this.render()
+      void this.loadSeatsRoster()
+      return
+    }
+    const roster = tuiSeatsRoster(this.state)
+    if (key.name === 'up') {
+      this.state.overlayIndex = Math.max(0, this.state.overlayIndex - 1)
+      this.render()
+      return
+    }
+    if (key.name === 'down') {
+      this.state.overlayIndex = Math.min(
+        Math.max(0, roster.length - 1),
+        this.state.overlayIndex + 1
+      )
+      this.render()
+      return
+    }
+    if (key.name === 'return' || key.name === 'enter' || key.name === 'space') {
+      this.toggleSelectedSeat()
+      return
+    }
+  }
+
+  /**
+   * Toggle the highlighted seat. The Host is the authority: the toggle is
+   * ATTEMPTED and the Host's typed refusal rendered in plain language
+   * (last-seat, active-round, …), never pre-empted by a client-side mirror
+   * that could drift from the server's rules. The row never flips
+   * optimistically — a succeeded toggle re-reads the authoritative snapshot
+   * and the lens renders what the Host actually holds.
+   */
+  private toggleSelectedSeat(): void {
+    const seats = this.state.seats
+    if (!seats || seats.loading || seats.unavailable || seats.error) return
+    const threadId = seats.threadId
+    if (this.state.selectedThreadId !== threadId) return
+    const roster = tuiSeatsRoster(this.state)
+    const participant = roster[Math.min(this.state.overlayIndex, roster.length - 1)]
+    if (!participant) return
+    const command = this.buildMutation(
+      'ensemble.seat.toggle',
+      { threadId },
+      {
+        participantId: participant.id,
+        enabled: !participant.enabled
+      }
+    )
+    if (!command) return
+    const generation = this.seatsReadGeneration
+    void this.runHostMutation(command, {
+      onTerminalReceipt: (receipt) => {
+        if (receipt.status === 'succeeded') return
+        if (!this.seatsReadIsCurrent(generation, threadId)) return
+        this.state.seats = { threadId, actionError: describeSeatToggleRefusal(receipt) }
+      },
+      onSucceeded: async () => {
+        await this.refreshHostSnapshot()
+        if (!this.seatsReadIsCurrent(generation, threadId)) return
+        this.state.seats = { threadId }
+        this.render()
+      }
+    })
+  }
+
+  private async commandOffers(): Promise<TaskWraithControlThreadOffers | undefined> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) {
+      this.setNotice('Open a thread before choosing a model or reasoning level.', 'warning', 3_000)
+      this.render()
+      return undefined
+    }
+    await this.loadOffers()
+    const offers = this.state.offers
+    if (!offers || offers.threadId !== threadId) return undefined
+    if (offers.locked) {
+      this.setNotice(offers.locked, 'warning', 3_000)
+      this.render()
+      return undefined
+    }
+    if (!offers.models.length) {
+      this.setNotice(
+        'The Host returned no selectable model offers for this thread.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return undefined
+    }
+    return offers
+  }
+
+  private async stageModel(modelId: string): Promise<void> {
+    if (!this.state.selectedThreadId) {
+      await this.stageHomeModel(modelId)
+      return
+    }
+    if (!this.client?.supports('provider-catalog')) {
+      const offers = await this.commandOffers()
+      if (!offers) return
+      const modelIndex = offers.models.findIndex((model) => model.id === modelId)
+      if (modelIndex < 0) {
+        this.setNotice(
+          `Unknown model "${modelId}". Offered: ${offers.models.map((model) => model.id).join(', ')}`,
+          'warning',
+          4_000
+        )
+        this.render()
+        return
+      }
+      this.state.overlayIndex = modelIndex
+      this.state.tuneEffortIndex = this.effortIndexFor(offers, modelIndex)
+      this.applyTuneSelection(offers.models[modelIndex])
+      return
+    }
+    await this.loadHomeTuneProviders(false)
+    const choices = tuiModelChoices(this.state.homeTune?.providers ?? []).filter(
+      (choice) => choice.model.modelId === modelId
+    )
+    if (choices.length !== 1) {
+      this.setNotice(
+        choices.length > 1
+          ? `Model "${modelId}" is offered by multiple providers · use /model to choose.`
+          : `Unknown ready-provider model "${modelId}" · use /model to browse.`,
+        'warning',
+        4_000
+      )
+      this.render()
+      return
+    }
+    await this.configureThreadModel(choices[0])
+  }
+
+  private async stageHomeModel(modelId: string): Promise<void> {
+    await this.loadHomeTuneProviders(false)
+    const providers = this.state.homeTune?.providers ?? []
+    const choices = tuiModelChoices(providers)
+    const matches = choices.filter((choice) => choice.model.modelId === modelId)
+    if (matches.length !== 1) {
+      this.setNotice(
+        matches.length > 1
+          ? `Model "${modelId}" is offered by multiple providers · use /model to choose.`
+          : `Unknown ready-provider model "${modelId}" · use /model to browse.`,
+        'warning',
+        4_000
+      )
+      this.render()
+      return
+    }
+    const { provider, model, providerIndex } = matches[0]
+    const savedReasoning =
+      this.profileSettings.providerId === provider.status.providerId &&
+      this.profileSettings.modelId === model.modelId
+        ? resolveStartupReasoning(model, this.profileSettings.reasoningId)
+        : undefined
+    const persisted = this.rememberProfileSettings({
+      providerId: provider.status.providerId,
+      modelId: model.modelId,
+      ...(savedReasoning ? { reasoningId: savedReasoning.reasoningId } : { reasoningId: undefined })
+    })
+    const modelIndex = choices.findIndex(
+      (choice) =>
+        choice.provider.status.providerId === provider.status.providerId &&
+        choice.model.modelId === model.modelId
+    )
+    const reasoning = model.reasoning.filter((candidate) => candidate.available)
+    const previousProvider =
+      choices[this.state.homeTune?.modelIndex ?? 0]?.provider.status.providerId
+    if (previousProvider !== provider.status.providerId) this.state.homePermission = undefined
+    this.state.homeTune = {
+      ...this.state.homeTune!,
+      providerIndex: Math.max(0, providerIndex),
+      modelIndex: Math.max(0, modelIndex),
+      reasoningIndex: savedReasoning
+        ? reasoning.findIndex((candidate) => candidate.reasoningId === savedReasoning.reasoningId)
+        : -1
+    }
+    this.setNotice(
+      `${persisted ? 'Default' : 'Session default'} · ${provider.status.label} / ${model.label}`,
+      persisted ? 'good' : 'warning',
+      4_000
+    )
+    this.render()
+  }
+
+  private async stageReasoning(level?: string): Promise<void> {
+    const offers = await this.commandOffers()
+    if (!offers) return
+    const stagedModel = this.state.pendingSelection?.model
+    const modelIndex = stagedModel
+      ? offers.models.findIndex((model) => model.id === stagedModel)
+      : offers.models.findIndex((model) => model.current)
+    const selectedIndex = modelIndex >= 0 ? modelIndex : 0
+    const model = offers.models[selectedIndex]
+    if (!model) return
+    const ladder = model.reasoningEfforts
+    if (!level) {
+      const current =
+        this.state.pendingSelection?.model === model.id
+          ? this.state.pendingSelection.reasoningEffort
+          : (offers.currentReasoningEffort ?? model.defaultReasoningEffort)
+      this.setNotice(
+        `Reasoning for ${model.label ?? model.id}: ${current ?? 'not set'} ${this.glyphs.separator} offered: ${
+          ladder.map((effort) => effort.id).join(', ') || 'none'
+        }`,
+        'neutral',
+        4_000
+      )
+      this.render()
+      return
+    }
+    const effortIndex = ladder.findIndex((effort) => effort.id === level)
+    if (effortIndex < 0) {
+      this.setNotice(
+        `Unknown reasoning level "${level}" for ${model.label ?? model.id}. Offered: ${
+          ladder.map((effort) => effort.id).join(', ') || 'none'
+        }`,
+        'warning',
+        4_000
+      )
+      this.render()
+      return
+    }
+    this.state.overlayIndex = selectedIndex
+    this.state.tuneEffortIndex = effortIndex
+    this.applyTuneSelection(model)
+  }
+
+  private async openProviderLoginHub(requestedProviderId?: string): Promise<void> {
+    if (!this.client?.connected) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('provider-catalog')) {
+      this.setNotice('Provider setup is unavailable on this Host.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const generation = ++this.providerLoginReadGeneration
+    this.state.overlay = 'login'
+    this.state.providerLogin = { providers: [], flows: [], flowIndex: 0, loading: true }
+    this.render()
+    try {
+      const providers = [...(await this.client.getProviderStatuses())]
+      if (generation !== this.providerLoginReadGeneration || this.state.overlay !== 'login') return
+      const preferred = requestedProviderId
+        ? matchProviderStatus(providers, requestedProviderId)
+        : (providers.find((provider) => provider.providerId === this.profileSettings.providerId) ??
+          providers[0])
+      if (requestedProviderId && !preferred) {
+        this.state.providerLogin = {
+          providers,
+          flows: [],
+          flowIndex: 0,
+          error: `Unknown or ambiguous provider "${requestedProviderId}".`
+        }
+        this.render()
+        return
+      }
+      this.state.providerLogin = {
+        providers,
+        selectedProviderId: preferred?.providerId,
+        flows: [],
+        flowIndex: 0
+      }
+      if (preferred) await this.loadProviderLoginSelection(preferred.providerId)
+    } catch (error) {
+      if (generation !== this.providerLoginReadGeneration) return
+      this.state.providerLogin = {
+        providers: [],
+        flows: [],
+        flowIndex: 0,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private async loadProviderLoginSelection(providerId: string): Promise<void> {
+    if (!this.client?.connected || !this.state.providerLogin) return
+    const generation = ++this.providerLoginReadGeneration
+    this.state.providerLogin = {
+      ...this.state.providerLogin,
+      selectedProviderId: providerId,
+      flows: [],
+      flowIndex: 0,
+      loading: true,
+      error: undefined
+    }
+    this.render()
+    try {
+      const authStatus = this.client.supports('provider-auth')
+        ? await this.client.getProviderAuthStatus(providerId)
+        : undefined
+      const flows =
+        authStatus?.state === 'unauthenticated' && this.client.supports('provider-auth')
+          ? [...(await this.client.getProviderAuthFlows(providerId))].filter(
+              (flow) => flow.available
+            )
+          : []
+      if (
+        generation !== this.providerLoginReadGeneration ||
+        this.state.overlay !== 'login' ||
+        this.state.providerLogin?.selectedProviderId !== providerId
+      ) {
+        return
+      }
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        authStatus,
+        flows,
+        flowIndex: 0,
+        loading: false,
+        operationId:
+          authStatus?.state === 'authenticated' ? undefined : this.state.providerLogin.operationId
+      }
+    } catch (error) {
+      if (generation !== this.providerLoginReadGeneration) return
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        flows: [],
+        flowIndex: 0,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.render()
+  }
+
+  private async handleProviderLoginKey(key: Keypress): Promise<void> {
+    const login = this.state.providerLogin
+    if (!login || login.loading) return
+    const selectedIndex = Math.max(
+      0,
+      login.providers.findIndex((provider) => provider.providerId === login.selectedProviderId)
+    )
+    if (key.name === 'up' || key.name === 'down') {
+      const nextIndex = cycleIndex(
+        selectedIndex,
+        login.providers.length,
+        key.name === 'up' ? -1 : 1
+      )
+      const provider = login.providers[nextIndex]
+      if (provider) await this.loadProviderLoginSelection(provider.providerId)
+      return
+    }
+    if (key.name === 'tab' && login.flows.length > 1) {
+      this.state.providerLogin = {
+        ...login,
+        flowIndex: cycleIndex(login.flowIndex, login.flows.length, key.shift ? -1 : 1)
+      }
+      this.render()
+      return
+    }
+    if (key.name === 'r') {
+      await this.openProviderLoginHub(login.selectedProviderId)
+      return
+    }
+    if (key.name !== 'return' && key.name !== 'enter') return
+    if (login.pending || login.operationId) {
+      if (login.selectedProviderId) await this.loadProviderLoginSelection(login.selectedProviderId)
+      return
+    }
+    const flow = login.flows[login.flowIndex]
+    if (!flow || !login.selectedProviderId) {
+      await this.loadProviderLoginSelection(login.selectedProviderId ?? '')
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) return
+    const command = buildProviderAuthBeginCommand({
+      actor,
+      providerId: login.selectedProviderId,
+      flowId: flow.flowId
+    })
+    this.state.providerLogin = { ...login, pending: this.pendingFrom(command) }
+    const receipt = await this.runHostMutation(command)
+    if (!this.state.providerLogin) return
+    if (receipt?.status === 'succeeded' && receipt.resultRef?.kind === 'provider-auth') {
+      this.state.providerLogin = {
+        ...this.state.providerLogin,
+        pending: undefined,
+        operationId: receipt.resultRef.operationId
+      }
+      this.setNotice('Provider setup opened · complete it, then press r to refresh.', 'neutral')
+      await this.loadProviderLoginSelection(login.selectedProviderId)
+    } else if (receipt && isTerminalHostReceiptStatus(receipt.status)) {
+      this.state.providerLogin = { ...this.state.providerLogin, pending: undefined }
+    }
+    this.render()
+  }
+
+  private async resumeProviderLoginPending(): Promise<void> {
+    const pending = this.state.providerLogin?.pending
+    if (!pending || !this.client?.connected) return
+    try {
+      const receipt = await this.client.lookupReceipt({ commandId: pending.commandId })
+      if (!this.state.providerLogin) return
+      if (receipt.status === 'succeeded' && receipt.resultRef?.kind === 'provider-auth') {
+        this.state.providerLogin = {
+          ...this.state.providerLogin,
+          pending: undefined,
+          operationId: receipt.resultRef.operationId
+        }
+      } else if (isTerminalHostReceiptStatus(receipt.status)) {
+        this.state.providerLogin = { ...this.state.providerLogin, pending: undefined }
+      }
+    } catch {
+      // Retain exact pending identity. Provider auth begin is never replayed automatically.
+    }
+  }
+
+  private async startNewSoloThread(requestedProviderId?: string): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot create Host threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread creation.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const canGuide = this.client.supports('setup') && this.client.supports('provider-catalog')
+    if (!canGuide) {
+      if (requestedProviderId) {
+        this.setNotice(
+          'Connected Host does not advertise provider setup. Use /new without a provider id.',
+          'warning',
+          4_000
+        )
+        this.retainHomeForNextThread = false
+        this.render()
+        return
+      }
+      if (!this.state.selectedThreadId) this.retainHomeForNextThread = true
+      await this.createSoloThread()
+      return
+    }
+    if (this.state.coldStartIntent === 'required' && this.state.coldStart?.kind !== 'ready') {
+      this.state.overlay = 'setup'
+      this.retainHomeForNextThread = false
+      this.setNotice('Finish Host setup, then /new starts another solo thread.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.state.selectedThreadId) this.retainHomeForNextThread = true
+    const workspaceId = this.resolveWorkspaceId()
+    this.state.coldStart = workspaceId ? coldStartWorkspaceRegistered(workspaceId) : coldStartIdle()
+    this.state.coldStartIntent = this.state.thread || workspaceId ? 'new-thread' : 'required'
+    this.state.overlay = 'setup'
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    this.state.coldStartAuthFlowIndex = 0
+    this.resetColdStartConfigureIndices()
+    if (this.state.coldStart.kind === 'workspace') {
+      await this.loadColdStartProviders()
+      if (requestedProviderId) {
+        const match = this.matchColdStartProvider(requestedProviderId)
+        if (!match) {
+          this.setNotice(
+            `Unknown provider "${requestedProviderId}". Use ↑/↓ to choose, then Enter.`,
+            'warning',
+            4_000
+          )
+          this.retainHomeForNextThread = false
+          this.render()
+          return
+        }
+        await this.confirmColdStartProvider(match)
+        this.render()
+        return
+      }
+      this.setNotice('Use ↑/↓ to choose a provider, then Enter. Esc cancels.', 'neutral')
+    }
+    this.render()
+  }
+
+  private cancelNewSoloThread(): void {
+    this.retainHomeForNextThread = false
+    this.state.coldStart = undefined
+    this.state.coldStartIntent = undefined
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    this.state.coldStartAuthFlowIndex = 0
+    this.resetColdStartConfigureIndices()
+    this.state.overlay = 'none'
+    this.setNotice('New thread cancelled.', 'neutral', 2_000)
+    this.render()
+  }
+
+  private async loadColdStartProviders(): Promise<void> {
+    if (!this.client) return
+    this.state.coldStartProviderChoices = (await this.client.getProviderStatuses()).filter(
+      (candidate) => candidate.status === 'ready' || candidate.status === 'auth_required'
+    )
+    const preferred =
+      resolveStartupProvider(
+        this.state.coldStartProviderChoices,
+        this.profileSettings.providerId
+      ) ??
+      this.state.coldStartProviderChoices.find(
+        (candidate) => candidate.providerId === this.profileSettings.providerId
+      )
+    this.state.coldStartProviderIndex = Math.max(
+      0,
+      preferred
+        ? this.state.coldStartProviderChoices.findIndex(
+            (candidate) => candidate.providerId === preferred.providerId
+          )
+        : 0
+    )
+  }
+
+  private matchColdStartProvider(requested: string) {
+    const needle = requested.trim().toLowerCase()
+    const choices = this.state.coldStartProviderChoices ?? []
+    const exact = choices.filter(
+      (candidate) =>
+        candidate.providerId.toLowerCase() === needle || candidate.label.toLowerCase() === needle
+    )
+    if (exact.length === 1) return exact[0]
+    const prefix = choices.filter(
+      (candidate) =>
+        candidate.providerId.toLowerCase().startsWith(needle) ||
+        candidate.label.toLowerCase().startsWith(needle)
+    )
+    return prefix.length === 1 ? prefix[0] : undefined
+  }
+
+  private async confirmColdStartProvider(status: HostProviderStatusProjection): Promise<void> {
+    const cold = this.state.coldStart
+    if (!cold || !this.client) return
+    const provider = coldStartSelectProvider(cold, status)
+    this.state.coldStartProviderChoices = undefined
+    this.state.coldStartProviderIndex = 0
+    if (status.status === 'auth_required') {
+      if (!this.client.supports('provider-auth'))
+        throw new Error('Provider auth capability is unavailable.')
+      const auth = await this.client.getProviderAuthStatus(status.providerId)
+      this.state.coldStart =
+        auth.state === 'authenticated'
+          ? coldStartOffers(
+              provider,
+              this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
+            )
+          : coldStartAuthFlows(
+              provider,
+              auth,
+              await this.client.getProviderAuthFlows(status.providerId)
+            )
+      this.state.coldStartAuthFlowIndex = 0
+    } else {
+      this.state.coldStart = coldStartOffers(
+        provider,
+        this.effectiveProviderOffers(await this.client.getProviderOffers(status.providerId))
+      )
+    }
+    this.resetColdStartConfigureIndices()
+  }
+
+  private async createSoloThread(): Promise<void> {
+    if (!this.client) {
+      this.setNotice('Demo mode cannot create Host threads.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (!this.client.supports('commands')) {
+      this.setNotice('Connected Host does not advertise thread creation.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const actor = this.actorIdentity()
+    if (!actor) {
+      this.setNotice('TaskWraith Host is not connected.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const workspaceId = this.resolveWorkspaceId()
+    const command = buildThreadCreateCommand({
+      actor,
+      scope: workspaceId ? 'workspace' : 'global',
+      ...(workspaceId ? { workspaceId } : {})
+    })
+    let createdThreadId: string | undefined
+    await this.runHostMutation(command, {
+      onSucceeded: async (receipt) => {
+        createdThreadId =
+          receipt.resultRef?.kind === 'thread' ? receipt.resultRef.threadId : undefined
+        await this.refreshHostSnapshot()
+        if (!createdThreadId) {
+          this.setNotice('Host created a thread without a thread locator.', 'warning', 4_000)
+        }
+      }
+    })
+    if (createdThreadId) {
+      await this.openThread(createdThreadId, { preserveHome: this.retainHomeForNextThread })
+      this.retainHomeForNextThread = false
+    }
+  }
+
+  private async showStatus(): Promise<void> {
+    const generation = ++this.statusReadGeneration
+    const read = await this.readHostStatus()
+    if (generation !== this.statusReadGeneration || this.stopped) return
+    const profilePath = this.profilePath()
+    const thread = this.state.thread?.thread
+    const capabilities = this.client?.welcome?.capabilities.join(', ') || 'none advertised'
+    const model = this.state.pendingSelection?.model ?? thread?.provider.model ?? 'none'
+    const reasoning = this.state.pendingSelection?.reasoningEffort ?? thread?.reasoning ?? 'default'
+    const status = [
+      `Node Host ${this.state.connection}`,
+      // Early in the line: a notice is one header row, cut at terminal width.
+      ...hostIdentitySegments({
+        identity: this.client?.discoveryProcessIdentity ?? null,
+        status: read.status,
+        lease: this.hostLeaseState
+      }),
+      `profile ${profilePath}`,
+      `socket ${taskWraithControlSocketPath(profilePath)}`,
+      thread ? `${thread.provider.displayProvider} / ${model} / ${reasoning}` : 'no thread',
+      `caps ${capabilities}`
+    ].join(` ${this.glyphs.separator} `)
+    this.setNotice(status, 'neutral', 6_000)
+    this.render()
+  }
+
+  private profilePath(): string {
+    return this.options.userDataPath ?? defaultTaskWraithUserDataPath()
+  }
+
+  /** This TUI's profile as the registry names it, for "is this our Host?". */
+  private ownHostProfile(): string {
+    return canonicalHostProfilePath(this.profilePath())
+  }
+
+  /** `host.status`, bounded: a slow Host costs the reader a short wait, never a hang. */
+  private async readHostStatus(): Promise<{
+    readonly status: HostStatusProjection | null
+    readonly error?: string
+  }> {
+    const client = this.client
+    if (!client?.connected) return { status: null }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const status = await Promise.race([
+        client.getHostStatus(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('the Host did not answer in time')),
+            HOST_STATUS_READ_TIMEOUT_MS
+          )
+        })
+      ])
+      return { status }
+    } catch (error) {
+      if (error instanceof HostProjectionTransportError && error.code === 'unknown_request_kind') {
+        return { status: null, error: 'This Host predates host.status; /host restart upgrades it.' }
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      return { status: null, error: `Host status unavailable: ${message}` }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  private async runHostCommand(argumentText: string): Promise<void> {
+    const command = parseTuiHostCommand(argumentText)
+    if (command.verb === 'invalid') {
+      this.setNotice(command.message, 'warning', 6_000)
+      this.render()
+      return
+    }
+    if (command.verb === 'status') {
+      await this.openHostStatus()
+      return
+    }
+    if (this.hostOperation) {
+      this.setNotice('A /host operation is already running.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (command.verb === 'restart') {
+      await this.requestHostRestart()
+      return
+    }
+    await this.planHostStopAll(command.request)
+  }
+
+  private async openHostStatus(): Promise<void> {
+    const generation = ++this.hostPanelGeneration
+    this.hostConfirmation = undefined
+    this.state.overlay = 'host'
+    // A placeholder rather than no panel: only a stop-all plan still being
+    // read is a pending request that a resize or a disconnect cancels.
+    this.state.hostPanel = {
+      title: 'Host',
+      fields: [],
+      notes: ['Reading the Host…'],
+      hint: 'Esc close'
+    }
+    this.render()
+    const read = await this.readHostStatus()
+    if (generation !== this.hostPanelGeneration || this.stopped) return
+    this.state.hostPanel = buildHostStatusPanel({
+      profilePath: this.profilePath(),
+      connected: Boolean(this.client?.connected),
+      identity: this.client?.discoveryProcessIdentity ?? null,
+      status: read.status,
+      ...(read.error ? { statusError: read.error } : {}),
+      lease: this.hostLeaseState
+    })
+    this.render()
+  }
+
+  /**
+   * Cancels an armed /host confirmation, or a plan still being read behind the
+   * lens, and closes the lens. True when there was one to cancel.
+   */
+  private cancelHostConfirmation(): boolean {
+    const pending =
+      Boolean(this.hostConfirmation) ||
+      (this.state.overlay === 'host' && this.state.hostPanel === undefined)
+    if (!pending) return false
+    this.hostConfirmation = undefined
+    this.hostPanelGeneration += 1
+    this.state.overlay = 'none'
+    this.state.hostPanel = undefined
+    return true
+  }
+
+  private answerHostConfirmation(input: string, key: Keypress): void {
+    const confirmation = this.hostConfirmation
+    if (!confirmation) return
+    this.hostConfirmation = undefined
+    if (!key.ctrl && !key.meta && (input === 'y' || input === 'Y')) {
+      void (confirmation.kind === 'restart'
+        ? this.restartHost()
+        : this.runHostStopAll(confirmation.plan))
+      return
+    }
+    this.hostPanelGeneration += 1
+    this.state.overlay = 'none'
+    this.state.hostPanel = undefined
+    this.setNotice(
+      confirmation.kind === 'restart'
+        ? 'Restart cancelled · the Host keeps running'
+        : 'Stop-all cancelled · nothing was stopped',
+      'neutral',
+      4_000
+    )
+    this.render()
+  }
+
+  /** Live runs and rounds across every thread, from the Host itself when it answers. */
+  private async liveHostWorkCount(): Promise<number> {
+    const snapshot = this.hostSnapshot
+    const projected = snapshot
+      ? new Set(snapshot.threads.flatMap((thread) => projectedThreadWorkIds(snapshot, thread.id)))
+          .size
+      : 0
+    const read = await this.readHostStatus()
+    return Math.max(projected, read.status?.liveWork.runs ?? 0)
+  }
+
+  private async requestHostRestart(): Promise<void> {
+    if (!this.options.hostControl?.restart) {
+      this.setNotice(
+        this.options.hostControl?.restartUnavailable ??
+          'Host restart is unavailable in this session.',
+        'warning',
+        6_000
+      )
+      this.render()
+      return
+    }
+    const liveRuns = await this.liveHostWorkCount()
+    if (this.stopped) return
+    if (liveRuns === 0) {
+      await this.restartHost()
+      return
+    }
+    this.hostPanelGeneration += 1
+    this.state.hostPanel = buildRestartConfirmPanel({
+      pid: this.client?.discoveryProcessIdentity?.pid ?? null,
+      profilePath: this.profilePath(),
+      liveRuns
+    })
+    this.state.overlay = 'host'
+    this.hostConfirmation = { kind: 'restart' }
+    this.render()
+  }
+
+  private async restartHost(): Promise<void> {
+    const restart = this.options.hostControl?.restart
+    if (!restart || this.hostOperation) return
+    const pid = this.client?.discoveryProcessIdentity?.pid ?? null
+    this.hostOperation = 'restart'
+    this.hostPanelGeneration += 1
+    this.state.overlay = this.state.overlay === 'host' ? 'none' : this.state.overlay
+    this.state.hostPanel = undefined
+    this.setNotice(`Restarting the TaskWraith Host${pid ? ` (pid ${pid})` : ''}…`, 'warning')
+    this.render()
+    try {
+      const result = await restart(pid)
+      if (this.stopped) return
+      const launch = result.launch
+      if (!launch) {
+        const refusal = result.termination.detail
+          ? `${result.termination.kind}, ${result.termination.detail}`
+          : result.termination.kind
+        this.setNotice(
+          `Host restart refused (${refusal}) · the Host${pid ? ` (pid ${pid})` : ''} keeps running`,
+          'error',
+          10_000
+        )
+        return
+      }
+      if (launch.kind === 'launched') this.replaceFullAccessPresence(launch.fullAccessPresence)
+      this.hostStoppedByUser = false
+      const now = launch.kind === 'launched' && launch.pid ? ` · now pid ${launch.pid}` : ''
+      this.setNotice(
+        `Restarted the TaskWraith Host${pid ? ` (was pid ${pid})` : ''}${now}`,
+        'good',
+        6_000
+      )
+    } catch (error) {
+      if (this.stopped) return
+      this.setNotice(
+        `Host restart failed · ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+        10_000
+      )
+    } finally {
+      this.hostOperation = undefined
+      if (!this.stopped) {
+        this.reconnectPromptly()
+        this.render()
+      }
+    }
+  }
+
+  private async planHostStopAll(request: TuiHostStopAllRequest): Promise<void> {
+    const control = this.options.hostControl
+    if (!control) {
+      this.setNotice('Host control is unavailable in this session.', 'warning', 4_000)
+      this.render()
+      return
+    }
+    const generation = ++this.hostPanelGeneration
+    this.hostConfirmation = undefined
+    this.state.overlay = 'host'
+    this.state.hostPanel = undefined
+    this.render()
+    let plan: TuiHostStopAllPlan
+    try {
+      plan = await control.planStopAll(request)
+    } catch (error) {
+      if (generation !== this.hostPanelGeneration || this.stopped) return
+      this.state.hostPanel = {
+        title: 'Stop Hosts',
+        fields: [],
+        notes: [`Could not list Hosts · ${error instanceof Error ? error.message : String(error)}`],
+        hint: 'Esc close'
+      }
+      this.render()
+      return
+    }
+    // Arm only a plan the reader is still looking at: a lens closed while the
+    // registry was read never becomes a live y prompt.
+    if (generation !== this.hostPanelGeneration || this.stopped || this.state.overlay !== 'host') {
+      return
+    }
+    this.state.hostPanel = buildStopAllPlanPanel(plan, this.ownHostProfile())
+    if (plan.request.scope.kind !== 'list' && plan.selected.length > 0) {
+      this.hostConfirmation = { kind: 'stop-all', plan }
+    }
+    this.render()
+  }
+
+  private async runHostStopAll(plan: TuiHostStopAllPlan): Promise<void> {
+    const control = this.options.hostControl
+    if (!control || this.hostOperation) return
+    const generation = ++this.hostPanelGeneration
+    const ownProfile = this.ownHostProfile()
+    this.hostOperation = 'stop-all'
+    this.state.overlay = 'host'
+    this.state.hostPanel = {
+      title: 'Stop Hosts',
+      fields: [],
+      notes: [
+        `Stopping ${plan.selected.length === 1 ? '1 Host' : `${plan.selected.length} Hosts`}…`
+      ],
+      hint: 'Verified termination waits for each Host to finish its own shutdown.'
+    }
+    this.render()
+    try {
+      const outcome = await control.runStopAll(plan)
+      if (this.stopped) return
+      if (
+        outcome.kind === 'done' &&
+        outcome.results.some(
+          (result) =>
+            result.host.profilePath === ownProfile &&
+            HOST_TERMINATION_SUCCESS_KINDS.has(result.outcome.kind)
+        )
+      ) {
+        this.hostStoppedByUser = true
+      }
+      if (generation === this.hostPanelGeneration) {
+        this.state.overlay = 'host'
+        this.state.hostPanel = buildStopAllResultPanel(outcome, ownProfile)
+      }
+      this.setNotice(
+        outcome.kind === 'registry_changed'
+          ? 'Stop-all refused · the Host registry changed after the list was shown'
+          : this.hostStoppedByUser
+            ? "Stop-all finished · this TUI's Host was stopped; /host restart starts it again"
+            : 'Stop-all finished',
+        outcome.kind === 'registry_changed' ? 'warning' : 'good',
+        8_000
+      )
+    } catch (error) {
+      if (this.stopped) return
+      this.setNotice(
+        `Stop-all failed · ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+        10_000
+      )
+    } finally {
+      this.hostOperation = undefined
+      if (!this.stopped) this.render()
+    }
+  }
+
+  private enqueuePromptDraft(
+    threadId: string,
+    text: string,
+    selection?: TuiPendingSelection
+  ): string[] {
+    const liveWork = liveThreadWorkIds(this.hostSnapshot, threadId)
+    this.state.queuedDrafts = [
+      ...(this.state.queuedDrafts ?? []),
+      {
+        id: `tui-draft-${randomUUID()}`,
+        threadId,
+        text,
+        enqueuedAt: this.options.now(),
+        phase: 'queued',
+        ...(selection ? { selection: { ...selection } } : {}),
+        ...(liveWork[0] ? { blockedByRunId: liveWork[0] } : {})
+      }
+    ]
+    if (this.client?.connected && this.hostSnapshot?.freshness !== 'live') {
+      this.queueFreshReadRequested = true
+    }
+    return liveWork
+  }
+
+  private async refreshThenHandleEscape(threadId: string, originalInput: string): Promise<void> {
+    if (this.escapeRefreshInFlight) return
+    this.escapeRefreshInFlight = true
+    try {
+      await this.refreshHostSnapshot()
+      const live = liveThreadWorkIds(this.hostSnapshot, threadId)
+      if (!live.length) return
+      const draft = originalInput.trim()
+      if (
+        this.state.selectedThreadId === threadId &&
+        this.state.input === originalInput &&
+        draft &&
+        !draft.startsWith('/') &&
+        !this.selectedOpenQuestion()
+      ) {
+        this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+        this.state.input = ''
+        this.state.inputCursor = 0
+        this.state.pendingSelection = undefined
+        this.state.scrollOffset = 0
+      }
+      await this.cancelRun({ shortcut: true, liveWorkIds: live, targetThreadId: threadId })
+    } catch (error) {
+      this.retainEscapeIntent(threadId, originalInput)
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.escapeRefreshInFlight = false
+      this.render()
+    }
+  }
+
+  private retainEscapeIntent(threadId: string, originalInput: string): void {
+    const draft = originalInput.trim()
+    if (
+      this.state.selectedThreadId === threadId &&
+      this.state.input === originalInput &&
+      draft &&
+      !draft.startsWith('/') &&
+      !this.selectedOpenQuestion()
+    ) {
+      this.enqueuePromptDraft(threadId, draft, this.state.pendingSelection)
+      this.state.input = ''
+      this.state.inputCursor = 0
+      this.state.pendingSelection = undefined
+      this.state.scrollOffset = 0
+    }
+    const projected = projectedThreadWorkIds(this.hostSnapshot, threadId)
+    this.pendingEscapeCancel = projected[0] ? { threadId, liveWorkId: projected[0] } : undefined
+    this.setNotice(
+      projected[0]
+        ? 'Steer queued · waiting for a fresh Host connection'
+        : 'Draft queued · waiting for a fresh Host connection',
+      'warning'
+    )
+    this.render()
+  }
+
+  private restoreBlockedDraftIfSafe(): void {
+    const threadId = this.state.selectedThreadId
+    if (!threadId || this.state.input) return
+    const blocked = queuedDraftsForThread(this.state, threadId)[0]
+    if (!blocked || blocked.phase !== 'blocked') return
+    this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, blocked.id)
+    this.queuedDraftCommands.delete(blocked.id)
+    this.clearQueuedDraftRetry(blocked.id)
+    this.state.input = blocked.text
+    this.state.inputCursor = Array.from(blocked.text).length
+    this.state.pendingSelection = blocked.selection ? { ...blocked.selection } : undefined
+    this.setNotice(`${blocked.error || 'Queued send was blocked'} · draft restored`, 'error', 4_500)
+  }
+
+  private projectionFence(): string {
+    const snapshot = this.hostSnapshot
+    return `${this.connectionEpoch}:${this.state.connection}:${snapshot?.generation ?? -1}:${snapshot?.cursor ?? -1}`
+  }
+
+  private scheduleQueuedDraftDrain(): void {
+    if (this.queueDrainScheduled || this.stopped) return
+    this.queueDrainScheduled = true
+    queueMicrotask(() => {
+      this.queueDrainScheduled = false
+      void this.drainQueuedDrafts()
+    })
+  }
+
+  private async refreshQueuedDraftAuthority(): Promise<void> {
+    if (this.queueFreshReadInFlight || !this.client?.connected) return
+    this.queueFreshReadInFlight = true
+    try {
+      await this.refreshHostSnapshot()
+    } catch (error) {
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.queueFreshReadInFlight = false
+      this.scheduleQueuedDraftDrain()
+    }
+  }
+
+  private scheduleQueuedDraftRetry(draftId: string): void {
+    if (this.queueRetryTimers.has(draftId) || this.stopped) return
+    const attempt = (this.queueRetryAttempts.get(draftId) ?? 0) + 1
+    this.queueRetryAttempts.set(draftId, attempt)
+    const delayMs = Math.min(4_000, 250 * 2 ** Math.min(4, attempt - 1))
+    const timer = setTimeout(() => {
+      this.queueRetryTimers.delete(draftId)
+      this.queueRetryFences.delete(draftId)
+      this.queueFreshReadRequested = true
+      this.scheduleQueuedDraftDrain()
+    }, delayMs)
+    timer.unref?.()
+    this.queueRetryTimers.set(draftId, timer)
+  }
+
+  private clearQueuedDraftRetry(draftId: string): void {
+    const timer = this.queueRetryTimers.get(draftId)
+    if (timer) clearTimeout(timer)
+    this.queueRetryTimers.delete(draftId)
+    this.queueRetryAttempts.delete(draftId)
+    this.queueRetryFences.delete(draftId)
+  }
+
+  /**
+   * Whether a queued draft stages a model the thread's elevated consent does
+   * not cover.
+   *
+   * The Host pins the exact model an elevated posture was consented for and
+   * denies a per-send switch as `standalone_configuration_mismatch`, asking for
+   * an explicit reconfigure instead. That guard is correct and is left alone —
+   * this only detects the case so the TUI can perform the reconfigure the Host
+   * is asking for.
+   *
+   * These projection fields are display-only and never grant authority. They
+   * decide only whether it is worth asking the Host, which re-validates the
+   * posture, the model and the offer revision regardless of what is read here.
+   */
+  private elevatedDraftPinsAnotherModel(draft: TuiQueuedDraft): boolean {
+    const staged = draft.selection?.model
+    if (!staged) return false
+    const thread = this.hostSnapshot?.threads.find((candidate) => candidate.id === draft.threadId)
+    if (!thread) return false
+    const elevated =
+      thread.permissionPresetId === 'workspace_write' || thread.permissionPresetId === 'full_access'
+    // The pin denies only on inequality, so an override that already matches
+    // the thread is accepted as-is and must not trigger a reconfigure.
+    return elevated && typeof thread.modelId === 'string' && thread.modelId !== staged
+  }
+
+  /**
+   * Reconfigure an elevated thread onto the draft's staged model so the next
+   * drain pass can send it against a selection the Host has consented to.
+   */
+  private async reconfigureElevatedDraftModel(
+    draft: TuiQueuedDraft,
+    fence: string
+  ): Promise<boolean> {
+    const staged = draft.selection?.model
+    const thread = this.hostSnapshot?.threads.find((candidate) => candidate.id === draft.threadId)
+    const providerId = thread?.providerId
+    if (!staged || !providerId || !this.client) return false
+    try {
+      const [current, refreshed] = await Promise.all([
+        this.client.getThreadOffers(draft.threadId),
+        this.client.getProviderOffers(providerId)
+      ])
+      const offers = this.effectiveProviderOffers(refreshed)
+      const model = offers.models.find(
+        (candidate) => candidate.modelId === staged && candidate.available
+      )
+      if (!model) throw new Error('That model is no longer offered by the Host.')
+      // The posture is carried across unchanged. This is a model switch, not a
+      // permission change, and re-consenting to a different tier here would be
+      // exactly the unconsented escalation the Host's pin exists to prevent.
+      const postureId = current.currentPostureId ?? thread.permissionPresetId
+      const posture = offers.postures.find(
+        (candidate) => candidate.postureId === postureId && candidate.available
+      )
+      if (!posture) throw new Error('The thread permission tier is no longer offered.')
+      // The queued command is memoised by draft id and its receipt recovered by
+      // command id. A denial is terminal, so replaying that identity would
+      // re-apply the old refusal verbatim and the reconfigure would look like it
+      // did nothing. Drop it so the next pass mints a fresh command.
+      this.queuedDraftCommands.delete(draft.id)
+      await this.configureThreadSelection({
+        threadId: draft.threadId,
+        providerId: offers.providerId,
+        providerLabel: offers.providerId,
+        offers,
+        model,
+        posture,
+        ...(draft.selection?.reasoningEffort
+          ? { reasoningId: draft.selection.reasoningEffort }
+          : {})
+      })
+    } catch (error) {
+      this.failElevatedReconfigure(
+        draft,
+        fence,
+        error instanceof Error ? error.message : String(error)
+      )
+      return false
+    }
+    // configureThreadSelection reports nothing on refusal, so the thread itself
+    // is the evidence. Without this check a refused reconfigure would leave the
+    // draft dispatchable and unchanged, and the drain would spin on it forever.
+    if (this.elevatedDraftPinsAnotherModel(draft)) {
+      this.failElevatedReconfigure(
+        draft,
+        fence,
+        'The Host did not accept the model switch for this write-capable thread.'
+      )
+      return false
+    }
+    return true
+  }
+
+  /** Park a draft whose reconfigure did not take, rather than spin the drain. */
+  private failElevatedReconfigure(draft: TuiQueuedDraft, fence: string, message: string): void {
+    this.queueRetryFences.set(draft.id, fence)
+    this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+      phase: 'queued',
+      error: message
+    })
+    this.setNotice(message, 'warning', 4_000)
+    this.render()
+  }
+
+  private async drainQueuedDrafts(): Promise<void> {
+    if (
+      (this.state.queuedDrafts?.length ?? 0) > 0 &&
+      this.client?.connected &&
+      this.queueFreshReadRequested
+    ) {
+      this.queueFreshReadRequested = false
+      void this.refreshQueuedDraftAuthority()
+      return
+    }
+    if (
+      this.queueDrainActive ||
+      this.mutationInFlight ||
+      this.selectingThread ||
+      this.sendingPrompt ||
+      !this.client?.connected ||
+      this.hostSnapshot?.freshness !== 'live'
+    ) {
+      return
+    }
+    const fence = this.projectionFence()
+    const blocked = new Set(
+      [...this.queueRetryFences.entries()]
+        .filter(([, blockedAt]) => blockedAt === fence)
+        .map(([draftId]) => draftId)
+    )
+    const draft = nextDispatchableDraft(
+      this.state,
+      this.hostSnapshot,
+      blocked,
+      new Set(this.acceptedQueueRuns.keys())
+    )
+    if (!draft) return
+
+    // A write-capable thread pins the model its consent was granted for, so a
+    // staged switch has to be an explicit reconfigure rather than a per-send
+    // override the Host will deny. Sequenced as its own settled mutation
+    // because runHostMutation refuses to reenter while one is in flight; the
+    // next drain pass sends the draft against the consented selection.
+    if (this.elevatedDraftPinsAnotherModel(draft)) {
+      let reconfigured = false
+      this.queueDrainActive = true
+      try {
+        reconfigured = await this.reconfigureElevatedDraftModel(draft, fence)
+      } finally {
+        this.queueDrainActive = false
+      }
+      // Scheduled only once the drain flag has cleared. scheduleQueuedDraftDrain
+      // defers through queueMicrotask, so scheduling from inside the guarded
+      // section runs the next pass while the guard is still held: it returns at
+      // the reentry check having already consumed the scheduled slot, and the
+      // draft sits queued forever with nothing left to wake it.
+      if (reconfigured) this.scheduleQueuedDraftDrain()
+      return
+    }
+
+    this.queueDrainActive = true
+    this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+      phase: 'dispatching',
+      error: undefined
+    })
+    this.render()
+    let command = this.queuedDraftCommands.get(draft.id)
+    const recoveringCommand = Boolean(command)
+    if (!command) {
+      const args: Record<string, unknown> = { text: draft.text }
+      if (draft.selection?.model) args.model = draft.selection.model
+      if (draft.selection?.reasoningEffort) {
+        args.reasoningEffort = draft.selection.reasoningEffort
+      }
+      command = this.buildMutation('composer.send', { threadId: draft.threadId }, args) ?? undefined
+      if (command) this.queuedDraftCommands.set(draft.id, command)
+    }
+
+    try {
+      if (!command) {
+        this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+          phase: 'queued'
+        })
+        this.queueRetryFences.set(draft.id, fence)
+        this.scheduleQueuedDraftRetry(draft.id)
+        return
+      }
+      let receipt: HostCommandReceipt | undefined
+      if (recoveringCommand) {
+        try {
+          const recovered = await this.client.lookupReceipt({ commandId: command.commandId })
+          if (isTerminalHostReceiptStatus(recovered.status)) {
+            await this.applyTerminalReceipt(recovered, {})
+            receipt = recovered
+          }
+        } catch {
+          // Receipt absence is safe: resubmit the exact same command identity below.
+        }
+      }
+      receipt ??= await this.runHostMutation(command)
+      if (receipt?.status === 'succeeded') {
+        this.acceptedQueueRuns.set(draft.threadId, {
+          commandId: command.commandId,
+          observedLive: false
+        })
+        this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, draft.id)
+        this.queuedDraftCommands.delete(draft.id)
+        this.clearQueuedDraftRetry(draft.id)
+        try {
+          await this.refreshHostSnapshot()
+        } catch (error) {
+          this.surfaceProjectionSyncError(error)
+        }
+      } else if (receipt && isTerminalHostReceiptStatus(receipt.status)) {
+        const description = describeHostReceipt(receipt)
+        if (this.state.selectedThreadId === draft.threadId && !this.state.input) {
+          this.state.queuedDrafts = removeQueuedDraft(this.state.queuedDrafts, draft.id)
+          this.queuedDraftCommands.delete(draft.id)
+          this.clearQueuedDraftRetry(draft.id)
+          this.state.input = draft.text
+          this.state.inputCursor = Array.from(draft.text).length
+          this.state.pendingSelection = draft.selection ? { ...draft.selection } : undefined
+          this.setNotice(`${description.text} · draft restored`, description.tone, 4_500)
+        } else {
+          this.clearQueuedDraftRetry(draft.id)
+          this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+            phase: 'blocked',
+            error: description.text
+          })
+        }
+      } else {
+        this.state.queuedDrafts = replaceQueuedDraft(this.state.queuedDrafts, draft.id, {
+          phase: 'queued'
+        })
+        this.queueRetryFences.set(draft.id, fence)
+        this.scheduleQueuedDraftRetry(draft.id)
+      }
+    } finally {
+      this.queueDrainActive = false
+      this.render()
+      this.scheduleQueuedDraftDrain()
+    }
+  }
+
+  private async cancelRun(
+    options: {
+      shortcut?: boolean
+      liveWorkIds?: readonly string[]
+      targetThreadId?: string
+      command?: HostCommand
+    } = {}
+  ): Promise<void> {
+    const threadId = options.targetThreadId ?? this.state.selectedThreadId
     if (!threadId) {
       this.setNotice('No selected thread to cancel.', 'warning', 3_000)
       this.render()
@@ -1148,21 +5056,191 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    if (this.mutationInFlight) {
-      this.setNotice('A Host command is already in flight.', 'warning', 2_000)
+    if (!options.liveWorkIds && this.hostSnapshot?.freshness !== 'live') {
+      try {
+        await this.refreshHostSnapshot()
+      } catch (error) {
+        this.surfaceProjectionSyncError(error)
+        this.setNotice('Could not prove the live run to cancel.', 'warning', 3_000)
+        return
+      }
+    }
+    const liveWork = [...(options.liveWorkIds ?? liveThreadWorkIds(this.hostSnapshot, threadId))]
+    const targetWorkId = liveWork[0]
+    if (!targetWorkId) {
+      this.setNotice('No live run is available to cancel.', 'warning', 2_000)
       this.render()
       return
     }
-    const command = this.buildMutation('run.cancel', { threadId }, {})
-    if (!command) return
-    await this.runHostMutation(command, {
-      onSucceeded: async () => {
-        await this.refreshHostSnapshot()
-        if (this.state.selectedThreadId) {
-          this.applyLocalThread(this.state.selectedThreadId)
-        }
+    if (this.mutationInFlight) {
+      if (options.shortcut && targetWorkId) {
+        this.pendingEscapeCancel = { threadId, liveWorkId: targetWorkId }
+        this.setNotice('Steer queued · cancellation follows the current Host command', 'warning')
+      } else {
+        this.setNotice('A Host command is already in flight.', 'warning', 2_000)
       }
+      this.render()
+      return
+    }
+    if (options.shortcut && targetWorkId && this.cancelRequestedWorkIds.has(targetWorkId)) {
+      this.setNotice('Cancellation already requested · waiting for the Host', 'warning', 2_000)
+      this.render()
+      return
+    }
+    if (targetWorkId) this.cancelRequestedWorkIds.add(targetWorkId)
+    const command =
+      options.command ??
+      this.buildMutation('run.cancel', { threadId }, { expectedWorkId: targetWorkId })
+    if (!command) {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      return
+    }
+    if (!options.command) this.clearEscapeCancelRecovery()
+    let receipt: HostCommandReceipt | undefined
+    if (options.command) {
+      try {
+        const recovered = await this.client.lookupReceipt({ commandId: command.commandId })
+        if (isTerminalHostReceiptStatus(recovered.status)) {
+          await this.applyTerminalReceipt(recovered, {})
+          receipt = recovered
+        }
+      } catch {
+        // The Host may not have accepted it; exact-id resubmission is idempotent.
+      }
+    }
+    receipt ??= await this.runHostMutation(command)
+    if (receipt?.status === 'succeeded') {
+      this.clearEscapeCancelRecovery()
+      try {
+        await this.refreshHostSnapshot()
+      } catch (error) {
+        this.surfaceProjectionSyncError(error)
+      }
+      if (options.shortcut) {
+        const queued = queuedDraftsForThread(this.state, threadId).length
+        this.setNotice(
+          queued > 0
+            ? 'Stopping current run · queued steer sends after terminal confirmation'
+            : 'Stopping current run',
+          'warning',
+          3_000
+        )
+      }
+    } else if (!receipt) {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      if (options.shortcut && targetWorkId) {
+        this.pendingEscapeCancel = {
+          threadId,
+          liveWorkId: targetWorkId,
+          command
+        }
+        this.scheduleEscapeCancelRecovery()
+      }
+    } else {
+      if (targetWorkId) this.cancelRequestedWorkIds.delete(targetWorkId)
+      this.clearEscapeCancelRecovery()
+    }
+    this.render()
+  }
+
+  private clearEscapeCancelRecovery(): void {
+    if (this.escapeCancelRecoveryTimer) clearTimeout(this.escapeCancelRecoveryTimer)
+    this.escapeCancelRecoveryTimer = null
+    this.escapeCancelRecoveryAttempts = 0
+  }
+
+  /**
+   * An uncertain same-socket cancel cannot wait for the periodic projection.
+   * Take a bounded fresh read, then retry the retained exact command only if
+   * that exact work item is still live.
+   */
+  private scheduleEscapeCancelRecovery(): void {
+    if (
+      this.stopped ||
+      !this.pendingEscapeCancel?.command ||
+      this.escapeCancelRecoveryTimer ||
+      this.escapeCancelRecoveryInFlight ||
+      this.escapeCancelRecoveryAttempts >= ESCAPE_CANCEL_MAX_RECOVERY_ATTEMPTS
+    ) {
+      return
+    }
+    const attempt = this.escapeCancelRecoveryAttempts + 1
+    this.escapeCancelRecoveryAttempts = attempt
+    const delayMs = Math.min(1_600, ESCAPE_CANCEL_RECOVERY_BASE_MS * 2 ** (attempt - 1))
+    this.escapeCancelRecoveryTimer = setTimeout(() => {
+      this.escapeCancelRecoveryTimer = null
+      void this.recoverPendingEscapeCancel()
+    }, delayMs)
+    this.escapeCancelRecoveryTimer.unref?.()
+  }
+
+  private async recoverPendingEscapeCancel(): Promise<void> {
+    if (
+      this.escapeCancelRecoveryInFlight ||
+      !this.pendingEscapeCancel?.command ||
+      !this.client?.connected
+    ) {
+      return
+    }
+    this.escapeCancelRecoveryInFlight = true
+    let refreshed = false
+    try {
+      await this.refreshHostSnapshot()
+      refreshed = this.hostSnapshot?.freshness === 'live'
+    } catch (error) {
+      this.surfaceProjectionSyncError(error)
+    } finally {
+      this.escapeCancelRecoveryInFlight = false
+    }
+    if (refreshed) this.flushPendingEscapeCancel()
+    else this.scheduleEscapeCancelRecovery()
+  }
+
+  private flushPendingEscapeCancel(): void {
+    const pending = this.pendingEscapeCancel
+    if (!pending || this.mutationInFlight) return
+    if (!this.client?.connected || this.hostSnapshot?.freshness !== 'live') return
+    const live = liveThreadWorkIds(this.hostSnapshot, pending.threadId)
+    if (!live.includes(pending.liveWorkId)) {
+      this.pendingEscapeCancel = undefined
+      this.clearEscapeCancelRecovery()
+      this.scheduleQueuedDraftDrain()
+      return
+    }
+    this.pendingEscapeCancel = undefined
+    void this.cancelRun({
+      shortcut: true,
+      targetThreadId: pending.threadId,
+      liveWorkIds: [pending.liveWorkId],
+      ...(pending.command ? { command: pending.command } : {})
     })
+  }
+
+  private replaceFullAccessPresence(next?: TuiFullAccessPresence): void {
+    if (next === this.fullAccessPresence) return
+    this.fullAccessPresence?.dispose()
+    this.fullAccessPresence = next ?? null
+  }
+
+  private hasMatchingFullAccessPresence(): boolean {
+    return Boolean(
+      this.client?.connected &&
+      this.fullAccessPresence?.matches(this.client.discoveryProcessIdentity)
+    )
+  }
+
+  private effectiveProviderOffers(
+    offers: HostProviderOffersProjection
+  ): HostProviderOffersProjection {
+    return projectTuiFullAccessPresence(offers, this.hasMatchingFullAccessPresence())
+  }
+
+  private authorizeConfigureCommand(command: HostCommand): HostCommand {
+    if (command.arguments.postureId !== 'full_access') return command
+    if (!this.hasMatchingFullAccessPresence() || !this.fullAccessPresence) {
+      throw new Error('Full Access requires a fresh user-presence Host launch from this TUI.')
+    }
+    return this.fullAccessPresence.authorizeConfigure(command)
   }
 
   private actorIdentity(): HostActorIdentity | null {
@@ -1210,6 +5288,12 @@ export class TaskWraithTui {
   private enqueueProjectionUpdate(operation: () => Promise<void>): Promise<void> {
     const run = this.projectionQueue.then(operation, operation)
     this.projectionQueue = run.catch(() => undefined)
+    return run
+  }
+
+  private enqueueHistoryUpdate(operation: () => Promise<void>): Promise<void> {
+    const run = this.historyQueue.then(operation, operation)
+    this.historyQueue = run.catch(() => undefined)
     return run
   }
 
@@ -1365,14 +5449,15 @@ export class TaskWraithTui {
     command: HostCommand,
     options: {
       composerRestore?: string
-      onSucceeded?: () => Promise<void> | void
+      onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
+      onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     } = {}
-  ): Promise<void> {
-    if (!this.client) return
+  ): Promise<HostCommandReceipt | undefined> {
+    if (!this.client) return undefined
     if (this.mutationInFlight) {
       this.setNotice('A Host command is already in flight.', 'warning', 2_000)
       this.render()
-      return
+      return undefined
     }
     this.mutationInFlight = true
     const pending: TuiPendingHostMutation = {
@@ -1415,16 +5500,20 @@ export class TaskWraithTui {
           }
         })
         await this.applyTerminalReceipt(terminal, options)
-        return
+        return terminal
       }
       await this.applyTerminalReceipt(initial, options)
+      return initial
     } catch (error) {
       if (options.composerRestore) this.restoreComposerText(options.composerRestore)
       this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+      return undefined
     } finally {
       this.mutationInFlight = false
       this.state.pendingHostMutation = undefined
       this.render()
+      if (this.pendingEscapeCancel) this.flushPendingEscapeCancel()
+      else this.scheduleQueuedDraftDrain()
     }
   }
 
@@ -1432,7 +5521,8 @@ export class TaskWraithTui {
     receipt: HostCommandReceipt,
     options: {
       composerRestore?: string
-      onSucceeded?: () => Promise<void> | void
+      onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
+      onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     }
   ): Promise<void> {
     if (!isTerminalHostReceiptStatus(receipt.status)) {
@@ -1441,9 +5531,10 @@ export class TaskWraithTui {
       this.setNotice(`${stuck.text} · timed out`, 'warning', 5_000)
       return
     }
+    options.onTerminalReceipt?.(receipt)
     if (receipt.status === 'succeeded') {
       const noticeBefore = this.state.notice
-      await options.onSucceeded?.()
+      await options.onSucceeded?.(receipt)
       // Prefer a specific notice from onSucceeded (e.g. "Opened …") over the
       // generic "Host accepted <name>" so the HUD still names the thread.
       if (this.state.notice === noticeBefore) {
@@ -1530,8 +5621,40 @@ export class TaskWraithTui {
       ansi: this.ansi,
       now: this.options.now(),
       animationEnabled: this.options.animationEnabled,
-      glyphs: this.glyphs
+      glyphs: this.glyphs,
+      theme: this.theme
     })
     this.options.output.write(`\u001b[H${frame}`)
   }
+}
+
+function cycleIndex(index: number, length: number, delta: number): number {
+  if (length <= 0) return 0
+  return (index + delta + length) % length
+}
+
+function cycleAvailableIndex(
+  items: readonly { available: boolean }[],
+  index: number,
+  delta: number
+): number {
+  if (!items.length || !items.some((item) => item.available)) return 0
+  let next = index
+  for (let attempts = 0; attempts < items.length; attempts += 1) {
+    next = cycleIndex(next, items.length, delta)
+    if (items[next]?.available) return next
+  }
+  return Math.max(0, Math.min(index, items.length - 1))
+}
+
+function mergeTranscriptRows(
+  older: readonly TaskWraithControlTranscriptRow[],
+  newer: readonly TaskWraithControlTranscriptRow[]
+): TaskWraithControlTranscriptRow[] {
+  const ids = new Set<string>()
+  return [...older, ...newer].filter((row) => {
+    if (ids.has(row.id)) return false
+    ids.add(row.id)
+    return true
+  })
 }

@@ -18,4 +18,4 @@ Open a chat in the companion app that has an open Canvas on the desktop. The car
 
 ## Tips & related
 - [Canvas composer button](./canvas-composer-button.md) — how a Canvas gets opened on the Mac in the first place.
-- [Canvas multiview pane](./canvas-multiview-pane.md) — the embedded-pane alternative to a floating Canvas window.
+- [Canvas multiview pane](./canvas-multiview-pane.md) — the embedded-pane alternative to the right dock.

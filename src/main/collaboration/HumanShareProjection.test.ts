@@ -504,6 +504,57 @@ describe('buildHumanShareProjection v2 vocabulary', () => {
     expect(projection.rows[0].preview).toContain('run_shell')
   })
 
+  it('omits wrapper-only rows and excludes wrappers from mixed tool rows', () => {
+    const projection = buildHumanShareProjection(
+      chatWith([
+        {
+          id: 'wrapper-only',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-06-25T00:00:00.000Z',
+          toolActivities: [
+            {
+              id: 'wrapper-1',
+              toolName: 'callmcptool',
+              displayName: 'Used callmcptool',
+              category: 'unknown',
+              status: 'success'
+            }
+          ]
+        },
+        {
+          id: 'mixed-tools',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-06-25T00:00:01.000Z',
+          toolActivities: [
+            {
+              id: 'wrapper-2',
+              toolName: 'mcp',
+              displayName: 'MCP',
+              category: 'unknown',
+              status: 'success'
+            },
+            {
+              id: 'read-1',
+              toolName: 'read_file',
+              displayName: 'Read file',
+              category: 'read',
+              status: 'success'
+            }
+          ]
+        }
+      ]),
+      share as never
+    )
+
+    expect(projection.rows.map((row) => row.id)).toEqual(['mixed-tools'])
+    expect(projection.rows[0].tools).toEqual([
+      { name: 'read_file', category: 'read', failed: false }
+    ])
+    expect(projection.rows[0].preview).toBe('read_file')
+  })
+
   it('a tool row with no recorded activities is readable, not an empty bubble', () => {
     // A real production shape, not a defensive edge case: a sub-thread return
     // card is `role: 'tool'` with no `toolActivities`, and so is a tool message

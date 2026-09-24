@@ -8,7 +8,7 @@
   max-width: none;
   margin: 0;
   padding: 7px 14px;
-  gap: 8px;
+  gap: 48px;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
@@ -43,7 +43,19 @@
  * the picker automatically wraps both rows — no per-shell additions.
  * Control chrome reuses .composer-ensemble-mode(-button) /
  * .composer-fanout-policy / .composer-ensemble-hop-meter so the
- * existing shell + theme overrides keep applying in the new home. */
+ * existing shell + theme overrides keep applying in the new home.
+ *
+ * 2026-09-01: inter-element spacing widened over three passes, ending at
+ * 4x the original (stack 8 -> 48, welcome hero 16 -> 80, compact 12 -> 64).
+ * Retiring the mode picker and the Chars slider left the row with room the
+ * remaining Fan-Out / Isolate / Turns pairs can spend. The narrow-container
+ * rules below deliberately did NOT follow the last doubling: they exist to
+ * stop the nowrap row overrunning its line, so they hold the earlier values
+ * and keep the ladder monotonic as the pane tightens.
+ *
+ * The 6px in-cell label-to-control gap deliberately stays tight: proximity
+ * is the only thing still binding each label to its own control once the
+ * cells sit this far apart. */
 .ensemble-roster-preset-picker-second-row {
   flex-basis: 100%;
   min-width: 0;
@@ -59,14 +71,14 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center; /* welcome hero variant centers like the chips row */
-  gap: 6px 16px;
+  gap: 6px 80px;
   min-width: 0;
 }
 .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
   flex: 0 1 auto;
   justify-content: center;
   flex-wrap: nowrap;
-  gap: 6px 12px;
+  gap: 6px 64px;
 }
 .composer-orchestration-cell {
   display: inline-flex;
@@ -237,6 +249,21 @@
   white-space: nowrap;
 }
 
+/* Mid-width step-down. The full-width gaps above put the compact row at
+ * roughly 630px including the picker padding, so between the 620px
+ * label-hiding breakpoint and ~760px it would overrun its own nowrap line.
+ * Step back to the previous pass values there; the ladder stays monotonic
+ * (64 -> 32 -> 24), which is the original narrower-means-tighter intent. */
+@container (max-width: 760px) {
+  .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
+    gap: 24px;
+  }
+
+  .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
+    gap: 6px 32px;
+  }
+}
+
 @container (max-width: 620px) {
   .composer-orchestration-cell-label,
   .composer-orchestration-cell-history {
@@ -244,7 +271,7 @@
   }
 
   .ensemble-roster-preset-picker.is-compact .composer-ensemble-orchestration-row {
-    gap: 6px 10px;
+    gap: 6px 24px;
   }
 }
 
@@ -1607,6 +1634,33 @@
 .ensemble-above-chip.provider-pi .ensemble-above-chip-role {
   color: var(--provider-pi-color);
 }
+.ensemble-above-chip.provider-openrouter .ensemble-above-chip-role {
+  color: var(--provider-openrouter-color);
+}
+.ensemble-above-chip.provider-thinkingmachines .ensemble-above-chip-role {
+  color: var(--provider-thinkingmachines-color);
+}
+.ensemble-above-chip.provider-tencent .ensemble-above-chip-role {
+  color: var(--provider-tencent-color);
+}
+.ensemble-above-chip.provider-inception .ensemble-above-chip-role {
+  color: var(--provider-inception-color);
+}
+.ensemble-above-chip.provider-nexagi .ensemble-above-chip-role {
+  color: var(--provider-nexagi-color);
+}
+.ensemble-above-chip.provider-sakana .ensemble-above-chip-role {
+  color: var(--provider-sakana-color);
+}
+.ensemble-above-chip.provider-stealth .ensemble-above-chip-role {
+  color: var(--provider-stealth-color);
+}
+.ensemble-above-chip.provider-unbiased .ensemble-above-chip-role {
+  color: var(--provider-unbiased-color);
+}
+.ensemble-above-chip.provider-typesafe .ensemble-above-chip-role {
+  color: var(--provider-typesafe-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1625,12 +1679,18 @@
 .ensemble-above-chip.provider-muse .ensemble-above-chip-role {
   color: var(--provider-muse-color);
 }
+.ensemble-above-chip.provider-devin .ensemble-above-chip-role {
+  color: var(--provider-devin-color);
+}
 
 .ensemble-above-chip.provider-groq .ensemble-above-chip-role {
   color: var(--provider-groq-color);
 }
 .ensemble-above-chip.provider-cerebras .ensemble-above-chip-role {
   color: var(--provider-cerebras-color);
+}
+.ensemble-above-chip.provider-xiaomi .ensemble-above-chip-role {
+  color: var(--provider-xiaomi-color);
 }
 
 /* 2026-08 chip polish — live shimmer sweep + failed icon re-ink.
@@ -1859,6 +1919,33 @@
 .ensemble-above-chip-tooltip.provider-pi .ensemble-above-chip-tooltip-title {
   color: var(--provider-pi-color);
 }
+.ensemble-above-chip-tooltip.provider-openrouter .ensemble-above-chip-tooltip-title {
+  color: var(--provider-openrouter-color);
+}
+.ensemble-above-chip-tooltip.provider-thinkingmachines .ensemble-above-chip-tooltip-title {
+  color: var(--provider-thinkingmachines-color);
+}
+.ensemble-above-chip-tooltip.provider-tencent .ensemble-above-chip-tooltip-title {
+  color: var(--provider-tencent-color);
+}
+.ensemble-above-chip-tooltip.provider-inception .ensemble-above-chip-tooltip-title {
+  color: var(--provider-inception-color);
+}
+.ensemble-above-chip-tooltip.provider-nexagi .ensemble-above-chip-tooltip-title {
+  color: var(--provider-nexagi-color);
+}
+.ensemble-above-chip-tooltip.provider-sakana .ensemble-above-chip-tooltip-title {
+  color: var(--provider-sakana-color);
+}
+.ensemble-above-chip-tooltip.provider-stealth .ensemble-above-chip-tooltip-title {
+  color: var(--provider-stealth-color);
+}
+.ensemble-above-chip-tooltip.provider-unbiased .ensemble-above-chip-tooltip-title {
+  color: var(--provider-unbiased-color);
+}
+.ensemble-above-chip-tooltip.provider-typesafe .ensemble-above-chip-tooltip-title {
+  color: var(--provider-typesafe-color);
+}
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);
 }
@@ -1877,12 +1964,18 @@
 .ensemble-above-chip-tooltip.provider-muse .ensemble-above-chip-tooltip-title {
   color: var(--provider-muse-color);
 }
+.ensemble-above-chip-tooltip.provider-devin .ensemble-above-chip-tooltip-title {
+  color: var(--provider-devin-color);
+}
 
 .ensemble-above-chip-tooltip.provider-groq .ensemble-above-chip-tooltip-title {
   color: var(--provider-groq-color);
 }
 .ensemble-above-chip-tooltip.provider-cerebras .ensemble-above-chip-tooltip-title {
   color: var(--provider-cerebras-color);
+}
+.ensemble-above-chip-tooltip.provider-xiaomi .ensemble-above-chip-tooltip-title {
+  color: var(--provider-xiaomi-color);
 }
 
 /* Neutralise the per-provider chip-border overrides — the chip
@@ -2052,6 +2145,86 @@
   gap: 8px;
 }
 
+/* ── Double-click chip seat-role picker (2026-08 tactile roles) ─────
+ * The compact vertical role list that opens when a participant chip in
+ * the above row is double-clicked. It reuses the composer's
+ * `.composer-combined-picker-popover` shell for the frosted glass
+ * material (glass bg, backdrop material, sheen/refraction pseudo-elements,
+ * degrade chain, 10060 portaled band) and `.composer-combined-picker-row`
+ * for row hover/selected/disabled states — these rules only add the
+ * narrow geometry and the authority/stage divider. */
+.ensemble-chip-role-picker {
+  width: 208px;
+}
+
+.composer-combined-picker-popover.ensemble-chip-role-picker {
+  flex-direction: column;
+}
+
+.ensemble-chip-role-picker .composer-combined-picker-column {
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.ensemble-chip-role-picker-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 55%, transparent);
+}
+
+.ensemble-chip-role-picker-name input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.ensemble-chip-role-picker-name input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-color, var(--accent)) 65%, var(--border-color));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, var(--accent)) 18%, transparent);
+}
+
+.ensemble-chip-role-picker-name input:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ensemble-chip-role-picker-toggles {
+  margin-bottom: 4px;
+}
+
+.ensemble-chip-role-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ensemble-chip-role-picker-label svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.ensemble-chip-role-picker-row.is-selected .ensemble-chip-role-picker-label svg {
+  opacity: 1;
+}
+
+.ensemble-chip-role-picker-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 4px 8px;
+  background: color-mix(in srgb, var(--panel-border) 55%, transparent);
+}
+
 .ensemble-above-overflow-quick-toggles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2080,7 +2253,7 @@
   box-shadow: 0 0 10px color-mix(in srgb, var(--success, #34d399) 24%, transparent);
 }
 
-.ensemble-above-overflow-toggle.is-auto[aria-pressed='true'] {
+.thread-auto-approvals-pill:is([aria-pressed='true'], [data-pressed='true']) {
   --segmented-action-foreground: var(--warning, #f5b14c);
   --segmented-action-border: color-mix(
     in srgb,
@@ -2211,13 +2384,13 @@
  * composer pickers and the participant-chip popover retain their base layout. */
 .composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 124px;
-  grid-template-rows: minmax(0, 38fr) minmax(0, 62fr) auto;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 124px;
+  grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto;
   width: min(520px, calc(100vw - 16px));
   min-width: min(520px, calc(100vw - 16px));
   max-width: min(520px, calc(100vw - 16px));
-  height: min(570px, calc(100dvh - 16px));
-  max-height: min(570px, calc(100dvh - 16px));
+  height: min(610px, calc(100dvh - 16px));
+  max-height: min(610px, calc(100dvh - 16px));
 }
 
 .is-ensemble-add-participant > .composer-combined-picker-top-content {
@@ -2234,14 +2407,20 @@
   scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
 }
 
-.is-ensemble-add-participant > .composer-combined-picker-models {
+.is-ensemble-add-participant > .composer-combined-picker-provider-tabs {
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
 }
 
-.is-ensemble-add-participant > .composer-combined-picker-reasoning {
+.is-ensemble-add-participant > .composer-combined-picker-models {
   grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+}
+
+.is-ensemble-add-participant > .composer-combined-picker-reasoning {
+  grid-column: 3;
   grid-row: 2;
   min-height: 0;
 }
@@ -2325,6 +2504,49 @@
   min-width: 0;
 }
 
+.ensemble-add-participant-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ensemble-add-participant-bottom-row > .ensemble-add-participant-duplicate-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ensemble-add-participant-management-action {
+  flex: 0 0 auto;
+}
+
+.composer-ensemble-participant-remove-action {
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, #e5484d 46%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #e5484d 8%, transparent);
+  color: color-mix(in srgb, #e5484d 82%, var(--text-primary));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 680;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.composer-ensemble-participant-remove-action:hover:not(:disabled),
+.composer-ensemble-participant-remove-action:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, #e5484d 68%, var(--panel-border));
+  background: color-mix(in srgb, #e5484d 14%, transparent);
+  color: #f06a6f;
+}
+
+.composer-ensemble-participant-remove-action:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
 .ensemble-add-participant-duplicate-label {
   flex: 0 0 auto;
   color: var(--text-tertiary);
@@ -2336,7 +2558,7 @@
 
 .ensemble-add-participant-duplicate-list {
   display: flex;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2353,10 +2575,11 @@
   gap: 5px;
   max-width: 220px;
   min-height: 26px;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-raised, var(--panel-bg)) 76%, transparent);
+  padding: 3px 1px 4px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
   cursor: pointer;
@@ -2364,12 +2587,13 @@
 
 .ensemble-add-participant-duplicate-chip:hover:not(:disabled),
 .ensemble-add-participant-duplicate-chip.is-selected {
-  border-color: color-mix(
-    in srgb,
-    var(--duplicate-participant-accent) 68%,
-    var(--panel-border)
-  );
-  background: color-mix(in srgb, var(--duplicate-participant-accent) 12%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--duplicate-participant-accent) 68%, transparent);
+  background: transparent;
+}
+
+.ensemble-add-participant-duplicate-chip:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--duplicate-participant-accent) 58%, transparent);
+  outline-offset: 2px;
 }
 
 .ensemble-add-participant-duplicate-chip:disabled {
@@ -2392,6 +2616,165 @@
 }
 
 .ensemble-add-participant-duplicate-model {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Seat-navigator rail — the Duplicate row's navigation sibling. Mounted as
+ * bottomContent of the ORDINARY composer model/permission popovers so a tab
+ * click retargets the active participant chip without closing the picker.
+ * The add-participant popover keeps its own three-row grid + Duplicate rail
+ * (is-ensemble-add-participant), hence the :not() guards. */
+.composer-combined-picker-popover.has-bottom-content:not(.is-ensemble-add-participant) {
+  flex-wrap: wrap;
+}
+
+.composer-combined-picker-popover.has-bottom-content:not(.is-ensemble-add-participant)
+  > .composer-combined-picker-bottom-content {
+  flex: 1 1 100%;
+  min-width: 0;
+  /* Size the rail from the columns above it, never the other way round: the
+   * chip list scrolls horizontally inside whatever width the popover already
+   * has (the permission popover stays narrow with many seats). */
+  contain: inline-size;
+  margin-top: 6px;
+  padding: 6px 2px 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
+}
+
+/* The fixed-height unified model picker becomes a two-row grid so the rail
+ * gets its own track instead of squeezing the scrollable model list. */
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  ) {
+  display: grid;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: min(366px, calc(100vh - 24px));
+  max-height: min(366px, calc(100vh - 24px));
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  > .composer-combined-picker-provider-tabs {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  .composer-combined-picker-models.is-unified-model-list {
+  grid-column: 2;
+  grid-row: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  .composer-combined-picker-reasoning {
+  grid-column: 3;
+  grid-row: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  > .composer-combined-picker-bottom-content {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin-top: 0;
+}
+
+.ensemble-seat-navigator-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ensemble-seat-navigator-label {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ensemble-seat-navigator-list {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 2px 3px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+
+.ensemble-seat-navigator-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  min-height: 26px;
+  padding: 3px 1px 4px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ensemble-seat-navigator-chip:hover,
+.ensemble-seat-navigator-chip.is-selected {
+  border-bottom-color: color-mix(in srgb, var(--seat-navigator-accent) 68%, transparent);
+  background: transparent;
+}
+
+.ensemble-seat-navigator-chip.is-selected {
+  cursor: default;
+}
+
+.ensemble-seat-navigator-chip:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--seat-navigator-accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+/* Disabled seats stay selectable (their config is still editable), so this
+ * dims without the :disabled attribute the Duplicate rail uses. */
+.ensemble-seat-navigator-chip.is-disabled-seat {
+  opacity: 0.55;
+}
+
+.ensemble-seat-navigator-provider,
+.ensemble-seat-navigator-provider .provider-brand-logo {
+  width: 13px;
+  height: 13px;
+}
+
+.ensemble-seat-navigator-role {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--seat-navigator-accent) 76%, var(--text-primary));
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ensemble-seat-navigator-model {
   overflow: hidden;
   color: var(--text-tertiary);
   font-size: 10px;
@@ -2683,7 +3066,11 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
+/* `--has-ensemble-rows` carries the `:has(:is(...))` condition as a class; the
+ * `:not(:empty)` (always true when the flag is set) restores the (0,3,0)
+ * specificity the `:has()` argument contributed, so the cascade is unchanged.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -4695,7 +5082,7 @@
 }
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack.fx-agent-aura.fx-status-running
   > * {
   position: relative;
@@ -4850,7 +5237,7 @@
   > :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row)::before,
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *::after {
   display: none !important;
@@ -5059,36 +5446,93 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Concurrent Ensemble seats share the same live transcript tail. Keep the
- * existing single-row presentation for solo chats, but use the available
- * width when several seats are working at once instead of growing a tall
- * vertical column. */
-.message-working-stack {
+/* One app-owned Working signal leads every live Ensemble seat. The seat grid
+ * then preserves each participant's own timer/token telemetry without
+ * repeating the ghost, provider/model meta row, or outer chrome. Four columns
+ * match the approved desktop mock; narrower panes collapse progressively. */
+.message-working-unified {
+  /* The shared signal is app-owned, not another participant. Keep it neutral:
+   * `--text-primary` resolves light on dark themes and dark on light themes.
+   * Each seat still supplies its own inline provider accent below this row. */
+  --message-working-accent: var(--text-primary);
+  container: working-indicator / inline-size;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: clamp(var(--space-md), 3vw, var(--space-xl));
-  row-gap: var(--space-md);
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space-xs) + 2px);
   width: 100%;
   min-width: 0;
 }
 
-.message-working-stack-row {
-  min-width: 0;
+.message-working-unified > .message-working {
+  padding: var(--space-xs) 0;
 }
 
-.message-working-stack-row .message-meta {
+.message-working-seat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: clamp(var(--space-md), 2.4vw, var(--space-xl));
+  row-gap: calc(var(--space-sm) + 2px);
+  width: 100%;
+  min-width: 0;
+  padding-inline-start: 34px;
+}
+
+.message-working-seat {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 3px;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: wrap;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--transcript-font-family);
+  text-align: left;
 }
 
-.message-working-stack-row .message-working {
+.message-working-seat-label {
+  display: inline-block;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-working-seat .message-working-telemetry {
   max-width: 100%;
 }
 
-@media (max-width: 620px) {
-  .message-working-stack {
+.message-working-seat-jump {
+  cursor: pointer;
+}
+
+.message-working-seat-jump:hover .message-working-seat-label {
+  filter: brightness(1.16) saturate(1.08);
+}
+
+.message-working-seat-jump:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--message-working-accent) 72%, transparent);
+  outline-offset: 3px;
+}
+
+@container working-indicator (max-width: 720px) {
+  .message-working-seat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container working-indicator (max-width: 420px) {
+  .message-working-seat-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

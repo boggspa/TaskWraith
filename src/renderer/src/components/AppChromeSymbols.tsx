@@ -309,6 +309,25 @@ export function MultiviewSymbolIcon() {
   )
 }
 
+/** Transcript view (verbosity): stacked lines, the top one full and the two
+ * below progressively shorter — "how much of each turn is shown". */
+export function TranscriptViewSymbolIcon() {
+  return (
+    <span className="composer-control-icon">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M2.6 4.2h10.8M2.6 8h7.6M2.6 11.8h4.4" />
+      </svg>
+    </span>
+  )
+}
+
 export function BackToParentIcon() {
   return (
     <span className="chat-corner-symbol">
@@ -630,6 +649,10 @@ export function WorkflowGlyphIcon() {
 // Claude-style send: the native Claude composer uses a "return" arrow glyph
 // (↵) inside the send button instead of a play triangle. Used when
 // appearance.composerStyle === 'claude' so the send/stop pair reads native.
+// Geometry mirrors Claude Desktop's ArrowReturn glyph at its 20px render:
+// a top bar that turns down the right side into a bottom bar ending in an
+// open arrowhead, drawn with a hairline stroke (the shell CSS sets the
+// on-screen stroke width; paths use vector-effect: non-scaling-stroke).
 export function ClaudeReturnSymbolIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
@@ -637,12 +660,153 @@ export function ClaudeReturnSymbolIcon() {
         viewBox="0 0 16 16"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.4"
+        strokeWidth="1.25"
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <path d="M12.5 4v2.5a2 2 0 0 1-2 2H4" />
-        <path d="M6.5 6.5 4 8.5l2.5 2" />
+        <path d="M6.6 4h5.4a1.6 1.6 0 0 1 1.6 1.6v2.7a1.6 1.6 0 0 1-1.6 1.6H2.4" />
+        <path d="M6 6.3 2.4 9.9 6 13.5" />
+      </svg>
+    </span>
+  )
+}
+
+// Codex Desktop's idle send control shows a voice-mode waveform inside the
+// white circle while the draft is empty; the Codex composer shell renders it
+// in that state (Composer.tsx run-button branch). Five rounded bars.
+export function WaveformSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon composer-waveform-glyph" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 6.5v3" />
+        <path d="M5.5 4.5v7" />
+        <path d="M8 2.5v11" />
+        <path d="M10.5 4.5v7" />
+        <path d="M13 6.5v3" />
+      </svg>
+    </span>
+  )
+}
+
+// Permission-mode glyphs for the Codex composer shell's permission chip,
+// mirroring Codex Desktop's approval menu icons: a checklist for Plan, a
+// raised hand for Ask, a smiling badge for Accept Edits ("Approve for me"),
+// and a warning ring for the elevated Full WS Access / Full Access presets.
+// `data-permission-glyph` names the shape so tests and CSS can address it.
+function PermissionGlyph({
+  name,
+  children
+}: {
+  name: 'plan' | 'ask' | 'approve' | 'elevated'
+  children: React.ReactNode
+}) {
+  return (
+    <span
+      className="sf-symbol-icon composer-permission-glyph"
+      data-permission-glyph={name}
+      aria-hidden
+    >
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {children}
+      </svg>
+    </span>
+  )
+}
+
+export function PermissionPlanGlyphIcon() {
+  return (
+    <PermissionGlyph name="plan">
+      <rect x="3.25" y="2.75" width="9.5" height="10.5" rx="1.8" />
+      <path d="M5.6 6.2h4.8M5.6 8.5h4.8M5.6 10.8h2.6" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionAskGlyphIcon() {
+  return (
+    <PermissionGlyph name="ask">
+      <path d="M5 9V5.5a1 1 0 0 1 2 0v3" />
+      <path d="M7 8V3.9a1 1 0 0 1 2 0v4.6" />
+      <path d="M9 8.5V4.9a1 1 0 0 1 2 0v4.6" />
+      <path d="M11 9.5V7.2a1 1 0 0 1 2 0v3.3a4.5 4.5 0 0 1-4.5 4.5h-.2A3.3 3.3 0 0 1 5 11.7V9" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionApproveGlyphIcon() {
+  return (
+    <PermissionGlyph name="approve">
+      <rect x="2.75" y="2.75" width="10.5" height="10.5" rx="3.2" />
+      <circle cx="6.2" cy="7.2" r="0.65" fill="currentColor" stroke="none" />
+      <circle cx="9.8" cy="7.2" r="0.65" fill="currentColor" stroke="none" />
+      <path d="M5.9 9.6c.55.75 1.3 1.15 2.1 1.15s1.55-.4 2.1-1.15" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionElevatedGlyphIcon() {
+  return (
+    <PermissionGlyph name="elevated">
+      <circle cx="8" cy="8" r="5.9" />
+      <path d="M8 5.1v3.4" />
+      <circle cx="8" cy="10.9" r="0.7" fill="currentColor" stroke="none" />
+    </PermissionGlyph>
+  )
+}
+
+// Claude-style stop: Claude Desktop's StopCircle glyph — a hairline ring with
+// a filled, softly rounded square inside. Only the Claude composer shell
+// renders it (Composer.tsx stop-button branch); every other shell keeps
+// StopSymbolIcon below.
+export function StopCircleSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="8" cy="8" r="6.4" />
+        <rect x="5.4" y="5.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" stroke="none" />
+      </svg>
+    </span>
+  )
+}
+
+// Claude-style microphone: Claude Desktop's Microphone glyph — capsule, U
+// cradle and a short stem, with no base bar. Only the Claude composer shell
+// renders it (ComposerVoiceInput.tsx); other shells keep MicrophoneSymbolIcon.
+export function ClaudeMicrophoneSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="5.9" y="2" width="4.2" height="7.6" rx="2.1" strokeWidth="1" />
+        <path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0" />
+        <path d="M8 12v2.2" />
       </svg>
     </span>
   )
@@ -1122,6 +1286,27 @@ export function TrustSymbolIcon() {
   )
 }
 
+/** Work > Logins. A key, because the row is about an account you hold. */
+export function SiteLoginSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon composer-control-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="5.6" cy="5.6" r="2.9" />
+        <path d="M7.7 7.7 13 13" />
+        <path d="M11.2 11.2 10 12.4" />
+        <path d="M12.6 12.6 11.4 13.8" />
+      </svg>
+    </span>
+  )
+}
+
 export function LinkCircleSymbolIcon() {
   return (
     <span className="sf-symbol-icon composer-control-icon" aria-hidden>
@@ -1202,7 +1387,8 @@ export function ContextWheel({
   label: string
   /** Codex composer shell — 10% smaller ring, +1px rendered stroke weight. */
   codexShell?: boolean
-  /** Claude composer shell — hairline ~1px ring matching real Claude. */
+  /** Claude composer shell — 2px ring on a 12-13px donut, matching Claude
+   * Desktop's context ring (12px svg, 2px stroke). */
   claudeShell?: boolean
   /** Cursor composer shell — 10% smaller ring with a thicker stroke. */
   cursorShell?: boolean
@@ -1212,7 +1398,9 @@ export function ContextWheel({
 }) {
   const clamped = Math.max(0, Math.min(100, percent))
   const radius = 5.5
-  const strokeWidth = codexShell ? 2.7 : claudeShell ? 1 : cursorShell ? 2.5 : 1.7
+  // Claude: 2.33 in the 14-unit viewBox renders as a 2px stroke at the shell's
+  // 12px donut (2.33 × 12 / 14), matching Claude Desktop's context ring.
+  const strokeWidth = codexShell ? 2.7 : claudeShell ? 2.33 : cursorShell ? 2.5 : 1.7
   const circumference = 2 * Math.PI * radius
   const dash = (clamped / 100) * circumference
   const remainingDash = circumference - dash

@@ -21,7 +21,7 @@ export function isEnsembleParticipantSeatRuntimeLocked(
   if (!targetParticipantId || !isEnsembleActiveRoundDispatchLive(round)) return false
   if (round?.activeParticipantId === targetParticipantId) return true
 
-  const participantState = round?.participants.find(
+  const participantState = (round?.participants || []).find(
     (participant) => participant.participantId === targetParticipantId
   )
   if (

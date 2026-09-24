@@ -8,7 +8,7 @@
  * sequence skip, cache-stale-on-disconnect, and clean client close.
  */
 
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,13 +17,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  type HostCapability,
   type HostBootstrapWelcome,
   type HostCommand,
   type HostCommandReceipt,
   type HostDeltasFrame,
   type HostHealthFrame,
   type HostSnapshot,
-  type HostSnapshotFrame
+  type HostSnapshotFrame,
+  type HostStatusProjection
 } from '../../shared/hostProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
@@ -51,6 +53,7 @@ interface FakeHost {
   token: string
   userDataPath: string
   nextClient(): Promise<Socket>
+  connectionCount(): number
 }
 
 async function startFakeHost(overrides?: {
@@ -86,6 +89,7 @@ async function startFakeHost(overrides?: {
   const tokenPath = join(userDataPath, 'taskwraith-host-v2.token')
   const token = overrides?.token ?? 'test-host-token-0123456789abcdef'
   await writeFile(tokenPath, `${token}\n`, 'utf8')
+  await chmod(tokenPath, 0o600)
   await writeFile(
     discoveryPath,
     JSON.stringify({
@@ -97,6 +101,7 @@ async function startFakeHost(overrides?: {
     }),
     'utf8'
   )
+  await chmod(discoveryPath, 0o600)
 
   cleanup.push(() => {
     for (const socket of allSockets) socket.destroy()
@@ -110,6 +115,7 @@ async function startFakeHost(overrides?: {
     tokenPath,
     token,
     userDataPath,
+    connectionCount: () => allSockets.size,
     nextClient: () =>
       new Promise<Socket>((resolve) => {
         const existing = pendingClients.shift()
@@ -202,7 +208,11 @@ function makeEmptySnapshot(generation = 3, cursor = 42): HostSnapshot {
   }
 }
 
-function makeClient(host: FakeHost): HostProjectionClient {
+function makeClient(
+  host: FakeHost,
+  capabilities?: readonly HostCapability[],
+  optionalCapabilities?: readonly HostCapability[]
+): HostProjectionClient {
   const client = new HostProjectionClient({
     client: {
       clientId: 'desktop-1',
@@ -211,6 +221,8 @@ function makeClient(host: FakeHost): HostProjectionClient {
     },
     userDataPath: host.userDataPath,
     discoveryPath: host.discoveryPath,
+    ...(capabilities ? { capabilities } : {}),
+    ...(optionalCapabilities ? { optionalCapabilities } : {}),
     connectTimeoutMs: 500,
     requestTimeoutMs: 500
   })
@@ -246,6 +258,9 @@ describe('HostProjectionClient', () => {
     expect((hello.hello as { type: string }).type).toBe('host.hello')
     expect((hello.hello as { protocolVersion: number }).protocolVersion).toBe(HOST_PROTOCOL_VERSION)
     expect((hello.hello as { capabilities: string[] }).capabilities).toContain('model-offers')
+    expect((hello.hello as { capabilities: string[] }).capabilities).not.toEqual(
+      expect.arrayContaining(['provider-catalog', 'provider-auth', 'history'])
+    )
     sendWelcome(socket)
     const welcome = await connectPromise
     expect(welcome.hostId).toBe('test-host')
@@ -254,12 +269,55 @@ describe('HostProjectionClient', () => {
     expect(client.connected).toBe(true)
     expect(client.generation).toBe(3)
     expect(client.cursor).toBe(42)
+    expect(client.supports('bootstrap')).toBe(true)
+    expect(client.supports('provider-auth')).toBe(false)
+  })
+
+  it('requests a stable deduped base-plus-optional union on its first hello', async () => {
+    const host = await startFakeHost()
+    const client = makeClient(
+      host,
+      ['bootstrap', 'snapshot', 'bootstrap'],
+      ['provider-auth', 'snapshot', 'provider-catalog', 'provider-auth']
+    )
+    const connect = client.connect()
+    const socket = await host.nextClient()
+    const hello = await readLine(socket)
+    expect((hello.hello as { capabilities: readonly HostCapability[] }).capabilities).toEqual([
+      'bootstrap',
+      'snapshot',
+      'provider-auth',
+      'provider-catalog'
+    ])
+    sendWelcome(socket, makeWelcome({ capabilities: ['bootstrap', 'snapshot'] }))
+    await connect
+    expect(client.supports('provider-auth')).toBe(false)
+  })
+
+  it('retries once base-only only after an accepted connection closes before welcome', async () => {
+    const host = await startFakeHost()
+    const base: readonly HostCapability[] = ['bootstrap', 'snapshot']
+    const optional: readonly HostCapability[] = ['provider-auth', 'provider-catalog']
+    const client = makeClient(host, base, optional)
+    const connect = client.connect()
+
+    const first = await host.nextClient()
+    expect((await readLine(first)).hello).toMatchObject({
+      capabilities: ['bootstrap', 'snapshot', 'provider-auth', 'provider-catalog']
+    })
+    first.end()
+
+    const second = await host.nextClient()
+    expect((await readLine(second)).hello).toMatchObject({ capabilities: base })
+    sendWelcome(second, makeWelcome({ capabilities: base as HostCapability[] }))
+    await expect(connect).resolves.toMatchObject({ capabilities: base })
   })
 
   it('rejects with a distinct error when discovery advertises a non-v2 protocol', async () => {
     const host = await startFakeHost({ protocolVersion: 999 })
-    const client = makeClient(host)
+    const client = makeClient(host, ['bootstrap'], ['provider-auth'])
     await expect(client.connect()).rejects.toBeInstanceOf(HostProjectionIncompatibleProtocolError)
+    expect(host.connectionCount()).toBe(0)
   })
 
   it('rejects connect() when the socket closes before welcome (auth failure)', async () => {
@@ -485,6 +543,145 @@ describe('HostProjectionClient', () => {
     expect(received.bytes.byteLength).toBeGreaterThan(0)
   })
 
+  it('routes typed provider setup and bounded history reads', async () => {
+    const host = await startFakeHost()
+    const requestedCapabilities: readonly HostCapability[] = [
+      'bootstrap',
+      'snapshot',
+      'health',
+      'provider-catalog',
+      'provider-auth',
+      'history'
+    ]
+    const client = makeClient(host, requestedCapabilities)
+    const connect = client.connect()
+    const hostSocket = await host.nextClient()
+    const hello = await readLine(hostSocket)
+    expect((hello.hello as { capabilities: readonly string[] }).capabilities).toEqual(
+      requestedCapabilities
+    )
+    sendWelcome(hostSocket)
+    await connect
+
+    const statuses = client.getProviderStatuses()
+    const statusesRequest = await readLine(hostSocket)
+    expect(statusesRequest).toMatchObject({ kind: 'provider.status', params: {} })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(statusesRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.status',
+        statuses: [{ providerId: 'codex', status: 'ready', label: 'Codex' }]
+      }
+    })
+    await expect(statuses).resolves.toEqual([
+      { providerId: 'codex', status: 'ready', label: 'Codex' }
+    ])
+
+    const offers = client.getProviderOffers('codex')
+    const offersRequest = await readLine(hostSocket)
+    expect(offersRequest).toMatchObject({
+      kind: 'provider.offers',
+      params: { providerId: 'codex' }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(offersRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.offers',
+        offers: {
+          providerId: 'codex',
+          offerRevision: 'catalog-r1',
+          models: [{ modelId: 'gpt-5.6', label: 'GPT-5.6', available: true, reasoning: [] }],
+          postures: [
+            {
+              postureId: 'plan',
+              label: 'Plan',
+              available: true,
+              requiresExplicitConsent: true,
+              ceiling: 'workspace_write'
+            }
+          ]
+        }
+      }
+    })
+    await expect(offers).resolves.toMatchObject({ providerId: 'codex' })
+
+    const authFlows = client.getProviderAuthFlows('codex')
+    const authFlowsRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(authFlowsRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.auth.flows',
+        flows: [{ flowId: 'browser', kind: 'browser', label: 'Browser', available: true }]
+      }
+    })
+    await expect(authFlows).resolves.toHaveLength(1)
+
+    const authStatus = client.getProviderAuthStatus('codex')
+    const authStatusRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(authStatusRequest.id),
+      ok: true,
+      result: {
+        kind: 'provider.auth.status',
+        status: { providerId: 'codex', state: 'unauthenticated' }
+      }
+    })
+    await expect(authStatus).resolves.toEqual({ providerId: 'codex', state: 'unauthenticated' })
+
+    const history = client.getThreadHistory({ threadId: 'thread-1', limit: 25 })
+    const historyRequest = await readLine(hostSocket)
+    expect(historyRequest).toMatchObject({
+      kind: 'thread.history',
+      params: { threadId: 'thread-1', limit: 25 }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(historyRequest.id),
+      ok: true,
+      result: {
+        kind: 'thread.history',
+        page: { threadId: 'thread-1', generation: 1, cursor: 3, entries: [] }
+      }
+    })
+    await expect(history).resolves.toMatchObject({ threadId: 'thread-1' })
+
+    const since = client.getHistorySince({
+      threadId: 'thread-1',
+      since: { generation: 1, cursor: 3 }
+    })
+    const sinceRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(sinceRequest.id),
+      ok: true,
+      result: {
+        kind: 'history.since',
+        result: {
+          kind: 'deltas',
+          threadId: 'thread-1',
+          generation: 1,
+          fromCursor: 3,
+          toCursor: 3,
+          deltas: []
+        }
+      }
+    })
+    await expect(since).resolves.toMatchObject({ kind: 'deltas', threadId: 'thread-1' })
+  })
+
   it('rejects a twmission export whose integrity digest was tampered', async () => {
     const { hostSocket, client } = await connectedPair()
     const exported = exportTwMissionBundle({
@@ -518,6 +715,9 @@ describe('HostProjectionClient', () => {
     const healthSeen = new Promise<number>((resolve) =>
       client.once('health', (_frame, sequence) => resolve(sequence))
     )
+    const historySeen = new Promise<number>((resolve) =>
+      client.once('history', (_frame, sequence) => resolve(sequence))
+    )
     const closingSeen = new Promise<number>((resolve) =>
       client.once('hostClosing', (sequence) => resolve(sequence))
     )
@@ -542,8 +742,27 @@ describe('HostProjectionClient', () => {
     writeFrame(hostSocket, {
       type: 'event',
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      event: 'history',
+      sequence: 3,
+      payload: {
+        type: 'host.history',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        threadId: 'thread-1',
+        result: {
+          kind: 'deltas',
+          threadId: 'thread-1',
+          generation: 3,
+          fromCursor: 41,
+          toCursor: 41,
+          deltas: []
+        }
+      }
+    })
+    writeFrame(hostSocket, {
+      type: 'event',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       event: 'health',
-      sequence: 2,
+      sequence: 4,
       payload: {
         type: 'host.health',
         protocolVersion: HOST_PROTOCOL_VERSION,
@@ -559,12 +778,13 @@ describe('HostProjectionClient', () => {
       type: 'event',
       transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
       event: 'host.closing',
-      sequence: 3
+      sequence: 5
     })
 
     expect(await deltasSeen).toBe(1)
-    expect(await healthSeen).toBe(2)
-    expect(await closingSeen).toBe(3)
+    expect(await healthSeen).toBe(4)
+    expect(await historySeen).toBe(3)
+    expect(await closingSeen).toBe(5)
   })
 
   it('skips unknown event kinds without disconnecting (forward compat)', async () => {
@@ -669,6 +889,196 @@ describe('HostProjectionClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(sawDisconnect).toBe(false)
     expect(client.connected).toBe(false)
+  })
+
+  it('routes host.status through the strict status decoder', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const status: HostStatusProjection = {
+      pid: 4242,
+      startedAt: '2026-09-23T00:00:00.000Z',
+      uptimeMs: 60_000,
+      hostId: 'test-host',
+      payloadVersion: `sha256:${'a'.repeat(64)}`,
+      profilePath: '/profiles/one',
+      persist: false,
+      lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 1 },
+      liveWork: { runs: 0 },
+      clients: [
+        {
+          clientClass: 'desktop',
+          clientId: 'desktop-1',
+          connectedForMs: 10,
+          lease: 'explicit',
+          capabilities: ['bootstrap', 'health']
+        }
+      ]
+    }
+    const pending = client.getHostStatus()
+    const request = await readLine(hostSocket)
+    expect(request).toMatchObject({ type: 'request', kind: 'host.status', params: {} })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(request.id),
+      ok: true,
+      result: {
+        kind: 'host.status',
+        status: { ...status, token: 'dropped' } as HostStatusProjection
+      }
+    })
+    await expect(pending).resolves.toEqual(status)
+
+    // The transport only shape-checks the record; an out-of-bounds status is
+    // refused here without costing the connection.
+    const invalid = client.getHostStatus()
+    const invalidRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(invalidRequest.id),
+      ok: true,
+      result: { kind: 'host.status', status: { ...status, pid: 0 } }
+    })
+    await expect(invalid).rejects.toThrow(/invalid status projection/)
+    expect(client.connected).toBe(true)
+  })
+
+  it('speaks the four host.lease actions and refuses a mismatched answer', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const answer = async (
+      expected: Record<string, unknown>,
+      result: Extract<HostLocalTransportHostFrame, { type: 'response'; ok: true }>['result']
+    ) => {
+      const request = await readLine(hostSocket)
+      expect(request).toMatchObject({ type: 'request', kind: 'host.lease', params: expected })
+      expect(Object.keys(request.params as object).sort()).toEqual(Object.keys(expected).sort())
+      writeFrame(hostSocket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: String(request.id),
+        ok: true,
+        result
+      })
+    }
+
+    const acquired = client.acquireHostLease()
+    await answer(
+      { action: 'acquire' },
+      {
+        kind: 'host.lease',
+        action: 'acquire',
+        leaseId: 'lease-1',
+        heartbeatMs: 5_000,
+        ttlMs: 20_000,
+        hostNowMs: 7
+      }
+    )
+    await expect(acquired).resolves.toEqual({
+      leaseId: 'lease-1',
+      heartbeatMs: 5_000,
+      ttlMs: 20_000,
+      hostNowMs: 7
+    })
+
+    const renewed = client.renewHostLease('lease-1')
+    await answer(
+      { action: 'renew', leaseId: 'lease-1' },
+      { kind: 'host.lease', action: 'renew', leaseId: 'lease-1', expiresInMs: 20_000, hostNowMs: 9 }
+    )
+    await expect(renewed).resolves.toEqual({
+      leaseId: 'lease-1',
+      expiresInMs: 20_000,
+      hostNowMs: 9
+    })
+
+    const released = client.releaseHostLease('lease-1')
+    await answer(
+      { action: 'release', leaseId: 'lease-1' },
+      { kind: 'host.lease', action: 'release', released: true }
+    )
+    await expect(released).resolves.toBeUndefined()
+
+    const declined = client.declineHostLease()
+    await answer({ action: 'decline' }, { kind: 'host.lease', action: 'decline', declined: true })
+    await expect(declined).resolves.toBeUndefined()
+
+    const mismatched = client.acquireHostLease()
+    await answer({ action: 'acquire' }, { kind: 'host.lease', action: 'decline', declined: true })
+    await expect(mismatched).rejects.toThrow(/unexpected lease result/)
+    expect(client.connected).toBe(true)
+  })
+
+  it("surfaces an old Host's unknown_request_kind for the lease kinds and keeps the connection", async () => {
+    const { hostSocket, client } = await connectedPair()
+    for (const ask of [() => client.acquireHostLease(), () => client.getHostStatus()]) {
+      const pending = ask()
+      const request = await readLine(hostSocket)
+      writeFrame(hostSocket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: String(request.id),
+        ok: false,
+        error: { code: 'unknown_request_kind' }
+      })
+      await expect(pending).rejects.toMatchObject({ code: 'unknown_request_kind' })
+    }
+    expect(client.connected).toBe(true)
+  })
+
+  it('releaseHostLeaseSync writes exactly one release frame and waits for no answer', async () => {
+    const { hostSocket, client } = await connectedPair()
+    // Every line the Host receives, in order: readLine() alone would drop a
+    // second frame that arrived in the same chunk as the first.
+    const received: Array<Record<string, unknown>> = []
+    let buffer = ''
+    hostSocket.on('data', (chunk: Buffer | string) => {
+      buffer += chunk.toString()
+      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
+        received.push(JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>)
+        buffer = buffer.slice(newline + 1)
+      }
+    })
+    expect(client.releaseHostLeaseSync('lease-1')).toBe(true)
+    const health = client.getHealth()
+    await vi.waitFor(() => expect(received.length).toBeGreaterThanOrEqual(2))
+    expect(received[0]).toMatchObject({
+      type: 'request',
+      kind: 'host.lease',
+      params: { action: 'release', leaseId: 'lease-1' }
+    })
+    // The very next frame on the wire is the next request, not a second release.
+    expect(received[1]).toMatchObject({ kind: 'health.get' })
+    // The release's own answer matches nothing pending and is dropped.
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(received[0].id),
+      ok: true,
+      result: { kind: 'host.lease', action: 'release', released: true }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(received[1].id),
+      ok: true,
+      result: {
+        kind: 'health.get',
+        frame: {
+          type: 'host.health',
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          health: {
+            hostStatus: 'ok',
+            connectionPhase: 'live',
+            supervised: false,
+            freshness: 'live'
+          }
+        }
+      }
+    })
+    await expect(health).resolves.toMatchObject({ type: 'host.health' })
+    expect(received).toHaveLength(2)
+    client.close()
+    expect(client.releaseHostLeaseSync('lease-1')).toBe(false)
   })
 
   it('rejects a request immediately when not connected', async () => {

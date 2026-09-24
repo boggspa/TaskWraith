@@ -10,6 +10,8 @@ interface TerminalPanelProps {
   onClose?: () => void
   className?: string
   variant?: TerminalPanelVariant
+  onTerminalReady?: () => void
+  ptySessionId?: string
 }
 
 const TUI_TERMINAL_THEME = {
@@ -50,8 +52,11 @@ export function TerminalPanel({
   workspacePath,
   onClose,
   className,
-  variant = 'inspector'
+  variant = 'inspector',
+  onTerminalReady,
+  ptySessionId: propPtySessionId
 }: TerminalPanelProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
@@ -60,11 +65,33 @@ export function TerminalPanel({
 
   const theme = useMemo(() => (isPane ? TUI_TERMINAL_THEME : INSPECTOR_TERMINAL_THEME), [isPane])
 
+  // The PTY this panel owns, derived during render rather than inside the
+  // setup effect.
+  //
+  // It used to be computed from `propPtySessionId` *inside* that effect while
+  // the dependency list named only [sessionId, workspacePath, theme]. So
+  // switching between two chats in the SAME workspace changed the id without
+  // re-running the effect: the panel kept writing to — and reading from — the
+  // previous chat's shell, and the new chat's shell was never started. Naming
+  // the id here is what makes it a real dependency below.
+  const effectivePtySessionId = propPtySessionId || `setup-${sessionId}`
+
+  // `onTerminalReady` is deliberately kept out of the setup effect's deps via
+  // a ref. The composer's callback closes over its pending-command map and
+  // clears that map when it fires, so its identity changes on every flush —
+  // depending on it directly would tear the PTY down and respawn it the moment
+  // the terminal reported ready, in a loop. A ref keeps exhaustive-deps honest
+  // instead of silencing it, and seeding it with the first value means an
+  // early `startPty` resolve cannot miss the callback.
+  const onTerminalReadyRef = useRef(onTerminalReady)
+  useEffect(() => {
+    onTerminalReadyRef.current = onTerminalReady
+  }, [onTerminalReady])
+
   useEffect(() => {
     const host = terminalRef.current
     if (!host) return
     let disposed = false
-    const ptySessionId = `setup-${sessionId}`
 
     term.current = new Terminal({
       cursorBlink: true,
@@ -79,73 +106,103 @@ export function TerminalPanel({
     fitAddon.current.fit()
 
     term.current.onData((data) => {
-      window.api.ptyWrite(data, ptySessionId)
+      window.api.ptyWrite(data, effectivePtySessionId)
     })
 
     const unsubscribePtyData = window.api.onPtyData((data, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId) return
+      if (eventSessionId && eventSessionId !== effectivePtySessionId && eventSessionId !== 'default') return
       term.current?.write(data)
     })
 
     const unsubscribePtyExit = window.api.onPtyExit((code, eventSessionId) => {
-      if (eventSessionId && eventSessionId !== ptySessionId) return
+      if (eventSessionId && eventSessionId !== effectivePtySessionId && eventSessionId !== 'default') return
       term.current?.write(`\r\n\x1b[33mProcess exited with code ${code}\x1b[0m\r\n`)
     })
 
-    window.api.startPty(workspacePath, ptySessionId).catch((error) => {
-      if (disposed) return
-      term.current?.write(`\r\n\x1b[31m${String(error)}\x1b[0m\r\n`)
-    })
+    window.api.startPty(workspacePath, effectivePtySessionId)
+      .then(() => {
+        if (disposed) return
+        onTerminalReadyRef.current?.()
+      })
+      .catch((error) => {
+        if (disposed) return
+        term.current?.write(`\r\n\x1b[31m${String(error)}\x1b[0m\r\n`)
+      })
 
     const handleResize = () => {
       if (fitAddon.current && term.current) {
         fitAddon.current.fit()
-        window.api.ptyResize(term.current.cols, term.current.rows, ptySessionId)
+        window.api.ptyResize(term.current.cols, term.current.rows, effectivePtySessionId)
       }
     }
-    window.addEventListener('resize', handleResize)
 
-    // The workspace pane is drag-resizable (`--workspace-terminal-height`),
-    // which fires no window resize — without this the grid keeps the row count
-    // it was opened at, so the shell wraps and scrolls against a stale height.
-    // rAF-coalesced because a drag emits observations at pointer rate.
     let pendingFrame: number | null = null
-    const hostObserver = new ResizeObserver(() => {
+    const coalescedResize = () => {
       if (pendingFrame !== null) return
       pendingFrame = requestAnimationFrame(() => {
         pendingFrame = null
         if (!disposed) handleResize()
       })
-    })
+    }
+
+    window.addEventListener('resize', coalescedResize)
+
+    // The workspace pane is drag-resizable (`--workspace-terminal-height`),
+    // which fires no window resize — without this the grid keeps the row count
+    // it was opened at, so the shell wraps and scrolls against a stale height.
+    // rAF-coalesced because a drag emits observations at pointer rate.
+    const hostObserver = new ResizeObserver(coalescedResize)
     hostObserver.observe(host)
 
     return () => {
       disposed = true
-      window.api.stopPty(ptySessionId).catch(() => {})
+      window.api.stopPty(effectivePtySessionId).catch(() => {})
       unsubscribePtyData()
       unsubscribePtyExit()
       term.current?.dispose()
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', coalescedResize)
       hostObserver.disconnect()
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
     }
-  }, [sessionId, workspacePath, theme])
+    // `effectivePtySessionId` replaces the old `sessionId` entry: it already
+    // folds in the generated fallback, and it is the value every start/write/
+    // resize/stop call routes on. The cleanup closes over the OUTGOING id, so
+    // a chat switch stops exactly the shell it started.
+  }, [effectivePtySessionId, workspacePath, theme])
 
+  // Escape-to-close is scoped to THIS panel, not the document.
+  //
+  // A document listener meant any Escape anywhere in the app closed the
+  // terminal — dismissing a picker, a popover or a modal took the shell down
+  // with it. Listening on the panel root instead means the key only counts
+  // when it was pressed inside the panel (the close button, the header, or
+  // the terminal itself), which is what "Escape closes the focused terminal"
+  // was always supposed to mean.
+  //
+  // The pane variant additionally leaves Escape to the shell: it is a
+  // long-lived terminal where Escape belongs to whatever is running (vim,
+  // less, fzf), so closing the whole pane on it would be data loss. Panes
+  // have a visible × instead. The inspector's setup terminal keeps its
+  // modal-style Escape-to-dismiss unchanged.
   useEffect(() => {
     if (!onClose) return
+    const root = rootRef.current
+    if (!root) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (isPane && terminalRef.current?.contains(event.target as Node)) return
+      onClose()
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+    root.addEventListener('keydown', onKeyDown)
+    return () => root.removeEventListener('keydown', onKeyDown)
+  }, [onClose, isPane])
 
   const rootClass = [className ?? 'terminal-panel', isPane ? 'terminal-panel--pane' : '']
     .filter(Boolean)
     .join(' ')
 
   return (
-    <div className={rootClass}>
+    <div className={rootClass} ref={rootRef}>
       <div className="terminal-panel-header">
         {isPane ? (
           <span>Terminal · {workspaceBasename(workspacePath)}</span>

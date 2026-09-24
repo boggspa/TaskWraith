@@ -14,8 +14,14 @@
  * 4. Lazy migration from the legacy `chat-list-index.json` format —
  *    transparent on first load; old format readable forever.
  * 5. mtimeMs+size cache stamp so repeat readAll()/readEntry() skips the
- *    full JSONL parse (and the O(chats) per-summary reads) when the file
- *    is unchanged. Invalidation is stamped on every mutation path.
+ *    full JSONL parse (and the per-summary reads) when the file is
+ *    unchanged. Invalidation is stamped on every mutation path, and the
+ *    stamp records WHICH file it came from so an unmigrated legacy profile
+ *    on a read-only Host caches too instead of re-parsing on every call.
+ *    A cold parse also resolves the append-only last-line-wins winner BEFORE
+ *    touching any side file, so summary reads cost O(live chats) and not
+ *    O(lines): `shouldCompact` lets the JSONL carry up to 4x chatCount
+ *    lines, so reading per line threw ~75% of that file I/O away.
  * 6. List projection carries only the LEAN ensemble (the flagged
  *    `toChatListEnsembleProjection` output, ~3 KB); the fat blob was ~98% of
  *    each entry and is not a list-index concern. Dropping `ensemble` outright
@@ -100,8 +106,8 @@ function isLeanEnsembleProjection(ensemble: unknown): boolean {
 
 /**
  * The store-local mirror of `AppStore.toChatListEnsembleProjection`: drop the
- * four sub-blobs that make an entry fat and blank the seat briefs, keeping
- * activeRound / roles / providers so sidebar rows still render.
+ * history-only sub-blobs that make an entry fat and blank the seat briefs,
+ * keeping activeRound / roles / providers so sidebar rows still render.
  *
  * It cannot be imported from `store/index.ts` — that module owns this one, so
  * the dependency would be circular. The duplication is deliberate and narrow;
@@ -110,6 +116,7 @@ function isLeanEnsembleProjection(ensemble: unknown): boolean {
 function toLeanEnsembleProjection(ensemble: Record<string, unknown>): Record<string, unknown> {
   const {
     roundSummaries: _roundSummaries,
+    roundWallMsById: _roundWallMsById,
     blackboard: _blackboard,
     blackboardTombstones: _blackboardTombstones,
     wakeups: _wakeups,
@@ -211,6 +218,11 @@ function shouldCompact(lineCount: number, chatCount: number): boolean {
   return lineCount > chatCount * 4 && lineCount > 100
 }
 
+export interface ChatListIndexStoreOptions {
+  /** Dynamic authority for durable migrations and index mutations. */
+  canWrite?: () => boolean
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -221,16 +233,35 @@ export class ChatListIndexStore {
   private readonly legacyPath: string
   private cache: Record<string, ChatListItem> | null = null
   private cacheLineCount = 0
-  /** mtimeMs of indexPath when `cache` was last stamped from disk. */
+  /**
+   * Which file `cache` was stamped against: normally indexPath, but legacyPath
+   * while a read-only Host projects an unmigrated profile. Empty = unstamped.
+   */
+  private cacheSourcePath = ''
+  /** mtimeMs of cacheSourcePath when `cache` was last stamped from disk. */
   private cacheMtimeMs = -1
-  /** size of indexPath when `cache` was last stamped from disk. */
+  /** size of cacheSourcePath when `cache` was last stamped from disk. */
   private cacheSize = -1
   private migrated = false
+  private readonly canWrite: () => boolean
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: ChatListIndexStoreOptions = {}) {
     this.indexPath = path.join(userDataPath, 'chat-list-index.jsonl')
     this.summariesDir = path.join(userDataPath, 'chat-list-summaries')
     this.legacyPath = path.join(userDataPath, 'chat-list-index.json')
+    this.canWrite = options.canWrite ?? (() => true)
+  }
+
+  private isWritable(): boolean {
+    try {
+      return this.canWrite() === true
+    } catch {
+      return false
+    }
+  }
+
+  private assertWritable(): void {
+    if (!this.isWritable()) throw new Error('Chat list index is read-only')
   }
 
   // -----------------------------------------------------------------------
@@ -247,12 +278,10 @@ export class ChatListIndexStore {
     }
 
     let records: JsonlRecord[]
-    let lineCount: number
     let sawEnsemble = false
     try {
       const raw = fs.readFileSync(this.indexPath, 'utf-8')
       const lines = raw.split('\n')
-      lineCount = lines.length
       records = []
       for (const line of lines) {
         const trimmed = line.trim()
@@ -273,28 +302,44 @@ export class ChatListIndexStore {
         }
       }
     } catch {
+      // A read-only Host may still project a pre-JSONL profile. Migration is
+      // deliberately deferred until authority is restored, so preserve the
+      // legacy record in memory rather than creating any new artifact here.
+      if (!this.isWritable() && !fs.existsSync(this.indexPath)) {
+        return this.readLegacyIndexReadOnly()
+      }
       return {}
     }
 
-    // Last record per chatId wins (append-only semantics).
-    const index: Record<string, ChatListItem> = {}
+    // Last record per chatId wins (append-only semantics). Resolve that
+    // winner FIRST, then read side files once per SURVIVING chat. Reading
+    // them inside the record loop cost one readFileSync + JSON.parse per
+    // LINE, and every superseded line's summaries were overwritten by the
+    // next line for the same chat before any caller could observe them --
+    // `shouldCompact` lets the file hold 4x chatCount lines, so ~75% of that
+    // synchronous I/O was pure waste on the measured ~485ms cold path.
+    const latest = new Map<string, ChatListIndexLineEntry | null>()
     for (const rec of records) {
-      if (rec.entry === null) {
-        delete index[rec.chatId]
-      } else {
-        const summaries = this.readSummaries(rec.chatId)
-        index[rec.chatId] = mergeEntry(rec.entry, summaries)
-      }
+      latest.set(rec.chatId, rec.entry)
+    }
+
+    const index: Record<string, ChatListItem> = {}
+    for (const [chatId, entry] of latest) {
+      // A tombstone that won simply never materializes.
+      if (entry === null) continue
+      index[chatId] = mergeEntry(entry, this.readSummaries(chatId))
     }
 
     this.cache = index
-    this.cacheLineCount = lineCount
+    // Count real parsed records: `lines.length` also counted the trailing ''
+    // after the final newline, so this now agrees with compact()'s own count.
+    this.cacheLineCount = records.length
     this.stampCacheFromDisk()
 
     // Historical fat lines stay on disk until compacted. Force one rewrite so
     // the 98.7 MB install actually shrinks; projecting on write alone cannot
     // reach lines that were already written.
-    if (sawEnsemble) {
+    if (sawEnsemble && this.isWritable()) {
       this.compact()
     }
 
@@ -321,6 +366,7 @@ export class ChatListIndexStore {
    * per-chat summary file. Compacts periodically.
    */
   writeEntry(chatId: string, item: ChatListItem): void {
+    this.assertWritable()
     this.ensureMigrated()
     ensureDir(path.dirname(this.indexPath))
     ensureDir(this.summariesDir)
@@ -362,6 +408,7 @@ export class ChatListIndexStore {
    * (NON-NEGOTIABLE #4).
    */
   removeEntries(chatIds: string[]): void {
+    this.assertWritable()
     this.ensureMigrated()
     if (chatIds.length === 0) return
 
@@ -398,6 +445,7 @@ export class ChatListIndexStore {
   clearCache(): void {
     this.cache = null
     this.cacheLineCount = 0
+    this.cacheSourcePath = ''
     this.cacheMtimeMs = -1
     this.cacheSize = -1
   }
@@ -405,9 +453,16 @@ export class ChatListIndexStore {
   /** True when the cached index is still valid (same file mtimeMs + size). */
   isCacheValid(): boolean {
     if (this.cache === null) return false
+    if (this.cacheSourcePath === '') return false
     if (this.cacheMtimeMs < 0 || this.cacheSize < 0) return false
+    // A legacy-sourced stamp only holds while no JSONL exists: readAll always
+    // prefers the JSONL, so its arrival (migration, or another process) must
+    // drop the legacy cache rather than keep serving pre-migration rows.
+    if (this.cacheSourcePath !== this.indexPath && fs.existsSync(this.indexPath)) {
+      return false
+    }
     try {
-      const stat = fs.statSync(this.indexPath)
+      const stat = fs.statSync(this.cacheSourcePath)
       return stat.mtimeMs === this.cacheMtimeMs && stat.size === this.cacheSize
     } catch {
       return false
@@ -418,13 +473,19 @@ export class ChatListIndexStore {
   // Internal
   // -----------------------------------------------------------------------
 
-  /** Stamp cache validity from the live index file (R1 — every mutation). */
-  private stampCacheFromDisk(): void {
+  /**
+   * Stamp cache validity from the file the cache was actually built from
+   * (R1 — every mutation). Defaults to the live index; the read-only legacy
+   * projection passes legacyPath so it stops re-parsing on every call.
+   */
+  private stampCacheFromDisk(sourcePath: string = this.indexPath): void {
     try {
-      const stat = fs.statSync(this.indexPath)
+      const stat = fs.statSync(sourcePath)
+      this.cacheSourcePath = sourcePath
       this.cacheMtimeMs = stat.mtimeMs
       this.cacheSize = stat.size
     } catch {
+      this.cacheSourcePath = ''
       this.cacheMtimeMs = -1
       this.cacheSize = -1
     }
@@ -455,6 +516,7 @@ export class ChatListIndexStore {
   }
 
   private compact(): void {
+    this.assertWritable()
     let records: JsonlRecord[]
     try {
       const raw = fs.readFileSync(this.indexPath, 'utf-8')
@@ -496,7 +558,42 @@ export class ChatListIndexStore {
   // Migration
   // -----------------------------------------------------------------------
 
+  /**
+   * Project the pre-JSONL index without migrating it. This is only reached
+   * while writes are unavailable, and intentionally leaves `migrated` false
+   * so a later writable operation can perform the durable migration.
+   */
+  private readLegacyIndexReadOnly(): Record<string, ChatListItem> {
+    let legacyIndex: Record<string, ChatListItem>
+    try {
+      legacyIndex = JSON.parse(fs.readFileSync(this.legacyPath, 'utf-8')) as Record<
+        string,
+        ChatListItem
+      >
+    } catch {
+      return {}
+    }
+
+    const index: Record<string, ChatListItem> = {}
+    for (const [chatId, item] of Object.entries(legacyIndex)) {
+      if (!item || typeof item !== 'object') continue
+      const entry = stripSummaries(item)
+      index[chatId] = mergeEntry(entry, extractSummaries(item))
+    }
+
+    this.cache = index
+    this.cacheLineCount = Object.keys(index).length
+    // Stamp against the LEGACY file so a read-only Host stops re-parsing it
+    // on every readAll/readEntry. isCacheValid() drops this stamp the moment
+    // a JSONL appears, so a later migration still wins.
+    this.stampCacheFromDisk(this.legacyPath)
+    return { ...index }
+  }
+
   private ensureMigrated(): void {
+    if (!this.isWritable()) {
+      return
+    }
     if (this.migrated) return
     this.migrated = true
 

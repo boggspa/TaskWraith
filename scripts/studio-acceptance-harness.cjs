@@ -166,12 +166,12 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
   'scripts/perf/electronChildSession.cjs':
-    '9d62485e7df55c812d09c61117162fdaa8ce58a26dfad53acc07da773f312d9f',
+    'da8429efbe551df0119ff28c736000fd427b61b700eaca0eef285f15521b2977',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
   'scripts/perf/cdpWebSocketSession.cjs':
-    '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01'
+    '3bd5394220bf612bb79dfaf4438b5df8e9a0c72572be4d10abe5cb482a3afbe7'
 })
 const STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS = Object.freeze([
   'design-assets/suite-app-icons/studio/app-icon.icns',
@@ -234,6 +234,30 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_APP_OUTPUT',
   'TASKWRAITH_STUDIO_ARCH'
 ])
+/**
+ * Provenance binding, not a drift detector. Do not "sync" it to the workspace.
+ *
+ * One frozen object carries both halves of a single claim: `sourceDigest` /
+ * `sourceCount` describe a source tree, and `companionSha256` /
+ * `bridgeDaemonSha256` describe binaries. `assertStudioAcceptanceCustody`
+ * checks the source half in its `source` phase and the binary half in its
+ * `after-run` phase against this same object, so together they assert
+ * "these binaries were built from that source".
+ *
+ * `sourceCount` therefore reads far below the current tree on purpose — it is
+ * the count at the moment the pinned companion and bridge daemon were built,
+ * not a stale measurement. Re-pinning the source half alone would keep the old
+ * binary hashes while claiming a newer tree produced them, which is precisely
+ * the false provenance this receipt exists to catch. Update all four together,
+ * from one rebuild, or leave every one of them alone.
+ *
+ * The source-measurement test deliberately does not pin today's mutable
+ * checkout digest. A deterministic fixture proves included-byte sensitivity
+ * and test-source exclusion, while the real launch path compares its measured
+ * tree to this immutable tuple. The support hashes above bind the current
+ * acceptance control plane independently; moving one does not claim that an
+ * old native product was rebuilt from newer source.
+ */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
   sourceDigest: '2debc73cbb715e8b1c6d5d65458eb4fb6f4fcffcc537248bceaf8cffb73c39cb',
   sourceCount: 2284,
@@ -1147,13 +1171,34 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
   if (!String(bridgeSpeechUsage.stdout || '').trim()) {
     throw new Error('packaged Studio bridge omits its Speech Recognition usage description')
   }
-  const bridgeBundleIdentifier = await runExec(
-    '/usr/bin/plutil',
-    ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', candidates.bridgeInfoPlist],
-    { timeoutMs: 10_000 }
-  )
-  if (String(bridgeBundleIdentifier.stdout || '').trim() !== 'com.chrisizatt.taskwraith') {
-    throw new Error('packaged Studio bridge does not share TaskWraith consent identity')
+  // The bridge helper must share the packaged app's consent identity and
+  // version, whichever distribution identity (beta or debut) the app carries.
+  // Compare against the parent Info.plist rather than a literal appId.
+  const bundleIdentityKeys = ['CFBundleIdentifier', 'CFBundleShortVersionString', 'CFBundleVersion']
+  const bundleIdentity = { app: {}, bridge: {} }
+  for (const [member, plistPath] of [
+    ['app', candidates.infoPlist],
+    ['bridge', candidates.bridgeInfoPlist]
+  ]) {
+    for (const key of bundleIdentityKeys) {
+      const extracted = await runExec(
+        '/usr/bin/plutil',
+        ['-extract', key, 'raw', '-o', '-', plistPath],
+        { timeoutMs: 10_000 }
+      )
+      const value = String(extracted.stdout || '').trim()
+      if (!value) {
+        throw new Error(`packaged Studio ${member} bundle omits ${key}`)
+      }
+      bundleIdentity[member][key] = value
+    }
+  }
+  for (const key of bundleIdentityKeys) {
+    if (bundleIdentity.bridge[key] !== bundleIdentity.app[key]) {
+      throw new Error(
+        `packaged Studio bridge ${key} ${bundleIdentity.bridge[key]} does not share the app bundle ${key} ${bundleIdentity.app[key]}`
+      )
+    }
   }
   return {
     appRoot: path.relative(root, appRoot).split(path.sep).join('/'),
@@ -1167,7 +1212,10 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
     bridgeDaemonSha256: files.bridgeDaemon.sha256,
     speechUsageDescription: String(speechUsage.stdout).trim(),
     bridgeSpeechUsageDescription: String(bridgeSpeechUsage.stdout).trim(),
-    bridgeBundleIdentifier: String(bridgeBundleIdentifier.stdout).trim(),
+    bundleIdentifier: bundleIdentity.app.CFBundleIdentifier,
+    bundleShortVersion: bundleIdentity.app.CFBundleShortVersionString,
+    bundleVersion: bundleIdentity.app.CFBundleVersion,
+    bridgeBundleIdentifier: bundleIdentity.bridge.CFBundleIdentifier,
     codeSignatureVerified: true
   }
 }
@@ -6450,6 +6498,7 @@ module.exports = {
   assertGeneratedSpeechFixtureCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
   measurePackagedStudioExecution,
   assertStudioAcceptanceCustody,

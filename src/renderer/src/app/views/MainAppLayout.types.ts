@@ -2,11 +2,16 @@ import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../../../main/store/types'
 import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
+import type { SelectedChatHydrationState } from '../../lib/SelectedChatHydrationRecovery'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
-import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
-import type { ThreadMessageInboxSnapshot } from '../../hooks/useThreadMessageInbox'
+import type {
+  RightDockCanvasSurface,
+  RightDockSurfaceDef
+} from '../../components/RightDockSurfaceSwitcher'
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
+import type { ChatPopoutPresentation } from '../../../../shared/chatPopoutPresentation'
+import type { ExecutionGhostCardView } from '../../../../shared/executionGraphGhost'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -31,6 +36,9 @@ type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
   | 'appIconVariant'
   | 'promptSurfaceStyle'
   | 'fanoutLaneLayout'
+  | 'defaultTranscriptView'
+  | 'transcriptTextSize'
+  | 'transcriptWidth'
   | 'composerStyle'
   | 'transcriptFontFamily'
   | 'composerFontFamily'
@@ -95,6 +103,7 @@ type MainAppLayoutSidebarProps = {
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
   handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
   handleOpenProjectReferencesLibrary: NonNullable<SidebarProps['onOpenReferencesLibrary']>
+  handleOpenWebSiteLogins: NonNullable<SidebarProps['onOpenWebSiteLogins']>
   workProjectHeader: Omit<
     import('../../components/ProjectHomeHeader').ProjectHomeHeaderProps,
     'onOpenLibrary'
@@ -166,6 +175,7 @@ type MainAppLayoutSidebarProps = {
 export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   acknowledgedElevationDefaults: any
   activateRightDockTab: any
+  activateCanvasDockSurface: (surface: RightDockCanvasSurface) => void
   toggleRightDockPanel: any
   activeDiff: any
   activeProvider: any
@@ -197,7 +207,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   appTranscriptRef: any
   appVersion: MainAppLayoutSidebarProps['appVersion']
   appearance: MainAppLayoutAppearanceProps
-  approvalMode: any
   approvalTimeouts: any
   auraProviderKey: any
   autoFollowRef: any
@@ -214,6 +223,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   chatByIdRef: any
   chatContextNotice: any
   chatContextTurns: any
+  chatPopoutPresentation: ChatPopoutPresentation
   chatPopoutParentChat: any
   chatSplitRegionRef: any
   chatSplitStyle: any
@@ -225,11 +235,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   closeRightDockPanel: any
   closeThreadSearch: any
   codexMcpStatus: any
-  codexModels: any
   codexReasoningEffort: any
   codexSandboxFallback: any
   codexStatus: any
-  codexThreads: any
   collaboratingChatIds: MainAppLayoutSidebarProps['collaboratingChatIds']
   composerCtx: any
   composerSurfaceBase: any
@@ -239,11 +247,19 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleBackFromExecutionMap: () => void
   handleSelectExecutionMapStep: (stepId: string) => void
   handleOpenExecutionThread: (threadRef: string) => void
+  handleCancelExecutionRun: (executionId: string) => void
+  handleResumeExecutionRun: (executionId: string) => void
+  handleOpenExecutionMap: (executionId: string, stepId?: string) => void
+  executionRunEntries: ReadonlyArray<{
+    executionId: string
+    title: string
+    statusLabel: string
+    isLive: boolean
+  }>
+  handleOpenExecutionRunFromWork: (executionId: string) => void
   handleSaveExecutionGraph: (runId: string) => void
   copiedId: any
   copy: any
-  currentAgentMcpStatus: any
-  currentAgentStatus: any
   currentBlackboardEntries: any
   currentChat: MainAppLayoutSidebarProps['currentChat']
   currentChatIdRef: any
@@ -260,7 +276,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   currentProvider: any
   currentProviderCapabilities: any
   currentProviderLabel: any
-  currentProviderModelOptions: any
   currentRun: any
   currentWorkspace: MainAppLayoutSidebarProps['currentWorkspace']
   currentWorkspacePath: any
@@ -275,13 +290,14 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   dockChatPopoutWindow: any
   dockPresence: any
   dockTabDefs: RightDockSurfaceDef[]
+  /** Work > Logins dock visibility. */
+  isWebSiteLoginsPanelOpen: boolean
   effectiveInspectorWidth: any
   effectiveIsThinking: any
   ensembleEnabledParticipantsForCurrent: any
   exportProductDiagnostics: any
   exportProductAuditBundle: any
   verifyProductAuditBundle: any
-  externalPathGrants: any
   fileChangeDisplayAdds: any
   fileChangeDisplayDels: any
   fileChangeShouldShowStats: any
@@ -291,36 +307,33 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   focusedPaneSkyEnabled: any
   geminiCheckpointingEnabled: any
   geminiMcpBridgeEnabled: any
-  geminiMcpBridgeStatus: any
   geminiTerminalEndRef: any
   geminiTerminalInput: any
   geminiTerminalStatusLabel: any
-  geminiVersion: any
   getDefaultModelForProvider: any
   grokProviderAvailable: any
   handleAddChatToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddChatToWorkspaceBoard']
   handleAddLocalServerToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddLocalServerToWorkspaceBoard']
   handleAddPinnedMessageToWorkspaceBoard: any
   handleAddRunQueueJobToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddRunQueueJobToWorkspaceBoard']
+  geminiVersion: any
   handleAddTranscriptMessageToPrompt: any
   handleAddWorkflowToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddWorkflowToWorkspaceBoard']
   handleAddWorkspaceBoardCard: any
   handleAgentQuestionDismiss: MainAppLayoutSidebarProps['handleAgentQuestionDismiss']
   handleAgentQuestionSubmit: MainAppLayoutSidebarProps['handleAgentQuestionSubmit']
-  handleArchiveHandoff: any
   handleArchiveWorkspaceBoard: MainAppLayoutSidebarProps['handleArchiveWorkspaceBoard']
   handleCancelAuditRun: any
-  handleCancelRunLane: any
   handleCancelWorkflowExecution: MainAppLayoutSidebarProps['handleCancelWorkflowExecution']
   handleClearClaudeApiKey: any
   handleClearCodexUsageCredential: any
   handleClearKimiApiKey: any
   handleCopyMessage: any
-  handleCreateHandoffFromLane: any
   handleCreateWorkspaceBoard: MainAppLayoutSidebarProps['handleCreateWorkspaceBoard']
   handleDeleteAllChatHistory: any
   handleDeleteChat: MainAppLayoutSidebarProps['handleDeleteChat']
   handleDeleteMessage: any
+  handleEditAndResendFromHere?: any
   handleDeleteQueuedMessage: any
   handleDeleteWorkflow: MainAppLayoutSidebarProps['handleDeleteWorkflow']
   handleDeleteWorkspaceBoard: MainAppLayoutSidebarProps['handleDeleteWorkspaceBoard']
@@ -328,8 +341,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleDismissAuditRun: any
   handleDismissAuditRunNotice: any
   handleDismissOnboardingHint: MainAppLayoutSidebarProps['handleDismissOnboardingHint']
-  handleDispatchHandoff: any
-  handleDuplicateRunLane: any
   handleDuplicateWorkspaceBoard: MainAppLayoutSidebarProps['handleDuplicateWorkspaceBoard']
   handleEditQueuedMessage: any
   handleEditWorkflowInterval: MainAppLayoutSidebarProps['handleEditWorkflowInterval']
@@ -337,8 +348,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleEndCurrentLinkedMainChat: any
   handleEndSidePanelChat: any
   handleToggleSideChatAuthorityReturn: any
-  handleForkCodexThread: any
-  handleForkAgentThread: any
   handleGeminiTerminalSubmit: any
   handleImportCodexUsageCredential: any
   handleJumpToLatest: any
@@ -363,7 +372,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleOpenPluginWorkflowTemplate: MainAppLayoutSidebarProps['handleOpenPluginWorkflowTemplate']
   handleOpenWorkflowCompose: MainAppLayoutSidebarProps['handleOpenWorkflowCompose']
   handleOpenWorkspaceBoard: MainAppLayoutSidebarProps['handleOpenWorkspaceBoard']
-  handlePersistRunAnalysis: any
   handlePlanChoiceSubmit: any
   handlePromoteCollaboratorComment: any
   handleProposedPlanApprove: any
@@ -374,11 +382,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleRenameChat: MainAppLayoutSidebarProps['handleRenameChat']
   handleRenameWorkspaceBoard: MainAppLayoutSidebarProps['handleRenameWorkspaceBoard']
   handleReorderQueuedMessages: any
-  handleResumeCodexThread: any
-  handleRetryRunLane: any
   handleReturnToSideChatParent: any
   handleRightPanelResizeKeyDown: any
-  handleRollbackCodexThread: any
   handleRunWorkflowNow: MainAppLayoutSidebarProps['handleRunWorkflowNow']
   handleSelectChat: MainAppLayoutSidebarProps['handleSelectChat']
   handleSelectSideChatTypeOption: any
@@ -395,6 +400,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSideProviderChange: any
   handleSideReasoningChange: any
   handleSideRun: any
+  handleSideSteer: any
   handleSideToggleFastMode: any
   handleSidebarQuickUpdate: MainAppLayoutSidebarProps['handleSidebarQuickUpdate']
   handleSteerToQueuedMessage: any
@@ -414,15 +420,14 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleProviderLogin: any
   handleUpgradeProviderCli: any
   handleWorkspaceSidebarResizeKeyDown: MainAppLayoutSidebarProps['handleWorkspaceSidebarResizeKeyDown']
-  handoffCards: any
   hasCurrentHandoffDraft: any
   hasWorkspaceContext: any
   hideSideChatPane: any
   hostWeather: any
-  inspectingRunId: any
   installGeminiMcpBridge: any
   interfaceStyle: any
   isAdvancedFxActive: any
+  isOldVersion: any
   isChatExpanded: any
   isChatMediaPanelOpen: any
   isChatPopoutWindow: MainAppLayoutSidebarProps['isChatPopoutWindow']
@@ -432,7 +437,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isFxEnabled: any
   isLinkedChatPopout: any
   isMultiviewSplit: any
-  isOldVersion: any
   isPinnedMessagesPanelOpen: any
   isProjectReferencesPanelOpen: any
   isWorkRouteReferencesPinned: boolean
@@ -458,6 +462,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   ollamaBaseUrl: any
   ollamaDefaultModel: any
   openChatPopoutWindow: any
+  openCompactChatCompanion: any
   openCurrentSideChatPresentation: any
   openFileChangeInWorkbench: any
   openLinkedChatAsMain: any
@@ -489,7 +494,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   rawLogs: any
   rawLogsEndRef: any
   refractionEnabled: any
-  refreshCodexThreads: any
   refreshDiff: any
   refreshGeminiMcpBridgeStatus: any
   refreshProductOperationsStatus: any
@@ -507,9 +511,10 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   roundFileChangeSummaries: any
   runCompleteDurationText: any
   runCompleteNotice: any
+  selectedChatHydrationState: SelectedChatHydrationState | null
+  retrySelectedChatHydration: () => void
   runDiff: any
   runFxStatus: any
-  runLanes: any
   runPreviewTargetAction: any
   runQueueJobs: any
   runningChatIds: any
@@ -520,12 +525,10 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   selectedParticipant: any
   selectedSideChatSeedMessage: any
   selectedSideChatTypeOption: any
-  sessionTrust: any
   setChatMediaPanelOpenPreservingTranscript: any
   setChatPromptDraft: any
   setDiffView: any
   setGeminiTerminalInput: any
-  setInspectingRunId: any
   setIsPinnedMessagesPanelOpen: any
   setPendingElevation: any
   setPopoutMenuOpen: any
@@ -534,17 +537,14 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   setRawFilter: any
   setRawLogs: any
   setRightDockTab: any
-  setSessionTrust: any
   setSettingsActiveTab: MainAppLayoutSidebarProps['setSettingsActiveTab']
   setShowBugReportSheet: any
-  setShowCockpit: any
   setShowFileEditor: any
   setShowFirstLaunchSheet: any
   setShowGeminiTerminal: any
   setShowGhostCompanion: any
   setShowSettings: MainAppLayoutSidebarProps['setShowSettings']
   setShowSkyVisualFx: any
-  setShowTerminal: any
   setShowWorkspaceSidebar: any
   setSideChatMenuOpen: any
   setSubThreadCreatorParent: any
@@ -558,20 +558,22 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showAgentAuraFx: any
   showBugReportSheet: any
   showChangelogSheet: any
-  showCockpit: any
   showFileEditor: any
   showOfficeSuite: any
   isCanvasDockPanelOpen: any
   isAppDriveDockPanelOpen: boolean
   appDriveDockStatus: AppDriveDockStatus | null
+  handleAppDriveAttach: () => void
+  handleAppDriveOpenBrowser: () => void
+  appDriveAttachUnavailableReason: string | null
+  appDriveControlUnavailableReason: string | null
+  appDriveAttaching: boolean
   handleAppDrivePause: () => void
   handleAppDriveResume: () => void
   handleAppDriveTakeOver: () => void
   handleAppDriveStop: () => void
-  isFanoutCandidatesPanelOpen: any
-  isThreadMessagePanelOpen: boolean
-  threadMessageInbox: ThreadMessageInboxSnapshot
-  onThreadMessageSent: () => void
+  threadHomeOpen: boolean
+  openThreadHome: () => void
   officeOpenRequest: any
   onOpenOfficeDocument: any
   onRequestOfficeExternalAccess: any
@@ -584,7 +586,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showOnboardingHint: MainAppLayoutSidebarProps['showOnboardingHint']
   showRunDataVizFx: any
   showSettings: MainAppLayoutSidebarProps['showSettings']
-  showTerminal: any
   showWorkspaceSidebar: any
   sideAutoFollowRef: any
   sideCanRun: any
@@ -670,7 +671,6 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   transcriptMessages: any
   transcriptScrollRef: any
   transcriptStyle: any
-  trustResult: any
   unreadFromBottomCount: any
   updateChannel: any
   updatePinnedNotesForChat: any
@@ -683,6 +683,12 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   visibleAuditRunNotice: any
   visibleGeminiTerminalLogs: any
   visibleRunCompleteNotice: any
+  /** Threads still accountable for an unsettled durable execution. */
+  liveOwnedExecutionThreads: Set<string>
+  /** Ghost-strip views for every owned execution, keyed by owning thread.
+   * Terminal graphs are included: a settled result card still shows how its
+   * graph fanned out. */
+  ownedExecutionViewsByThreadId: Map<string, ExecutionGhostCardView[]>
   pluginWorkflowTemplates: MainAppLayoutSidebarProps['pluginWorkflowTemplates']
   welcomeDashboardCardEnabled: any
   welcomeFitLevel: any

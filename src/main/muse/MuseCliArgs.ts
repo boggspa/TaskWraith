@@ -13,6 +13,14 @@
 //   * Env helpers relocate XDG_* (+ optional HOME/MUSE_AUTH_PATH) and stamp
 //     MUSE_NO_AUTO_UPDATE=1. Home lease / skill pin are out of this module.
 
+import { randomUUID } from 'node:crypto'
+
+import {
+  MUSE_META_REASONING_EFFORTS,
+  museModelSupportsMaxReasoning,
+  type MuseMetaReasoningEffort
+} from '../../shared/museReasoning'
+
 /** Launcher on PATH; resolves/execs muse-bin-* beside itself. */
 export const MUSE_BINARY_NAME = 'muse'
 
@@ -23,8 +31,16 @@ export const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
 
 export const MUSE_TOOL_SURFACE_VERSION_PIN = '2'
 
-/** Refresh when qualifying a new binary (build.sha from session metadata). */
-export const MUSE_BUILD_SHA_PIN = '427a430436'
+/**
+ * The build this seat was last qualified against — `runtime.session.metadata`
+ * `record.build.sha` in Muse's own session log, here 1.1.1-R2514.1. Refresh
+ * when qualifying a new binary.
+ *
+ * Documentation, not a gate: nothing reads it. The adapter's build.sha check
+ * keys on the per-request `buildShaExpected`, which no production caller sets,
+ * and even a mismatch there only appends a warning.
+ */
+export const MUSE_BUILD_SHA_PIN = 'b934305d21'
 
 /**
  * Env var that overrides Meta account login. Prefer `--api-key-stdin` or a
@@ -34,22 +50,13 @@ export const MUSE_BUILD_SHA_PIN = '427a430436'
 export const MUSE_META_API_KEY_ENV = 'META_API_KEY'
 
 /** Intentionally no `none` — meta/Spark rejects it. */
-export const MUSE_REASONING_EFFORTS = [
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra'
-] as const
+export const MUSE_REASONING_EFFORTS = MUSE_META_REASONING_EFFORTS
 
-export type MuseReasoningEffort = (typeof MUSE_REASONING_EFFORTS)[number]
+export type MuseReasoningEffort = MuseMetaReasoningEffort
 
 export type MuseSandboxNetworkMode = 'restricted' | 'enabled' | 'proxy-only'
 
 export const MUSE_DEFAULT_SANDBOX_NETWORK: MuseSandboxNetworkMode = 'proxy-only'
-
-import { randomUUID } from 'node:crypto'
 
 /** Muse `--session-id` must be a UUID; TaskWraith appRunIds are not. */
 const MUSE_SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -70,6 +77,25 @@ export function resolveMuseExecSessionId(
 }
 
 export const MUSE_DEFAULT_REASONING_EFFORT: MuseReasoningEffort = 'high'
+
+/**
+ * Muse has no argv MCP configuration surface. The registered desktop path
+ * injects its route-bound TaskWraith MCP server through the one-run isolated
+ * settings document instead. UltraTask still uses Muse's native child-agent
+ * control plane; the ephemeral definition is a deliberately read-only
+ * reviewer. Agent Definitions can only narrow the parent's Work-tool grant,
+ * and this allowlist contains no file mutation or shell capability.
+ */
+export const MUSE_ULTRATASK_REVIEWER_AGENT_ID = 'ultratask-reviewer'
+export const MUSE_ULTRATASK_REVIEWER_TOOLS = Object.freeze(['read_file', 'search'] as const)
+export const MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY = JSON.stringify({
+  [MUSE_ULTRATASK_REVIEWER_AGENT_ID]: {
+    description: 'Independent read-only reviewer for an UltraTask run.',
+    prompt:
+      'Review the delegated work independently. Inspect with read_file and search only; do not modify files, run shell commands, or broaden the assignment. Return concise findings with file and line evidence.',
+    tools: MUSE_ULTRATASK_REVIEWER_TOOLS
+  }
+})
 
 export interface MuseSeatHomes {
   xdgConfigHome: string
@@ -103,6 +129,12 @@ export interface BuildMuseExecArgvInput {
   apiKeyStdin?: boolean
   /** If set, emit `--prompt-file` and omit the positional prompt. */
   promptFile?: string
+  /**
+   * Main-derived only from the signed UltraTask delegation-consent posture.
+   * Adds Muse's native, read-only reviewer definition; ordinary Muse argv is
+   * byte-for-byte unchanged.
+   */
+  ultraTaskDelegationAutoAllow?: boolean
   // NEVER: yolo, disableSandbox, noSessionLog when metering required
 }
 
@@ -118,6 +150,80 @@ export const MUSE_NATIVE_TOOL_POLICY = {
   headlessFlags: ['--disable-approval', '--user-input-auto-resolve'],
   meteringRequiresSessionLog: true
 } as const
+
+/**
+ * Native tool policy for the MSP host (`muse serve`).
+ *
+ * Separate from MUSE_NATIVE_TOOL_POLICY rather than a variant of it, because
+ * the containment SHAPE differs.
+ *
+ * NOTE on the seal: `ProviderLaunchAuthorityDigest` reserves a
+ * `nativeToolPolicySha256` slot and `MuseOrchestrationContracts` carries the
+ * field, but nothing hashes either Muse policy document today — there is no
+ * SealEvidenceMuse. So keeping the documents separate is hygiene that PREPARES
+ * for the digest; it does not yet make a containment change visible in one.
+ * Wire the hash before relying on that property.
+ *
+ * The differences:
+ *
+ * - `--workspace` is not a serve flag. Under exec it rooted the run; under MSP
+ *   the workspace is a `session/start` parameter, and it was measured NOT to
+ *   confine reads (a serve session read /etc/hosts outside its workspaceRoot).
+ *   The sandbox flags below are therefore the whole boundary, not a backstop.
+ * - The headless pair (`--disable-approval`, `--user-input-auto-resolve`) is
+ *   absent BY DESIGN: MSP carries approvals on the wire, so this lane answers
+ *   them through TaskWraith rather than suppressing them. Removing that pair is
+ *   a containment change, which is why it gets its own hashed document.
+ * - `--api-key-stdin` is not a serve flag either; the credential reaches the
+ *   host through the projected auth.json in the per-run isolated home.
+ * - `--no-foreign-personal-context` and `--disable-web-tools`, which the exec
+ *   builder always emits, are NOT serve flags at all (verified against
+ *   `muse serve --help` on 1.0.3-R2198.1, still true on 1.1.1-R2514.1, whose
+ *   serve surface is only the sandbox posture plus `--no-session-log`). They
+ *   are therefore absent here because they cannot be expressed, not because
+ *   this lane relaxed them — but the effect is the same, so an MSP seat must
+ *   suppress foreign personal context and web tools by another lever (the
+ *   binary exposes `MUSE_ENABLE_WEB_TOOLS` and an experimental foreign-context
+ *   kill) or accept that it is more permissive than exec on both. UNRESOLVED;
+ *   do not describe the two lanes as equivalent until it is settled.
+ *
+ * Sandbox posture is fixed for the HOST's lifetime — see
+ * `museMspHostPostureIsPerHost` in museGate.ts.
+ */
+export const MUSE_NATIVE_SERVE_TOOL_POLICY = {
+  kind: 'muse-cli-serve',
+  containment: 'host-sandbox-plus-disable-write-shell-plus-wire-approvals',
+  forbiddenFlags: ['--yolo', '--disable-sandbox', '--no-session-log'],
+  readOnlyFlags: ['--disable-write', '--disable-shell'],
+  /** Empty on purpose: approvals ride `approval/requested` / `approval/decide`. */
+  headlessFlags: [],
+  meteringRequiresSessionLog: true
+} as const
+
+export interface MuseServeArgvInput {
+  /** TaskWraith approval mode; a read-only seat adds the read-only flags. */
+  approvalMode?: string | null
+  sandboxNetwork?: MuseSandboxNetworkMode
+  /** Default false — omit `--trust-workspace`. */
+  trustWorkspace?: boolean
+}
+
+/**
+ * Production `muse serve` argv.
+ *
+ * Deliberately short: model, reasoning effort, session id, workspace and the
+ * prompt are all protocol-level under MSP, so an argv that carried them would
+ * be silently ignored rather than rejected. Everything this builder emits is
+ * host-lifetime posture.
+ */
+export function buildMuseServeArgv(input: MuseServeArgvInput = {}): string[] {
+  const args = ['serve', '--sandbox-network', resolveSandboxNetwork(input.sandboxNetwork)]
+  if (!museWriteCapable(input.approvalMode)) {
+    args.push('--disable-write', '--disable-shell')
+  }
+  if (input.trustWorkspace === true) args.push('--trust-workspace')
+  return args
+}
 
 /**
  * Read-only vs write tier from TaskWraith's approval mode.
@@ -139,11 +245,19 @@ export function museWriteCapable(approvalMode: string | null | undefined): boole
  * unsupported effort aborts the turn).
  */
 export function normalizeMuseReasoningEffort(
-  effort: string | null | undefined
+  effort: string | null | undefined,
+  model?: string | null
 ): MuseReasoningEffort {
   const raw = typeof effort === 'string' ? effort.trim().toLowerCase() : ''
   if (!raw) return MUSE_DEFAULT_REASONING_EFFORT
   if (raw === 'none' || raw === 'off') return 'minimal'
+  // TaskWraith's top-of-ladder tier clamps to Muse's highest effort rather
+  // than falling to the default (a silent downgrade).
+  if (raw === 'ultratask' || raw === 'ultracode') return 'ultra'
+  // Max is currently provider-published only for regular Spark 1.3. Preserve
+  // the old top-tier clamp for stale/manual Max selections on every other
+  // model instead of sending a model-invalid wire value.
+  if (raw === 'max' && !museModelSupportsMaxReasoning(model)) return 'ultra'
   if ((MUSE_REASONING_EFFORTS as readonly string[]).includes(raw)) {
     return raw as MuseReasoningEffort
   }
@@ -195,13 +309,17 @@ export function buildMuseExecArgv(input: BuildMuseExecArgvInput): string[] {
     '--session-id',
     sessionId,
     '--reasoning-effort',
-    normalizeMuseReasoningEffort(input.reasoningEffort),
+    normalizeMuseReasoningEffort(input.reasoningEffort, input.model),
     '--sandbox-network',
     resolveSandboxNetwork(input.sandboxNetwork)
   ]
 
   if (input.disableWebTools !== false) {
     args.push('--disable-web-tools')
+  }
+
+  if (input.ultraTaskDelegationAutoAllow === true) {
+    args.push('--agents', MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY)
   }
 
   if (input.readOnlySeat) {

@@ -17,7 +17,8 @@ const ALL_PROVIDER_IDENTITIES = [
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ] as const satisfies readonly ProviderId[]
 
 /**
@@ -55,6 +56,7 @@ describe('window-all-closed headless continuity', () => {
     const handler = windowAllClosedHandler()
     expect(handler).toContain('getActiveTaskWraithThreadCount() > 0')
     expect(handler).toContain('hasActiveStreamingTaskWraithRun()')
+    expect(handler).toContain('hasEnsembleHostAdmissionWork()')
     expect(handler).toContain('keepActiveRunsAlive')
     expect(handler).toContain('keepBridgeAlive || keepActiveRunsAlive')
     // Early return must precede the destructive teardown symbols.
@@ -86,7 +88,7 @@ describe('window-all-closed headless continuity', () => {
     expect(handler.slice(quitIdx)).toContain('app.quit()')
   })
 
-  it('keeps the RunManager lifecycle inventory exact across all eleven provider identities', () => {
+  it('keeps the RunManager lifecycle inventory exact across all twelve provider identities', () => {
     // This is a lifecycle/cleanup invariant only. It does not make retired
     // Gemini selectable or bypass AntiGravity's consent and credential wall.
     expect(RUN_MANAGER_PROVIDERS).toEqual(ALL_PROVIDER_IDENTITIES)
@@ -132,17 +134,24 @@ describe('window-all-closed headless continuity', () => {
     )
     expect(streamingCheck).toContain('RUN_MANAGER_PROVIDERS.flatMap')
     expect(streamingCheck).toContain('hasStreamingRemoteRunSessions')
+    expect(indexSource).toContain('hasEnsembleHostAdmissionWork()')
+    expect(indexSource).toContain('occupancy.active > 0 || occupancy.queued > 0')
   })
 
   it('does not cancel provider runs or approvals when the renderer closes or crashes', () => {
+    const chatUpdateTargetCleanup = sourceBetween(
+      'function clearChatUpdateTarget(targetId: number): void {',
+      'function clearDeletedChatUpdateState(chatId: string): void {'
+    )
     const browserWindowLifecycle = sourceBetween(
       "app.on('browser-window-created', (_, window) => {",
       '    // Phase E3: Bridge Networking'
     )
 
+    expect(chatUpdateTargetCleanup).toContain('chatUpdateInterestRouter.clearTarget(targetId)')
     expect(browserWindowLifecycle).toContain("window.once('closed'")
     expect(browserWindowLifecycle).toContain("window.webContents.on('render-process-gone'")
-    expect(browserWindowLifecycle).toContain('chatUpdateDeliveryCoordinator.clearTarget')
+    expect(browserWindowLifecycle).toContain('clearChatUpdateTarget')
     expect(browserWindowLifecycle).toContain('rendererResponsivenessTracker.clear')
     expect(browserWindowLifecycle).toContain('rendererCrashRecovery.show')
     expect(browserWindowLifecycle).toContain('activeRunCount: getActiveTaskWraithThreadCount()')
@@ -154,7 +163,7 @@ describe('window-all-closed headless continuity', () => {
       renderGoneHandler
     )
     const deliveryClearAfterDiagnostic = browserWindowLifecycle.indexOf(
-      'chatUpdateDeliveryCoordinator.clearTarget',
+      'clearChatUpdateTarget',
       terminalDiagnostic
     )
     expect(renderGoneHandler).toBeGreaterThan(0)
@@ -171,6 +180,41 @@ describe('window-all-closed headless continuity', () => {
     expect(handler).not.toContain('runManager.cancel(')
     expect(handler).not.toContain('approvalService?.cancelForRun')
     expect(handler).not.toContain('approvalService?.cancelAll')
+  })
+
+  it('contains only the lost renderer canvas cohort before recovery can paint', () => {
+    const browserWindowLifecycle = sourceBetween(
+      "app.on('browser-window-created', (_, window) => {",
+      '    // Phase E3: Bridge Networking'
+    )
+    const renderGoneHandler = browserWindowLifecycle.indexOf(
+      "window.webContents.on('render-process-gone'"
+    )
+    const closeRenderer = browserWindowLifecycle.indexOf(
+      'canvasEmbedIpcAuthority.closeRenderer(webContentsId)',
+      renderGoneHandler
+    )
+    const terminalDiagnostic = browserWindowLifecycle.indexOf(
+      'rendererDiagnosticRecorder.recordWindowLifecycleSample',
+      renderGoneHandler
+    )
+    const cleanExitReturn = browserWindowLifecycle.indexOf(
+      "if (details.reason === 'clean-exit')",
+      renderGoneHandler
+    )
+    const recoveryShow = browserWindowLifecycle.indexOf(
+      'rendererCrashRecovery.show',
+      renderGoneHandler
+    )
+
+    expect(renderGoneHandler).toBeGreaterThan(0)
+    expect(closeRenderer).toBeGreaterThan(renderGoneHandler)
+    expect(closeRenderer).toBeLessThan(terminalDiagnostic)
+    expect(closeRenderer).toBeLessThan(cleanExitReturn)
+    expect(closeRenderer).toBeLessThan(recoveryShow)
+    expect(browserWindowLifecycle).not.toContain('canvasEmbedIpcAuthority.clear()')
+    expect(browserWindowLifecycle).not.toContain('canvasEmbedController.detachAll()')
+    expect(browserWindowLifecycle).not.toContain('canvasService.closeAll()')
   })
 
   it('keeps renderer delivery best-effort and makes durable headless sends no-op', () => {

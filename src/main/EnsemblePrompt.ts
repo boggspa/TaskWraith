@@ -1,18 +1,30 @@
+import { planPromptContinuity } from './continuity/ContinuityPrompt'
 import type {
   ActiveGoal,
   ChatMessage,
   ChatRecord,
   EnsembleConfig,
   EnsembleParticipant,
+  PermissionPresetId,
   ProviderId,
   SessionActivityLedgerEntry,
   ToolActivity
 } from './store/types'
 import { resolveEnsembleFanoutIsolationPolicy } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import {
+  ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE,
+  ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE
+} from '../shared/ensembleFanoutWriteScopes'
+import {
+  formatLaneIntentBoundary,
+  type EffectiveLanePosture
+} from './ensemble/EnsembleLanePosture'
 import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import { isEnsembleParticipantAuthoredMessage } from '../shared/ensembleParticipantMessage'
 import type { EnsemblePromptTranscriptAttribution } from '../shared/ensemblePromptCostAttribution'
+import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
+import { resolveEnsembleListedTools } from './EnsembleListedTools'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -25,11 +37,14 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
 }
 
 const MAX_MESSAGE_CHARS = 4000
 const MAX_TRANSCRIPT_CHARS = 24000
+export const ENSEMBLE_WRITER_GIT_GUIDANCE =
+  'Writer lanes may use listed git_stage and git_commit tools within their approved write scopes. Use explicit paths; prefer git_commit(mode="private_index") with an isolated patch when sharing files or the index, or mode="pathspec" for whole owned files. Audit the slice before committing. Normal approvals and Git metadata locks still apply.'
 import { formatScoutBriefsForPrompt, type ScoutBriefRecord } from './ScoutBrief'
 import { buildUserInstructionBlock } from './PromptComposition'
 import type { ResolvedInstructionContext } from '../shared/instructions/InstructionTypes'
@@ -43,6 +58,11 @@ import {
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './ollama/OllamaEnsembleContext'
+import {
+  ENSEMBLE_SEAT_INGEST_MAX_CHARS,
+  ENSEMBLE_SEAT_INGEST_MIN_CHARS,
+  resolveEnsembleSeatIngestChars
+} from '../shared/ensembleSeatIngest'
 
 export { OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS, OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS }
 // 1.0.5-EW18 — Pull canonical alias set from the shared resolver so
@@ -68,10 +88,12 @@ import {
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
+import { externalAgentAttribution } from '../shared/messageOrigin'
 import {
   isExternalUntrustedMessage,
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
+import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
 import {
   looksExternallyWrapped,
   wrapExternalContribution
@@ -79,11 +101,12 @@ import {
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
+import { resolveActiveGoalForEnsemble, shouldInjectActiveGoal } from './GoalState'
+import { buildAgentWorkContract } from './AgentWorkContract'
 import {
-  formatActiveGoalPromptBlock,
-  resolveActiveGoalForEnsemble,
-  shouldInjectActiveGoal
-} from './GoalState'
+  ensembleGoalAuthorityForParticipant,
+  latestGoalAssignmentForParticipant
+} from './EnsembleGoalCompletionPolicy'
 import { gateBlocksActiveGoal } from './ReviewGateScope'
 import {
   conversationCompactionEligibleMessageIds,
@@ -120,6 +143,8 @@ import { buildSkillDiscoveryBlock, type SkillDiscoveryEntry } from './skills/Ski
 export { MAX_ENSEMBLE_PARTICIPANTS }
 
 export interface BuildEnsemblePromptInput {
+  /** This projection seeds a fresh provider context after native resume fails. */
+  continuityColdStart?: boolean
   chat: ChatRecord
   config: EnsembleConfig
   participant: EnsembleParticipant
@@ -129,6 +154,15 @@ export interface BuildEnsemblePromptInput {
   currentPromptMessageId?: string
   roundId: string
   chatContextTurns?: number
+  /**
+   * `AppSettings.ensembleModelIngestChars` — per-model shared-history ingest
+   * overrides (keys `provider:modelId`), honored only for the override-eligible
+   * model classes (Codex GPT-5.3 Spark, 4B–12B Ollama locals). Every other
+   * seat derives its ingest budget from its model's context window; the
+   * retired per-chat `ensembleContextChars` field is ignored. See
+   * `shared/ensembleSeatIngest.ts`.
+   */
+  modelIngestCharOverrides?: Readonly<Record<string, number>> | null
   /**
    * 1.0.4-AK6 — structured briefs recorded by participants during
    * a just-completed parallel fan-out pass. When present, the
@@ -142,7 +176,7 @@ export interface BuildEnsemblePromptInput {
    */
   scoutBriefs?: ScoutBriefRecord[]
   /**
-   * Spike 5 (docs/ensemble-posture-fanout-preamble-design.md) — emit the
+   * Spike 5 (the staged fan-out design) — emit the
    * slim resumed-turn prompt instead of the full ~5.5k-char shell. Callers
    * must only set this when (a) the participant's provider session will
    * genuinely resume, and (b) the participant's persisted
@@ -158,6 +192,16 @@ export interface BuildEnsemblePromptInput {
   dynamicStateSnapshot?: EnsembleDynamicStateSnapshot
   /** Effective host approval mode, used to name Grok's per-run MCP server exactly. */
   effectiveApprovalMode?: string | null
+  /**
+   * The posture this dispatch ACTUALLY runs under, after any runtime clamp.
+   *
+   * Optional on purpose: 100+ existing test constructions and every non-lane
+   * caller omit it, and a serial seat with no lane must fall through to the
+   * seat-configured behaviour. When present it is authoritative over the seat's
+   * roster `permissionPresetId` and over `config.activeRound.lanes[…].intent`,
+   * both of which go stale when a writer lane is narrowed to read at dispatch.
+   */
+  effectiveLanePosture?: EffectiveLanePosture
   /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
   /**
@@ -178,6 +222,14 @@ export interface BuildEnsemblePromptInput {
    * "Brief updated" flow) instead of duplicating the block every turn.
    */
   instructionContext?: ResolvedInstructionContext | null
+  /**
+   * Live listed TaskWraith tools for this seat when the caller already knows
+   * them. UltraTask priority names are filtered to this set. When omitted, a
+   * pinned MCP profile receipt is enough to derive the same filter so
+   * production Ensemble prompt builds stay honest without growing the
+   * orchestrator.
+   */
+  listedTools?: readonly string[]
   /**
    * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
    * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
@@ -291,7 +343,10 @@ export function computeEnsemblePromptShellStamp(
     authority.captainParticipantIds.join(','),
     config.synthesizerParticipantId || '',
     config.roundMode || 'roundtable',
-    config.orchestrationMode || 'turn_bound',
+    // Continuous-only: the mode is no longer configurable, so the digest input
+    // is a constant. Keeping the slot preserves stamp ordering; legacy
+    // 'turn_bound' chats re-brief once when they first run continuous.
+    'continuous',
     // Review F2: /discuss rounds flip the deictic rule; fan-out policy and
     // concurrent mode change the parallel-policy lines.
     config.selfReflective ? 'self-reflective' : '',
@@ -439,12 +494,20 @@ function formatRoleBoundaryContract(
   orderedParticipants: EnsembleParticipant[],
   positionOneIndexed: number,
   totalParticipants: number,
-  bossDrivenWriteAllocation: boolean
+  bossDrivenWriteAllocation: boolean,
+  /**
+   * This dispatch's LANE task intent is read (see `EffectiveLanePosture`), so
+   * neither the seat's roster worker stage nor a Boss/Captain write allocation
+   * can be executed this turn. True for both reader cases — runtime-clamped and
+   * configured-tier-preserved.
+   */
+  laneReadClamped: boolean
 ): string[] {
   if (orderedParticipants.length < 2) return []
   const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
   const roleText = `${selfRole} / ${providerLabel(participant.provider)}`
   const isCaptain = isConfiguredCaptain(config, participant.id)
+  const isBoss = normalizeEnsembleAuthority(config).bossmanParticipantId === participant.id
   const lines = [
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
@@ -462,7 +525,14 @@ function formatRoleBoundaryContract(
     )
   }
 
-  if (bossDrivenWriteAllocation) {
+  // The live posture outranks the allocation, and only in the safe direction.
+  // `bossDrivenWriteAllocation` is derived from the persisted lane record, and a
+  // writer lane narrowed to read at dispatch is never written back to it — so
+  // the record keeps claiming write for a run that cannot write, and this branch
+  // would otherwise reach the write line before the read/recon branches below
+  // ever run. The clamp supersedes the allocation for this lane only; it does
+  // not revoke the allocation itself.
+  if (bossDrivenWriteAllocation && !laneReadClamped) {
     lines.push(
       "- Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes. This explicit allocation supersedes an advisory/review stage for this lane only; it does not change the seat's standing roster role."
     )
@@ -470,11 +540,15 @@ function formatRoleBoundaryContract(
     lines.push(
       isCaptain
         ? '- Review/Recon/Scout stage rule: fulfill the scheduled investigation or review, then report findings, evidence, risks, and acceptance criteria. Captain authority is additive: retain your listed Captain powers and this stage instead of becoming an advisory-only coordinator or abandoning the stage work.'
-        : '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
+        : isBoss
+          ? '- Review/Recon/Scout Boss rule: fulfill the scheduled investigation or review while retaining root orchestration authority. Complete the root Goal only after every required assignment and gate is finished and independently verified.'
+          : '- Review/Recon/Scout rule: produce findings, evidence, risks, and acceptance criteria. Do not implement or independently complete the active goal unless the user or Lead/Boss explicitly assigns that work, or the host marks fallback takeover available.'
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
-      '- Worker rule: execute the assigned implementation slice. Do not redesign the plan or take over review/recon unless the current plan is unsafe or blocked.'
+      laneReadClamped
+        ? '- Read-clamped lane: report findings, evidence, and risks for the assigned slice instead of implementing it. This lane intent supersedes your worker stage for this lane only; it does not change the seat\'s standing roster role. Do not attempt workspace mutations — they cannot succeed from this lane.'
+        : '- Worker rule: execute the assigned implementation slice. Do not redesign the plan or take over review/recon unless the current plan is unsafe or blocked.'
     )
   }
 
@@ -547,10 +621,10 @@ function formatBossPostRound1HandoffRule(
     return []
   }
   return [
-    '- POST-ROUND-1 BOSS HANDOFF (applies after the first full pass / continuationHops >=1, or any time pass >0): you MUST end this turn with an explicit handoff. Do not emit a small follow-up that loops back to yourself.',
-    '  - If work remains owned by another seat: call a listed `ensemble_yield(target)` with a specific participant/role/model target (preferred for 1:1), OR call listed `ensemble_fanout` / `ensemble_fanout_all` for explicit parallel assignments.',
+    '- BOSS HANDOFF: when another seat should speak next, request an explicit handoff. Routing priority is a valid direct yield, then a unique routable @Role/@Model mention, then the next eligible seat in serial order.',
+    '  - If work remains owned by another seat: call a listed `ensemble_yield(target)` with a specific participant/role/model target (preferred for 1:1), OR call listed `ensemble_fanout` for explicit parallel assignments, or `ensemble_fanout_all` for the whole eligible roster (it is not listed directly: find it with `capability_search` and call it through `capability_invoke`).',
     '  - Use `ensemble_fanout` for recon/review sweeps and for implementation slices that can run in parallel; use `ensemble_yield(target)` for a single-owner slice. Broad `all` is allowed for fan-out — see Parallel policy — but for yield the target must be specific, never `all`.',
-    '  - Narrating `@Worker should do X` without a tool call or a unique routable `@Role/@Model` mention is NOT a handoff and will re-summon you. If the needed tool is not listed, write one unambiguous @Role/@Model mention instead.',
+    '  - If the needed tool is not listed, write one unambiguous @Role/@Model mention. When no valid handoff is requested, TaskWraith advances the serial queue; a quiet response does not re-summon you.',
     '- Commit discipline (WIP marker + slices): claim the workspace write lock before any file edits — TaskWraith creates `.WORK-IN-PROGRESS-taskwraith-runtime-<instance>-<sha256>.md` (see WorkspaceLockMarkerProjection.ts:127 / RuntimeMarkerPattern.ts:8). Do not start writes without that marker. Commit in small path-scoped slices (one logical slice per commit) and keep the marker until the slice lands; the unlock/commit flow removes it. Report lock conflicts rather than retrying around the lock.'
   ]
 }
@@ -636,6 +710,36 @@ function isConfiguredCaptain(config: EnsembleConfig, participantId: string): boo
   }).captainParticipantIds.includes(participantId)
 }
 
+/**
+ * Does THIS seat hold a live write-intent lane right now?
+ *
+ * The former `hasWriteIntentLane` asked a wave-wide question with no status
+ * filter, so a single writer anywhere in the round handed every reader the
+ * writer git guidance — and because lanes are never removed from the round, one
+ * COMPLETED writer in pass 1 kept poisoning every later reader for the rest of
+ * the round. Modelled on `hasBossDrivenWriteAllocation` below: same self-lane
+ * and active-status filters.
+ *
+ * The live posture wins when the caller supplied one: a writer lane narrowed to
+ * read at dispatch is never written back to the lane record, so the record is
+ * stale in exactly the dangerous direction.
+ */
+function hasSelfWriteIntentLane(
+  config: EnsembleConfig,
+  participantId: string,
+  posture?: EffectiveLanePosture
+): boolean {
+  if (posture?.laneIntent) return posture.laneIntent === 'write'
+  return Object.values(config.activeRound?.lanes || {}).some(
+    (lane) =>
+      lane.participantId === participantId &&
+      lane.intent === 'write' &&
+      (lane.status === 'pending' ||
+        lane.status === 'running' ||
+        lane.status === 'awaiting-approval')
+  )
+}
+
 function hasBossDrivenWriteAllocation(config: EnsembleConfig, participantId: string): boolean {
   return Object.values(config.activeRound?.lanes || {}).some(
     (lane) =>
@@ -695,7 +799,9 @@ function formatAdvisoryTurnBoundary(
   config: EnsembleConfig,
   participant: EnsembleParticipant,
   orderedParticipants: EnsembleParticipant[],
-  bossDrivenWriteAllocation: boolean
+  bossDrivenWriteAllocation: boolean,
+  /** See `formatRoleBoundaryContract`: this dispatch's LANE intent is read. */
+  laneReadClamped: boolean
 ): string | null {
   // Captain is authority added to a seat, not an advisory replacement for its
   // role. Scout/reviewer wording still comes from the role/stage contract,
@@ -704,7 +810,9 @@ function formatAdvisoryTurnBoundary(
   // A scoped writer lane is already a machine-verifiable Boss/Captain
   // assignment. Re-injecting an advisory boundary here contradicts that
   // allocation and causes capable seats to self-refuse despite write posture.
-  if (bossDrivenWriteAllocation) return null
+  // The read clamp reverses that: a lane that cannot write IS advisory this
+  // turn, so suppressing the boundary on the stale allocation is the desync.
+  if (bossDrivenWriteAllocation && !laneReadClamped) return null
   const kind = advisorySeatKind(participant)
   if (!kind) return null
 
@@ -748,8 +856,9 @@ function formatBossmanControlStanza(
   }
   const lines: string[] = []
   if (state.roundPlan) {
+    const planSummary = state.roundPlan.planSummary || state.roundPlan.goal
     lines.push(
-      `Plan: ${sanitizeText(state.roundPlan.goal)}`,
+      `Execution plan: ${sanitizeText(planSummary)}`,
       ...(state.roundPlan.phase ? [`Phase: ${sanitizeText(state.roundPlan.phase)}`] : []),
       ...(state.roundPlan.ownerParticipantIds?.length
         ? [`Owners: ${state.roundPlan.ownerParticipantIds.map(participantName).join(', ')}`]
@@ -885,6 +994,20 @@ function formatBossmanControlStanza(
   return ['Boss/Captain control state:', ...lines].join('\n')
 }
 
+function formatEnsembleGoalState(goal: ActiveGoal): string {
+  return [
+    '<taskwraith_active_goal_state>',
+    `Goal id: ${goal.id}`,
+    `Status: ${goal.status}`,
+    ...(goal.specification?.sourceMessageId
+      ? [`Exact untruncated source: user message ${goal.specification.sourceMessageId}`]
+      : []),
+    'Expected outcome:',
+    goal.objective,
+    '</taskwraith_active_goal_state>'
+  ].join('\n')
+}
+
 /**
  * The prompt roster may be mention-reordered for a particular round. Dynamic
  * state must never inherit that incidental ordering: the same persisted state
@@ -956,7 +1079,7 @@ export function buildEnsembleDynamicStateSnapshot(
   // watch it succeed without touching the thread goal, and conclude goal
   // creation is user-only — the 2026-08-18 ChipTown stall.
   const activeGoalSlot = shouldInjectActiveGoal(activeGoal)
-    ? ['Active goal:', formatActiveGoalPromptBlock(activeGoal)].join('\n')
+    ? ['Active root Goal:', formatEnsembleGoalState(activeGoal)].join('\n')
     : 'Active goal: <none — a Boss/Captain seat may create one via ensemble_control action "set_goal"; set_round_plan does not create it>'
   const bossmanSlot =
     formatBossmanControlStanza(config, stableParticipants, chat.activeGoal) ||
@@ -993,9 +1116,16 @@ export function buildEnsembleDynamicStateSnapshot(
  */
 function permissionSurfaceRule(
   participant: EnsembleParticipant,
-  effectiveApprovalMode?: string | null
+  effectiveApprovalMode?: string | null,
+  /**
+   * The preset this dispatch actually resolved to. A fan-out lane clamped at
+   * dispatch keeps its roster `permissionPresetId`, so without this the rule
+   * tells a read-clamped lane "your permission role is workspace_write" while
+   * the denial wording beside it is already (correctly) plan-shaped.
+   */
+  lanePresetId?: PermissionPresetId
 ): string {
-  const presetId = participant.permissionPresetId
+  const presetId = lanePresetId ?? participant.permissionPresetId
   const denialPosture =
     presetId === 'read_only' || presetId === 'plan' || effectiveApprovalMode === 'plan'
   if (denialPosture) {
@@ -1015,6 +1145,42 @@ function permissionSurfaceRule(
     }; individual calls may still pause for user approval depending on this run's approval mode. Respect a denial — do not retry it through an alternate tool.`
   }
   return '- Your permission role: use the read/search tools actually listed by your runtime; listed file and shell mutations may prompt for user approval. Respect a denial — do not retry it through an alternate tool.'
+}
+
+const ULTRATASK_PRIORITY_TOOLS = [
+  { name: 'ensemble_fanout', label: 'ensemble_fanout (Ensemble only)' },
+  { name: 'delegate_wave', label: 'delegate_wave (all chats)' },
+  { name: 'delegate_to_subthread', label: 'delegate_to_subthread (fallback)' }
+] as const
+
+function ultraTaskPriorityLines(listedTools?: readonly string[]): string[] {
+  const available = listedTools
+    ? ULTRATASK_PRIORITY_TOOLS.filter((row) => listedTools.includes(row.name))
+    : [...ULTRATASK_PRIORITY_TOOLS]
+  const order = available.map((row) => row.label).join(' > ')
+  const lines = [
+    '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.'
+  ]
+  if (available.length > 0) {
+    lines.push(
+      listedTools
+        ? `- Priority order among this seat's listed tools: ${order}.`
+        : `- Priority order among listed tools: ${order}. Skip any name that is not listed for this seat.`
+    )
+  } else {
+    lines.push(
+      '- No listed TaskWraith delegation tools are attached to this seat; use unique @Role/@Model mentions and normal rotation rather than inventing a fan-out tool.'
+    )
+  }
+  lines.push(
+    '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.'
+  )
+  if (available.length > 0) {
+    lines.push(
+      '- After ANY listed delegation call, immediately invoke ensemble_await with the returned IDs when that await tool is listed, to block and retain turn ownership.'
+    )
+  }
+  return lines
 }
 
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
@@ -1073,24 +1239,22 @@ export function buildEnsembleParticipantPromptProjection(
     const source = checkpoint.sourceParticipantLabel
       ? ` A peer (${checkpoint.sourceParticipantLabel}) explicitly tagged you for this intervention.`
       : ''
-    if (checkpoint.selectionRequired) {
+    if (checkpoint.kind === 'later_pass') {
       const routingRule =
-        checkpoint.kind === 'tagged_intervention'
-          ? '- A targeted listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision, but the target must name specific participants or a specific stage/role; do not use a broad/all target for this tagged checkpoint.'
-          : "- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention that routes also counts as a routing decision. Follow each tool's normal target policy; use `select_participants` when you need to reduce serial churn."
+        "- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention can direct the work. Follow each tool's normal target policy; use `select_participants` when you need to reduce serial churn."
       return [
-        `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): before you end or yield, make one explicit routing decision.${source}`,
-        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. Ending quietly without a decision re-summons you instead of advancing ordinary serial seats.',
-        `${routingRule} If the needed tool is absent, state the precise selection or opt-out visibly with unique @Role/@Model names.`
+        `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): you may direct the remaining queue before ending.${source}`,
+        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. These controls are optional: ending without a valid route advances the next eligible serial seat.',
+        `${routingRule} A valid direct yield wins over text mentions; without either, the existing serial queue continues.`
       ]
     }
     return [
       `Authority routing checkpoint: you were explicitly tagged for an interstitial Boss/Captain decision.${source}`,
-      '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or say that you are preserving the queue; do not guess or fan out broadly.'
+      '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or preserve the queue by finishing normally; do not guess or fan out broadly. A valid direct yield wins over text mentions; without either, the next eligible serial seat runs.'
     ]
   })()
-  const orchestrationMode =
-    input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+  // Continuous-only: every round is Continuous; legacy 'turn_bound' records
+  // normalize away rather than resurrecting turn-bound prompt stanzas.
   const antigravityGoalLifecycleFallback = (() => {
     if (promptTransportProfile !== 'antigravity-official-agy') return undefined
     const authority = normalizeEnsembleAuthority(input.config)
@@ -1108,26 +1272,36 @@ export function buildEnsembleParticipantPromptProjection(
     return undefined
   })()
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
-  const hasWriteIntentLane = Boolean(
-    input.config.activeRound?.lanes &&
-    Object.values(input.config.activeRound.lanes).some((lane) => lane.intent === 'write')
+  const hasWriteIntentLane = hasSelfWriteIntentLane(
+    input.config,
+    input.participant.id,
+    input.effectiveLanePosture
   )
+  // Non-elidable posture sentence for a reader lane; `undefined` for every
+  // other seat, which keeps every existing prompt shape byte-identical.
+  const laneIntentBoundary = formatLaneIntentBoundary(input.effectiveLanePosture)
+  // The provider capsules render their own `Stage:` line from this value, and
+  // 658ed47ee gated only the generic prompt shape — so a read-clamped seat kept
+  // being told `Stage: Worker — act on the request directly.` in the very
+  // capsules the failing AntiGravity and Ollama lanes render on, directly
+  // underneath the boundary telling it not to. Only `worker` conflicts with a
+  // read lane; scout, reviewer and background are all compatible with it and
+  // keep their stage.
+  const capsuleStageRole =
+    laneIntentBoundary && input.participant.stageRole === 'worker'
+      ? undefined
+      : input.participant.stageRole
   const maxContinuationHops = input.config.maxContinuationHops || 6
   const continuationHops = input.config.activeRound?.continuationHops || 0
-  // 1.0.4 — speaker-position awareness. First + last participants
-  // in a multi-participant turn-bound round get extra nudges so the
-  // panel doesn't lopside: the opener scopes rather than executing
-  // through (1.0.4-Y), and the closer knows there's nobody left to
-  // yield to so they should either close cleanly or deliberately yield
-  // to `user` instead of bouncing an invalid participant target off the
-  // end of the rotation (1.0.4-AJ).
-  //
-  // Continuous-mode rounds don't have a fixed "last" speaker — the round
-  // AUTO-CONTINUES (re-dispatches the roster each pass, consuming hops) until
-  // the goal/tasks are marked complete (or blocked/paused), the hop budget is
-  // exhausted, or the user stops it (see the continuous-mode round-policy line
-  // + rule below, and `tryAutoContinueRound` in EnsembleOrchestrator). So the
-  // fixed last-speaker marker is skipped in continuous mode.
+  // 1.0.4 — speaker-position awareness. The opening participant of a
+  // multi-participant round gets a scoping nudge so it frames the work
+  // instead of executing through (1.0.4-Y). Rounds are Continuous-only now:
+  // there is no fixed "last" speaker — the round AUTO-CONTINUES
+  // (re-dispatches the roster each pass, consuming hops) until the
+  // goal/tasks are marked complete (or blocked/paused), the hop budget is
+  // exhausted, or the user stops it (see the round-policy line + rule below,
+  // and `tryAutoContinueRound` in EnsembleOrchestrator) — so the retired
+  // turn-bound last-speaker marker/rule are gone with the mode picker.
   const rotationParticipants = orderedParticipants.filter(
     (participant) => participant.stageRole !== 'background'
   )
@@ -1139,23 +1313,16 @@ export function buildEnsembleParticipantPromptProjection(
   const positionOneIndexed = selfIndex >= 0 ? selfIndex + 1 : 0
   const isFirstSpeaker =
     isMultiParticipantRound && rotationParticipants[0]?.id === input.participant.id
-  const isLastSpeaker =
-    isMultiParticipantRound &&
-    orchestrationMode === 'turn_bound' &&
-    selfIndex === totalParticipants - 1
-  // 1.0.4-AJ — continuous-mode hop-budget awareness. When the round
-  // is in continuous mode and the running hop count is at-or-near
-  // the cap, the closer can choose to close even though there's no
-  // fixed final turn. Surface "X hops remaining" so the speaker can
-  // weigh another yield vs. closing to user.
-  const continuousHopsRemaining =
-    orchestrationMode === 'continuous' ? Math.max(0, maxContinuationHops - continuationHops) : null
-  const isContinuousNearCap = continuousHopsRemaining !== null && continuousHopsRemaining <= 1
+  // 1.0.4-AJ — hop-budget awareness. When the running hop count is
+  // at-or-near the cap, the speaker can choose to close even though
+  // there's no fixed final turn. Surface "X hops remaining" so the
+  // speaker can weigh another yield vs. closing to user.
+  const continuousHopsRemaining = Math.max(0, maxContinuationHops - continuationHops)
+  const isContinuousNearCap = continuousHopsRemaining <= 1
   const roster = orderedParticipants
     .map((participant) => {
       const isSelf = participant.id === input.participant.id
       const isFirstInList = participant.id === rotationParticipants[0]?.id
-      const isLastInList = participant.id === rotationParticipants[totalParticipants - 1]?.id
       // Position marker accompanies the "(you)" tag. First/last
       // markers give the model a contextual cue beyond the rule
       // lines further down — useful even when the participant
@@ -1165,8 +1332,6 @@ export function buildEnsembleParticipantPromptProjection(
       if (isSelf) {
         if (isFirstSpeaker && isFirstInList) {
           marker = ' (you — first speaker)'
-        } else if (isLastSpeaker && isLastInList) {
-          marker = ` (you — last speaker, position ${positionOneIndexed} of ${totalParticipants})`
         } else if (isMultiParticipantRound && positionOneIndexed > 0 && totalParticipants >= 3) {
           marker = ` (you — position ${positionOneIndexed} of ${totalParticipants})`
         } else {
@@ -1269,13 +1434,46 @@ export function buildEnsembleParticipantPromptProjection(
     orderedParticipants,
     positionOneIndexed,
     totalParticipants,
-    bossDrivenWriteAllocation
+    bossDrivenWriteAllocation,
+    Boolean(laneIntentBoundary)
   )
+  const rootGoal = resolveActiveGoalForEnsemble(input.chat.activeGoal)
+  const goalAssignment = latestGoalAssignmentForParticipant(input.chat, input.participant.id)
+  const completionAuthority = ensembleGoalAuthorityForParticipant(
+    input.config,
+    input.participant.id
+  )
+  const canCompleteRootGoal = completionAuthority === 'root'
+  let workContract = buildAgentWorkContract({
+    activeGoal: rootGoal,
+    completionAuthority,
+    ...(goalAssignment
+      ? {
+          assignment: {
+            id: goalAssignment.id,
+            objective: goalAssignment.objective,
+            acceptanceCriteria: goalAssignment.acceptanceCriteria,
+            status: goalAssignment.status
+          }
+        }
+      : {})
+  })
+  // First turn heuristic: if no active goal exists and first user prompt is actionable
+  if (!rootGoal && input.chat && (input.chat.messages || []).length === 1) {
+    const firstMsg = input.chat.messages[0]?.content || ''
+    // Heuristic: if it's over a few words and isn't just a greeting
+    if (firstMsg.length > 20 && !firstMsg.match(/^(hi|hello|hey|what's up|greetings)\b/i)) {
+      const hint =
+        'NOTE: No TaskWraith goal is set for this thread. Since your prompt appears to require action, you may call `update_goal` (with `objective` or `description`) to set the objective from your prompt. This allows task completion verification and prevents continuous mode loops.'
+      workContract = workContract ? `${workContract}\n\n${hint}` : hint
+    }
+  }
   const advisoryTurnBoundary = formatAdvisoryTurnBoundary(
     input.config,
     input.participant,
     orderedParticipants,
-    bossDrivenWriteAllocation
+    bossDrivenWriteAllocation,
+    Boolean(laneIntentBoundary)
   )
   const planOwnerLines = formatEnsemblePlanOwnerLines(input.chat, input.config, input.participant)
   // Recon-aware ollama workflow hint: the local-scout hint used to say
@@ -1292,16 +1490,20 @@ export function buildEnsembleParticipantPromptProjection(
   // Threaded into the tagged-transcript builder so every
   // `[Provider / Role #pN]` header carries the same handle the
   // roster + self-label use.
+  // Window-derived per-seat ingest budget (the chat-wide Chars slider is
+  // retired). Ollama seats feed the request through their model-aware clamp
+  // below, so a window-derived or overridden request can only shrink there.
+  const seatIngest = resolveEnsembleSeatIngestChars({
+    provider: input.participant.provider,
+    modelId: input.participant.model,
+    overrides: input.modelIngestCharOverrides
+  })
   const ollamaTranscriptBudget = isOllamaParticipant
-    ? resolveOllamaEnsembleTranscriptBudget(
-        input.config.ensembleContextChars,
-        input.chatContextTurns,
-        {
-          modelId: input.participant.model,
-          promptShellChars: 5_800,
-          toolsEnabled: input.chat.scope !== 'global'
-        }
-      )
+    ? resolveOllamaEnsembleTranscriptBudget(seatIngest.chars, input.chatContextTurns, {
+        modelId: input.participant.model,
+        promptShellChars: 5_800,
+        toolsEnabled: input.chat.scope !== 'global'
+      })
     : null
   // Host-side SEAT compaction: current Kimi/Grok seats can carry a durable
   // bounded summary. Cursor Path-B is live, but is not a host-seat compaction
@@ -1317,7 +1519,7 @@ export function buildEnsembleParticipantPromptProjection(
     seatCompactionSummary?.provenance
   ) as ChatMessage[]
   const seatTranscriptChars = resolveSeatTranscriptChars(
-    ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+    ollamaTranscriptBudget?.contextChars ?? seatIngest.chars,
     seatSummaryBlock
   )
   // A custom prompt label means the final request block is a derived or
@@ -1349,6 +1551,21 @@ export function buildEnsembleParticipantPromptProjection(
       }
     : input
 
+  const continuity = planPromptContinuity({
+    chat: input.chat,
+    seatId: input.participant.id,
+    provider: input.participant.provider,
+    providerSessionId: input.continuityColdStart
+      ? undefined
+      : input.participant.linkedProviderSessionId,
+    nativeSessionResume: !input.continuityColdStart && input.participant.kimiAcpNativeSession,
+    // A persisted catalogue is not proof that this transport's broker is active.
+    // The native tool catalogues already describe retrieval; capsules never invent tools.
+    mcpAdvertised: false,
+    isolated: input.chatContextTurns === 0
+  })
+  const continuityCheckpoint = continuity.action === 'deliver' ? continuity.block : undefined
+
   // Ollama locals get a request-first capsule instead of the full Rules
   // encyclopaedia — small models bury the ask under Boss/fan-out prose and
   // then invent peers from workspace fixture markdown.
@@ -1362,22 +1579,20 @@ export function buildEnsembleParticipantPromptProjection(
       input.scoutBriefs && input.scoutBriefs.length > 0
         ? formatScoutBriefsForPrompt(input.scoutBriefs)
         : undefined
-    const compactRoundPolicy =
-      orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
-        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        ? `Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it. ${ENSEMBLE_WRITER_GIT_GUIDANCE}`
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildOllamaEnsemblePromptCapsuleProjection(
       {
+        continuityCheckpoint,
         participantLabel,
         modelLabel: input.participant.model || selfModelLabel,
         selfToken,
         roundId: input.roundId,
-        stageRole: input.participant.stageRole,
+        stageRole: capsuleStageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: requestPresentation.text,
@@ -1386,8 +1601,10 @@ export function buildEnsembleParticipantPromptProjection(
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
         turnBoundary: advisoryTurnBoundary || undefined,
+        laneIntentBoundary,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
+        workContract,
         dynamicState: includeDynamicState ? dynamicStateSnapshot.block : undefined,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
@@ -1395,7 +1612,11 @@ export function buildEnsembleParticipantPromptProjection(
         blackboardSnapshot: blackboardSnapshot || undefined,
         seatSummary: seatSummaryBlock || undefined,
         transcript,
-        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        permissionRule: permissionSurfaceRule(
+          input.participant,
+          input.effectiveApprovalMode,
+          input.effectiveLanePosture?.presetId
+        ),
         workflowHint: ollamaScoutDelegateWorkflowHint(input.participant.model, ollamaHintIntent),
         transcriptAutoCompacted: Boolean(ollamaTranscriptBudget?.autoCompacted)
       },
@@ -1410,7 +1631,8 @@ export function buildEnsembleParticipantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
       projectionInput,
-      capsuleProjection.suppliedMessageIds
+      capsuleProjection.suppliedMessageIds,
+      capsuleProjection
     )
   }
 
@@ -1425,20 +1647,18 @@ export function buildEnsembleParticipantPromptProjection(
       input.scoutBriefs && input.scoutBriefs.length > 0
         ? formatScoutBriefsForPrompt(input.scoutBriefs)
         : undefined
-    const compactRoundPolicy =
-      orchestrationMode === 'continuous'
-        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
-        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactRoundPolicy = `Continuous round: follow the current assignment, then ${canCompleteRootGoal ? 'complete the root Goal only after every required assignment/gate is finished' : 'report this seat-owned contribution and hand it to the Boss/Captain; do not complete the root Goal'}; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
     const compactParallelPolicy = activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        ? `Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it. ${ENSEMBLE_WRITER_GIT_GUIDANCE}`
         : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
       : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
     const capsuleProjection = buildAntigravityOfficialAgyPromptCapsuleProjection(
       {
+        continuityCheckpoint,
         participantLabel,
         roundId: input.roundId,
-        stageRole: input.participant.stageRole,
+        stageRole: capsuleStageRole,
         roleInstructions:
           input.participant.instructions || 'Contribute a concise, useful response for your role.',
         currentPrompt: requestPresentation.text,
@@ -1447,8 +1667,10 @@ export function buildEnsembleParticipantPromptProjection(
         authorityLines: authorityRoutingLines,
         roleBoundaryLines,
         turnBoundary: advisoryTurnBoundary || undefined,
+        laneIntentBoundary,
         roundPolicy: compactRoundPolicy,
         parallelPolicy: compactParallelPolicy,
+        workContract,
         dynamicState: dynamicStateSnapshot.block,
         workspaceStanza,
         workspaceChurnStanza: input.workspaceChurnStanza,
@@ -1456,7 +1678,11 @@ export function buildEnsembleParticipantPromptProjection(
         blackboardSnapshot,
         seatSummary: seatSummaryBlock,
         transcript,
-        permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+        permissionRule: permissionSurfaceRule(
+          input.participant,
+          input.effectiveApprovalMode,
+          input.effectiveLanePosture?.presetId
+        ),
         yieldExecutionCheck,
         goalLifecycleFallback: antigravityGoalLifecycleFallback
       },
@@ -1471,7 +1697,8 @@ export function buildEnsembleParticipantPromptProjection(
       capsuleProjection.prompt,
       transcriptProjection,
       projectionInput,
-      capsuleProjection.suppliedMessageIds
+      capsuleProjection.suppliedMessageIds,
+      capsuleProjection
     )
   }
 
@@ -1488,7 +1715,7 @@ export function buildEnsembleParticipantPromptProjection(
       input.chat.messages || [],
       ollamaTranscriptBudget?.contextTurns ?? input.chatContextTurns ?? 6,
       participantTokens,
-      ollamaTranscriptBudget?.contextChars ?? input.config.ensembleContextChars,
+      ollamaTranscriptBudget?.contextChars ?? seatIngest.chars,
       dupProviderModelLabels,
       input.participant.id,
       excludeCurrentRoundUserPrompt
@@ -1506,13 +1733,19 @@ export function buildEnsembleParticipantPromptProjection(
       `Round id: ${input.roundId}`,
       ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
       ...formatBossPostRound1HandoffRule(input.config, input.participant.id),
-      ...(bossDrivenWriteAllocation
+      // Same live-posture gate as the full briefing's role boundary: the lane
+      // record still says `write` after a dispatch-time narrow, so without this
+      // a read lane gets both this line and the read-clamp boundary below it.
+      ...(bossDrivenWriteAllocation && !laneIntentBoundary
         ? [
             'Boss/Captain write allocation: execute the approved implementation slice inside its declared write scopes.'
           ]
         : input.participant.stageRole
           ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
           : []),
+      '',
+      workContract,
+      ...(hasWriteIntentLane ? [ENSEMBLE_WRITER_GIT_GUIDANCE] : []),
       ...(includeDynamicState ? ['', dynamicStateSnapshot.block] : []),
       ...(input.scoutBriefs && input.scoutBriefs.length > 0
         ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
@@ -1554,6 +1787,10 @@ export function buildEnsembleParticipantPromptProjection(
       '',
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
+      // This shape emits neither the role-boundary contract nor the permission
+      // surface rule, so without this line a resumed reader lane carries no
+      // posture statement at all.
+      ...(laneIntentBoundary ? ['', laneIntentBoundary] : []),
       '',
       requestPresentation.label || 'Current user request:',
       requestPresentation.text,
@@ -1563,11 +1800,16 @@ export function buildEnsembleParticipantPromptProjection(
       '',
       `Respond now as [${participantLabel}].`
     ].join('\n')
-    return participantPromptProjection(prompt, deltaTranscriptProjection, projectionInput)
+    return participantPromptProjection(
+      continuityCheckpoint ? `${continuityCheckpoint}\n\n${prompt}` : prompt,
+      deltaTranscriptProjection,
+      projectionInput
+    )
   }
 
   const prompt = [
     'TaskWraith Ensemble Mode',
+    ...(input.participant.provider !== 'pi' ? ['For long tasks, use capability_search when listed to discover private task checkpoints and selective history reads. Keep raw tool output in history.'] : []),
     '',
     activeConcurrentMode
       ? `You are ${participantLabel} in an Ensemble round with parallel fan-out lanes. Multiple participants may run at the same time.`
@@ -1583,14 +1825,12 @@ export function buildEnsembleParticipantPromptProjection(
         ]
       : []),
     `Round id: ${input.roundId}`,
-    `Round policy: ${
-      orchestrationMode === 'continuous'
-        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
-            advisoryTurnBoundary
-              ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
-              : 'To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.'
-          }`
-        : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
+    `Round policy: Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. ${
+      advisoryTurnBoundary
+        ? 'As an advisory seat, report your bounded result and hand off; do not end the round or complete the active goal unless the advisory fallback boundary below explicitly permits takeover.'
+        : canCompleteRootGoal
+          ? 'To END the round, finish and verify every required assignment/gate, then mark the root Goal complete when that lifecycle tool is listed — restating "done" WITHOUT completing the Goal just loops another pass.'
+          : 'Finish and verify only your seat-owned contribution, update/report its status, and hand evidence to the Boss/Captain. Do not call a root Goal lifecycle tool.'
     }`,
     ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
     activeConcurrentMode
@@ -1598,6 +1838,7 @@ export function buildEnsembleParticipantPromptProjection(
         ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss- or Captain-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. TaskWraith projects the runtime WIP marker when it acquires that lock; this satisfies repository instructions to raise a marker, so do not create an additional manual marker with a file tool. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: reader-intent fan-out lanes may run concurrently. Their task boundary remains inspection/review even when a seat’s configured permission tier allows more; only locked writer lanes authorize parallel mutation.'
       : 'Parallel policy: use ensemble_fanout for targeted reader-intent fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
+    ...(hasWriteIntentLane ? [ENSEMBLE_WRITER_GIT_GUIDANCE] : []),
     ...(workspaceIsolationLine ? [workspaceIsolationLine] : []),
     ...(workspaceStanza ? [workspaceStanza] : []),
     // User instruction layers are part of the INVARIANT shell (they join
@@ -1605,6 +1846,8 @@ export function buildEnsembleParticipantPromptProjection(
     // dynamic state and ship only in full briefings — slim resumed turns
     // re-brief automatically when the digest changes the stamp.
     ...(userInstructionsBlock ? ['', userInstructionsBlock] : []),
+    '',
+    workContract,
     '',
     dynamicStateSnapshot.block,
     // Tree-derived churn sits immediately after the dynamic state block: both
@@ -1625,7 +1868,7 @@ export function buildEnsembleParticipantPromptProjection(
     ),
     // Spike 4 — declared dispatch stage. Emitted only when the seat carries
     // an explicit stageRole so unstaged rosters keep their prompt shape.
-    ...(bossDrivenWriteAllocation
+    ...(bossDrivenWriteAllocation && !laneIntentBoundary
       ? []
       : input.participant.stageRole === 'reviewer'
         ? [
@@ -1638,10 +1881,12 @@ export function buildEnsembleParticipantPromptProjection(
               'Stage role: scout — you run at the start of the round to investigate. Gather the facts your peers will need and report them crisply; leave implementation to the worker seats.'
             ]
           : input.participant.stageRole === 'worker'
-            ? [
-                '',
-                'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
-              ]
+            ? laneIntentBoundary
+              ? []
+              : [
+                  '',
+                  'Stage role: worker — you take a serial implementation turn. Act on the request (and any scout findings above) directly.'
+                ]
             : input.participant.stageRole === 'background'
               ? [
                   '',
@@ -1683,23 +1928,54 @@ export function buildEnsembleParticipantPromptProjection(
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers the alias is ambiguous and TaskWraith fails it closed. A unique in-round mention promotes that remaining participant; ambiguous aliases are skipped with a warning. Use the participant picker or a unique role/model alias for a new composer send.',
     '- If another participant should handle this turn, write a unique @Role/@Model mention. When `ensemble_yield` is listed, you may instead call it with a short reason and optional target.',
     '- Never search for or invent an Ensemble lifecycle tool. When `ensemble_yield` is listed, call that exact tool with the target and optional reason; when it is not listed, use the unique-mention fallback. If a listed tool fails, report the failure rather than probing another broker or alias.',
+    ...(input.participant.provider === 'muse'
+      ? [
+          '- Muse transport rule: `submit_reminder_decision` belongs to an internal Muse reminder observer; it is never a TaskWraith handoff. Do not call or wait for it. If `ensemble_yield` is listed, use that exact tool; otherwise end your ordinary assistant response with one unique @Role/@Model mention and stop.'
+        ]
+      : []),
     ...(input.participant.provider === 'grok'
       ? [
           `- Grok direct-tool rule: only when the Ensemble lifecycle tool is listed for this run, invoke its exact MCP alias through Grok's native \`use_tool\` wrapper. For a listed yield tool, set \`tool_name\` to \`${grokDirectYieldTool}\` and pass the yield input once. Do not call \`search_tool\`, do not use \`taskwraith-broker__ensemble_yield\`, do not probe alternate aliases, and do not route through a Cursor workspace proxy; those bind the wrong provider context. If the exact listed call fails, report that failure instead of tool-discovery retries; if it is absent, use the unique-mention fallback.`
         ]
       : []),
-    '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out is a reader TASK INTENT, not a permission demotion: any eligible target keeps its configured permission tier while the lane remains inspection/review-only. Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available. locked_writers remains feature-gated, requires explicit writeScopes for writer targets, and relies on workspace write locks. `ensemble_fanout_all` has no writeScopes surface and therefore refuses any selection that would create write intent; use it only for an all-reader sweep, and use `ensemble_fanout(mode="locked_writers", writeScopes=...)` for parallel mutations. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background auxiliary lanes may still be host-clamped read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
-    '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
-    '- At most 3 fan-outs may be in flight at once. A fourth dispatch is refused until you ensemble_await one of the open ones and read it with ensemble_lane_result — so plan a fan-out and its join together rather than firing several and collecting them later. This bounds concurrent fan-out CALLS, never the number of participants in one: a single fan-out may carry the whole roster, so never drop seats to get past the refusal.',
+    '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out is a reader TASK INTENT, not a permission demotion: any eligible target keeps its configured permission tier while the lane remains inspection/review-only. Broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available. locked_writers remains feature-gated, requires explicit writeScopes for writer targets, and relies on workspace write locks. `ensemble_fanout_all` has no writeScopes surface: write-capable seats join under their configured permission tier but receive reader intent, so mutations remain blocked. It is a discoverable capability rather than a listed tool: reach it with `capability_search` and call it through `capability_invoke`. Use `ensemble_fanout(mode="locked_writers", writeScopes=...)` for parallel mutations. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background auxiliary lanes may still be host-clamped read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
+    `- When ensemble_fanout is listed: ${ENSEMBLE_FANOUT_WRITE_SCOPES_GUIDANCE} ${ENSEMBLE_FANOUT_SCOPE_REPAIR_GUIDANCE}`,
+    ...(input.participant.reasoningEffort?.trim().toLowerCase() === 'ultratask'
+      ? input.participant.provider === 'muse'
+        ? [
+            '- ULTRA-TASK MODE ACTIVE: You MUST use delegation patterns for complex work.',
+            '- Use Muse native sub-agents: subagent_spawn for the delegated worker/reviewer, then subagent_wait and subagent_read_result to join and inspect the result.',
+            '- Strongly recommended for: Codebase Recon, Files Explorer, Web Researcher, Disjoint Workers/Writers, Code Reviewers, Adversarial Challengers.',
+            '- After ANY subagent_spawn call, immediately invoke subagent_wait, then subagent_read_result, to block and retain turn ownership.'
+          ]
+        : ultraTaskPriorityLines(
+            resolveEnsembleListedTools({
+              listedTools: input.listedTools,
+              provider: input.participant.provider,
+              profileId: input.participant.taskWraithMcpProfileReceipt?.profileId ?? null,
+              permissionPresetId:
+                input.effectiveLanePosture?.presetId ?? input.participant.permissionPresetId,
+              reasoningEffort: input.participant.reasoningEffort
+            })
+          )
+      : []),
+    '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. ensemble_await also accepts subThreadIds and waveIds to block on delegated sub-threads and waves in both Ensemble and single-provider threads. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
+    '- Fan-outs are not capped by count — dispatch as many as the work genuinely needs. A wave is refused only when host slots are exhausted or a target\u2019s Boss/Captain budget blocks it, and the receipt says which. Still plan each fan-out together with the ensemble_await that joins it and the ensemble_lane_result that reads it, rather than firing several and collecting them later. One fan-out may carry the whole roster, so prefer a single wider call over several narrow ones, and never drop seats to make a wave smaller.',
     '- Verification is evidence only when it is independent. Never dispatch a verify/review lane to the seat whose claim it is checking, and never count a seat confirming its own work — including yourself — as verification: route the check to a reviewer-stage seat or an uninvolved peer. If a brief asks you to check work you yourself produced, do the check rather than bounce it, but label the result self-review so the router knows an independent pass is still owed.',
-    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
+    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={planSummary:"Review the implementation."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). `planSummary` is execution strategy toward the existing root Goal; it never creates or replaces that Goal. Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
     '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
     '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may use the listed roster tools to inspect and import a task-specific TaskWraith roster export. If those tools are absent, propose the roster in visible text; do not invent a roster-management tool.',
     '- When blackboard_post/read or ensemble_poll_response are listed, use them only for durable shared facts, decisions, risks, do-not-repeat notes, and polls — not conversational side messages. If those tools are absent, place concise durable findings in your response for the later participants instead.',
     advisoryTurnBoundary
       ? '- In Continuous mode, finish this advisory turn by reporting your evidence and routing the appropriate action owner. Do not use a goal-completion tool unless fallback takeover is available or the user/Lead/Boss explicitly assigned completion to you.'
-      : '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',
-    permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+      : canCompleteRootGoal
+        ? '- In Continuous mode the round auto-continues until the root Goal is complete or the hop budget runs out. Complete it only after every required assignment and review gate is finished and verified.'
+        : '- In Continuous mode, finish only your assignment/review contribution and hand evidence to the Boss/Captain. Local todo completion never authorizes root Goal completion.',
+    permissionSurfaceRule(
+      input.participant,
+      input.effectiveApprovalMode,
+      input.effectiveLanePosture?.presetId
+    ),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
     // Mode is an orchestration mode; Plan-authoring mode is where plan
@@ -1769,31 +2045,10 @@ export function buildEnsembleParticipantPromptProjection(
           '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with a unique @Role/@Model mention or with listed ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Boss/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
         ]
       : []),
-    // 1.0.4-AJ — last-speaker scoping rule. Mirror of the first-
-    // speaker rule, addressing the "Gemini tries to yield to Codex
-    // on its final turn and the yield fails → bounces back to user"
-    // failure mode. Without this rule the final speaker had no way
-    // to know they were last: they'd reach for `ensemble_yield(target:
-    // ...)` thinking they were passing the baton, but in turn_bound
-    // mode there's nobody after them in the rotation and the
-    // orchestrator routes the failed yield back to the user. Now
-    // the closer knows: no more participants are scheduled — either
-    // close cleanly (final summary / observation / no extra agent
-    // work needed) or explicitly yield to `user` for a follow-up question. Risk
-    // noted: agents could theoretically abuse turn-position
-    // awareness to manipulate flow (e.g. always extending). User
-    // will monitor over time; trust-but-verify.
-    ...(isLastSpeaker
-      ? [
-          `- You are SPEAKING LAST in this turn-bound round (position ${positionOneIndexed} of ${totalParticipants}). No further participants are scheduled — a listed \`ensemble_yield(target: ...)\` cannot route to another panelist this round. Either close with a final observation / summary / decision OR, when listed, call \`ensemble_yield(target: "user")\` if you have a question the user should answer next. Otherwise ask it visibly. Avoid attempting a participant yield that has nowhere to land.`
-        ]
-      : []),
-    // 1.0.4-AJ — continuous-mode hop-budget awareness. When the
-    // hop counter is near the cap, surface the remaining-hops count
-    // so the speaker can decide whether to close gracefully vs.
-    // hand off again. Skipped in turn_bound (rotation already
-    // bounds the round) and skipped when there's plenty of budget
-    // left (no signal needed yet).
+    // 1.0.4-AJ — hop-budget awareness. When the hop counter is near
+    // the cap, surface the remaining-hops count so the speaker can
+    // decide whether to close gracefully vs. hand off again. Skipped
+    // when there's plenty of budget left (no signal needed yet).
     ...(isContinuousNearCap
       ? [
           `- Continuation-hop budget is nearly exhausted: ${continuousHopsRemaining} extra handoff${
@@ -1864,6 +2119,7 @@ export function buildEnsembleParticipantPromptProjection(
     '',
     'Recent tagged transcript:',
     transcript || '[No prior transcript]',
+    ...(laneIntentBoundary ? ['', laneIntentBoundary] : []),
     '',
     requestPresentation.label || 'Current user request:',
     requestPresentation.text,
@@ -1873,7 +2129,11 @@ export function buildEnsembleParticipantPromptProjection(
     '',
     `Respond now as [${participantLabel}].`
   ].join('\n')
-  return participantPromptProjection(prompt, transcriptProjection, projectionInput)
+  return participantPromptProjection(
+    continuityCheckpoint ? `${continuityCheckpoint}\n\n${prompt}` : prompt,
+    transcriptProjection,
+    projectionInput
+  )
 }
 
 /**
@@ -2039,7 +2299,7 @@ export function formatToolTraceSummary(activities: readonly ToolActivity[] | und
 }
 
 /**
- * Spike 3 (docs/ensemble-posture-fanout-preamble-design.md) — compact
+ * Spike 3 (the staged fan-out design) — compact
  * per-file change digest for the tagged transcript.
  *
  * The tool-trace line above collapses peers' edits into
@@ -2197,12 +2457,16 @@ function projectTaggedTranscript(
     deltaOnly?: boolean
   }
 ): TaggedTranscriptProjection {
-  // Total shared-transcript char budget — user-adjustable per ensemble
-  // (5K–256K via the Turn picker); falls back to the default cap. This is the
-  // real lever: it drives BOTH how many recent messages we walk and the hard
-  // cap, so a bigger budget genuinely surfaces more panel history rather than
-  // being silently capped by the turn-count.
-  const maxChars = Math.min(256_000, Math.max(5_000, contextChars ?? MAX_TRANSCRIPT_CHARS))
+  // Total shared-transcript char budget — window-derived per seat since the
+  // chat-wide Chars slider retired (see shared/ensembleSeatIngest.ts). This is
+  // the real lever: it drives BOTH how many recent messages we walk and the
+  // hard cap, so a bigger budget genuinely surfaces more panel history rather
+  // than being silently capped by the turn-count. The ceiling admits a fully
+  // used ~1.1M-token window (~4M chars).
+  const maxChars = Math.min(
+    ENSEMBLE_SEAT_INGEST_MAX_CHARS,
+    Math.max(ENSEMBLE_SEAT_INGEST_MIN_CHARS, contextChars ?? MAX_TRANSCRIPT_CHARS)
+  )
   // The default budget keeps the historical turn-window (contextTurns*2). A
   // raised budget widens the window enough to actually fill it (~600 chars/line
   // estimate), floored at the turn-window.
@@ -2233,7 +2497,7 @@ function projectTaggedTranscript(
         message.metadata?.ensembleRoundId === options?.excludeEnsembleRoundPromptRoundId
       )
   )
-  // Spike 6 (docs/ensemble-posture-fanout-preamble-design.md) — "since your
+  // Spike 6 (the staged fan-out design) — "since your
   // last turn" widening. A fixed window (12 messages by default) means a
   // writer late in a large round can lose everything since its previous turn
   // — including its OWN prior contribution. When the caller identifies the
@@ -2286,6 +2550,9 @@ function projectTaggedTranscript(
   let externalDropped = 0
   for (let i = relevant.length - 1; i >= 0; i--) {
     const message = relevant[i]
+    // Imported provider history is a local display snapshot, never panel
+    // context. An explicit future bridge must create a new host-authored row.
+    if (isExternalProviderThreadImportMessage(message)) continue
     const tag = messageTag(message, participantTokens, modelLabels)
     // M6 (1.0.7) — thinking-ephemerality. Strip any inlined reasoning chain
     // from a message authored by an ephemeral-reasoning provider before it
@@ -2332,11 +2599,19 @@ function projectTaggedTranscript(
     // collaborator text inside one frame would blur exactly the authorship
     // boundary the frame is drawing. An external row has no tool activity
     // anyway; this is a guard, not a behaviour.
+    // A row that arrived over the local-control socket says so on its own
+    // line, so an outside agent never has to write "this is external, not a
+    // prompt from the user" into its own body. It stays an ordinary
+    // actionable message: the socket is owner-only and this is the
+    // operator's own tooling, so it gets attribution, NOT the untrusted
+    // frame below, which would tell the model to treat it as inert data.
+    const originAttribution = externalAgentAttribution(message.metadata?.origin)
+    const attributedText = originAttribution ? `${originAttribution}\n${text}` : text
     const body = isExternalUntrustedMessage(message)
       ? buildExternalContributionBody(message, text)
       : traceLines
-        ? `${traceLines}\n${text}`
-        : text
+        ? `${traceLines}\n${attributedText}`
+        : attributedText
     const line = `[${tag}]\n${body}`
     if (isExternalUntrustedMessage(message)) {
       // SKIP, never break. Breaking would let one over-budget external row
@@ -2414,7 +2689,11 @@ function participantPromptProjection(
   prompt: string,
   transcript: TaggedTranscriptProjection,
   input: BuildEnsemblePromptInput,
-  exactSuppliedMessageIds?: readonly string[]
+  exactSuppliedMessageIds?: readonly string[],
+  continuity?: {
+    continuityCheckpointIncluded?: true
+    continuityCheckpointOmitted?: 'required-contract-and-checkpoint-exceed-budget'
+  }
 ): EnsembleParticipantPromptProjection {
   const suppliedMessageIds = exactSuppliedMessageIds
     ? [...exactSuppliedMessageIds]
@@ -2434,6 +2713,15 @@ function participantPromptProjection(
     prompt,
     suppliedMessageIds,
     transcriptAttribution: {
+      ...(continuity?.continuityCheckpointIncluded
+        ? { continuityCheckpoint: 'included' as const }
+        : {}),
+      ...(continuity?.continuityCheckpointOmitted
+        ? {
+            continuityCheckpoint: 'omitted' as const,
+            continuityCheckpointOmission: continuity.continuityCheckpointOmitted
+          }
+        : {}),
       sourceRequestChars: sanitizeText(input.currentPrompt).length,
       transcriptMessageChars: rowChars(suppliedRows),
       transcriptMessageCount: suppliedRows.length,
@@ -2496,6 +2784,7 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
   participant: EnsembleParticipant
   chatContextTurns?: number
   excludeEnsembleRoundPromptRoundId?: string
+  modelIngestCharOverrides?: Readonly<Record<string, number>> | null
 }): string[] {
   const seatSummaryBlock = buildSeatCompactionSummaryBlock(input.participant)
   const seatTranscriptMessages = pruneContiguousCompactionPrefix(
@@ -2506,7 +2795,16 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
     seatTranscriptMessages,
     input.chatContextTurns ?? 6,
     buildParticipantTokenMap(input.config.participants),
-    resolveSeatTranscriptChars(input.config.ensembleContextChars, seatSummaryBlock),
+    resolveSeatTranscriptChars(
+      // Mirror the live prompt's window-derived per-seat budget exactly, so
+      // this omission evidence cannot drift from what the seat really saw.
+      resolveEnsembleSeatIngestChars({
+        provider: input.participant.provider,
+        modelId: input.participant.model,
+        overrides: input.modelIngestCharOverrides
+      }).chars,
+      seatSummaryBlock
+    ),
     buildDupProviderModelLabels(input.config.participants),
     input.participant.id,
     input.excludeEnsembleRoundPromptRoundId
@@ -2821,6 +3119,9 @@ export function ensembleSpeakerForMessage(
   participants: readonly EnsembleParticipant[] | undefined
 ): (message: ChatMessage) => string | undefined {
   const modelLabels = buildDupProviderModelLabels(participants)
+  const participantsById = new Map(
+    (participants || []).map((participant) => [participant.id, participant])
+  )
   return (message) => {
     if (message.role !== 'assistant') return undefined
     const provider = message.metadata?.ensembleProvider as ProviderId | undefined
@@ -2831,8 +3132,18 @@ export function ensembleSpeakerForMessage(
       typeof message.metadata?.ensembleParticipantId === 'string'
         ? message.metadata.ensembleParticipantId
         : ''
-    const modelLabel = participantId ? modelLabels.get(participantId) : undefined
-    return `${providerLabel(provider)}${role ? ` / ${role}` : ''}${modelLabel ? ` (${modelLabel})` : ''}`
+    const participant = participantId ? participantsById.get(participantId) : undefined
+    const model =
+      typeof message.metadata?.ensembleModel === 'string'
+        ? message.metadata.ensembleModel
+        : participant?.model
+    const presentation = resolveTaskWraithProviderPresentation(provider, model)
+    const duplicateModelLabel = participantId ? modelLabels.get(participantId) : undefined
+    const modelLabel =
+      duplicateModelLabel && (provider === 'ollama' || provider === 'pi')
+        ? presentation.modelLabel || duplicateModelLabel
+        : duplicateModelLabel
+    return `${presentation.displayProvider}${role ? ` / ${role}` : ''}${modelLabel ? ` (${modelLabel})` : ''}`
   }
 }
 

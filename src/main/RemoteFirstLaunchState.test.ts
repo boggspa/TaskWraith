@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildRemoteFirstLaunchState } from './RemoteFirstLaunchState'
-import {
-  NEW_ADDITIONS_NOTIFICATION_ID,
-  resolveAppNotifications
-} from '../shared/appNotifications'
+import { NEW_ADDITIONS_NOTIFICATION_ID, resolveAppNotifications } from '../shared/appNotifications'
 import type { ProviderUsageSummary } from './ProviderUsageStatus'
 import type { ProviderCapabilityContract, ProviderId } from './store/types'
 import type { TaskWraithPluginActivatedProviderSetup } from '../shared/plugins/PluginTypes'
@@ -119,7 +116,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'ollama',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
     expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
@@ -129,9 +127,9 @@ describe('buildRemoteFirstLaunchState', () => {
       statusText: 'Not observable'
     })
     expect(
-      state.providerCards.find((card) => card.id === 'cursor')?.setupCommands.some(
-        (entry) => entry.id === 'cursor'
-      )
+      state.providerCards
+        .find((card) => card.id === 'cursor')
+        ?.setupCommands.some((entry) => entry.id === 'cursor')
     ).toBe(true)
     expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(true)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
@@ -383,6 +381,26 @@ describe('buildRemoteFirstLaunchState', () => {
     })
   })
 
+  it('projects only the two tones the iOS carousel renders: error is red, warning is the default card', () => {
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-06-21T18:02:00.000Z',
+      notifications: [
+        { id: 'stack-warning', kind: 'warning', title: 'Stack recovery paused', body: 'w' },
+        { id: 'stack-error', kind: 'error', title: 'Stack history is damaged', body: 'e' },
+        { id: 'sunset', kind: 'deprecation', title: 'Retired', body: 'd' }
+      ],
+      workspace,
+      providers: {},
+      usage: {}
+    })
+
+    expect(state.notifications.map((notice) => [notice.id, notice.tone])).toEqual([
+      ['stack-warning', 'default'],
+      ['stack-error', 'danger'],
+      ['sunset', 'danger']
+    ])
+  })
+
   it('projects active app notices for the iOS first-launch sheet', () => {
     const state = buildRemoteFirstLaunchState({
       generatedAt: '2026-06-21T18:02:00.000Z',
@@ -394,9 +412,7 @@ describe('buildRemoteFirstLaunchState', () => {
 
     // Pin via the registry constant, not a dated literal — the id bumps every
     // time the New Additions lineup changes.
-    expect(state.notifications.map((notice) => notice.id)).toContain(
-      NEW_ADDITIONS_NOTIFICATION_ID
-    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(NEW_ADDITIONS_NOTIFICATION_ID)
     expect(state.notifications.map((notice) => notice.id)).not.toContain(
       'gemini-retirement-2026-06-18'
     )
@@ -412,26 +428,48 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      // Claude leads the lineup from the Opus 5.5 release (2026-09-22).
+      'claude',
+      'codex',
+      'kimi',
+      'devin',
       'antigravity',
       'grok',
       'cursor',
       'muse',
       'mistral',
-      'ollama'
+      'ollama',
+      'pi'
     ])
     expect(
-      newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
-    ).toBe('Gemini 3.7 Flash')
+      newAdditions?.groups?.find((group) => group.provider === 'kimi')?.models.map((m) => m.name)
+    ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
     expect(
-      newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name
-    ).toBe('Grok 4.6 Fast')
+      newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
+    ).toBe('Opus 5.5')
+    expect(newAdditions?.groups?.find((group) => group.provider === 'devin')?.models[0]?.name).toBe(
+      'SWE-2'
+    )
+    expect(
+      newAdditions?.groups?.find((group) => group.provider === 'antigravity')?.models[0]?.name
+    ).toBe('Gemini 3.8 Flash')
+    expect(newAdditions?.groups?.find((group) => group.provider === 'grok')?.models[0]?.name).toBe(
+      'Grok 4.7'
+    )
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'cursor')?.models[0]?.name
     ).toBe('Grok 4.6')
     const museGroup = newAdditions?.groups?.find((group) => group.provider === 'muse')
-    expect(museGroup?.models.map((model) => model.name)).toEqual(['Muse Spark 1.2'])
+    expect(museGroup?.models.map((model) => model.name)).toEqual([
+      'Muse Spark 1.3',
+      'Muse Contributor Spark 1.3'
+    ])
     const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
     expect(ollamaGroup?.models.map((model) => model.name)).toEqual([
+      'DeepSeek V4.1 Flash (Cloud)',
+      'GLM 5.2 (Cloud)',
+      'MiniMax M3 (Cloud)',
+      'Ornith 1.5 (9B & 35B)',
       'Gemma 4 (31B-MLX)',
       'Qwen 3.8 (27B-MLX)',
       'Muse Glimmer (30B-MLX)',
@@ -441,6 +479,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'Rnj-1'
     ])
     expect(ollamaGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'minimax',
+      'deep-reinforce',
       'google',
       'qwen',
       'meta',
@@ -452,9 +494,57 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.groups?.find((group) => group.provider === 'meta')).toBeUndefined()
     // Mistral is deliberately BACK: `068867185` retired the Pi and Mistral
     // additions (which is where this guard came from), then `aff6db7f9`
-    // re-added the Mistral entries and `717f43933` refreshed them. Only the
-    // guard was left behind. Pi is still retired.
-    expect(newAdditions?.groups?.find((group) => group.provider === 'pi')).toBeUndefined()
+    // re-added the Mistral entries and `717f43933` refreshed them. Pi was
+    // likewise re-added afterwards, so both now assert presence.
+    const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
+    expect(piGroup?.label).toBe('Pi')
+    expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Space Bunny Alpha (OpenRouter Free)',
+      'Pareto (OpenRouter)',
+      'Jev 1.13 (OpenRouter)',
+      'Fugu Max (OpenRouter)',
+      'Fugu Ultra v2 (OpenRouter)',
+      'Mercury 2.5 (OpenRouter)',
+      'Nex-N2.5-Pro (OpenRouter Free)',
+      'Nex-N2.5-Mini (OpenRouter Free)',
+      'Qwen 3.8 27B (Cerebras)',
+      'North Mini Code (OpenRouter Free)',
+      'MiniMax M3 (OpenRouter Free)',
+      'Inkling (OpenRouter Free)',
+      'Inkling Small (OpenRouter Free)',
+      'DeepSeek V4 Flash',
+      'GLM-5.2',
+      'Qwen3.8 Max',
+      'Xiaomi MiMo',
+      'Mistral Large 3',
+      'Laguna S 2.1',
+      'Nemotron 3 Ultra'
+    ])
+    expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      // The projection iOS actually receives must carry the brand overrides
+      // too, or the rows arrive with no accent on the phone while the desktop
+      // card shows the stealth gold, the vermilion and the magenta.
+      'stealth',
+      'unbiased',
+      'typesafe',
+      'sakana',
+      'sakana',
+      'inception',
+      'nexagi',
+      'nexagi',
+      'cerebras',
+      'cohere',
+      'minimax',
+      'thinkingmachines',
+      'thinkingmachines',
+      'deepseek',
+      'zai',
+      'qwen',
+      'xiaomi',
+      'mistral',
+      'poolside',
+      'nvidia'
+    ])
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

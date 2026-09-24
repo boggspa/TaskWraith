@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import { MeshCanvasPanel, MeshCanvasPanelStatus, toMeshSceneSummary } from './MeshCanvasPanel'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  dismissMeshCanvasView,
+  MeshCanvasPanel,
+  MeshCanvasPanelStatus,
+  toMeshSceneSummary
+} from './MeshCanvasPanel'
 
 describe('toMeshSceneSummary', () => {
   it('decodes a renderer-safe summary and ignores unrelated payload fields', () => {
@@ -82,9 +87,38 @@ describe('MeshCanvasPanel (static render)', () => {
       join(process.cwd(), 'src/renderer/src/components/MeshCanvasPanel.tsx'),
       'utf8'
     )
-    expect(source).toContain('await api.closePresentation(chatId, activeSceneId)')
+    expect(source).toContain('await dismissMeshCanvasView({')
+    expect(source).toContain('api.closePresentation(targetChatId, sceneId)')
+    expect(source).toContain('useImperativeHandle(ref, () => ({ dismiss }), [dismiss])')
     expect(source).toContain('onDismiss()')
     expect(source).not.toContain('api.deleteScene(')
     expect(source).not.toContain('mesh-canvas-delete')
+  })
+
+  it('closes a presentation before every dismiss entry point returns home', async () => {
+    const order: string[] = []
+    const closePresentation = vi.fn(async () => {
+      order.push('close-presentation')
+    })
+    const refresh = vi.fn(async () => {
+      order.push('refresh')
+    })
+    const onDismiss = vi.fn(() => {
+      order.push('dismiss')
+    })
+
+    await dismissMeshCanvasView({
+      chatId: 'chat-mesh',
+      sceneId: 'scene-1',
+      isPresented: true,
+      closePresentation,
+      refresh,
+      onIssue: vi.fn(),
+      onDismiss
+    })
+
+    expect(order).toEqual(['close-presentation', 'refresh', 'dismiss'])
+    expect(closePresentation).toHaveBeenCalledWith('chat-mesh', 'scene-1')
+    expect(onDismiss).toHaveBeenCalledOnce()
   })
 })

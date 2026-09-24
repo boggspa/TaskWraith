@@ -1,7 +1,21 @@
-import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore } from 'react'
+import { RendererChatPendingDrafts } from './lib/RendererChatPendingDrafts'
+import { RendererChatConflictNotice } from './components/RendererChatConflictNotice'
+import { ThreadCatalogueStatus } from './components/ThreadCatalogueStatus'
+import {
+  startTransition,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  useSyncExternalStore
+} from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
+import { RendererChatTranscriptPersistence } from './lib/RendererChatTranscriptPersistence'
+import { liveRunDiffStore } from './lib/liveRunDiffStore'
 import {
   getCachedRendererUsageRecords,
   invalidateRendererUsageRecords,
@@ -14,21 +28,44 @@ import {
   scheduleProviderMetadataWarmup,
   type ProviderMetadataWarmupController
 } from './lib/providerMetadataWarmup'
+import {
+  providerMetadataBootRefreshes,
+  providerMetadataWarmupQueue,
+  providersTabMetadataRefreshes
+} from './lib/providerMetadataDelivery'
 import { PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT } from './lib/providerModelCatalogEvents'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
-import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
+import {
+  reconcileChatRefMap,
+  shouldKeepCanonicalChatReference,
+  createRendererChatReferenceMap,
+  markRendererChatReference,
+  inheritRendererChatReference
+} from './lib/reconcileChatRefMap'
 import { deepEqual, messagesRenderEqual } from './lib/messagesRenderEqual'
 import { mergeWorkflowTelemetryIntoMessages } from './lib/workflowTelemetryMessages'
 import { mergeReviewTelemetryIntoMessages } from './lib/reviewTelemetryMessages'
 import { mergeMultiAgentTelemetryIntoMessages } from './lib/multiAgentTelemetryMessages'
-import { rawLogPayloadForStringify } from './lib/rawLogPayload'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import {
+  chatRecordHasLiveRun,
+  coalescePendingChatUpdateRender,
   mergeChatUpdatedForRender,
+  type LocalGoalIntent,
   type PendingChatUpdateRender
 } from './lib/chatUpdateRenderMerge'
-import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
+import {
+  CHAT_UPDATE_MAX_RENDER_LATENCY_MS,
+  shouldFlushChatUpdateImmediately
+} from './lib/chatUpdateRenderUrgency'
+import { writeComposerDrafts } from './lib/composerDraftStore'
+import {
+  beginComposerDraftSubmission,
+  isAcceptedEnsembleSteerResult
+} from './lib/composerDraftSubmission'
+import { composerDraftState, useComposerDraftChatIds } from './hooks/useComposerDraft'
+import { useChangeGuardedSetter } from './hooks/useChangeGuardedSetter'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFork'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
@@ -39,6 +76,7 @@ import {
   isDispatchableProviderForRun,
   isAntigravityRendererAdmitted,
   useAntigravityGeminiApiSecretRefreshIdentity,
+  antigravityAdmittedProviderSnapshot,
   type ConfiguredProviderSnapshot
 } from './hooks/useConfiguredProviderSnapshot'
 import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
@@ -52,8 +90,26 @@ import {
   shouldPruneRunningChatIdAfterOrphanExit
 } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
-import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
+import { DEVIN_DEFAULT_MODEL_ID, devinDefaultReasoningEffort } from '../../shared/devinModelCatalog'
+import { defaultPiReasoningEffort } from '../../shared/piReasoning'
+import { resolveOllamaComposerReasoningEffort } from '../../shared/ollamaReasoning'
+import {
+  appliedChatUpdateBaseline,
+  applyChatUpdateDelivery,
+  type ChatUpdateBaseline
+} from '../../shared/chatUpdateTransport'
+import { classifyRewindTarget } from '../../shared/chatRewindPolicy'
+import {
+  RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+  chatPersistenceRevision
+} from '../../shared/rendererChatTranscriptMutation'
 import { buildChatUpdateAck } from './lib/chatUpdateAck'
+import {
+  buildChatUpdateRenderedAck,
+  createChatUpdateRenderReceipt,
+  createRendererChatUpdateEpoch,
+  type ChatUpdateRenderReceipt
+} from './lib/chatUpdateRenderReceipt'
 import {
   RENDERER_DIAGNOSTIC_SAMPLE_INTERVAL_MS,
   type RendererChatUpdateClientCounters
@@ -67,14 +123,15 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../shared/taskWraithCloseout'
+import type { PromptDeliveryReceipts } from '../../shared/PromptDeliveryReceipts'
 import { buildLiveToolFileSummarySignature } from './lib/liveToolFileSummarySignature'
+import { canCompactSoloChatContext } from './lib/chatContextCompactEligibility'
 import {
   coerceLiveProvider,
   DEFAULT_PROVIDER,
   isEnsembleSeatProvider,
   isLiveSelectableProvider,
-  isRetiredProvider,
-  LIVE_SELECTABLE_PROVIDER_IDS
+  isRetiredProvider
 } from '../../shared/retiredProviders'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -85,8 +142,14 @@ import {
   clearEnsembleRoundFailureForSeatChange,
   ensembleSeatExecutionConfigChanged
 } from '../../shared/ensembleSeatFailureClear'
-import { normalizeThreadTitle } from '../../shared/threadTitles'
+import {
+  derivePromptFallbackThreadTitle,
+  isPlaceholderThreadTitle,
+  normalizeThreadTitle,
+  threadTitleSourceFingerprint
+} from '../../shared/threadTitles'
 import { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
+import { antigravityEffortForModelId } from '../../shared/antigravityAgyModelGrouping'
 import {
   buildHostCompactionSummaryPrompt,
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
@@ -98,7 +161,6 @@ import {
   type ContextCompactionProgressEvent,
   type ContextCompactionProvenance
 } from '../../shared/contextCompaction'
-import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import {
@@ -114,16 +176,32 @@ import {
 } from '../../shared/runStreamMetrics'
 import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
+import { TRANSCRIPT_VIEWS } from './lib/transcriptViewFold'
+import {
+  captureTranscriptViewOverrideForChat,
+  setTranscriptViewOverride,
+  type TranscriptView
+} from './lib/transcriptViewOverride'
+import { normalizeTranscriptViewOverrideTransfer } from '../../shared/chatPopoutTransfer'
+import {
+  acceptedProviderReasoningEfforts,
+  acceptsStoredProviderReasoning
+} from './lib/composerProviderReasoningSelection'
+import { providerModelCatalogueAccepts } from './lib/providerModelCatalogueValidity'
 import { nextComposerSurfaceRequest, composerSurfaceOpenSignal } from './lib/composerSurfaceRequest'
-import type {
-  ComposerSurfaceId,
-  ComposerSurfaceRequest
-} from './lib/composerSurfaceRequest'
+import type { ComposerSurfaceId, ComposerSurfaceRequest } from './lib/composerSurfaceRequest'
 import { fastModeToggleAvailable, nextFastModeToggle } from './lib/fastModeToggle'
 import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
+import { canonicalKimiTaskWraithModelId } from '../../shared/kimiModels'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
-import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
+import { selectCurrentChatRun } from './lib/activeRunSelection'
+import { ensembleRoundDispatchRefusal } from './lib/ensembleRoundDispatchReceipt'
+import {
+  cumulativeRunBaseSignature,
+  resolveComposerRunTimecodeStartedAt,
+  resolveCumulativeRunBaseMs
+} from './lib/cumulativeRunTimecode'
 import type {
   AppSettings,
   WorkspaceRecord,
@@ -158,23 +236,19 @@ import type {
   RunQueueJobStatus,
   RunQueueRequestSnapshot,
   CapabilityLedgerSnapshot,
-  RunEventInput,
   RunEventRecord,
   RunRecoveryRecord,
   ProductOperationsStatus,
   ProductUpdateChannel,
-  AuditRetentionPurgeResult,
   ProductAuditBundleExportRequest,
   ProductAuditBundleVerificationResult,
   ChatWorkflowMode,
   RuntimeProfile,
   HandoffCard,
-  RunAnalystSnapshot,
   EnsembleParticipant,
   PermissionPresetId,
   EnsembleFanoutIsolationPolicy,
   EnsembleFanoutPolicy,
-  EnsembleOrchestrationMode,
   PinnedMessageGroup,
   AuditRunRecord,
   ActiveGoal,
@@ -182,6 +256,11 @@ import type {
   TranscriptMediaRef,
   ToolActivityDetailRef
 } from '../../main/store/types'
+// Canonical active-ChatRun-status vocabulary (running/queued/starting/
+// cancelling/steer_promoting/active/paused) — shared with main's
+// sealChatRunTerminalFields so the renderer's provider-exit seal repairs the
+// same ghost shapes main's reconciler does.
+import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
 import type { NormalizedProviderUsageSnapshot } from '../../main/ProviderQuotaSnapshots'
 import { resolveEnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import {
@@ -196,10 +275,7 @@ import {
 import type { ExecutionRunProjection } from '../../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphDiagnosticsSnapshot } from '../../main/ipc/executionGraphHandlers'
 import type { LocalServerEntry } from '../../main/localServers/types'
-import type {
-  NativeWindowCoordinatorRendererObservation,
-  NativeWindowCoordinatorRendererStatus
-} from '../../main/nativeWindow/NativeWindowCoordinator'
+import type { NativeWindowCoordinatorRendererStatus } from '../../main/nativeWindow/NativeWindowCoordinator'
 import {
   collectExternalPathGrantsFromMetadata,
   reorderExternalPathGrantsByPath
@@ -218,6 +294,11 @@ import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
 import { locatePendingApproval, shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
+import {
+  approvalLatencyNow,
+  recordApprovalClickToAckFrom,
+  recordApprovalRendererReceipt
+} from './lib/approvalLatencyMetrics'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
@@ -250,20 +331,21 @@ import {
   findCurrentChatSearchMatches
 } from './lib/currentChatSearch'
 import { formatAssistantMessageLabel } from './lib/assistantMessageLabel'
+import {
+  promptDeliveryReceiptMetadataPatch,
+  promptDeliveryReceiptsPersistableStatus
+} from './lib/promptDeliveryReceipts'
 import { groupAdjacentToolMessages } from './lib/transcriptToolMessageGrouping'
 import {
   MIN_RIGHT_PANEL_WIDTH,
-  MAX_RIGHT_PANEL_WIDTH,
   MIN_WORKSPACE_SIDEBAR_WIDTH,
   MAX_WORKSPACE_SIDEBAR_WIDTH,
   clampPanelWidth,
   clampWorkspaceSidebarWidth,
-  getStoredWorkspaceSidebarWidth
+  getStoredWorkspaceSidebarWidth,
+  rightPanelViewportMax
 } from './lib/panelWidths'
-import {
-  getProviderLabel,
-  getProviderOfferUnavailableReason
-} from './lib/providerLabels'
+import { getProviderLabel, getProviderOfferUnavailableReason } from './lib/providerLabels'
 import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
@@ -285,16 +367,13 @@ import {
   getUsageWorkspaceIdForChat
 } from './lib/chatScope'
 import { resolvePaneWorkspace, resolvePaneWorkspacePath } from './lib/mainPaneWorkspaceHeader'
-import { resolveComposerFocusedWorkspace, resolveAppChatChromeWorkspacePath } from './lib/composerFocusedWorkspace'
 import {
-  openWorkspaceDiffInspector,
-  withWorkspaceDiffPath
-} from './lib/workspaceDiffInspector'
+  resolveComposerFocusedWorkspace,
+  resolveAppChatChromeWorkspacePath
+} from './lib/composerFocusedWorkspace'
+import { openWorkspaceDiffInspector, withWorkspaceDiffPath } from './lib/workspaceDiffInspector'
 import { resolveRemoveWorkspaceFocusTeardown } from './lib/removeWorkspaceFocusTeardown'
-import {
-  WorkspaceGitSnapshotStore,
-  useWorkspaceGitSnapshot
-} from './lib/workspaceGitSnapshotStore'
+import { WorkspaceGitSnapshotStore, useWorkspaceGitSnapshot } from './lib/workspaceGitSnapshotStore'
 import {
   WorkspacePrCiRefresher,
   WorkspacePrCiStore,
@@ -316,10 +395,7 @@ import {
   isTopLevelWorkspaceChat,
   type SideChatCreateMode
 } from './lib/sideChatLifecycle'
-import {
-  setSideChatAuthorityReturn,
-  sideChatAuthorityReturnEnabled
-} from './lib/sideChatReturn'
+import { setSideChatAuthorityReturn, sideChatAuthorityReturnEnabled } from './lib/sideChatReturn'
 import { findReusableSideChat } from './lib/sideChatReuse'
 import {
   CODEX_DEFAULT_MODELS,
@@ -359,10 +435,7 @@ import {
 import { humaniseModelId } from './lib/modelDisplayName'
 import { mergeOllamaModelCatalog } from './lib/ollamaModelCatalog'
 import { normalizeGeminiResumeTarget, resolveGeminiResumeForRun } from './lib/geminiResume'
-import {
-  buildChatTokenTally,
-  formatEnsembleTokenBreakdown
-} from './lib/threadTokenTally'
+import { buildChatTokenTally, formatEnsembleTokenBreakdown } from './lib/threadTokenTally'
 import { buildCodexUsageWindows } from './lib/codexUsageWindows'
 import {
   restoreQueuedRunWorktreeTarget,
@@ -380,22 +453,36 @@ import {
   shouldAppendDueScheduledRun
 } from './lib/midRunSteeringQueue'
 import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
+import { mergeHydratedRawLogs, shouldHydrateThreadRawLogs } from './lib/rawLogHydration'
+import {
+  runRequestDisplayPrompt,
+  runRequestPromptPreview
+} from './lib/runRequestPromptPreview'
 import { buildCodexNativeReviewInvocationParams } from './lib/codexNativeReview'
 import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
   ensembleQueuedPromptsFromRound,
   ensembleRoundQueuePatch,
+  filterTranscriptBackedQueuedRunEntries,
   mapQueuedAttachmentsForComposer,
   preserveOptimisticEnsembleQueue,
-  queuedRunRequestChatId
+  queuedRunRequestChatId,
+  reserveQueuedRunAtFront
 } from './lib/queuedMessageRows'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
+import {
+  formatProviderDiagnosticNotice,
+  readProviderDiagnosticNotice
+} from '../../shared/providerDiagnosticNotice'
 import { resolveChatApprovalMode } from './lib/chatComposerSelection'
 import { decideFirstSendWorkspaceConsent } from './lib/approvalElevation'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
-import { attachmentPathsOutsideWorkspace, parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
+import {
+  attachmentPathsOutsideWorkspace,
+  parseGeminiPermissionRequest
+} from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
   CommandPaletteItem,
@@ -412,18 +499,11 @@ import { parsePositiveIntArg, parseSlashToggleArg } from './lib/ensembleSlashCom
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
-import {
-  NeedsInputBanner,
-  useNeedsInputBannerController
-} from './components/NeedsInputBanner'
+import { NeedsInputBanner, useNeedsInputBannerController } from './components/NeedsInputBanner'
+import { StartupAuthorityBanner } from './components/StartupAuthorityBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
-import { UsageHeatmap } from './components/UsageHeatmap'
-import { DailyActivityHeatmap } from './components/DailyActivityHeatmap'
-import { WorkspaceActivityHeatmap } from './components/WorkspaceActivityHeatmap'
-import { type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
-import { TokenUsageChart } from './components/TokenUsageChart'
 import { useAppearance } from './hooks/useAppearance'
 import { usePanelPresence } from './hooks/usePanelPresence'
 import { useExternalPathRepoMetadataByPath } from './hooks/useExternalPathRepoMetadata'
@@ -433,10 +513,16 @@ import { useAppVersion } from './hooks/useAppVersion'
 import { useNativeCapabilities } from './hooks/useNativeCapabilities'
 import { useViewportWidth } from './hooks/useViewportWidth'
 import { useChangelog } from './hooks/useChangelog'
+import { useApplicationMenu } from './hooks/useApplicationMenu'
+import {
+  resolveApplicationMenuWorkspace,
+  runApplicationMenuCommand,
+  type ApplicationMenuActions
+} from './lib/applicationMenuActions'
+import { terminalLaunchBus } from './lib/TerminalSidebarStore'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import { useScopedIpc } from './hooks/useScopedIpc'
-import { useThreadMessageInbox } from './hooks/useThreadMessageInbox'
 import { useChatMutations } from './state/useChatMutations'
 import {
   filterDispatchExternalPathGrants,
@@ -475,16 +561,9 @@ import {
 } from './lib/chatGitWorkflowObserver'
 import { summarizeChecks } from './components/GitStatusChips'
 import { repoNameFromRemote } from './components/GitHubSatellitePopover'
-import {
-  buildSidebarGitIndicators,
-  encodeSidebarGitIndicators
-} from './lib/sidebarGitIndicators'
+import { buildSidebarGitIndicators, encodeSidebarGitIndicators } from './lib/sidebarGitIndicators'
 import { type WorkspaceBoardCreateInput } from './components/Sidebar'
-import {
-  SETTINGS_TABS,
-  isSettingsTabVisible,
-  type SettingsTab
-} from './components/SettingsPanel'
+import { SETTINGS_TABS, isSettingsTabVisible, type SettingsTab } from './components/SettingsPanel'
 import { resolveSettingsTabFromSlashArg } from './lib/resolveSettingsSlashTab'
 import { SubThreadCreator } from './components/SubThreadCreator'
 import { FirstLaunchSheet } from './components/FirstLaunchSheet'
@@ -492,7 +571,10 @@ import { BugReportSheet, type BugReportSubmission } from './components/BugReport
 import { ChangelogSheet } from './components/ChangelogSheet'
 import { ComposerScheduleButton } from './components/ComposerScheduleButton'
 import { AppBootMask } from './components/AppBootMask'
+import { bootMaskUnmountDelayMs, prefersReducedMotion } from './lib/bootMaskTiming'
+import { startupSettingsRequest } from './lib/startupSettingsCache'
 import { MainAppLayout } from './app/views/MainAppLayout'
+import { TerminalWorkbench } from './components/TerminalWorkbench'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
 import {
   AppleTerminalIcon,
@@ -503,23 +585,19 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   LinkCircleSymbolIcon,
+  SiteLoginSymbolIcon,
   CanvasSurfaceSymbolIcon,
-  FanoutCandidatesSymbolIcon,
   OfficeSuiteSymbolIcon,
-  PeerThreadMessageSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
   QuestionCircleIcon,
   ReviewSymbolIcon,
-  RunRailSymbolIcon,
   ScreenWatchSymbolIcon,
   SidebarCornerIcon,
   SkyWeatherIcon,
-  SplitChatIcon } from './components/AppChromeSymbols'
-import {
-  collectChatMediaRefs,
-  type ChatMediaRef
-} from './components/ChatMediaPanel'
+  SplitChatIcon
+} from './components/AppChromeSymbols'
+import { collectChatMediaRefs, type ChatMediaRef } from './components/ChatMediaPanel'
 // PairingSheet retired in the post-1.0.2 Settings full-app takeover.
 // The pairing flow now lives as a Settings tab (`PairingPage` mounted
 // inside SettingsPanel). Triggers route through `setShowSettings(true)
@@ -537,32 +615,25 @@ import {
   shortModelName
 } from './lib/composerChipFormat'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
   GROK_46_MODEL_ID,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
   cursorGrokBaseModelId,
   isCursorGrokModelId,
+  isGrok47ReasoningModelId,
   isGrokReasoningModelId
 } from '../../shared/grok45Models'
 
 import {
-  deleteEnsembleRosterPreset,
-  importEnsembleRosterPresetsFromJson,
-  listEnsembleRosterPresets,
   materializeParticipantsFromPresetWithBossman,
   MAX_ROSTER_PRESET_PARTICIPANTS,
-  saveEnsembleRosterPresetFromParticipants,
   seedDefaultEnsembleRosterPresets,
-  subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
-import {
-  hydrateParticipantsWithPooledAgentIdentity,
-  pooledAgentIdentitySnapshot,
-  registerParticipantInAgentPool
-} from './lib/ensembleAgentPool'
+import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
 import {
   deriveActiveEnsembleWorkingPresentation,
   ENSEMBLE_NEUTRAL_HUE_CLASS,
@@ -571,8 +642,10 @@ import {
 import {
   buildProviderChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
+  getEnsembleReasoningOptions,
   normalizeProviderModelSelection,
-  resolveEnsembleParticipantSettings
+  resolveEnsembleParticipantSettings,
+  resolveReasoningEffortForSeatChange
 } from './lib/ensembleProviderDefaults'
 import { shouldApplyFocusedWorkspaceRebind } from './lib/ensembleWelcomeWorkspace'
 import { withSessionActivityLedger } from './lib/sessionActivityLedger'
@@ -589,30 +662,15 @@ import {
 import { type PermissionOption } from './components/CombinedPermissionsPicker'
 import { useComposerTextareaContextMenu } from './components/ComposerTextareaContextMenu'
 import { WORKSPACE_POLICY_SERVICES } from './lib/workspacePolicyServices'
-import {
-  applyStateAction,
-  type PerChatStateAction,
-  usePerChatState
-} from './hooks/usePerChatState'
+import { applyStateAction, type PerChatStateAction, usePerChatState } from './hooks/usePerChatState'
 import {
   DEFAULT_CONTEXT_TURNS,
   buildConversationCompactionProjection,
   clampContextTurns,
   resolveContextBudget
 } from '../../main/PromptComposition'
-import {
-  estimateWorstOllamaEnsembleUiPressure,
-  ollamaContextPressureMessage
-} from '../../main/ollama/OllamaEnsembleContext'
 import { resolveRuntimeProfileIdForChat } from '../../main/RuntimeProfileResolution'
-import {
-  buildRunLanes,
-  compactPromptPreview,
-  extractRunTouchedFiles,
-  resolveCockpitRunSource,
-  type RunLane
-} from './lib/RunLanes'
-import { formatOpaqueMarkdownPromptSection } from './lib/HandoffPrompt'
+import { compactPromptPreview } from './lib/RunLanes'
 import {
   isContextWindowProviderId,
   resolveContextWindow,
@@ -627,12 +685,16 @@ import {
   type ContextMeterModel
 } from './lib/contextMeter'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
-import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
-import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
 import {
-  createRunQueueLeaseClaims,
-  removeExactQueuedRunRequest
-} from './lib/runQueueLeaseClaims'
+  deferredRawLogEntry,
+  materializeRawLogEntries,
+  rawLogEntryContent,
+  rawLogFromRunEvent,
+  type RawLogEntry
+} from './lib/rawLogEntry'
+import { RawLogRingBuffer } from './lib/rawLogRingBuffer'
+import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
+import { createRunQueueLeaseClaims, removeExactQueuedRunRequest } from './lib/runQueueLeaseClaims'
 import {
   acceptedEnsembleRunQueueWrapperReason,
   isQueuedDesktopRunQueueJob,
@@ -646,6 +708,8 @@ import {
   isEnsembleActiveRoundDispatchLive,
   shouldQueueRunBeforeDispatch
 } from './lib/chatBusyState'
+import { ChatDispatchLatch } from './lib/chatDispatchLatch'
+import { ComposerSubmitLedger } from './lib/composerSubmitLedger'
 import { applyRecoveryRecordsToEnsembleRounds } from './lib/recoverEnsembleRoundTerminals'
 import {
   buildPlanImportDisplayPrompt,
@@ -670,7 +734,6 @@ import {
   visibleRunningChatIds
 } from './lib/runningChatVisibility'
 import {
-  DEFAULT_STEER_POLL_INTERVAL_MS,
   IDLE_STEER_STATE,
   getSteerIndicatorMessage,
   isSteerInFlight,
@@ -694,10 +757,12 @@ import {
 import {
   chatPopoutHandoffKey,
   getInitialChatPopoutChatId,
+  getInitialChatPopoutPresentation,
   listChatPopoutHandoffChatIds,
   readChatPopoutHandoff,
   writeChatPopoutHandoff
 } from './lib/chatPopoutHandoff'
+import type { ChatPopoutPresentation } from '../../shared/chatPopoutPresentation'
 import {
   chatPopoutAuthorityDisabledReason,
   shouldPersistApprovalElevationAck
@@ -724,6 +789,32 @@ import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
 import { githubWatchDisabledReason } from './lib/watchedPrUi'
 import { useWatchedPrController } from './app/hooks/useWatchedPrController'
+import { useEnsembleRosterPresetBridge } from './app/hooks/useEnsembleRosterPresetBridge'
+import { useCollaborationChatIds } from './app/hooks/useCollaborationChatIds'
+import { usePluginActivation } from './app/hooks/usePluginActivation'
+import { useWebSiteLoginAttention } from './app/hooks/useWebSiteLoginAttention'
+import type { AttachedWindowSnapshot, ResumeAppWatchSnapshot } from './app/windowAttachmentState'
+import { attachedWindowFromStatus, stickyAppWatchStashInput } from './app/windowAttachmentState'
+import {
+  appendMessageContentToPromptDraft,
+  compactShortcutHint,
+  hasGitSnapshotSubscriptionApi,
+  runIdFromStreamFlushItemKey,
+  scheduleAfterPaint,
+  streamFlushItemKey
+} from './app/appScheduleAndCopyHelpers'
+import type { AuditBundleExportScope } from './app/appAuditAndPermissionHelpers'
+import {
+  approvalModeToPermissionPreset,
+  auditBundleExportScopeLabel,
+  contextCompactionProgressKey,
+  isPermissionPresetId,
+  permissionPresetToApprovalMode,
+  shareUnchangedMessageObjects,
+  summarizeAuditBundleVerification,
+  summarizeAuditRetentionPurge
+} from './app/appAuditAndPermissionHelpers'
+import { buildWelcomeHeatmapSlots } from './app/welcomeHeatmapSlots'
 import {
   shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
@@ -742,21 +833,39 @@ import {
   resolveWelcomeFitStackBounds,
   type WelcomeFitLevel
 } from './lib/welcomeFit'
-import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
+import { isChatSummaryRecord, mergeChatRecord, mergeChatRecordValue } from './lib/chatRecordMerge'
+import { resolveDispatchChatBase } from './lib/dispatchChatBase'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
+import { applyEnsembleParticipantSelection } from './lib/ensembleParticipantSelectionCommit'
 import { commitHydratedChat, resolveChatHydration } from './lib/chatHydrationMerge'
-import { createChatHydrationRuntime, reconcileHydrationOptions } from './lib/chatHydrationRuntime'
+import { hydratePagedChatShell } from './lib/chatTranscriptPager'
+import { createSurfaceChatHydrator, isSurfaceChatHydrated } from './lib/chatSurfacePagedHydration'
+import {
+  resolveCurrentChatTranscriptWindow,
+  useCurrentChatTranscriptWindow
+} from './lib/currentChatTranscriptWindow'
+import { shouldDeferTranscriptPresentation } from './lib/approvalPresentationGate'
+import {
+  isTranscriptPagedShell,
+  shouldPageTranscriptOnOpen,
+  type ChatShell,
+  type TranscriptPage
+} from '../../shared/transcriptPage'
+import {
+  getOrCreateChatHydrationRuntime,
+  reconcileHydrationOptions,
+  type ChatHydrationRuntime
+} from './lib/chatHydrationRuntime'
 import { shouldRetainReactChatOnFlush } from './lib/chatChromeIdentity'
 import { bindChatTranscriptStore } from './lib/useChatTranscript'
+import { useChatUpdateInterestRuntime } from './hooks/useChatUpdateInterestRuntime'
+import { RawLogPresentationQueue } from './lib/rawLogPresentationQueue'
 import {
   applyParticipantPermissionsToEnsemble,
   cloneParticipantPermissionPatch,
   resolveParticipantPermissionPatch
 } from './lib/ensembleParticipantPermissions'
-import {
-  buildPinnedMessageSummaries,
-  toggleChatMessagePin
-} from './lib/pinnedMessages'
+import { buildPinnedMessageSummaries, toggleChatMessagePin } from './lib/pinnedMessages'
 import { applyChatMessageFeedback, type MessageFeedbackDetails } from './lib/messageFeedback'
 import {
   buildRightDockTabs,
@@ -773,12 +882,14 @@ import {
 } from './lib/appDriveDockState'
 import {
   getPendingMeshCanvasOpenRequest,
+  requestMeshCanvasOpen,
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
 import { isCanvasDockPresentationEvent } from './lib/canvasPresentation'
 import {
   getPendingSimulatorCanvasOpenRequest,
   isSimulatorCanvasPresentationEvent,
+  requestSimulatorCanvasOpen,
   subscribeSimulatorCanvasOpenRequests
 } from './lib/simulatorCanvasLaunch'
 import {
@@ -840,6 +951,10 @@ import {
 } from './lib/startupNewChatTarget'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
 import {
+  launchWelcomeBackgroundThread,
+  type WelcomeBackgroundThreadTarget
+} from './lib/welcomeBackgroundThread'
+import {
   buildLaunchPreviewTargets,
   launchPreviewActionTitle,
   type LaunchPreviewTarget
@@ -866,9 +981,14 @@ import {
   type ImageAttachment,
   type ImageAttachmentThumbnail
 } from './lib/imageAttachments'
+import { compactResolvedImageThumbnailMetadata } from './lib/imageThumbnailMetadata'
 import { shouldSurfaceProposedPlanCard } from './lib/ensemblePlanPolicy'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
-import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
+import {
+  parseProposedPlan,
+  stripProposedPlanBlock,
+  type ProposedPlanState
+} from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
 import { type AgentQuestionState } from './components/AgentQuestionCard'
 import {
@@ -900,6 +1020,10 @@ import {
   closeoutSubagentRefreshFingerprint
 } from './lib/closeoutSubagentRefresh'
 import {
+  applyRestingChatCloseout,
+  resolveRestingChatCloseoutTarget
+} from './lib/paneCloseoutAuthoring'
+import {
   findCloseoutCommitRepairTargets,
   repairCloseoutCommitTombstones
 } from './lib/closeoutCommitRepair'
@@ -907,6 +1031,7 @@ import {
   buildRoundCloseoutSummaryDigest,
   buildRunCloseoutSummaryDigest
 } from './lib/closeoutSummaryDigest'
+import { roundSummaryRefreshKeyForCloseout } from './lib/closeoutRoundSummaryRefresh'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
 import {
   fetchProviderRates,
@@ -915,10 +1040,7 @@ import {
   type RendererProviderRates
 } from './lib/providerRateEstimate'
 import { buildWelcomeUsageDashboardData } from './lib/welcomeUsageDashboard'
-import {
-  type AgentAuraProviderKey,
-  type AgentAuraStatus
-} from './components/FxLayers'
+import { type AgentAuraProviderKey, type AgentAuraStatus } from './components/FxLayers'
 import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenTally'
 import {
   cachedPaneContextTelemetry,
@@ -927,39 +1049,53 @@ import {
   cachedPaneRunCompleteNotice
 } from './lib/multiviewPaneDerivations'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
-import { type ComposerProps } from './components/Composer'
+import { type ComposerProps, type ComposerRunPromptRoutingReader } from './components/Composer'
 import {
   buildDetachedChatSurfaceBase,
   ChatSurfaceComposerRuntime,
   ChatSurfaceComposerRuntimeRegistry
 } from './lib/chatSurfaceComposerRuntime'
+import {
+  PendingApprovalRecoveryWindow,
+  projectChatSurfacePendingApprovals
+} from './lib/chatSurfacePendingApprovals'
 import { createPaneTopLeftChromeComposer } from './lib/paneTopLeftChrome'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
+import { executionRunStatusLabel } from './lib/executionGraphProjection'
 import {
   executionAppendSubmissionKey,
   executionStackStepTitle,
   executionRunTimestamp,
   isTerminalExecutionRun,
+  ownedExecutionViewsByThread,
+  liveOwnedExecutionThreadIds,
   mergeExecutionRunProjection,
   projectExecutionRun,
   shouldAppendBusySendToExecutionStack,
   sortExecutionRunHistory
 } from './lib/executionGraphLiveState'
 import {
+  clearExecutionGraphNoticeFailure,
+  deriveExecutionGraphDiagnosticNotices,
+  executionGraphDiagnosticAppNotifications
+} from './lib/executionGraphDiagnosticNotices'
+import { publishDynamicAppNotifications } from './lib/dynamicAppNotifications'
+import {
   paneRecordsIncludingParked,
   removedCanvasIds,
   useMultiviewState
 } from './hooks/useMultiviewState'
 import { useChatSurfaceHydration } from './hooks/useChatSurfaceHydration'
+import { useSelectedChatHydrationRecovery } from './hooks/useSelectedChatHydrationRecovery'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
+import { tryCommitEnsembleSeatPatch } from './lib/ensembleSeatPatchCommit'
+import { needsDispatchHistoryHydration } from './lib/dispatchHistoryHydration'
 import {
-  clearPendingEnsembleSeatSelection,
-  ensembleParticipantSelectionsEqual,
   overlayPendingEnsembleSeatSelections,
   queuePendingEnsembleSeatSelection,
   reconcilePendingEnsembleSeatSelections,
-  setPendingEnsembleSeatSelection,
+  replacePendingEnsembleSeatSelectionIfCurrent,
   type PendingEnsembleSeatSelections
 } from './lib/pendingEnsembleSeatSelection'
 import { resolveSoleEnsembleSoloCandidate } from './lib/ensembleRosterFloor'
@@ -980,6 +1116,7 @@ import { FILE_DIFF_STATUSES } from './lib/fileDiffStatuses'
 import { RUN_WRITE_TOOLS } from './lib/runWriteTools'
 import {
   deriveVisibleRunCompleteNotice,
+  shouldSuppressRunCompleteSummary,
   type RunCompleteNotice
 } from './lib/runCompleteNotice'
 import type { PersistentSessionStatus } from './lib/persistentSessionStatus'
@@ -994,6 +1131,31 @@ import {
   type PendingProviderChange
 } from '../../main/providerChangeQueue'
 import {
+  applyChatComposerSelectionPatch,
+  chatComposerSelectionPatchTouchesProviderMetadata,
+  sanitizeChatComposerSelectionPatch,
+  shouldDeferProviderScopedComposerSelection
+} from '../../shared/chatComposerSelectionPatch'
+import { ChatComposerSelectionPatchQueue } from './lib/ChatComposerSelectionPatchQueue'
+import { ComposerSelectionWriteClaims } from './lib/composerSelectionWriteClaims'
+import { EnsembleRosterWriteClaims } from './lib/ensembleRosterWriteClaims'
+import type { EnsembleUserRosterMutation } from '../../main/EnsembleUserRosterMutation'
+import { EnsembleChatKindWriteClaims } from './lib/ensembleChatKindWriteClaims'
+import { withEnsembleWriteClaim } from './lib/ensembleWriteClaimScope'
+import {
+  ChatKindSwitchGate,
+  type ChatKindSwitchAdmission,
+  type ChatKindSwitchRequest
+} from './lib/chatKindSwitchGate'
+import { ChatModeChangeNotices, describeChatModeChangeFailure } from './lib/chatModeChangeNotices'
+import { ChatModeChangeNotice } from './components/ChatModeChangeNotice'
+import {
+  commitEnsembleLiveRosterMutation as commitEnsembleLiveRosterMutationRecord,
+  commitEnsembleRosterChange as commitEnsembleRosterChangeRecord,
+  saveChatPreservingEnsembleIntent
+} from './lib/ensembleRosterCommit'
+import { planConflictGatedChatSave } from './lib/conflictGatedChatSave'
+import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
 } from '../../shared/pendingWorkspaceRebind'
@@ -1003,10 +1165,7 @@ import {
   buildUserEnsembleRosterPresetApplyPlan,
   hasPendingEnsembleRosterPresetApply
 } from '../../main/EnsembleRosterPresetApply'
-import {
-  EMPTY_PERMISSION_STATE,
-  type ComposerPermissionState
-} from './lib/composerPermissionState'
+import { EMPTY_PERMISSION_STATE, type ComposerPermissionState } from './lib/composerPermissionState'
 import { createAppRunId, createMessageId } from './lib/idGenerators'
 import { drainStreamRenderMetrics } from './lib/streamRenderMetrics'
 import {
@@ -1027,14 +1186,6 @@ import {
 
 /** Matches MuseCliArgs MUSE_DEFAULT_REASONING_EFFORT (renderer-safe). */
 const MUSE_DEFAULT_REASONING_EFFORT = 'high'
-const MUSE_REASONING_EFFORT_ALLOWLIST = new Set([
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'ultra'
-])
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
@@ -1051,59 +1202,8 @@ interface WorkspaceBoardCaptureInput {
   provenance?: WorkspaceBoardProvenance
 }
 
-const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
-type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
-
-function streamFlushItemKey(runId: string, itemId?: string): string {
-  return `${runId}${STREAM_FLUSH_ITEM_KEY_SEPARATOR}${itemId || ''}`
-}
-
-function runIdFromStreamFlushItemKey(key: string): string {
-  const separatorIndex = key.indexOf(STREAM_FLUSH_ITEM_KEY_SEPARATOR)
-  return separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
-}
-
-function summarizeAuditRetentionPurge(result: AuditRetentionPurgeResult): string {
-  if (!result.ok) return `failed: ${result.error || 'unknown error'}`
-  const receipt = result.receipt
-  if (!receipt) return 'completed without a receipt'
-  const totals = Object.values(receipt.counts).reduce(
-    (acc, counts) => ({
-      scanned: acc.scanned + counts.scanned,
-      retained: acc.retained + counts.retained,
-      deleted: acc.deleted + counts.deleted
-    }),
-    { scanned: 0, retained: 0, deleted: 0 }
-  )
-  const verb = receipt.dryRun ? 'would delete' : 'deleted'
-  const mode = receipt.dryRun ? 'dry-run' : 'purge'
-  const disabledNote = receipt.enabled ? '' : ' (retention disabled; forced dry-run)'
-
-  return `${mode}${disabledNote}: scanned ${totals.scanned}, retained ${totals.retained}, ${verb} ${totals.deleted}`
-}
-
-function auditBundleExportScopeLabel(scope: AuditBundleExportScope): string {
-  switch (scope) {
-    case 'workspace':
-      return 'current workspace'
-    case 'chat':
-      return 'current thread'
-    case 'run':
-      return 'current run'
-    default:
-      return 'full local'
-  }
-}
-
-function summarizeAuditBundleVerification(result: ProductAuditBundleVerificationResult): string {
-  if (!result.ok) {
-    const reason = result.verification?.reason || result.error || 'verification failed'
-    return `failed: ${reason}`
-  }
-  const evidence = result.manifest?.tamperEvidence || 'unknown evidence'
-  const keyId = result.verification?.keyId ? `, key ${result.verification.keyId}` : ''
-  return `verified (${evidence}${keyId})`
-}
+/** Fresh per-document identity; used only to reject stale ACKs after reload. */
+const RENDERER_CHAT_UPDATE_EPOCH = createRendererChatUpdateEpoch()
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
@@ -1124,25 +1224,9 @@ type ContextCompactionProgressState = ContextCompactionProgressEvent & {
 
 const EMPTY_CONTEXT_COMPACTION_PROGRESS: readonly ContextCompactionProgressEvent[] = []
 
-function contextCompactionProgressKey(event: Pick<ContextCompactionProgressEvent, 'chatId' | 'participantId' | 'provider'>): string {
-  return `${event.chatId}:${event.participantId || event.provider || 'chat'}`
-}
-
 // Per-provider palette CORE constants live in
 // src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
 // paletteCoreForProvider() so App routing stays aligned with the slash menu.
-
-function compactShortcutHint(keys: string[]): string {
-  if (keys.length === 0 || keys[0] === 'Unassigned') return ''
-  return keys
-    .map((key) => {
-      if (key === 'Cmd/Ctrl') return '⌘'
-      if (key === 'Shift') return '⇧'
-      if (key === 'Alt') return '⌥'
-      return key
-    })
-    .join('')
-}
 
 // sanitizeContextText moved to `src/main/PromptComposition.ts` and re-exported below.
 
@@ -1153,122 +1237,10 @@ function compactShortcutHint(keys: string[]): string {
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
 const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
-const EMPTY_WELCOME_HEATMAP_SLOTS: WelcomeHeatmapSlot[] = []
-
-interface WelcomeHeatmapSlotsConfig {
-  workspaceActivityPath?: string
-  showUsageDashboard: boolean
-  taskwraithActivityEnabled: boolean
-  externalActivityEnabled: boolean
-  refreshKey: number
-  usageRecords: UsageRecord[]
-}
-
-function buildWelcomeHeatmapSlots({
-  workspaceActivityPath,
-  showUsageDashboard,
-  taskwraithActivityEnabled,
-  externalActivityEnabled,
-  refreshKey,
-  usageRecords
-}: WelcomeHeatmapSlotsConfig): WelcomeHeatmapSlot[] {
-  if (!workspaceActivityPath && !showUsageDashboard) return EMPTY_WELCOME_HEATMAP_SLOTS
-
-  const slots: WelcomeHeatmapSlot[] = []
-  if (workspaceActivityPath) {
-    slots.push({
-      key: 'workspace',
-      node: (
-        <WorkspaceActivityHeatmap
-          workspacePath={workspaceActivityPath}
-          dayCount={90}
-          refreshKey={refreshKey}
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard && taskwraithActivityEnabled) {
-    slots.push({
-      key: 'taskwraith',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={refreshKey}
-          records={usageRecords}
-          title="TaskWraith Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard && externalActivityEnabled) {
-    slots.push({
-      key: 'external',
-      node: (
-        <UsageHeatmap
-          dayCount={90}
-          refreshKey={refreshKey}
-          usageSource="external"
-          supplementalTaskWraithRecords={usageRecords}
-          title="External Activity"
-          showProviderFilter
-          className="usage-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  if (showUsageDashboard) {
-    slots.push({
-      key: 'taskwraith-tokens',
-      node: (
-        <TokenUsageChart
-          title="TaskWraith Tokens"
-          records={usageRecords}
-          dayCount={90}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-    slots.push({
-      key: 'external-tokens',
-      node: (
-        <TokenUsageChart
-          title="External Tokens"
-          source="external"
-          supplementalTaskWraithRecords={usageRecords}
-          dayCount={90}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="token-usage-chart--welcome"
-        />
-      )
-    })
-    // The only slot in the cycle that reaches past 90 days: it reads the
-    // persisted daily rollup rather than the scan window, one cell per day.
-    slots.push({
-      key: 'external-year',
-      node: (
-        <DailyActivityHeatmap
-          title="External Activity · Year"
-          supplementalTaskWraithRecords={usageRecords}
-          refreshKey={refreshKey}
-          showProviderFilter
-          className="daily-heatmap--welcome-standalone"
-        />
-      )
-    })
-  }
-  return slots.length > 0 ? slots : EMPTY_WELCOME_HEATMAP_SLOTS
-}
 
 // Prompt-composition helpers moved to `src/main/PromptComposition.ts` (Phase B3 step 1).
 // Re-exported below from the canonical module so existing call sites keep working
 // without an import-statement migration; future call sites should import directly.
-
 
 /**
  * QMOD (1.0.3) — modal card rendered next to a synthetic system
@@ -1298,117 +1270,13 @@ type SideChatTypePickerOption = {
   chatId?: string
   agentIdentity?: ReturnType<typeof assignAgentIdentityFromSeed>
 }
-type InspectorRightTab =
-  | 'diff'
-  | 'commits'
-  | 'raw'
-  | 'delegation'
-  | 'timeline'
-  | 'safety'
-  | 'capabilities'
-  | 'background-tasks'
+type InspectorRightTab = 'diff' | 'commits' | 'raw'
 type SideChatSeedContext = {
   originMessageId?: string
   originRunId?: string
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
 }
-function permissionPresetToApprovalMode(preset?: string): string {
-  if (preset === 'read_only') return 'plan'
-  if (preset === 'plan') return 'plan'
-  if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
-  return 'default'
-}
-
-function approvalModeToPermissionPreset(
-  approvalMode: string,
-  workflowMode: ChatWorkflowMode
-): PermissionPresetId {
-  if (approvalMode === 'plan') {
-    return workflowMode === 'plan' ? 'plan' : 'read_only'
-  }
-  if (approvalMode === 'auto_edit') return 'workspace_write'
-  return 'default'
-}
-
-function isPermissionPresetId(value: unknown): value is PermissionPresetId {
-  return (
-    value === 'read_only' ||
-    value === 'plan' ||
-    value === 'default' ||
-    value === 'workspace_write' ||
-    value === 'full_access' ||
-    value === 'custom'
-  )
-}
-
-function scheduleAfterPaint(callback: () => void, timeout = 700): () => void {
-  if (typeof window === 'undefined') return () => {}
-  const win = window as Window & {
-    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number
-    cancelIdleCallback?: (handle: number) => void
-  }
-  let cancelled = false
-  const run = () => {
-    if (!cancelled) callback()
-  }
-  if (typeof win.requestIdleCallback === 'function') {
-    const handle = win.requestIdleCallback(run, { timeout })
-    return () => {
-      cancelled = true
-      win.cancelIdleCallback?.(handle)
-    }
-  }
-  let timeoutHandle: number | null = null
-  const rafHandle = window.requestAnimationFrame(() => {
-    timeoutHandle = window.setTimeout(run, 0)
-  })
-  return () => {
-    cancelled = true
-    window.cancelAnimationFrame(rafHandle)
-    if (timeoutHandle !== null) window.clearTimeout(timeoutHandle)
-  }
-}
-
-function scheduleAfterNextPaint(callback: () => void): () => void {
-  if (typeof window === 'undefined') return () => {}
-  let cancelled = false
-  let timeoutHandle: number | null = null
-  const rafHandle = window.requestAnimationFrame(() => {
-    timeoutHandle = window.setTimeout(() => {
-      if (!cancelled) callback()
-    }, 0)
-  })
-  return () => {
-    cancelled = true
-    window.cancelAnimationFrame(rafHandle)
-    if (timeoutHandle !== null) window.clearTimeout(timeoutHandle)
-  }
-}
-
 const EMPTY_DIFF_FILE_SUMMARIES: DiffFileSummary[] = []
-
-function appendMessageContentToPromptDraft(previous: string, content: string): string {
-  const addition = content.trim()
-  if (!addition) return previous
-  if (!previous.trim()) return addition
-  const separator = previous.endsWith('\n\n') ? '' : previous.endsWith('\n') ? '\n' : '\n\n'
-  return `${previous}${separator}${addition}`
-}
-
-function shareUnchangedMessageObjects(
-  previous: readonly ChatMessage[],
-  next: readonly ChatMessage[]
-): ChatMessage[] {
-  let changed = false
-  const shared = next.map((message, index) => {
-    const prior = previous[index]
-    if (!prior || prior === message || prior.id !== message.id) return message
-    if (!deepEqual(prior, message)) return message
-    changed = true
-    return prior
-  })
-  return changed ? shared : (next as ChatMessage[])
-}
 
 interface LiveToolFileSummaryState {
   chatId: string
@@ -1432,62 +1300,6 @@ interface OllamaModelInstallPrompt {
   error?: string
 }
 
-function hasGitSnapshotSubscriptionApi(): boolean {
-  return typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
-}
-
-// Composer still names this field `windowMeta`; it is intentionally derived
-// from the coordinator's public renderer observation only.
-type AttachedWindowSnapshot = {
-  readonly chatId: string
-  readonly generation: number
-  readonly windowMeta: NativeWindowCoordinatorRendererObservation['window']
-  readonly attachedAt: string
-  readonly streaming?: NativeWindowCoordinatorRendererObservation['streaming']
-}
-
-function attachedWindowFromStatus(
-  status: NativeWindowCoordinatorRendererStatus
-): AttachedWindowSnapshot | null {
-  const observation = status.observation
-  if (!observation) return null
-  return {
-    chatId: observation.chatId,
-    generation: observation.generation,
-    windowMeta: observation.window,
-    attachedAt: observation.attachedAt,
-    ...(observation.streaming ? { streaming: observation.streaming } : {})
-  }
-}
-
-type StickyAppWatchWindowMeta = Pick<
-  NativeWindowCoordinatorRendererObservation['window'],
-  'title' | 'bundleID' | 'applicationName'
->
-
-type ResumeAppWatchSnapshot = {
-  readonly chatId: string
-  readonly windowMeta: StickyAppWatchWindowMeta
-  readonly attachedAt: string
-  readonly stashedAt: string
-  readonly wasStreaming: boolean
-}
-
-function stickyAppWatchStashInput(
-  attachment: AttachedWindowSnapshot
-): Omit<ResumeAppWatchSnapshot, 'stashedAt'> {
-  return {
-    chatId: attachment.chatId,
-    windowMeta: {
-      title: attachment.windowMeta.title,
-      bundleID: attachment.windowMeta.bundleID,
-      applicationName: attachment.windowMeta.applicationName
-    },
-    attachedAt: attachment.attachedAt,
-    wasStreaming: Boolean(attachment.streaming)
-  }
-}
-
 function App(): React.JSX.Element {
   // Shared copy-to-clipboard feedback for every in-app copy affordance
   // (message chips, latest-response button). One instance keeps the
@@ -1495,6 +1307,10 @@ function App(): React.JSX.Element {
   const { copiedId, copy } = useCopyFeedback()
   const chatPopoutChatIdRef = useRef(getInitialChatPopoutChatId())
   const isChatPopoutWindow = Boolean(chatPopoutChatIdRef.current)
+  const [chatPopoutPresentation, setChatPopoutPresentation] = useState(
+    getInitialChatPopoutPresentation
+  )
+  const isCompactChatCompanion = isChatPopoutWindow && chatPopoutPresentation === 'compact'
   const trustedSessionMutationDisabledReason = chatPopoutAuthorityDisabledReason(
     isChatPopoutWindow,
     'trusted-session'
@@ -1505,6 +1321,14 @@ function App(): React.JSX.Element {
   )
   const isDockingChatPopoutRef = useRef(false)
   const skipCloseSideChatPresentationIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isChatPopoutWindow || typeof window.api.onChatPopoutPresentationChanged !== 'function') {
+      return undefined
+    }
+    return window.api.onChatPopoutPresentationChanged(({ presentation }) => {
+      setChatPopoutPresentation(presentation)
+    })
+  }, [isChatPopoutWindow])
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [managedPolicyStatus, setManagedPolicyStatus] = useState<Record<string, unknown> | null>(
     null
@@ -1553,7 +1377,9 @@ function App(): React.JSX.Element {
   // for surface-scoped host state — today the contextual dock memory. The ref
   // exists for write-time reads inside effects that must not re-run on tab
   // changes (the dock persist effect).
-  const [sidebarActiveTab, setSidebarActiveTab] = useState<'chat' | 'threads' | 'projects'>('chat')
+  const [sidebarActiveTab, setSidebarActiveTab] = useState<
+    'chat' | 'threads' | 'projects' | 'terminal'
+  >('chat')
   const sidebarActiveTabRef = useRef(sidebarActiveTab)
   sidebarActiveTabRef.current = sidebarActiveTab
   const [activeWorkProjectId, setActiveWorkProjectId] = useState<string | null>(null)
@@ -1574,122 +1400,30 @@ function App(): React.JSX.Element {
     enabledAt: null
   })
 
-  // Push roster presets (renderer localStorage = source of truth) up to main on
-  // mount + on every change, so the bridge can project them to paired iOS
-  // devices (the Roster page). The same subscription fires when an iOS-driven
-  // save/delete round-trips back to the renderer (slice B3).
-  useEffect(() => {
-    if (isChatPopoutWindow) return
-    const push = (): void => {
-      try {
-        void window.api
-          .syncEnsembleRosterPresets?.(listEnsembleRosterPresets())
-          .catch(() => undefined)
-      } catch {
-        // Best-effort: an older preload without the bridge just skips iOS sync.
-      }
-    }
-    push()
-    const unsubscribe = subscribeEnsembleRosterPresets(push)
-    // iOS-triggered preset writes round-trip here (the renderer owns the store).
-    // Persisting fires the subscription above, which re-syncs the list to main.
-    const offSave = window.api.onEnsembleRosterPresetSaveRequested?.((payload) => {
-      try {
-        saveEnsembleRosterPresetFromParticipants(
-          payload.name,
-          (payload.participants ?? []) as Parameters<
-            typeof saveEnsembleRosterPresetFromParticipants
-          >[1]
-        )
-      } catch {
-        // ignore malformed payloads
-      }
-    })
-    const offImport = window.api.onEnsembleRosterPresetImportRequested?.((payload) => {
-      try {
-        const result = importEnsembleRosterPresetsFromJson(payload.json)
-        const savedPreset = result.presets[0]
-        window.api.sendEnsembleRosterPresetImportResult({
-          requestId: payload.requestId,
-          ok: true,
-          importedCount: result.importedCount,
-          presetId: savedPreset.id,
-          presetName: savedPreset.name
-        })
-      } catch (error) {
-        window.api.sendEnsembleRosterPresetImportResult({
-          requestId: payload.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : 'Roster preset import failed.'
-        })
-      }
-    })
-    const offPoolRegistration = window.api.onEnsembleAgentPoolRegistrationRequested?.((payload) => {
-      try {
-        const result = registerParticipantInAgentPool(
-          payload.participant as Parameters<typeof registerParticipantInAgentPool>[0]
-        )
-        window.api.sendEnsembleAgentPoolRegistrationResult({
-          requestId: payload.requestId,
-          ok: true,
-          pooledAgentId: result.agent.agentId,
-          pooledAgentIdentity: pooledAgentIdentitySnapshot(result.agent),
-          mode: result.mode
-        })
-      } catch (error) {
-        window.api.sendEnsembleAgentPoolRegistrationResult({
-          requestId: payload.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : 'Agent Pool registration failed.'
-        })
-      }
-    })
-    const offDelete = window.api.onEnsembleRosterPresetDeleteRequested?.((presetId) => {
-      try {
-        deleteEnsembleRosterPreset(presetId)
-      } catch {
-        // ignore
-      }
-    })
-    return () => {
-      unsubscribe()
-      offSave?.()
-      offImport?.()
-      offPoolRegistration?.()
-      offDelete?.()
-    }
-  }, [isChatPopoutWindow])
+  useEnsembleRosterPresetBridge(isChatPopoutWindow)
 
-  // Seed drafts synchronously from localStorage on first render (not an async
-  // effect) so a restored draft is present before the composer reads it and can't
-  // be clobbered by — or clobber — text the user starts typing on launch.
-  const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
-  const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
-  // Full enabled-share list (for the Shares footer popover). Mirrors the Set
-  // above but keeps the participant/mode detail the popover renders.
-  const refreshCollaborationChatIds = useCallback(() => {
-    const channels = window.api.channels
-    if (!channels) return
-    void channels
-      .list()
-      .then((result) => {
-        if (!result.ok) return
-        setCollaboratingChatIds(
-          new Set(
-            result.value
-              .filter((channel) => channel.status === 'active')
-              .map((channel) => channel.chatId)
-          )
-        )
-      })
-      .catch(() => {})
-  }, [])
-  useEffect(() => {
-    refreshCollaborationChatIds()
-    return window.api.channels?.onChanged?.(() => refreshCollaborationChatIds())
-  }, [refreshCollaborationChatIds])
+  // Composer drafts live in the external `composerDraftState` store, NOT in App
+  // state: a keystroke must not re-render this root (App ~32.5k lines ->
+  // MainAppLayout ~3k, neither memoized). App subscribes only to the
+  // identity-stable draft-id SET below; the live text is subscribed per-chat by
+  // the Composer that owns it, via useComposerDraft.
+  //
+  // The synchronous localStorage seed that used to be this hook's lazy
+  // initializer now happens at module load in `useComposerDraft`, which still
+  // runs before first render — so a restored draft is present before any
+  // composer reads it, and cannot clobber (or be clobbered by) text the user
+  // starts typing on launch.
+  const setComposerDraftForChat = useCallback(
+    (chatId: string | null | undefined, value: PerChatStateAction<string>) =>
+      composerDraftState.setDraft(chatId, value),
+    []
+  )
+  const collaboratingChatIds = useCollaborationChatIds()
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
+  const [failedQueuedSteerRunIds, setFailedQueuedSteerRunIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const midRunTranscriptAppendInFlightRef = useRef<Set<string>>(new Set())
   // Mirror of `queuedRuns` for handlers that need synchronous
   // access without re-reading React state (esp. edit/delete/steer
@@ -1718,45 +1452,24 @@ function App(): React.JSX.Element {
   // Single-flight guard for the ENSEMBLE composer Steer IPC. Keyed by chatId;
   // added before dispatch and cleared in a `finally`.
   const ensembleSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
+  // Edit-&-resend rewind single-flight: ignore a re-entrant resend for this
+  // chat while a previous rewind's cancel → truncate → dispatch is in flight.
+  const rewindInFlightChatIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
-  const [pluginActivation, setPluginActivation] = useState<TaskWraithPluginActivationSnapshot | null>(
-    null
-  )
+  const { pluginActivation, setPluginActivation } = usePluginActivation()
   /** Live `/skill-*` prompt-templates from effective user/workspace skills. */
-  const [skillSlashPromptTemplates, setSkillSlashPromptTemplates] = useState<PromptTemplateCommand[]>(
-    []
-  )
+  const [skillSlashPromptTemplates, setSkillSlashPromptTemplates] = useState<
+    PromptTemplateCommand[]
+  >([])
   const [selectedRuntimeProfileByChatId, setSelectedRuntimeProfileByChatId] = useState<
     Record<string, string>
   >({})
   const [handoffCards, setHandoffCards] = useState<HandoffCard[]>([])
-  const [showCockpit, setShowCockpit] = useState(false)
-
-  const refreshPluginActivation = useCallback(async (): Promise<void> => {
-    if (typeof window.api?.getPluginActivation !== 'function') return
-    try {
-      setPluginActivation(await window.api.getPluginActivation())
-    } catch {
-      setPluginActivation(null)
-    }
-  }, [])
-
-  useEffect(() => {
-    const handlePluginActivationChanged = (): void => {
-      void refreshPluginActivation()
-    }
-    window.addEventListener('taskwraith-plugin-activation-changed', handlePluginActivationChanged)
-    return () =>
-      window.removeEventListener(
-        'taskwraith-plugin-activation-changed',
-        handlePluginActivationChanged
-      )
-  }, [refreshPluginActivation])
 
   // Model & Mode Selectors
   // Seed the user-facing default to a live provider; sticky last-used (persisted
@@ -1797,21 +1510,16 @@ function App(): React.JSX.Element {
     isDispatchableProviderForRun(provider, antigravityAdmissibleRef.current)
   // The main process starts a fresh cache generation after a settings change,
   // but do not render a prior successful AntiGravity snapshot for even one
-  // renderer frame after BOTH lanes' consent is withdrawn.
+  // renderer frame after BOTH lanes' consent is withdrawn. Conversely, when
+  // EITHER lane is admitted, keep the picker row visible even if the discovery
+  // snapshot is still warming up or missed under a cache-key race — dispatch
+  // already uses the same admission union, so the picker must not hide a
+  // fully-consented provider just because a bounded probe was slow.
   const configuredProviderSnapshot = useMemo<ConfiguredProviderSnapshot>(
-    () =>
-      antigravityAdmissible
-        ? rawConfiguredProviderSnapshot
-        : {
-            ready: rawConfiguredProviderSnapshot.ready,
-            providerIds: rawConfiguredProviderSnapshot.providerIds.filter(
-              (provider) => provider !== 'antigravity'
-            )
-          },
+    () => antigravityAdmittedProviderSnapshot(rawConfiguredProviderSnapshot, antigravityAdmissible),
     [antigravityAdmissible, rawConfiguredProviderSnapshot]
   )
-  const configuredAntigravityModels =
-    configuredProviderSnapshot.modelsByProvider?.antigravity || []
+  const configuredAntigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []
   useEffect(() => {
     if (isChatPopoutWindow || !configuredProviderSnapshot.ready) return
     seedDefaultEnsembleRosterPresets(configuredProviderSnapshot.providerIds)
@@ -1822,7 +1530,6 @@ function App(): React.JSX.Element {
   const [codexModels, setCodexModels] = useState<CodexModelOption[]>(CODEX_DEFAULT_MODELS)
   const [codexStatus, setCodexStatus] = useState<any>(null)
   const [codexMcpStatus, setCodexMcpStatus] = useState<any>(null)
-  const [codexThreads, setCodexThreads] = useState<any[]>([])
   const [agentStatusByProvider, setAgentStatusByProvider] = useState<
     Partial<Record<ProviderId, any>>
   >({})
@@ -1874,6 +1581,11 @@ function App(): React.JSX.Element {
   )
   const [cursorFastMode, setCursorFastMode] = useState<boolean>(false)
   const [mistralReasoningEffort, setMistralReasoningEffort] = useState<string>('medium')
+  const [devinReasoningEffort, setDevinReasoningEffort] = useState<string>(
+    devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) || ''
+  )
+  const [piReasoningEffort, setPiReasoningEffort] = useState<string>('medium')
+  const [ollamaReasoningEffort, setOllamaReasoningEffort] = useState<string>('on')
   const [approvalMode, setApprovalMode] = useState<string>('default')
   // Permission-mode ELEVATION warning sheet. When a picker raise needs a
   // failsafe (Tier 1 → Accept Edits, shown once per workspace+provider;
@@ -1957,16 +1669,15 @@ function App(): React.JSX.Element {
   const workspaceDiffInspectorRequestRef = useRef(0)
   const [auditRuns, setAuditRuns] = useState<AuditRunRecord[]>([])
   const [auditRunNotice, setAuditRunNotice] = useState<AuditRunNoticeState | null>(null)
-  const [dismissedAuditRunIds, setDismissedAuditRunIds] = useState<Set<string>>(
-    readDismissedAuditRunIds
-  )
+  const [dismissedAuditRunIds, setDismissedAuditRunIds] =
+    useState<Set<string>>(readDismissedAuditRunIds)
 
   const currentRunWarningsRef = useRef<RunWarning[]>([])
   const preSnapshotRef = useRef<any>(null)
 
   // Right Panel Tabs
   const [rightTab, setRightTab] = useState<InspectorRightTab>('diff')
-  const [rightDockTab, setRightDockTab] = useState<RightDockTab>('run')
+  const [rightDockTab, setRightDockTab] = useState<RightDockTab>('home')
   const [showRightDockHome, setShowRightDockHome] = useState(false)
   const [commitsInspectorWorkspacePath, setCommitsInspectorWorkspacePath] = useState<string | null>(
     null
@@ -2003,6 +1714,13 @@ function App(): React.JSX.Element {
   // and drive the same value. Remembered across opens so the user
   // re-enters Settings on whichever tab they were on last.
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingsTab>('appearance')
+  /* Provider status, permissions, models and MCP used to be right-dock
+   * Inspector tabs. They live in Settings now, so every slash command and
+   * capability nudge that used to jump into the dock routes here instead. */
+  const openSettingsTab = (tab: SettingsTab) => {
+    setSettingsActiveTab(tab)
+    setShowSettings(true)
+  }
   // Pairing trigger callback. Opens the Settings takeover on the
   // Pairing tab — see also the legacy `setShowPairingSheet(true)`
   // call sites that have been updated to use this helper instead.
@@ -2145,7 +1863,6 @@ function App(): React.JSX.Element {
   const [showOfficeSuite, setShowOfficeSuite] = useState(false)
   const [isCanvasDockPanelOpen, setIsCanvasDockPanelOpen] = useState(false)
   const [isAppDriveDockPanelOpen, setIsAppDriveDockPanelOpen] = useState(false)
-  const [isFanoutCandidatesPanelOpen, setIsFanoutCandidatesPanelOpen] = useState(false)
   const [officeOpenRequest, setOfficeOpenRequest] = useState<{
     path: string
     nonce: number
@@ -2159,8 +1876,9 @@ function App(): React.JSX.Element {
   const [geminiTerminalInputByChatId, setGeminiTerminalInputForChat] = usePerChatState('')
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
-  const [isThreadMessagePanelOpen, setIsThreadMessagePanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
+  const [isWebSiteLoginsPanelOpen, setIsWebSiteLoginsPanelOpen] = useState(false)
+  const webSiteLoginAttention = useWebSiteLoginAttention()
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
@@ -2185,6 +1903,10 @@ function App(): React.JSX.Element {
   const liveToolFileSummaryCacheRef = useRef<Map<string, LiveToolFileSummaryState>>(new Map())
   const [liveToolFileSummaryState, setLiveToolFileSummaryState] =
     useState<LiveToolFileSummaryState | null>(null)
+  // App nearly always has pending lanes, which defeats React's eager same-state
+  // bailout: the summary effect re-set a cached entry on unrelated commits and
+  // scheduled a full App render each time (measured 2026-09-05).
+  const commitLiveToolFileSummaryState = useChangeGuardedSetter(setLiveToolFileSummaryState)
   const [chatContextNotice, setChatContextNotice] = useState<{
     id: string
     message: string
@@ -2216,6 +1938,8 @@ function App(): React.JSX.Element {
   // (Builder still accepts the range param so the lib stays flexible
   // for future surfaces; this is the single canonical caller.)
   const saveChatTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const rendererTranscriptPersistenceRef = useRef<RendererChatTranscriptPersistence | null>(null)
+  const pendingChatDraftsRef = useRef(new RendererChatPendingDrafts())
   const lastUsageWindowsByProviderRef = useRef<Record<ProviderId, UsageWindowAggregate[]>>({
     gemini: [],
     codex: [],
@@ -2227,7 +1951,8 @@ function App(): React.JSX.Element {
     antigravity: [],
     pi: [],
     mistral: [],
-    muse: []
+    muse: [],
+    devin: []
   })
   // Last-known TaskWraith supplemental snapshots (DeepSeek/Cerebras/Meta).
   // The hook lane's counterpart to `lastUsageWindowsByProviderRef` above: one
@@ -2260,6 +1985,13 @@ function App(): React.JSX.Element {
   const usageRecordsRefreshPendingRef = useRef(false)
   const lateQuotaRefreshCoordinatorRef = useRef<LateBackgroundRefreshCoordinator | null>(null)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
+  /**
+   * Chats whose run-event history has been fetched. Tracked separately from the
+   * raw-log buffer because `appendThreadRawLog` creates a buffer for the first
+   * renderer-authored line, and using buffer presence as the guard let one such
+   * line suppress hydration for that thread permanently.
+   */
+  const rawLogHydratedRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
   >({})
@@ -2268,8 +2000,9 @@ function App(): React.JSX.Element {
   >({})
   const discordContextSelectionByChatIdRef = useRef(discordContextSelectionByChatId)
   discordContextSelectionByChatIdRef.current = discordContextSelectionByChatId
-  const [discordContextTargets, setDiscordContextTargets] =
-    useState<DiscordContextTargets | null>(null)
+  const [discordContextTargets, setDiscordContextTargets] = useState<DiscordContextTargets | null>(
+    null
+  )
   const [discordContextPickerOpen, setDiscordContextPickerOpen] = useState(false)
   const [discordContextLoading, setDiscordContextLoading] = useState(false)
   const [discordContextError, setDiscordContextError] = useState('')
@@ -2725,18 +2458,19 @@ function App(): React.JSX.Element {
     if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi()) return undefined
     const requestedWorkspacePath = currentGitPresentationPath
     const workspaceGeneration = primaryWorkspacePresentationGenerationRef.current
-    return window.api.gitSubscribeSnapshot(
-      { workspacePath: requestedWorkspacePath },
-      (payload) => {
-        if (!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)) return
-        setPrimaryGitSnapshot(payload.snapshot)
-        refreshPrimaryPrStatus(payload.snapshot)
-      }
-    )
+    return window.api.gitSubscribeSnapshot({ workspacePath: requestedWorkspacePath }, (payload) => {
+      if (!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)) return
+      setPrimaryGitSnapshot(payload.snapshot)
+      refreshPrimaryPrStatus(payload.snapshot)
+    })
   }, [currentGitPresentationPath, isCurrentPrimaryWorkspaceRequest, refreshPrimaryPrStatus])
 
   useEffect(() => {
-    if (!currentGitPresentationPath || !runCompleteNotice?.timestamp || !window.api.gitInvalidateSnapshot) {
+    if (
+      !currentGitPresentationPath ||
+      !runCompleteNotice?.timestamp ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return
     }
     void window.api.gitInvalidateSnapshot({
@@ -2918,7 +2652,11 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (
+      !currentGitPresentationPath ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return undefined
     }
     const onFocus = (): void => {
@@ -2956,6 +2694,7 @@ function App(): React.JSX.Element {
   const {
     ensembleConcurrentLanesAvailable,
     ensembleConcurrentWriteLanesAvailable,
+    appDriveUnavailableReason,
     screenWatchUnavailableReason: nativeScreenWatchUnavailableReason
   } = useNativeCapabilities()
   const screenWatchUnavailableReason = isChatPopoutWindow
@@ -3016,7 +2755,9 @@ function App(): React.JSX.Element {
             liveAttachedWindowRef.current?.chatId !== snapshot.chatId &&
             stickyAppWatchRevisionRef.current.get(snapshot.chatId) === revision
           ) {
-            setResumeAppWatchSnapshot(result.snapshot?.chatId === snapshot.chatId ? result.snapshot : null)
+            setResumeAppWatchSnapshot(
+              result.snapshot?.chatId === snapshot.chatId ? result.snapshot : null
+            )
           }
         } catch {
           // A failed resume-hint refresh is not authority to infer an attachment.
@@ -3026,7 +2767,10 @@ function App(): React.JSX.Element {
     [enqueueStickyAppWatchMutation, nextStickyAppWatchRevision]
   )
   const reconcileAttachedWindowStatus = useCallback(
-    (chatId: string, status: NativeWindowCoordinatorRendererStatus): AttachedWindowSnapshot | null => {
+    (
+      chatId: string,
+      status: NativeWindowCoordinatorRendererStatus
+    ): AttachedWindowSnapshot | null => {
       const next = attachedWindowFromStatus(status)
       const previous = liveAttachedWindowRef.current
       if (currentChatIdRef.current === chatId) {
@@ -3168,8 +2912,7 @@ function App(): React.JSX.Element {
   const needsInputBanner = useNeedsInputBannerController()
   const needsInputBannerRef = useRef(needsInputBanner)
   needsInputBannerRef.current = needsInputBanner
-  const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] =
-    usePerChatState(0)
+  const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] = usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([])
   const [executionRunsById, setExecutionRunsById] = useState<
@@ -3177,28 +2920,21 @@ function App(): React.JSX.Element {
   >({})
   const [executionGraphDiagnostics, setExecutionGraphDiagnostics] =
     useState<ExecutionGraphDiagnosticsSnapshot | null>(null)
-  const executionGraphDiagnosticReasons = useMemo(() => {
-    if (!executionGraphDiagnostics) return []
-    const boundedReason = (value: string): string => redactLog(value).slice(0, 512)
-    return [
-      ...executionGraphDiagnostics.serviceDiagnostics.map(
-        (diagnostic) => `Stack service: ${boundedReason(diagnostic.message)}`
-      ),
-      ...executionGraphDiagnostics.repositoryDiagnostics.map(
-        (diagnostic) =>
-          `Stack ${diagnostic.executionId}: ${boundedReason(diagnostic.message)}`
-      ),
-      ...executionGraphDiagnostics.recoveryDiagnostics.map(
-        (diagnostic) =>
-          `Stack ${diagnostic.executionId}: startup recovery paused — ${boundedReason(
-            diagnostic.message
-          )}`
-      )
-    ]
-  }, [executionGraphDiagnostics])
-  const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<
-    Record<string, string[]>
+  // Diagnostics become tray notices (NotificationZone) rather than a root
+  // aside: derived purely from the snapshot, so a retry or archive that lands a
+  // refreshed snapshot clears its notice by re-derivation.
+  const executionGraphDiagnosticNotices = useMemo(
+    () => deriveExecutionGraphDiagnosticNotices(executionGraphDiagnostics, redactLog),
+    [executionGraphDiagnostics]
+  )
+  // The last refused notice action per stack (an archive the coordinator would
+  // not close), shown on the notice itself: an orphan has no thread log.
+  const [executionGraphNoticeFailures, setExecutionGraphNoticeFailures] = useState<
+    Readonly<Record<string, string>>
   >({})
+  const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<Record<string, string[]>>(
+    {}
+  )
   const [openExecutionMap, setOpenExecutionMap] = useState<{
     executionId: string
     selectedStepId?: string
@@ -3241,18 +2977,44 @@ function App(): React.JSX.Element {
     // object), behind a Tier-4-style confirm. Default 'safe' = no elevation.
     unattendedLevel: UnattendedElevationLevel
   } | null>(null)
-  // Guards the in-place chatKind mutation behind the ensemble toggle so a fast
-  // double-click can't race a second mutation onto the same chat.
-  const chatKindTogglingRef = useRef(false)
+  // Admission for the in-place chatKind mutation behind the ensemble toggle. It
+  // still stops a fast double-click racing a second mutation onto the same
+  // chat, but its lease EXPIRES: the bare boolean it replaces was cleared in a
+  // `finally` that a `setChatKind` which never answered could not reach, and
+  // every later click was then refused for the life of the window. It also
+  // carries the words for the refusals that used to be bare returns.
+  // See lib/chatKindSwitchGate.ts.
+  const chatKindSwitchGateRef = useRef<ChatKindSwitchGate | null>(null)
+  if (!chatKindSwitchGateRef.current) chatKindSwitchGateRef.current = new ChatKindSwitchGate()
+  // Where a refused or failed mode switch becomes visible. The raw log still
+  // gets everything it always did; it is just no longer the only place a user
+  // could have found out. See lib/chatModeChangeNotices.ts.
+  const chatModeChangeNoticesRef = useRef<ChatModeChangeNotices | null>(null)
+  if (!chatModeChangeNoticesRef.current) {
+    chatModeChangeNoticesRef.current = new ChatModeChangeNotices()
+  }
   const [pendingEnsembleToSoloChatId, setPendingEnsembleToSoloChatId] = useState<string | null>(
     null
   )
   const [chatKindMutationBusy, setChatKindMutationBusy] = useState(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
-  // Multiview: split the central pane into 1-4 panes. Inert until a layout is
+  // Multiview: split the central pane into 1-8 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  const [threadHomeOpen, setThreadHomeOpen] = useState(false)
+  const threadHomeSourceChatIdRef = useRef<string | null>(null)
+  const openThreadHome = useCallback(() => {
+    const chatId = currentChatIdRef.current
+    if (!chatId) return
+    threadHomeSourceChatIdRef.current = chatId
+    setThreadHomeOpen(true)
+  }, [])
+  useEffect(() => {
+    if (!threadHomeOpen) return
+    if (currentChat?.appChatId === threadHomeSourceChatIdRef.current) return
+    setThreadHomeOpen(false)
+  }, [currentChat?.appChatId, threadHomeOpen])
   const previousMultiviewPanesRef = useRef(paneRecordsIncludingParked(multiview))
   useEffect(() => {
     const ownedPanes = paneRecordsIncludingParked(multiview)
@@ -3314,8 +3076,7 @@ function App(): React.JSX.Element {
   // from sideChatId — the session can stay alive while another dock tab
   // is selected).
   const [isSideChatDockPanelOpen, setIsSideChatDockPanelOpen] = useState(false)
-  const [sidePanelPresentation, setSidePanelPresentation] =
-    useState<SidePanelPresentation>('split')
+  const [sidePanelPresentation, setSidePanelPresentation] = useState<SidePanelPresentation>('split')
   const [sideChatMenuOpen, setSideChatMenuOpen] = useState(false)
   const [popoutMenuOpen, setPopoutMenuOpen] = useState(false)
   // Which pane's preview-target dropdown is open. Keyed by the pane's STABLE id
@@ -3343,13 +3104,9 @@ function App(): React.JSX.Element {
   // Bind the hydration-runtime transcript store once. TranscriptPanel
   // subscribes by chat id; stream flushes ingest here and may retain React
   // chat identity so App chrome skips mid-stream re-renders.
-  const chatHydrationRuntimeRef = useRef(
-    (() => {
-      const runtime = createChatHydrationRuntime()
-      bindChatTranscriptStore(runtime.transcriptStore)
-      return runtime
-    })()
-  )
+  const chatHydrationRuntimeRef = useRef<ChatHydrationRuntime | null>(null)
+  const chatHydrationRuntime = getOrCreateChatHydrationRuntime(chatHydrationRuntimeRef)
+  bindChatTranscriptStore(chatHydrationRuntime.transcriptStore)
 
   // Focus is a residency lease, not a permanent property of every chat ever
   // visited. Pair ownership with React's chat-id lifecycle so the previous
@@ -3358,7 +3115,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
-    const retention = chatHydrationRuntimeRef.current.retention
+    const retention = chatHydrationRuntime.retention
     retention.pin(chatId, 'focused')
     return () => retention.unpin(chatId, 'focused')
   }, [currentChat?.appChatId])
@@ -3366,7 +3123,7 @@ function App(): React.JSX.Element {
   // A pending approval is a live surface even when its chat is not focused.
   // Keep every queue-owning transcript resident until the final card resolves.
   useEffect(() => {
-    const retention = chatHydrationRuntimeRef.current.retention
+    const retention = chatHydrationRuntime.retention
     const chatIds = new Set<string>()
     for (const [chatId, approval] of Object.entries(pendingAgentApprovalByChatId)) {
       if (approval) chatIds.add(chatId)
@@ -3444,16 +3201,13 @@ function App(): React.JSX.Element {
     // badge uses so an orphaned entry can't pin a phantom streaming pill.
     streamingActive: Boolean(
       currentChat &&
-        runningChatIds.has(currentChat.appChatId) &&
-        !hasTerminalLastRun(currentChat) &&
-        !hasKnownInactiveEnsembleRound(currentChat)
+      runningChatIds.has(currentChat.appChatId) &&
+      !hasTerminalLastRun(currentChat) &&
+      !hasKnownInactiveEnsembleRound(currentChat)
     )
   })
   const setCurrentChatIdForNavigation = useCallback(
-    (
-      nextChatId: string | null,
-      options: { assignMultiviewPane?: boolean } = {}
-    ) => {
+    (nextChatId: string | null, options: { assignMultiviewPane?: boolean } = {}) => {
       if (nextChatId && multiview.isMultiview && options.assignMultiviewPane !== false) {
         multiview.assignToFocusedPane(nextChatId)
       }
@@ -3476,10 +3230,7 @@ function App(): React.JSX.Element {
   } | null>(null)
   useLayoutEffect(() => {
     committedSideChatIdRef.current = sideChatId
-    if (
-      sideRestoreTargetChatIdRef.current &&
-      sideRestoreTargetChatIdRef.current !== sideChatId
-    ) {
+    if (sideRestoreTargetChatIdRef.current && sideRestoreTargetChatIdRef.current !== sideChatId) {
       sideRestoreTargetChatIdRef.current = null
       sideRestoreGenerationRef.current += 1
       setSideExternalRestoreAnchorTarget(null)
@@ -3497,9 +3248,7 @@ function App(): React.JSX.Element {
       )
       const cancel = restoreChatScrollStateWhenReady(
         () =>
-          committedSideChatIdRef.current === targetChatId
-            ? sideTranscriptScrollRef.current
-            : null,
+          committedSideChatIdRef.current === targetChatId ? sideTranscriptScrollRef.current : null,
         scrollState,
         8,
         () =>
@@ -3569,12 +3318,12 @@ function App(): React.JSX.Element {
     switch (panelId) {
       case 'home':
         return showRightDockHome
-      case 'run':
-        return showCockpit
       case 'media':
         return isChatMediaPanelOpen
       case 'references':
         return isProjectReferencesPanelOpen
+      case 'logins':
+        return isWebSiteLoginsPanelOpen
       case 'pins':
         return isPinnedMessagesPanelOpen
       case 'files':
@@ -3585,10 +3334,6 @@ function App(): React.JSX.Element {
         return isCanvasDockPanelOpen
       case 'appdrive':
         return isAppDriveDockPanelOpen
-      case 'candidates':
-        return isFanoutCandidatesPanelOpen
-      case 'peers':
-        return isThreadMessagePanelOpen
       case 'inspector':
         return appearance.showInspector
       case 'terminal':
@@ -3637,6 +3382,13 @@ function App(): React.JSX.Element {
   const rawEventsAutoFollowRef = useRef(true)
   const rawEventsUserScrolledAwayRef = useRef(false)
   const composerAreaRef = useRef<HTMLDivElement>(null)
+  const focusedRunPromptRoutingReaderRef = useRef<ComposerRunPromptRoutingReader | null>(null)
+  const registerFocusedRunPromptRoutingReader = useCallback(
+    (reader: ComposerRunPromptRoutingReader | null): void => {
+      focusedRunPromptRoutingReaderRef.current = reader
+    },
+    []
+  )
   // TODO(per-pane): non-focused multiview panes render the shared <Composer>,
   // but must never clobber the focused composer's reservation ref. Pane contexts
   // retain this safe throwaway default; ChatViewPane overrides it at the actual
@@ -3752,7 +3504,7 @@ function App(): React.JSX.Element {
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
-  const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  const chatByIdRef = useRef<Map<string, ChatRecord>>(createRendererChatReferenceMap())
   // This baseline is deliberately separate from chatByIdRef: the latter may
   // contain optimistic or in-flight renderer-only content and is therefore
   // not a safe base for reconstructing main-owned transport patches.
@@ -3781,13 +3533,35 @@ function App(): React.JSX.Element {
   // never clobbers in-flight content (see lib/reconcileChatRefMap + its tests).
   const pendingChatFlushRef = useRef<Set<string>>(new Set())
   const pendingMainChatUpdatesRef = useRef<Map<string, PendingChatUpdateRender>>(new Map())
+  // Goal edits this renderer committed optimistically and main has not confirmed
+  // yet. The chat-update merge defends a goal ONLY while its edit is in flight;
+  // outside that window a delivery is authoritative. See preserveNewerLocalActiveGoal.
+  const pendingGoalIntentRef = useRef<Map<string, LocalGoalIntent>>(new Map())
+  const pendingChatRenderReceiptsRef = useRef<Map<string, ChatUpdateRenderReceipt>>(new Map())
   const chatFlushRafRef = useRef<number | null>(null)
+  const chatFlushDeadlineRef = useRef<number | null>(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
-  const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
-  chatHydrationRuntimeRef.current.retention.attachTransportBaselines(
-    chatUpdateBaselineByIdRef.current
-  )
-  chatHydrationRuntimeRef.current.retention.attachRawLogs(rawLogsByChatIdRef.current)
+  const rawLogsByChatIdRef = useRef<Map<string, RawLogRingBuffer>>(new Map())
+  const rawLogPresentationVisibleRef = useRef(false)
+  rawLogPresentationVisibleRef.current = rightTab === 'raw' || showGeminiTerminal
+  const rawLogPresentationQueueRef = useRef<RawLogPresentationQueue | null>(null)
+  if (!rawLogPresentationQueueRef.current) {
+    rawLogPresentationQueueRef.current = new RawLogPresentationQueue({
+      present: ({ chatId, logs }) => {
+        // Selection and explicit clear/hydration writes take ownership
+        // immediately. A delayed provider burst may publish only while its
+        // exact ref snapshot still belongs to the focused chat.
+        if (currentChatIdRef.current !== chatId) return
+        if (!rawLogPresentationVisibleRef.current) return
+        setRawLogs(logs)
+      },
+      resolve: (chatId) => rawLogSnapshotForChat(chatId, true),
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (handle) => window.clearTimeout(handle as number)
+    })
+  }
+  chatHydrationRuntime.retention.attachTransportBaselines(chatUpdateBaselineByIdRef.current)
+  chatHydrationRuntime.retention.attachRawLogs(rawLogsByChatIdRef.current)
   const activeRunChatSnapshotRef = useRef<ChatRecord | null>(null)
   const activeRunChatIdRef = useRef<string | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
@@ -3800,6 +3574,7 @@ function App(): React.JSX.Element {
   const latestRunRequestRef = useRef<QueuedRunRequest | null>(null)
   const runQueueJobsRef = useRef<RunQueueJob[]>([])
   const rehydratedRunQueueRef = useRef(false)
+  const runQueueRehydrateRetryCountRef = useRef(0)
   const runSchedulerBusyRef = useRef(false)
   const persistentSessionActiveRef = useRef(false)
   const activeScheduledTaskIdRef = useRef<string | null>(null)
@@ -3859,13 +3634,12 @@ function App(): React.JSX.Element {
       .sort((a, b) => a.order - b.order)
       .map((participant) => `${participant.role || participant.provider}/${participant.provider}`)
       .join(', ')
-    const mode = ensemble.orchestrationMode || 'turn'
-    return `${enabled.length} participants · ${mode} · ${labels}`
+    return `${enabled.length} participants · ${labels}`
   }, [currentChat?.ensemble])
   const hasWorkspaceContext = Boolean(
     (currentChatWorkspace || currentWorkspacePath || currentWorkspace) &&
-      currentChat &&
-      !isCurrentGlobalChat
+    currentChat &&
+    !isCurrentGlobalChat
   )
   const currentWorkspacePopoutPath = resolveAppChatChromeWorkspacePath({
     currentWorkspacePath,
@@ -3882,20 +3656,21 @@ function App(): React.JSX.Element {
   const visibleAuditRunNotice =
     auditRunNotice && auditRunNotice.chatId === currentChat?.appChatId ? auditRunNotice : null
   const canOpenWorkspacePopout = Boolean(currentWorkspacePopoutPath)
-  const shouldTreatRunQueueJobAsActive = useCallback((
-    job: Pick<RunQueueJob, 'chatId' | 'status'>
-  ): boolean => {
-    if (!job.chatId || !ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return false
-    const chat =
-      chatByIdRef.current.get(job.chatId) ||
-      chats.find((candidate) => candidate.appChatId === job.chatId)
-    return isRunQueueJobVisibleForChat(job, chat)
-  }, [chats])
+  const shouldTreatRunQueueJobAsActive = useCallback(
+    (job: Pick<RunQueueJob, 'chatId' | 'status'>): boolean => {
+      if (!job.chatId || !ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return false
+      const chat =
+        chatByIdRef.current.get(job.chatId) ||
+        chats.find((candidate) => candidate.appChatId === job.chatId)
+      return isRunQueueJobVisibleForChat(job, chat)
+    },
+    [chats]
+  )
   const chatHasActiveRunQueueJob = useCallback(
     (chatId?: string | null): boolean =>
       Boolean(
         chatId &&
-          runQueueJobs.some((job) => job.chatId === chatId && shouldTreatRunQueueJobAsActive(job))
+        runQueueJobs.some((job) => job.chatId === chatId && shouldTreatRunQueueJobAsActive(job))
       ),
     [runQueueJobs, shouldTreatRunQueueJobAsActive]
   )
@@ -3903,13 +3678,15 @@ function App(): React.JSX.Element {
     currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
   const currentPendingProviderChange =
-    currentChat && currentChat.chatKind !== 'ensemble' ? readPendingProviderChange(currentChat) : null
+    currentChat && currentChat.chatKind !== 'ensemble'
+      ? readPendingProviderChange(currentChat)
+      : null
   const isCurrentChatProviderLocked = Boolean(
     currentChat?.appChatId &&
-      (runningChatIds.has(currentChat.appChatId) ||
-        hasCurrentChatQueuedRunForProviderLock ||
-        isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound) ||
-        Boolean(currentPendingProviderChange))
+    (runningChatIds.has(currentChat.appChatId) ||
+      hasCurrentChatQueuedRunForProviderLock ||
+      isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound) ||
+      Boolean(currentPendingProviderChange))
   )
   const isFxEnabled = appearance.funFxEnabled && appearance.funFxMode !== 'off'
   // Refraction is an independent MATERIAL toggle (not part of the fun-FX system),
@@ -3960,14 +3737,12 @@ function App(): React.JSX.Element {
   // rendered alongside the primary above-bar. Probe results are
   // cached in the hook so re-renders are free; only changes to the
   // grant set trigger new probes.
-  const externalPathRepoMetadataByPath = useExternalPathRepoMetadataByPath(
-    visibleExternalPathGrants
-  )
+  const externalPathRepoMetadataByPath =
+    useExternalPathRepoMetadataByPath(visibleExternalPathGrants)
   const currentComposerChatId = currentChat?.appChatId || null
   const currentProjectReferenceContextSelection = useSyncExternalStore(
     useCallback(
-      (listener) =>
-        subscribeProjectReferenceContextSelection(currentComposerChatId, listener),
+      (listener) => subscribeProjectReferenceContextSelection(currentComposerChatId, listener),
       [currentComposerChatId]
     ),
     () => getProjectReferenceContextSelection(currentComposerChatId),
@@ -3992,10 +3767,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const refreshExecutionGraphDiagnostics = useCallback((): void => {
-    if (
-      isChatPopoutWindow ||
-      typeof window.api.getExecutionGraphDiagnostics !== 'function'
-    ) {
+    if (isChatPopoutWindow || typeof window.api.getExecutionGraphDiagnostics !== 'function') {
       return
     }
     void window.api
@@ -4012,10 +3784,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const generation = ++executionRunQueryGenerationRef.current
-    if (
-      isChatPopoutWindow ||
-      typeof window.api.listExecutionRuns !== 'function'
-    ) {
+    if (isChatPopoutWindow || typeof window.api.listExecutionRuns !== 'function') {
       return
     }
 
@@ -4047,10 +3816,7 @@ function App(): React.JSX.Element {
           setExecutionRunIdsByChatId((current) => ({
             ...current,
             [chatId]: Array.from(
-              new Set([
-                ...ordered.map((run) => run.executionId),
-                ...(current[chatId] || [])
-              ])
+              new Set([...ordered.map((run) => run.executionId), ...(current[chatId] || [])])
             )
           }))
           refreshExecutionGraphDiagnostics()
@@ -4115,28 +3881,38 @@ function App(): React.JSX.Element {
     openExecutionMap
   ])
 
-  const prompt = currentComposerChatId ? composerDraftsByChatId[currentComposerChatId] || '' : ''
-  const composerDraftsByChatIdRef = useRef(composerDraftsByChatId)
-  useEffect(() => {
-    composerDraftsByChatIdRef.current = composerDraftsByChatId
-  }, [composerDraftsByChatId])
+  // Non-reactive read: correct for THIS render, and the Composer that receives
+  // it keeps itself live through useComposerDraft. App is deliberately not
+  // subscribed, which is what keeps a keystroke off this render path.
+  const prompt = composerDraftState.getDraft(currentComposerChatId)
   // Persist composer drafts so typed-but-unsent text survives an app restart.
   // In-memory updates stay immediate (thread-switch is instant); only the disk
   // write is debounced (~800ms) so localStorage isn't hit on every keystroke.
-  // The map is sparse (usePerChatState deletes empty drafts), so a sent/cleared
+  // The map is sparse (the store deletes empty drafts), so a sent/cleared
   // prompt persists as "gone" and can't resurrect next launch. Only the main
   // window persists — the popout shares this origin and would clobber the blob;
   // its draft already flows back via the handoff channel.
+  //
+  // Subscribed to the store's any-change grain rather than to React state: this
+  // must re-arm on every keystroke, but it must NOT re-render App to do it.
   useEffect(() => {
     if (isChatPopoutWindow) return undefined
-    const handle = window.setTimeout(() => {
-      writeComposerDrafts(composerDraftsByChatId)
-    }, 800)
-    return () => window.clearTimeout(handle)
-  }, [composerDraftsByChatId, isChatPopoutWindow])
+    let handle: number | null = null
+    const unsubscribe = composerDraftState.subscribeToAnyChange(() => {
+      if (handle !== null) window.clearTimeout(handle)
+      handle = window.setTimeout(() => {
+        handle = null
+        writeComposerDrafts(composerDraftState.getDraftMap())
+      }, 800)
+    })
+    return () => {
+      if (handle !== null) window.clearTimeout(handle)
+      unsubscribe()
+    }
+  }, [isChatPopoutWindow])
   useEffect(() => {
     if (isChatPopoutWindow) return undefined
-    const flush = (): void => writeComposerDrafts(composerDraftsByChatIdRef.current)
+    const flush = (): void => writeComposerDrafts(composerDraftState.getDraftMap())
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'hidden') flush()
     }
@@ -4160,9 +3936,7 @@ function App(): React.JSX.Element {
   )
   const currentDiscordContextSelection = useMemo(
     () =>
-      currentComposerChatId
-        ? discordContextSelectionByChatId[currentComposerChatId] || null
-        : null,
+      currentComposerChatId ? discordContextSelectionByChatId[currentComposerChatId] || null : null,
     [currentComposerChatId, discordContextSelectionByChatId]
   )
   const currentChatMediaRefs = useMemo(
@@ -4172,10 +3946,6 @@ function App(): React.JSX.Element {
   // Peer thread-message inbox. Held here rather than inside the dock panel because
   // the dock TAB carries the pending count, so the count must exist whether or not
   // the panel is mounted; the panel receives this snapshot so there is exactly one
-  // fetch per chat. The inbox is not part of ChatRecord — it has its own main-side
-  // ledger — which is why this is a fetch and not a field read.
-  const { snapshot: threadMessageInbox, refresh: refreshThreadMessageInbox } =
-    useThreadMessageInbox(currentChat?.appChatId)
   // "Add to <project> library" on Media rows: offered only when the focused
   // chat belongs to exactly ONE project (ambiguous membership would be a
   // guess) and the row is path-backed. Promotion catalogues a locator through
@@ -4204,54 +3974,20 @@ function App(): React.JSX.Element {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChat?.appChatId, projectsRevision])
-  const projectReferenceContextSummary = (
-    selection: ProjectReferenceContextSelection | null | undefined
-  ): string =>
-    selection
-      ? `${selection.referenceIds.length} Project reference${selection.referenceIds.length === 1 ? '' : 's'}`
-      : ''
   const runRequestHasContent = (
     request: Pick<
       QueuedRunRequest,
-      'prompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+      'prompt' | 'imageAttachments' | 'projectReferenceContextSelection' | 'discordContextSelection'
     >
   ) =>
     hasAttachmentPromptContent(request.prompt, request.imageAttachments) ||
-    Boolean(request.projectReferenceContextSelection?.referenceIds.length)
-  const runRequestDisplayPrompt = (
-    request: Pick<
-      QueuedRunRequest,
-      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
-    >,
-    finalPrompt: string
-  ): string => {
-    if (request.displayPrompt?.trim()) return request.displayPrompt
-    if (request.prompt.trim()) return finalPrompt
-    return (
-      attachmentSummary(request.imageAttachments) ||
-      projectReferenceContextSummary(request.projectReferenceContextSelection) ||
-      finalPrompt
-    )
-  }
-  const runRequestPromptPreview = (
-    request: Pick<
-      QueuedRunRequest,
-      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
-    >
-  ): string => {
-    const text = (request.displayPrompt || request.prompt || '').trim()
-    return (
-      text ||
-      attachmentSummary(request.imageAttachments) ||
-      projectReferenceContextSummary(request.projectReferenceContextSelection)
-    )
-  }
+    Boolean(request.projectReferenceContextSelection?.referenceIds.length) ||
+    Boolean(request.discordContextSelection)
   const buildSubmittedImageThumbnailMetadata = async (
     attachments: readonly ImageAttachment[]
   ): Promise<{ imagePaths: string[]; imageThumbnails: ImageAttachmentThumbnail[] }> => {
     const images = attachments.filter(
-      (attachment) =>
-        !isDirectoryAttachment(attachment) && isImageAttachmentPath(attachment.path)
+      (attachment) => !isDirectoryAttachment(attachment) && isImageAttachmentPath(attachment.path)
     )
     if (images.length === 0 || typeof window.api?.readImagePreview !== 'function') {
       return { imagePaths: [], imageThumbnails: [] }
@@ -4265,13 +4001,7 @@ function App(): React.JSX.Element {
         }
       })
     )
-    if (!thumbnails.every(Boolean)) {
-      return { imagePaths: [], imageThumbnails: [] }
-    }
-    return {
-      imagePaths: images.map((attachment) => attachment.path),
-      imageThumbnails: thumbnails as ImageAttachmentThumbnail[]
-    }
+    return compactResolvedImageThumbnailMetadata(images, thumbnails)
   }
   const sideChat = useMemo(() => {
     if (!sideChatId) return null
@@ -4282,7 +4012,7 @@ function App(): React.JSX.Element {
     )
   }, [sideChatId, chats])
   const sideProvider = sideChat ? getChatProvider(sideChat) : currentProvider
-  const sidePrompt = sideChat ? composerDraftsByChatId[sideChat.appChatId] || '' : ''
+  const sidePrompt = sideChat ? composerDraftState.getDraft(sideChat.appChatId) : ''
   const sidePanelParentChat = sideChat?.parentChatId
     ? chatByIdRef.current.get(sideChat.parentChatId) ||
       chats.find((chat) => chat.appChatId === sideChat.parentChatId) ||
@@ -4312,8 +4042,7 @@ function App(): React.JSX.Element {
     for (const pane of multiview.panes) {
       if (!pane.chatId) continue
       addChatWorkspace(
-        chatByIdRef.current.get(pane.chatId) ||
-          chats.find((chat) => chat.appChatId === pane.chatId)
+        chatByIdRef.current.get(pane.chatId) || chats.find((chat) => chat.appChatId === pane.chatId)
       )
     }
     return paths
@@ -4325,7 +4054,7 @@ function App(): React.JSX.Element {
       : 'split'
   const currentChatIsLinkedChild = Boolean(
     currentChat?.parentChatId &&
-      (currentChat.parentChatRelation === 'sideChat' || isSubThreadChat(currentChat))
+    (currentChat.parentChatRelation === 'sideChat' || isSubThreadChat(currentChat))
   )
   const currentLinkedParentChat =
     currentChatIsLinkedChild && currentChat?.parentChatId
@@ -4350,6 +4079,7 @@ function App(): React.JSX.Element {
     if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
+    if (provider === 'kimi') return agentModelsByProvider.kimi || KIMI_DEFAULT_MODELS
     // Pi was missing here and fell through to `[]`, so its picker group was
     // permanently empty ("Loading models…" is this picker's EMPTY state, not a
     // pending one) no matter how many upstream keys were stored. Main already
@@ -4359,7 +4089,7 @@ function App(): React.JSX.Element {
     // therefore state-backed and CANNOT move to the static switch, where `[]`
     // would instead mean "permanently unusable".
     if (provider === 'pi') return agentModelsByProvider.pi || []
-    // Everything else is a fixed catalogue (gemini/kimi/grok/cursor/mistral).
+    // Everything else is a fixed catalogue (gemini/grok/cursor/mistral).
     // Mistral belongs here rather than with Pi above: the Vibe seat's two
     // models are fixed in the CLI's own bundled config and need no key
     // discovery.
@@ -4387,9 +4117,7 @@ function App(): React.JSX.Element {
     if (provider === 'pi') {
       const piModels = agentModelsByProvider.pi || []
       return (
-        piModels.find((model) => model.isDefault)?.id ||
-        piModels[0]?.id ||
-        PI_DEFAULT_MODEL_WIRE_ID
+        piModels.find((model) => model.isDefault)?.id || piModels[0]?.id || PI_DEFAULT_MODEL_WIRE_ID
       )
     }
     return getStaticProviderDefaultModel(provider)
@@ -4414,6 +4142,9 @@ function App(): React.JSX.Element {
       provider === 'claude' ? resolveEnsembleParticipantSettings(participant) : null
     const selectedKimiSettings =
       provider === 'kimi' ? resolveEnsembleParticipantSettings(participant) : null
+    const antigravityUltraTaskSelected =
+      provider === 'antigravity' &&
+      participant.reasoningEffort?.trim().toLowerCase() === 'ultratask'
     return {
       selectedModelType:
         provider !== 'kimi' && !isKnownModel && providerModel !== 'custom'
@@ -4430,8 +4161,7 @@ function App(): React.JSX.Element {
       ...(provider === 'codex'
         ? {
             codexReasoningEffort: participant.reasoningEffort || 'medium',
-            codexServiceTier:
-              participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
+            codexServiceTier: participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
           }
         : {}),
       ...(provider === 'claude'
@@ -4452,23 +4182,51 @@ function App(): React.JSX.Element {
       ...(provider === 'grok'
         ? isGrokReasoningModelId(providerModel)
           ? {
-              grokReasoningEffort:
-                participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+              grokReasoningEffort: participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
             }
           : { grokReasoningEffort: '' }
         : {}),
       ...(provider === 'muse'
         ? {
-            museReasoningEffort:
-              participant.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+            museReasoningEffort: participant.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+          }
+        : {}),
+      ...(provider === 'ollama'
+        ? {
+            ollamaReasoningEffort:
+              resolveOllamaComposerReasoningEffort(providerModel, participant.reasoningEffort) ||
+              getEnsembleReasoningOptions(
+                'ollama',
+                providerModel,
+                providerOptions.find((model) => model.id === providerModel)
+              ).at(-1)?.value ||
+              ''
           }
         : {}),
       ...(provider === 'mistral'
         ? {
-            mistralReasoningEffort:
-              participant.reasoningEffort || 'medium'
+            mistralReasoningEffort: participant.reasoningEffort || 'medium'
           }
         : {}),
+      ...(provider === 'devin'
+        ? {
+            devinReasoningEffort:
+              participant.reasoningEffort || devinDefaultReasoningEffort(providerModel) || ''
+          }
+        : {}),
+      ...(provider === 'pi'
+        ? {
+            piReasoningEffort:
+              participant.reasoningEffort || defaultPiReasoningEffort(participant.model)
+          }
+        : {}),
+      antigravityReasoningEffort:
+        provider === 'antigravity'
+          ? antigravityUltraTaskSelected
+            ? 'ultraTask'
+            : participant.reasoningEffort || antigravityEffortForModelId(providerModel) || ''
+          : null,
+      antigravityUltraTaskSelected,
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrokModelId(providerModel)
@@ -4603,6 +4361,34 @@ function App(): React.JSX.Element {
               ? { museReasoningEffort: fallbackMetadata.museReasoningEffort }
               : {}
             : {}),
+          ...(fallbackProvider === 'mistral'
+            ? typeof fallbackMetadata.mistralReasoningEffort === 'string'
+              ? { mistralReasoningEffort: fallbackMetadata.mistralReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'devin'
+            ? typeof fallbackMetadata.devinReasoningEffort === 'string'
+              ? { devinReasoningEffort: fallbackMetadata.devinReasoningEffort }
+              : {}
+            : {}),
+          ...(fallbackProvider === 'pi'
+            ? typeof fallbackMetadata.piReasoningEffort === 'string'
+              ? { piReasoningEffort: fallbackMetadata.piReasoningEffort }
+              : {}
+            : {}),
+          antigravityReasoningEffort:
+            fallbackProvider === 'antigravity' &&
+            typeof fallbackMetadata.antigravityReasoningEffort === 'string'
+              ? fallbackMetadata.antigravityReasoningEffort
+              : null,
+          antigravityUltraTaskSelected:
+            fallbackProvider === 'antigravity' &&
+            fallbackMetadata.antigravityUltraTaskSelected === true,
+          ...(fallbackProvider === 'ollama'
+            ? typeof fallbackMetadata.ollamaReasoningEffort === 'string'
+              ? { ollamaReasoningEffort: fallbackMetadata.ollamaReasoningEffort }
+              : {}
+            : {}),
           ...(fallbackProvider === 'cursor'
             ? {
                 ...(typeof fallbackMetadata.cursorReasoningEffort === 'string'
@@ -4652,9 +4438,7 @@ function App(): React.JSX.Element {
         const closedSideChat = applySideChatLifecycle(liveSideChat, 'closed')
         chatByIdRef.current.set(closedSideChat.appChatId, closedSideChat)
         setChats((prev) =>
-          prev.map((chat) =>
-            chat.appChatId === closedSideChat.appChatId ? closedSideChat : chat
-          )
+          prev.map((chat) => (chat.appChatId === closedSideChat.appChatId ? closedSideChat : chat))
         )
         void window.api.saveChat(closedSideChat).catch(() => {})
       }
@@ -4740,8 +4524,7 @@ function App(): React.JSX.Element {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastSideTranscriptScrollTopRef.current,
           nextScrollTop: scroller.scrollTop,
-          distanceFromBottom:
-            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+          distanceFromBottom: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
           isProgrammatic: sideProgrammaticScrollRef.current
         })
       ) {
@@ -5346,15 +5129,22 @@ function App(): React.JSX.Element {
   // sendConfirmationTimeoutRef + isSendConfirming state, so each pane runs
   // its own send-confirm animation. It was never called from App-level code.
 
+  function rawLogSnapshotForChat(chatId: string, materialize = false): RawLogEntry[] {
+    const logs = rawLogsByChatIdRef.current.get(chatId)?.snapshot() || []
+    return materialize ? materializeRawLogEntries(logs) : logs
+  }
+
   const setThreadRawLogs = (chatId: string | null | undefined, logs: RawLogEntry[]) => {
-    const nextLogs = logs.slice(-1000)
     if (!chatId) {
-      setRawLogs(nextLogs)
+      setRawLogs(logs.slice(-1000))
       return
     }
-    rawLogsByChatIdRef.current.set(chatId, nextLogs)
+    const buffer = rawLogsByChatIdRef.current.get(chatId) || new RawLogRingBuffer()
+    buffer.replace(logs)
+    rawLogsByChatIdRef.current.set(chatId, buffer)
     if (currentChatIdRef.current === chatId) {
-      setRawLogs(nextLogs)
+      rawLogPresentationQueueRef.current?.cancelPending()
+      setRawLogs(rawLogSnapshotForChat(chatId, rawLogPresentationVisibleRef.current))
     }
   }
 
@@ -5363,33 +5153,44 @@ function App(): React.JSX.Element {
       setRawLogs((prev) => [...prev, log].slice(-1000))
       return
     }
-    const previous = rawLogsByChatIdRef.current.get(chatId) || []
-    setThreadRawLogs(chatId, [...previous, log])
+    const buffer = rawLogsByChatIdRef.current.get(chatId) || new RawLogRingBuffer()
+    buffer.append(log)
+    // GeminiStreamAdapter emits one raw_event for every provider JSONL line.
+    // Keep that audit buffer exact here, but do not call setThreadRawLogs:
+    // its immediate setRawLogs used to re-render the entire App once per line
+    // and could starve the separately-coalesced transcript until a chat switch.
+    rawLogsByChatIdRef.current.set(chatId, buffer)
+    if (currentChatIdRef.current === chatId && rawLogPresentationVisibleRef.current) {
+      rawLogPresentationQueueRef.current?.enqueue(chatId)
+    }
   }
   const appendThreadRawLogRef = useRef(appendThreadRawLog)
   appendThreadRawLogRef.current = appendThreadRawLog
 
-  const appendDurableRunEvent = (_event: RunEventInput) => {
-    // Durable event writes are main-owned; renderer keeps local raw logs only.
-  }
-
   const hydrateThreadRawLogsFromEvents = (chatId: string) => {
     if (
-      rawLogsByChatIdRef.current.has(chatId) ||
-      rawLogHydrationInFlightRef.current.has(chatId) ||
-      typeof window.api.getRunEvents !== 'function'
+      !shouldHydrateThreadRawLogs({
+        hydrated: rawLogHydratedRef.current.has(chatId),
+        inFlight: rawLogHydrationInFlightRef.current.has(chatId),
+        hasBuffer: rawLogsByChatIdRef.current.has(chatId),
+        hasRunEventsApi: typeof window.api.getRunEvents === 'function'
+      })
     )
       return
     rawLogHydrationInFlightRef.current.add(chatId)
     window.api
       .getRunEvents({ chatId, limit: 1000 })
       .then((events: RunEventRecord[]) => {
-        if (!Array.isArray(events) || rawLogsByChatIdRef.current.has(chatId)) return
+        if (!Array.isArray(events)) return
         const logs = events
           .map(rawLogFromRunEvent)
           .filter((log): log is RawLogEntry => Boolean(log))
-          .slice(-1000)
-        setThreadRawLogs(chatId, logs)
+        // Renderer-authored lines can land while this fetch is in flight, and
+        // setThreadRawLogs replaces the buffer wholesale -- merge so hydration
+        // never discards the very lines whose presence allowed it to run.
+        const existing = rawLogsByChatIdRef.current.get(chatId)?.snapshot() || []
+        rawLogHydratedRef.current.add(chatId)
+        setThreadRawLogs(chatId, mergeHydratedRawLogs(logs, existing, 1000))
       })
       .catch(() => {})
       .finally(() => {
@@ -5594,7 +5395,7 @@ function App(): React.JSX.Element {
     const pendingMainUpdates = pendingMainChatUpdatesRef.current
     pendingMainChatUpdatesRef.current = new Map()
     const byId = chatByIdRef.current
-    const transcriptStore = chatHydrationRuntimeRef.current.transcriptStore
+    const transcriptStore = chatHydrationRuntime.transcriptStore
     for (const chatId of dirty) {
       let updated = byId.get(chatId)
       const pendingMainUpdate = pendingMainUpdates.get(chatId)
@@ -5604,16 +5405,30 @@ function App(): React.JSX.Element {
           pendingQuestions && pendingQuestions.length > 0
             ? new Set(pendingQuestions.map((question) => question.messageId))
             : undefined
+        const beforeMerge = updated
         updated = mergeChatUpdatedForRender(pendingMainUpdate.chat, {
           liveChat: updated,
           messagesChanged: pendingMainUpdate.messagesChanged,
           hasActiveRun: pendingMainUpdate.hasActiveRun,
           hadRecentRun: pendingMainUpdate.hadRecentRun,
-          pendingMarkerIds
+          pendingMarkerIds,
+          localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null,
+          localComposerSelectionPending: composerSelectionClaimsRef.current?.held(chatId) === true,
+          localEnsembleRosterPending: ensembleRosterClaimsRef.current?.held(chatId) === true,
+          localEnsembleChatKindPending: ensembleChatKindClaimsRef.current?.held(chatId) === true
         })
+        updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
       }
-      if (updated) transcriptStore.ingest(updated)
+      if (updated) {
+        markRendererChatReference(updated)
+        transcriptStore.ingest(updated)
+        if (pendingMainUpdate?.renderReceipt) {
+          // Keep only the newest accepted delivery per chat. This receipt is
+          // observational: it never controls main's transport backpressure.
+          pendingChatRenderReceiptsRef.current.set(chatId, pendingMainUpdate.renderReceipt)
+        }
+      }
     }
     setChats((prev) => {
       let changed = false
@@ -5646,14 +5461,14 @@ function App(): React.JSX.Element {
       if (!updated || updated === prev) return prev
       if (shouldRetainReactChatOnFlush(prev, updated)) return prev
       if (messagesRenderEqual(prev.messages, updated.messages)) {
-        return { ...updated, messages: prev.messages }
+        return inheritRendererChatReference(updated, { ...updated, messages: prev.messages })
       }
       const sharedMessages = shareUnchangedMessageObjects(prev.messages, updated.messages)
-      return sharedMessages === updated.messages ? updated : { ...updated, messages: sharedMessages }
+      return sharedMessages === updated.messages
+        ? updated
+        : inheritRendererChatReference(updated, { ...updated, messages: sharedMessages })
     })
-    const focusedChat = currentChatIdRef.current
-      ? byId.get(currentChatIdRef.current)
-      : undefined
+    const focusedChat = currentChatIdRef.current ? byId.get(currentChatIdRef.current) : undefined
     if (
       focusedChat &&
       focusedChat.chatKind === 'ensemble' &&
@@ -5696,20 +5511,136 @@ function App(): React.JSX.Element {
       cancelAnimationFrame(chatFlushRafRef.current)
       chatFlushRafRef.current = null
     }
+    if (chatFlushDeadlineRef.current !== null) {
+      window.clearTimeout(chatFlushDeadlineRef.current)
+      chatFlushDeadlineRef.current = null
+    }
     flushCoalescedChats()
   }, [flushCoalescedChats])
 
   const scheduleCoalescedChatFlush = useCallback(
     (chatId: string): void => {
       pendingChatFlushRef.current.add(chatId)
-      if (chatFlushRafRef.current !== null) return
-      chatFlushRafRef.current = requestAnimationFrame(() => {
-        chatFlushRafRef.current = null
-        flushCoalescedChats()
-      })
+      if (chatFlushRafRef.current === null) {
+        chatFlushRafRef.current = requestAnimationFrame(() => {
+          chatFlushRafRef.current = null
+          if (chatFlushDeadlineRef.current !== null) {
+            window.clearTimeout(chatFlushDeadlineRef.current)
+            chatFlushDeadlineRef.current = null
+          }
+          flushCoalescedChats()
+        })
+      }
+      if (chatFlushDeadlineRef.current === null) {
+        chatFlushDeadlineRef.current = window.setTimeout(() => {
+          chatFlushDeadlineRef.current = null
+          if (chatFlushRafRef.current !== null) {
+            cancelAnimationFrame(chatFlushRafRef.current)
+            chatFlushRafRef.current = null
+          }
+          flushCoalescedChats()
+        }, CHAT_UPDATE_MAX_RENDER_LATENCY_MS)
+      }
     },
     [flushCoalescedChats]
   )
+
+  if (!rendererTranscriptPersistenceRef.current) {
+    const publishPersistedRecord = (chatId: string, record: ChatRecord): void => {
+      markRendererChatReference(record)
+      chatByIdRef.current.set(chatId, record)
+      if (activeRunChatIdRef.current === chatId) {
+        activeRunChatSnapshotRef.current = record
+      }
+      scheduleCoalescedChatFlush(chatId)
+    }
+    rendererTranscriptPersistenceRef.current = new RendererChatTranscriptPersistence({
+      mutate: (request) => window.api.mutateChatTranscript(request),
+      loadCanonical: (chatId) => window.api.getChat(chatId),
+      onAccepted: (
+        chatId,
+        baseRevision,
+        optimisticTarget,
+        result,
+        beforeTarget,
+        acceptedTarget
+      ) => {
+        const current = chatByIdRef.current.get(chatId)
+        const advancedRecord = pendingChatDraftsRef.current.advance(
+          beforeTarget,
+          optimisticTarget,
+          current,
+          acceptedTarget
+        )
+        if (!advancedRecord) return
+        const persistedRecord = advancedRecord.record
+        const transportBaseline = chatUpdateBaselineByIdRef.current.get(chatId)
+        if (
+          transportBaseline &&
+          Number(transportBaseline.chat.persistenceRevision || 0) === baseRevision
+        ) {
+          const advanced = appliedChatUpdateBaseline(
+            transportBaseline.revision,
+            acceptedTarget,
+            result.transcriptHash
+          )
+          if (
+            !advancedRecord.pending &&
+            (!result.recordHash || advanced.recordHash === result.recordHash)
+          ) {
+            chatUpdateBaselineByIdRef.current.set(chatId, advanced)
+          } else {
+            chatUpdateBaselineByIdRef.current.delete(chatId)
+          }
+        }
+        publishPersistedRecord(chatId, persistedRecord)
+      },
+      onRecovered: (chatId, optimisticTarget, rebasedTarget, canonical) => {
+        chatUpdateBaselineByIdRef.current.delete(chatId)
+        const current = chatByIdRef.current.get(chatId)
+        const advanced = pendingChatDraftsRef.current.advance(
+          optimisticTarget,
+          rebasedTarget,
+          current,
+          canonical
+        )
+        if (advanced) publishPersistedRecord(chatId, advanced.record)
+      },
+      onUnrecoverable: (chatId, canonical) => {
+        chatUpdateBaselineByIdRef.current.delete(chatId)
+        if (canonical) {
+          publishPersistedRecord(
+            chatId,
+            pendingChatDraftsRef.current.apply(
+              canonical,
+              canonical,
+              chatByIdRef.current.get(chatId)
+            )
+          )
+          return
+        }
+        const latest = chatByIdRef.current.get(chatId)
+        if (!latest) return
+        void window.api
+          .saveChat(latest)
+          .then((saved) => publishPersistedRecord(chatId, saved))
+          .catch(() => {})
+      }
+    })
+  }
+
+  // `accepted` ACKs free main's one-slot transport queue immediately. This
+  // later receipt is deliberately observational: React may be throttled or a
+  // window may be hidden, but neither condition may stall a transcript lane.
+  useEffect(() => {
+    const receipts = pendingChatRenderReceiptsRef.current
+    if (receipts.size === 0) return
+    pendingChatRenderReceiptsRef.current = new Map()
+    if (typeof window.api.ackChatUpdated !== 'function') return
+    for (const receipt of receipts.values()) {
+      window.api.ackChatUpdated(buildChatUpdateRenderedAck(receipt))
+    }
+  })
 
   // On unmount, drop any scheduled flush so it can't fire into a torn-down tree.
   // The 200ms saveChat debounce already persists the latest ref content.
@@ -5717,9 +5648,15 @@ function App(): React.JSX.Element {
     return () => {
       summaryChatUpdateQueueRef.current.clear()
       pendingMainChatUpdatesRef.current.clear()
+      pendingChatRenderReceiptsRef.current.clear()
+      rawLogPresentationQueueRef.current?.cancelPending()
       if (chatFlushRafRef.current !== null) {
         cancelAnimationFrame(chatFlushRafRef.current)
         chatFlushRafRef.current = null
+      }
+      if (chatFlushDeadlineRef.current !== null) {
+        window.clearTimeout(chatFlushDeadlineRef.current)
+        chatFlushDeadlineRef.current = null
       }
     }
   }, [])
@@ -5728,7 +5665,7 @@ function App(): React.JSX.Element {
     (
       chatId: string | null | undefined,
       updater: (chat: ChatRecord) => ChatRecord,
-      options?: { coalesce?: boolean }
+      options?: { coalesce?: boolean; persistence?: 'transcript-tail' | 'none' }
     ): ChatRecord | null => {
       if (!chatId) return null
       if (!options?.coalesce && pendingMainChatUpdatesRef.current.has(chatId)) {
@@ -5742,10 +5679,7 @@ function App(): React.JSX.Element {
           ? activeRunChatSnapshotRef.current
           : null)
       if (!base) return null
-      if (
-        isChatSummaryRecord(base) ||
-        summaryChatUpdateQueueRef.current.hasPending(chatId)
-      ) {
+      if (isChatSummaryRecord(base) || summaryChatUpdateQueueRef.current.hasPending(chatId)) {
         return summaryChatUpdateQueueRef.current.enqueue({
           key: chatId,
           updater,
@@ -5784,10 +5718,23 @@ function App(): React.JSX.Element {
       // Every updater returns a new object when it intends a change
       // (audited 2026-08-19: none mutate the base in place).
       if (updated === base) return updated
+      markRendererChatReference(updated)
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
       }
+      // Claim an Ensemble panel edit BEFORE the flush below can merge a
+      // delivery against it. The optimistic record is already live, so from
+      // this instant until the durable write answers, any delivery that
+      // disagrees about the roster or the panel config was built without
+      // knowing about this edit. Raised here rather than at each call site so
+      // every surface reaching the panel through this funnel — chip strip,
+      // roster popover, preset apply, orchestration row, seat patch — is
+      // covered by construction. See lib/ensembleRosterWriteClaims.ts.
+      const ensembleEditToken =
+        updated.ensemble !== base.ensemble || updated.chatKind !== base.chatKind
+          ? (ensembleRosterClaimsRef.current?.raise(chatId) ?? null)
+          : null
       // #1 — render coalescing. The ref write above is the synchronous source
       // of truth. For coalesced (streamed-delta) updates, defer the React
       // commit to one rAF flush per frame; every other caller commits
@@ -5800,12 +5747,66 @@ function App(): React.JSX.Element {
         pendingChatFlushRef.current.add(chatId)
         flushCoalescedChatsNow()
       }
+      // Small composer picker edits persist through their own main-authoritative
+      // patch IPC. Returning here keeps the optimistic React/cache update above
+      // while avoiding a structured clone of the entire chat transcript. A panel
+      // claim raised above stays held across this return BY DESIGN: the edit is
+      // in flight until that IPC answers. `requestLiveEnsembleRoundConfigUpdate`
+      // raises its own superseding claim and settles it, so the hop-limit path
+      // releases properly; the bounded lease is the backstop for any other
+      // caller that returns here without an authoritative write of its own.
+      if (options?.persistence === 'none') return updated
+      pendingChatDraftsRef.current.trackTarget(updated)
+      const persistTranscriptTail =
+        options?.persistence === 'transcript-tail' &&
+        rendererTranscriptPersistenceRef.current!.queue(base, updated)
+      if (!persistTranscriptTail) {
+        rendererTranscriptPersistenceRef.current!.discardPending(chatId)
+      }
       const existingTimer = saveChatTimersRef.current.get(chatId)
       if (existingTimer) clearTimeout(existingTimer)
       const timer = setTimeout(() => {
         saveChatTimersRef.current.delete(chatId)
-        const latest = chatByIdRef.current.get(chatId) || updated
-        window.api.saveChat(latest).catch(() => {})
+        if (persistTranscriptTail) {
+          void rendererTranscriptPersistenceRef.current!.flush(chatId)
+          return
+        }
+        void rendererTranscriptPersistenceRef
+          .current!.whenIdle(chatId)
+          .then(() => {
+            const latest = chatByIdRef.current.get(chatId) || updated
+            const savePlan = planConflictGatedChatSave({
+              draftConflicts: pendingChatDraftsRef.current.conflicts(chatId),
+              ensembleSliceEdit: ensembleEditToken !== null
+            })
+            if (savePlan === 'skip') return
+            // An Ensemble panel edit answers a refusal instead of swallowing
+            // it: main drops a whole clone whose revision skewed, which its own
+            // writes cause constantly. See lib/ensembleRosterCommit.ts. A
+            // transcript-draft conflict does NOT close this lane: the slice
+            // save is refused on its stale revision and rebased onto canonical
+            // (lib/conflictGatedChatSave.ts), so an ensemble-slice edit made
+            // mid-stream is still sent instead of silently reverted.
+            if (savePlan === 'whole-record') return window.api.saveChat(latest)
+            return saveChatPreservingEnsembleIntent(latest, {
+              saveChat: (record) => window.api.saveChatWithOutcome(record),
+              onRebased: (record) => {
+                chatByIdRef.current.set(chatId, record)
+                pendingChatFlushRef.current.add(chatId)
+                flushCoalescedChatsNow()
+              }
+            })
+          })
+          .catch(() => {})
+          .finally(() => {
+            // Main has the panel edit. Drain the deliveries built before it
+            // through the still-claimed merge, THEN release — the same
+            // ordering the composer-selection queue uses, so an in-flight
+            // stale frame cannot land in the gap between answer and release.
+            if (ensembleEditToken === null) return
+            flushCoalescedChatsNow()
+            ensembleRosterClaimsRef.current?.settle(chatId, ensembleEditToken)
+          })
       }, 200)
       saveChatTimersRef.current.set(chatId, timer)
       return updated
@@ -5908,6 +5909,7 @@ function App(): React.JSX.Element {
       // "nothing to do" — skip both setState calls (including the list
       // insertion, whose no-op paths are all genuine nothing-to-do branches).
       if (updated === base) return updated
+      markRendererChatReference(updated)
       chatByIdRef.current.set(chatId, updated)
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
@@ -5989,17 +5991,19 @@ function App(): React.JSX.Element {
     return window.api.getChats(workspaceId)
   }, [])
 
-  const refreshChatList = useCallback(async (workspaceId?: string): Promise<ChatRecord[]> => {
-    const list = await loadChatList(workspaceId)
-    chatMutations.reconcileAll(list)
-    return list
-  }, [chatMutations, loadChatList])
+  const refreshChatList = useCallback(
+    async (workspaceId?: string): Promise<ChatRecord[]> => {
+      const list = (await loadChatList(workspaceId)).map((row) =>
+        pendingChatDraftsRef.current.apply(row, row, chatByIdRef.current.get(row.appChatId))
+      )
+      chatMutations.reconcileAll(list)
+      return list
+    },
+    [chatMutations, loadChatList]
+  )
 
   const resolveHydratedChat = useCallback(
-    (
-      chat: ChatRecord,
-      request?: { localAtRequestStart: ChatRecord | null }
-    ): ChatRecord => {
+    (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
       const current =
         chatByIdRef.current.get(chat.appChatId) ||
         (activeRunChatSnapshotRef.current?.appChatId === chat.appChatId
@@ -6017,15 +6021,16 @@ function App(): React.JSX.Element {
   )
 
   const applyHydratedChat = useCallback(
-    (
-      chat: ChatRecord,
-      request?: { localAtRequestStart: ChatRecord | null }
-    ): ChatRecord => {
-      const merged = resolveHydratedChat(chat, request)
+    (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
+      const merged = pendingChatDraftsRef.current.apply(
+        chat,
+        resolveHydratedChat(chat, request),
+        chatByIdRef.current.get(chat.appChatId)
+      )
       const committed = commitHydratedChat({
         chat: merged,
-        transcriptStore: chatHydrationRuntimeRef.current.transcriptStore,
-        byteLru: chatHydrationRuntimeRef.current.byteLru
+        transcriptStore: chatHydrationRuntime.transcriptStore,
+        byteLru: chatHydrationRuntime.byteLru
       })
       chatByIdRef.current.set(committed.appChatId, committed)
       setChats((prev) => mergeChatRecord(prev, committed))
@@ -6038,7 +6043,7 @@ function App(): React.JSX.Element {
   const refreshSingleChat = useCallback(
     async (chatId: string | null | undefined): Promise<ChatRecord | null> => {
       if (!chatId) return null
-      return chatHydrationRuntimeRef.current.requestPool.run(chatId, async () => {
+      return chatHydrationRuntime.requestPool.run(chatId, async () => {
         const localAtRequestStart =
           chatByIdRef.current.get(chatId) ||
           (activeRunChatSnapshotRef.current?.appChatId === chatId
@@ -6052,19 +6057,112 @@ function App(): React.JSX.Element {
     [applyHydratedChat]
   )
 
+  // Stage 1b — commit a paged open: shell chrome + the store's tail page,
+  // never the full transcript arrays. A full record that landed while the
+  // fetch was in flight (send escalation, live delivery snapshot) always wins.
+  const applyPagedHydratedChat = (shell: ChatShell, page: TranscriptPage): ChatRecord => {
+    const current =
+      chatByIdRef.current.get(shell.appChatId) ||
+      (activeRunChatSnapshotRef.current?.appChatId === shell.appChatId
+        ? activeRunChatSnapshotRef.current
+        : null)
+    if (current && !isChatSummaryRecord(current)) return current
+    const installedPage = chatHydrationRuntime.transcriptStore.get(shell.appChatId)
+    if (
+      current &&
+      isTranscriptPagedShell(current) &&
+      installedPage &&
+      installedPage.updatedAt > page.updatedAt
+    ) {
+      return current
+    }
+    const committed: ChatRecord = pendingChatDraftsRef.current.apply(
+      shell,
+      mergeChatRecordValue(current ?? undefined, shell),
+      current
+    )
+    chatByIdRef.current.set(committed.appChatId, committed)
+    chatHydrationRuntime.transcriptStore.ingestPage(page)
+    chatHydrationRuntime.byteLru.touch(committed.appChatId)
+    setChats((prev) => mergeChatRecord(prev, committed))
+    setCurrentChat((prev) => (prev?.appChatId === committed.appChatId ? committed : prev))
+    return committed
+  }
+
+  const chatUpdateInterestRuntime = useChatUpdateInterestRuntime({
+    chats,
+    currentChat,
+    setChats,
+    setCurrentChat,
+    chatByIdRef,
+    activeRunChatIdRef,
+    activeRunChatSnapshotRef,
+    clearedChatIdsRef,
+    pendingMainChatUpdatesRef,
+    pendingChatFlushRef,
+    pendingChatRenderReceiptsRef,
+    hydrationRuntime: chatHydrationRuntime,
+    isChatPopoutWindow,
+    chatPopoutChatId: chatPopoutChatIdRef.current,
+    paneChatIds: isMultiviewSplit ? multiview.paneChatIds : [],
+    paneScrollRefs: multiview.paneRefs,
+    sideChatId,
+    currentAutoFollowRef: autoFollowRef,
+    fullResidencyChatIds: [
+      ...Object.entries(pendingAgentApprovalByChatId)
+        .filter(([, approval]) => Boolean(approval))
+        .map(([chatId]) => chatId),
+      ...Object.entries(pendingApprovalQueueByChatId)
+        .filter(([, approvals]) => approvals.length > 0)
+        .map(([chatId]) => chatId)
+    ]
+  })
+
+  // Stage 1b parity for SECONDARY chat surfaces. Built once and driven through
+  // a ref: `createSurfaceChatHydrator` owns a per-chat single-flight map, so a
+  // hydrator rebuilt on every render would throw that away. The runtime and its
+  // transcript store are themselves ref-held (getOrCreateChatHydrationRuntime),
+  // so closing over them here is stable.
+  const surfacePagedHydrationDepsRef = useRef({ refreshSingleChat, applyPagedHydratedChat })
+  surfacePagedHydrationDepsRef.current = { refreshSingleChat, applyPagedHydratedChat }
+  const hydrateSurfaceChatRef = useRef<((chatId: string) => Promise<ChatRecord | null>) | null>(
+    null
+  )
+  if (!hydrateSurfaceChatRef.current) {
+    hydrateSurfaceChatRef.current = createSurfaceChatHydrator({
+      resolveChat: (chatId) => chatByIdRef.current.get(chatId),
+      transcriptStore: chatHydrationRuntime.transcriptStore,
+      fullHydrate: (chatId) => surfacePagedHydrationDepsRef.current.refreshSingleChat(chatId),
+      commitPagedShell: (shell, page) =>
+        surfacePagedHydrationDepsRef.current.applyPagedHydratedChat(shell, page)
+    })
+  }
+  const hydrateSurfaceChat = hydrateSurfaceChatRef.current
+
+  // Composer prop: Class W surfaces (e.g. the @-mention menu) request full
+  // hydration of a paged chat through this.
+  const onRequestFullChat = useCallback(
+    (chatId: string) => {
+      void refreshSingleChat(chatId)
+    },
+    [refreshSingleChat]
+  )
+
   // Visible panes own their thread residency. This deliberately does not read
   // currentChat/focus: every pane hydrates by its own chat id, concurrent reads
   // are deduplicated per id, and a failed pane cannot cancel its neighbours.
-  useChatSurfaceHydration<ChatRecord>(
-    isMultiviewSplit ? multiview.paneChatIds : [],
-    {
-      resolveChat: (chatId) => chatByIdRef.current.get(chatId),
-      isHydrated: (chat) => !isChatSummaryRecord(chat),
-      hydrateChat: refreshSingleChat,
-      pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'pane'),
-      unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'pane')
-    }
-  )
+  useChatSurfaceHydration<ChatRecord>(isMultiviewSplit ? multiview.paneChatIds : [], {
+    resolveChat: (chatId) => chatByIdRef.current.get(chatId),
+    // A marked shell counts as hydrated while the store holds its window. The
+    // old `!isChatSummaryRecord` binding read every shell as un-hydrated, so
+    // the coordinator escalated each one back to a full fetch — including the
+    // FOCUSED chat's shell whenever a pane shared it, undoing Stage 1b for the
+    // main window in split mode.
+    isHydrated: (chat) => isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore),
+    hydrateChat: hydrateSurfaceChat,
+    pinChat: (chatId) => chatHydrationRuntime.retention.pin(chatId, 'pane'),
+    unpinChat: (chatId) => chatHydrationRuntime.retention.unpin(chatId, 'pane')
+  })
 
   const hydratePresentedSideChat = useCallback(
     async (chatId: string): Promise<ChatRecord | null> => {
@@ -6090,12 +6188,21 @@ function App(): React.JSX.Element {
   // focused parent. Keep it resident for the whole presentation lifetime —
   // including while another right-dock tab temporarily covers it — and hydrate
   // its own id independently of currentChat/focus.
+  //
+  // DELIBERATELY NOT on the Stage 1b paged policy, unlike panes and the pop-out.
+  // Presenting a live side chat always mutates it (`hydratePresentedSideChat` →
+  // `applySideChatLifecycle(..., 'active')`), and `updateChatById` routes any
+  // mutation whose base is a summary record — which a shell is — through the
+  // summary queue, whose `hydrate` is a full `window.api.getChat`. Paging here
+  // would therefore pay for a shell + tail page AND still full-fetch on the very
+  // next statement. Full hydration is strictly cheaper until the lifecycle
+  // stamp can be applied without escalating.
   useChatSurfaceHydration<ChatRecord>(sideChatId ? [sideChatId] : [], {
     resolveChat: (chatId) => chatByIdRef.current.get(chatId),
     isHydrated: (chat) => !isChatSummaryRecord(chat),
     hydrateChat: hydratePresentedSideChat,
-    pinChat: (chatId) => chatHydrationRuntimeRef.current.retention.pin(chatId, 'side'),
-    unpinChat: (chatId) => chatHydrationRuntimeRef.current.retention.unpin(chatId, 'side')
+    pinChat: (chatId) => chatHydrationRuntime.retention.pin(chatId, 'side'),
+    unpinChat: (chatId) => chatHydrationRuntime.retention.unpin(chatId, 'side')
   })
 
   const isValidModelForProvider = (
@@ -6111,19 +6218,29 @@ function App(): React.JSX.Element {
     // carried over from another provider. A legacy 'cli-default' coerces to the
     // provider default so the picker shows Grok 4.6, not blank.
     if (provider === 'grok') return modelId.startsWith('grok')
-    if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrokModelId(modelId)
+    if (provider === 'cursor')
+      return modelId.startsWith('composer-') || isCursorGrokModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
+    // Membership, but only where the catalogue is evidence. Pi's is fetched over
+    // IPC and filtered to keyed upstreams, so `[]` means "not hydrated / no keys
+    // yet" far more often than "this id is wrong" — and a no here is answered by
+    // substituting `getDefaultModelForProvider`, which on Pi is the one
+    // `isDefault` row, DeepSeek. That is how a thread storing
+    // `cerebras/qwen-3.8-27b` ends up showing AND DISPATCHING DeepSeek.
     if (provider === 'pi') {
-      return getProviderModelOptions('pi').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('pi'), modelId)
     }
     if (provider === 'mistral') {
-      return getProviderModelOptions('mistral').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('mistral'), modelId)
     }
     if (provider === 'muse') {
-      return getProviderModelOptions('muse').some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(getProviderModelOptions('muse'), modelId)
+    }
+    if (provider === 'devin') {
+      return providerModelCatalogueAccepts(getProviderModelOptions('devin'), modelId)
     }
     if (provider === 'antigravity') {
-      return configuredAntigravityModels.some((model) => model.id === modelId)
+      return providerModelCatalogueAccepts(configuredAntigravityModels, modelId)
     }
     return isGeminiModelId(modelId)
   }
@@ -6138,21 +6255,24 @@ function App(): React.JSX.Element {
     return ids
   }, [])
 
-  const refreshOllamaModelsFromStatus = useCallback((status: any): string[] => {
-    const installedIds = rememberOllamaInstalledModels(status?.models)
-    if (Array.isArray(status?.models)) {
-      setAgentModelsByProvider((prev) => ({
-        ...prev,
-        ollama: mergeOllamaModelCatalog(
-          status.models.map((model: CodexModelOption) => ({
-            ...model,
-            label: model.label || model.id
-          }))
-        )
-      }))
-    }
-    return installedIds
-  }, [rememberOllamaInstalledModels])
+  const refreshOllamaModelsFromStatus = useCallback(
+    (status: any): string[] => {
+      const installedIds = rememberOllamaInstalledModels(status?.models)
+      if (Array.isArray(status?.models)) {
+        setAgentModelsByProvider((prev) => ({
+          ...prev,
+          ollama: mergeOllamaModelCatalog(
+            status.models.map((model: CodexModelOption) => ({
+              ...model,
+              label: model.label || model.id
+            }))
+          )
+        }))
+      }
+      return installedIds
+    },
+    [rememberOllamaInstalledModels]
+  )
 
   const getOllamaModelLabel = useCallback(
     (modelId: string, label?: string): string => {
@@ -6283,10 +6403,29 @@ function App(): React.JSX.Element {
         .filter((option) => !option.disabled)
         .map((option) => option.reasoningEffort)
     )
-    const providerReasoningEfforts = new Set(
-      (providerModelOption?.supportedReasoningEfforts || [])
-        .filter((option) => !option.disabled)
-        .map((option) => option.reasoningEffort)
+    enabledClaudeReasoningEfforts.add('ultraTask')
+    const providerReasoningOptions = getEnsembleReasoningOptions(
+      provider,
+      selected,
+      providerModelOption
+    )
+    // Mirror of the rungs the pickers OFFER, kept in the shared helper so the
+    // offer side and this accept side cannot drift apart again.
+    const providerReasoningEfforts = acceptedProviderReasoningEfforts({
+      reasoningOptions: providerReasoningOptions,
+      supportedReasoningEfforts: providerModelOption?.supportedReasoningEfforts,
+      ultraTaskSupported: providerModelOption?.ultraTaskSupported
+    })
+    // The set above describes the ACTIVE provider's ladder for the model this
+    // chat has selected, and nothing else. Only that provider's stored effort
+    // can be judged by it; the other seven have no model here to be judged
+    // against, and testing them against this one replaced a value the user
+    // picked with a default belonging to a different provider.
+    const acceptsStoredReasoning = (candidate: ProviderId, value: string): boolean =>
+      acceptsStoredProviderReasoning(candidate, provider, providerReasoningEfforts, value)
+    const ollamaHealedReasoning = resolveOllamaComposerReasoningEffort(
+      selected,
+      metadata.ollamaReasoningEffort
     )
     const providerDefaultReasoning =
       providerModelOption?.defaultReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
@@ -6311,6 +6450,10 @@ function App(): React.JSX.Element {
       storedPermissionPresetId === 'full_access' && resolvedApprovalMode !== 'auto_edit'
         ? derivedPermissionPresetId
         : storedPermissionPresetId || derivedPermissionPresetId
+    const persistedOllamaRunProfile =
+      typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
+    const antigravityUltraTaskSelected =
+      provider === 'antigravity' && metadata.antigravityUltraTaskSelected === true
     return {
       provider,
       selectedModelType: selected,
@@ -6326,7 +6469,14 @@ function App(): React.JSX.Element {
         typeof metadata.codexServiceTier === 'string' ? metadata.codexServiceTier : '',
       claudeReasoningEffort:
         typeof metadata.claudeReasoningEffort === 'string' &&
-        enabledClaudeReasoningEfforts.has(metadata.claudeReasoningEffort)
+        // Claude keeps its own accepted set, resolved from the Claude model
+        // option rather than the shared ladder; scope it the same way.
+        acceptsStoredProviderReasoning(
+          'claude',
+          provider,
+          enabledClaudeReasoningEfforts,
+          metadata.claudeReasoningEffort
+        )
           ? metadata.claudeReasoningEffort
           : resolveClaudeDefaultReasoningEffort(claudeModelOption),
       claudeFastMode:
@@ -6336,28 +6486,49 @@ function App(): React.JSX.Element {
         Boolean(providerModelOption?.additionalSpeedTiers?.includes('fast')),
       kimiReasoningEffort:
         typeof metadata.kimiReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.kimiReasoningEffort)
+        acceptsStoredReasoning('kimi', metadata.kimiReasoningEffort)
           ? metadata.kimiReasoningEffort
           : providerModelOption?.defaultReasoningEffort || 'on',
       kimiThinkingEnabled: true,
       grokReasoningEffort:
         typeof metadata.grokReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.grokReasoningEffort)
+        acceptsStoredReasoning('grok', metadata.grokReasoningEffort)
           ? metadata.grokReasoningEffort
           : providerDefaultReasoning,
       museReasoningEffort:
         typeof metadata.museReasoningEffort === 'string' &&
-        MUSE_REASONING_EFFORT_ALLOWLIST.has(metadata.museReasoningEffort)
+        acceptsStoredReasoning('muse', metadata.museReasoningEffort)
           ? metadata.museReasoningEffort
           : MUSE_DEFAULT_REASONING_EFFORT,
       mistralReasoningEffort:
         typeof metadata.mistralReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.mistralReasoningEffort)
+        acceptsStoredReasoning('mistral', metadata.mistralReasoningEffort)
           ? metadata.mistralReasoningEffort
           : 'medium',
+      devinReasoningEffort:
+        typeof metadata.devinReasoningEffort === 'string' &&
+        acceptsStoredReasoning('devin', metadata.devinReasoningEffort)
+          ? metadata.devinReasoningEffort
+          : providerModelOption?.defaultReasoningEffort ||
+            devinDefaultReasoningEffort(selected) ||
+            '',
+      piReasoningEffort:
+        typeof metadata.piReasoningEffort === 'string' &&
+        acceptsStoredReasoning('pi', metadata.piReasoningEffort)
+          ? metadata.piReasoningEffort
+          : defaultPiReasoningEffort(selected),
+      ollamaReasoningEffort:
+        typeof metadata.ollamaReasoningEffort === 'string' &&
+        acceptsStoredReasoning('ollama', metadata.ollamaReasoningEffort)
+          ? metadata.ollamaReasoningEffort
+          : persistedOllamaRunProfile === 'local_scout' && providerReasoningEfforts.has('medium')
+            ? 'medium'
+            : providerReasoningEfforts.has(ollamaHealedReasoning)
+              ? ollamaHealedReasoning
+              : providerReasoningOptions.at(-1)?.value || '',
       cursorReasoningEffort:
         typeof metadata.cursorReasoningEffort === 'string' &&
-        providerReasoningEfforts.has(metadata.cursorReasoningEffort)
+        acceptsStoredReasoning('cursor', metadata.cursorReasoningEffort)
           ? metadata.cursorReasoningEffort
           : providerDefaultReasoning,
       cursorFastMode:
@@ -6368,12 +6539,17 @@ function App(): React.JSX.Element {
             : typeof metadata.cursorFastMode === 'boolean'
               ? metadata.cursorFastMode
               : false,
+      antigravityReasoningEffort: antigravityUltraTaskSelected
+        ? 'ultraTask'
+        : typeof metadata.antigravityReasoningEffort === 'string'
+          ? metadata.antigravityReasoningEffort
+          : antigravityEffortForModelId(selected) || '',
+      antigravityUltraTaskSelected,
       // Solo-chat Ollama run profile: honored only if a legacy chat still
       // carries one in providerMetadata (there is no picker to set it any more).
       // Absent → undefined → the runtime defaults to provider_parity. The
       // per-ensemble-participant selector is the sole runtime knob now.
-      ollamaRunProfile:
-        typeof metadata.ollamaRunProfile === 'string' ? metadata.ollamaRunProfile : undefined
+      ollamaRunProfile: persistedOllamaRunProfile
     }
   }
 
@@ -6388,7 +6564,11 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return selection.grokReasoningEffort
     if (provider === 'muse') return selection.museReasoningEffort
     if (provider === 'mistral') return selection.mistralReasoningEffort
+    if (provider === 'devin') return selection.devinReasoningEffort
+    if (provider === 'pi') return selection.piReasoningEffort
+    if (provider === 'ollama') return selection.ollamaReasoningEffort
     if (provider === 'cursor') return selection.cursorReasoningEffort
+    if (provider === 'antigravity') return selection.antigravityReasoningEffort
     return undefined
   }
 
@@ -6411,6 +6591,9 @@ function App(): React.JSX.Element {
     setGrokReasoningEffort(selection.grokReasoningEffort)
     setMuseReasoningEffort(selection.museReasoningEffort)
     setMistralReasoningEffort(selection.mistralReasoningEffort)
+    setDevinReasoningEffort(selection.devinReasoningEffort)
+    setPiReasoningEffort(selection.piReasoningEffort)
+    setOllamaReasoningEffort(selection.ollamaReasoningEffort)
     setCursorReasoningEffort(selection.cursorReasoningEffort)
     setCursorFastMode(selection.cursorFastMode)
     setRuntimeProfileForChat(
@@ -6423,6 +6606,76 @@ function App(): React.JSX.Element {
   }
   const applyChatComposerSelectionRef = useRef(applyChatComposerSelection)
   applyChatComposerSelectionRef.current = applyChatComposerSelection
+
+  // Claims over a picker commit main has not confirmed yet, so a delivery built
+  // before it cannot revert the chip. Raised on the optimistic commit, released
+  // by the durable answer. See lib/composerSelectionWriteClaims.ts.
+  const composerSelectionClaimsRef = useRef<ComposerSelectionWriteClaims | null>(null)
+  if (!composerSelectionClaimsRef.current) {
+    composerSelectionClaimsRef.current = new ComposerSelectionWriteClaims()
+  }
+  // Claims over an Ensemble roster / panel-configuration commit main has not
+  // confirmed yet, so a delivery built before it cannot revert the seat the
+  // user just added or removed, or the round budget beside it. Its own
+  // register, not the selection one: the two writes answer independently.
+  // See lib/ensembleRosterWriteClaims.ts.
+  // Claims over a `setChatKind` still in flight. Its own register, not the
+  // roster one: a roster save answering must not release the mode's protection
+  // while the switch is still outstanding. See lib/ensembleChatKindWriteClaims.ts.
+  const ensembleChatKindClaimsRef = useRef<EnsembleChatKindWriteClaims | null>(null)
+  if (!ensembleChatKindClaimsRef.current) {
+    ensembleChatKindClaimsRef.current = new EnsembleChatKindWriteClaims()
+  }
+  const ensembleRosterClaimsRef = useRef<EnsembleRosterWriteClaims | null>(null)
+  if (!ensembleRosterClaimsRef.current) {
+    ensembleRosterClaimsRef.current = new EnsembleRosterWriteClaims()
+  }
+  const composerSelectionPatchQueueRef = useRef<ChatComposerSelectionPatchQueue | null>(null)
+  if (!composerSelectionPatchQueueRef.current) {
+    composerSelectionPatchQueueRef.current = new ChatComposerSelectionPatchQueue({
+      persist: async (request) => {
+        // Read the claim AFTER the queue has coalesced and is actually
+        // flushing: everything picked up to this moment is in this request, and
+        // anything picked later raises its own claim that this answer must not
+        // release.
+        const claims = composerSelectionClaimsRef.current
+        const token = claims?.current(request.chatId) ?? null
+        try {
+          await rendererTranscriptPersistenceRef.current?.whenIdle(request.chatId)
+          const result = await window.api.patchChatComposerSelection(request)
+          if (!result.ok) throw new Error(`Composer selection patch failed: ${result.reason}`)
+          // Main has the selection and broadcast it. Drain the deliveries that
+          // were built before it through the still-claimed merge, then release —
+          // the same ordering the goal claim uses, so an in-flight stale frame
+          // cannot land in the gap between the answer and the release.
+          flushCoalescedChatsNow()
+          return result
+        } finally {
+          claims?.settle(request.chatId, token)
+        }
+      },
+      onError: (chatId, error) => {
+        // Compatibility fallback only: a bridge/version mismatch must not lose
+        // the user's choice. The normal path never clones this full record.
+        const latest = chatByIdRef.current.get(chatId)
+        if (latest && !isChatSummaryRecord(latest)) {
+          void window.api.saveChat(latest).catch(() => {})
+        }
+        console.warn('[composer selection] compact persistence failed', error)
+      }
+    })
+  }
+  useEffect(() => {
+    const queue = composerSelectionPatchQueueRef.current
+    const claims = composerSelectionClaimsRef.current
+    return () => {
+      if (!queue) return
+      void queue.flushAll().finally(() => {
+        queue.dispose()
+        claims?.clear()
+      })
+    }
+  }, [])
 
   const buildEnsembleSeedParticipantFromChat = (chat: ChatRecord): EnsembleParticipant => {
     const provider = getChatProvider(chat)
@@ -6486,6 +6739,31 @@ function App(): React.JSX.Element {
               MUSE_DEFAULT_REASONING_EFFORT
           }
         : {}),
+      ...(provider === 'mistral'
+        ? {
+            reasoningEffort: selection.mistralReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'devin'
+        ? {
+            reasoningEffort: selection.devinReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'pi'
+        ? {
+            reasoningEffort: selection.piReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
+      ...(provider === 'antigravity' && selection.antigravityReasoningEffort
+        ? {
+            reasoningEffort: selection.antigravityReasoningEffort
+          }
+        : {}),
+      ...(provider === 'ollama'
+        ? {
+            reasoningEffort: selection.ollamaReasoningEffort || defaults.reasoningEffort
+          }
+        : {}),
       ...(provider === 'cursor'
         ? {
             ...(isCursorGrokModelId(selection.selectedModelType)
@@ -6499,82 +6777,97 @@ function App(): React.JSX.Element {
     }
   }
 
-  const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
-    if (!isChatSummaryRecord(chat)) return
-    scheduleAfterNextPaint(() => {
-      void refreshSingleChat(chat.appChatId)
-        .then((resolved) => {
-          if (!resolved || currentChatIdRef.current !== resolved.appChatId) return
-          const provider = getChatProvider(resolved)
-          startTransition(() => {
-            applyChatComposerSelection(resolved, provider)
-            setRunCompleteNotice(
-              deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
+  const selectedChatHydration = useSelectedChatHydrationRecovery(currentChat, {
+    needsHydration: (chatId) => {
+      if (currentChatIdRef.current !== chatId || clearedChatIdsRef.current.has(chatId)) return false
+      const chat = chatByIdRef.current.get(chatId)
+      return Boolean(chat && !isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore))
+    },
+    subscribe: (chatId, listener) =>
+      chatHydrationRuntime.transcriptStore.subscribe(chatId, listener),
+    hydrate: async (chatId) => {
+      const chat = chatByIdRef.current.get(chatId)
+      if (
+        !chat ||
+        !isChatSummaryRecord(chat) ||
+        isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore)
+      ) {
+        return chat ?? null
+      }
+      // Retry the same paged/full chain. A slow successful read has no deadline;
+      // only a rejection or missing result consumes the bounded retry budget.
+      const resolved = await (shouldPageTranscriptOnOpen(chat)
+        ? hydratePagedChatShell(chatId, chat)
+            .catch(() => null)
+            .then((paged) =>
+              paged ? applyPagedHydratedChat(paged.shell, paged.page) : refreshSingleChat(chatId)
             )
-            setRawLogs(rawLogsByChatIdRef.current.get(resolved.appChatId) || [])
-            syncThinkingForChat(resolved)
-          })
-        })
-        .catch(() => {})
-    })
-  }
+        : refreshSingleChat(chatId))
+      if (
+        !resolved ||
+        currentChatIdRef.current !== chatId ||
+        clearedChatIdsRef.current.has(chatId)
+      ) {
+        return resolved
+      }
+      const provider = getChatProvider(resolved)
+      startTransition(() => {
+        applyChatComposerSelection(resolved, provider)
+        setRunCompleteNotice(
+          deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
+        )
+        setRawLogs(rawLogSnapshotForChat(resolved.appChatId))
+        syncThinkingForChat(resolved)
+      })
+      return resolved
+    }
+  })
 
-  const PROVIDER_SCOPED_COMPOSER_METADATA_KEYS = new Set([
-    'selectedModelType',
-    'customModel',
-    'codexReasoningEffort',
-    'codexServiceTier',
-    'claudeReasoningEffort',
-    'claudeFastMode',
-    'kimiFastMode',
-    'kimiReasoningEffort',
-    'kimiThinkingEnabled',
-    'grokReasoningEffort',
-    'museReasoningEffort',
-    'mistralReasoningEffort',
-    'cursorReasoningEffort',
-    'cursorFastMode',
-    'runtimeProfileId',
-    'geminiAuthProfileId'
-  ])
+  const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
+    selectedChatHydration.select(chat.appChatId)
+  }
 
   const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
     if (!chatId) return
-    const maybeWorkflowMode = patch.workflowMode
-    const nextWorkflowMode =
-      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
-        ? maybeWorkflowMode
-        : undefined
-    const touchesProviderScopedMetadata = Object.keys(patch).some((key) =>
-      PROVIDER_SCOPED_COMPOSER_METADATA_KEYS.has(key)
-    )
-    updateChatById(chatId, (source) => {
-      if (source.chatKind !== 'ensemble' && touchesProviderScopedMetadata && isChatBusy(chatId)) {
-        const pendingChange = readPendingProviderChange(source)
-        const queuedChat = queueProviderChange(source, {
-          provider: pendingChange?.provider || getChatProvider(source),
-          providerMetadata: {
-            ...(pendingChange?.providerMetadata || {}),
-            ...patch
-          },
-          queuedAt: pendingChange?.queuedAt || new Date().toISOString()
-        })
-        return {
-          ...queuedChat,
-          ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-          updatedAt: Date.now()
-        }
-      }
-      return {
-        ...source,
-        ...(nextWorkflowMode ? { workflowMode: nextWorkflowMode } : {}),
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          ...patch
-        },
-        updatedAt: Date.now()
-      }
+    const sanitizedPatch = sanitizeChatComposerSelectionPatch(patch)
+    if (!sanitizedPatch) return
+    const touchesProviderScopedMetadata =
+      chatComposerSelectionPatchTouchesProviderMetadata(sanitizedPatch)
+    const source =
+      chatByIdRef.current.get(chatId) ||
+      (activeRunChatSnapshotRef.current?.appChatId === chatId
+        ? activeRunChatSnapshotRef.current
+        : null)
+    if (!source) return
+    const pendingChange = readPendingProviderChange(source)
+    const deferProviderScoped = shouldDeferProviderScopedComposerSelection({
+      chatKind: source.chatKind,
+      touchesProviderScopedMetadata,
+      busy: isChatBusy(chatId),
+      hasPendingProviderChange: pendingChange !== null
     })
+    const provider = pendingChange?.provider || getChatProvider(source)
+    const queuedAt = deferProviderScoped
+      ? pendingChange?.queuedAt || new Date().toISOString()
+      : undefined
+    const request = {
+      chatId,
+      patch: sanitizedPatch,
+      provider,
+      deferProviderScoped,
+      ...(queuedAt ? { queuedAt } : {})
+    }
+    const updated = updateChatById(
+      chatId,
+      (current) => applyChatComposerSelectionPatch(current, request),
+      { persistence: 'none' }
+    )
+    if (updated === source) return
+    // Claim the selection BEFORE the write is queued: the optimistic record is
+    // already live, so from this instant until main answers, any delivery that
+    // disagrees was built without knowing about this pick.
+    composerSelectionClaimsRef.current?.raise(chatId)
+    composerSelectionPatchQueueRef.current?.enqueue(request)
   }
 
   const rememberCurrentChatComposerSelection = (patch: Record<string, unknown>) => {
@@ -6665,11 +6958,7 @@ function App(): React.JSX.Element {
         reportPreviewLaunchError(target, chat, target.reason || 'Launch target is unavailable.')
       }
     } catch (error) {
-      reportPreviewLaunchError(
-        target,
-        chat,
-        error instanceof Error ? error.message : String(error)
-      )
+      reportPreviewLaunchError(target, chat, error instanceof Error ? error.message : String(error))
     }
   }
   const renderPreviewTargetMenu = (
@@ -6730,12 +7019,15 @@ function App(): React.JSX.Element {
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
   const refreshProviderModelCatalog = useCallback(async (provider: ProviderId): Promise<void> => {
-    if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function') return
+    if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function')
+      return
     try {
       const models = await window.api.getAgentModels(provider)
       const normalized =
         provider === 'kimi'
-          ? KIMI_DEFAULT_MODELS
+          ? Array.isArray(models) && models.length > 0
+            ? models.map((model) => ({ ...model, label: model.label || model.id }))
+            : KIMI_DEFAULT_MODELS
           : provider === 'ollama'
             ? mergeOllamaModelCatalog(
                 Array.isArray(models)
@@ -6930,59 +7222,34 @@ function App(): React.JSX.Element {
     }
   }
 
-  const upsertRunDiffFromTool = (activity: ToolActivity, workspacePath?: string | null) => {
+  const upsertRunDiffFromTool = (
+    chatId: string,
+    activity: ToolActivity,
+    workspacePath?: string | null
+  ) => {
     const change = summarizeWriteToolForDiff(activity, workspacePath)
     if (!change) return
-
-    setRunDiff((prev) => {
-      const next = [...(prev || [])]
-      const existingIndex = next.findIndex((item) => item.path === change.path)
-      if (existingIndex >= 0) {
-        const existing = next[existingIndex]
-        const mergedStatus =
-          existing.status === 'created'
-            ? 'created'
-            : change.status === 'created'
-              ? 'created'
-              : change.status === 'deleted'
-                ? 'deleted'
-                : 'modified'
-
-        next[existingIndex] = {
-          ...existing,
-          status: mergedStatus,
-          additions: (existing.additions || 0) + change.additions,
-          deletions: (existing.deletions || 0) + change.deletions,
-          previewKind: existing.previewKind || 'none'
-        }
-      } else {
-        next.push({
-          path: change.path,
-          status: change.status,
-          additions: change.additions,
-          deletions: change.deletions,
-          previewKind: 'none'
-        })
-      }
-      return next
-    })
+    liveRunDiffStore.upsert(chatId, { ...change, previewKind: 'none' })
   }
 
   const loadInitialDataRef = useRef<(() => Promise<void>) | null>(null)
   const providerMetadataWarmupRef = useRef<ProviderMetadataWarmupController | null>(null)
+  // Latest-instance ref so the Providers-tab effect can call the non-memoised
+  // refresh without re-firing on every render.
+  const refreshProviderMetadataRef = useRef(refreshProviderMetadata)
+  useEffect(() => {
+    refreshProviderMetadataRef.current = refreshProviderMetadata
+  })
 
   const armProviderMetadataWarmup = (activeProvider: ProviderId): void => {
     providerMetadataWarmupRef.current?.dispose()
     providerMetadataWarmupRef.current = null
     if (isChatPopoutWindow) return
     providerMetadataWarmupRef.current = scheduleProviderMetadataWarmup({
-      providers: (LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]).filter(
-        // Pi's key-filtered catalogue is an in-memory read in main, so it is
-        // warmed once immediately below. Keeping it out of the heavyweight
-        // idle metadata queue prevents a second request and avoids waiting
-        // behind repeated 20-second quiet windows before its models appear.
-        (provider) => provider !== activeProvider && provider !== 'pi'
-      ),
+      // Pi and Ollama are local reads (see lib/providerMetadataDelivery) and
+      // are refreshed directly once the initial route settles, never behind
+      // the repeated 20-second quiet windows this queue requires.
+      providers: providerMetadataWarmupQueue(activeProvider),
       refresh: (provider) => refreshProviderMetadata(provider),
       eventTarget: window
     })
@@ -7002,9 +7269,12 @@ function App(): React.JSX.Element {
       return
     }
     setInitialRouteWasRevealed(true)
+    // Input is already released by `.is-leaving`; this only decides when the
+    // node leaves the tree, so it tracks the animation that is actually
+    // playing instead of a flat 760 ms (see lib/bootMaskTiming.ts).
     const timeout = window.setTimeout(() => {
       setBootMaskVisible(false)
-    }, 760)
+    }, bootMaskUnmountDelayMs(prefersReducedMotion()))
     return () => window.clearTimeout(timeout)
   }, [isBootReady])
 
@@ -7086,8 +7356,25 @@ function App(): React.JSX.Element {
   }, [runQueueJobs])
 
   const loadInitialData = async () => {
+    // These five are plain IPC reads with no dependency on settings or policy,
+    // so they are issued now and awaited below: two sequential round trips
+    // become one. Every state update below keeps its original order.
+    const initialLoads = Promise.allSettled([
+      window.api.getWorkspaces(),
+      loadChatList(),
+      typeof window.api.getRuntimeProfiles === 'function'
+        ? window.api.getRuntimeProfiles()
+        : Promise.resolve([]),
+      typeof window.api.getHandoffCards === 'function'
+        ? window.api.getHandoffCards()
+        : Promise.resolve([]),
+      typeof window.api.getPluginActivation === 'function'
+        ? window.api.getPluginActivation()
+        : Promise.resolve(null)
+    ])
     const [s, policyStatus] = await Promise.all([
-      window.api.getSettings(),
+      // Shared with useAppearance's mount effect: one IPC round trip, not two.
+      startupSettingsRequest.request(),
       isChatPopoutWindow
         ? Promise.resolve(null)
         : window.api.getManagedPolicyStatus().catch(() => null)
@@ -7176,25 +7463,8 @@ function App(): React.JSX.Element {
     // `handleSelectWorkspace` re-fetched and all "previously loaded"
     // workspaces suddenly appeared. Use `Promise.allSettled` so each
     // load is independent, then apply whatever resolved.
-    const [
-      wsResult,
-      chatsResult,
-      profilesResult,
-      handoffsResult,
-      pluginActivationResult
-    ] = await Promise.allSettled([
-      window.api.getWorkspaces(),
-      loadChatList(),
-      typeof window.api.getRuntimeProfiles === 'function'
-        ? window.api.getRuntimeProfiles()
-        : Promise.resolve([]),
-      typeof window.api.getHandoffCards === 'function'
-        ? window.api.getHandoffCards()
-        : Promise.resolve([]),
-      typeof window.api.getPluginActivation === 'function'
-        ? window.api.getPluginActivation()
-        : Promise.resolve(null)
-    ])
+    const [wsResult, chatsResult, profilesResult, handoffsResult, pluginActivationResult] =
+      await initialLoads
     const wsList = wsResult.status === 'fulfilled' ? wsResult.value : []
     const allChats = chatsResult.status === 'fulfilled' ? chatsResult.value : []
     const profiles = profilesResult.status === 'fulfilled' ? profilesResult.value : []
@@ -7214,10 +7484,7 @@ function App(): React.JSX.Element {
       console.error('[loadInitialData] getHandoffCards failed:', handoffsResult.reason)
     }
     if (pluginActivationResult.status === 'rejected') {
-      console.error(
-        '[loadInitialData] getPluginActivation failed:',
-        pluginActivationResult.reason
-      )
+      console.error('[loadInitialData] getPluginActivation failed:', pluginActivationResult.reason)
     }
     setRuntimeProfiles(profiles)
     setPluginActivation(activation)
@@ -7226,13 +7493,36 @@ function App(): React.JSX.Element {
     setWorkspaces(wsList)
     await rehydrateQueuedRuns(wsList).catch(() => {})
     if (isChatPopoutWindow) {
-      const popoutSummary = allChats.find(
-        (chat) => chat.appChatId === chatPopoutChatIdRef.current
-      )
-      const popoutChat =
-        popoutSummary && isChatSummaryRecord(popoutSummary)
-          ? (await window.api.getChat(popoutSummary.appChatId)) || popoutSummary
-          : popoutSummary
+      const popoutSummary = allChats.find((chat) => chat.appChatId === chatPopoutChatIdRef.current)
+      // Stage 1b: the pop-out / Compact Companion boot used to fetch the FULL
+      // record unconditionally and never ingest it into the transcript store, so
+      // an idle large chat rendered its entire transcript through
+      // TranscriptPanel's derivation graph for the whole window lifetime
+      // (`storeReady` only flips once a live stream frame arrives). Route the
+      // open through the shared surface policy instead: over-budget chats open
+      // as chrome shell + one bounded tail page, everything else full-hydrates
+      // byte-identically to before.
+      //
+      // This does NOT reuse `hydrateSurfaceChat`: that resolves through
+      // `chatByIdRef`, which the `replaceAll` above only populates once React
+      // commits, so at boot the ref is still empty for this id and every open
+      // would silently fall through to a full fetch. Resolving the row we
+      // already hold is what makes the paging decision reachable here.
+      //
+      // Safe to page: the boot tail below only reads chrome and sets local UI
+      // state — it never mutates the record, which would auto-escalate through
+      // `updateChatById`'s summary queue.
+      const hydratePopoutBootChat = createSurfaceChatHydrator({
+        resolveChat: () => popoutSummary ?? null,
+        transcriptStore: chatHydrationRuntime.transcriptStore,
+        // Deliberately the raw channel, not `refreshSingleChat`: the non-paged
+        // path must stay exactly what it was before this change.
+        fullHydrate: async (chatId) => (await window.api.getChat(chatId)) || null,
+        commitPagedShell: applyPagedHydratedChat
+      })
+      const popoutChat = popoutSummary
+        ? (await hydratePopoutBootChat(popoutSummary.appChatId)) || popoutSummary
+        : popoutSummary
       if (popoutChat) {
         if (!isChatSummaryRecord(popoutChat)) {
           setChats((prev) => mergeChatRecord(prev, popoutChat))
@@ -7269,10 +7559,19 @@ function App(): React.JSX.Element {
         }
         const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)
         if (popoutHandoff?.roundExpansion !== undefined) {
-          hydrateSessionRoundExpansionForChat(
-            popoutChat.appChatId,
-            popoutHandoff.roundExpansion
-          )
+          hydrateSessionRoundExpansionForChat(popoutChat.appChatId, popoutHandoff.roundExpansion)
+        }
+        // Before `setCurrentChat`: the panel's chat id is `currentChat?.appChatId
+        // ?? null` and the view lookup short-circuits on null, so this commit is
+        // the first render that can read the store for this chat. Applying the
+        // view after it paints the full `standard` row set once and then
+        // relayouts under the bounded scroll restore queued below.
+        //
+        // Guarded rather than unconditional: absence means "follow the default",
+        // and writing the default in as an explicit entry would pin this chat
+        // against a later Appearance default.
+        if (popoutHandoff?.transcriptView) {
+          setTranscriptViewOverride(popoutChat.appChatId, popoutHandoff.transcriptView)
         }
         setCurrentChat(popoutChat)
         applyChatComposerSelection(popoutChat, provider)
@@ -7281,7 +7580,7 @@ function App(): React.JSX.Element {
         }
         void refreshUsageSummary(getUsageWorkspaceIdForChat(popoutChat), provider)
         void refreshProviderMetadata(provider, popoutChat.workspacePath)
-        setRawLogs(rawLogsByChatIdRef.current.get(popoutChat.appChatId) || [])
+        setRawLogs(rawLogSnapshotForChat(popoutChat.appChatId))
         hydrateThreadRawLogsFromEvents(popoutChat.appChatId)
         syncThinkingForChat(popoutChat)
         if (popoutHandoff?.scrollState) {
@@ -7341,9 +7640,7 @@ function App(): React.JSX.Element {
           (chat) =>
             isGlobalChat(chat) && chat.chatKind !== 'ensemble' && isReusableWelcomeChat(chat)
         )
-        .sort(
-          (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
-        )[0]
+        .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))[0]
       if (reusableEmptyGeneralChat) {
         launchChat = reusableEmptyGeneralChat
         await selectGlobalChat(reusableEmptyGeneralChat)
@@ -7363,6 +7660,11 @@ function App(): React.JSX.Element {
       }
     }
     armProviderMetadataWarmup(initialProvider)
+    // Ollama's status carries the remembered Cloud sign-in; ask for it now
+    // rather than sixth in the idle queue (see lib/providerMetadataDelivery).
+    for (const provider of providerMetadataBootRefreshes(initialProvider)) {
+      void refreshProviderMetadata(provider)
+    }
     markInitialRouteSettled()
   }
   loadInitialDataRef.current = loadInitialData
@@ -7374,6 +7676,13 @@ function App(): React.JSX.Element {
       const popoutHandoff = readChatPopoutHandoff(chatId)
       if (popoutHandoff?.roundExpansion !== undefined) {
         hydrateSessionRoundExpansionForChat(chatId, popoutHandoff.roundExpansion)
+      }
+      // A re-pop-out of an already-open popout reuses this window, so this is
+      // the only delivery after the first. Still guarded: the popout may have
+      // been put on Follow default from inside, and an absent carried value
+      // must not overwrite that with a pin.
+      if (popoutHandoff?.transcriptView) {
+        setTranscriptViewOverride(chatId, popoutHandoff.transcriptView)
       }
       if (typeof popoutHandoff?.draft === 'string') {
         setChatPromptDraft(chatId, popoutHandoff.draft)
@@ -7410,6 +7719,9 @@ function App(): React.JSX.Element {
       setChatContextTurns(nextChatContextTurns)
       settingsPatch.chatContextTurns = nextChatContextTurns
     }
+    if (next.midRunInputBehavior !== undefined) {
+      settingsPatch.midRunInputBehavior = next.midRunInputBehavior
+    }
 
     // 1.0.5-EW25 — Currency selection. No local state to mirror
     // (the `displayCurrency` const derives from `settings?.currency`
@@ -7443,6 +7755,9 @@ function App(): React.JSX.Element {
     }
     if (next.ensembleCollapseOlderRounds !== undefined) {
       settingsPatch.ensembleCollapseOlderRounds = next.ensembleCollapseOlderRounds
+    }
+    if (next.keepAwakeWhileWorking !== undefined) {
+      settingsPatch.keepAwakeWhileWorking = next.keepAwakeWhileWorking
     }
     if (next.maxWaveAgents !== undefined) {
       settingsPatch.maxWaveAgents = next.maxWaveAgents
@@ -7550,6 +7865,18 @@ function App(): React.JSX.Element {
       settingsPatch.fanoutLaneLayout = next.fanoutLaneLayout
       appearance.update({ fanoutLaneLayout: next.fanoutLaneLayout })
     }
+    if (next.defaultTranscriptView !== undefined) {
+      settingsPatch.defaultTranscriptView = next.defaultTranscriptView
+      appearance.update({ defaultTranscriptView: next.defaultTranscriptView })
+    }
+    if (next.transcriptTextSize !== undefined) {
+      settingsPatch.transcriptTextSize = next.transcriptTextSize
+      appearance.update({ transcriptTextSize: next.transcriptTextSize })
+    }
+    if (next.transcriptWidth !== undefined) {
+      settingsPatch.transcriptWidth = next.transcriptWidth
+      appearance.update({ transcriptWidth: next.transcriptWidth })
+    }
     if (next.composerStyle !== undefined) {
       settingsPatch.composerStyle = next.composerStyle
       appearance.update({ composerStyle: next.composerStyle })
@@ -7655,6 +7982,12 @@ function App(): React.JSX.Element {
       setOllamaDefaultModel(next.ollamaDefaultModel)
       settingsPatch.ollamaDefaultModel = next.ollamaDefaultModel
       providersToRefresh.push('ollama')
+    }
+    // Devin custom api_server_url — persist only (mirrors the cliPathDirectories
+    // pattern). The Devin launch lane reads `settings.devinApiServerUrl`
+    // main-side; the SettingsPanel field is fed by the host pass-through.
+    if (next.devinApiServerUrl !== undefined) {
+      settingsPatch.devinApiServerUrl = next.devinApiServerUrl
     }
     if (next.auditOrchestration !== undefined) {
       settingsPatch.auditOrchestration = next.auditOrchestration
@@ -7771,16 +8104,8 @@ function App(): React.JSX.Element {
     }
     try {
       const nextSettings = enabled
-        ? await window.api.upsertAgenticWorkspaceGrant(
-            targetProvider,
-            grantWorkspacePath,
-            service
-          )
-        : await window.api.removeAgenticWorkspaceGrant(
-            targetProvider,
-            grantWorkspacePath,
-            service
-          )
+        ? await window.api.upsertAgenticWorkspaceGrant(targetProvider, grantWorkspacePath, service)
+        : await window.api.removeAgenticWorkspaceGrant(targetProvider, grantWorkspacePath, service)
       applyAgenticWorkspaceGrantSettings(nextSettings)
       return true
     } catch (error) {
@@ -7972,14 +8297,9 @@ function App(): React.JSX.Element {
           ? defaults.model
           : getDefaultModelForProvider(provider))
       const nextRuntimeProfileId = defaultRuntimeProfileIdForProvider(provider)
-      const modelMetadata =
-        provider === 'codex'
-          ? codexModels.find((model) => model.id === nextModel)
-          : provider === 'claude'
-            ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
-                (model) => model.id === nextModel
-              )
-            : undefined
+      const modelMetadata = getProviderModelOptions(provider).find(
+        (model) => model.id === nextModel
+      )
       const normalizedSelection = normalizeProviderModelSelection(
         provider,
         nextModel,
@@ -7988,6 +8308,12 @@ function App(): React.JSX.Element {
           ? { reasoningEffort: options.previousReasoningEffort }
           : undefined
       )
+      const preserveUltraTask =
+        options.previousReasoningEffort?.trim().toLowerCase() === 'ultratask' &&
+        modelMetadata?.ultraTaskSupported === true
+      const nextReasoningEffort = preserveUltraTask
+        ? 'ultraTask'
+        : normalizedSelection.reasoningEffort
       const providerMetadata: Record<string, unknown> = {
         selectedModelType: nextModel,
         customModel: '',
@@ -7995,29 +8321,37 @@ function App(): React.JSX.Element {
         ...(options.workflowMode ? { workflowMode: options.workflowMode } : {}),
         runtimeProfileId: nextRuntimeProfileId,
         geminiAuthProfileId: provider === 'gemini' ? null : undefined,
-        codexReasoningEffort:
-          provider === 'codex' ? normalizedSelection.reasoningEffort || '' : undefined,
+        codexReasoningEffort: provider === 'codex' ? nextReasoningEffort || '' : undefined,
         codexServiceTier: provider === 'codex' ? normalizedSelection.serviceTier || '' : undefined,
-        claudeReasoningEffort:
-          provider === 'claude' ? normalizedSelection.reasoningEffort || '' : undefined,
+        claudeReasoningEffort: provider === 'claude' ? nextReasoningEffort || '' : undefined,
         claudeFastMode:
           provider === 'claude' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiFastMode:
           provider === 'kimi' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
-        kimiReasoningEffort:
-          provider === 'kimi' ? normalizedSelection.reasoningEffort || 'on' : undefined,
-        kimiThinkingEnabled:
-          provider === 'kimi' ? true : undefined,
-        grokReasoningEffort:
-          provider === 'grok' ? normalizedSelection.reasoningEffort || '' : undefined,
+        kimiReasoningEffort: provider === 'kimi' ? nextReasoningEffort || 'on' : undefined,
+        kimiThinkingEnabled: provider === 'kimi' ? true : undefined,
+        grokReasoningEffort: provider === 'grok' ? nextReasoningEffort || '' : undefined,
         museReasoningEffort:
-          provider === 'muse'
-            ? normalizedSelection.reasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+          provider === 'muse' ? nextReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT : undefined,
+        mistralReasoningEffort:
+          provider === 'mistral' ? nextReasoningEffort || 'medium' : undefined,
+        devinReasoningEffort:
+          provider === 'devin'
+            ? nextReasoningEffort || devinDefaultReasoningEffort(nextModel) || ''
             : undefined,
-        cursorReasoningEffort:
-          provider === 'cursor' ? normalizedSelection.reasoningEffort || '' : undefined,
+        piReasoningEffort:
+          provider === 'pi'
+            ? nextReasoningEffort || defaultPiReasoningEffort(nextModel)
+            : undefined,
+        ollamaReasoningEffort: provider === 'ollama' ? nextReasoningEffort || '' : undefined,
+        cursorReasoningEffort: provider === 'cursor' ? nextReasoningEffort || '' : undefined,
         cursorFastMode:
-          provider === 'cursor' ? Boolean(normalizedSelection.fastModeEnabled) : undefined
+          provider === 'cursor' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
+        antigravityReasoningEffort:
+          provider === 'antigravity'
+            ? nextReasoningEffort || antigravityEffortForModelId(nextModel) || ''
+            : null,
+        antigravityUltraTaskSelected: provider === 'antigravity' && preserveUltraTask
       }
       return {
         change: {
@@ -8029,12 +8363,7 @@ function App(): React.JSX.Element {
         nextRuntimeProfileId
       }
     },
-    [
-      agentModelsByProvider.claude,
-      codexModels,
-      defaultRuntimeProfileIdForProvider,
-      getDefaultModelForProvider
-    ]
+    [defaultRuntimeProfileIdForProvider, getDefaultModelForProvider, getProviderModelOptions]
   )
 
   const handleProviderChange = async (provider: ProviderId, model?: string) => {
@@ -8043,7 +8372,9 @@ function App(): React.JSX.Element {
         ? readPendingProviderChange(currentChat)?.provider
         : null
     if (provider === (pendingProvider || currentProvider)) return
-    const currentSelection = currentChat ? getChatComposerSelection(currentChat, currentProvider) : null
+    const currentSelection = currentChat
+      ? getChatComposerSelection(currentChat, currentProvider)
+      : null
     const previousReasoningEffort = getReasoningEffortForProviderFromSelection(
       currentSelection,
       currentProvider
@@ -8119,17 +8450,6 @@ function App(): React.JSX.Element {
     if (usageWorkspaceId) {
       void refreshUsageSummary(usageWorkspaceId, provider)
     }
-    if (provider === 'codex') {
-      if (typeof window.api.listAgentThreads === 'function') {
-        window.api
-          .listAgentThreads('codex', { cwd: currentWorkspace?.path || null })
-          .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
-          .catch(() => setCodexThreads([]))
-      }
-    } else {
-      setCodexThreads([])
-    }
-
     if (!queueAtTurnEnd && provider !== 'gemini' && showGeminiTerminal) {
       setShowGeminiTerminal(false)
     }
@@ -8168,31 +8488,8 @@ function App(): React.JSX.Element {
       return
     }
     setRuntimeProfileForChat(chatId, runtimeProfileId)
-    updateChatById(chatId, (source) => ({
-      ...source,
-      providerMetadata: {
-        ...(source.providerMetadata || {}),
-        runtimeProfileId
-      },
-      updatedAt: Date.now()
-    }))
+    rememberChatComposerSelectionById(chatId, { runtimeProfileId })
   }
-
-  const refreshCodexThreads = async () => {
-    if (typeof window.api.listAgentThreads !== 'function') {
-      setCodexThreads([])
-      return
-    }
-    try {
-      const response = await window.api.listAgentThreads('codex', {
-        cwd: currentWorkspace?.path || null
-      })
-      setCodexThreads(Array.isArray(response?.data) ? response.data : [])
-    } catch {
-      setCodexThreads([])
-    }
-  }
-
   const linkCodexThreadToCurrentChat = async (threadId: string) => {
     if (!currentChat || !threadId) return
     const targetChat =
@@ -8250,11 +8547,6 @@ function App(): React.JSX.Element {
       { type: 'info', content: `Linked Codex thread${linkScope}: ${threadId}` }
     ])
   }
-
-  const handleResumeCodexThread = async (threadId: string) => {
-    await linkCodexThreadToCurrentChat(threadId)
-  }
-
   const handleForkAgentThread = async (
     provider: ProviderId,
     threadId?: string,
@@ -8264,7 +8556,10 @@ function App(): React.JSX.Element {
     if (capability.kind === 'unsupported') {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `Fork unavailable for ${getProviderLabel(provider)}: ${capability.detail}` }
+        {
+          type: 'stderr',
+          content: `Fork unavailable for ${getProviderLabel(provider)}: ${capability.detail}`
+        }
       ])
       return
     }
@@ -8275,8 +8570,7 @@ function App(): React.JSX.Element {
         : currentChat?.linkedProviderSessionId) ||
       undefined
     if (capability.requiresLinkedSession && !effectiveThreadId) {
-      openInspectorTab('capabilities')
-      if (provider === 'codex') void refreshCodexThreads()
+      openSettingsTab('providers')
       setRawLogs((prev) => [
         ...prev,
         {
@@ -8311,7 +8605,6 @@ function App(): React.JSX.Element {
     const forkKind = result.kind || capability.kind
     if (provider === 'codex' && result.forkedSessionId) {
       await linkCodexThreadToCurrentChat(result.forkedSessionId)
-      await refreshCodexThreads()
     }
     if (result.chatId && result.chatId !== currentComposerChatId) {
       const forkedChat = chatByIdRef.current?.[result.chatId]
@@ -8330,19 +8623,6 @@ function App(): React.JSX.Element {
       }
     ])
   }
-
-  const handleForkCodexThread = async (threadId: string) => {
-    await handleForkAgentThread('codex', threadId)
-  }
-
-  // A pristine, never-started SINGLE draft that is safe to re-scope in place
-  // through the sanctioned rebindChatWorkspace seam (kind never changes —
-  // the reaper's "never reuse records across chat kinds" rule stays intact).
-  // Combines the record-level planner predicate with the runtime gates the
-  // record alone can't answer: live/queued runs and workflow bindings (a
-  // workflow-compose draft is intentionally empty but must keep its
-  // workspace). Started chats and ensembles never pass — their moves stay
-  // with the dedicated flows and the 'navigate' fresh-draft rule.
   const isRebindablePristineSingleDraft = (
     chat: ChatRecord | null | undefined
   ): chat is ChatRecord => {
@@ -8478,16 +8758,10 @@ function App(): React.JSX.Element {
       void refreshProviderMetadata(provider, ws.path)
       setRunDiff(null)
       setRunCompleteNotice(null)
-      setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(chatWithLedger.appChatId))
       hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
       setSessionTrust(false)
       syncThinkingForChat(chatWithLedger)
-      if (provider === 'codex' && typeof window.api.listAgentThreads === 'function') {
-        window.api
-          .listAgentThreads('codex', { cwd: ws.path })
-          .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
-          .catch(() => setCodexThreads([]))
-      }
       await refreshWorkspaceTrust(ws)
       return
     }
@@ -8541,19 +8815,12 @@ function App(): React.JSX.Element {
     void refreshProviderMetadata(selectedProvider, ws.path)
     setRunDiff(null)
     setRunCompleteNotice(null)
-    setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
+    setRawLogs(rawLogSnapshotForChat(selectedChat.appChatId))
     scheduleAfterPaint(() => {
       hydrateThreadRawLogsFromEvents(selectedChat.appChatId)
     })
     setSessionTrust(false)
     syncThinkingForChat(selectedChat)
-    if (selectedProvider === 'codex' && typeof window.api.listAgentThreads === 'function') {
-      window.api
-        .listAgentThreads('codex', { cwd: ws.path })
-        .then((response) => setCodexThreads(Array.isArray(response?.data) ? response.data : []))
-        .catch(() => setCodexThreads([]))
-    }
-
     // Check trust
     scheduleAfterPaint(() => {
       void refreshWorkspaceTrust(ws)
@@ -8563,9 +8830,7 @@ function App(): React.JSX.Element {
   const pendingWorkspaceRebind: PendingWorkspaceRebind | null = currentChat
     ? readPendingWorkspaceRebind(currentChat)
     : null
-  const pendingWorkspaceRebindRevision = currentChat
-    ? workspaceRebindRevision(currentChat)
-    : ''
+  const pendingWorkspaceRebindRevision = currentChat ? workspaceRebindRevision(currentChat) : ''
   useEffect(() => {
     const chatId = currentChat?.appChatId
     if (!chatId || !pendingWorkspaceRebind) {
@@ -8573,8 +8838,7 @@ function App(): React.JSX.Element {
       return
     }
     if (
-      pendingWorkspaceRebindRetryRevisionRef.current.get(chatId) ===
-      pendingWorkspaceRebindRevision
+      pendingWorkspaceRebindRetryRevisionRef.current.get(chatId) === pendingWorkspaceRebindRevision
     ) {
       return
     }
@@ -8588,12 +8852,8 @@ function App(): React.JSX.Element {
   }, [
     currentChat?.appChatId,
     pendingWorkspaceRebind?.scope,
-    pendingWorkspaceRebind?.scope === 'workspace'
-      ? pendingWorkspaceRebind.workspaceId
-      : null,
-    pendingWorkspaceRebind?.scope === 'workspace'
-      ? pendingWorkspaceRebind.workspacePath
-      : null,
+    pendingWorkspaceRebind?.scope === 'workspace' ? pendingWorkspaceRebind.workspaceId : null,
+    pendingWorkspaceRebind?.scope === 'workspace' ? pendingWorkspaceRebind.workspacePath : null,
     pendingWorkspaceRebindRevision,
     queuedRuns,
     runQueueJobs,
@@ -8676,7 +8936,7 @@ function App(): React.JSX.Element {
     setDiff(null)
     setRunDiff(null)
     setRunCompleteNotice(null)
-    setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
+    setRawLogs(rawLogSnapshotForChat(chatWithLedger.appChatId))
     hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
     setSessionTrust(false)
     syncThinkingForChat(chatWithLedger)
@@ -8703,8 +8963,7 @@ function App(): React.JSX.Element {
     if (sidebarSurfaceConvertInFlightRef.current) return
     const chatId = currentChatIdRef.current
     const initiatingChat = chatId
-      ? chatByIdRef.current.get(chatId) ||
-        (currentChat?.appChatId === chatId ? currentChat : null)
+      ? chatByIdRef.current.get(chatId) || (currentChat?.appChatId === chatId ? currentChat : null)
       : null
     const plan = planPrimarySurfaceConversion({
       surface,
@@ -8713,8 +8972,8 @@ function App(): React.JSX.Element {
       isMultiview: multiview.isMultiview,
       isWorkflowChat: Boolean(
         chatId &&
-          (workflowDraft?.chatId === chatId ||
-            workflowDefinitions.some((workflow) => workflow.template.chatId === chatId))
+        (workflowDraft?.chatId === chatId ||
+          workflowDefinitions.some((workflow) => workflow.template.chatId === chatId))
       ),
       hasActiveWorkspaceBoard: Boolean(activeWorkspaceBoardId),
       currentWorkspace,
@@ -8770,7 +9029,7 @@ function App(): React.JSX.Element {
         setDiff(null)
         setRunDiff(null)
         setRunCompleteNotice(null)
-        setRawLogs(rawLogsByChatIdRef.current.get(chatId) || [])
+        setRawLogs(rawLogSnapshotForChat(chatId))
         hydrateThreadRawLogsFromEvents(chatId)
         setSessionTrust(false)
         syncThinkingForChat(chatWithLedger)
@@ -8911,23 +9170,22 @@ function App(): React.JSX.Element {
       ollamaSnap,
       hookSnapshots,
       allUsageRecords
-    ] =
-      await Promise.all([
-        typeof window.api.getCodexUsageSnapshot === 'function'
-          ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
-          : Promise.resolve(null),
-        loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
-        loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
-        loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
-        loadQuotaInBackground(() =>
-          window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
-        ),
-        loadQuotaInBackground(() => window.api.getAgentRateLimits('ollama', quotaRefreshOptions)),
-        typeof window.api.getQuotaSnapshotHook === 'function'
-          ? loadQuotaInBackground(() => window.api.getQuotaSnapshotHook())
-          : Promise.resolve([]),
-        loadUsageRecordsPromise
-      ])
+    ] = await Promise.all([
+      typeof window.api.getCodexUsageSnapshot === 'function'
+        ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
+        : Promise.resolve(null),
+      loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
+      loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
+      loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
+      loadQuotaInBackground(() =>
+        window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
+      ),
+      loadQuotaInBackground(() => window.api.getAgentRateLimits('ollama', quotaRefreshOptions)),
+      typeof window.api.getQuotaSnapshotHook === 'function'
+        ? loadQuotaInBackground(() => window.api.getQuotaSnapshotHook())
+        : Promise.resolve([]),
+      loadUsageRecordsPromise
+    ])
 
     const normalizedUsageRecords = Array.isArray(allUsageRecords) ? allUsageRecords : []
     if (loadUsageRecords) {
@@ -9113,10 +9371,8 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('claude', claudeWindows, claudeSnap))
     }
 
-    // Kimi — only 5H and Weekly
-    const kimiAllowed = new Set(['5H', 'Weekly'])
+    // Kimi — include all windows (5H, Weekly, Monthly)
     const kimiFresh = (Array.isArray(kimiSnap?.windows) ? kimiSnap.windows : [])
-      .filter((w: any) => kimiAllowed.has(String(w?.label || '').trim()))
       .map((w: any, i: number) => normalizeQuotaWindow('kimi', w, `kimi-quota-${i}`))
       .filter((w): w is UsageWindowAggregate => Boolean(w))
     const kimiWindows = resolveWithCache('kimi', kimiFresh)
@@ -9143,18 +9399,14 @@ function App(): React.JSX.Element {
       typeof antigravitySnap === 'object'
     const effectiveAntigravitySnapshot = retainQuotaSnapshotOnDeadlineMiss(
       lastAntigravityQuotaSnapshotRef.current,
-      hasAntigravitySnapshot
-        ? (antigravitySnap as NormalizedProviderUsageSnapshot)
-        : null
+      hasAntigravitySnapshot ? (antigravitySnap as NormalizedProviderUsageSnapshot) : null
     )
     const antigravityFresh = (
       Array.isArray(effectiveAntigravitySnapshot?.windows)
         ? effectiveAntigravitySnapshot.windows
         : []
     )
-      .map((w: any, i: number) =>
-        normalizeQuotaWindow('antigravity', w, `antigravity-quota-${i}`)
-      )
+      .map((w: any, i: number) => normalizeQuotaWindow('antigravity', w, `antigravity-quota-${i}`))
       .filter((w): w is UsageWindowAggregate => Boolean(w))
     const antigravityWindows = effectiveAntigravitySnapshot
       ? antigravityFresh
@@ -9173,11 +9425,7 @@ function App(): React.JSX.Element {
         typeof effectiveAntigravitySnapshot.error === 'string')
     ) {
       ordered.push(
-        buildQuotaAggregate(
-          'antigravity',
-          antigravityWindows,
-          effectiveAntigravitySnapshot
-        )
+        buildQuotaAggregate('antigravity', antigravityWindows, effectiveAntigravitySnapshot)
       )
     }
 
@@ -9294,7 +9542,8 @@ function App(): React.JSX.Element {
       provider === 'ollama' ||
       provider === 'antigravity' ||
       provider === 'pi' ||
-      provider === 'mistral'
+      provider === 'mistral' ||
+      provider === 'devin'
 
     if (loadUsageRecords) {
       const runAggregateMap = new Map<string, ModelUsageAggregate>()
@@ -9359,8 +9608,7 @@ function App(): React.JSX.Element {
     providerHint?: ProviderId,
     options: { force?: boolean; codexStatusHint?: any } = {}
   ): Promise<boolean> => {
-    const canRefresh =
-      typeof navigator === 'undefined' || navigator.onLine !== false
+    const canRefresh = typeof navigator === 'undefined' || navigator.onLine !== false
     const decision = options.force
       ? !usageRefreshInFlightRef.current && canRefresh
       : shouldRunUsageRefresh({
@@ -9435,9 +9683,7 @@ function App(): React.JSX.Element {
       setPendingRemoteAccessWorkspace({
         workspace: ws,
         next: () =>
-          intent === 'switch'
-            ? handleSelectExistingWorkspace(ws)
-            : handleNavigateToWorkspace(ws)
+          intent === 'switch' ? handleSelectExistingWorkspace(ws) : handleNavigateToWorkspace(ws)
       })
     }
   }
@@ -9460,25 +9706,19 @@ function App(): React.JSX.Element {
    * permission preset and tool policies still govern what it may do
    * inside the additional workspace.
    */
-  const clearExternalPathGrantPrompt = useCallback(
-    (chatId?: string | null) => {
-      const targetChatId = chatId || currentChatIdRef.current
-      if (!targetChatId) return
-      const pendingRun = externalPathGrantPromptByChatIdRef.current[targetChatId]?.pendingRun
-      if (pendingRun) {
-        settleProjectReferenceContextClaim(
-          pendingRun.projectReferenceContextClaim,
-          'rejected'
-        )
-      }
-      externalPathGrantPromptByChatIdRef.current = {
-        ...externalPathGrantPromptByChatIdRef.current,
-        [targetChatId]: null
-      }
-      setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
-    },
-    []
-  )
+  const clearExternalPathGrantPrompt = useCallback((chatId?: string | null) => {
+    const targetChatId = chatId || currentChatIdRef.current
+    if (!targetChatId) return
+    const pendingRun = externalPathGrantPromptByChatIdRef.current[targetChatId]?.pendingRun
+    if (pendingRun) {
+      settleProjectReferenceContextClaim(pendingRun.projectReferenceContextClaim, 'rejected')
+    }
+    externalPathGrantPromptByChatIdRef.current = {
+      ...externalPathGrantPromptByChatIdRef.current,
+      [targetChatId]: null
+    }
+    setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
+  }, [])
 
   const openExternalPathGrantPrompt = useCallback(
     (input: {
@@ -9493,10 +9733,7 @@ function App(): React.JSX.Element {
         previousRun?.projectReferenceContextClaim?.claimId !==
         input.pendingRun?.projectReferenceContextClaim?.claimId
       ) {
-        settleProjectReferenceContextClaim(
-          previousRun?.projectReferenceContextClaim,
-          'rejected'
-        )
+        settleProjectReferenceContextClaim(previousRun?.projectReferenceContextClaim, 'rejected')
       }
       const nextPrompt = {
         gaps: input.gaps,
@@ -9675,10 +9912,7 @@ function App(): React.JSX.Element {
     setWorkspaces(wsList)
     // App-global currentWorkspace can lag the open chat's primary after a
     // thread switch — tear down chat vs global independently.
-    const chatWorkspaceId =
-      currentChatWorkspace?.id ||
-      currentChat?.workspaceId ||
-      null
+    const chatWorkspaceId = currentChatWorkspace?.id || currentChat?.workspaceId || null
     const teardown = resolveRemoveWorkspaceFocusTeardown({
       removedWorkspaceId: id,
       currentWorkspaceId: currentWorkspace?.id,
@@ -9751,11 +9985,7 @@ function App(): React.JSX.Element {
   const handleToggleArchiveChat = (chatId: string, nextArchived: boolean) => {
     updateChatById(chatId, (source) => ({
       ...(source.parentChatRelation === 'sideChat'
-        ? applySideChatLifecycle(
-            source,
-            nextArchived ? 'terminated' : 'closed',
-            'archived_by_user'
-          )
+        ? applySideChatLifecycle(source, nextArchived ? 'terminated' : 'closed', 'archived_by_user')
         : source),
       archived: nextArchived
     }))
@@ -9774,8 +10004,13 @@ function App(): React.JSX.Element {
     const trimmed = normalizeThreadTitle(nextTitle, '')
     if (!trimmed) return
     updateChatById(chatId, (source) => {
-      if (source.title === trimmed) return source
-      return { ...source, title: trimmed, updatedAt: Date.now() }
+      if (source.title === trimmed && source.threadTitle?.source === 'user') return source
+      return {
+        ...source,
+        title: trimmed,
+        threadTitle: { source: 'user' },
+        updatedAt: Date.now()
+      }
     })
   }
 
@@ -9806,8 +10041,10 @@ function App(): React.JSX.Element {
       saveChatTimersRef.current.delete(chatId)
     }
     chatMutations.removeChat(chatId)
+    pendingChatDraftsRef.current.discard(chatId)
+    rendererTranscriptPersistenceRef.current?.cancel(chatId)
     chatByIdRef.current.delete(chatId)
-    chatHydrationRuntimeRef.current.retention.drop(chatId)
+    chatHydrationRuntime.retention.drop(chatId)
     if (currentChat?.appChatId === chatId) {
       setCurrentChatIdForNavigation(null)
       setCurrentChat(null)
@@ -9879,8 +10116,10 @@ function App(): React.JSX.Element {
 
     await window.api.clearChats()
     const nextChats = await loadChatList().catch(() => [])
+    pendingChatDraftsRef.current.clear()
+    rendererTranscriptPersistenceRef.current?.cancelAll()
     chatByIdRef.current.clear()
-    chatHydrationRuntimeRef.current.retention.clear()
+    chatHydrationRuntime.retention.clear()
     queuedRunsRef.current = []
     runQueueJobsRef.current = []
     setCurrentChatIdForNavigation(null)
@@ -9972,9 +10211,7 @@ function App(): React.JSX.Element {
     for (const [id, selection] of Object.entries(discordContextSelectionByChatId)) {
       if (selection) protectedChatIds.add(id)
     }
-    const draftChatIds = Object.entries(composerDraftsByChatIdRef.current)
-      .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
-      .map(([id]) => id)
+    const draftChatIds = Array.from(composerDraftState.getDraftChatIds())
     void window.api
       .reapAbandonedChats({
         protectedChatIds: Array.from(protectedChatIds),
@@ -9995,8 +10232,10 @@ function App(): React.JSX.Element {
             clearTimeout(pendingSave)
             saveChatTimersRef.current.delete(id)
           }
+          pendingChatDraftsRef.current.discard(id)
+          rendererTranscriptPersistenceRef.current?.cancel(id)
           chatByIdRef.current.delete(id)
-          chatHydrationRuntimeRef.current.retention.drop(id)
+          chatHydrationRuntime.retention.drop(id)
         }
         chatMutations.removeChats(reaped)
       })
@@ -10014,12 +10253,9 @@ function App(): React.JSX.Element {
     // An explicit New Chat always creates: that create event advances the
     // delete-only reaper's rolling quota. Runtime gates keep a busy draft out
     // of the startup reuse path.
-    const reusableDraft = findReusableWorkspaceNewChatDraft(
-      availableChats,
-      wsId,
-      origin,
-      { isExcluded: (id) => runningChatIds.has(id) || isChatBusy(id) }
-    )
+    const reusableDraft = findReusableWorkspaceNewChatDraft(availableChats, wsId, origin, {
+      isExcluded: (id) => runningChatIds.has(id) || isChatBusy(id)
+    })
     const newChat = reusableDraft ?? (await window.api.createChat(wsId, wsPath))
     const provider = getChatProvider(newChat)
     setSideChatId(null)
@@ -10042,7 +10278,7 @@ function App(): React.JSX.Element {
       }
       setRunDiff(null)
       setRunCompleteNotice(null)
-      setRawLogs(rawLogsByChatIdRef.current.get(newChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(newChat.appChatId))
       clearImagePermissions()
       syncThinkingForChat(newChat)
     })
@@ -10094,9 +10330,8 @@ function App(): React.JSX.Element {
       setCurrentChat(normalizedChat)
       applyChatComposerSelection(normalizedChat, provider)
       setChats((prev) => mergeChatRecord(prev, normalizedChat))
-      setRawLogs(rawLogsByChatIdRef.current.get(normalizedChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(normalizedChat.appChatId))
       clearImagePermissions()
-      setCodexThreads([])
       syncThinkingForChat(normalizedChat)
     })
     scheduleAfterPaint(() => {
@@ -10263,8 +10498,7 @@ function App(): React.JSX.Element {
       ? workspaces.find((workspace) => workspace.id === workspaceOverride.id) || {
           id: workspaceOverride.id,
           path: workspaceOverride.path,
-          displayName:
-            workspaceOverride.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace',
+          displayName: workspaceOverride.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace',
           lastOpenedAt: Date.now(),
           createdAt: Date.now(),
           pinned: false
@@ -10359,7 +10593,7 @@ function App(): React.JSX.Element {
       chatByIdRef.current.set(subThread.appChatId, subThread)
       setCurrentChat(subThread)
       applyChatComposerSelection(subThread, provider)
-      setRawLogs(rawLogsByChatIdRef.current.get(subThread.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(subThread.appChatId))
       hydrateThreadRawLogsFromEvents(subThread.appChatId)
     }
     // Pre-fill the composer for the new sub-thread (per-chat draft).
@@ -10651,10 +10885,7 @@ function App(): React.JSX.Element {
           const liveChat = chatByIdRef.current.get(chatId) || chat
           updateExternalPathGrantsForChat(
             chatId,
-            normalizeExternalPathGrants([
-              ...externalPathGrantsForChat(liveChat),
-              ...result.grants
-            ])
+            normalizeExternalPathGrants([...externalPathGrantsForChat(liveChat), ...result.grants])
           )
         }
         const existing = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
@@ -10693,16 +10924,13 @@ function App(): React.JSX.Element {
     updateExternalPathGrantsForChat(chatId, nextGrants)
   }
 
-  const revokeExternalPathGrantsForChat = useCallback(
-    (chatId: string, grantIds: string[]) => {
-      const canonicalIds = [...new Set(grantIds.filter(Boolean))]
-      if (canonicalIds.length === 0) return
-      void window.api
-        .revokeExternalPathGrants({ chatId, grantIds: canonicalIds })
-        .catch(() => undefined)
-    },
-    []
-  )
+  const revokeExternalPathGrantsForChat = useCallback((chatId: string, grantIds: string[]) => {
+    const canonicalIds = [...new Set(grantIds.filter(Boolean))]
+    if (canonicalIds.length === 0) return
+    void window.api
+      .revokeExternalPathGrants({ chatId, grantIds: canonicalIds })
+      .catch(() => undefined)
+  }, [])
 
   // `handlePickExternalPathGrant` was the entry point for the
   // pre-emptive picker pill that lived in the composer's above-bar.
@@ -10804,6 +11032,7 @@ function App(): React.JSX.Element {
   }
 
   const handleSelectChat = async (chat: ChatRecord) => {
+    setThreadHomeOpen(false)
     setActiveWorkspaceBoardId(null)
     // Opening the thread is enough attention — drop the global banner for
     // this chat so the in-transcript question card becomes the focus.
@@ -10905,7 +11134,7 @@ function App(): React.JSX.Element {
       setRunCompleteNotice(
         deriveChatRunCompleteNotice(selectedChat, runningChatIds.has(selectedChat.appChatId))
       )
-      setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
+      setRawLogs(rawLogSnapshotForChat(selectedChat.appChatId))
       syncThinkingForChat(selectedChat)
     })
     scheduleAfterPaint(() => {
@@ -10953,6 +11182,7 @@ function App(): React.JSX.Element {
     // (`prompt` is deliberately excluded; including it caused the old flicker
     // feedback loop) — and the ResizeObserver still handles all in-thread resizes.
   }, [
+    chatPopoutPresentation,
     currentChat?.appChatId,
     currentChat?.ensemble?.activeRound?.queuedPrompt,
     currentChat?.ensemble?.activeRound?.queuedPrompts?.length,
@@ -11157,7 +11387,8 @@ function App(): React.JSX.Element {
       // freshly-opened chat's record is present in the ref after a switch).
       const streaming =
         activeRunChatIdRef.current === id ||
-        Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === id)
+        Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === id) ||
+        shouldKeepCanonicalChatReference(chatByIdRef.current.get(id), currentChat)
       if (!streaming) {
         chatByIdRef.current.set(id, currentChat)
       }
@@ -11230,7 +11461,7 @@ function App(): React.JSX.Element {
       recentlyCompleted: recentlyCompletedChatIdsRef.current,
       now: Date.now(),
       recentlyCompletedWindowMs: RECENTLY_COMPLETED_WINDOW_MS,
-      ...reconcileHydrationOptions(chatHydrationRuntimeRef.current)
+      ...reconcileHydrationOptions(chatHydrationRuntime)
     })
   }, [chats, currentChat])
 
@@ -11291,6 +11522,14 @@ function App(): React.JSX.Element {
   // keyed on `rightTab === 'raw'` to (a) bind only when the panel is
   // present in the DOM and (b) re-bind cleanly when the user switches
   // tabs and back.
+  useEffect(() => {
+    if (rightTab !== 'raw' && !showGeminiTerminal) return
+    const chatId = currentChatIdRef.current
+    if (!chatId) return
+    rawLogPresentationQueueRef.current?.cancelPending()
+    setRawLogs(rawLogSnapshotForChat(chatId, true))
+  }, [rightTab, showGeminiTerminal, currentChat?.appChatId])
+
   useEffect(() => {
     if (rightTab !== 'raw') return
     const scroller = rawLogsEndRef.current?.closest('.raw-events-body') as HTMLElement | null
@@ -11425,7 +11664,10 @@ function App(): React.JSX.Element {
 
     if (typeof geminiSessionApi.onGeminiSessionData === 'function') {
       geminiSessionApi.onGeminiSessionData((data: string) => {
-        setRawLogs((prev) => [...prev, { type: 'stdout', content: redactLog(String(data)) }])
+        appendThreadRawLogRef.current(currentChatIdRef.current, {
+          type: 'stdout',
+          content: redactLog(String(data))
+        })
       })
     }
 
@@ -11434,13 +11676,10 @@ function App(): React.JSX.Element {
         persistentSessionActiveRef.current = false
         setPersistentSessionStatus('exited')
         setIsPersistentSessionEnabled(false)
-        setRawLogs((prev) => [
-          ...prev,
-          {
-            type: 'info',
-            content: `Persistent Gemini session exited with code ${typeof code === 'number' ? code : 'unknown'}.`
-          }
-        ])
+        appendThreadRawLogRef.current(currentChatIdRef.current, {
+          type: 'info',
+          content: `Persistent Gemini session exited with code ${typeof code === 'number' ? code : 'unknown'}.`
+        })
       })
     }
 
@@ -11649,8 +11888,7 @@ function App(): React.JSX.Element {
     // session) — the agy CLI sub-lane owns its own context and must not be
     // host-summarized.
     const antigravityApiLane =
-      provider === 'antigravity' &&
-      Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
+      provider === 'antigravity' && Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
     // Mistral is deliberately ABSENT despite having a manual lever (see
     // compactChatContext). Its only available evidence is generic run usage,
     // which `shouldAutoCompactHostContext` rejects by design — so admitting it
@@ -11834,10 +12072,7 @@ function App(): React.JSX.Element {
             return next
           })
           if (finalizedOrphanChat && currentChatIdRef.current === orphanChatId) {
-            applyChatComposerSelection(
-              finalizedOrphanChat,
-              getChatProvider(finalizedOrphanChat)
-            )
+            applyChatComposerSelection(finalizedOrphanChat, getChatProvider(finalizedOrphanChat))
           }
           if (
             shouldPruneRunningChatIdAfterOrphanExit(
@@ -11880,25 +12115,6 @@ function App(): React.JSX.Element {
         exitCode === 0 ? 'Provider run completed.' : `Provider run exited with code ${exitCode}.`,
         exitCode === 0 ? undefined : `Run exited with code ${exitCode}`
       )
-      appendDurableRunEvent({
-        runId: completedRunId,
-        chatId: completedRunChatId,
-        workspaceId: isGlobalCompletedRun
-          ? undefined
-          : chatByIdRef.current.get(completedRunChatId)?.workspaceId,
-        workspacePath: completedWorkspacePath || context.workspacePath || undefined,
-        provider,
-        kind: 'lifecycle',
-        phase: 'control',
-        source: 'renderer',
-        summary: `Renderer observed provider exit: ${exitCode}`,
-        payload: {
-          exitCode,
-          hasToolCalls,
-          diffUnavailable: completedRunDiffUnavailable,
-          scheduledTaskId: completedScheduledTaskId
-        }
-      })
       if (!suppressSteerSummary) {
         handlers.triggerFxBurst('run-complete')
       }
@@ -11920,9 +12136,27 @@ function App(): React.JSX.Element {
         const runIndex = runs.findIndex((run) => run.runId === completedRunId)
         const targetRun = runIndex >= 0 ? runs[runIndex] : undefined
         if (targetRun) {
-          if (targetRun.status === 'success' && context.warnings.length > 0) {
-            targetRun.status = 'success_with_warnings'
-          } else if (!targetRun.status) {
+          // Seal endedAt alongside status: deriveChatRunCompleteNotice treats
+          // an un-ended last run as still-active and suppresses the Task
+          // Complete card on every later re-derivation (chat switch, refresh,
+          // hydrate-after-paint), even though status was stamped here.
+          if (!targetRun.endedAt) targetRun.endedAt = new Date().toISOString()
+          // Stamp over ANY non-terminal status, not just a missing one. A
+          // premature Wire `result` (status 'running' — a turn boundary, not
+          // completion) used to seal endedAt + status:'running' here-adjacent
+          // in the run_finished handler, and this seal then fell through BOTH
+          // branches ('success' upgrade / falsy stamp) and left the ghost
+          // status 'running' on a finished run — the close-out read "The run
+          // ended with status running" and the Task Complete receipts lost
+          // their run-scoped window. Mirrors sealChatRunTerminalFields'
+          // isActiveChatRunStatus semantics plus the adapter's 'unknown'
+          // fallback; 'sleeping' is deliberately untouched (a parked wakeup
+          // run is not an exit).
+          if (
+            !targetRun.status ||
+            targetRun.status === 'unknown' ||
+            isActiveChatRunStatus(targetRun.status)
+          ) {
             targetRun.status = wasIntentionalCancel
               ? 'cancelled'
               : exitCode === 0
@@ -11930,6 +12164,8 @@ function App(): React.JSX.Element {
                   ? 'success_with_warnings'
                   : 'success'
                 : 'failed'
+          } else if (targetRun.status === 'success' && context.warnings.length > 0) {
+            targetRun.status = 'success_with_warnings'
           }
           if (wasIntentionalCancel) {
             targetRun.cancelled = true
@@ -11993,19 +12229,19 @@ function App(): React.JSX.Element {
             payload && typeof payload === 'object'
               ? (payload as RunRouteEventPayload).error
               : undefined
-          const stderrLogs = rawLogsByChatIdRef.current.get(completedRunChatId) || []
+          const stderrLogs = rawLogSnapshotForChat(completedRunChatId, true)
           const roundParticipant = updated.ensemble?.activeRound?.participants?.find(
             (entry) => entry.runId === completedRunId
           )
           const ensembleParticipant =
             updated.chatKind === 'ensemble' && updated.ensemble
-              ? (roundParticipant
-                  ? updated.ensemble.participants.find(
-                      (participant) => participant.id === roundParticipant.participantId
-                    )
-                  : updated.ensemble.participants.find(
-                      (participant) => participant.provider === provider
-                    ))
+              ? roundParticipant
+                ? updated.ensemble.participants.find(
+                    (participant) => participant.id === roundParticipant.participantId
+                  )
+                : updated.ensemble.participants.find(
+                    (participant) => participant.provider === provider
+                  )
               : undefined
           const failureModel =
             targetRun?.actualModel ||
@@ -12069,10 +12305,7 @@ function App(): React.JSX.Element {
         return terminalFinalized
       })
       if (finalizedTerminalChat && currentChatIdRef.current === completedRunChatId) {
-        applyChatComposerSelection(
-          finalizedTerminalChat,
-          getChatProvider(finalizedTerminalChat)
-        )
+        applyChatComposerSelection(finalizedTerminalChat, getChatProvider(finalizedTerminalChat))
       }
 
       // Host-side compaction: consume a finished summarize run (store summary,
@@ -12171,21 +12404,6 @@ function App(): React.JSX.Element {
                       .flatMap((message) => message.toolActivities ?? [])
                   )
                 )
-                appendDurableRunEvent({
-                  runId: completedRunId,
-                  chatId: completedRunChatId,
-                  workspaceId: chatByIdRef.current.get(completedRunChatId)?.workspaceId,
-                  workspacePath: completedWorkspacePath,
-                  provider,
-                  kind: 'diff',
-                  phase: 'artifact',
-                  source: 'renderer',
-                  summary: `Run diff: ${runDiffResult.createdFiles.length} created, ${runDiffResult.modifiedFiles.length} modified, ${runDiffResult.deletedFiles.length} deleted`,
-                  payload: {
-                    ...runDiffResult,
-                    workspaceChangeSetId: runDiffResult.changeSetId
-                  }
-                })
                 updateChatById(completedRunChatId, (source) => {
                   const runs = [...(source.runs || [])]
                   const targetIndex = runs.findIndex((run) => run.runId === completedRunId)
@@ -12203,6 +12421,7 @@ function App(): React.JSX.Element {
                   ...runDiffResult.deletedFiles
                 ]
                 if (isVisibleCompletedRun()) {
+                  liveRunDiffStore.clear(completedRunChatId)
                   setRunDiff(handlers.getRunFileDiffSummaries(allRunChanges))
                   setDiffView('this_run')
                 }
@@ -12257,12 +12476,55 @@ function App(): React.JSX.Element {
     }
 
     const ipcUnsubscriptions: Array<() => void> = []
+    const approvalRecovery =
+      typeof window.api.getPendingAgentApprovals === 'function'
+        ? new PendingApprovalRecoveryWindow<AgentApprovalRequest>()
+        : null
     const addIpcSubscription = (unsubscribe: (() => void) | null | undefined): void => {
       if (typeof unsubscribe === 'function') ipcUnsubscriptions.push(unsubscribe)
     }
+    const resolveApprovalChatId = (request: AgentApprovalRequest): string | null => {
+      const handlers = appEventHandlersRef.current
+      const context = handlers.resolveActiveRunContext(
+        request.provider,
+        request.appRunId,
+        request.appChatId
+      )
+      return context?.chatId || request.appChatId || currentChatIdRef.current
+    }
+    const presentLiveApprovalRequest = (request: AgentApprovalRequest): void => {
+      const handlers = appEventHandlersRef.current
+      // Wave-3 instrumentation: stamp renderer receipt/scheduling time (not modal paint).
+      recordApprovalRendererReceipt(request.id)
+      const targetChatId = resolveApprovalChatId(request)
+      if (targetChatId) approvalRecovery?.recordLive({ chatId: targetChatId, approval: request })
+      // 1.0.4-AK4 — queue when an approval is already pending for
+      // this chat. Pre-AK4 the second arrival would overwrite the
+      // first (losing the user's chance to act on it). With AK5/AK6
+      // parallel fan-out lanes each can produce their own approval gate
+      // simultaneously; queueing keeps them all addressable.
+      handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
+        // The recovery snapshot and live IPC can carry the same request in
+        // either order. Never queue a duplicate behind itself.
+        if (previous?.id === request.id) return previous
+        if (previous && targetChatId) {
+          handlers.enqueueApprovalForChat(targetChatId, request)
+          return previous
+        }
+        return request
+      })
+      handlers.appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
+      })
+    }
 
-    addIpcSubscription(window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload)))
-    addIpcSubscription(window.api.onGeminiError((payload) => handleProviderError('gemini', payload)))
+    addIpcSubscription(
+      window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload))
+    )
+    addIpcSubscription(
+      window.api.onGeminiError((payload) => handleProviderError('gemini', payload))
+    )
     addIpcSubscription(window.api.onGeminiExit((payload) => handleProviderExit('gemini', payload)))
 
     if (typeof window.api.onAgentOutput === 'function') {
@@ -12293,38 +12555,13 @@ function App(): React.JSX.Element {
     }
 
     if (typeof window.api.onAgentApprovalRequest === 'function') {
-      addIpcSubscription(
-        window.api.onAgentApprovalRequest((request) => {
-          const handlers = appEventHandlersRef.current
-          const context = handlers.resolveActiveRunContext(
-            request.provider,
-            request.appRunId,
-            request.appChatId
-          )
-          const targetChatId = context?.chatId || request.appChatId || currentChatIdRef.current
-          // 1.0.4-AK4 — queue when an approval is already pending for
-          // this chat. Pre-AK4 the second arrival would overwrite the
-          // first (losing the user's chance to act on it). With AK5/AK6
-          // parallel fan-out lanes each can produce their own approval gate
-          // simultaneously; queueing keeps them all addressable.
-          handlers.setPendingAgentApprovalForChat(targetChatId, (previous) => {
-            if (previous && targetChatId) {
-              handlers.enqueueApprovalForChat(targetChatId, request)
-              return previous
-            }
-            return request
-          })
-          handlers.appendThreadRawLog(targetChatId, {
-            type: 'info',
-            content: `${getProviderLabel(request.provider)} approval requested: ${request.title}\n${request.body}`
-          })
-        })
-      )
+      addIpcSubscription(window.api.onAgentApprovalRequest(presentLiveApprovalRequest))
     }
 
     if (typeof window.api.onAgentApprovalTimeout === 'function') {
       addIpcSubscription(
         window.api.onAgentApprovalTimeout((timeout) => {
+          approvalRecovery?.recordSettled(timeout.approvalId)
           const handlers = appEventHandlersRef.current
           // Find which chat held this approval, clear it, and surface a
           // visible "auto-denied" note. The main process has already
@@ -12377,6 +12614,7 @@ function App(): React.JSX.Element {
     if (typeof window.api.onAgentApprovalResolved === 'function') {
       addIpcSubscription(
         window.api.onAgentApprovalResolved((resolved) => {
+          approvalRecovery?.recordSettled(resolved.approvalId)
           // Cross-surface acknowledgment: the approval was decided
           // SOMEWHERE — a paired iPhone, another window, or the auto-deny
           // timer — and main's ApprovalService has already executed the
@@ -12425,6 +12663,31 @@ function App(): React.JSX.Element {
       )
     }
 
+    if (typeof window.api.getPendingAgentApprovals === 'function') {
+      void window.api
+        .getPendingAgentApprovals()
+        .then((requests) => {
+          if (!Array.isArray(requests)) return
+          const recovered = requests
+            .filter((request): request is AgentApprovalRequest => Boolean(request?.id))
+            .map((request) => ({ chatId: resolveApprovalChatId(request), approval: request }))
+            .filter((entry): entry is { chatId: string; approval: AgentApprovalRequest } =>
+              Boolean(entry.chatId)
+            )
+          const merged = approvalRecovery?.reconcile(recovered)
+          if (!merged) return
+          const handlers = appEventHandlersRef.current
+          handlers.setPendingAgentApprovalByChatId(merged.approvalHeadByChatId)
+          handlers.setPendingApprovalQueueByChatId(merged.approvalQueueByChatId)
+        })
+        .catch((error) => {
+          console.warn('[approval-recovery] pending approval hydration failed', error)
+        })
+        .finally(() => {
+          approvalRecovery?.finish()
+        })
+    }
+
     if (!isChatPopoutWindow && typeof window.api.onScheduledTasksChanged === 'function') {
       addIpcSubscription(
         window.api.onScheduledTasksChanged((tasks) => {
@@ -12438,7 +12701,9 @@ function App(): React.JSX.Element {
         window.api.onWorkflowDefinitionsChanged((workflows) => {
           const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
           setWorkflowDefinitions(
-            workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
+            workspaceId
+              ? workflows.filter((workflow) => workflow.workspaceId === workspaceId)
+              : workflows
           )
         })
       )
@@ -12473,7 +12738,9 @@ function App(): React.JSX.Element {
           if (!workspaceId || payload.ledger.workspaceId === workspaceId) {
             setCapabilityLedgerSnapshot(payload.ledger)
           } else {
-            void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
+            void window.api
+              .getCapabilityLedgerSnapshot(workspaceId)
+              .then(setCapabilityLedgerSnapshot)
           }
         })
       )
@@ -12492,12 +12759,10 @@ function App(): React.JSX.Element {
             // the other consumers reacting to this same broadcast — but do
             // not force the provider quota meters (their TTLs guard against
             // per-run endpoint hammering).
-            void refreshUsageSummaryRef.current?.(
-              currentWorkspaceIdRef.current || undefined,
-              undefined,
-              undefined,
-              { forceUsageRecords: true }
-            )
+            void refreshUsageSummaryRef
+              .current?.(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
+                forceUsageRecords: true
+              })
               .catch(() => {})
               .finally(completeUsageRefresh)
           } else {
@@ -12546,11 +12811,26 @@ function App(): React.JSX.Element {
           diagnosticCounters.received += 1
           if (delivery.kind === 'snapshot') diagnosticCounters.snapshots += 1
           else diagnosticCounters.patches += 1
+          if (chatUpdateInterestRuntime.shouldRejectFullDelivery(delivery.chatId)) {
+            // A legacy full frame was already in flight when this document
+            // changed to paged/summary-only interest. Release it without ever
+            // reconstructing or retaining its ChatRecord in renderer state.
+            chatUpdateBaselineByIdRef.current.delete(delivery.chatId)
+            if (typeof window.api.ackChatUpdated === 'function') {
+              window.api.ackChatUpdated(
+                buildChatUpdateAck({
+                  delivery,
+                  applied: false,
+                  phase: 'accepted',
+                  rendererEpoch: RENDERER_CHAT_UPDATE_EPOCH
+                })
+              )
+              diagnosticCounters.acksSent += 1
+            }
+            return
+          }
           const baselines = chatUpdateBaselineByIdRef.current
-          const acknowledge = (
-            wasApplied: boolean,
-            appliedBaseline?: ChatUpdateBaseline
-          ): void => {
+          const acknowledge = (wasApplied: boolean, appliedBaseline?: ChatUpdateBaseline): void => {
             if (!wasApplied) baselines.delete(delivery.chatId)
             if (!wasApplied) diagnosticCounters.applyFailures += 1
             // ACK means the revision was validated and accepted into renderer
@@ -12566,8 +12846,11 @@ function App(): React.JSX.Element {
                 buildChatUpdateAck({
                   delivery,
                   applied: wasApplied,
+                  phase: 'accepted',
+                  rendererEpoch: RENDERER_CHAT_UPDATE_EPOCH,
                   appliedChat: appliedBaseline?.chat,
-                  appliedRecordHash: appliedBaseline?.recordHash
+                  appliedRecordHash: appliedBaseline?.recordHash,
+                  appliedTranscriptHash: appliedBaseline?.transcriptHash
                 })
               )
               diagnosticCounters.acksSent += 1
@@ -12588,7 +12871,7 @@ function App(): React.JSX.Element {
           while (baselines.size > 32) {
             const oldestChatId = baselines.keys().next().value
             if (typeof oldestChatId !== 'string') break
-            chatHydrationRuntimeRef.current.retention.dropTransportBaseline(oldestChatId)
+            chatHydrationRuntime.retention.dropTransportBaseline(oldestChatId)
           }
           if (
             clearedChatIdsRef.current.has(chat.appChatId) &&
@@ -12597,13 +12880,33 @@ function App(): React.JSX.Element {
             pendingMainChatUpdatesRef.current.delete(chat.appChatId)
             pendingChatFlushRef.current.delete(chat.appChatId)
             acknowledge(true, applied.baseline)
+            // The chat was explicitly cleared, so no React row will commit.
+            // Close the observational receipt immediately rather than leaving
+            // diagnostics to report a permanently pending invisible render.
+            if (typeof window.api.ackChatUpdated === 'function') {
+              window.api.ackChatUpdated(
+                buildChatUpdateRenderedAck(
+                  createChatUpdateRenderReceipt(
+                    delivery,
+                    applied.baseline,
+                    RENDERER_CHAT_UPDATE_EPOCH
+                  )
+                )
+              )
+            }
             return
           }
           const hasActiveRun = (() => {
             for (const ctx of activeRunsRef.current.values()) {
               if (ctx.chatId === chat.appChatId) return true
             }
-            return false
+            // Ensemble rounds (and Host-owned runs generally, since the
+            // independent-threads cutover) never register an ActiveRunContext
+            // here — activeRunsRef is written solely for renderer-spawned
+            // runs. The accepted record itself is their only liveness
+            // evidence; trust it (with a short post-end grace) instead of
+            // leaving the live-merge gate closed for the whole round.
+            return chatRecordHasLiveRun(chat)
           })()
           let hadRecentRun = false
           const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)
@@ -12618,12 +12921,21 @@ function App(): React.JSX.Element {
           // queueing the exact accepted snapshot is enough for ACK. The live
           // transcript merge and React state writes run in the existing rAF
           // coalescer, so prompt input is not serialized behind them.
-          pendingMainChatUpdatesRef.current.set(chat.appChatId, {
-            chat,
-            messagesChanged: previousBaseline?.chat.messages !== chat.messages,
-            hasActiveRun,
-            hadRecentRun
-          })
+          const pendingRender = pendingMainChatUpdatesRef.current.get(chat.appChatId)
+          pendingMainChatUpdatesRef.current.set(
+            chat.appChatId,
+            coalescePendingChatUpdateRender(pendingRender, {
+              chat,
+              messagesChanged: previousBaseline?.chat.messages !== chat.messages,
+              hasActiveRun,
+              hadRecentRun,
+              renderReceipt: createChatUpdateRenderReceipt(
+                delivery,
+                applied.baseline,
+                RENDERER_CHAT_UPDATE_EPOCH
+              )
+            })
+          )
           scheduleCoalescedChatFlush(chat.appChatId)
           if (
             currentChatIdRef.current === chat.appChatId &&
@@ -12633,6 +12945,10 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
           acknowledge(true, applied.baseline)
+          // ACK first so main can release its in-flight delivery, then make a
+          // terminal round visible synchronously. The completion notice and
+          // closeout effects must not depend on a future paint.
+          if (shouldFlushChatUpdateImmediately(chat)) flushCoalescedChatsNow()
           return
         })
       )
@@ -12672,7 +12988,10 @@ function App(): React.JSX.Element {
             payload.mediaRefs.length === 0
           )
             return
-          applyAssistantMediaRefsToChat(payload.appChatId, payload.mediaRefs as TranscriptMediaRef[])
+          applyAssistantMediaRefsToChat(
+            payload.appChatId,
+            payload.mediaRefs as TranscriptMediaRef[]
+          )
         })
       )
     }
@@ -12681,6 +13000,24 @@ function App(): React.JSX.Element {
       addIpcSubscription(
         window.api.onRunQueueChanged((jobs) => {
           setRunQueueJobs(jobs)
+          const terminalRunIds = new Set(
+            jobs
+              .filter((job) => isTerminalRunQueueStatus(job.status))
+              .map((job) => job.runId || job.id)
+          )
+          if (terminalRunIds.size > 0) {
+            setQueuedRuns((previous) =>
+              previous.filter(
+                (request) => !request.appRunId || !terminalRunIds.has(request.appRunId)
+              )
+            )
+            setFailedQueuedSteerRunIds((previous) => {
+              if (![...terminalRunIds].some((runId) => previous.has(runId))) return previous
+              const next = new Set(previous)
+              for (const runId of terminalRunIds) next.delete(runId)
+              return next
+            })
+          }
         })
       )
     }
@@ -12730,9 +13067,7 @@ function App(): React.JSX.Element {
         .catch(() => {})
     }
     if (!isChatPopoutWindow && typeof window.api.onAgenticYoloState === 'function') {
-      addIpcSubscription(
-        window.api.onAgenticYoloState((state) => setSessionYoloModeState(state))
-      )
+      addIpcSubscription(window.api.onAgenticYoloState((state) => setSessionYoloModeState(state)))
     }
 
     // QMOD (1.0.3) — listen for `ask_user_question` MCP-driven question
@@ -12831,7 +13166,12 @@ function App(): React.JSX.Element {
       )
     }
 
+    // Register compact invalidations only after every legacy/full delivery
+    // listener above is live; register() then publishes the first replacement
+    // snapshot, closing the boot race without losing an explicit-full frame.
+    addIpcSubscription(chatUpdateInterestRuntime.register())
     ipcUnsubscriptions.unshift(() => {
+      approvalRecovery?.cancel()
       for (const timer of contextCompactionProgressTimersRef.current.values()) {
         window.clearTimeout(timer)
       }
@@ -12863,7 +13203,9 @@ function App(): React.JSX.Element {
     return new Date(runAtMs).toISOString()
   }
 
-  const getScheduledQueueRunAtMs = (request: Pick<QueuedRunRequest, 'scheduledRunAt'>): number | null => {
+  const getScheduledQueueRunAtMs = (
+    request: Pick<QueuedRunRequest, 'scheduledRunAt'>
+  ): number | null => {
     if (!request.scheduledRunAt) return null
     const runAtMs = new Date(request.scheduledRunAt).getTime()
     return Number.isFinite(runAtMs) ? runAtMs : null
@@ -12927,16 +13269,20 @@ function App(): React.JSX.Element {
   const invokePromoteQueuedRunForSteer = async (
     input: PromoteQueuedRunForSteerInput
   ): Promise<PromoteQueuedRunForSteerResponse | null> => {
-    const modernApi = (window.api as {
-      promoteQueuedRunForSteer?: (
-        request: PromoteQueuedRunForSteerInput
-      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
-    }).promoteQueuedRunForSteer
-    const legacyApi = (window.api as {
-      promoteQueuedJobForSteer?: (
-        request: PromoteQueuedRunForSteerInput
-      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
-    }).promoteQueuedJobForSteer
+    const modernApi = (
+      window.api as {
+        promoteQueuedRunForSteer?: (
+          request: PromoteQueuedRunForSteerInput
+        ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+      }
+    ).promoteQueuedRunForSteer
+    const legacyApi = (
+      window.api as {
+        promoteQueuedJobForSteer?: (
+          request: PromoteQueuedRunForSteerInput
+        ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+      }
+    ).promoteQueuedJobForSteer
     const promotionApi = typeof modernApi === 'function' ? modernApi : legacyApi
     if (typeof promotionApi !== 'function') return null
 
@@ -12965,7 +13311,8 @@ function App(): React.JSX.Element {
         cancelRequested:
           typeof response.cancelRequested === 'boolean' ? response.cancelRequested : undefined,
         requeuedTo: response.requeuedTo === 'queued' ? 'queued' : undefined,
-        status: typeof response.status === 'string' ? (response.status as RunQueueJobStatus) : undefined
+        status:
+          typeof response.status === 'string' ? (response.status as RunQueueJobStatus) : undefined
       }
     } catch (error) {
       console.warn('[queued-steer] promoteQueuedRunForSteer failed', error)
@@ -12985,13 +13332,17 @@ function App(): React.JSX.Element {
     status?: RunQueueJobStatus
   } | null> => {
     const maybeApi = window.api as {
-      leasePromotedSteerJob?: (
-        input: {
-          runId: string
-          ownerToken: string
-          statusReason?: string
-        }
-      ) => Promise<{ ok?: boolean; kind?: string; request?: RunQueueRequestSnapshot; ownerToken?: string; status?: RunQueueJobStatus }>
+      leasePromotedSteerJob?: (input: {
+        runId: string
+        ownerToken: string
+        statusReason?: string
+      }) => Promise<{
+        ok?: boolean
+        kind?: string
+        request?: RunQueueRequestSnapshot
+        ownerToken?: string
+        status?: RunQueueJobStatus
+      }>
     }
     if (typeof maybeApi.leasePromotedSteerJob !== 'function') return null
     try {
@@ -13041,15 +13392,18 @@ function App(): React.JSX.Element {
       approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
       workflowMode: snapshot.workflowMode || fallbackRequest.workflowMode,
       sessionTrust:
-        typeof snapshot.sessionTrust === 'boolean' ? snapshot.sessionTrust : fallbackRequest.sessionTrust,
+        typeof snapshot.sessionTrust === 'boolean'
+          ? snapshot.sessionTrust
+          : fallbackRequest.sessionTrust,
       effectiveWorkspacePath: restoreQueuedRunWorktreeTarget(snapshot),
       imageAttachments: snapshot.imageAttachments.length
         ? snapshot.imageAttachments.map((attachment, index) => ({
-          id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
-          path: attachment.path,
-          name: attachment.name || getImageName(attachment.path),
-          ...attachmentKindMetadata(attachment),
-          ...persistedAttachmentMetadata(attachment)
+            id:
+              attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
+            path: attachment.path,
+            name: attachment.name || getImageName(attachment.path),
+            ...attachmentKindMetadata(attachment),
+            ...persistedAttachmentMetadata(attachment)
           }))
         : fallbackRequest.imageAttachments,
       ...(snapshot.discordContextSelection
@@ -13058,9 +13412,7 @@ function App(): React.JSX.Element {
       ...(snapshot.projectReferenceContextSelection
         ? { projectReferenceContextSelection: snapshot.projectReferenceContextSelection }
         : {}),
-      ...(snapshot.externalPathGrants
-        ? { externalPathGrants: snapshot.externalPathGrants }
-        : {}),
+      ...(snapshot.externalPathGrants ? { externalPathGrants: snapshot.externalPathGrants } : {}),
       ...(snapshot.geminiWorktree ? { geminiWorktree: snapshot.geminiWorktree } : {}),
       ...(snapshot.codexNativeReview ? { codexNativeReview: true } : {}),
       ...(snapshot.codexReasoningEffort !== undefined
@@ -13089,12 +13441,19 @@ function App(): React.JSX.Element {
       ...(snapshot.mistralReasoningEffort !== undefined
         ? { mistralReasoningEffort: snapshot.mistralReasoningEffort }
         : {}),
+      ...(snapshot.devinReasoningEffort !== undefined
+        ? { devinReasoningEffort: snapshot.devinReasoningEffort }
+        : {}),
+      ...(snapshot.piReasoningEffort !== undefined
+        ? { piReasoningEffort: snapshot.piReasoningEffort }
+        : {}),
+      ...(snapshot.antigravityReasoningEffort !== undefined
+        ? { antigravityReasoningEffort: snapshot.antigravityReasoningEffort }
+        : {}),
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
-      ...(snapshot.cursorFastMode !== undefined
-        ? { cursorFastMode: snapshot.cursorFastMode }
-        : {}),
+      ...(snapshot.cursorFastMode !== undefined ? { cursorFastMode: snapshot.cursorFastMode } : {}),
       ...(snapshot.scheduledTaskId ? { scheduledTaskId: snapshot.scheduledTaskId } : {}),
       ...(snapshot.scheduledRunAt ? { scheduledRunAt: snapshot.scheduledRunAt } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
@@ -13127,7 +13486,10 @@ function App(): React.JSX.Element {
         if (requestKey) {
           return existing.appRunId === requestKey
         }
-        return existing.prompt === request.prompt && queuedRunFallbackId(existing) === queuedRunFallbackId(request)
+        return (
+          existing.prompt === request.prompt &&
+          queuedRunFallbackId(existing) === queuedRunFallbackId(request)
+        )
       })
       if (exists) return prev
       return [...prev, request]
@@ -13194,6 +13556,18 @@ function App(): React.JSX.Element {
     ...(request.mistralReasoningEffort !== undefined
       ? { mistralReasoningEffort: request.mistralReasoningEffort }
       : {}),
+    ...(request.devinReasoningEffort !== undefined
+      ? { devinReasoningEffort: request.devinReasoningEffort }
+      : {}),
+    ...(request.piReasoningEffort !== undefined
+      ? { piReasoningEffort: request.piReasoningEffort }
+      : {}),
+    ...(request.antigravityReasoningEffort !== undefined
+      ? { antigravityReasoningEffort: request.antigravityReasoningEffort }
+      : {}),
+    ...(request.ollamaReasoningEffort !== undefined
+      ? { ollamaReasoningEffort: request.ollamaReasoningEffort }
+      : {}),
     ...(request.cursorReasoningEffort !== undefined
       ? { cursorReasoningEffort: request.cursorReasoningEffort }
       : {}),
@@ -13224,9 +13598,7 @@ function App(): React.JSX.Element {
       runId,
       provider: request.provider,
       scope,
-      ...(scope === 'global'
-        ? {}
-        : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
+      ...(scope === 'global' ? {} : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
       chatId: chat.appChatId,
       source: getRunQueueSource(request),
       status,
@@ -13285,14 +13657,12 @@ function App(): React.JSX.Element {
     const hasQueuedProviderChange = Boolean(
       !isExecutionGraphJob && chatRecord && hasPendingProviderChange(chatRecord)
     )
-    const queuedProviderBaseChat =
-      hasQueuedProviderChange
-        ? applyPendingProviderChangeOnFinalize(chatRecord)
-        : chatRecord
-    const queuedProviderSelection =
-      hasQueuedProviderChange
-        ? getChatComposerSelection(queuedProviderBaseChat)
-        : null
+    const queuedProviderBaseChat = hasQueuedProviderChange
+      ? applyPendingProviderChangeOnFinalize(chatRecord)
+      : chatRecord
+    const queuedProviderSelection = hasQueuedProviderChange
+      ? getChatComposerSelection(queuedProviderBaseChat)
+      : null
     const effectiveProvider = queuedProviderSelection?.provider || job.provider
     const scope =
       job.scope === 'global' || job.request.scope === 'global' || isGlobalChat(chatRecord)
@@ -13348,6 +13718,13 @@ function App(): React.JSX.Element {
         queuedProviderSelection?.museReasoningEffort ?? request.museReasoningEffort,
       mistralReasoningEffort:
         queuedProviderSelection?.mistralReasoningEffort ?? request.mistralReasoningEffort,
+      devinReasoningEffort:
+        queuedProviderSelection?.devinReasoningEffort ?? request.devinReasoningEffort,
+      piReasoningEffort: queuedProviderSelection?.piReasoningEffort ?? request.piReasoningEffort,
+      antigravityReasoningEffort:
+        queuedProviderSelection?.antigravityReasoningEffort ?? request.antigravityReasoningEffort,
+      ollamaReasoningEffort:
+        queuedProviderSelection?.ollamaReasoningEffort ?? request.ollamaReasoningEffort,
       cursorReasoningEffort:
         queuedProviderSelection?.cursorReasoningEffort ?? request.cursorReasoningEffort,
       cursorFastMode: queuedProviderSelection?.cursorFastMode ?? request.cursorFastMode,
@@ -13388,28 +13765,29 @@ function App(): React.JSX.Element {
 
   const projectReferenceContextSelectionQueueKey = (
     selection: ProjectReferenceContextSelection | null | undefined
-  ): string =>
-    selection ? `${selection.projectId}:${selection.referenceIds.join(',')}` : ''
+  ): string => (selection ? `${selection.projectId}:${selection.referenceIds.join(',')}` : '')
 
   const getQueuedDesktopRunJobs = (sourceJobs: RunQueueJob[] = runQueueJobsRef.current) => {
     const cachedOrder = new Map<string, number>()
     queuedRunsRef.current.forEach((request, index) => {
       if (request.appRunId) cachedOrder.set(request.appRunId, index)
     })
-    return sourceJobs
-      .filter(isQueuedDesktopRunQueueJob)
-      // Execution-graph rows are observed here for Stack/Map projection only.
-      // Their lease, composition, and provider launch are owned by main.
-      .filter((job) => !job.executionGraph)
-      .slice()
-      .sort((a, b) => {
-        const aOrder = cachedOrder.get(a.runId)
-        const bOrder = cachedOrder.get(b.runId)
-        if (aOrder !== undefined || bOrder !== undefined) {
-          return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
-        }
-        return queuedRunJobSortTime(a) - queuedRunJobSortTime(b)
-      })
+    return (
+      sourceJobs
+        .filter(isQueuedDesktopRunQueueJob)
+        // Execution-graph rows are observed here for Stack/Map projection only.
+        // Their lease, composition, and provider launch are owned by main.
+        .filter((job) => !job.executionGraph)
+        .slice()
+        .sort((a, b) => {
+          const aOrder = cachedOrder.get(a.runId)
+          const bOrder = cachedOrder.get(b.runId)
+          if (aOrder !== undefined || bOrder !== undefined) {
+            return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
+          }
+          return queuedRunJobSortTime(a) - queuedRunJobSortTime(b)
+        })
+    )
   }
 
   const resolveQueuedDesktopRunRequest = (job: RunQueueJob): QueuedRunRequest | null => {
@@ -13425,7 +13803,8 @@ function App(): React.JSX.Element {
         job.scope === 'global'
           ? undefined
           : workspaces.find(
-              (workspace) => workspace.id === job.workspaceId || workspace.path === job.workspacePath
+              (workspace) =>
+                workspace.id === job.workspaceId || workspace.path === job.workspacePath
             ) || cached.workspaceRecord
       return {
         ...cached,
@@ -13490,12 +13869,27 @@ function App(): React.JSX.Element {
   const rehydrateQueuedRuns = async (workspaceList: WorkspaceRecord[]) => {
     if (rehydratedRunQueueRef.current || typeof window.api.getRunQueueJobs !== 'function') return
     rehydratedRunQueueRef.current = true
-    const [fetchedJobs, recoveryRecords] = await Promise.all([
-      window.api.getRunQueueJobs({ statuses: ['queued', 'steer_promoting'] }),
-      typeof window.api.getRunRecoveryRecords === 'function'
-        ? window.api.getRunRecoveryRecords({ limit: 100 })
-        : Promise.resolve([])
-    ])
+    let retryNeeded = false
+    const scheduleRetry = (): void => {
+      if (runQueueRehydrateRetryCountRef.current >= 3) return
+      runQueueRehydrateRetryCountRef.current += 1
+      rehydratedRunQueueRef.current = false
+      const delayMs = runQueueRehydrateRetryCountRef.current * 500
+      window.setTimeout(() => void rehydrateQueuedRuns(workspaceList), delayMs)
+    }
+    let fetchedJobs: RunQueueJob[]
+    let recoveryRecords: RunRecoveryRecord[]
+    try {
+      ;[fetchedJobs, recoveryRecords] = await Promise.all([
+        window.api.getRunQueueJobs({ statuses: ['queued', 'steer_promoting'] }),
+        typeof window.api.getRunRecoveryRecords === 'function'
+          ? window.api.getRunRecoveryRecords({ limit: 100 })
+          : Promise.resolve([])
+      ])
+    } catch {
+      scheduleRetry()
+      return
+    }
     const jobs = fetchedJobs.filter(
       (job) => job.status === 'queued' || isPreparedSoloSteerQueueJob(job)
     )
@@ -13527,14 +13921,60 @@ function App(): React.JSX.Element {
       const request = queuedRunRequestFromJob(job, workspaceList, recoveredChatList, {
         allowPreparedSoloSteer: true
       })
-      if (!request) continue
+      if (!request) {
+        let chatLookupFailed = false
+        const durableChat = job.chatId
+          ? await window.api.getChat(job.chatId).catch(() => {
+              chatLookupFailed = true
+              return null
+            })
+          : null
+        if (!chatLookupFailed && !durableChat) {
+          const reason =
+            'Prepared steering could not be recovered because its privacy-scoped chat transcript is unavailable after restart.'
+          const failed = await window.api
+            .transitionRunQueueJob(job.runId, 'failed', {
+              statusReason: reason,
+              lastError: reason
+            })
+            .catch(() => null)
+          if (failed) effectiveJobs[index] = failed
+        } else {
+          retryNeeded = true
+        }
+        continue
+      }
       const message = await appendMidRunQueuedRequestToTranscript(
         request,
         'soloSteer',
         job.createdAt,
         { persistImmediately: true }
       )
-      if (!message) continue
+      if (!message) {
+        retryNeeded = true
+        continue
+      }
+      if (job.steerDeliveryPhase !== undefined && job.steerDeliveryPhase !== 'prepared') {
+        const statusReason =
+          'Live steering admission was interrupted while its provider outcome was unknown.'
+        const lastError =
+          'TaskWraith did not replay this steering message because the provider may already have accepted it.'
+        const failed = await window.api
+          .transitionRunQueueJob(job.runId, 'failed', { statusReason, lastError })
+          .catch(() => null)
+        // A null result can mean MAIN still owns a live admission in this same
+        // process. Preserve that projection rather than fabricating a local
+        // failure or deleting its transcript row. On blocked startup there is
+        // no coordinator owner, so the terminal transition above commits.
+        if (failed) {
+          effectiveJobs[index] = failed
+          appendThreadRawLog(job.chatId, {
+            type: 'stderr',
+            content: `${statusReason} ${lastError}`
+          })
+        }
+        continue
+      }
       const ownerToken = job.promotionOwnerToken
       if (!ownerToken) continue
       const released = await invokeFallbackPromotedSteerJob({
@@ -13552,6 +13992,8 @@ function App(): React.JSX.Element {
           promotionToken: undefined,
           steerPreparationKind: undefined
         }
+      } else {
+        retryNeeded = true
       }
     }
     const durableChatList = recoveredChatList.map(
@@ -13567,6 +14009,8 @@ function App(): React.JSX.Element {
         return [...current, ...restoredRuns.filter((request) => !knownRunIds.has(request.appRunId))]
       })
     }
+    if (retryNeeded) scheduleRetry()
+    else runQueueRehydrateRetryCountRef.current = 0
   }
 
   const buildRunRequest = (
@@ -13599,6 +14043,24 @@ function App(): React.JSX.Element {
     )
     const provider = selectedChat ? getChatProvider(selectedChat) : currentProvider
     const composerSelection = selectedChat ? getChatComposerSelection(selectedChat, provider) : null
+    // AntiGravity's presentation marker belongs only to an AntiGravity run.
+    // Older chats can retain it after a provider switch because provider
+    // metadata is merged for history. Strip that stale signal from the run
+    // snapshot so another provider cannot inherit invisible UltraTask intent.
+    const requestChatRecord =
+      selectedChat &&
+      provider !== 'antigravity' &&
+      (selectedChat.providerMetadata?.antigravityUltraTaskSelected === true ||
+        typeof selectedChat.providerMetadata?.antigravityReasoningEffort === 'string')
+        ? {
+            ...selectedChat,
+            providerMetadata: {
+              ...(selectedChat.providerMetadata || {}),
+              antigravityReasoningEffort: null,
+              antigravityUltraTaskSelected: false
+            }
+          }
+        : selectedChat
     const rawRequestModel = overrideModel
       ? selectedModelType
       : composerSelection?.selectedModelType || selectedModelType
@@ -13606,7 +14068,8 @@ function App(): React.JSX.Element {
       ? rawRequestModel
       : getDefaultModelForProvider(provider)
     const requestCustomModel = composerSelection?.customModel ?? customModel
-    const requestApprovalMode = target?.approvalMode || composerSelection?.approvalMode || approvalMode
+    const requestApprovalMode =
+      target?.approvalMode || composerSelection?.approvalMode || approvalMode
     const requestWorkflowMode =
       target?.workflowMode ??
       composerSelection?.workflowMode ??
@@ -13624,8 +14087,7 @@ function App(): React.JSX.Element {
       provider === 'codex'
         ? composerSelection?.codexServiceTier || codexServiceTier
         : codexServiceTier
-    const requestKimiThinkingEnabled =
-      provider === 'kimi' ? true : kimiThinkingEnabled
+    const requestKimiThinkingEnabled = provider === 'kimi' ? true : kimiThinkingEnabled
     const requestKimiReasoningEffort =
       provider === 'kimi'
         ? composerSelection?.kimiReasoningEffort || kimiReasoningEffort
@@ -13634,9 +14096,9 @@ function App(): React.JSX.Element {
       provider === 'kimi'
         ? Boolean(
             (composerSelection?.kimiFastMode ?? kimiFastMode) &&
-              getProviderModelOptions('kimi')
-                .find((model) => model.id === requestModel)
-                ?.additionalSpeedTiers?.includes('fast')
+            getProviderModelOptions('kimi')
+              .find((model) => model.id === requestModel)
+              ?.additionalSpeedTiers?.includes('fast')
           )
         : kimiFastMode
     const requestClaudeReasoningEffort =
@@ -13655,14 +14117,34 @@ function App(): React.JSX.Element {
           museReasoningEffort ||
           MUSE_DEFAULT_REASONING_EFFORT
         : museReasoningEffort
+    const requestMistralReasoningEffort =
+      provider === 'mistral'
+        ? composerSelection?.mistralReasoningEffort || mistralReasoningEffort
+        : mistralReasoningEffort
+    const requestDevinReasoningEffort =
+      provider === 'devin'
+        ? composerSelection?.devinReasoningEffort || devinReasoningEffort
+        : devinReasoningEffort
+    const requestPiReasoningEffort =
+      provider === 'pi'
+        ? composerSelection?.piReasoningEffort || piReasoningEffort
+        : piReasoningEffort
+    const requestOllamaReasoningEffort =
+      provider === 'ollama'
+        ? composerSelection?.ollamaReasoningEffort || ollamaReasoningEffort
+        : ollamaReasoningEffort
     const requestCursorReasoningEffort =
       provider === 'cursor'
         ? composerSelection?.cursorReasoningEffort || cursorReasoningEffort
         : cursorReasoningEffort
     const requestCursorFastMode =
-      provider === 'cursor'
-        ? (composerSelection?.cursorFastMode ?? cursorFastMode)
-        : cursorFastMode
+      provider === 'cursor' ? (composerSelection?.cursorFastMode ?? cursorFastMode) : cursorFastMode
+    const requestAntigravityReasoningEffort =
+      provider === 'antigravity'
+        ? composerSelection?.antigravityReasoningEffort ||
+          antigravityEffortForModelId(requestModel) ||
+          null
+        : null
     const normalizedExternalPathGrants =
       scope !== 'global'
         ? normalizeExternalPathGrants(
@@ -13701,14 +14183,22 @@ function App(): React.JSX.Element {
       !existingPrompt && selectedChat?.chatKind !== 'ensemble'
         ? targetProjectReferenceContextSelection !== undefined
           ? targetProjectReferenceContextSelection
-          : projectReferenceContextClaim?.selection ?? null
+          : (projectReferenceContextClaim?.selection ?? null)
         : null
 
     return {
       appRunId: createAppRunId(),
       scope,
       provider,
-      prompt: target?.prompt !== undefined ? target.prompt : existingPrompt || prompt,
+      // Fallback reads the store at CALL time. Same reason as the popout handoff:
+      // App no longer re-renders per keystroke, so the render-time `prompt` const
+      // could send text older than what the user just typed. Keyed on
+      // currentComposerChatId to preserve the original meaning — "the focused
+      // composer's text" — even when `target.chat` points elsewhere.
+      prompt:
+        target?.prompt !== undefined
+          ? target.prompt
+          : existingPrompt || composerDraftState.getDraft(currentComposerChatId),
       ...(target?.displayPrompt !== undefined ? { displayPrompt: target.displayPrompt } : {}),
       overrideModel,
       existingPrompt,
@@ -13728,9 +14218,7 @@ function App(): React.JSX.Element {
       ...(requestProjectReferenceContextSelection
         ? { projectReferenceContextSelection: requestProjectReferenceContextSelection }
         : {}),
-      ...(projectReferenceContextClaim
-        ? { projectReferenceContextClaim }
-        : {}),
+      ...(projectReferenceContextClaim ? { projectReferenceContextClaim } : {}),
       externalPathGrants,
       geminiWorktree:
         scope === 'global' ? undefined : resolveGeminiWorktreeConfig(selectedWorkspace),
@@ -13743,8 +14231,13 @@ function App(): React.JSX.Element {
       kimiThinkingEnabled: requestKimiThinkingEnabled,
       grokReasoningEffort: requestGrokReasoningEffort,
       museReasoningEffort: requestMuseReasoningEffort,
+      mistralReasoningEffort: requestMistralReasoningEffort,
+      devinReasoningEffort: requestDevinReasoningEffort,
+      piReasoningEffort: requestPiReasoningEffort,
+      ollamaReasoningEffort: requestOllamaReasoningEffort,
       cursorReasoningEffort: requestCursorReasoningEffort,
       cursorFastMode: requestCursorFastMode,
+      antigravityReasoningEffort: requestAntigravityReasoningEffort,
       runtimeProfileId: getRuntimeProfileIdForChat(selectedChat, provider),
       geminiAuthProfileId:
         provider === 'gemini'
@@ -13753,7 +14246,7 @@ function App(): React.JSX.Element {
             : geminiAuthStatus?.activeProfileId || null
           : null,
       workspaceRecord: selectedWorkspace || undefined,
-      chatRecord: selectedChat || undefined
+      chatRecord: requestChatRecord || undefined
     }
   }
   const buildRunRequestRef = useRef(buildRunRequest)
@@ -13780,12 +14273,8 @@ function App(): React.JSX.Element {
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
-        projectReferenceContextSelectionQueueKey(
-          job.request?.projectReferenceContextSelection
-        ) ===
-          projectReferenceContextSelectionQueueKey(
-            queuedRequest.projectReferenceContextSelection
-          )
+        projectReferenceContextSelectionQueueKey(job.request?.projectReferenceContextSelection) ===
+          projectReferenceContextSelectionQueueKey(queuedRequest.projectReferenceContextSelection)
     )
     const duplicateLocalQueuedRun = queuedRunsRef.current.some(
       (request) =>
@@ -13803,9 +14292,7 @@ function App(): React.JSX.Element {
         discordContextSelectionQueueKey(request.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
         projectReferenceContextSelectionQueueKey(request.projectReferenceContextSelection) ===
-          projectReferenceContextSelectionQueueKey(
-            queuedRequest.projectReferenceContextSelection
-          )
+          projectReferenceContextSelectionQueueKey(queuedRequest.projectReferenceContextSelection)
     )
     if (duplicateQueuedRun || duplicateLocalQueuedRun) {
       settleProjectReferenceContextForRequest(queuedRequest, 'rejected')
@@ -13826,11 +14313,7 @@ function App(): React.JSX.Element {
       getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length +
       localQueuedRunsForChat.length +
       1
-    const persistence = persistRunQueueJobForRequest(
-      queuedRequest,
-      'queued',
-      reason
-    )
+    const persistence = persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
       .then((job) => {
         if (!job) {
           throw new Error('The queued run could not be persisted.')
@@ -13911,12 +14394,23 @@ function App(): React.JSX.Element {
         })
         appendedMessage = result.message
         if (!result.appended) return chat
+        const shouldTitle =
+          chat.messages.length === 0 &&
+          isPlaceholderThreadTitle(chat.title) &&
+          chat.threadTitle?.source !== 'user' &&
+          chat.threadTitle?.source !== 'local-ai'
         return {
           ...chat,
-          title:
-            chat.messages.length === 0
-              ? normalizeThreadTitle(content, 'New Chat')
-              : chat.title,
+          title: shouldTitle ? derivePromptFallbackThreadTitle(content, 'New Chat') : chat.title,
+          ...(shouldTitle && result.message
+            ? {
+                threadTitle: {
+                  source: 'prompt-fallback' as const,
+                  sourceMessageId: result.message.id,
+                  sourceFingerprint: threadTitleSourceFingerprint(result.message.id, content)
+                }
+              }
+            : {}),
           messages: result.messages,
           updatedAt: Date.now()
         }
@@ -14074,6 +14568,11 @@ function App(): React.JSX.Element {
     let currentRunIdForCleanup = runRequest?.appRunId
     let dispatchAccepted = false
     let requestForClaimCleanup = runRequest
+    // Hoisted so the outer catch can honour the ordering invariant: a run
+    // error must never land in the transcript before the user message that
+    // triggered it. Assigned at their original sites inside the try.
+    let runStartedAt: string | undefined
+    let promptMessageId: string | undefined
     try {
       const baseRequest = runRequest ?? buildRunRequest()
       let request = baseRequest.appRunId
@@ -14081,7 +14580,7 @@ function App(): React.JSX.Element {
         : { ...baseRequest, appRunId: createAppRunId() }
       requestForClaimCleanup = request
       let runChat = request.chatRecord || currentChat
-      if (runChat && isChatSummaryRecord(runChat)) {
+      if (runChat && needsDispatchHistoryHydration(runChat, request.workflowMode)) {
         const hydrated = await refreshSingleChat(runChat.appChatId)
         if (hydrated) {
           runChat = hydrated
@@ -14210,6 +14709,24 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
+        // Consume the draft at gesture time, as the steer lane does. The round
+        // IPC resolves only after main's round-start durability barrier — a
+        // full-record Host write that takes seconds on a large thread — so
+        // clearing after it left the sent text in the composer and Enter
+        // looked ignored. Edit-aware rollback restores it on a refusal.
+        const ensembleSendDraft =
+          request.existingPrompt || request.preserveComposer
+            ? null
+            : beginComposerDraftSubmission({
+                chatId: runChat.appChatId,
+                submittedDraft: request.displayPrompt || request.prompt,
+                getDraft: composerDraftState.getDraft,
+                setDraft: setChatPromptDraft,
+                subscribeToDraft: composerDraftState.subscribeToChat
+              })
+        // The pending picker choice must reach main before it resolves the
+        // roster for this round. This waits only for seat edits, not history.
+        await authoritativeParticipantSeatChangeQueueRef.current.get(runChat.appChatId)
         const workflowModeForRound = request.workflowMode || 'normal'
         if (runChat.workflowMode !== workflowModeForRound) {
           const updatedRunChat: ChatRecord = {
@@ -14246,7 +14763,7 @@ function App(): React.JSX.Element {
             ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
             : false
         try {
-          await window.api.runEnsembleRound({
+          const dispatchReceipt = await window.api.runEnsembleRound({
             chatId: runChat.appChatId,
             prompt: request.prompt,
             ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
@@ -14291,6 +14808,20 @@ function App(): React.JSX.Element {
                 }
               : {})
           })
+          const dispatchRefusal = ensembleRoundDispatchRefusal(dispatchReceipt)
+          if (dispatchRefusal) {
+            if (didOptimisticallyQueue) {
+              removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, optimisticQueuedPrompt)
+            }
+            updateRunQueueJobStatus(currentRunId, 'failed', dispatchRefusal.message)
+            settleProjectReferenceContextForRequest(request, 'rejected')
+            appendThreadRawLog(runChat.appChatId, {
+              type: 'stderr',
+              content: dispatchRefusal.message
+            })
+            ensembleSendDraft?.restoreIfUntouched()
+            return
+          }
           const acceptedQueueWrapperReason = acceptedEnsembleRunQueueWrapperReason({
             mode,
             scheduledTaskId: request.scheduledTaskId,
@@ -14311,11 +14842,16 @@ function App(): React.JSX.Element {
             redactLog(String(error))
           )
           settleProjectReferenceContextForRequest(request, 'rejected')
+          ensembleSendDraft?.restoreIfUntouched()
           throw error
         }
         dispatchAccepted = true
+        ensembleSendDraft?.commit()
         if (!request.existingPrompt && !request.preserveComposer) {
-          setChatPromptDraft(runChat.appChatId, '')
+          // Only a draft the gesture could not consume (it no longer matched
+          // the request's text) is still cleared here; a consumed one already
+          // is, and clearing again would erase whatever was typed meanwhile.
+          if (!ensembleSendDraft) setChatPromptDraft(runChat.appChatId, '')
           clearComposerAttachmentsForSubmittedRequest(request)
         }
         setIsThinking(true)
@@ -14397,6 +14933,10 @@ function App(): React.JSX.Element {
           grokReasoningEffort: request.grokReasoningEffort,
           museReasoningEffort: request.museReasoningEffort,
           mistralReasoningEffort: request.mistralReasoningEffort,
+          devinReasoningEffort: request.devinReasoningEffort,
+          piReasoningEffort: request.piReasoningEffort,
+          antigravityReasoningEffort: request.antigravityReasoningEffort,
+          ollamaReasoningEffort: request.ollamaReasoningEffort,
           cursorReasoningEffort: request.cursorReasoningEffort,
           cursorFastMode: request.cursorFastMode,
           runtimeProfileId: request.runtimeProfileId,
@@ -14483,14 +15023,13 @@ function App(): React.JSX.Element {
         runDiffWorkspacePath = composerEffectiveWorkspacePath
       }
       const finalPrompt = composerMetadata.finalPrompt
-      const discordContextReads =
-        composerMetadata.discordContextReads?.length
-          ? redactDiscordContextReadsForHistory(composerMetadata.discordContextReads)
-          : request.discordContextSnapshots?.length
-            ? redactDiscordContextReadsForHistory(
-                request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
-              )
-            : []
+      const discordContextReads = composerMetadata.discordContextReads?.length
+        ? redactDiscordContextReadsForHistory(composerMetadata.discordContextReads)
+        : request.discordContextSnapshots?.length
+          ? redactDiscordContextReadsForHistory(
+              request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
+            )
+          : []
       const projectReferenceContextMetadata = composerMetadata.projectReferenceContext
         ? projectReferenceContextDisclosure(composerMetadata.projectReferenceContext)
         : null
@@ -14506,22 +15045,18 @@ function App(): React.JSX.Element {
         composerMetadata.workflowMode || composedPayload.workflowMode || request.workflowMode
       const resumeSessionId = composedPayload.providerSessionId || undefined
       const geminiResumeSkippedReason = composerMetadata.geminiResumeSkippedReason
-      const contextTurnsForRun = composerMetadata.contextTurnsApplied
       const contextualPrompt = composedPayload.prompt
-      const usagePromptText =
-        discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
+      const usagePromptText = discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
       const contextApplicationLog = composerMetadata.applicationLog
 
       activeScheduledTaskIdRef.current = request.scheduledTaskId || null
-      const dispatchChatBase = preAppendedPromptMessage
-        ? chatByIdRef.current.get(runChat.appChatId) || runChat
-        : runChat
-      const chatToUpdate = { ...dispatchChatBase, provider: effectiveRunProvider }
-      if (composerMetadata.clearLinkedGeminiSession) {
-        chatToUpdate.linkedGeminiSessionId = undefined
-      }
+      // The visible-run reset only ever needed the chat id, and it must stay
+      // ahead of the thumbnail await below so the "Working" chip still goes up
+      // in the same frame the user pressed Send. `resolveDispatchChatBase`
+      // cannot change the id, so this is the same chat `chatToUpdate` becomes.
       const selectedChatIdAtRunStart = currentChatIdRef.current || currentChat?.appChatId || null
-      const isRunVisibleAtStart = selectedChatIdAtRunStart === chatToUpdate.appChatId
+      const isRunVisibleAtStart = selectedChatIdAtRunStart === runChat.appChatId
+      liveRunDiffStore.clear(runChat.appChatId)
       if (isRunVisibleAtStart) {
         setRunCompleteNotice(null)
         setRunDiff(null)
@@ -14530,14 +15065,50 @@ function App(): React.JSX.Element {
         setPendingPlanImport(null)
         setIsThinking(true)
       }
-
-      if (chatToUpdate.messages.length === 0) {
-        chatToUpdate.title = normalizeThreadTitle(displayFinalPrompt, 'New Chat')
+      const authorsPromptMessage = !request.existingPrompt && !preAppendedPromptMessage
+      // Thumbnails are read off disk, one IPC per attachment, so this await is
+      // wide for an image-heavy prompt. It runs BEFORE the dispatch base is
+      // resolved: any await between resolving the base and the `saveChat` below
+      // re-opens the staleness window that base read exists to close.
+      const submittedImageThumbnails = authorsPromptMessage
+        ? await buildSubmittedImageThumbnailMetadata(request.imageAttachments)
+        : null
+      // `runChat` was snapshotted at the top of dispatch, before `composeRun`
+      // and the awaits above. Anything appended during that window lives only
+      // in the live map, and spreading the snapshot dropped it — then made the
+      // loss durable, because this dispatch saves the whole record.
+      const dispatchChatBase = resolveDispatchChatBase(
+        runChat,
+        chatByIdRef.current.get(runChat.appChatId)
+      )
+      // Hydration above is BEST EFFORT: `refreshSingleChat` returns null when
+      // `getChat` yields nothing, which is exactly a brand-new thread with
+      // nothing on disk yet, so `runChat` can still arrive without a
+      // transcript. Normalise once here instead of guarding each read that
+      // follows -- an undefined `messages` threw "Cannot read properties of
+      // undefined (reading 'length')" out of dispatch, and because the throw
+      // landed AFTER setIsThinking(true) but BEFORE the ChatRun was created,
+      // the turn died with no run at all under a stuck "Working" chip.
+      const chatToUpdate = {
+        ...dispatchChatBase,
+        provider: effectiveRunProvider,
+        messages: Array.isArray(dispatchChatBase.messages) ? dispatchChatBase.messages : [],
+        runs: Array.isArray(dispatchChatBase.runs) ? dispatchChatBase.runs : []
+      }
+      if (composerMetadata.clearLinkedGeminiSession) {
+        chatToUpdate.linkedGeminiSessionId = undefined
+      }
+      if (
+        chatToUpdate.messages.length === 0 &&
+        isPlaceholderThreadTitle(chatToUpdate.title) &&
+        chatToUpdate.threadTitle?.source !== 'user' &&
+        chatToUpdate.threadTitle?.source !== 'local-ai'
+      ) {
+        chatToUpdate.title = derivePromptFallbackThreadTitle(displayFinalPrompt, 'New Chat')
       }
 
-      let runStartedAt = new Date().toISOString()
-      let promptMessageId: string | undefined
-      if (!request.existingPrompt && !preAppendedPromptMessage) {
+      runStartedAt = new Date().toISOString()
+      if (authorsPromptMessage) {
         const imageAttachmentMetadata = request.imageAttachments
           .map((attachment) => ({
             id: attachment.id,
@@ -14551,11 +15122,9 @@ function App(): React.JSX.Element {
         if (imageAttachmentMetadata.length > 0) {
           messageMetadata.imageAttachments = imageAttachmentMetadata
         }
-        const imageThumbnailMetadata =
-          await buildSubmittedImageThumbnailMetadata(request.imageAttachments)
-        if (imageThumbnailMetadata.imagePaths.length > 0) {
-          messageMetadata.imagePaths = imageThumbnailMetadata.imagePaths
-          messageMetadata.imageThumbnails = imageThumbnailMetadata.imageThumbnails
+        if (submittedImageThumbnails && submittedImageThumbnails.imagePaths.length > 0) {
+          messageMetadata.imagePaths = submittedImageThumbnails.imagePaths
+          messageMetadata.imageThumbnails = submittedImageThumbnails.imageThumbnails
         }
         if (linkPreviewMetadata.length > 0) {
           messageMetadata.linkPreviews = linkPreviewMetadata
@@ -14629,7 +15198,9 @@ function App(): React.JSX.Element {
         ...(effectiveRunProvider !== 'gemini' && resumeSessionId
           ? { providerThreadId: resumeSessionId }
           : {}),
-        ...(composedPayload.providerReroute ? { providerReroute: composedPayload.providerReroute } : {}),
+        ...(composedPayload.providerReroute
+          ? { providerReroute: composedPayload.providerReroute }
+          : {}),
         ...(runWorktree ? { geminiWorktree: runWorktree } : {}),
         ...(runDiffWorkspacePath ? { effectiveWorkspacePath: runDiffWorkspacePath } : {}),
         ...(runDiffUnavailable ? { diffUnavailableReason: WORKTREE_DIFF_UNAVAILABLE_TEXT } : {}),
@@ -14677,32 +15248,6 @@ function App(): React.JSX.Element {
         return prev.map((chat) => (chat.appChatId === runChatId ? chatToUpdate : chat))
       })
       window.api.saveChat(chatToUpdate)
-      appendDurableRunEvent({
-        runId: currentRunId,
-        chatId: runChatId,
-        workspaceId: isGlobalRun ? undefined : chatToUpdate.workspaceId,
-        workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-        provider: effectiveRunProvider,
-        kind: 'lifecycle',
-        phase: 'control',
-        source: 'renderer',
-        summary: `Run requested for ${getProviderLabel(effectiveRunProvider)}`,
-        payload: {
-          promptMessageId,
-          requestedModel: modelToPass,
-          approvalMode: modeToPass,
-          workflowMode: workflowModeToPass || null,
-          contextTurns: contextTurnsForRun,
-          workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-          effectiveWorkspacePath: runDiffWorkspacePath,
-          diffUnavailable: runDiffUnavailable,
-          scheduledTaskId: request.scheduledTaskId || null,
-          runtimeProfileId: request.runtimeProfileId || null,
-          handoffSourceRunId: request.handoffSourceRunId || null,
-          providerReroute: composedPayload.providerReroute || null
-        }
-      })
-
       const promptLogContent =
         discordContextReads.length > 0
           ? `User prompt (pre-composition): ${displayFinalPrompt}\n\n[${discordContextReads.length} Discord context snapshot(s) supplied to provider; run-only Discord message content omitted from Inspector log.]`
@@ -14761,80 +15306,51 @@ function App(): React.JSX.Element {
 
       const isVisibleRunChat = () => currentChatIdRef.current === runChatId
       const runContext = {} as ActiveRunContext
-      const durableKindForAdapterEvent = (event: NormalizedEvent): RunEventInput['kind'] => {
-        if (event.type === 'run_item_event') return 'timeline'
-        if (event.type === 'tool_event') return 'tool'
-        if (event.type === 'assistant_message_complete') return 'final_message'
-        if (event.type === 'run_started' || event.type === 'run_finished') return 'lifecycle'
-        return 'timeline'
-      }
-      const durableSummaryForAdapterEvent = (event: NormalizedEvent): string => {
-        if (event.type === 'run_item_event') return `Run item event: ${event.event.kind}`
-        if (event.type === 'tool_event')
-          return `Tool ${event.isResult ? 'result' : 'event'}: ${event.name || event.data?.tool_name || event.data?.toolName || 'unknown'}`
-        if (event.type === 'assistant_message_complete') return 'Assistant final message'
-        if (event.type === 'assistant_message_delta') return 'Assistant message delta'
-        if (event.type === 'assistant_media_refs')
-          return `Assistant media refs: ${event.mediaRefs.length}`
-        if (event.type === 'run_started')
-          return `Provider run started${event.model ? `: ${event.model}` : ''}`
-        if (event.type === 'run_finished')
-          return `Provider run finished: ${event.status || 'unknown'}`
-        if (event.type === 'raw_event')
-          return `Raw event${event.data?.type ? `: ${event.data.type}` : ''}`
-        if (event.type === 'malformed_json') return 'Malformed provider JSON'
-        if (event.type === 'error') return event.message || 'Provider error'
-        return event.type
-      }
-      const durablePayloadForAdapterEvent = (event: NormalizedEvent): unknown => {
-        if (event.type === 'run_item_event') {
-          return { runItemEvent: event.event }
-        }
-        if (event.type === 'raw_event') {
-          return {
-            type: event.data?.type,
-            preview: redactLog(JSON.stringify(event.data, null, 2))
-          }
-        }
-        if (event.type === 'malformed_json') {
-          return {
-            text: redactLog(event.text)
-          }
-        }
-        return event
-      }
       const providerModelMetadataForAssistantDelta = (
         updated: ChatRecord,
         model?: string,
         modelLabel?: string
       ) => {
-        if (effectiveRunProvider !== 'ollama') return undefined
-        const resolvedModel =
-          model ||
-          updated.runs?.[updated.runs.length - 1]?.actualModel ||
-          updated.runs?.[updated.runs.length - 1]?.requestedModel ||
-          ''
-        const resolvedLabel = modelLabel || humaniseModelId('ollama', resolvedModel)
-        if (!resolvedModel && !resolvedLabel) return undefined
+        const currentRun =
+          updated.runs?.find((run) => run.runId === currentRunId) ||
+          updated.runs?.[updated.runs.length - 1]
+        const resolvedModel = model || currentRun?.actualModel || currentRun?.requestedModel || ''
+        const resolvedLabel = modelLabel || humaniseModelId(effectiveRunProvider, resolvedModel)
+        const reasoningEffort =
+          effectiveRunProvider === 'codex'
+            ? request.codexReasoningEffort
+            : effectiveRunProvider === 'claude'
+              ? request.claudeReasoningEffort
+              : effectiveRunProvider === 'kimi'
+                ? request.kimiReasoningEffort
+                : effectiveRunProvider === 'grok'
+                  ? request.grokReasoningEffort
+                  : effectiveRunProvider === 'cursor'
+                    ? request.cursorReasoningEffort
+                    : effectiveRunProvider === 'ollama'
+                      ? request.ollamaReasoningEffort
+                      : effectiveRunProvider === 'pi'
+                        ? request.piReasoningEffort
+                        : effectiveRunProvider === 'mistral'
+                          ? request.mistralReasoningEffort
+                          : effectiveRunProvider === 'muse'
+                            ? request.museReasoningEffort
+                            : effectiveRunProvider === 'antigravity'
+                              ? request.antigravityReasoningEffort
+                              : effectiveRunProvider === 'devin'
+                                ? request.devinReasoningEffort
+                                : undefined
         return {
+          assistantProvider: effectiveRunProvider,
           ...(resolvedModel ? { providerModel: resolvedModel } : {}),
-          ...(resolvedLabel ? { providerModelLabel: resolvedLabel } : {})
+          ...(resolvedLabel ? { providerModelLabel: resolvedLabel } : {}),
+          ...(reasoningEffort ? { assistantReasoningEffort: reasoningEffort } : {}),
+          ...(effectiveRunProvider === 'kimi' && typeof request.kimiThinkingEnabled === 'boolean'
+            ? { assistantThinkingEnabled: request.kimiThinkingEnabled }
+            : {})
         }
       }
       const adapter = new GeminiStreamAdapter((event: NormalizedEvent) => {
-        appendDurableRunEvent({
-          runId: currentRunId,
-          chatId: runChatId,
-          workspaceId: isGlobalRun ? undefined : chatToUpdate.workspaceId,
-          workspacePath: isGlobalRun ? undefined : runWorkspace!.path,
-          provider: effectiveRunProvider,
-          kind: durableKindForAdapterEvent(event),
-          phase: 'normalized',
-          source: 'renderer',
-          summary: durableSummaryForAdapterEvent(event),
-          payload: durablePayloadForAdapterEvent(event)
-        })
-
         if (event.type === 'run_item_event') {
           const itemEvent = event.event
           runStreamMetricsByRunIdRef.current.set(
@@ -14847,31 +15363,35 @@ function App(): React.JSX.Element {
           )
           const sidecarProjection = projectRunItemAssistantDelta(itemEvent)
           if (sidecarProjection && sidecarProjection.chatId === runChatId) {
-            updateChatById(runChatId, (source) => {
-              // Same-reference returns are the no-op signal: no flush, no
-              // saveChat re-arm. Never spread before these guards.
-              if (source.chatKind === 'ensemble') return source
-              if (steerSuppressionChatIdsRef.current.has(runChatId)) return source
-              const updated = { ...source }
-              if (isVisibleRunChat()) setIsThinking(false)
-              const providerModelMetadata = providerModelMetadataForAssistantDelta(
-                updated,
-                itemEvent.kind === 'item/delta' ? itemEvent.model : undefined,
-                itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
-              )
-              const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
-              if (!projection) return source
-              updated.messages = applyAssistantDelta(updated.messages, projection.input, {
-                createMessageId,
-                now: () => new Date().toISOString()
-              })
-              recordPendingStreamFlush(
-                projection.runId,
-                projection.itemId,
-                projection.input.incoming.length
-              )
-              return updated
-            }, { coalesce: true })
+            updateChatById(
+              runChatId,
+              (source) => {
+                // Same-reference returns are the no-op signal: no flush, no
+                // saveChat re-arm. Never spread before these guards.
+                if (source.chatKind === 'ensemble') return source
+                if (steerSuppressionChatIdsRef.current.has(runChatId)) return source
+                const updated = { ...source }
+                if (isVisibleRunChat()) setIsThinking(false)
+                const providerModelMetadata = providerModelMetadataForAssistantDelta(
+                  updated,
+                  itemEvent.kind === 'item/delta' ? itemEvent.model : undefined,
+                  itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
+                )
+                const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
+                if (!projection) return source
+                updated.messages = applyAssistantDelta(updated.messages, projection.input, {
+                  createMessageId,
+                  now: () => new Date().toISOString()
+                })
+                recordPendingStreamFlush(
+                  projection.runId,
+                  projection.itemId,
+                  projection.input.incoming.length
+                )
+                return updated
+              },
+              { coalesce: true, persistence: 'transcript-tail' }
+            )
           }
           const toolProjections = projectRunItemToolEvents(itemEvent, effectiveRunProvider).filter(
             (projection) => projection.chatId === runChatId
@@ -14882,48 +15402,75 @@ function App(): React.JSX.Element {
                 runContext.toolCallsCount += 1
               }
             })
-            updateChatById(runChatId, (source) => {
-              // Same-reference return = no-op (no flush, no saveChat re-arm);
-              // ensemble transcripts are orchestrator-canonical.
-              if (source.chatKind === 'ensemble') return source
-              const updated = { ...source }
-              // The assistant-delta handler hides the Working indicator while
-              // the bubble streams; tool traffic after the bubble seals means
-              // the run is still live, so re-arm it or the transcript shows
-              // no indicator at all for the rest of the tool phase.
-              if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
-                setIsThinking(true)
-              }
-              let nextMessages = updated.messages
-              for (const projection of toolProjections) {
-                const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
-                  createMessageId,
-                  provider: effectiveRunProvider,
-                  runId: currentRunId
-                })
-                nextMessages = reduction.messages
-                if (
-                  isVisibleRunChat() &&
-                  !runContext.diffUnavailable &&
-                  reduction.latestToolActivity &&
-                  reduction.isResult
-                ) {
-                  upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+            updateChatById(
+              runChatId,
+              (source) => {
+                // Same-reference return = no-op (no flush, no saveChat re-arm);
+                // ensemble transcripts are orchestrator-canonical.
+                if (source.chatKind === 'ensemble') return source
+                const updated = { ...source }
+                // The assistant-delta handler hides the Working indicator while
+                // the bubble streams; tool traffic after the bubble seals means
+                // the run is still live, so re-arm it or the transcript shows
+                // no indicator at all for the rest of the tool phase.
+                if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+                  setIsThinking(true)
                 }
-              }
-              updated.messages = nextMessages
-              return updated
-            }, { coalesce: true })
+                let nextMessages = updated.messages
+                // Same wire id the assistant bubbles are stamped with, so an
+                // activity row brands itself instead of depending on a run
+                // lookup. Hoisted: it is per-record, not per-projection.
+                const { providerModel, providerModelLabel } =
+                  providerModelMetadataForAssistantDelta(updated)
+                for (const projection of toolProjections) {
+                  const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
+                    createMessageId,
+                    provider: effectiveRunProvider,
+                    runId: currentRunId,
+                    model: providerModel,
+                    modelLabel: providerModelLabel
+                  })
+                  nextMessages = reduction.messages
+                  if (
+                    isVisibleRunChat() &&
+                    !runContext.diffUnavailable &&
+                    reduction.latestToolActivity &&
+                    reduction.isResult
+                  ) {
+                    upsertRunDiffFromTool(
+                      runChatId,
+                      reduction.latestToolActivity,
+                      runContext.workspacePath
+                    )
+                  }
+                }
+                updated.messages = nextMessages
+                return updated
+              },
+              { coalesce: true }
+            )
           }
           return
         }
 
         if (event.type === 'raw_event') {
-          // Truncate pathological string fields (100KB+ cumulative thinking
-          // re-sends) BEFORE the pretty stringify + redact pass — the raw
-          // panel keeps head+tail with an elision marker, and the per-line
-          // cost stops growing with accumulated trace length.
-          const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
+          // TaskWraith's own provider notices (Kimi runtime admission, the
+          // Kimi/Pi compatibility filter) no longer get a transcript card, and
+          // the deferred entry below is an unreadable JSON dump until something
+          // materializes it. Emit an eager, prefixed line so the Inspector has
+          // one shape to find — byte-identical to the run-event summary main
+          // persists for the same payload, so a rehydrated ring reads the same.
+          const diagnosticNotice = readProviderDiagnosticNotice(event.data)
+          if (diagnosticNotice) {
+            appendThreadRawLog(runChatId, {
+              type: 'info',
+              content: formatProviderDiagnosticNotice(diagnosticNotice)
+            })
+          }
+          // Keep the parsed payload unformatted in the bounded ring. Recursive
+          // truncation, pretty-printing and redaction happen only when a
+          // visible Raw Events/terminal consumer asks for this entry.
+          const deferredLog = deferredRawLogEntry('stdout', event.data)
           // This lane is heuristic text sniffing over EVERY raw event: any
           // tool output that merely contained "access denied" / "needs
           // access to" popped the attachment modal — Full Access runs
@@ -14962,9 +15509,11 @@ function App(): React.JSX.Element {
               : typeof rawEventRecord?.code === 'number'
                 ? rawEventRecord.code
                 : undefined
-          const exitMatch = isExitRawEvent ? redacted.match(/Process exited with code\s+(\d+)/i) : null
-          const exitCode =
-            rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
+          const exitMatch =
+            isExitRawEvent && rawExitCode === undefined
+              ? rawLogEntryContent(deferredLog).match(/Process exited with code\s+(\d+)/i)
+              : null
+          const exitCode = rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
           if (isExitRawEvent && Number.isFinite(exitCode)) {
             const suppressRawCompletionNotice =
               steerSuppressedSummaryRunIdsRef.current.has(currentRunId) ||
@@ -14995,13 +15544,14 @@ function App(): React.JSX.Element {
               'progress',
               'tool_progress'
             ].includes(String(event.data.type || ''))
-          appendThreadRawLog(runChatId, { type: isTool ? 'tool' : 'stdout', content: redacted })
+          deferredLog.type = isTool ? 'tool' : 'stdout'
+          appendThreadRawLog(runChatId, deferredLog)
           return
         }
         if (event.type === 'malformed_json') {
           appendThreadRawLog(runChatId, {
             type: 'stdout',
-            content: redactLog(rawLogPayloadForStringify(event.text) as string)
+            content: redactLog(event.text)
           })
           return
         }
@@ -15065,178 +15615,455 @@ function App(): React.JSX.Element {
 
         let finalizedProviderChangeChat: ChatRecord | null = null
         let finalizedProviderChangeChatId: string | null = null
-        updateChatById(runChatId, (source) => {
-          let updated = { ...source }
+        updateChatById(
+          runChatId,
+          (source) => {
+            let updated = { ...source }
 
-          // Steer suppression: while the user has clicked Steer and the
-          // cancel is in flight, drop in-flight assistant content so the
-          // provider's farewell wrap-up doesn't pollute the transcript
-          // with a mid-flow "final summary." See `handleSteer`.
-          const isSteerSuppressed =
-            (event.type === 'assistant_message_delta' ||
-              event.type === 'assistant_message_complete') &&
-            steerSuppressionChatIdsRef.current.has(runChatId)
-          if (isSteerSuppressed) {
-            // Same-reference return = no-op: no flush, no saveChat re-arm.
-            return source
-          }
-
-          if (event.type === 'user_message') {
-            // Handled manually before run — nothing changes here.
-            return source
-          } else if (event.type === 'assistant_message_delta') {
-            // Ensemble transcripts are materialised by EnsembleOrchestrator
-            // (`flushRun` → chat-updated). Provider compat lines still reach
-            // the renderer, but merging them here races the orchestrator and
-            // can stamp Ollama `providerModel` metadata onto the wrong
-            // assistant bubble (backward-scan finds another participant's
-            // message). Skip transcript mutation; orchestrator is canonical.
-            // Also leave `isThinking` alone — compat deltas are noise for
-            // ensemble rounds and were clearing the indicator until the next
-            // user turn. Same-reference return = no flush, no saveChat re-arm.
-            if (updated.chatKind === 'ensemble') {
+            // Steer suppression: while the user has clicked Steer and the
+            // cancel is in flight, drop in-flight assistant content so the
+            // provider's farewell wrap-up doesn't pollute the transcript
+            // with a mid-flow "final summary." See `handleSteer`.
+            const isSteerSuppressed =
+              (event.type === 'assistant_message_delta' ||
+                event.type === 'assistant_message_complete') &&
+              steerSuppressionChatIdsRef.current.has(runChatId)
+            if (isSteerSuppressed) {
+              // Same-reference return = no-op: no flush, no saveChat re-arm.
               return source
             }
-            if (isVisibleRunChat()) setIsThinking(false)
-            // Interleaving-preserving routing. A content delta continues
-            // the live bubble ONLY while the trailing message is still an
-            // assistant; once a tool burst is the trailing message the text
-            // segment is sealed and the next delta opens a NEW bubble AFTER
-            // the burst. This mirrors the iOS stream (af91f0be — "seal a
-            // text segment at every tool boundary") and the main bridge
-            // transcript (`appendBridgeRunText`). The previous code scanned
-            // backward PAST tool messages and merged every later delta into
-            // the first bubble of the turn, which pulled prose up out of its
-            // position and left the tail a tool message — so every tool
-            // burst coalesced into one ActivityStack rendered above the text.
-            const incomingItemId = (event as { itemId?: unknown }).itemId
-            const incomingItemIdStr =
-              typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
-            // Ollama stamps the streaming bubble with its provider model so the
-            // transcript can show which local model produced the text.
-            const providerModelMetadata = providerModelMetadataForAssistantDelta(
-              updated,
-              typeof event.model === 'string' && event.model ? event.model : undefined,
-              typeof event.modelLabel === 'string' && event.modelLabel ? event.modelLabel : undefined
-            )
-            // Interleaving-preserving routing, idempotent increment-vs-
-            // restatement merge, and Codex item separators all live in
-            // lib/applyAssistantDelta (pure + unit-tested). It returns a new
-            // messages array; the ref write-back happens in updateChatById.
-            updated.messages = applyAssistantDelta(
-              updated.messages,
-              {
-                incoming: event.content,
-                runId: currentRunId,
-                cumulative: event.cumulative === true,
-                itemId: incomingItemIdStr,
-                providerModelMetadata
-              },
-              { createMessageId, now: () => new Date().toISOString() }
-            )
-            if (currentRunId && event.content) {
-              recordPendingStreamFlush(currentRunId, incomingItemIdStr, event.content.length)
-            }
-          } else if (event.type === 'assistant_message_complete') {
-            if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
-            const lastRun = updated.runs?.[updated.runs.length - 1]
-            const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
-            const isPlanMode =
-              lastRun?.approvalMode === 'plan' && lastWorkflowMode === 'plan'
-            const parsedChoice = parsePlanModeChoice(event.content)
-            // The complete event carries the FULL turn, so treat it as a
-            // cumulative restatement: it may reach back across a trailing
-            // tool burst to replace its own bubble in place. Without this an
-            // interleaved turn (text → tool burst → complete) would append a
-            // duplicate full-turn bubble below the tools.
-            const completeTarget = resolveAssistantDeltaTarget(updated.messages, {
-              incoming: event.content,
-              cumulative: true,
-              // A system card (queued-run record, question marker, terminal
-              // compaction card) landing after the last delta must not hide
-              // the streamed bubbles from the dedupe — without this the full
-              // turn re-appends below the card.
-              spanTrailingSystemCards: true,
-              // A mid-run steering row is a transcript boundary, not a
-              // provider-turn boundary. Reconcile the final envelope across
-              // it without duplicating pre-interjection prose below it.
-              spanMidRunSteeringMessages: true
-            })
-            // The complete event restates the FULL turn. A `merge`/`replaceText`
-            // targets an existing bubble; `skip` means the streamed deltas
-            // already rendered it (don't duplicate); `appendText`/`append` open
-            // a fresh post-tool bubble with only the tail / the content.
-            const completeTargetIdx =
-              completeTarget.action === 'merge' || completeTarget.action === 'replaceText'
-                ? completeTarget.index
-                : -1
-            const completeTargetMsg =
-              completeTargetIdx >= 0 ? updated.messages[completeTargetIdx] : null
-            // assistantMessageId anchors the plan-mode choice below — reuse the
-            // targeted bubble's id, else the trailing assistant's, else a new id.
-            const trailingAssistantForId =
-              updated.messages.length > 0 &&
-              updated.messages[updated.messages.length - 1].role === 'assistant'
-                ? updated.messages[updated.messages.length - 1]
-                : null
-            const newCompleteMessageId = createMessageId()
-            const assistantMessageId =
-              completeTargetMsg?.id ?? trailingAssistantForId?.id ?? newCompleteMessageId
 
-            if (updated.chatKind !== 'ensemble') {
-              if (completeTarget.action === 'skip') {
-                // Already rendered by the streamed deltas — no-op.
-              } else if (
-                (completeTarget.action === 'merge' || completeTarget.action === 'replaceText') &&
-                completeTargetMsg
-              ) {
-                const nextContent =
-                  completeTarget.action === 'replaceText' ? completeTarget.text : event.content
-                updated.messages = [
-                  ...updated.messages.slice(0, completeTargetIdx),
-                  { ...completeTargetMsg, content: nextContent, runId: completeTargetMsg.runId ?? currentRunId },
-                  ...updated.messages.slice(completeTargetIdx + 1)
-                ]
-              } else {
-                const content =
-                  completeTarget.action === 'appendText' ? completeTarget.text : event.content
-                updated.messages = [
-                  ...updated.messages,
-                  {
-                    id: newCompleteMessageId,
-                    role: 'assistant',
-                    content,
-                    runId: currentRunId,
-                    timestamp: new Date().toISOString()
-                  }
-                ]
+            if (event.type === 'user_message') {
+              // Handled manually before run — nothing changes here.
+              return source
+            } else if (event.type === 'assistant_message_delta') {
+              // Ensemble transcripts are materialised by EnsembleOrchestrator
+              // (`flushRun` → chat-updated). Provider compat lines still reach
+              // the renderer, but merging them here races the orchestrator and
+              // can stamp Ollama `providerModel` metadata onto the wrong
+              // assistant bubble (backward-scan finds another participant's
+              // message). Skip transcript mutation; orchestrator is canonical.
+              // Also leave `isThinking` alone — compat deltas are noise for
+              // ensemble rounds and were clearing the indicator until the next
+              // user turn. Same-reference return = no flush, no saveChat re-arm.
+              if (updated.chatKind === 'ensemble') {
+                return source
               }
-            }
-            const resetHints = extractResetHintsFromText(event.content)
-            for (const hint of resetHints) {
-              const key = normalizeModelName(hint.model)
-              const existing = runContext.usageResetHints.get(key) || {}
-              runContext.usageResetHints.set(key, mergeUsageReset(existing, hint))
-            }
-            if (resetHints.length > 0) {
-              Promise.all(
-                resetHints.map((hint) =>
-                  window.api.recordUsage({
-                    provider: effectiveRunProvider,
-                    workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
-                    chatId: updated.appChatId,
-                    runId: currentRunId,
-                    usageKind: 'reset_hint',
-                    model: hint.model,
-                    inputTokens: 0,
-                    outputTokens: 0,
-                    totalTokens: 0,
-                    resetAt: hint.resetAt,
-                    resetText: hint.resetText,
-                    durationMs: 0
-                  })
+              if (isVisibleRunChat()) setIsThinking(false)
+              // Interleaving-preserving routing. A content delta continues
+              // the live bubble ONLY while the trailing message is still an
+              // assistant; once a tool burst is the trailing message the text
+              // segment is sealed and the next delta opens a NEW bubble AFTER
+              // the burst. This mirrors the iOS stream (af91f0be — "seal a
+              // text segment at every tool boundary") and the main bridge
+              // transcript (`appendBridgeRunText`). The previous code scanned
+              // backward PAST tool messages and merged every later delta into
+              // the first bubble of the turn, which pulled prose up out of its
+              // position and left the tail a tool message — so every tool
+              // burst coalesced into one ActivityStack rendered above the text.
+              const incomingItemId = (event as { itemId?: unknown }).itemId
+              const incomingItemIdStr =
+                typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
+              // Ollama stamps the streaming bubble with its provider model so the
+              // transcript can show which local model produced the text.
+              const providerModelMetadata = providerModelMetadataForAssistantDelta(
+                updated,
+                typeof event.model === 'string' && event.model ? event.model : undefined,
+                typeof event.modelLabel === 'string' && event.modelLabel
+                  ? event.modelLabel
+                  : undefined
+              )
+              // Interleaving-preserving routing, idempotent increment-vs-
+              // restatement merge, and Codex item separators all live in
+              // lib/applyAssistantDelta (pure + unit-tested). It returns a new
+              // messages array; the ref write-back happens in updateChatById.
+              updated.messages = applyAssistantDelta(
+                updated.messages,
+                {
+                  incoming: event.content,
+                  runId: currentRunId,
+                  cumulative: event.cumulative === true,
+                  itemId: incomingItemIdStr,
+                  providerModelMetadata
+                },
+                { createMessageId, now: () => new Date().toISOString() }
+              )
+              if (currentRunId && event.content) {
+                recordPendingStreamFlush(currentRunId, incomingItemIdStr, event.content.length)
+              }
+            } else if (event.type === 'assistant_message_complete') {
+              if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
+              const providerModelMetadata = providerModelMetadataForAssistantDelta(updated)
+              const lastRun = updated.runs?.[updated.runs.length - 1]
+              const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
+              const isPlanMode = lastRun?.approvalMode === 'plan' && lastWorkflowMode === 'plan'
+              const parsedChoice = parsePlanModeChoice(event.content)
+              // The complete event carries the FULL turn, so treat it as a
+              // cumulative restatement: it may reach back across a trailing
+              // tool burst to replace its own bubble in place. Without this an
+              // interleaved turn (text → tool burst → complete) would append a
+              // duplicate full-turn bubble below the tools.
+              const completeTarget = resolveAssistantDeltaTarget(updated.messages, {
+                incoming: event.content,
+                cumulative: true,
+                // A system card (queued-run record, question marker, terminal
+                // compaction card) landing after the last delta must not hide
+                // the streamed bubbles from the dedupe — without this the full
+                // turn re-appends below the card.
+                spanTrailingSystemCards: true,
+                // A mid-run steering row is a transcript boundary, not a
+                // provider-turn boundary. Reconcile the final envelope across
+                // it without duplicating pre-interjection prose below it.
+                spanMidRunSteeringMessages: true
+              })
+              // The complete event restates the FULL turn. A `merge`/`replaceText`
+              // targets an existing bubble; `skip` means the streamed deltas
+              // already rendered it (don't duplicate); `appendText`/`append` open
+              // a fresh post-tool bubble with only the tail / the content.
+              const completeTargetIdx =
+                completeTarget.action === 'merge' || completeTarget.action === 'replaceText'
+                  ? completeTarget.index
+                  : -1
+              const completeTargetMsg =
+                completeTargetIdx >= 0 ? updated.messages[completeTargetIdx] : null
+              // assistantMessageId anchors the plan-mode choice below — reuse the
+              // targeted bubble's id, else the trailing assistant's, else a new id.
+              const trailingAssistantForId =
+                updated.messages.length > 0 &&
+                updated.messages[updated.messages.length - 1].role === 'assistant'
+                  ? updated.messages[updated.messages.length - 1]
+                  : null
+              const newCompleteMessageId = createMessageId()
+              const assistantMessageId =
+                completeTargetMsg?.id ?? trailingAssistantForId?.id ?? newCompleteMessageId
+
+              if (updated.chatKind !== 'ensemble') {
+                if (completeTarget.action === 'skip') {
+                  // Already rendered by the streamed deltas — no-op.
+                } else if (
+                  (completeTarget.action === 'merge' || completeTarget.action === 'replaceText') &&
+                  completeTargetMsg
+                ) {
+                  const nextContent =
+                    completeTarget.action === 'replaceText' ? completeTarget.text : event.content
+                  updated.messages = [
+                    ...updated.messages.slice(0, completeTargetIdx),
+                    {
+                      ...completeTargetMsg,
+                      content: nextContent,
+                      runId: completeTargetMsg.runId ?? currentRunId,
+                      metadata: {
+                        ...(completeTargetMsg.metadata || {}),
+                        ...providerModelMetadata
+                      }
+                    },
+                    ...updated.messages.slice(completeTargetIdx + 1)
+                  ]
+                } else {
+                  const content =
+                    completeTarget.action === 'appendText' ? completeTarget.text : event.content
+                  updated.messages = [
+                    ...updated.messages,
+                    {
+                      id: newCompleteMessageId,
+                      role: 'assistant',
+                      content,
+                      runId: currentRunId,
+                      timestamp: new Date().toISOString(),
+                      metadata: providerModelMetadata
+                    }
+                  ]
+                }
+              }
+              const resetHints = extractResetHintsFromText(event.content)
+              for (const hint of resetHints) {
+                const key = normalizeModelName(hint.model)
+                const existing = runContext.usageResetHints.get(key) || {}
+                runContext.usageResetHints.set(key, mergeUsageReset(existing, hint))
+              }
+              if (resetHints.length > 0) {
+                Promise.all(
+                  resetHints.map((hint) =>
+                    window.api.recordUsage({
+                      provider: effectiveRunProvider,
+                      workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
+                      chatId: updated.appChatId,
+                      runId: currentRunId,
+                      usageKind: 'reset_hint',
+                      model: hint.model,
+                      inputTokens: 0,
+                      outputTokens: 0,
+                      totalTokens: 0,
+                      resetAt: hint.resetAt,
+                      resetText: hint.resetText,
+                      durationMs: 0
+                    })
+                  )
+                ).then(() => {
+                  const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
+                  if (
+                    usageWorkspaceId &&
+                    (currentWorkspaceIdRef.current === usageWorkspaceId || isGlobalChat(updated))
+                  ) {
+                    void refreshUsageSummary(usageWorkspaceId)
+                  }
+                })
+              }
+              if (isVisibleRunChat()) {
+                // Plan mode surfaces ONE card per turn: a choice (question +
+                // options) takes precedence; otherwise a proposed plan (an
+                // explicit <proposed_plan> block in any mode, or a substantive
+                // plan-mode turn) gets the approve/implement card.
+                // Solo plan-mode runs still parse <proposed_plan> inline to derive
+                // title/body. Ensemble transcripts are authored by the
+                // orchestrator, so they hydrate pending modal state from existing
+                // metadata instead.
+                const parsedPlan =
+                  parsedChoice || updated.chatKind === 'ensemble'
+                    ? null
+                    : parseProposedPlan(event.content, isPlanMode)
+                setPendingPlanChoice(
+                  isPlanMode && parsedChoice
+                    ? {
+                        messageId: assistantMessageId,
+                        question: parsedChoice.question,
+                        options: parsedChoice.options
+                      }
+                    : null
                 )
-              ).then(() => {
+                if (parsedPlan) {
+                  // Persist the plan on its message so the card survives reload +
+                  // the decision, and strip the raw <proposed_plan> block so it
+                  // doesn't double-render as prose beside the card. Anchor to the
+                  // message that actually holds the plan: the resolved id when it
+                  // exists, else the last assistant bubble — `assistantMessageId`
+                  // can be a phantom id on the skip branch when the turn ends on a
+                  // tool burst (the plan streamed into the pre-burst bubble).
+                  const planTargetId = updated.messages.some((m) => m.id === assistantMessageId)
+                    ? assistantMessageId
+                    : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
+                  updated.messages = updated.messages.map((m) =>
+                    m.id === planTargetId
+                      ? {
+                          ...m,
+                          content: stripProposedPlanBlock(m.content),
+                          metadata: {
+                            ...(m.metadata || {}),
+                            proposedPlan: {
+                              ...(m.metadata?.proposedPlan || {}),
+                              title: parsedPlan.title,
+                              body: parsedPlan.body,
+                              status: 'pending' as const
+                            }
+                          }
+                        }
+                      : m
+                  )
+                  if (planTargetId) {
+                    setPendingProposedPlan({
+                      messageId: planTargetId,
+                      title: parsedPlan.title,
+                      body: parsedPlan.body,
+                      artifactPath: updated.messages.find((message) => message.id === planTargetId)
+                        ?.metadata?.proposedPlan?.artifactPath
+                    })
+                  }
+                } else if (updated.chatKind === 'ensemble') {
+                  const pendingEnsembleProposedPlan = [...updated.messages]
+                    .reverse()
+                    .find((message) => {
+                      const proposedPlan = message.metadata?.proposedPlan
+                      if (!proposedPlan || proposedPlan.status !== 'pending') return false
+
+                      const messageParticipantId =
+                        typeof message.metadata?.ensembleParticipantId === 'string'
+                          ? message.metadata?.ensembleParticipantId
+                          : undefined
+
+                      return shouldSurfaceProposedPlanCard({
+                        chatKind: 'ensemble',
+                        bossmanParticipantId: updated.ensemble?.bossmanParticipantId,
+                        fallbackOwnerParticipantId: undefined,
+                        messageParticipantId,
+                        isPlanMode,
+                        hasExplicitProposedPlanBlock: true
+                      })
+                    })
+
+                  if (pendingEnsembleProposedPlan?.metadata?.proposedPlan) {
+                    setPendingProposedPlan({
+                      messageId: pendingEnsembleProposedPlan.id,
+                      title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
+                      body: pendingEnsembleProposedPlan.metadata.proposedPlan.body,
+                      artifactPath: pendingEnsembleProposedPlan.metadata.proposedPlan.artifactPath
+                    })
+                  }
+                }
+              }
+            } else if (event.type === 'run_started') {
+              const sessionId = normalizeGeminiResumeTarget(event.session_id)
+              if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
+                if (effectiveRunProvider !== 'gemini') {
+                  updated.linkedProviderSessionId = sessionId
+                  if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
+                    updated.providerMetadata = {
+                      ...(updated.providerMetadata || {}),
+                      kimiAcpNativeSession: true,
+                      ...(event.kimiAcpPostureVersion
+                        ? { kimiAcpPostureVersion: event.kimiAcpPostureVersion }
+                        : {})
+                    }
+                  }
+                } else {
+                  updated.linkedGeminiSessionId = sessionId
+                }
+              }
+              const runs = [...(updated.runs || [])]
+              const runIndex = findChatRunIndex(runs, currentRunId)
+              if (runIndex >= 0) {
+                const targetRun = runs[runIndex]
+                const nextModel = typeof event.model === 'string' ? event.model.trim() : ''
+                // Model-less follow-up inits (Muse opaque exec) must not clobber a
+                // real requested/actual model with '' or the old 'unknown' sentinel.
+                const keepModel =
+                  !nextModel || nextModel.toLowerCase() === 'unknown'
+                    ? targetRun.actualModel
+                    : nextModel
+                runs[runIndex] = {
+                  ...targetRun,
+                  actualModel: keepModel,
+                  ...(effectiveRunProvider !== 'gemini'
+                    ? { providerThreadId: sessionId || targetRun.providerThreadId }
+                    : {})
+                }
+              }
+              updated.runs = runs
+            } else if (event.type === 'run_finished') {
+              if (promptDeliveryReceiptsPersistableStatus(event.status)) {
+                const promptDeliveryPatch = promptDeliveryReceiptMetadataPatch(
+                  (composerMetadata as { promptDeliveryReceipts?: PromptDeliveryReceipts })
+                    .promptDeliveryReceipts,
+                  effectiveRunProvider
+                )
+                if (Object.keys(promptDeliveryPatch).length > 0) {
+                  updated.providerMetadata = {
+                    ...(updated.providerMetadata || {}),
+                    ...promptDeliveryPatch
+                  }
+                }
+              }
+              if (isVisibleRunChat()) setIsThinking(false)
+              const runs = [...(updated.runs || [])]
+              const renderMetrics = drainStreamRenderMetrics(currentRunId)
+              const streamMetrics = renderMetrics
+                ? mergeRunStreamRenderMetrics(
+                    runStreamMetricsByRunIdRef.current.get(currentRunId),
+                    currentRunId,
+                    renderMetrics,
+                    Date.now()
+                  )
+                : runStreamMetricsByRunIdRef.current.get(currentRunId)
+              // Terminal: the merged metrics ride the persisted run stats below;
+              // drop the live entry so long sessions don't retain one per run.
+              runStreamMetricsByRunIdRef.current.delete(currentRunId)
+              const finishedStats = streamMetrics
+                ? { ...(event.stats || {}), streamMetrics }
+                : event.stats
+              const finishedSessionId = normalizeGeminiResumeTarget(event.providerThreadId)
+              if (finishedSessionId && effectiveRunProvider !== 'gemini') {
+                updated.linkedProviderSessionId = finishedSessionId
+              }
+              const runIndex = findChatRunIndex(runs, currentRunId)
+              const targetRun = runIndex >= 0 ? runs[runIndex] : undefined
+              const resolvedRunModel =
+                targetRun?.actualModel || targetRun?.requestedModel || 'unknown'
+              const runUsageEntries = extractModelUsageEntriesFromStats(
+                finishedStats || {},
+                resolvedRunModel
+              )
+
+              if (runIndex >= 0 && targetRun) {
+                runs[runIndex] = {
+                  ...targetRun,
+                  status: event.status,
+                  stats: finishedStats,
+                  endedAt: new Date().toISOString(),
+                  ...(finishedSessionId && effectiveRunProvider !== 'gemini'
+                    ? { providerThreadId: finishedSessionId }
+                    : {})
+                }
+              }
+              updated.runs = runs
+              if (updated.chatKind !== 'ensemble') {
+                const nextChat = applyPendingProviderChangeOnFinalize(
+                  applyPendingEnsembleRosterPresetOnRunTerminal(updated, currentRunId)
+                )
+                if (nextChat !== updated) {
+                  updated = nextChat
+                  finalizedProviderChangeChat = nextChat
+                  finalizedProviderChangeChatId = nextChat.appChatId
+                }
+              }
+
+              const runDurationMs = Math.max(
+                0,
+                extractUsageCount(finishedStats, [['duration_ms'], ['durationMs']])
+              )
+
+              const usageAlreadyRecorded = Boolean(finishedStats?._taskwraith_usage_recorded)
+              const usageRecordPromises = usageAlreadyRecorded
+                ? []
+                : runUsageEntries.map((usageEntry) => {
+                    const {
+                      model,
+                      costRateModel,
+                      inputTokens,
+                      outputTokens,
+                      totalTokens,
+                      cacheReadInputTokens,
+                      cacheCreationInputTokens,
+                      inputTokenLimit,
+                      outputTokenLimit,
+                      totalTokenLimit,
+                      resetAt,
+                      resetText,
+                      durationMs: entryDurationMs
+                    } = usageEntry
+                    const resetHint =
+                      runContext.usageResetHints.get(normalizeModelName(model)) || {}
+                    const mergedReset = mergeUsageReset({ resetAt, resetText }, resetHint)
+
+                    return window.api.recordUsage({
+                      provider: effectiveRunProvider,
+                      workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
+                      chatId: updated.appChatId,
+                      runId: currentRunId,
+                      usageKind: 'run',
+                      model,
+                      costRateModel,
+                      inputTokens,
+                      outputTokens,
+                      totalTokens,
+                      cacheReadInputTokens,
+                      cacheCreationInputTokens,
+                      inputTokenLimit,
+                      outputTokenLimit,
+                      totalTokenLimit,
+                      resetAt: mergedReset.resetAt,
+                      resetText: mergedReset.resetText,
+                      durationMs: entryDurationMs ?? runDurationMs,
+                      ...(effectiveRunProvider === 'ollama'
+                        ? ollamaMemoryUsageFields(event.stats)
+                        : {}),
+                      promptText: usagePromptText,
+                      responseText:
+                        updated.messages[updated.messages.length - 1]?.role === 'assistant'
+                          ? updated.messages[updated.messages.length - 1].content
+                          : undefined
+                    })
+                  })
+
+              Promise.all(usageRecordPromises).then(() => {
                 const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
                 if (
                   usageWorkspaceId &&
@@ -15245,365 +16072,130 @@ function App(): React.JSX.Element {
                   void refreshUsageSummary(usageWorkspaceId)
                 }
               })
-            }
-            if (isVisibleRunChat()) {
-              // Plan mode surfaces ONE card per turn: a choice (question +
-              // options) takes precedence; otherwise a proposed plan (an
-              // explicit <proposed_plan> block in any mode, or a substantive
-              // plan-mode turn) gets the approve/implement card.
-              // Solo plan-mode runs still parse <proposed_plan> inline to derive
-              // title/body. Ensemble transcripts are authored by the
-              // orchestrator, so they hydrate pending modal state from existing
-              // metadata instead.
-              const parsedPlan =
-                parsedChoice || updated.chatKind === 'ensemble'
-                  ? null
-                  : parseProposedPlan(event.content, isPlanMode)
-              setPendingPlanChoice(
-                isPlanMode && parsedChoice
-                  ? {
-                      messageId: assistantMessageId,
-                      question: parsedChoice.question,
-                      options: parsedChoice.options
-                    }
-                  : null
-              )
-              if (parsedPlan) {
-                // Persist the plan on its message so the card survives reload +
-                // the decision, and strip the raw <proposed_plan> block so it
-                // doesn't double-render as prose beside the card. Anchor to the
-                // message that actually holds the plan: the resolved id when it
-                // exists, else the last assistant bubble — `assistantMessageId`
-                // can be a phantom id on the skip branch when the turn ends on a
-                // tool burst (the plan streamed into the pre-burst bubble).
-                const planTargetId = updated.messages.some((m) => m.id === assistantMessageId)
-                  ? assistantMessageId
-                  : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
-                updated.messages = updated.messages.map((m) =>
-                  m.id === planTargetId
-                  ? {
-                        ...m,
-                        content: stripProposedPlanBlock(m.content),
-                        metadata: {
-                          ...(m.metadata || {}),
-                          proposedPlan: {
-                            ...(m.metadata?.proposedPlan || {}),
-                            title: parsedPlan.title,
-                            body: parsedPlan.body,
-                            status: 'pending' as const
-                          }
-                        }
-                      }
-                    : m
-                )
-                if (planTargetId) {
-                  setPendingProposedPlan({
-                    messageId: planTargetId,
-                    title: parsedPlan.title,
-                    body: parsedPlan.body,
-                    artifactPath: updated.messages.find((message) => message.id === planTargetId)
-                      ?.metadata?.proposedPlan?.artifactPath
-                  })
-                }
-              } else if (updated.chatKind === 'ensemble') {
-                const pendingEnsembleProposedPlan = [...updated.messages].reverse().find((message) => {
-                  const proposedPlan = message.metadata?.proposedPlan
-                  if (!proposedPlan || proposedPlan.status !== 'pending') return false
-
-                  const messageParticipantId =
-                    typeof message.metadata?.ensembleParticipantId === 'string'
-                      ? message.metadata?.ensembleParticipantId
-                      : undefined
-
-                  return shouldSurfaceProposedPlanCard({
-                    chatKind: 'ensemble',
-                    bossmanParticipantId: updated.ensemble?.bossmanParticipantId,
-                    fallbackOwnerParticipantId: undefined,
-                    messageParticipantId,
-                    isPlanMode,
-                    hasExplicitProposedPlanBlock: true
-                  })
-                })
-
-                if (pendingEnsembleProposedPlan?.metadata?.proposedPlan) {
-                  setPendingProposedPlan({
-                    messageId: pendingEnsembleProposedPlan.id,
-                    title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
-                    body: pendingEnsembleProposedPlan.metadata.proposedPlan.body,
-                    artifactPath: pendingEnsembleProposedPlan.metadata.proposedPlan.artifactPath
-                  })
-                }
+            } else if (event.type === 'tool_event') {
+              // Ensemble tool rows are materialised by EnsembleOrchestrator
+              // (`flushRun` -> chat-updated). The renderer's solo reducer
+              // would append a second local tool message for the same provider
+              // compat event, which is especially visible for ensemble_yield
+              // because yield activities intentionally stay inline.
+              // Same-reference return = no flush, no saveChat re-arm.
+              if (updated.chatKind === 'ensemble') {
+                return source
               }
-            }
-          } else if (event.type === 'run_started') {
-            const sessionId = normalizeGeminiResumeTarget(event.session_id)
-            if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
-              if (effectiveRunProvider !== 'gemini') {
-                updated.linkedProviderSessionId = sessionId
-                if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
-                  updated.providerMetadata = {
-                    ...(updated.providerMetadata || {}),
-                    kimiAcpNativeSession: true,
-                    ...(event.kimiAcpPostureVersion
-                      ? { kimiAcpPostureVersion: event.kimiAcpPostureVersion }
-                      : {})
-                  }
-                }
-              } else {
-                updated.linkedGeminiSessionId = sessionId
+              // Mirrors the run-item lane above: text deltas hide the Working
+              // indicator, so trailing tool activity must re-arm it.
+              if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+                setIsThinking(true)
               }
-            }
-            const runs = [...(updated.runs || [])]
-            const runIndex = findChatRunIndex(runs, currentRunId)
-            if (runIndex >= 0) {
-              const targetRun = runs[runIndex]
-              const nextModel =
-                typeof event.model === 'string' ? event.model.trim() : ''
-              // Model-less follow-up inits (Muse opaque exec) must not clobber a
-              // real requested/actual model with '' or the old 'unknown' sentinel.
-              const keepModel =
-                !nextModel || nextModel.toLowerCase() === 'unknown'
-                  ? targetRun.actualModel
-                  : nextModel
-              runs[runIndex] = {
-                ...targetRun,
-                actualModel: keepModel,
-                ...(effectiveRunProvider !== 'gemini'
-                  ? { providerThreadId: sessionId || targetRun.providerThreadId }
-                  : {})
+              if (isProviderExecutionToolEvent(event)) {
+                runContext.toolCallsCount += 1
               }
-            }
-            updated.runs = runs
-          } else if (event.type === 'run_finished') {
-            if (isVisibleRunChat()) setIsThinking(false)
-            const runs = [...(updated.runs || [])]
-            const renderMetrics = drainStreamRenderMetrics(currentRunId)
-            const streamMetrics = renderMetrics
-              ? mergeRunStreamRenderMetrics(
-                  runStreamMetricsByRunIdRef.current.get(currentRunId),
-                  currentRunId,
-                  renderMetrics,
-                  Date.now()
-                )
-              : runStreamMetricsByRunIdRef.current.get(currentRunId)
-            // Terminal: the merged metrics ride the persisted run stats below;
-            // drop the live entry so long sessions don't retain one per run.
-            runStreamMetricsByRunIdRef.current.delete(currentRunId)
-            const finishedStats = streamMetrics
-              ? { ...(event.stats || {}), streamMetrics }
-              : event.stats
-            const finishedSessionId = normalizeGeminiResumeTarget(event.providerThreadId)
-            if (finishedSessionId && effectiveRunProvider !== 'gemini') {
-              updated.linkedProviderSessionId = finishedSessionId
-            }
-            const runIndex = findChatRunIndex(runs, currentRunId)
-            const targetRun = runIndex >= 0 ? runs[runIndex] : undefined
-            const resolvedRunModel =
-              targetRun?.actualModel || targetRun?.requestedModel || 'unknown'
-            const runUsageEntries = extractModelUsageEntriesFromStats(
-              finishedStats || {},
-              resolvedRunModel
-            )
+              const toolRowModel = providerModelMetadataForAssistantDelta(updated)
+              const reduction = reduceSoloToolEventMessages(updated.messages, event, {
+                createMessageId,
+                provider: effectiveRunProvider,
+                runId: currentRunId,
+                model: toolRowModel.providerModel,
+                modelLabel: toolRowModel.providerModelLabel
+              })
+              updated.messages = reduction.messages
 
-            if (runIndex >= 0 && targetRun) {
-              runs[runIndex] = {
-                ...targetRun,
-                status: event.status,
-                stats: finishedStats,
-                endedAt: new Date().toISOString(),
-                ...(finishedSessionId && effectiveRunProvider !== 'gemini'
-                  ? { providerThreadId: finishedSessionId }
-                  : {})
-              }
-            }
-            updated.runs = runs
-            if (updated.chatKind !== 'ensemble') {
-              const nextChat = applyPendingProviderChangeOnFinalize(
-                applyPendingEnsembleRosterPresetOnRunTerminal(updated, currentRunId)
-              )
-              if (nextChat !== updated) {
-                updated = nextChat
-                finalizedProviderChangeChat = nextChat
-                finalizedProviderChangeChatId = nextChat.appChatId
-              }
-            }
-
-            const runDurationMs = Math.max(
-              0,
-              extractUsageCount(finishedStats, [['duration_ms'], ['durationMs']])
-            )
-
-            const usageAlreadyRecorded = Boolean(finishedStats?._taskwraith_usage_recorded)
-            const usageRecordPromises = usageAlreadyRecorded
-              ? []
-              : runUsageEntries.map((usageEntry) => {
-                  const {
-                    model,
-                    costRateModel,
-                    inputTokens,
-                    outputTokens,
-                    totalTokens,
-                    cacheReadInputTokens,
-                    cacheCreationInputTokens,
-                    inputTokenLimit,
-                    outputTokenLimit,
-                    totalTokenLimit,
-                    resetAt,
-                    resetText,
-                    durationMs: entryDurationMs
-                  } = usageEntry
-                  const resetHint = runContext.usageResetHints.get(normalizeModelName(model)) || {}
-                  const mergedReset = mergeUsageReset({ resetAt, resetText }, resetHint)
-
-                  return window.api.recordUsage({
-                    provider: effectiveRunProvider,
-                    workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
-                    chatId: updated.appChatId,
-                    runId: currentRunId,
-                    usageKind: 'run',
-                    model,
-                    costRateModel,
-                    inputTokens,
-                    outputTokens,
-                    totalTokens,
-                    cacheReadInputTokens,
-                    cacheCreationInputTokens,
-                    inputTokenLimit,
-                    outputTokenLimit,
-                    totalTokenLimit,
-                    resetAt: mergedReset.resetAt,
-                    resetText: mergedReset.resetText,
-                    durationMs: entryDurationMs ?? runDurationMs,
-                    ...(effectiveRunProvider === 'ollama' ? ollamaMemoryUsageFields(event.stats) : {}),
-                    promptText: usagePromptText,
-                    responseText:
-                      updated.messages[updated.messages.length - 1]?.role === 'assistant'
-                        ? updated.messages[updated.messages.length - 1].content
-                        : undefined
-                  })
-                })
-
-            Promise.all(usageRecordPromises).then(() => {
-              const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
               if (
-                usageWorkspaceId &&
-                (currentWorkspaceIdRef.current === usageWorkspaceId || isGlobalChat(updated))
+                isVisibleRunChat() &&
+                !runContext.diffUnavailable &&
+                reduction.latestToolActivity &&
+                reduction.isResult
               ) {
-                void refreshUsageSummary(usageWorkspaceId)
+                upsertRunDiffFromTool(
+                  runChatId,
+                  reduction.latestToolActivity,
+                  runContext.workspacePath
+                )
               }
-            })
-          } else if (event.type === 'tool_event') {
-            // Ensemble tool rows are materialised by EnsembleOrchestrator
-            // (`flushRun` -> chat-updated). The renderer's solo reducer
-            // would append a second local tool message for the same provider
-            // compat event, which is especially visible for ensemble_yield
-            // because yield activities intentionally stay inline.
-            // Same-reference return = no flush, no saveChat re-arm.
-            if (updated.chatKind === 'ensemble') {
-              return source
-            }
-            // Mirrors the run-item lane above: text deltas hide the Working
-            // indicator, so trailing tool activity must re-arm it.
-            if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
-              setIsThinking(true)
-            }
-            if (isProviderExecutionToolEvent(event)) {
-              runContext.toolCallsCount += 1
-            }
-            const reduction = reduceSoloToolEventMessages(updated.messages, event, {
-              createMessageId,
-              provider: effectiveRunProvider,
-              runId: currentRunId
-            })
-            updated.messages = reduction.messages
-
-            if (
-              isVisibleRunChat() &&
-              !runContext.diffUnavailable &&
-              reduction.latestToolActivity &&
-              reduction.isResult
-            ) {
-              upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
-            }
-          } else if (event.type === 'workflow_telemetry') {
-            // Claude-native Workflow live status. Merge onto the originating
-            // `Workflow` tool activity (found by tool_use id anywhere in the
-            // transcript) so the workflow card updates in place; no new tool row.
-            if (event.toolUseId) {
-              updated.messages = mergeWorkflowTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'review_telemetry') {
-            // Codex native-review live status. Merge onto the synthesized
-            // `codex_review` anchor activity so the review card updates in place.
-            if (event.toolUseId) {
-              updated.messages = mergeReviewTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'multi_agent_telemetry') {
-            // Codex native Multi-agent live status. Merge onto the synthesized
-            // `codex_multi_agent` anchor so the orchestration card updates in
-            // place; coordination never becomes a generic tool row.
-            if (event.toolUseId) {
-              updated.messages = mergeMultiAgentTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'compaction_notice') {
-            // Provider context compaction. Persist a system card for terminal
-            // signals; 'started' stays transient (no row). Ensemble transcripts
-            // are orchestrator-canonical — the same compat line reaches the
-            // orchestrator, which appends the card main-side, so appending here
-            // too would double-card (and be clobbered by its saveChat anyway).
-            if (event.kind !== 'started' && updated.chatKind !== 'ensemble') {
-              const cardId = contextCompactionMessageId(
-                event.telemetry,
-                `${currentRunId}-${event.kind}`
-              )
-              if (!updated.messages.some((message) => message.id === cardId)) {
-                updated.messages = [
-                  ...updated.messages,
-                  {
-                    id: cardId,
-                    role: 'system',
-                    content: formatContextCompactionSummary(
-                      { kind: event.kind, telemetry: event.telemetry },
-                      getProviderLabel(
-                        (event.telemetry.provider as ProviderId) || effectiveRunProvider
-                      )
-                    ),
-                    timestamp: new Date().toISOString(),
-                    metadata: {
-                      kind: CONTEXT_COMPACTION_MESSAGE_KIND,
-                      contextCompaction: { kind: event.kind, telemetry: event.telemetry },
-                      provider: event.telemetry.provider || effectiveRunProvider
+            } else if (event.type === 'workflow_telemetry') {
+              // Claude-native Workflow live status. Merge onto the originating
+              // `Workflow` tool activity (found by tool_use id anywhere in the
+              // transcript) so the workflow card updates in place; no new tool row.
+              if (event.toolUseId) {
+                updated.messages = mergeWorkflowTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'review_telemetry') {
+              // Codex native-review live status. Merge onto the synthesized
+              // `codex_review` anchor activity so the review card updates in place.
+              if (event.toolUseId) {
+                updated.messages = mergeReviewTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'multi_agent_telemetry') {
+              // Codex native Multi-agent live status. Merge onto the synthesized
+              // `codex_multi_agent` anchor so the orchestration card updates in
+              // place; coordination never becomes a generic tool row.
+              if (event.toolUseId) {
+                updated.messages = mergeMultiAgentTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'compaction_notice') {
+              // Provider context compaction. Persist a system card for terminal
+              // signals; 'started' stays transient (no row). Ensemble transcripts
+              // are orchestrator-canonical — the same compat line reaches the
+              // orchestrator, which appends the card main-side, so appending here
+              // too would double-card (and be clobbered by its saveChat anyway).
+              if (event.kind !== 'started' && updated.chatKind !== 'ensemble') {
+                const cardId = contextCompactionMessageId(
+                  event.telemetry,
+                  `${currentRunId}-${event.kind}`
+                )
+                if (!updated.messages.some((message) => message.id === cardId)) {
+                  updated.messages = [
+                    ...updated.messages,
+                    {
+                      id: cardId,
+                      role: 'system',
+                      content: formatContextCompactionSummary(
+                        { kind: event.kind, telemetry: event.telemetry },
+                        getProviderLabel(
+                          (event.telemetry.provider as ProviderId) || effectiveRunProvider
+                        )
+                      ),
+                      timestamp: new Date().toISOString(),
+                      metadata: {
+                        kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+                        contextCompaction: { kind: event.kind, telemetry: event.telemetry },
+                        provider: event.telemetry.provider || effectiveRunProvider
+                      }
                     }
-                  }
-                ]
+                  ]
+                }
               }
+            } else if (event.type === 'error') {
+              updated.messages = [
+                ...updated.messages,
+                {
+                  id: createMessageId(),
+                  role: 'error',
+                  content: event.message,
+                  timestamp: new Date().toISOString()
+                }
+              ]
             }
-          } else if (event.type === 'error') {
-            updated.messages = [
-              ...updated.messages,
-              {
-                id: createMessageId(),
-                role: 'error',
-                content: event.message,
-                timestamp: new Date().toISOString()
-              }
-            ]
-          }
 
-          return updated
-        }, { coalesce: event.type === 'assistant_message_delta' })
+            return updated
+          },
+          {
+            coalesce: event.type === 'assistant_message_delta',
+            persistence: event.type === 'assistant_message_delta' ? 'transcript-tail' : undefined
+          }
+        )
         if (
           finalizedProviderChangeChat &&
           currentChatIdRef.current === finalizedProviderChangeChatId
@@ -15628,7 +16220,8 @@ function App(): React.JSX.Element {
         workspacePath: runDiffWorkspacePath || null,
         workspaceId: isGlobalRun ? undefined : runWorkspace!.id,
         worktree: runWorktree,
-        checkpointingEnabled: effectiveRunProvider === 'gemini' ? geminiCheckpointingEnabled : false,
+        checkpointingEnabled:
+          effectiveRunProvider === 'gemini' ? geminiCheckpointingEnabled : false,
         startedAt: runStartedAt,
         diffUnavailable: runDiffUnavailable,
         scheduledTaskId: request.scheduledTaskId || null
@@ -15764,6 +16357,19 @@ function App(): React.JSX.Element {
 
       console.warn('[executeRun] uncaught exception:', error)
       const message = `Run execution failed unexpectedly: ${redactLog(String(error))}`
+      // UNWIND. A throw anywhere between the visibility block and the
+      // provider dispatch lands here with setIsThinking(true) already applied
+      // and runSchedulerBusyRef pinned true, while every clearing call lives
+      // downstream inside the stream-adapter callback that now never fires.
+      // Without this the surface stays on "Working" forever over a thread
+      // that has no run, and the scheduler refuses the next turn. The inner
+      // dispatch catch already unwinds its own context; this is the same duty
+      // for aborts that never reached it. Both calls are idempotent, so this
+      // is safe on the paths that did unwind.
+      if (!dispatchAccepted) {
+        setIsThinking(false)
+        syncRunningState()
+      }
       if (
         currentRunIdForCleanup &&
         !dispatchAccepted &&
@@ -15779,19 +16385,51 @@ function App(): React.JSX.Element {
       const chatId = runRequest?.chatRecord?.appChatId || currentChat?.appChatId
       if (chatId) {
         appendThreadRawLog(chatId, { type: 'stderr', content: message })
-        updateChatById(chatId, (source) => ({
-          ...source,
-          messages: [
-            ...source.messages,
-            {
+        updateChatById(chatId, (source) => {
+          const nextMessages = [...source.messages]
+          // ORDERING INVARIANT: a run error never lands before the user
+          // message that triggered it. A throw in the early dispatch awaits
+          // (before the prompt row is written) would otherwise append this
+          // error first — and a re-send would then stack its prompt AFTER
+          // the error, so the transcript read the failure above its own
+          // request. Ensemble prompts are excluded: their receipt rows are
+          // authored by the orchestrator in main, not by this function.
+          const promptRowWritten =
+            typeof promptMessageId === 'string' &&
+            nextMessages.some((existing) => existing.id === promptMessageId)
+          const fallbackPrompt =
+            typeof runRequest?.displayPrompt === 'string' && runRequest.displayPrompt.trim()
+              ? runRequest.displayPrompt
+              : typeof runRequest?.prompt === 'string'
+                ? runRequest.prompt.trim()
+                : ''
+          if (
+            !promptRowWritten &&
+            !runRequest?.existingPrompt &&
+            fallbackPrompt &&
+            (runRequest?.chatRecord ?? currentChat)?.chatKind !== 'ensemble'
+          ) {
+            nextMessages.push({
               id: createMessageId(),
-              role: 'error',
-              content: message,
-              timestamp: new Date().toISOString()
-            }
-          ]
-        }))
+              role: 'user',
+              content: fallbackPrompt,
+              timestamp: runStartedAt ?? new Date().toISOString()
+            })
+          }
+          nextMessages.push({
+            id: createMessageId(),
+            role: 'error',
+            content: message,
+            timestamp: new Date().toISOString()
+          })
+          return { ...source, messages: nextMessages }
+        })
       }
+    } finally {
+      // Keyed by run, so a settle that arrives after a later submit already
+      // claimed this chat cannot free that newer claim. Idempotent and a no-op
+      // for every dispatch lane that never claimed (queue drain, retry, review).
+      chatDispatchLatchRef.current.release(currentRunIdForCleanup)
     }
   }
 
@@ -15917,13 +16555,13 @@ function App(): React.JSX.Element {
           specialOverride ||
           Boolean(
             request.verbatimPrompt ||
-              request.codexNativeReview ||
-              request.handoffSourceRunId ||
-              request.preserveComposer ||
-              request.discordContextSelection ||
-              request.geminiWorktree?.enabled ||
-              request.effectiveWorkspacePath ||
-              request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')
+            request.codexNativeReview ||
+            request.handoffSourceRunId ||
+            request.preserveComposer ||
+            request.discordContextSelection ||
+            request.geminiWorktree?.enabled ||
+            request.effectiveWorkspacePath ||
+            request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')
           )
       }) ||
       !targetChatId ||
@@ -16027,7 +16665,9 @@ function App(): React.JSX.Element {
       })
       .then((run) => {
         try {
-          const persisted = JSON.parse(window.localStorage.getItem(pendingStorageKey) || 'null') as {
+          const persisted = JSON.parse(
+            window.localStorage.getItem(pendingStorageKey) || 'null'
+          ) as {
             key?: unknown
             clientRequestId?: unknown
           } | null
@@ -16045,7 +16685,7 @@ function App(): React.JSX.Element {
         settleProjectReferenceContextForRequest(graphRequest, 'accepted')
         clearSubmittedExecutionStackContext(graphRequest, targetChatId)
         const submittedDraft = graphRequest.displayPrompt || graphRequest.prompt
-        if (composerDraftsByChatIdRef.current[targetChatId] === submittedDraft) {
+        if (composerDraftState.getDraft(targetChatId) === submittedDraft) {
           setChatPromptDraft(targetChatId, '')
         }
       })
@@ -16081,6 +16721,79 @@ function App(): React.JSX.Element {
   const appendBusyRunToExecutionStackRef = useRef(appendBusyRunToExecutionStack)
   appendBusyRunToExecutionStackRef.current = appendBusyRunToExecutionStack
 
+  const welcomeBackgroundSubmitInFlightRef = useRef<Set<string>>(new Set())
+  // One composer submit per chat may be mid-dispatch. The busy check two
+  // branches down only sees a run `executeRun` has already registered, so
+  // without this every submit inside the dispatch window reads the chat as
+  // idle and starts its own run (2026-09-11: nine, from one held Enter).
+  const chatDispatchLatchRef = useRef(new ChatDispatchLatch())
+  // One send per draft revision. Identity for "the same message" is the
+  // number of committed edits the draft has had, so a repeat with nothing
+  // typed in between is refused however long the app took to respond.
+  const composerSubmitLedgerRef = useRef(new ComposerSubmitLedger())
+  const dispatchWelcomeBackgroundRequest = async (
+    request: QueuedRunRequest,
+    target: WelcomeBackgroundThreadTarget,
+    requestedSchedule: string,
+    scheduledRunAt?: string
+  ): Promise<void> => {
+    const sourceChatId = target.chat.appChatId
+    if (welcomeBackgroundSubmitInFlightRef.current.has(sourceChatId)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
+    welcomeBackgroundSubmitInFlightRef.current.add(sourceChatId)
+    try {
+      await launchWelcomeBackgroundThread(
+        { target, request, scheduledRunAt },
+        {
+          createWorkspaceChat: (workspaceId, workspacePath) =>
+            window.api.createChat(workspaceId, workspacePath),
+          createGlobalChat: () => window.api.createGlobalChat(),
+          createEnsembleChat: (args) => window.api.createEnsembleChat(args),
+          saveChat: (chat) => window.api.saveChat(chat),
+          recordChat: (chat) => {
+            chatByIdRef.current.set(chat.appChatId, chat)
+            setChats((current) => mergeChatRecord(current, chat))
+          },
+          projectIdsForChat: (chatId) =>
+            listProjects()
+              .filter((project) => !project.archived && project.memberChatIds.includes(chatId))
+              .map((project) => project.id),
+          addChatToProject: (projectId, chatId) => {
+            addChatToProject(projectId, chatId)
+          },
+          createRunId: createAppRunId,
+          queueRun: (queued, reason) => {
+            void queueRunRequest(queued, reason)
+          },
+          executeRun: (queued) => {
+            void executeRun(queued)
+          },
+          currentDraft: (chatId) => composerDraftState.getDraft(chatId),
+          clearDraft: (chatId) => setChatPromptDraft(chatId, ''),
+          clearSubmittedContext: clearSubmittedExecutionStackContext,
+          reapAbandonedChats: reapAbandonedChatsAfterCreate,
+          formatScheduledRunTime
+        }
+      )
+      if (
+        scheduledRunAt &&
+        requestedSchedule &&
+        scheduleRunAtByChatId[sourceChatId] === requestedSchedule
+      ) {
+        setScheduleRunAtForChat(sourceChatId, '')
+      }
+    } catch (error) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      const message = `Could not start a background thread: ${redactLog(String(error))}`
+      appendThreadRawLog(sourceChatId, { type: 'stderr', content: message })
+      window.alert(message)
+    } finally {
+      welcomeBackgroundSubmitInFlightRef.current.delete(sourceChatId)
+    }
+  }
+
   const handleRun = (
     overrideModel?: string,
     existingPrompt?: string,
@@ -16105,19 +16818,36 @@ function App(): React.JSX.Element {
      * explicit id above, this is only allowed to disambiguate one matching
      * plain mention when MAIN resolves the current roster.
      */
-    exactPickerParticipantId?: string
+    exactPickerParticipantId?: string,
+    backgroundTarget?: WelcomeBackgroundThreadTarget
   ) => {
-    const baseRequest = buildRunRequest(
-      overrideModel,
-      existingPrompt,
-      approvalModeOverride || workflowModeOverride
+    if (
+      backgroundTarget &&
+      (!isReusableWelcomeChat(backgroundTarget.chat) ||
+        workflowDraft?.chatId === backgroundTarget.chat.appChatId ||
+        welcomeBackgroundSubmitInFlightRef.current.has(backgroundTarget.chat.appChatId))
+    ) {
+      return
+    }
+    const requestTarget = backgroundTarget
+      ? {
+          chat: backgroundTarget.chat,
+          prompt: backgroundTarget.prompt,
+          sessionTrust: backgroundTarget.sessionTrust,
+          imageAttachments: backgroundTarget.imageAttachments,
+          discordContextSelection: backgroundTarget.discordContextSelection,
+          ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
+          ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {}),
+          claimProjectReferenceContext: true
+        }
+      : approvalModeOverride || workflowModeOverride
         ? {
             ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
             ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {}),
             claimProjectReferenceContext: true
           }
         : undefined
-    )
+    const baseRequest = buildRunRequest(overrideModel, existingPrompt, requestTarget)
     // One consent notice per WORKSPACE (owner directive 2026-08-05): the
     // first prompt sent into a never-consented workspace at an edit-capable
     // mode raises the generic Tier-1 sheet; Continue records the workspace
@@ -16131,20 +16861,24 @@ function App(): React.JSX.Element {
         baseRequest.chatRecord?.chatKind === 'ensemble'
           ? (baseRequest.chatRecord.ensemble?.participants ?? [])
               .filter((participant) => participant.enabled)
-              .map((participant) =>
-                permissionPresetToApprovalMode(participant.permissionPresetId)
-              )
+              .map((participant) => permissionPresetToApprovalMode(participant.permissionPresetId))
           : [baseRequest.approvalMode]
+      const consentWorkspace = baseRequest.chatRecord
+        ? getWorkspaceForChat(baseRequest.chatRecord)
+        : currentWorkspace
       const firstSendConsent = decideFirstSendWorkspaceConsent({
         approvalModes: consentModes,
         workspacePath: baseRequest.chatRecord?.workspacePath ?? currentWorkspacePath,
         acknowledgedDefault: acknowledgedElevationDefaults
       })
       if (firstSendConsent) {
+        if (backgroundTarget) {
+          settleProjectReferenceContextForRequest(baseRequest, 'rejected')
+        }
         setPendingElevation({
           tier: firstSendConsent.tier,
           provider: baseRequest.provider,
-          workspaceLabel: currentWorkspace?.displayName ?? null,
+          workspaceLabel: consentWorkspace?.displayName ?? null,
           ackKey: firstSendConsent.ackKey,
           persistAck: firstSendConsent.persistAckOnConfirm,
           toMode: 'default',
@@ -16157,7 +16891,8 @@ function App(): React.JSX.Element {
                 dmTargetParticipantId,
                 approvalModeOverride,
                 workflowModeOverride,
-                exactPickerParticipantId
+                exactPickerParticipantId,
+                backgroundTarget
               )
             } finally {
               firstSendConsentGrantedRef.current = false
@@ -16202,6 +16937,32 @@ function App(): React.JSX.Element {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
+    // Idempotence, ahead of the dispatch/queue/steer branch so all three
+    // inherit it — the queue is where the duplicates were most visible, as a
+    // stack of identical queued and steered copies of one message.
+    //
+    // A composer submit is identified by the draft revision it read. A repeat
+    // with nothing typed in between is the same message and is dropped,
+    // silently: someone pressing Enter again wants it sent, not a second thing
+    // on screen telling them it already was. Anything typed in between raises
+    // the revision and sends normally, including the same words retyped after
+    // the box cleared, which is two edits.
+    //
+    // Scoped to submits that READ the draft. `existingPrompt` (edit-and-resend,
+    // retry, plan import) and background-target sends carry their own text, so
+    // their revision never moves and deduping them would refuse the second one
+    // forever.
+    if (
+      !existingPrompt &&
+      !backgroundTarget &&
+      !composerSubmitLedgerRef.current.accept(
+        currentComposerChatId,
+        composerDraftState.getDraftRevision(currentComposerChatId)
+      )
+    ) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
     // Workflow compose: the first "send" CREATES the workflow (captures the
     // prompt + run settings into a WorkflowDefinition) instead of dispatching a
     // one-off run. The chat becomes the workflow's thread.
@@ -16225,6 +16986,29 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
     }
 
+    if (backgroundTarget) {
+      const sourceChatId = backgroundTarget.chat.appChatId
+      const requestedSchedule = scheduleRunAtByChatId[sourceChatId] || ''
+      const backgroundScheduledRunAt = requestedSchedule
+        ? normalizeScheduledQueueRunAt(requestedSchedule) || undefined
+        : undefined
+      if (requestedSchedule && !backgroundScheduledRunAt) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        appendThreadRawLog(sourceChatId, {
+          type: 'info',
+          content: 'Choose a future time for scheduled runs.'
+        })
+        return
+      }
+      void dispatchWelcomeBackgroundRequest(
+        request,
+        backgroundTarget,
+        requestedSchedule,
+        backgroundScheduledRunAt
+      )
+      return
+    }
+
     if (!existingPrompt && scheduleRunAt) {
       const scheduledRunAt = normalizeScheduledQueueRunAt(scheduleRunAt)
       if (!scheduledRunAt) {
@@ -16239,10 +17023,7 @@ function App(): React.JSX.Element {
         ...request,
         scheduledRunAt
       }
-      queueRunRequest(
-        scheduledRequest,
-        `Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`
-      )
+      queueRunRequest(scheduledRequest, `Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`)
       setScheduleRunAt('')
       clearComposerAttachmentsForSubmittedRequest(request)
       setChatPromptDraft(
@@ -16266,10 +17047,17 @@ function App(): React.JSX.Element {
     }
     const targetChat = request.chatRecord || currentChat
     const targetChatId = targetChat?.appChatId || currentChat?.appChatId
+    // A dispatch that has been accepted but has not yet registered its run
+    // counts as busy. `isChatBusy` can only see a run `executeRun` already put
+    // in `activeRunsRef`, which is many awaits and a `runAgent` IPC round trip
+    // later — so without this a second, genuinely different message sent inside
+    // that window races the first into the same thread instead of queueing
+    // behind it. Duplicates never reach here; the ledger above took them.
+    const dispatchInFlight = chatDispatchLatchRef.current.holderRunId(targetChatId) !== undefined
     if (
       shouldQueueRunBeforeDispatch({
         chatKind: targetChat?.chatKind,
-        busy: isChatBusy(targetChatId)
+        busy: isChatBusy(targetChatId) || dispatchInFlight
       })
     ) {
       if (
@@ -16283,16 +17071,58 @@ function App(): React.JSX.Element {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
-        setChatPromptDraft(
-          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
-          ''
-        )
+        setChatPromptDraft(targetChatId || currentChatIdRef.current || currentChat?.appChatId, '')
       }
       return
     }
 
+    // Hold the chat for the length of this dispatch, so the busy check above
+    // sees it. Never a refusal: a submit that gets this far is a message the
+    // user meant, and the queue is where a second one belongs.
+    chatDispatchLatchRef.current.claim(targetChatId, request.appRunId)
     void executeRun(request)
   }
+  const handleRunRef = useRef(handleRun)
+  handleRunRef.current = handleRun
+  const runWelcomeBackgroundTarget = useCallback(
+    (
+      target: WelcomeBackgroundThreadTarget,
+      dmTargetParticipantId?: string,
+      exactPickerParticipantId?: string
+    ): void => {
+      handleRunRef.current(
+        undefined,
+        undefined,
+        dmTargetParticipantId,
+        undefined,
+        undefined,
+        exactPickerParticipantId,
+        target
+      )
+    },
+    []
+  )
+  const handleRunInBackground = useCallback(
+    (dmTargetParticipantId?: string, exactPickerParticipantId?: string): void => {
+      const sourceChatId = currentChatIdRef.current
+      if (!sourceChatId) return
+      const sourceChat = chatByIdRef.current.get(sourceChatId)
+      if (!sourceChat) return
+      runWelcomeBackgroundTarget(
+        {
+          chat: sourceChat,
+          prompt: composerDraftState.getDraft(sourceChatId),
+          sessionTrust,
+          imageAttachments:
+            imageAttachmentsByChatIdRef.current[sourceChatId] || EMPTY_IMAGE_ATTACHMENTS,
+          discordContextSelection: discordContextSelectionByChatIdRef.current[sourceChatId] || null
+        },
+        dmTargetParticipantId,
+        exactPickerParticipantId
+      )
+    },
+    [runWelcomeBackgroundTarget, sessionTrust]
+  )
 
   const createSideChatFromCurrentChat = async (
     seedPrompt = '',
@@ -16327,8 +17157,10 @@ function App(): React.JSX.Element {
       const sideParticipantLabel = selectedSideParticipant
         ? selectedSideParticipant.role || getProviderLabel(selectedSideParticipant.provider)
         : getProviderLabel(sideProvider)
-      const shouldSeedIsolatedContextSnapshot =
-        shouldSeedIsolatedSideChatContext(seedPrompt, sideChatMode)
+      const shouldSeedIsolatedContextSnapshot = shouldSeedIsolatedSideChatContext(
+        seedPrompt,
+        sideChatMode
+      )
       const effectiveSeedPrompt = shouldSeedIsolatedContextSnapshot
         ? buildIsolatedSideChatContextSeed(parentChat, {
             participantLabel: selectedSideParticipant
@@ -16405,9 +17237,7 @@ function App(): React.JSX.Element {
             (selectedSideParticipant.fastModeEnabled ? 'fast' : '')
         }
         if (selectedSideParticipant.provider === 'claude') {
-          const selectedClaudeSettings = resolveEnsembleParticipantSettings(
-            selectedSideParticipant
-          )
+          const selectedClaudeSettings = resolveEnsembleParticipantSettings(selectedSideParticipant)
           const selectedClaudeModel =
             selectedSideParticipant.model ||
             getDefaultModelForProvider(selectedSideParticipant.provider)
@@ -16420,9 +17250,7 @@ function App(): React.JSX.Element {
           participantMetadata.claudeFastMode = Boolean(selectedSideParticipant.fastModeEnabled)
         }
         if (selectedSideParticipant.provider === 'kimi') {
-          const selectedKimiSettings = resolveEnsembleParticipantSettings(
-            selectedSideParticipant
-          )
+          const selectedKimiSettings = resolveEnsembleParticipantSettings(selectedSideParticipant)
           participantMetadata.kimiFastMode = selectedKimiSettings.fastModeEnabled
           participantMetadata.kimiReasoningEffort = selectedKimiSettings.reasoningEffort || 'on'
           participantMetadata.kimiThinkingEnabled = true
@@ -16473,7 +17301,10 @@ function App(): React.JSX.Element {
         setIsSideChatDockPanelOpen(true)
         setRightDockTab('chat')
       }
-      setChatPromptDraft(nextSideChat.appChatId, hiddenInitialContextPrompt ? '' : effectiveSeedPrompt)
+      setChatPromptDraft(
+        nextSideChat.appChatId,
+        hiddenInitialContextPrompt ? '' : effectiveSeedPrompt
+      )
       if (clearParentDraft) {
         setChatPromptDraft(parentChat.appChatId, '')
       }
@@ -16543,9 +17374,9 @@ function App(): React.JSX.Element {
     }
     const cancelInlineRestore = inlineScrollState
       ? restoreMainTranscriptScrollStateWhenReady(inlineScrollState, {
-        syncAutoFollow: true,
-        targetChatId: chat.appChatId
-      })
+          syncAutoFollow: true,
+          targetChatId: chat.appChatId
+        })
       : null
     try {
       await handleSelectChat(chat)
@@ -16640,7 +17471,11 @@ function App(): React.JSX.Element {
     )
   }
 
-  const popOutLinkedChat = (chat: ChatRecord, draftOverride?: string) => {
+  const popOutLinkedChat = (
+    chat: ChatRecord,
+    draftOverride?: string,
+    presentation: ChatPopoutPresentation = 'full'
+  ) => {
     const targetChat =
       chat.parentChatRelation === 'sideChat' ? applySideChatLifecycle(chat, 'active') : chat
     if (targetChat !== chat) {
@@ -16656,18 +17491,24 @@ function App(): React.JSX.Element {
       draft:
         typeof draftOverride === 'string'
           ? draftOverride
-          : composerDraftsByChatId[targetChat.appChatId] || '',
+          : composerDraftState.getDraft(targetChat.appChatId),
       scrollState: wasInlinePresentation
         ? captureChatScrollState(sideTranscriptScrollRef.current)
         : currentChat?.appChatId === targetChat.appChatId
           ? captureMainTranscriptScrollState()
           : undefined,
-      roundExpansion: captureSessionRoundExpansionForChat(targetChat.appChatId)
+      roundExpansion: captureSessionRoundExpansionForChat(targetChat.appChatId),
+      // Absent when this chat follows the Appearance default, and absent is
+      // carried as absent: the popout is a second BrowserWindow with its own
+      // module realm, so it starts with an empty override map and a resolved
+      // `'standard'` here would pin it there for the window's lifetime.
+      transcriptView: captureTranscriptViewOverrideForChat(targetChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
       chatId: targetChat.appChatId,
-      workspacePath: targetChat.workspacePath
+      workspacePath: targetChat.workspacePath,
+      presentation
     })
     if (wasInlinePresentation) {
       setSideChatId(null)
@@ -16782,9 +17623,7 @@ function App(): React.JSX.Element {
     presentation: SidePanelPresentation = 'split'
   ) => {
     const linkedMainScrollState =
-      currentChat?.appChatId === chat.appChatId
-        ? captureMainTranscriptScrollState()
-        : undefined
+      currentChat?.appChatId === chat.appChatId ? captureMainTranscriptScrollState() : undefined
     const parentChat = chat.parentChatId
       ? chatByIdRef.current.get(chat.parentChatId) ||
         chats.find((item) => item.appChatId === chat.parentChatId) ||
@@ -16845,6 +17684,14 @@ function App(): React.JSX.Element {
         if (request.roundExpansion !== undefined) {
           hydrateSessionRoundExpansionForChat(linkedChat.appChatId, request.roundExpansion)
         }
+        // Tri-state, and applied before the side pane opens so it never paints
+        // at the outgoing view. `null` is the popout saying it is on Follow
+        // default, which CLEARS a pin the main window may still be holding;
+        // `undefined` is the popout saying nothing, which must leave it alone.
+        const dockTranscriptView = normalizeTranscriptViewOverrideTransfer(request.transcriptView)
+        if (dockTranscriptView !== undefined) {
+          setTranscriptViewOverride(linkedChat.appChatId, dockTranscriptView)
+        }
         if (currentChatIdRef.current !== parentChat.appChatId) {
           await handleSelectChatRef.current(parentChat)
         }
@@ -16893,6 +17740,10 @@ function App(): React.JSX.Element {
       imageAttachments: sideRunAttachments,
       approvalMode: sideSelectedApprovalMode,
       workflowMode: sideComposerWorkflowMode,
+      // Linked-chat trust belongs to the linked composer's explicit permission
+      // selection. Never inherit whichever focused main chat happens to have
+      // Full Access at dispatch time.
+      sessionTrust: sideSelectedPermission === 'full_access',
       claimProjectReferenceContext: true
     })
     if (!runRequestHasContent(request)) {
@@ -17007,7 +17858,10 @@ function App(): React.JSX.Element {
     const queueJob = runQueueJobsRef.current.find((job) => job.runId === runId)
     const persistedRun = targetChat.runs?.find((run) => run.runId === runId)
     const provider =
-      activeContext?.provider || queueJob?.provider || persistedRun?.provider || getChatProvider(targetChat)
+      activeContext?.provider ||
+      queueJob?.provider ||
+      persistedRun?.provider ||
+      getChatProvider(targetChat)
     intentionalCancelRunIdsRef.current.add(runId)
     try {
       const accepted = await window.api.cancelAgentRun(provider, runId)
@@ -17026,10 +17880,7 @@ function App(): React.JSX.Element {
 
   const cancelLinkedChatRun = async (targetChat: ChatRecord) => {
     if (
-      await cancelRunningScheduledTaskForChat(
-        targetChat.appChatId,
-        'Cancelled from linked chat.'
-      )
+      await cancelRunningScheduledTaskForChat(targetChat.appChatId, 'Cancelled from linked chat.')
     ) {
       syncRunningState()
       void refreshSingleChat(targetChat.appChatId)
@@ -17163,8 +18014,19 @@ function App(): React.JSX.Element {
    * immediately and leaves the active provider turn untouched, then the
    * durable queue resumes the same provider session at its natural boundary.
    */
-  const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
-    const request = buildRunRequest(overrideModel, existingPrompt)
+  const handleSteer = async (
+    overrideModel?: string,
+    existingPrompt?: string,
+    // Multiview resting panes steer their OWN chat by passing the pane
+    // chat/draft/attachments here (buildRunRequest's target shape). Absent for
+    // the focused composer, which steers the visible chat as before.
+    target?: Parameters<typeof buildRunRequest>[2],
+    // Rewind-from-message restart hints for the post-cancel replacement round
+    // (see handleEditAndResendFromHere): resume the rotation at the captured
+    // seat, skip the opening preamble, and do not echo the edited prompt row.
+    rewind?: { resumeFromParticipantId?: string; suppressPromptEcho?: boolean }
+  ) => {
+    const request = buildRunRequest(overrideModel, existingPrompt, target)
     if (!runRequestHasContent(request)) {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
@@ -17211,35 +18073,80 @@ function App(): React.JSX.Element {
         targetChat.ensemble?.concurrentModeEnabled
       )
       ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
+      // Main acknowledges only after the accepted steer is durably persisted.
+      // The transcript can therefore show the routed message while this await
+      // is still pending. Consume the exact draft now, with edit-aware rollback
+      // if the IPC ultimately rejects, so that durability latency never makes
+      // a successful steer look unsent or lets a late reply erase new typing.
+      const draftSubmission = request.existingPrompt
+        ? null
+        : beginComposerDraftSubmission({
+            chatId: targetChatId,
+            submittedDraft: request.displayPrompt || request.prompt,
+            getDraft: composerDraftState.getDraft,
+            setDraft: setChatPromptDraft,
+            subscribeToDraft: composerDraftState.subscribeToChat
+          })
+      const ensembleRoundPayload = {
+        chatId: targetChatId,
+        prompt: request.prompt,
+        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+        fanoutPolicy,
+        ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+        ...(rewind ? { rewind } : {}),
+        ...(request.exactPickerParticipantId
+          ? { exactPickerParticipantId: request.exactPickerParticipantId }
+          : {}),
+        imageAttachments: request.imageAttachments.map((attachment) => ({
+          id: attachment.id,
+          path: attachment.path,
+          name: attachment.name,
+          ...attachmentKindMetadata(attachment),
+          ...persistedAttachmentMetadata(attachment)
+        }))
+      }
       try {
-        await window.api.runEnsembleRound({
-          chatId: targetChatId,
-          prompt: request.prompt,
-          // Keep the explicit steer intent on the wire. Main absorbs a plain
-          // text interjection into a genuinely-live round without cancellation;
-          // shape-changing requests (attachments/directed routing) retain their
-          // separate round boundary, and an idle chat starts normally.
-          mode: 'steer',
-          concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-          fanoutPolicy,
-          ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-          ...(request.exactPickerParticipantId
-            ? { exactPickerParticipantId: request.exactPickerParticipantId }
-            : {}),
-          imageAttachments: request.imageAttachments.map((attachment) => ({
-            id: attachment.id,
-            path: attachment.path,
-            name: attachment.name,
-            ...attachmentKindMetadata(attachment),
-            ...persistedAttachmentMetadata(attachment)
-          }))
+        // Keep the explicit steer intent on the wire. Main absorbs a plain
+        // text interjection into a genuinely-live round without cancellation;
+        // shape-changing requests (attachments/directed routing) retain their
+        // separate round boundary, and an idle chat starts normally.
+        let result = await window.api.runEnsembleRound({
+          ...ensembleRoundPayload,
+          mode: 'steer'
         })
-        clearComposerAttachmentsForSubmittedRequest(request)
-        if (!request.existingPrompt) {
-          setChatPromptDraft(targetChatId, '')
+        if (!isAcceptedEnsembleSteerResult(result)) {
+          // A STEER MUST LAND. A refusal here is main stating it did not retain
+          // the prompt -- isAcceptedEnsembleSteerResult admits exactly the
+          // statuses that prove retention -- so re-dispatching cannot
+          // double-deliver. Send it as an ordinary round instead: a live round
+          // QUEUES it (full retention, delivered at the next boundary) and an
+          // idle chat starts it. Previously this returned, and the text was
+          // only restored to the composer when the user had not typed since --
+          // so a user who kept typing simply lost what they had sent.
+          //
+          // The steer lane is chosen upstream by a predicate that reports live
+          // during a turn handoff while main's absorb gate refuses, so this
+          // refusal is routine rather than exceptional.
+          result = await window.api.runEnsembleRound({
+            ...ensembleRoundPayload,
+            mode: 'normal'
+          })
         }
-        setIsThinking(true)
+        if (!isAcceptedEnsembleSteerResult(result)) {
+          draftSubmission?.restoreIfUntouched()
+          return
+        }
+        draftSubmission?.commit()
+        clearComposerAttachmentsForSubmittedRequest(request)
+        // `isThinking` is the visible main transcript's badge; a pane steer of
+        // a non-visible chat must not flip it (same gate as the queued steer).
+        if (targetChatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+          setIsThinking(true)
+        }
         void refreshSingleChat(targetChatId)
+      } catch (error) {
+        draftSubmission?.restoreIfUntouched()
+        throw error
       } finally {
         ensembleSteerInFlightChatIdsRef.current.delete(targetChatId)
       }
@@ -17276,13 +18183,8 @@ function App(): React.JSX.Element {
         return
       }
       const steeringMessageId = midRunQueuedMessageId(steerRunId)
-      const preparationReason =
-        `Steer is waiting for the active ${getProviderLabel(request.provider)} turn to reach its natural boundary.`
-      const prepareJob = buildRunQueueJobInputForRequest(
-        request,
-        'paused',
-        preparationReason
-      )
+      const preparationReason = `Steer is waiting for the active ${getProviderLabel(request.provider)} turn to reach its natural boundary.`
+      const prepareJob = buildRunQueueJobInputForRequest(request, 'paused', preparationReason)
       if (!prepareJob) {
         settleProjectReferenceContextForRequest(request, 'rejected')
         appendThreadRawLog(targetChatId, {
@@ -17309,9 +18211,7 @@ function App(): React.JSX.Element {
         barrier.jobStatus === 'steer_promoting' &&
         typeof barrierOwnerToken === 'string'
       if (!barrierPrepared) {
-        setQueuedRuns((prev) =>
-          prev.filter((candidate) => candidate.appRunId !== steerRunId)
-        )
+        setQueuedRuns((prev) => prev.filter((candidate) => candidate.appRunId !== steerRunId))
         await window.api
           .transitionRunQueueJob(steerRunId, 'failed', {
             statusReason: 'Steering could not reserve its durable transcript barrier.',
@@ -17326,10 +18226,13 @@ function App(): React.JSX.Element {
         return
       }
       settleProjectReferenceContextForRequest(request, 'accepted')
+      const reservedSteerRequest = attachSteerMetadataToRequest(
+        request,
+        barrier.promotionToken,
+        barrierOwnerToken
+      )
       setQueuedRuns((prev) =>
-        prev.some((candidate) => candidate.appRunId === steerRunId)
-          ? prev
-          : [...prev, request]
+        reserveQueuedRunAtFront(prev, reservedSteerRequest, queuedRunFallbackId)
       )
       let steeringMessage: ChatMessage | null = null
       steeringMessage = await appendMidRunQueuedRequestToTranscript(
@@ -17372,9 +18275,33 @@ function App(): React.JSX.Element {
         released?.ok === true &&
         (released.jobStatus === 'queued' || released.jobStatus === 'steer_promoting')
       if (!deliveryOwned) {
-        setQueuedRuns((prev) =>
-          prev.filter((candidate) => candidate.appRunId !== steerRunId)
-        )
+        let durableLookupCompleted = false
+        let durableHandoff: RunQueueJob | null = null
+        if (typeof window.api.getRunQueueJobs === 'function') {
+          try {
+            const latestJobs = await window.api.getRunQueueJobs({
+              chatId: targetChatId,
+              includeTerminal: true
+            })
+            durableLookupCompleted = true
+            durableHandoff = latestJobs.find((candidate) => candidate.runId === steerRunId) || null
+          } catch {
+            // Lost IPC response is not proof that MAIN failed to admit the
+            // steer. Preserve its transcript and exact local reservation.
+          }
+        }
+        if (durableHandoff || !durableLookupCompleted) {
+          appendThreadRawLog(targetChatId, {
+            type: durableHandoff?.status === 'failed' ? 'stderr' : 'info',
+            content: durableHandoff
+              ? `Steer handoff reply was unavailable; MAIN retained ${durableHandoff.status} state for the exact request, so no duplicate draft was created.`
+              : 'Steer handoff state is unknown; the exact transcript row remains reserved and no duplicate draft was created.'
+          })
+          clearComposerAttachmentsForSubmittedRequest(request)
+          if (!request.existingPrompt) setChatPromptDraft(targetChatId, '')
+          return
+        }
+        setQueuedRuns((prev) => prev.filter((candidate) => candidate.appRunId !== steerRunId))
         const reverted = updateChatById(targetChatId, (chat) => ({
           ...chat,
           messages: chat.messages.filter((message) => message.id !== steeringMessageId),
@@ -17410,6 +18337,25 @@ function App(): React.JSX.Element {
     } finally {
       soloSteerInFlightChatIdsRef.current.delete(targetChatId)
     }
+  }
+  // Latest-impl ref (buildRunRequestRef pattern): handleSteer is a fresh
+  // closure every render, so memoized pane callbacks dispatch through this to
+  // stay identity-stable without stale captures.
+  const handleSteerRef = useRef(handleSteer)
+  handleSteerRef.current = handleSteer
+
+  const handleSideSteer = (): void => {
+    if (!sideChat) return
+    void handleSteerRef.current(undefined, undefined, {
+      chat: sideChat,
+      prompt: sidePrompt,
+      imageAttachments:
+        imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS,
+      approvalMode: sideSelectedApprovalMode,
+      workflowMode: sideComposerWorkflowMode,
+      sessionTrust: sideSelectedPermission === 'full_access',
+      claimProjectReferenceContext: true
+    })
   }
 
   const handleScheduleRun = async () => {
@@ -17479,6 +18425,10 @@ function App(): React.JSX.Element {
       grokReasoningEffort: request.grokReasoningEffort,
       museReasoningEffort: request.museReasoningEffort,
       mistralReasoningEffort: request.mistralReasoningEffort,
+      devinReasoningEffort: request.devinReasoningEffort,
+      piReasoningEffort: request.piReasoningEffort,
+      antigravityReasoningEffort: request.antigravityReasoningEffort,
+      ollamaReasoningEffort: request.ollamaReasoningEffort,
       cursorReasoningEffort: request.cursorReasoningEffort,
       cursorFastMode: request.cursorFastMode,
       runtimeProfileId: request.runtimeProfileId,
@@ -17531,6 +18481,26 @@ function App(): React.JSX.Element {
     })
   }
 
+  // Wiring for the two modules above: the decision is the gate's, the words are
+  // its own, and this puts them where the user is as well as in the raw log.
+  // A refusal with no message (the thread is already in the mode that was
+  // asked for) is a non-event and stays silent.
+  const reportChatModeChangeFailure = (
+    chatId: string | null | undefined,
+    message: string | null | undefined
+  ): void => {
+    if (!chatId || !message) return
+    chatModeChangeNoticesRef.current?.raise(chatId, message)
+    appendThreadRawLog(chatId, { type: 'info', content: message })
+  }
+  const admitChatKindSwitch = (request: ChatKindSwitchRequest): ChatKindSwitchAdmission | null => {
+    const admission = chatKindSwitchGateRef.current?.admit(request)
+    if (!admission) return null
+    if (admission.admitted) chatModeChangeNoticesRef.current?.clear(request.chatId)
+    else reportChatModeChangeFailure(request.chatId, admission.refusal.message)
+    return admission
+  }
+
   /**
    * Switch Ensemble off and continue the thread solo on `survivingParticipant`.
    * No provider modal: the seat passed in IS the answer, and its model /
@@ -17552,47 +18522,39 @@ function App(): React.JSX.Element {
     targetIsRunning: boolean,
     chatWithSeatRemoved?: ChatRecord | null
   ): Promise<void> => {
-    if (!targetChat.appChatId || targetChat.parentChatId) return
-    if (targetChat.chatKind !== 'ensemble') return
-    if (chatKindTogglingRef.current) return
-    if (targetIsRunning) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'Finish the current turn first to change chat mode.'
-      })
-      return
-    }
-    // A shared thread cannot leave panel mode, and main refuses it. Bail HERE,
-    // before the destructive save below.
-    //
-    // `chatWithSeatRemoved` is persisted BEFORE the mode change on purpose (see
-    // the note above — it is what makes setChatKind stash the post-removal
-    // roster). So letting main's refusal be the first line of defence would
-    // delete the seat and THEN decline the collapse, leaving a shared panel
-    // sitting below its own floor with nothing to undo it. Main's guard stays
-    // the authority against callers that never come through here; this one
-    // exists so the data is never destroyed on the way to being told no.
-    if (collaboratingChatIds.has(targetChat.appChatId)) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'This chat is shared. Stop sharing before switching it out of panel mode.'
-      })
-      return
-    }
-    chatKindTogglingRef.current = true
+    const admission = admitChatKindSwitch({
+      chatId: targetChat.appChatId,
+      parentChatId: targetChat.parentChatId,
+      currentKind: targetChat.chatKind,
+      enabled: false,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      chatIsRunning: targetIsRunning
+    })
+    if (!admission?.admitted) return
     setChatKindMutationBusy(true)
     try {
       if (chatWithSeatRemoved) {
         await window.api.saveChat(chatWithSeatRemoved)
       }
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: targetChat.appChatId,
-          targetKind: 'single',
-          canonicalProvider: survivingParticipant.provider,
-          canonicalProviderMetadata:
-            buildProviderMetadataFromEnsembleParticipant(survivingParticipant)
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          targetChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: targetChat.appChatId,
+              targetKind: 'single',
+              canonicalProvider: survivingParticipant.provider,
+              canonicalProviderMetadata:
+                buildProviderMetadataFromEnsembleParticipant(survivingParticipant)
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
@@ -17604,12 +18566,16 @@ function App(): React.JSX.Element {
       setPendingEnsembleToSoloChatId(null)
       void refreshChatList()
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        targetChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(targetChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -17635,22 +18601,24 @@ function App(): React.JSX.Element {
     enabled: boolean,
     targetIsRunning: boolean
   ): Promise<void> => {
-    if (!targetChat.appChatId || targetChat.parentChatId) return
-    if (settings?.ensembleModeEnabled === false && enabled) return
-    if ((targetChat.chatKind === 'ensemble') === enabled) return
-    if (chatKindTogglingRef.current) return
-    if (targetIsRunning) {
-      appendThreadRawLog(targetChat.appChatId, {
-        type: 'info',
-        content: 'Finish the current turn first to change chat mode.'
-      })
-      return
-    }
+    const admission = admitChatKindSwitch({
+      chatId: targetChat.appChatId,
+      parentChatId: targetChat.parentChatId,
+      currentKind: targetChat.chatKind,
+      enabled,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      chatIsRunning: targetIsRunning
+    })
+    if (!admission?.admitted) return
     if (!enabled) {
-      const modalChat =
-        isChatSummaryRecord(targetChat)
-          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
-          : targetChat
+      // Both continuations below raise their own admission — the collapse
+      // handler immediately, the modal whenever the user answers it — so this
+      // lease is released here rather than held across a dialog that may never
+      // be answered.
+      chatKindSwitchGateRef.current?.settle(admission.token)
+      const modalChat = isChatSummaryRecord(targetChat)
+        ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+        : targetChat
       // The modal exists to ask WHICH agent keeps the thread. A roster the
       // floor exempts (Agent-MCP / imported one-seat panels, and legacy chats
       // that predate the floor) offers exactly one answer, so asking is pure
@@ -17663,19 +18631,28 @@ function App(): React.JSX.Element {
       setPendingEnsembleToSoloChatId(modalChat.appChatId)
       return
     }
-    chatKindTogglingRef.current = true
     setChatKindMutationBusy(true)
     try {
-      const baseChat =
-        isChatSummaryRecord(targetChat)
-          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
-          : targetChat
+      const baseChat = isChatSummaryRecord(targetChat)
+        ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+        : targetChat
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: baseChat.appChatId,
-          targetKind: 'ensemble',
-          seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          baseChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: baseChat.appChatId,
+              targetKind: 'ensemble',
+              seedParticipant: buildEnsembleSeedParticipantFromChat(baseChat)
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
@@ -17685,18 +18662,20 @@ function App(): React.JSX.Element {
         updatedChat.ensemble?.participants[0]?.id || null
       )
       setWorkflowDraft((draft) =>
-        draft?.chatId === updatedChat.appChatId
-          ? { ...draft, ensembleEnabled: true }
-          : draft
+        draft?.chatId === updatedChat.appChatId ? { ...draft, ensembleEnabled: true } : draft
       )
       void refreshChatList()
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        targetChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(targetChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -17710,35 +18689,58 @@ function App(): React.JSX.Element {
     if (!modalChat) return
     const providerChoice =
       ensembleToSoloCanonicalProviders.find((candidate) => candidate.provider === provider) || null
-    chatKindTogglingRef.current = true
+    const admission = admitChatKindSwitch({
+      chatId: modalChat.appChatId,
+      parentChatId: modalChat.parentChatId,
+      currentKind: modalChat.chatKind,
+      enabled: false,
+      ensembleModeEnabled: settings?.ensembleModeEnabled !== false,
+      // The modal only ever renders for the focused chat (see
+      // `ensembleToSoloModalChat`), so this is that chat's own liveness.
+      chatIsRunning: isCurrentChatRunning
+    })
+    if (!admission?.admitted) return
     setChatKindMutationBusy(true)
     try {
       const updatedChat = applyHydratedChat(
-        await window.api.setChatKind({
-          chatId: modalChat.appChatId,
-          targetKind: 'single',
-          canonicalProvider: provider,
-          canonicalProviderMetadata: providerChoice?.metadata
-        })
+        // Claimed for the life of the call: main may have BUILT a delivery
+        // before this switch and flush it after, and that frame still carries
+        // the previous mode. See lib/ensembleChatKindWriteClaims.ts.
+        await withEnsembleWriteClaim(
+          modalChat.appChatId,
+          {
+            claims: ensembleChatKindClaimsRef.current,
+            flushDeliveries: flushCoalescedChatsNow
+          },
+          () =>
+            window.api.setChatKind({
+              chatId: modalChat.appChatId,
+              targetKind: 'single',
+              canonicalProvider: provider,
+              canonicalProviderMetadata: providerChoice?.metadata
+            })
+        )
       )
       if (currentChatIdRef.current === updatedChat.appChatId) {
         applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
       }
       setSelectedParticipantForChat(updatedChat.appChatId, null)
       setWorkflowDraft((draft) =>
-        draft?.chatId === updatedChat.appChatId
-          ? { ...draft, ensembleEnabled: false }
-          : draft
+        draft?.chatId === updatedChat.appChatId ? { ...draft, ensembleEnabled: false } : draft
       )
       void refreshChatList()
       setPendingEnsembleToSoloChatId(null)
     } catch (error) {
+      chatModeChangeNoticesRef.current?.raise(
+        modalChat.appChatId,
+        describeChatModeChangeFailure(error)
+      )
       appendThreadRawLog(modalChat.appChatId, {
         type: 'stderr',
         content: redactLog(error instanceof Error ? error.message : String(error))
       })
     } finally {
-      chatKindTogglingRef.current = false
+      chatKindSwitchGateRef.current?.settle(admission.token)
       setChatKindMutationBusy(false)
     }
   }
@@ -17834,7 +18836,8 @@ function App(): React.JSX.Element {
         kind: 'interval',
         intervalMs,
         startAt: new Date(Date.now() + intervalMs).toISOString(),
-        timezone: workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
+        timezone:
+          workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
       }
     })
     await refreshWorkflowState(currentWorkspace?.id)
@@ -17855,8 +18858,7 @@ function App(): React.JSX.Element {
   // confirmation for elevation; revocation remains immediate and fail-safe.
   const handleSetWorkflowUnattended = async (workflow: WorkflowDefinition): Promise<void> => {
     const current = workflow.unattendedElevation
-    const level: UnattendedElevationLevel =
-      current && current.level !== 'safe' ? 'safe' : 'default'
+    const level: UnattendedElevationLevel = current && current.level !== 'safe' ? 'safe' : 'default'
     try {
       await window.api.setWorkflowUnattendedElevation(workflow.id, level)
     } catch (error) {
@@ -18022,7 +19024,9 @@ function App(): React.JSX.Element {
         note: 'Duplicated from an existing workspace board.'
       })
     })
-    const sourceCards = workspaceBoardCards.filter((card) => card.boardId === board.id && !card.archived)
+    const sourceCards = workspaceBoardCards.filter(
+      (card) => card.boardId === board.id && !card.archived
+    )
     const savedCards: WorkspaceBoardCard[] = []
     for (const card of sourceCards) {
       const savedCard = await window.api.saveWorkspaceBoardCard({
@@ -18212,22 +19216,38 @@ function App(): React.JSX.Element {
 
   const chatBoardColumn = (chat: ChatRecord): WorkspaceBoardCard['columnId'] => {
     const run = chat.runs?.[chat.runs.length - 1]
-    if (runningChatIds.has(chat.appChatId) || run?.status === 'running' || run?.status === 'sleeping') {
+    if (
+      runningChatIds.has(chat.appChatId) ||
+      run?.status === 'running' ||
+      run?.status === 'sleeping'
+    ) {
       return 'running'
     }
     if (chat.activeGoal?.status === 'blocked') return 'blocked'
     if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
-    if (run?.status === 'success' || run?.status === 'success_with_warnings' || run?.status === 'completed') {
+    if (
+      run?.status === 'success' ||
+      run?.status === 'success_with_warnings' ||
+      run?.status === 'completed'
+    ) {
       return 'review-ready'
     }
     return 'inbox'
   }
 
   const workflowBoardColumn = (workflow: WorkflowDefinition): WorkspaceBoardCard['columnId'] => {
-    if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
+    if (
+      workflow.activeExecutionId ||
+      workflow.lastStatus === 'running' ||
+      workflow.lastStatus === 'queued'
+    ) {
       return 'running'
     }
-    if (workflow.lastStatus === 'failed' || workflow.lastStatus === 'cancelled' || workflow.failureStreak > 0) {
+    if (
+      workflow.lastStatus === 'failed' ||
+      workflow.lastStatus === 'cancelled' ||
+      workflow.failureStreak > 0
+    ) {
       return 'needs-input'
     }
     if (workflow.lastStatus === 'completed') return 'review-ready'
@@ -18235,7 +19255,12 @@ function App(): React.JSX.Element {
   }
 
   const runQueueJobBoardColumn = (job: RunQueueJob): WorkspaceBoardCard['columnId'] => {
-    if (job.status === 'queued' || job.status === 'starting' || job.status === 'active' || job.status === 'steer_promoting') {
+    if (
+      job.status === 'queued' ||
+      job.status === 'starting' ||
+      job.status === 'active' ||
+      job.status === 'steer_promoting'
+    ) {
       return 'running'
     }
     if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
@@ -18253,7 +19278,8 @@ function App(): React.JSX.Element {
       labels: compactBoardLabels('thread', chat.provider),
       link: { kind: 'chat', id: chat.appChatId },
       columnId: chatBoardColumn(chat),
-      blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
+      blockedReason:
+        chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
       provenance: createWorkspaceBoardProvenance('thread', {
         sourceId: chat.appChatId,
         sourceTitle: chat.title,
@@ -18345,279 +19371,17 @@ function App(): React.JSX.Element {
       })
     })
   }
-
-  const getCockpitRunSource = (
-    lane: RunLane
-  ): { chat: ChatRecord | null; run: ChatRun | null; prompt: string } => {
-    return resolveCockpitRunSource(lane, chats, chatByIdRef.current)
-  }
-
   const handleOpenCockpitThread = (chatId?: string) => {
     if (!chatId) return
     const chat = chatByIdRef.current.get(chatId) || chats.find((item) => item.appChatId === chatId)
     if (chat) {
-      if (
-        chat.parentChatRelation === 'sideChat' ||
-        chat.parentChatRelation === 'subThread'
-      ) {
+      if (chat.parentChatRelation === 'sideChat' || chat.parentChatRelation === 'subThread') {
         void openLinkedChatAsMain(chat)
       } else {
         void handleSelectChat(chat)
       }
-      setShowCockpit(false)
     }
   }
-
-  const handleCancelRunLane = (lane: RunLane) => {
-    if (lane.scheduledTaskId) {
-      void window.api
-        .cancelScheduledTask(lane.scheduledTaskId, 'Cancelled from Cockpit.')
-        .then(() => refreshWorkflowState(currentWorkspaceIdRef.current || undefined))
-      return
-    }
-    if (!lane.runId) return
-    setQueuedRuns((prev) => prev.filter((request) => request.appRunId !== lane.runId))
-    if (lane.phase === 'queued' || lane.phase === 'paused') {
-      updateRunQueueJobStatus(lane.runId, 'cancelled', 'Cancelled from Cockpit.')
-      return
-    }
-    void window.api.cancelAgentRun(lane.provider, lane.runId).catch(() => {
-      if (lane.provider === 'gemini') {
-        void window.api.cancelGemini(lane.runId)
-      }
-    })
-  }
-
-  const handleRetryRunLane = (lane: RunLane) => {
-    const { chat, run, prompt: sourcePrompt } = getCockpitRunSource(lane)
-    if (!chat || !sourcePrompt.trim()) return
-    const workspace = getWorkspaceForChat(chat) || undefined
-    const provider = lane.provider || getChatProvider(chat)
-    const selection = getChatComposerSelection(chat, provider)
-    const requestedRetryModel = run?.requestedModel
-    const retryModel = isValidModelForProvider(provider, requestedRetryModel)
-      ? requestedRetryModel
-      : selection.selectedModelType
-    const request: QueuedRunRequest = {
-      appRunId: createAppRunId(),
-      scope: getChatScope(chat),
-      provider,
-      prompt: sourcePrompt,
-      displayPrompt: `[retry] ${sourcePrompt}`,
-      existingPrompt: sourcePrompt,
-      selectedModelType: retryModel,
-      customModel: selection.customModel,
-      approvalMode: run?.approvalMode || selection.approvalMode,
-      sessionTrust,
-      imageAttachments: [],
-      externalPathGrants:
-        getChatScope(chat) === 'global'
-          ? []
-          : normalizeExternalPathGrants(
-              collectExternalPathGrantsFromMetadata(chat.providerMetadata)
-            ).filter((grant) => grant.provider === provider),
-      geminiWorktree:
-        getChatScope(chat) === 'global'
-          ? undefined
-          : resolveGeminiWorktreeConfig(workspace || null),
-      codexReasoningEffort: selection.codexReasoningEffort,
-      codexServiceTier: selection.codexServiceTier,
-      claudeReasoningEffort: selection.claudeReasoningEffort,
-      claudeFastMode: selection.claudeFastMode,
-      kimiFastMode: selection.kimiFastMode,
-      kimiReasoningEffort: selection.kimiReasoningEffort,
-      kimiThinkingEnabled: selection.kimiThinkingEnabled,
-      grokReasoningEffort: selection.grokReasoningEffort,
-      museReasoningEffort: selection.museReasoningEffort,
-      mistralReasoningEffort: selection.mistralReasoningEffort,
-      cursorReasoningEffort: selection.cursorReasoningEffort,
-      cursorFastMode: selection.cursorFastMode,
-      runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider),
-      handoffSourceRunId: lane.handoffSourceRunId,
-      workspaceRecord: getChatScope(chat) === 'global' ? undefined : workspace,
-      chatRecord: chat
-    }
-    if (
-      shouldQueueRunBeforeDispatch({
-        chatKind: chat.chatKind,
-        busy: isChatBusy(chat.appChatId)
-      })
-    ) {
-      queueRunRequest(
-        request,
-        `Retry is waiting for this chat's active ${getProviderLabel(provider)} task to exit.`
-      )
-      return
-    }
-    void executeRun(request)
-  }
-
-  const handleDuplicateRunLane = async (lane: RunLane) => {
-    const { chat, prompt: sourcePrompt } = getCockpitRunSource(lane)
-    if (!chat) return
-    const provider = lane.provider || getChatProvider(chat)
-    if (!isRunnableProvider(provider)) {
-      const message = `${getProviderOfferUnavailableReason(provider)} This run lane cannot be duplicated with that provider; choose a currently offered provider first.`
-      appendThreadRawLog(chat.appChatId, { type: 'info', content: message })
-      window.alert(message)
-      return
-    }
-    const workspace = getWorkspaceForChat(chat)
-    const duplicate = isGlobalChat(chat)
-      ? await window.api.createGlobalChat()
-      : workspace
-        ? await window.api.createChat(workspace.id, workspace.path)
-        : null
-    if (!duplicate) return
-    const updatedDuplicate: ChatRecord = {
-      ...duplicate,
-      provider,
-      providerMetadata: {
-        ...(duplicate.providerMetadata || {}),
-        runtimeProfileId: lane.runtimeProfileId || getRuntimeProfileIdForChat(chat, provider)
-      },
-      title: `${chat.title || getProviderLabel(provider)} copy`,
-      updatedAt: Date.now()
-    }
-    await window.api.saveChat(updatedDuplicate)
-    chatByIdRef.current.set(updatedDuplicate.appChatId, updatedDuplicate)
-    setChats((prev) => mergeChatRecord(prev, updatedDuplicate))
-    setChatPromptDraft(updatedDuplicate.appChatId, sourcePrompt)
-    setRuntimeProfileForChat(
-      updatedDuplicate.appChatId,
-      typeof updatedDuplicate.providerMetadata?.runtimeProfileId === 'string'
-        ? updatedDuplicate.providerMetadata.runtimeProfileId
-        : ''
-    )
-    void handleSelectChat(updatedDuplicate)
-    setShowCockpit(false)
-  }
-
-  const handleCreateHandoffFromLane = async (lane: RunLane) => {
-    const { chat, run, prompt: sourcePrompt } = getCockpitRunSource(lane)
-    if (!chat || !run || typeof window.api.saveHandoffCard !== 'function') return
-    const latestAssistantMessage = [...chat.messages]
-      .reverse()
-      .find((message) => message.role === 'assistant')
-    const selectedFiles = extractRunTouchedFiles(run)
-    const summary = latestAssistantMessage?.content
-      ? compactPromptPreview(latestAssistantMessage.content)
-      : `Continue work from ${getProviderLabel(lane.provider)} run ${run.runId}.`
-    const finalPrompt = [
-      `Continue from ${getProviderLabel(lane.provider)} run ${run.runId}.`,
-      `Source chat: ${chat.title || chat.appChatId}.`,
-      selectedFiles.length > 0
-        ? `Files touched: ${selectedFiles.slice(0, 24).join(', ')}`
-        : 'Files touched: none recorded.',
-      formatOpaqueMarkdownPromptSection('Prior request', sourcePrompt),
-      latestAssistantMessage?.content
-        ? formatOpaqueMarkdownPromptSection(
-            'Latest assistant summary',
-            latestAssistantMessage.content
-          )
-        : ''
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-    const card = await window.api.saveHandoffCard({
-      sourceChatId: chat.appChatId,
-      sourceRunId: run.runId,
-      sourceProvider: lane.provider,
-      workspaceId: chat.workspaceId,
-      workspacePath: chat.workspacePath,
-      summary,
-      selectedFiles,
-      workspaceChangeSetIds: run.workspaceChangeSetId ? [run.workspaceChangeSetId] : [],
-      rawEventRunIds: [run.runId],
-      recommendedProvider: lane.provider,
-      recommendedModel: run.actualModel || run.requestedModel,
-      recommendedApprovalMode: run.approvalMode,
-      finalPrompt
-    })
-    setHandoffCards((prev) => [card, ...prev.filter((item) => item.id !== card.id)])
-    closeOtherRightDockPanels('run')
-    setShowCockpit(true)
-    setRightDockTab('run')
-  }
-
-  const handleDispatchHandoff = async (card: HandoffCard) => {
-    const sourceChat =
-      chatByIdRef.current.get(card.sourceChatId) ||
-      chats.find((item) => item.appChatId === card.sourceChatId)
-    const provider = card.recommendedProvider || card.sourceProvider
-    if (!isRunnableProvider(provider)) {
-      const message = `${getProviderOfferUnavailableReason(provider)} This handoff cannot be dispatched to that provider; choose a currently offered provider first.`
-      appendThreadRawLog(sourceChat?.appChatId || card.sourceChatId, {
-        type: 'info',
-        content: message
-      })
-      window.alert(message)
-      return
-    }
-    const workspace = sourceChat ? getWorkspaceForChat(sourceChat) : null
-    const targetChat =
-      sourceChat && isGlobalChat(sourceChat)
-        ? await window.api.createGlobalChat()
-        : workspace
-          ? await window.api.createChat(workspace.id, workspace.path)
-          : null
-    if (!targetChat) return
-    const updatedTarget: ChatRecord = {
-      ...targetChat,
-      provider,
-      title: `Handoff from ${getProviderLabel(card.sourceProvider)}`,
-      updatedAt: Date.now()
-    }
-    await window.api.saveChat(updatedTarget)
-    const updatedCard = await window.api.updateHandoffCard(card.id, {
-      status: 'dispatched',
-      targetChatId: updatedTarget.appChatId,
-      dispatchedAt: new Date().toISOString()
-    })
-    if (updatedCard) {
-      setHandoffCards((prev) =>
-        prev.map((item) => (item.id === updatedCard.id ? updatedCard : item))
-      )
-    }
-    chatByIdRef.current.set(updatedTarget.appChatId, updatedTarget)
-    setChats((prev) => mergeChatRecord(prev, updatedTarget))
-    setChatPromptDraft(updatedTarget.appChatId, card.finalPrompt)
-    void handleSelectChat(updatedTarget)
-    setShowCockpit(false)
-  }
-
-  const handleArchiveHandoff = async (card: HandoffCard) => {
-    const updated = await window.api.updateHandoffCard(card.id, { status: 'archived' })
-    if (updated) {
-      setHandoffCards((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-    }
-  }
-
-  const handlePersistRunAnalysis = (
-    chatId: string,
-    runId: string,
-    snapshot: RunAnalystSnapshot
-  ) => {
-    const sourceChat =
-      chatByIdRef.current.get(chatId) || chats.find((item) => item.appChatId === chatId)
-    if (!sourceChat?.runs?.some((run) => run.runId === runId)) return
-    const updatedChat: ChatRecord = {
-      ...sourceChat,
-      runs: sourceChat.runs.map((run) =>
-        run.runId === runId ? { ...run, runAnalyst: snapshot } : run
-      ),
-      updatedAt: Date.now()
-    }
-    chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
-    setChats((prev) =>
-      prev.map((item) => (item.appChatId === updatedChat.appChatId ? updatedChat : item))
-    )
-    setCurrentChat((prev) =>
-      prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-    )
-    void window.api.saveChat(updatedChat).catch(() => {})
-  }
-
   const appendRawInfoOnce = (content: string) => {
     setRawLogs((prev) =>
       prev[prev.length - 1]?.content === content ? prev : [...prev, { type: 'info', content }]
@@ -18805,17 +19569,16 @@ function App(): React.JSX.Element {
     const slashTargetProvider: ProviderId =
       isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
     if (slashTargetProvider === 'codex') {
-      if (item.command === '/status' || item.command === '/permissions') {
-        openInspectorTab('safety')
+      if (item.command === '/status') {
+        openSettingsTab('providers')
+      } else if (item.command === '/permissions') {
+        openSettingsTab('safety-privacy')
       } else if (
         item.command === '/model' ||
         item.command === '/mcp' ||
         item.command === '/resume'
       ) {
-        openInspectorTab('capabilities')
-        if (item.command === '/resume') {
-          void refreshCodexThreads()
-        }
+        openSettingsTab(item.command === '/mcp' ? 'mcp' : 'providers')
       } else if (item.command === '/diff') {
         openInspectorTab('diff')
       } else if (item.command === '/review') {
@@ -18848,10 +19611,10 @@ function App(): React.JSX.Element {
       // read-only diff review (a plan-mode run), not provider-native TUI commands.
       if (item.command === '/status' || item.command === '/permissions') {
         void refreshProviderMetadata(slashTargetProvider)
-        openInspectorTab('safety')
+        openSettingsTab(item.command === '/permissions' ? 'safety-privacy' : 'providers')
       } else if (item.command === '/model') {
         void refreshProviderMetadata(slashTargetProvider)
-        openInspectorTab('capabilities')
+        openSettingsTab('providers')
       } else if (item.command === '/diff') {
         openInspectorTab('diff')
       } else if (item.command === '/review') {
@@ -18907,8 +19670,12 @@ function App(): React.JSX.Element {
     : `${currentGoalModeLabel} · Set an active goal`
 
   const persistGoalForCurrentChat = (nextGoal: ActiveGoal | null): void => {
-    const chat = currentChat
-    if (!chat) return
+    const stateChat = currentChat
+    if (!stateChat) return
+    // Author from the ref cache, not React state: state can lag the ref by a
+    // flush cycle, and a Clear built on a stale base is a stale omission the
+    // main CAS will (correctly) refuse.
+    const chat = chatByIdRef.current.get(stateChat.appChatId) ?? stateChat
     const updated: ChatRecord = nextGoal
       ? {
           ...chat,
@@ -18925,9 +19692,41 @@ function App(): React.JSX.Element {
     chatByIdRef.current.set(updated.appChatId, updated)
     setCurrentChat(updated)
     setChats((prev) => mergeChatRecord(prev, updated))
-    void window.api.saveChat(updated).catch((err) => {
-      console.error('[goal] saveChat failed', err)
-    })
+    // Claim the goal for the renderer until main's answer is adopted, not
+    // merely until the save settles: releasing on bare settle let a stale
+    // goal-less delivery wipe the optimistic edit before main's confirmation
+    // arrived — flapping the UI back to the editor and sending a goal-less
+    // save that main then refuses as a stale clone.
+    const intent: LocalGoalIntent = nextGoal
+      ? { goalId: nextGoal.id }
+      : { goalId: null, ...(chat.activeGoal ? { clearedGoalId: chat.activeGoal.id } : {}) }
+    const intents = pendingGoalIntentRef.current
+    const chatId = updated.appChatId
+    intents.set(chatId, intent)
+    void window.api
+      .saveChat(updated)
+      .then((canonical) => {
+        // Adopt what main confirmed — including the restored goal on a
+        // refused stale Clear — flush it through the still-guarded merge,
+        // and only then release the claim.
+        chatByIdRef.current.set(chatId, canonical)
+        if (activeRunChatIdRef.current === chatId) {
+          activeRunChatSnapshotRef.current = canonical
+        }
+        flushCoalescedChatsNow()
+        if (intents.get(chatId) === intent) intents.delete(chatId)
+      })
+      .catch((err) => {
+        console.error('[goal] saveChat failed', err)
+        // The save may never have landed: roll the optimistic record back to
+        // the pre-edit base (only if nothing newer has since adopted) and
+        // release, so a stuck claim can't fight main's truth forever.
+        if (chatByIdRef.current.get(chatId) === updated) {
+          chatByIdRef.current.set(chatId, chat)
+          flushCoalescedChatsNow()
+        }
+        if (intents.get(chatId) === intent) intents.delete(chatId)
+      })
   }
 
   const setGoalFromObjective = (
@@ -19043,7 +19842,10 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
       return
     }
-    if (prompt.trim() !== review.rawText) {
+    // Read the store at CALL time, not the render-time `prompt` const: App no
+    // longer re-renders per keystroke, so a closed-over value would be stale and
+    // this guard would compare against text the user has since changed.
+    if (composerDraftState.getDraft(currentComposerChatId).trim() !== review.rawText) {
       setPendingPlanImport(null)
       window.alert('The composer changed after this plan was reviewed. Import the plan again.')
       return
@@ -19083,10 +19885,7 @@ function App(): React.JSX.Element {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
-        setChatPromptDraft(
-          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
-          ''
-        )
+        setChatPromptDraft(targetChatId || currentChatIdRef.current || currentChat?.appChatId, '')
       }
       return
     }
@@ -19115,10 +19914,7 @@ function App(): React.JSX.Element {
       window.alert('No active goal is set for this chat.')
       return false
     }
-    const reason = window.prompt(
-      'Why is this goal blocked?',
-      currentActiveGoal.blockedReason || ''
-    )
+    const reason = window.prompt('Why is this goal blocked?', currentActiveGoal.blockedReason || '')
     if (reason === null) return false
     return updateCurrentGoalStatus('blocked', reason.trim() || 'Blocked by user.')
   }
@@ -19216,7 +20012,11 @@ function App(): React.JSX.Element {
   }, [goalPopoverOpen, updateGoalPopoverPosition])
 
   const openGoalPopover = (editing = false, draftOverride?: string): void => {
-    const fallbackDraft = draftOverride !== undefined ? draftOverride : prompt.trim()
+    // Call-time store read for the same reason as the plan-import guard above.
+    const fallbackDraft =
+      draftOverride !== undefined
+        ? draftOverride
+        : composerDraftState.getDraft(currentComposerChatId).trim()
     setGoalDraft(currentActiveGoal?.objective || fallbackDraft)
     setGoalEditing(editing)
     setGoalPopoverOpen(true)
@@ -19351,6 +20151,15 @@ function App(): React.JSX.Element {
     void refreshSettingsPinnedMessages()
   }, [showSettings, settingsActiveTab, refreshSettingsPinnedMessages])
 
+  // The Providers card must not be the one card whose provider nobody asked:
+  // opening Settings is itself the activity that resets the idle warmup queue,
+  // so the tab probes Ollama on open (see lib/providerMetadataDelivery).
+  useEffect(() => {
+    for (const provider of providersTabMetadataRefreshes({ showSettings, settingsActiveTab })) {
+      void refreshProviderMetadataRef.current(provider)
+    }
+  }, [showSettings, settingsActiveTab])
+
   const togglePinMessageInChat = useCallback(
     (chat: ChatRecord | null | undefined, messageId: string) => {
       if (!chat || !messageId) return
@@ -19467,6 +20276,153 @@ function App(): React.JSX.Element {
     [currentChat, deleteMessageFromChat]
   )
 
+  // Rewind-from-message ("Edit & resend from here"). The user re-typed an
+  // older user bubble and re-sent it: stop the live run and everything chained
+  // to it, drop the transcript tail after the edited row, and dispatch the
+  // edited text from that point.
+  //
+  // Transcript + lifecycle ONLY: no file or git revert, no seat change, and
+  // the blackboard/goal/todos ride through untouched — the truncate op drops
+  // message rows and nothing else. Order is CANCEL → QUIESCE → TRUNCATE →
+  // DISPATCH per the binding contract (blackboard
+  // `rewind-contract-v1.1-AMENDMENT-BINDING`): cancelling after truncation
+  // would let an in-flight run append into the cut tail, and truncating
+  // before the post-cancel quiesce would let a row already in flight land
+  // inside it.
+  const handleEditAndResendFromHere = async (messageId: string, editedContent: string) => {
+    const chat = currentChat
+    if (!chat || !messageId) return
+    if (!editedContent || !editedContent.trim()) return
+    const chatId = chat.appChatId
+    if (rewindInFlightChatIdsRef.current.has(chatId)) return
+    // Classify BEFORE cancelling: cancel destroys the rotation state a
+    // mid-round-steer resume reads, so the steer-vs-fresh dispatch decision
+    // is taken up front.
+    const classification = classifyRewindTarget({
+      // ChatMessage carries its round linkage at metadata.ensembleRoundId, not
+      // a top-level roundId — map it explicitly or every row reads as one
+      // unrouted group and a later round-opening prompt misclassifies as a
+      // mid-round steer.
+      messages: chat.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        // `metadata` is an index-signature bag, so this reads back as
+        // `unknown`; the in-tree convention (ensembleRoundCards,
+        // blackboardChangeStack, TranscriptPanel) is an explicit string
+        // guard. A non-string round id is treated as unstamped rather than
+        // coerced, which keeps the classifier's grouping honest.
+        roundId:
+          typeof message.metadata?.ensembleRoundId === 'string'
+            ? message.metadata.ensembleRoundId
+            : null
+      })),
+      messageId,
+      isEnsemble: chat.chatKind === 'ensemble'
+    })
+    if (!classification.ok) return
+    const { kind, index } = classification
+    const anchor = chat.messages[index]
+    if (!anchor || anchor.id !== messageId || anchor.role !== 'user') return
+    // FORK A (contract v1.1): capture the seat that is active RIGHT NOW. The
+    // cancel below destroys the rotation state with the round runtime
+    // (EnsembleOrchestrator clears activeParticipantId and drops the runtime),
+    // so this is the last chance to read it. The re-dispatch threads it
+    // through so a mid-round-steer rewind resumes the rotation at that seat
+    // instead of restarting from the roster top and re-running seats whose
+    // output survived the truncate.
+    const resumeFromParticipantId =
+      chat.chatKind === 'ensemble' && kind === 'mid-round-steer'
+        ? chat.ensemble?.activeRound?.activeParticipantId
+        : undefined
+    // Same orphan-pending guard as delete, extended over the whole cut tail:
+    // never strand an approval/question/plan modal whose anchor row is about
+    // to be rewritten or dropped.
+    const cutIds = chat.messages.slice(index).map((message) => message.id)
+    const strandsOpenPrompt = cutIds.some(
+      (id) =>
+        agentQuestionQueueHasMessage(pendingAgentQuestionsByChatId[chatId], id) ||
+        messageAnchorsActivePrompt(id, null, pendingPlanChoiceByChatId[chatId]?.messageId)
+    )
+    if (strandsOpenPrompt) {
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(
+          'This part of the transcript has an open prompt waiting on it. Answer or dismiss the prompt before editing & resending from here.'
+        )
+      }
+      return
+    }
+    rewindInFlightChatIdsRef.current.add(chatId)
+    try {
+      // 1. CANCEL. Reuses the linked-chat stop path so the run, queued jobs,
+      // scheduled occurrences, and (ensemble) the round drain together.
+      await cancelLinkedChatRun(chat)
+      // 2. QUIESCE (contract v1.1). Re-baseline against canonical AFTER
+      // cancel: a row that landed mid-cancel is now visible, and the revision
+      // fence on the mutation below turns any later arrival into a retryable
+      // conflict instead of a row inside the cut tail.
+      await rendererTranscriptPersistenceRef.current?.whenIdle(chatId)
+      pendingChatDraftsRef.current.discard(chatId)
+      const baseline = (await refreshSingleChat(chatId)) || chat
+      const sendRewindMutation = (record: ChatRecord) => {
+        const anchorMessage = record.messages.find((message) => message.id === messageId)
+        if (!anchorMessage || anchorMessage.role !== 'user') return null
+        return window.api.mutateChatTranscript({
+          version: RENDERER_CHAT_TRANSCRIPT_MUTATION_VERSION,
+          chatId,
+          baseRevision: chatPersistenceRevision(record),
+          transcriptOps: [
+            { op: 'update', id: messageId, message: { ...anchorMessage, content: editedContent } },
+            { op: 'truncateFrom', id: messageId }
+          ]
+        })
+      }
+      let mutation = await sendRewindMutation(baseline)
+      if (
+        mutation &&
+        !mutation.accepted &&
+        mutation.reason === 'revision-conflict' &&
+        mutation.canonical
+      ) {
+        // A row landed between quiesce and truncate — exactly the race v1.1
+        // names. Retry ONCE against the returned canonical, then give up.
+        mutation = await sendRewindMutation(mutation.canonical)
+      }
+      if (!mutation || !mutation.accepted) {
+        const reason = !mutation ? 'no response' : mutation.reason
+        appendThreadRawLog(chatId, {
+          type: 'stderr',
+          content: `Edit & resend stopped the live run but could not rewrite the transcript (${reason}). Files and blackboard are untouched — the edited text was moved to the composer draft; send it from there to continue.`
+        })
+        handleAddTranscriptMessageToPrompt(chatId, editedContent)
+        return
+      }
+      void refreshSingleChat(chatId)
+      // 3. DISPATCH from that point. A corrected premise inside an ensemble
+      // chat re-enters through the steer path carrying the rewind hints: the
+      // replacement round skips the opening preamble (a scout/writer fan-out
+      // re-fire is the chat-opening exception ONLY), resumes the rotation at
+      // the seat captured before the cancel for a mid-round steer, and does
+      // not echo the edited prompt — the truncate mutation already rewrote
+      // the anchor row in place. A fresh premise — solo turn or the chat's
+      // opening prompt — dispatches as a new send with the full preamble.
+      // Both ride `existingPrompt` so the composer draft is never disturbed.
+      relockMainTranscriptToLatest()
+      if (chat.chatKind === 'ensemble' && kind !== 'chat-opening') {
+        void handleSteerRef.current(undefined, editedContent, undefined, {
+          ...(resumeFromParticipantId ? { resumeFromParticipantId } : {}),
+          suppressPromptEcho: true
+        })
+      } else {
+        handleRunRef.current(undefined, editedContent)
+      }
+      if (chatId === (currentChatIdRef.current || currentChat?.appChatId)) {
+        setIsThinking(true)
+      }
+    } finally {
+      rewindInFlightChatIdsRef.current.delete(chatId)
+    }
+  }
+
   const handleOpenSideChatFromMessage = useCallback(
     (message: ChatMessage) => {
       if (!canCreateSideChatFromCurrent || !currentChat || !message?.id) return
@@ -19510,16 +20466,45 @@ function App(): React.JSX.Element {
       sideChatPresentationForCurrentParent
     ]
   )
+  // Read-path rule (paged opens): ONE shared seam for the current chat's
+  // transcript: the store's loaded window on a paged shell, the canonical
+  // arrays otherwise. Whole-transcript (Class W) features escalate below.
+  const currentChatTranscript = useCurrentChatTranscriptWindow(currentChat, {
+    deferPresentation: shouldDeferTranscriptPresentation({
+      running: Boolean(currentChat && runningChatIds.has(currentChat.appChatId)),
+      approvalOpen: Boolean(currentChat && pendingAgentApprovalByChatId[currentChat.appChatId])
+    })
+  })
+  // Class W read paths (thread search, pins) escalate ON DEMAND only — a paged thread STAYS PAGED on plain open; plain
+  // opens never background-hydrate a paged chat. Compaction, closeout repair, and the mention menu carry
+  // their own on-demand triggers (below / in their own modules); mutations auto-escalate through
+  // updateChatById's summary queue. TODO(main-side search/pins IPC): serve canonically from main.
+  useEffect(() => {
+    if (!currentChatTranscript.paged) return
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    if (!threadSearchOpen && !isPinnedMessagesPanelOpen) return
+    // A Class W surface (search invoked, pins panel opened) is demanding the whole transcript —
+    // full-hydrate, once per open (request-pool dedupes concurrent/ repeat triggers).
+    void refreshSingleChat(chatId)
+  }, [
+    currentChatTranscript.paged,
+    currentChat?.appChatId,
+    threadSearchOpen,
+    isPinnedMessagesPanelOpen,
+    refreshSingleChat
+  ])
   const latestSideChatRunResultSeed = useMemo(() => {
-    if (!currentChat?.runs?.length) return null
-    const sourceRun = [...currentChat.runs].reverse().find((run) => run.runId && run.endedAt)
+    const chatRuns = currentChatTranscript.runs
+    if (!chatRuns.length) return null
+    const sourceRun = [...chatRuns].reverse().find((run) => run.runId && run.endedAt)
     if (!sourceRun) return null
     const providerLabel = getProviderLabel(sourceRun.provider || getChatProvider(currentChat))
     return {
       runId: sourceRun.runId,
       label: `${providerLabel} run${sourceRun.status ? ` · ${sourceRun.status}` : ''}`
     }
-  }, [currentChat])
+  }, [currentChat, currentChatTranscript])
   const handleOpenSideChatFromLatestRunResult = useCallback(() => {
     if (!latestSideChatRunResultSeed?.runId) return
     handleOpenSideChatFromRunResult(latestSideChatRunResultSeed.runId)
@@ -19533,7 +20518,7 @@ function App(): React.JSX.Element {
         content: ensembleSummary
       }
     }
-    const latestAssistantMessage = [...(currentChat?.messages || [])]
+    const latestAssistantMessage = [...currentChatTranscript.messages]
       .reverse()
       .find((message) => message.role === 'assistant' && message.content.trim())
     if (!latestAssistantMessage?.content) return null
@@ -19541,7 +20526,7 @@ function App(): React.JSX.Element {
       label: 'Latest assistant response',
       content: compactPromptPreview(latestAssistantMessage.content)
     }
-  }, [currentChat])
+  }, [currentChat, currentChatTranscript])
   const handleOpenSideChatFromSummary = useCallback(() => {
     if (!canCreateSideChatFromCurrent || !currentChat || !sideChatSummarySeed?.content) return
     const seedPrompt = [
@@ -19562,8 +20547,9 @@ function App(): React.JSX.Element {
     sideChatSummarySeed
   ])
   const selectedSideChatSeedMessage =
-    sideChatSeedMessageId && currentChat?.messages
-      ? currentChat.messages.find((message) => message.id === sideChatSeedMessageId) || null
+    sideChatSeedMessageId && currentChatTranscript.messages.length > 0
+      ? currentChatTranscript.messages.find((message) => message.id === sideChatSeedMessageId) ||
+        null
       : null
   const handleMessageSelectionCandidate = useCallback((message: ChatMessage) => {
     if (!message?.id) return
@@ -19816,7 +20802,8 @@ function App(): React.JSX.Element {
   const handleAgentApprovalAction = async (
     requestId: string,
     action: AgentApprovalAction,
-    intentNoteOverride?: string
+    intentNoteOverride?: string,
+    commandRuleOfferIdOverride?: string
   ): Promise<boolean> => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
@@ -19834,19 +20821,37 @@ function App(): React.JSX.Element {
           decisionSource?: 'user' | 'system'
           reason?: string
           message?: string
+          commandRule?: { id: string; executablePath: string; fingerprint: string }
         } = false
+    const approvalClickStartMs = approvalLatencyNow()
     try {
       responseAccepted = await window.api.respondAgentApproval(
         requestId,
         action,
-        noteForDecision
+        noteForDecision,
+        commandRuleOfferIdOverride
+      )
+      // Wave-3 instrumentation: click-to-durable-ACK duration. Recorded only
+      // after the await settles; never implies acceptance before the ACK.
+      recordApprovalClickToAckFrom(
+        requestId,
+        action,
+        approvalClickStartMs,
+        shouldDismissAgentApproval(responseAccepted) ? 'acked' : 'not-acked'
       )
       if (!shouldDismissAgentApproval(responseAccepted)) {
+        const rejectionMessage =
+          responseAccepted &&
+          typeof responseAccepted === 'object' &&
+          typeof responseAccepted.message === 'string'
+            ? responseAccepted.message
+            : null
         setRawLogs((prev) => [
           ...prev,
           {
             type: 'stderr',
             content:
+              rejectionMessage ||
               'Approval response was not accepted. The request remains open for exact review or a different decision.'
           }
         ])
@@ -19858,6 +20863,10 @@ function App(): React.JSX.Element {
         responseAccepted.reason === 'stale-grant-binding'
           ? responseAccepted
           : null
+      const addedCommandRule =
+        responseAccepted && typeof responseAccepted === 'object' && responseAccepted.commandRule
+          ? responseAccepted.commandRule
+          : null
       setRawLogs((prev) => [
         ...prev,
         {
@@ -19865,11 +20874,13 @@ function App(): React.JSX.Element {
           content: remapped
             ? remapped.message ||
               'Grant cancelled: the chat workspace changed while the prompt was open. Re-approve from the current workspace if still needed.'
-            : `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${
-                typeof responseAccepted === 'object' && responseAccepted.resolvedAction
-                  ? responseAccepted.resolvedAction
-                  : action
-              }`
+            : addedCommandRule
+              ? `Saved exact command Allowlist rule (${addedCommandRule.fingerprint.slice(0, 12)}) and approved this invocation.`
+              : `${getProviderLabel(pendingAgentApproval?.provider || currentProvider)} approval response sent: ${
+                  typeof responseAccepted === 'object' && responseAccepted.resolvedAction
+                    ? responseAccepted.resolvedAction
+                    : action
+                }`
         }
       ])
       if (action === 'acceptForWorkspace') {
@@ -19881,6 +20892,8 @@ function App(): React.JSX.Element {
         )
       }
     } catch (error) {
+      // Wave-3 instrumentation: the IPC itself threw — still close the timing.
+      recordApprovalClickToAckFrom(requestId, action, approvalClickStartMs, 'error')
       setRawLogs((prev) => [
         ...prev,
         { type: 'stderr', content: `Failed to send approval response: ${redactLog(String(error))}` }
@@ -19933,7 +20946,10 @@ function App(): React.JSX.Element {
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `TaskWraith MCP bridge status failed: ${redactLog(String(error))}` }
+        {
+          type: 'stderr',
+          content: `TaskWraith MCP bridge status failed: ${redactLog(String(error))}`
+        }
       ])
     }
   }
@@ -20159,7 +21175,10 @@ function App(): React.JSX.Element {
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `TaskWraith MCP bridge install failed: ${redactLog(String(error))}` }
+        {
+          type: 'stderr',
+          content: `TaskWraith MCP bridge install failed: ${redactLog(String(error))}`
+        }
       ])
     }
   }
@@ -20167,10 +21186,7 @@ function App(): React.JSX.Element {
   const handleCancel = async () => {
     if (
       currentChat &&
-      (await cancelRunningScheduledTaskForChat(
-        currentChat.appChatId,
-        'Cancelled from composer.'
-      ))
+      (await cancelRunningScheduledTaskForChat(currentChat.appChatId, 'Cancelled from composer.'))
     ) {
       setIsThinking(false)
       syncRunningState()
@@ -20253,8 +21269,7 @@ function App(): React.JSX.Element {
           scheduledRunAt: request.scheduledRunAt,
           nowMs,
           chatBusy: isChatBusy(chatId, { ignoreQueueRunId: request.appRunId }),
-          chatKind:
-            liveChat?.chatKind === 'ensemble' || liveChat?.ensemble ? 'ensemble' : 'single'
+          chatKind: liveChat?.chatKind === 'ensemble' || liveChat?.ensemble ? 'ensemble' : 'single'
         })
       ) {
         continue
@@ -20266,14 +21281,7 @@ function App(): React.JSX.Element {
         request.scheduledRunAt
       )
     }
-  }, [
-    queuedRuns,
-    runQueueJobs,
-    workspaces,
-    currentWorkspace,
-    currentChat,
-    scheduledQueueWakeTick
-  ])
+  }, [queuedRuns, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
 
   useEffect(() => {
     const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)
@@ -20320,48 +21328,59 @@ function App(): React.JSX.Element {
         provider: nextRun.provider,
         statusReason: 'Dequeued by TaskWraith scheduler.'
       })
-      .then((leased) => {
-        if (!leased) {
-          queuedDispatchLeaseClaimsRef.current.release(nextRunId)
-          return
-        }
-        setQueuedRuns((prev) => removeExactQueuedRunRequest(prev, nextRunId))
-        let dispatchChat = nextRun.chatRecord
-        if (
-          dispatchChat &&
-          (hasPendingProviderChange(dispatchChat) ||
-            hasPendingEnsembleRosterPresetApply(dispatchChat))
-        ) {
-          const appliedChat = updateChatById(dispatchChat.appChatId, (source) => ({
-            ...applyPendingProviderChangeOnFinalize(
-              applyPendingEnsembleRosterPresetOnFinalize(source)
-            ),
-            updatedAt: Date.now()
-          }))
-          if (appliedChat) {
-            dispatchChat = appliedChat
-            if (currentChatIdRef.current === appliedChat.appChatId) {
-              applyChatComposerSelection(appliedChat, getChatProvider(appliedChat))
+      .then(
+        (leased) => {
+          if (!leased) {
+            queuedDispatchLeaseClaimsRef.current.release(nextRunId)
+            return
+          }
+          setQueuedRuns((prev) => removeExactQueuedRunRequest(prev, nextRunId))
+          let dispatchChat = nextRun.chatRecord
+          if (
+            dispatchChat &&
+            (hasPendingProviderChange(dispatchChat) ||
+              hasPendingEnsembleRosterPresetApply(dispatchChat))
+          ) {
+            const appliedChat = updateChatById(dispatchChat.appChatId, (source) => ({
+              ...applyPendingProviderChangeOnFinalize(
+                applyPendingEnsembleRosterPresetOnFinalize(source)
+              ),
+              updatedAt: Date.now()
+            }))
+            if (appliedChat) {
+              dispatchChat = appliedChat
+              if (currentChatIdRef.current === appliedChat.appChatId) {
+                applyChatComposerSelection(appliedChat, getChatProvider(appliedChat))
+              }
             }
           }
+          const dispatchProvider = getChatProvider(dispatchChat || nextRun.chatRecord)
+          appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
+            type: 'info',
+            content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(
+              dispatchProvider
+            )} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
+          })
+          void executeRunRef.current({
+            ...nextRun,
+            appRunId: leased.runId,
+            provider: dispatchProvider,
+            chatRecord: dispatchChat || nextRun.chatRecord
+          })
+        },
+        () => {
+          queuedDispatchLeaseClaimsRef.current.release(nextRunId)
         }
-        const dispatchProvider = getChatProvider(dispatchChat || nextRun.chatRecord)
-        appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
-          type: 'info',
-          content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(
-            dispatchProvider
-          )} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
-        })
-        void executeRunRef.current({
-          ...nextRun,
-          appRunId: leased.runId,
-          provider: dispatchProvider,
-          chatRecord: dispatchChat || nextRun.chatRecord
-        })
-      }, () => {
-        queuedDispatchLeaseClaimsRef.current.release(nextRunId)
-      })
-  }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
+      )
+  }, [
+    queuedRuns,
+    runningChatIds,
+    runQueueJobs,
+    workspaces,
+    currentWorkspace,
+    currentChat,
+    scheduledQueueWakeTick
+  ])
 
   useEffect(() => {
     try {
@@ -20392,10 +21411,7 @@ function App(): React.JSX.Element {
   const startRightPanelResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     const startX = event.clientX
-    const maxWidth = Math.min(
-      MAX_RIGHT_PANEL_WIDTH,
-      Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.58))
-    )
+    const maxWidth = rightPanelViewportMax(window.innerWidth)
     // Start from the *applied* (window-clamped) width, not the raw stored
     // preference — otherwise the first drag jumps to the full stored px on
     // a window that was rendering a narrower, clamped inspector.
@@ -20479,10 +21495,7 @@ function App(): React.JSX.Element {
     }
 
     event.preventDefault()
-    const maxWidth = Math.min(
-      MAX_RIGHT_PANEL_WIDTH,
-      Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.58))
-    )
+    const maxWidth = rightPanelViewportMax(window.innerWidth)
     const currentWidth = Math.min(appearance.inspectorWidth, maxWidth)
     const step = event.shiftKey ? 40 : 16
     let nextWidth = currentWidth
@@ -20524,42 +21537,112 @@ function App(): React.JSX.Element {
   const openChatPopoutWindow = useCallback(() => {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
-      draft: prompt,
+      // Store read at CALL time: App no longer re-renders per keystroke, so the
+      // render-time `prompt` const would hand the popout a draft older than what
+      // is on screen and silently drop the user's most recent typing.
+      draft: composerDraftState.getDraft(currentChat.appChatId),
       scrollState: captureMainTranscriptScrollState(),
-      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+      transcriptView: captureTranscriptViewOverrideForChat(currentChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
       chatId: currentChat.appChatId,
-      workspacePath: currentChat.workspacePath
+      workspacePath: currentChat.workspacePath,
+      presentation: 'full'
     })
-  }, [
-    captureMainTranscriptScrollState,
-    currentChat?.appChatId,
-    currentChat?.workspacePath,
-    prompt
-  ])
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath])
+
+  const openCompactChatCompanion = useCallback(() => {
+    if (!currentChat?.appChatId) return
+    writeChatPopoutHandoff(currentChat.appChatId, {
+      // Store read at CALL time: App no longer re-renders per keystroke, so the
+      // render-time `prompt` const would hand the popout a draft older than what
+      // is on screen and silently drop the user's most recent typing.
+      draft: composerDraftState.getDraft(currentChat.appChatId),
+      scrollState: captureMainTranscriptScrollState(),
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+      transcriptView: captureTranscriptViewOverrideForChat(currentChat.appChatId)
+    })
+    void window.api.openWorkspacePopout({
+      kind: 'chat',
+      chatId: currentChat.appChatId,
+      workspacePath: currentChat.workspacePath,
+      presentation: 'compact'
+    })
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath])
 
   const dockChatPopoutWindow = useCallback(
     (presentation: SidePanelPresentation) => {
       if (!isChatPopoutWindow || !currentChat?.appChatId) return
       isDockingChatPopoutRef.current = true
-      void window.api.dockSideChatPopout({
-        chatId: currentChat.appChatId,
-        presentation,
-        draft: prompt,
-        scrollState: captureMainTranscriptScrollState(),
-        roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
-      }).catch(() => {
-        isDockingChatPopoutRef.current = false
-      })
+      // Read once, at call time, from the module store rather than from a
+      // render-time hook value.
+      const dockedTranscriptView = captureTranscriptViewOverrideForChat(currentChat.appChatId)
+      void window.api
+        .dockSideChatPopout({
+          chatId: currentChat.appChatId,
+          presentation,
+          draft: composerDraftState.getDraft(currentChat.appChatId),
+          scrollState: captureMainTranscriptScrollState(),
+          roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+          // The wire format is tri-state on the return leg — `null` is an
+          // explicit "clear this chat back to Follow default" — but THIS SENDER
+          // NEVER SENDS ONE, and that is deliberate.
+          //
+          // It cannot tell a deliberate clear from a lost one. `readChatPopoutHandoff`
+          // is destructive, so a popout that merely RELOADED holds no override
+          // through no act of the user. Coercing that absence with `?? null`
+          // would travel home as an explicit clear and silently delete a pin the
+          // user set in the main window and never touched: pin Minimal, pop out,
+          // press Cmd-R in the popout, dock — and Minimal is gone.
+          //
+          // Declining to send a clear costs the other direction: clearing the
+          // view INSIDE a popout does not follow the chat home. That is a
+          // visible no-op the user can repeat in the main window, where the
+          // coercion is silent data loss they never asked for and cannot see.
+          ...(dockedTranscriptView !== undefined ? { transcriptView: dockedTranscriptView } : {})
+        })
+        .catch(() => {
+          isDockingChatPopoutRef.current = false
+        })
     },
-    [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow, prompt]
+    [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow]
   )
+
+  const applicationMenuActions: ApplicationMenuActions = {
+    activeTab: sidebarActiveTab,
+    workspace: resolveApplicationMenuWorkspace(
+      workspaces,
+      currentWorkspace,
+      sidebarActiveTab === 'projects' && activeWorkProjectId
+        ? getProjectWorkProfile(activeWorkProjectId)?.preferredWorkspaceId
+        : undefined
+    ),
+    newWorkspaceChat: handleNewChat,
+    newGlobalChat: handleNewDefaultGlobalChat,
+    newTerminal: (workspacePath) => terminalLaunchBus.request(workspacePath),
+    openFolder: handleSelectWorkspace,
+    openGeneralSettings: () => {
+      handleDismissChangelogSheet()
+      openSettingsTab('behavior')
+    },
+    showApp: () => {
+      handleDismissChangelogSheet()
+      setShowSettings(false)
+      setActiveProjectGraphId(null)
+    }
+  }
+  useApplicationMenu(applicationMenuActions, !isChatPopoutWindow, () => {
+    void window.api
+      .getWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => {})
+  })
 
   const createNewChatFromKeyboard = (): boolean => {
     if (isChatPopoutWindow) return false
-    void handleNewDefaultGlobalChat()
+    void runApplicationMenuCommand('new-chat', applicationMenuActions)
     return true
   }
 
@@ -20628,12 +21711,20 @@ function App(): React.JSX.Element {
     [resolvedKeyCommandBindings]
   )
 
+  const runCurrentPromptFromKeyboard = (): void => {
+    const routing = focusedRunPromptRoutingReaderRef.current?.()
+    const focusedChatId = currentChatIdRef.current || currentComposerChatId
+    const exactPickerParticipantId =
+      routing?.chatId === focusedChatId ? routing.exactPickerParticipantId : undefined
+    handleRun(undefined, undefined, undefined, undefined, undefined, exactPickerParticipantId)
+  }
+
   const keyboardActionsRef = useRef({
     attachWindowFromKeyboard,
     clearImagePermissions,
     copyCurrentTranscriptFromKeyboard,
     createNewChatFromKeyboard,
-    handleRun,
+    runCurrentPromptFromKeyboard,
     openChatPopoutWindowFromKeyboard,
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
@@ -20648,7 +21739,7 @@ function App(): React.JSX.Element {
     clearImagePermissions,
     copyCurrentTranscriptFromKeyboard,
     createNewChatFromKeyboard,
-    handleRun,
+    runCurrentPromptFromKeyboard,
     openChatPopoutWindowFromKeyboard,
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
@@ -20712,7 +21803,7 @@ function App(): React.JSX.Element {
           return false
         }
         if (commandId === 'run-prompt') {
-          keyboardActions.handleRun()
+          keyboardActions.runCurrentPromptFromKeyboard()
           return true
         }
         if (commandId === 'command-palette') {
@@ -20865,14 +21956,17 @@ function App(): React.JSX.Element {
           ...activeRunQueueChatIds
         ])
       ),
-    [runningChatIds, pendingAgentApprovalByChatId, chatsByAppChatIdForRunning, activeRunQueueChatIds]
+    [
+      runningChatIds,
+      pendingAgentApprovalByChatId,
+      chatsByAppChatIdForRunning,
+      activeRunQueueChatIds
+    ]
   )
   const hasCurrentChatActiveRunQueueJob = Boolean(
     currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
-  const currentEnsembleRound = activeEnsembleRoundForComposer(
-    currentChat?.ensemble?.activeRound
-  )
+  const currentEnsembleRound = activeEnsembleRoundForComposer(currentChat?.ensemble?.activeRound)
   const isCurrentEnsembleRoundDispatchLive = Boolean(currentEnsembleRound)
   const isCurrentChatRunning = Boolean(
     currentChat?.appChatId &&
@@ -20888,9 +21982,7 @@ function App(): React.JSX.Element {
   // True while the open chat is a workflow being composed (welcome screen shows
   // the workflow controls; first send saves the WorkflowDefinition).
   const isWorkflowComposeChat =
-    workflowDraft != null &&
-    currentChat != null &&
-    workflowDraft.chatId === currentChat.appChatId
+    workflowDraft != null && currentChat != null && workflowDraft.chatId === currentChat.appChatId
   // A saved workflow whose thread is the open chat (post-create / re-opened).
   const workflowForCurrentChat = currentChat
     ? (workflowDefinitions.find((wf) => wf.template.chatId === currentChat.appChatId) ?? null)
@@ -20905,7 +21997,9 @@ function App(): React.JSX.Element {
       : null
   const isEnsembleModeEnabled = settings?.ensembleModeEnabled !== false
   const isCurrentComposerLocked = isCurrentChatRunning && !isCurrentEnsembleChat
-  const planImportGroundingWorkspace = currentChat ? getWorkspaceForChat(currentChat) : currentWorkspace
+  const planImportGroundingWorkspace = currentChat
+    ? getWorkspaceForChat(currentChat)
+    : currentWorkspace
   const planImportGroundingDisabledReason = !pendingPlanImport
     ? null
     : pendingPlanImport.contract.fileGroundings.length === 0
@@ -20932,6 +22026,8 @@ function App(): React.JSX.Element {
   const [pendingEnsembleSeatSelections, setPendingEnsembleSeatSelections] =
     useState<PendingEnsembleSeatSelections>({})
   const pendingEnsembleSeatSelectionsRef = useRef<PendingEnsembleSeatSelections>({})
+  // Preserve chat-wide order for rapid edits and multi-seat operations.
+  const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const replacePendingEnsembleSeatSelections = useCallback(
     (next: PendingEnsembleSeatSelections): void => {
       if (next === pendingEnsembleSeatSelectionsRef.current) return
@@ -20943,14 +22039,12 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!currentChat?.ensemble) return
     replacePendingEnsembleSeatSelections(
-      reconcilePendingEnsembleSeatSelections(
-        pendingEnsembleSeatSelectionsRef.current,
-        {
-          chatId: currentChat.appChatId,
-          participants: currentChat.ensemble.participants,
-          roundLive: isEnsembleActiveRoundDispatchLive(currentChat.ensemble.activeRound)
-        }
-      )
+      reconcilePendingEnsembleSeatSelections(pendingEnsembleSeatSelectionsRef.current, {
+        chatId: currentChat.appChatId,
+        participants: currentChat.ensemble.participants,
+        roundLive: isEnsembleActiveRoundDispatchLive(currentChat.ensemble.activeRound),
+        writesPending: authoritativeParticipantSeatChangeQueueRef.current.has(currentChat.appChatId)
+      })
     )
   }, [
     currentChat?.appChatId,
@@ -20967,18 +22061,18 @@ function App(): React.JSX.Element {
     // authority for hydrated/current panes and removed genuinely deleted chats.
     // Whole-chat broadcasts replace `chats` repeatedly during streaming, so
     // skip both scheduling boundaries unless roster/live-round ownership changed.
-    const snapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
-      chatByIdRef.current.values()
-    )
+    const snapshot = buildMultiviewEnsembleSelectionPruneSnapshot(chatByIdRef.current.values())
     if (ensembleSelectionPruneKeyRef.current === snapshot.ownershipKey) return
     ensembleSelectionPruneKeyRef.current = snapshot.ownershipKey
-    setSelectedParticipantIdByChatId((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, previous, new Set())
-        .selectedParticipantIdByChatId
+    setSelectedParticipantIdByChatId(
+      (previous) =>
+        pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, previous, new Set())
+          .selectedParticipantIdByChatId
     )
-    setUserOverrodeSelectionRoundKeys((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, {}, previous)
-        .userOverrodeSelectionRoundKeys
+    setUserOverrodeSelectionRoundKeys(
+      (previous) =>
+        pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, {}, previous)
+          .userOverrodeSelectionRoundKeys
     )
   }, [chats, currentChat])
   const setSelectedParticipantForChat = useCallback(
@@ -21010,15 +22104,9 @@ function App(): React.JSX.Element {
     () =>
       overlayPendingEnsembleSeatSelections(
         [...(currentChat?.ensemble?.participants || [])].sort((a, b) => a.order - b.order),
-        currentChat?.appChatId
-          ? pendingEnsembleSeatSelections[currentChat.appChatId]
-          : undefined
+        currentChat?.appChatId ? pendingEnsembleSeatSelections[currentChat.appChatId] : undefined
       ),
-    [
-      currentChat?.appChatId,
-      currentChat?.ensemble?.participants,
-      pendingEnsembleSeatSelections
-    ]
+    [currentChat?.appChatId, currentChat?.ensemble?.participants, pendingEnsembleSeatSelections]
   )
   const ensembleEnabledParticipantsForCurrent = useMemo(
     () =>
@@ -21031,9 +22119,7 @@ function App(): React.JSX.Element {
     if (!isCurrentEnsembleChat || ensembleEnabledParticipantsForCurrent.length === 0) {
       return undefined
     }
-    return buildEnsembleProviderBlendStyle(
-      ensembleEnabledParticipantsForCurrent
-    ) as CSSProperties
+    return buildEnsembleProviderBlendStyle(ensembleEnabledParticipantsForCurrent) as CSSProperties
   }, [isCurrentEnsembleChat, ensembleEnabledParticipantsForCurrent])
   const chatOwnedSelectedParticipantId = currentChat
     ? resolveSlashParticipantForChat(currentChat)?.id || null
@@ -21077,18 +22163,13 @@ function App(): React.JSX.Element {
     runtimePickerScope.provider,
     runtimePickerScope.selectedRuntimeProfileId
   )
-  currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(runtimePickerScope.provider)
-  const currentEnsembleOrchestrationMode: EnsembleOrchestrationMode =
-    currentChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-  const activeEnsembleOrchestrationMode: EnsembleOrchestrationMode =
-    currentEnsembleRound?.orchestrationMode === 'continuous'
-      ? 'continuous'
-      : currentEnsembleOrchestrationMode
+  currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(
+    runtimePickerScope.provider
+  )
   const currentEnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy(
     currentChat?.ensemble?.fanoutPolicy,
     currentChat?.ensemble?.concurrentModeEnabled
   )
-  const currentEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(currentEnsembleFanoutPolicy)
   const activeEnsembleFanoutPolicy =
     currentEnsembleRound?.fanoutPolicy !== undefined ||
     currentEnsembleRound?.concurrentMode !== undefined
@@ -21097,61 +22178,12 @@ function App(): React.JSX.Element {
           currentEnsembleRound?.concurrentMode
         )
       : currentEnsembleFanoutPolicy
-  const activeEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(activeEnsembleFanoutPolicy)
-  const ensembleOllamaContextWarning = useMemo(() => {
-    if (!isCurrentEnsembleChat || !currentChat?.ensemble) return null
-    const ollamaParticipants = currentChat.ensemble.participants.filter(
-      (participant) => participant.enabled && participant.provider === 'ollama'
-    )
-    if (ollamaParticipants.length === 0) return null
-    const installedOllamaModels = Array.isArray(agentStatusByProvider.ollama?.models)
-      ? agentStatusByProvider.ollama.models
-      : []
-    const explicitOllamaContextLengths = ollamaParticipants
-      .map(
-        (participant) =>
-          installedOllamaModels.find(
-            (model: { id?: string; contextLength?: number }) =>
-              model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-          )?.contextLength
-      )
-      .filter(
-        (contextLength): contextLength is number =>
-          typeof contextLength === 'number' &&
-          Number.isFinite(contextLength) &&
-          contextLength >= 2048
-      )
-    const pressure = estimateWorstOllamaEnsembleUiPressure({
-      configuredContextChars: currentChat.ensemble.ensembleContextChars,
-      participantCount: currentChat.ensemble.participants.filter((participant) => participant.enabled)
-        .length,
-      ollamaParticipants: ollamaParticipants.map((participant) => ({
-        modelId: participant.model,
-        ollamaContextLength: installedOllamaModels.find(
-          (model: { id?: string; contextLength?: number }) =>
-            model.id && isOllamaModelInstalled(participant.model || '', [model.id])
-        )?.contextLength
-      })),
-      toolsEnabled: currentChat.scope !== 'global'
-    })
-    if (!pressure) return null
-    return {
-      severity: pressure.severity,
-      message: ollamaContextPressureMessage(pressure),
-      suggestedChars: pressure.effectiveTranscriptChars,
-      clampContextChars: explicitOllamaContextLengths.some(
-        (contextLength) => contextLength < 128 * 1024
-      )
-    }
-  }, [isCurrentEnsembleChat, currentChat?.ensemble, currentChat?.scope, agentStatusByProvider.ollama?.models])
   const currentEnsembleContinuationHops = currentEnsembleRound?.continuationHops || 0
   // Prefer chat-level cap so the hops meter updates as soon as the user
   // saves — an in-flight round still carries its own snapshot, but the
   // composer chip should reflect the user's latest setting immediately.
   const currentEnsembleMaxContinuationHops =
-    currentChat?.ensemble?.maxContinuationHops ??
-    currentEnsembleRound?.maxContinuationHops ??
-    6
+    currentChat?.ensemble?.maxContinuationHops ?? currentEnsembleRound?.maxContinuationHops ?? 6
   const isCurrentEnsembleRoundRunning = Boolean(currentEnsembleRound)
   const runtimeSeatPatchKeys = useMemo(
     () =>
@@ -21193,10 +22225,6 @@ function App(): React.JSX.Element {
     setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
     setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
   }, [])
-  // Model, reasoning, and permission clicks can be one rapid picker edit.
-  // Preserve chat-wide order so multi-seat mutations such as "Apply to all"
-  // build every authoritative response on the previous canonical snapshot.
-  const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const requestAuthoritativeParticipantSeatChange = useCallback(
     (
       sourceChat: ChatRecord,
@@ -21210,8 +22238,7 @@ function App(): React.JSX.Element {
         (candidate) => candidate.id === participantId
       )
       if (!sourceParticipant) return false
-      const previousPending =
-        pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
+      const previousPending = pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
       const optimistic = queuePendingEnsembleSeatSelection(
         pendingEnsembleSeatSelectionsRef.current,
         queueKey,
@@ -21219,24 +22246,14 @@ function App(): React.JSX.Element {
         patch
       )
       replacePendingEnsembleSeatSelections(optimistic.selections)
-      const replaceIfLatest = (
-        replacement: EnsembleParticipant | null | undefined
-      ): void => {
-        const current =
-          pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
-        if (!ensembleParticipantSelectionsEqual(current, optimistic.participant)) return
+      const replaceIfLatest = (replacement: EnsembleParticipant | null | undefined): void => {
         replacePendingEnsembleSeatSelections(
-          replacement
-            ? setPendingEnsembleSeatSelection(
-                pendingEnsembleSeatSelectionsRef.current,
-                queueKey,
-                replacement
-              )
-            : clearPendingEnsembleSeatSelection(
-                pendingEnsembleSeatSelectionsRef.current,
-                queueKey,
-                participantId
-              )
+          replacePendingEnsembleSeatSelectionIfCurrent(
+            pendingEnsembleSeatSelectionsRef.current,
+            queueKey,
+            optimistic.participant,
+            replacement
+          )
         )
       }
       const previous = authoritativeParticipantSeatChangeQueueRef.current.get(queueKey)
@@ -21269,11 +22286,7 @@ function App(): React.JSX.Element {
       })
       return true
     },
-    [
-      applyChatSnapshot,
-      buildRuntimeSeatPatch,
-      replacePendingEnsembleSeatSelections
-    ]
+    [applyChatSnapshot, buildRuntimeSeatPatch, replacePendingEnsembleSeatSelections]
   )
   const patchParticipantImmediate = useCallback(
     (
@@ -21343,32 +22356,44 @@ function App(): React.JSX.Element {
   )
   const patchEnsembleParticipantForChat = useCallback(
     (chatId: string, participantId: string, patch: Partial<EnsembleParticipant>): void => {
+      if (
+        tryCommitEnsembleSeatPatch({
+          chat: chatByIdRef.current.get(chatId),
+          participantId,
+          patch,
+          runtimePatch: buildRuntimeSeatPatch(patch),
+          request: requestAuthoritativeParticipantSeatChange
+        })
+      ) {
+        return
+      }
       updateChatById(chatId, (sourceChat) => {
         if (!sourceChat.ensemble) return sourceChat
         return patchParticipantWithSeatGate(sourceChat, participantId, patch) || sourceChat
       })
     },
-    [patchParticipantWithSeatGate, updateChatById]
+    [
+      buildRuntimeSeatPatch,
+      requestAuthoritativeParticipantSeatChange,
+      patchParticipantWithSeatGate,
+      updateChatById
+    ]
   )
   const applyEnsembleRosterPresetToChat = useCallback(
     (chatId: string, preset: EnsembleRosterPreset): void => {
       const sourceChat = chatByIdRef.current.get(chatId)
       if (!sourceChat?.ensemble) return
-      const materializedPreset = materializeParticipantsFromPresetWithBossman(
-        preset.participants
-      )
+      const materializedPreset = materializeParticipantsFromPresetWithBossman(preset.participants)
       const participants = hydrateParticipantsWithPooledAgentIdentity(
         materializedPreset.participants
       )
-      const firstEnabled = participants.find((participant) => participant.enabled) || participants[0]
+      const firstEnabled =
+        participants.find((participant) => participant.enabled) || participants[0]
       const nextMaxParticipants = Math.min(
         MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
       )
-      if (
-        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble.activeRound) &&
-        firstEnabled
-      ) {
+      if (isEnsembleActiveRoundDispatchLive(sourceChat.ensemble.activeRound) && firstEnabled) {
         const pendingPlan = buildUserEnsembleRosterPresetApplyPlan({
           preset,
           participants,
@@ -21422,9 +22447,7 @@ function App(): React.JSX.Element {
             concurrentModeEnabled:
               typeof preset.concurrentModeEnabled === 'boolean'
                 ? preset.concurrentModeEnabled
-                : ensembleFanoutPolicyEnabled(
-                    normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)
-                  ),
+                : ensembleFanoutPolicyEnabled(normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)),
             ...(typeof preset.ensembleContextChars === 'number'
               ? { ensembleContextChars: preset.ensembleContextChars }
               : {}),
@@ -21503,14 +22526,13 @@ function App(): React.JSX.Element {
     (
       chatId: string,
       patch: {
-        orchestrationMode?: EnsembleOrchestrationMode
         fanoutPolicy?: EnsembleFanoutPolicy
         maxContinuationHops?: number
         previousMaxContinuationHops?: number
       }
     ): void => {
       const source = chatByIdRef.current.get(chatId)
-      // Mode/fan-out retain their live-round-only behavior. A hop-limit edit
+      // Fan-out retains its live-round-only behavior. A hop-limit edit
       // also applies while idle because its durable transcript event is born
       // through this authoritative main-process path.
       if (
@@ -21519,8 +22541,19 @@ function App(): React.JSX.Element {
       ) {
         return
       }
-      void window.api
-        .updateLiveEnsembleRoundConfig({ chatId, ...patch })
+      // The optimistic edit above rode `persistence: 'none'`, so this IPC is
+      // the only write there is — and it is what must release the panel claim.
+      // A later raise supersedes an earlier token, so claiming here also closes
+      // the one that path leaves outstanding, instead of leaving it to expire
+      // and refuse legitimate main-authored changes for the rest of its lease.
+      void withEnsembleWriteClaim(
+        chatId,
+        {
+          claims: ensembleRosterClaimsRef.current,
+          flushDeliveries: flushCoalescedChatsNow
+        },
+        () => window.api.updateLiveEnsembleRoundConfig({ chatId, ...patch })
+      )
         .then((result) => {
           if (result.ok) return
           window.alert(result.message || result.error || 'Live Ensemble control update failed.')
@@ -21534,41 +22567,6 @@ function App(): React.JSX.Element {
         })
     },
     [refreshSingleChat]
-  )
-  const updateEnsembleOrchestrationModeForChat = useCallback(
-    (chatId: string, mode: EnsembleOrchestrationMode): void => {
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const activeRound = source.ensemble.activeRound
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            orchestrationMode: mode,
-            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
-              ? {
-                  activeRound: {
-                    ...activeRound,
-                    orchestrationMode: mode
-                  }
-                }
-              : {}),
-            maxParticipants:
-              Number.isFinite(source.ensemble.maxParticipants) &&
-              source.ensemble.maxParticipants >= 2 &&
-              source.ensemble.maxParticipants <= MAX_ROSTER_PRESET_PARTICIPANTS
-                ? source.ensemble.maxParticipants
-                : MAX_ROSTER_PRESET_PARTICIPANTS,
-            maxContinuationHops: source.ensemble.maxContinuationHops || 6,
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
-      requestLiveEnsembleRoundConfigUpdate(chatId, { orchestrationMode: mode })
-    },
-    [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   const updateEnsembleFanoutPolicyForChat = useCallback(
     (chatId: string, policy: EnsembleFanoutPolicy): void => {
@@ -21621,54 +22619,52 @@ function App(): React.JSX.Element {
     },
     [updateChatById]
   )
-  const updateEnsembleContextCharsForChat = useCallback(
-    (chatId: string, nextChars: number): void => {
-      const safeChars = Math.max(5_000, Math.min(256_000, Math.round(Number(nextChars) || 0)))
-      if (!Number.isFinite(safeChars) || safeChars <= 0) return
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            ensembleContextChars: safeChars,
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
-    },
-    [updateChatById]
-  )
   const updateEnsembleMaxContinuationHopsForChat = useCallback(
     (chatId: string, nextMax: number): void => {
       const source = chatByIdRef.current.get(chatId)
       if (!source?.ensemble) return
       const change = buildContinuationHopsChangeRequest(chatId, source.ensemble, nextMax)
       if (!change) return
-      updateChatById(chatId, (source) => {
-        if (!source.ensemble) return source
-        const activeRound = source.ensemble.activeRound
-        const patched: ChatRecord = {
-          ...source,
-          ensemble: {
-            ...source.ensemble,
-            maxContinuationHops: change.maxContinuationHops,
-            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
-              ? {
-                  activeRound: {
-                    ...activeRound,
-                    maxContinuationHops: change.maxContinuationHops
+      // The live-round-config IPC persists authoritatively main-side (with the
+      // durable transcript event), so this optimistic patch must not ALSO
+      // schedule the debounced whole-record save: the two would race to persist
+      // the same value, and the loser is a redundant multi-MB write of a record
+      // the authoritative path has already settled.
+      //
+      // 2026-09-11 — this comment used to justify the same decision by the two
+      // ways the whole-record save FAILED: the cap's merge preservation was
+      // stamp-gated, so a later main save wiped the optimistic value from the
+      // ref, and the delayed clone was then refused as stale. Both are fixed
+      // (the cap is in ENSEMBLE_PANEL_CONFIGURATION_KEYS and defended by the
+      // roster write claim; a refused save is rebased and re-issued — see
+      // lib/ensembleRosterCommit.ts). Routing through the authoritative IPC
+      // remains right on its own merits; it is no longer a workaround.
+      updateChatById(
+        chatId,
+        (source) => {
+          if (!source.ensemble) return source
+          const activeRound = source.ensemble.activeRound
+          const patched: ChatRecord = {
+            ...source,
+            ensemble: {
+              ...source.ensemble,
+              maxContinuationHops: change.maxContinuationHops,
+              ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
+                ? {
+                    activeRound: {
+                      ...activeRound,
+                      maxContinuationHops: change.maxContinuationHops
+                    }
                   }
-                }
-              : {}),
-            updatedAt: new Date().toISOString()
-          },
-          updatedAt: Date.now()
-        }
-        return withSessionActivityLedger(source, patched)
-      })
+                : {}),
+              updatedAt: new Date().toISOString()
+            },
+            updatedAt: Date.now()
+          }
+          return withSessionActivityLedger(source, patched)
+        },
+        { persistence: 'none' }
+      )
       requestLiveEnsembleRoundConfigUpdate(chatId, {
         maxContinuationHops: change.maxContinuationHops,
         previousMaxContinuationHops: change.previousMaxContinuationHops
@@ -21687,12 +22683,41 @@ function App(): React.JSX.Element {
       if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
       patchEnsembleParticipantForChat(currentChat.appChatId, selectedParticipant.id, patch)
     },
-    [
-      isCurrentEnsembleChat,
-      patchEnsembleParticipantForChat,
-      selectedParticipant,
-      currentChat
-    ]
+    [isCurrentEnsembleChat, patchEnsembleParticipantForChat, selectedParticipant, currentChat]
+  )
+  // Chip-strip whole-record commit. Thin wiring only — the claim ordering that
+  // keeps a stale delivery from reverting the user's add/removal lives in
+  // lib/ensembleRosterCommit.ts.
+  const commitEnsembleRosterChange = useCallback(
+    (updatedChat: ChatRecord) => {
+      commitEnsembleRosterChangeRecord(updatedChat, {
+        chatById: chatByIdRef.current,
+        setCurrentChat,
+        setChats,
+        claims: ensembleRosterClaimsRef.current,
+        saveChat: (chat) => window.api.saveChatWithOutcome(chat),
+        flushDeliveries: flushCoalescedChatsNow
+      })
+    },
+    [flushCoalescedChatsNow]
+  )
+  // Live-round roster lane. Thin wiring only — the claim ordering that keeps a
+  // delivery main built before the mutation from reverting it lives in
+  // lib/ensembleRosterCommit.ts.
+  const commitEnsembleLiveRosterMutation = useCallback(
+    (chatId: string, mutation: EnsembleUserRosterMutation) => {
+      void commitEnsembleLiveRosterMutationRecord(chatId, {
+        chatById: chatByIdRef.current,
+        setCurrentChat,
+        setChats,
+        claims: ensembleRosterClaimsRef.current,
+        flushDeliveries: flushCoalescedChatsNow,
+        requestMutation: (id) =>
+          window.api.requestEnsembleUserRosterMutation({ chatId: id, ...mutation }),
+        onError: (message) => window.alert(message)
+      })
+    },
+    [flushCoalescedChatsNow]
   )
   const patchEnsembleParticipantById = useCallback(
     (participantId: string, patch: Partial<EnsembleParticipant>) => {
@@ -21722,28 +22747,13 @@ function App(): React.JSX.Element {
   )
   const applyEnsemblePermissionsToAllParticipants = useCallback(() => {
     if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
-    applyEnsemblePermissionsToAllParticipantsForChat(
-      currentChat.appChatId,
-      selectedParticipant.id
-    )
+    applyEnsemblePermissionsToAllParticipantsForChat(currentChat.appChatId, selectedParticipant.id)
   }, [
     applyEnsemblePermissionsToAllParticipantsForChat,
     isCurrentEnsembleChat,
     selectedParticipant,
     currentChat
   ])
-  const updateCurrentEnsembleOrchestrationMode = useCallback(
-    (mode: EnsembleOrchestrationMode) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateEnsembleOrchestrationModeForChat(currentChat.appChatId, mode)
-    },
-    [
-      isCurrentEnsembleChat,
-      currentChat?.appChatId,
-      currentChat?.ensemble,
-      updateEnsembleOrchestrationModeForChat
-    ]
-  )
   const updateCurrentEnsembleFanoutPolicy = useCallback(
     (policy: EnsembleFanoutPolicy) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
@@ -21756,12 +22766,6 @@ function App(): React.JSX.Element {
       updateEnsembleFanoutPolicyForChat
     ]
   )
-  const updateCurrentEnsembleConcurrentMode = useCallback(
-    (enabled: boolean) => {
-      updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
-    },
-    [updateCurrentEnsembleFanoutPolicy]
-  )
   const updateCurrentEnsembleFanoutIsolation = useCallback(
     (isolation: EnsembleFanoutIsolationPolicy) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
@@ -21772,22 +22776,6 @@ function App(): React.JSX.Element {
       currentChat?.appChatId,
       currentChat?.ensemble,
       updateEnsembleFanoutIsolationForChat
-    ]
-  )
-
-  // D — persist the user-set shared-transcript char budget (5K–256K) onto
-  // chat.ensemble.ensembleContextChars. Drives buildTaggedTranscript's budget
-  // for the NEXT round; clamped here so a malformed value never lands.
-  const updateCurrentEnsembleContextChars = useCallback(
-    (nextChars: number) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      updateEnsembleContextCharsForChat(currentChat.appChatId, nextChars)
-    },
-    [
-      isCurrentEnsembleChat,
-      currentChat?.appChatId,
-      currentChat?.ensemble,
-      updateEnsembleContextCharsForChat
     ]
   )
 
@@ -21809,47 +22797,37 @@ function App(): React.JSX.Element {
     ]
   )
 
-  // Ensemble round-complete notice — fires once when the round
-  // transitions to `completed` (or `cancelled`). Solo chats use the
-  // per-run-exit notice path; for ensemble we suppress that and
-  // emit here instead, so the card reflects round-level metadata
-  // rather than the last participant's individual run.
-  //
-  // Lifecycle:
-  //   - `completed` / `cancelled` → emit the notice (once per round).
-  //   - `running` (new round started) → CLEAR any stale notice from
-  //     a previous round so the user doesn't see a stale "Task
-  //     complete" card overlapping a live run.
-  //   - The ref dedupes within a single round so chat broadcasts
-  //     landing in pairs (debounce + finalise) don't refire.
-  const lastEnsembleRoundCompleteRef = useRef<string | null>(null)
+  // Ensemble round-complete notice is derived from durable round state rather
+  // than an edge-triggered once-per-round ref. Continuous rounds can reopen and
+  // re-complete under the same round id, and chat switches/reloads must rebuild
+  // the same notice without relying on a transition this component happened to
+  // observe. Solo chats retain the per-run exit path.
   useEffect(() => {
-    if (!isCurrentEnsembleChat) return
+    if (!isCurrentEnsembleChat || !currentChat) return
     const round = currentChat?.ensemble?.activeRound
     if (!round) return
     if (isEnsembleActiveRoundDispatchLive(round)) {
-      // A new round (or a round-restart) is live — wipe any notice
-      // left from a previous round. The dedupe ref also resets so
-      // the upcoming round-end CAN fire a fresh notice.
-      if (lastEnsembleRoundCompleteRef.current !== round.roundId) {
-        lastEnsembleRoundCompleteRef.current = null
-        setRunCompleteNotice(null)
-      }
+      setRunCompleteNotice(null)
       return
     }
-    if (round.status !== 'completed' && round.status !== 'cancelled') return
-    if (lastEnsembleRoundCompleteRef.current === round.roundId) return
-    lastEnsembleRoundCompleteRef.current = round.roundId
+    if (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed') {
+      return
+    }
+    const notice = deriveChatRunCompleteNotice(currentChat, false)
+    if (!notice) return
     setIsThinking(false)
-    setRunCompleteNotice({
-      timestamp: round.endedAt || new Date().toISOString(),
-      // Treat `cancelled` like a non-zero exit so the card surfaces
-      // the cancellation outcome via the existing copy.
-      exitCode: round.status === 'cancelled' ? 130 : 0,
-      startedAt: round.startedAt || undefined
-    })
+    setRunCompleteNotice((previous) =>
+      previous !== null &&
+      previous.roundId === notice.roundId &&
+      previous.timestamp === notice.timestamp &&
+      previous.exitCode === notice.exitCode &&
+      previous.startedAt === notice.startedAt
+        ? previous
+        : notice
+    )
   }, [
     isCurrentEnsembleChat,
+    currentChat?.appChatId,
     currentChat?.ensemble?.activeRound?.roundId,
     currentChat?.ensemble?.activeRound,
     currentChat?.ensemble?.activeRound?.status,
@@ -21872,14 +22850,7 @@ function App(): React.JSX.Element {
         })
       }
       setSelectedParticipantForChat(chatId, id)
-      updateChatById(chatId, (source) => ({
-        ...source,
-        providerMetadata: {
-          ...(source.providerMetadata || {}),
-          [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: id
-        },
-        updatedAt: Date.now()
-      }))
+      updateChatById(chatId, (source) => applyEnsembleParticipantSelection(source, id))
     },
     [setSelectedParticipantForChat, updateChatById]
   )
@@ -21943,109 +22914,117 @@ function App(): React.JSX.Element {
   // apply the matching `.provider-{name}` class to the thinking-indicator's
   // message-meta — same provider-tint treatment as the assistant labels
   // in the rest of the transcript.
-  const { thinkingProviderLabel, thinkingProvider, thinkingProviderClass, thinkingModelBadge } = (() => {
-    const activeRound = currentChat?.ensemble?.activeRound
-    if (activeRound?.activeParticipantId) {
-      const participant = currentChat?.ensemble?.participants.find(
-        (p) => p.id === activeRound.activeParticipantId
-      )
-      if (participant) {
-        const baseModelName = participant.model
-          ? shortModelName(participant.provider, '', participant.model)
-          : null
-        // Mirror the assistant-header treatment in `formatAssistantMessageLabel`:
-        // append the participant's reasoning effort / thinking flag so
-        // the in-flight indicator reads "5.5 Extra High" / "K2.7 Coding
-        // Thinking" — matching the composer chip the user picked.
-        // `reasoningDisplayLabel` short-circuits to '' for providers
-        // without a reasoning axis or when effort is 'off'.
-        const thinkingReasoningSuffix = baseModelName
-          ? reasoningDisplayLabel({
-              provider: participant.provider,
-              composerStyle: 'default',
-              modelId: participant.model || '',
-              modelLabel: '',
-              codexReasoningEffort:
-                participant.provider === 'codex' ? participant.reasoningEffort : undefined,
-              claudeReasoningEffort:
-                participant.provider === 'claude' ? participant.reasoningEffort : undefined,
-              mistralReasoningEffort:
-                participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
-              kimiReasoningEffort:
-                participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
-              kimiThinkingEnabled:
-                participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
-            })
-          : ''
-        const providerPresentation = resolveWorkingIndicatorProviderPresentation(
-          participant.provider,
-          participant.model
+  const { thinkingProviderLabel, thinkingProvider, thinkingProviderClass, thinkingModelBadge } =
+    (() => {
+      const activeRound = currentChat?.ensemble?.activeRound
+      if (activeRound?.activeParticipantId) {
+        const participant = currentChat?.ensemble?.participants.find(
+          (p) => p.id === activeRound.activeParticipantId
         )
-        const workingModelBadge = providerPresentation.modelBadge || baseModelName
-        return {
-          thinkingProviderLabel: providerPresentation.providerLabel,
-          thinkingProvider: participant.provider as ProviderId | null,
-          thinkingProviderClass: providerPresentation.providerClass,
-          // Show the short model name alongside the "Codex Thinking…"
-          // chip so the user can see at a glance which configured
-          // model is actually producing the in-flight output. Empty
-          // for participants without a custom model (legacy chats).
-          thinkingModelBadge: workingModelBadge
-            ? thinkingReasoningSuffix
-              ? `${workingModelBadge} ${thinkingReasoningSuffix}`
-              : workingModelBadge
+        if (participant) {
+          const baseModelName = participant.model
+            ? shortModelName(participant.provider, '', participant.model)
             : null
+          // Mirror the assistant-header treatment in `formatAssistantMessageLabel`:
+          // append the participant's reasoning effort / thinking flag so
+          // the in-flight indicator reads "5.5 Extra High" / "K2.7 Coding
+          // Thinking" — matching the composer chip the user picked.
+          // `reasoningDisplayLabel` short-circuits to '' for providers
+          // without a reasoning axis or when effort is 'off'.
+          const thinkingReasoningSuffix = baseModelName
+            ? reasoningDisplayLabel({
+                provider: participant.provider,
+                composerStyle: 'default',
+                modelId: participant.model || '',
+                modelLabel: '',
+                codexReasoningEffort:
+                  participant.provider === 'codex' ? participant.reasoningEffort : undefined,
+                claudeReasoningEffort:
+                  participant.provider === 'claude' ? participant.reasoningEffort : undefined,
+                mistralReasoningEffort:
+                  participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
+                devinReasoningEffort:
+                  participant.provider === 'devin' ? participant.reasoningEffort : undefined,
+                piReasoningEffort:
+                  participant.provider === 'pi' ? participant.reasoningEffort : undefined,
+                kimiReasoningEffort:
+                  participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
+                kimiThinkingEnabled:
+                  participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
+              })
+            : ''
+          const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+            participant.provider,
+            participant.model
+          )
+          const workingModelBadge = providerPresentation.modelBadge || baseModelName
+          return {
+            thinkingProviderLabel: providerPresentation.providerLabel,
+            thinkingProvider: participant.provider as ProviderId | null,
+            thinkingProviderClass: providerPresentation.providerClass,
+            // Show the short model name alongside the "Codex Thinking…"
+            // chip so the user can see at a glance which configured
+            // model is actually producing the in-flight output. Empty
+            // for participants without a custom model (legacy chats).
+            thinkingModelBadge: workingModelBadge
+              ? thinkingReasoningSuffix
+                ? `${workingModelBadge} ${thinkingReasoningSuffix}`
+                : workingModelBadge
+              : null
+          }
         }
       }
-    }
-    // Ensemble fallback: when `activeParticipantId` is briefly cleared
-    // (between one participant finalising and the next being seeded),
-    // do NOT fall back to the chat's base provider. That field is the
-    // user's last-active provider when the ensemble chat was created
-    // (commonly 'codex'), so the indicator would show "Codex
-    // Thinking…" for ~50-200ms even when Kimi or Gemini is about to
-    // speak — confusing and wrong. Show a neutral "Ensemble" label
-    // instead.
-    //
-    // Neutral means the ENSEMBLE hue, not the absence of one. A null class
-    // leaves `--message-working-accent` inheriting `var(--accent)` — the
-    // user-configurable app accent, gray under graphite/obsidian — so the
-    // indicator's colour tracked the theme rather than saying anything about
-    // the round. `provider` stays null: no adapter owns this moment, and
-    // 'ensemble' is a hue class, never a ProviderId.
-    if (currentChat?.chatKind === 'ensemble') {
+      // Ensemble fallback: when `activeParticipantId` is briefly cleared
+      // (between one participant finalising and the next being seeded),
+      // do NOT fall back to the chat's base provider. That field is the
+      // user's last-active provider when the ensemble chat was created
+      // (commonly 'codex'), so the indicator would show "Codex
+      // Thinking…" for ~50-200ms even when Kimi or Gemini is about to
+      // speak — confusing and wrong. Show a neutral "Ensemble" label
+      // instead.
+      //
+      // Neutral means the ENSEMBLE hue, not the absence of one. A null class
+      // leaves `--message-working-accent` inheriting `var(--accent)` — the
+      // user-configurable app accent, gray under graphite/obsidian — so the
+      // indicator's colour tracked the theme rather than saying anything about
+      // the round. `provider` stays null: no adapter owns this moment, and
+      // 'ensemble' is a hue class, never a ProviderId.
+      if (currentChat?.chatKind === 'ensemble') {
+        return {
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null as ProviderId | null,
+          thinkingProviderClass: ENSEMBLE_NEUTRAL_HUE_CLASS as string | null,
+          thinkingModelBadge: null as string | null
+        }
+      }
+      if (currentProvider === 'ollama' || currentProvider === 'pi') {
+        // Same paged-shell hazard as `currentRun` below: a bare tail read
+        // resolves to undefined on a paged chat, so the working chip fell back
+        // to the DEFAULT model name instead of the one actually running.
+        const latestRun = selectCurrentChatRun(currentChat?.runs, currentChatTranscript.runs)
+        const model =
+          latestRun?.actualModel ||
+          latestRun?.requestedModel ||
+          (selectedModelType === 'custom' ? customModel : selectedModelType) ||
+          (currentProvider === 'pi' ? PI_DEFAULT_MODEL_WIRE_ID : ollamaDefaultModel)
+        const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+          currentProvider,
+          model
+        )
+        return {
+          thinkingProviderLabel: providerPresentation.providerLabel,
+          thinkingProvider: currentProvider as ProviderId | null,
+          thinkingProviderClass: providerPresentation.providerClass,
+          thinkingModelBadge: providerPresentation.modelBadge
+        }
+      }
       return {
-        thinkingProviderLabel: 'Ensemble',
-        thinkingProvider: null as ProviderId | null,
-        thinkingProviderClass: ENSEMBLE_NEUTRAL_HUE_CLASS as string | null,
+        thinkingProviderLabel: currentProviderLabel,
+        thinkingProvider: currentProvider as ProviderId | null,
+        thinkingProviderClass: currentProvider as string | null,
         thinkingModelBadge: null as string | null
       }
-    }
-    if (currentProvider === 'ollama' || currentProvider === 'pi') {
-      const latestRun = currentChat?.runs?.[currentChat.runs.length - 1]
-      const model =
-        latestRun?.actualModel ||
-        latestRun?.requestedModel ||
-        (selectedModelType === 'custom' ? customModel : selectedModelType) ||
-        (currentProvider === 'pi' ? PI_DEFAULT_MODEL_WIRE_ID : ollamaDefaultModel)
-      const providerPresentation = resolveWorkingIndicatorProviderPresentation(
-        currentProvider,
-        model
-      )
-      return {
-        thinkingProviderLabel: providerPresentation.providerLabel,
-        thinkingProvider: currentProvider as ProviderId | null,
-        thinkingProviderClass: providerPresentation.providerClass,
-        thinkingModelBadge: providerPresentation.modelBadge
-      }
-    }
-    return {
-      thinkingProviderLabel: currentProviderLabel,
-      thinkingProvider: currentProvider as ProviderId | null,
-      thinkingProviderClass: currentProvider as string | null,
-      thinkingModelBadge: null as string | null
-    }
-  })()
+    })()
   // Slice C (revised): clear the "Thinking…" indicator when the ensemble
   // round has already finished. Otherwise the indicator persists after the
   // last participant yields and the user sees stale "Codex Thinking…" even
@@ -22056,16 +23035,30 @@ function App(): React.JSX.Element {
     chat: currentChat,
     runQueueJobs
   })
-  const currentRun = currentChat?.runs?.[currentChat.runs.length - 1]
-  const sideRun = sideChat?.runs?.[sideChat.runs.length - 1]
+  // The canonical `runs` array is EMPTY BY CONSTRUCTION on a paged chat --
+  // `buildChatShell` stamps `runs: []`, and `ChatUpdateInterestRouter` replaces
+  // every mid-run `chat-updated` for a non-`full` target with a compact
+  // `summaryOnly` invalidation carrying `runs: []`. A bare tail read therefore
+  // returned undefined, `startedAt` resolved to null, and the composer painted
+  // 00:00:00:00 while renderer-local `runningChatIds` kept the surface on
+  // "Working". Resolving through the loaded window is a pure widening: for a
+  // hydrated record the window IS `chat.runs`, so the value is unchanged.
+  const currentRun = selectCurrentChatRun(currentChat?.runs, currentChatTranscript.runs)
+  // Same widening as `currentRun` above, for the side pane. Passing `null` for
+  // the payload is deliberate: it is the summaryOnly projections that strip
+  // `runs` while keeping `lastRun`, and those need no store subscription.
+  const sideRun = selectCurrentChatRun(
+    sideChat?.runs,
+    resolveCurrentChatTranscriptWindow(sideChat, null).runs
+  )
   const hasSideChatActiveRunQueueJob = Boolean(
     sideChat?.appChatId && chatHasActiveRunQueueJob(sideChat.appChatId)
   )
   const isSideChatRunning = Boolean(
     sideChat?.appChatId &&
-      (runningChatIds.has(sideChat.appChatId) ||
-        hasSideChatActiveRunQueueJob ||
-        isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound))
+    (runningChatIds.has(sideChat.appChatId) ||
+      hasSideChatActiveRunQueueJob ||
+      isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound))
   )
   const sideChatStatusLabel =
     sideChat && getSideChatMode(sideChat) === 'fanOut'
@@ -22080,20 +23073,14 @@ function App(): React.JSX.Element {
     : null
   const sideThinkingModel =
     sideProvider === 'ollama' || sideProvider === 'pi'
-      ? sideRun?.actualModel ||
-        sideRun?.requestedModel ||
-        sideChat?.runs?.[sideChat.runs.length - 1]?.actualModel ||
-        sideChat?.runs?.[sideChat.runs.length - 1]?.requestedModel ||
-        ''
+      ? sideRun?.actualModel || sideRun?.requestedModel || ''
       : ''
   const sideThinkingPresentation = resolveWorkingIndicatorProviderPresentation(
     sideProvider,
     sideThinkingModel
   )
   const sideThinkingProviderLabel =
-    sideChat?.chatKind === 'ensemble'
-      ? 'Ensemble'
-      : sideThinkingPresentation.providerLabel
+    sideChat?.chatKind === 'ensemble' ? 'Ensemble' : sideThinkingPresentation.providerLabel
   const sideThinkingProvider = sideChat?.chatKind === 'ensemble' ? null : sideProvider
   const sideThinkingProviderClass =
     sideChat?.chatKind === 'ensemble'
@@ -22104,7 +23091,9 @@ function App(): React.JSX.Element {
   const sidePendingProviderChange =
     sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
   const sideComposerSourceChat =
-    sideChat && sidePendingProviderChange ? applyProviderChange(sideChat, sidePendingProviderChange) : sideChat
+    sideChat && sidePendingProviderChange
+      ? applyProviderChange(sideChat, sidePendingProviderChange)
+      : sideChat
   const sideComposerSelection = sideComposerSourceChat
     ? getChatComposerSelection(
         sideComposerSourceChat,
@@ -22117,8 +23106,8 @@ function App(): React.JSX.Element {
     (sideComposerSourceChat ? getChatProvider(sideComposerSourceChat) : sideProvider)
   const sideCanRun = Boolean(
     sideChat &&
-      isRunnableProvider(sideComposerProvider) &&
-      (getChatScope(sideChat) === 'global' || sideWorkspace)
+    isRunnableProvider(sideComposerProvider) &&
+    (getChatScope(sideChat) === 'global' || sideWorkspace)
   )
   const sideComposerModelOptionsRaw = getProviderModelOptions(sideComposerProvider)
   const sideComposerSelectedModel = sideComposerSelection?.selectedModelType
@@ -22169,6 +23158,7 @@ function App(): React.JSX.Element {
     sideComposerSelection?.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideMuseReasoning =
     sideComposerSelection?.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
+  const sideOllamaReasoning = sideComposerSelection?.ollamaReasoningEffort || ''
   const sideCursorReasoning =
     sideComposerSelection?.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
   const sideCursorFastMode = Boolean(sideComposerSelection?.cursorFastMode)
@@ -22201,9 +23191,9 @@ function App(): React.JSX.Element {
     const modelOption = sideComposerModelOptionsRaw.find(
       (model) => model.id === sideComposerSelectedModel
     )
-    sideComposerReasoningOptions = (modelOption?.supportedReasoningEfforts || [
-      { reasoningEffort: 'on' }
-    ]).map((option) => ({
+    sideComposerReasoningOptions = (
+      modelOption?.supportedReasoningEfforts || [{ reasoningEffort: 'on' }]
+    ).map((option) => ({
       value: option.reasoningEffort,
       label:
         option.reasoningEffort === 'on'
@@ -22213,23 +23203,32 @@ function App(): React.JSX.Element {
       ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
     }))
     sideComposerSelectedReasoning = sideKimiReasoning
-  } else if (
-    sideComposerProvider === 'grok' &&
-    isGrokReasoningModelId(sideComposerSelectedModel)
-  ) {
+  } else if (sideComposerProvider === 'ollama') {
+    const modelOption = sideComposerModelOptionsRaw.find(
+      (model) => model.id === sideComposerSelectedModel
+    )
+    sideComposerReasoningOptions = getEnsembleReasoningOptions(
+      'ollama',
+      sideComposerSelectedModel,
+      modelOption
+    )
+    sideComposerSelectedReasoning = sideComposerReasoningOptions.some(
+      (option) => option.value === sideOllamaReasoning
+    )
+      ? sideOllamaReasoning
+      : sideComposerReasoningOptions.at(-1)?.value || ''
+  } else if (sideComposerProvider === 'grok' && isGrokReasoningModelId(sideComposerSelectedModel)) {
     sideComposerReasoningOptions = [
       { value: 'low', label: grokReasoningDisplayLabel('low') },
       { value: 'medium', label: grokReasoningDisplayLabel('medium') },
       { value: 'high', label: grokReasoningDisplayLabel('high') },
-      ...(sideComposerSelectedModel === GROK_46_MODEL_ID
+      ...(sideComposerSelectedModel === GROK_46_MODEL_ID ||
+      isGrok47ReasoningModelId(sideComposerSelectedModel)
         ? [{ value: 'xhigh', label: grokReasoningDisplayLabel('xhigh') }]
         : [])
     ]
     sideComposerSelectedReasoning = sideGrokReasoning
-  } else if (
-    sideComposerProvider === 'cursor' &&
-    isCursorGrokModelId(sideComposerSelectedModel)
-  ) {
+  } else if (sideComposerProvider === 'cursor' && isCursorGrokModelId(sideComposerSelectedModel)) {
     sideComposerReasoningOptions = [
       { value: 'low', label: grokReasoningDisplayLabel('low') },
       { value: 'medium', label: grokReasoningDisplayLabel('medium') },
@@ -22273,17 +23272,12 @@ function App(): React.JSX.Element {
       )
     }
     if (sideComposerProvider === 'cursor') {
-      return new Set([
-        'composer-2.5',
-        'composer-2.5-fast',
-        CURSOR_GROK_46_BASE_MODEL_ID,
-        CURSOR_GROK_45_BASE_MODEL_ID
-      ])
+      return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_46_BASE_MODEL_ID])
     }
     if (sideComposerProvider === 'grok') {
       // All Grok CLI models are permanently Fast-mode → Fast ⚡ glyph on every
       // row. No onToggleFastMode is passed for grok, so no toggle renders.
-      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+      return new Set([GROK_47_MODEL_ID, GROK_47_FAST_MODEL_ID, GROK_46_MODEL_ID, GROK_45_MODEL_ID])
     }
     return new Set<string>()
   })()
@@ -22332,14 +23326,15 @@ function App(): React.JSX.Element {
             if (!grant || grant.provider !== sideComposerProvider || !grant.workspacePath) {
               return false
             }
-            return grant.workspacePath.replace(/\/+$/, '') === sideGrantWorkspacePath.replace(/\/+$/, '')
+            return (
+              grant.workspacePath.replace(/\/+$/, '') === sideGrantWorkspacePath.replace(/\/+$/, '')
+            )
           })
           .map((grant) => grant.service)
       : []
   )
-  const sideGrantServices = sideChat && !sideIsGlobalChat && sideWorkspace
-    ? WORKSPACE_POLICY_SERVICES
-    : []
+  const sideGrantServices =
+    sideChat && !sideIsGlobalChat && sideWorkspace ? WORKSPACE_POLICY_SERVICES : []
   const isSideChatProviderLocked = Boolean(
     sideChat && (isSideChatRunning || Boolean(sidePendingProviderChange))
   )
@@ -22362,11 +23357,7 @@ function App(): React.JSX.Element {
   }
   const handleSideProviderChange = (provider: ProviderId, model?: string): void => {
     const pendingProvider = sidePendingProviderChange?.provider || sideComposerProvider
-    if (
-      !sideChat ||
-      isSideEnsembleComposerLocked ||
-      provider === pendingProvider
-    ) {
+    if (!sideChat || isSideEnsembleComposerLocked || provider === pendingProvider) {
       return
     }
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
@@ -22414,6 +23405,15 @@ function App(): React.JSX.Element {
       if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
         metadataPatch.codexServiceTier = ''
       }
+    }
+    if (sideComposerProvider === 'ollama') {
+      metadataPatch.ollamaReasoningEffort =
+        resolveReasoningEffortForSeatChange({
+          provider: 'ollama',
+          model: nextModel,
+          previousEffort: sideOllamaReasoning,
+          modelMetadata: sideComposerModelOptionsRaw.find((model) => model.id === nextModel)
+        }) || ''
     }
     if (sideComposerProvider === 'claude') {
       const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
@@ -22469,6 +23469,8 @@ function App(): React.JSX.Element {
       rememberSideChatComposerSelection({ grokReasoningEffort: value })
     } else if (sideComposerProvider === 'muse') {
       rememberSideChatComposerSelection({ museReasoningEffort: value })
+    } else if (sideComposerProvider === 'ollama') {
+      rememberSideChatComposerSelection({ ollamaReasoningEffort: value })
     } else if (sideComposerProvider === 'cursor') {
       rememberSideChatComposerSelection({ cursorReasoningEffort: value })
     }
@@ -22546,12 +23548,14 @@ function App(): React.JSX.Element {
       return false
     }
   }
-  const sideComposerRunTimecodeStartedAt = isSideChatRunning
-    ? sideChat?.ensemble?.activeRound?.startedAt || sideRun?.startedAt || null
-    : null
+  const sideComposerRunTimecodeStartedAt = resolveComposerRunTimecodeStartedAt({
+    chat: sideChat,
+    isRunning: isSideChatRunning,
+    currentRunStartedAt: sideRun?.startedAt
+  })
   const sideCumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(sideChat?.runs, sideComposerRunTimecodeStartedAt),
-    [sideChat?.runs, sideComposerRunTimecodeStartedAt]
+    () => resolveCumulativeRunBaseMs(sideChat, sideComposerRunTimecodeStartedAt),
+    [sideChat?.runs, cumulativeRunBaseSignature(sideChat), sideComposerRunTimecodeStartedAt]
   )
   const sideChatTokenTally = useMemo(
     () => buildChatTokenTally(sideChat?.runs || [], { providerRates }),
@@ -22568,9 +23572,7 @@ function App(): React.JSX.Element {
     if (activeRunIds.size === 0 && sideRun?.runId) {
       activeRunIds.add(sideRun.runId)
     }
-    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
-      sideChat.ensemble?.activeRound
-    )
+    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound)
       ? Date.parse(sideChat.ensemble!.activeRound!.startedAt || '')
       : Number.NaN
     let liveChars = 0
@@ -22591,11 +23593,14 @@ function App(): React.JSX.Element {
   }, [isSideChatRunning, sideChat, sideRun?.runId])
   const sideThreadTokenTallyHasValue =
     sideChatTokenTally.totalTokens > 0 || sideLiveRunOutputTokens > 0
-  const sideContextModelId = sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
+  const sideContextModelId =
+    sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
   const sideDualComposerTelemetry = Boolean(sideChat && sideChat.chatKind === 'ensemble')
-  const composerRunTimecodeStartedAt = isCurrentChatRunning
-    ? currentEnsembleRound?.startedAt || currentRun?.startedAt || null
-    : null
+  const composerRunTimecodeStartedAt = resolveComposerRunTimecodeStartedAt({
+    chat: currentChat,
+    isRunning: isCurrentChatRunning,
+    currentRunStartedAt: currentRun?.startedAt
+  })
   const chatTokenTally = useMemo(
     () => buildChatTokenTally(currentChat?.runs || [], { providerRates }),
     [currentChat?.runs, providerRates]
@@ -22603,7 +23608,7 @@ function App(): React.JSX.Element {
   const liveRunOutputTokens = useMemo(() => {
     if (!isCurrentChatRunning || !currentChat) return 0
     const activeRunIds = new Set(
-      (currentChat.runs || [])
+      (currentChatTranscript.runs || [])
         .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
         .map((run) => run.runId)
         .filter((runId): runId is string => Boolean(runId))
@@ -22617,7 +23622,7 @@ function App(): React.JSX.Element {
       ? Date.parse(currentChat.ensemble!.activeRound!.startedAt || '')
       : Number.NaN
     let liveChars = 0
-    for (const message of currentChat.messages || []) {
+    for (const message of currentChatTranscript.messages) {
       if (message.role !== 'assistant') continue
       if (message.runId && activeRunIds.has(message.runId)) {
         liveChars += message.content?.length || 0
@@ -22633,6 +23638,7 @@ function App(): React.JSX.Element {
     return estimateLiveOutputTokensFromChars(liveChars)
   }, [
     currentChat,
+    currentChatTranscript,
     currentChat?.ensemble?.activeRound?.startedAt,
     currentChat?.ensemble?.activeRound?.status,
     currentRun?.runId,
@@ -22643,8 +23649,8 @@ function App(): React.JSX.Element {
   // The active run/round stays out of the base and is added live by the
   // timecode component, preserving a ticking display without redrawing App.
   const cumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(currentChat?.runs, composerRunTimecodeStartedAt),
-    [currentChat?.runs, composerRunTimecodeStartedAt]
+    () => resolveCumulativeRunBaseMs(currentChat, composerRunTimecodeStartedAt),
+    [currentChat?.runs, cumulativeRunBaseSignature(currentChat), composerRunTimecodeStartedAt]
   )
   const cumulativeChatTokens =
     chatTokenTally.totalTokens + (isCurrentChatRunning ? liveRunOutputTokens : 0)
@@ -22674,24 +23680,37 @@ function App(): React.JSX.Element {
       )?.contextLength,
     [installedOllamaModelsForContext]
   )
-  const ollamaLiveContextLength =
+  const resolveLiveKimiContextLength = useCallback(
+    (modelId?: string | null): number | undefined => {
+      const canonical = canonicalKimiTaskWraithModelId(modelId)
+      if (!canonical) return undefined
+      return agentModelsByProvider.kimi?.find((model) => model.id === canonical)?.contextWindow
+    },
+    [agentModelsByProvider.kimi]
+  )
+  const liveProviderContextLength =
     currentProvider === 'ollama'
       ? resolveLiveOllamaContextLength(contextModelId)
-      : undefined
+      : currentProvider === 'kimi'
+        ? resolveLiveKimiContextLength(contextModelId)
+        : undefined
   const contextWindowSize = resolveContextWindow(
     isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
     contextModelId,
     latestRunLimits.totalTokenLimit,
-    ollamaLiveContextLength
+    liveProviderContextLength
   )
   // Honest current-context proxy for the donut (NOT cumulativeChatTokens, which
   // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
   // stays for the cost tally + plan-import estimate, which legitimately want
   // lifetime totals.
-  const currentContextUsageSnapshot = currentContextUsage(currentChat?.runs || [], {
+  const currentContextUsageSnapshot = currentContextUsage(currentChatTranscript.runs, {
     liveOutputTokens: liveRunOutputTokens,
     isRunning: isCurrentChatRunning,
-    messages: currentChat?.messages || []
+    // Read-path rule: a paged thread's ambient meter derives from run stats
+    // alone — the window's messages would make compaction evidence partial,
+    // so treat that part as unknown rather than page-fed or a misleading 0.
+    messages: currentChatTranscript.paged ? undefined : currentChatTranscript.messages
   })
   const currentContextUsedTokens = currentContextUsageSnapshot?.contextTokens || 0
   const activeContextPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
@@ -22730,7 +23749,9 @@ function App(): React.JSX.Element {
           resolveWindowTokens: (participant) =>
             participant.provider === 'ollama'
               ? resolveLiveOllamaContextLength(participant.model)
-              : undefined,
+              : participant.provider === 'kimi'
+                ? resolveLiveKimiContextLength(participant.model)
+                : undefined,
           messages: currentChat?.messages || []
         }
       )
@@ -22763,23 +23784,34 @@ function App(): React.JSX.Element {
   // Claude and marked Kimi ACP seats compact via normal `/compact` runs against
   // native sessions, so the card arrives through the stream-observation lane;
   // Codex compacts via the thread/compact/start IPC,
-  // whose card is appended main-side. Refs-only body so the callback identity
-  // stays stable for the memoized composer prop bag.
+  // whose card is appended main-side. Refs-only body (plus refreshSingleChat,
+  // a stable useCallback) so the callback identity stays stable for the
+  // memoized composer prop bag.
   const compactChatContext = useCallback(
     async (chatId: string | null, trigger: 'manual' | 'auto' = 'manual'): Promise<void> => {
-      const chat = chatId ? chatByIdRef.current.get(chatId) : null
+      let chat = chatId ? chatByIdRef.current.get(chatId) : null
+      // Paged shell (Stage 1b): escalate to the full canonical record before
+      // ANY compaction decision — never stamp provenance (coveredMessageIds /
+      // suppliedMessageIds) from a partial page. If hydration fails, skip
+      // this tick; the next one retries. TODO(main-side compaction IPC)
+      if (chat && isTranscriptPagedShell(chat)) {
+        chat = await refreshSingleChat(chat.appChatId)
+      }
       if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
-      // Path-B Cursor starts a fresh contained process and receives host-fed
-      // context; it has no provider-native session compaction lever. This only
-      // hides "compact now" and does not affect ordinary managed Cursor runs.
-      if (provider === 'cursor') return
+      if (provider === 'cursor') {
+        await window.api.compactProviderContext({
+          chatId: chat.appChatId,
+          provider: 'cursor'
+        })
+        return
+      }
       const sessionId = chat.linkedProviderSessionId
       const kimiNativeSession = Boolean(
         provider === 'kimi' &&
-          sessionId?.startsWith('session_') &&
-          chat.providerMetadata?.kimiAcpNativeSession === true &&
-          isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
+        sessionId?.startsWith('session_') &&
+        chat.providerMetadata?.kimiAcpNativeSession === true &&
+        isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
       )
       if (provider === 'codex') {
         if (!sessionId) return
@@ -22824,7 +23856,9 @@ function App(): React.JSX.Element {
         if (!chat.linkedProviderSessionId?.startsWith('api://')) return
         const transcript = chat.messages || []
         if (!transcript.some((m) => m.role === 'assistant')) return
-        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+        if (
+          [...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId)
+        )
           return
         const preTokens = currentContextTokens(chat.runs || [], {
           liveOutputTokens: 0,
@@ -22897,16 +23931,16 @@ function App(): React.JSX.Element {
         // the `compactionSummaryBlock` provider gate); only this writer was
         // missing, which is why /compact silently did nothing on a Mistral chat.
         if (!(chat.messages || []).some((m) => m.role === 'assistant')) return
-        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+        if (
+          [...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId)
+        )
           return
         const preTokens = currentContextTokens(chat.runs || [], {
           liveOutputTokens: 0,
           isRunning: false
         })
         const previousSummary = chat.contextCompactionSummary
-        const previousSummaryText = previousSummary?.text?.trim()
-          ? previousSummary.text
-          : undefined
+        const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
         const contextBudget = resolveContextBudget(provider)
         const projection = buildConversationCompactionProjection(
           chat.messages || [],
@@ -22958,28 +23992,30 @@ function App(): React.JSX.Element {
         })
       }
     },
-    []
+    [refreshSingleChat]
   )
   compactChatContextRef.current = compactChatContext
-  const canCompactCurrentChatContext =
-    !isCurrentEnsembleChat &&
-    !isCurrentChatRunning &&
-    (currentProvider === 'claude' || currentProvider === 'codex'
-      ? Boolean(currentChat?.linkedProviderSessionId)
-      : currentProvider === 'kimi'
-        ? currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
-          isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion)
-          ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
-          : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-        : currentProvider === 'antigravity'
-          ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://')) &&
-            Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-          : // Mistral carries its material in-prompt (fresh ACP session every
-            // turn), so like legacy Kimi it needs NO session token — the lever
-            // exists as soon as there is something to summarize.
-            currentProvider === 'mistral'
-            ? Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-            : false)
+  // Paged shell visibility: the shell's arrays are empty, so read the loaded
+  // window (or the knowledge that older history exists) instead of hiding the
+  // compaction lever on a >1,500-message thread.
+  const currentChatHasAssistantMessage = currentChatTranscript.paged
+    ? currentChatTranscript.hasOlder ||
+      currentChatTranscript.messages.some((m) => m.role === 'assistant')
+    : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+  const canCompactCurrentChatContext = canCompactSoloChatContext({
+    isEnsemble: isCurrentEnsembleChat,
+    isRunning: isCurrentChatRunning,
+    provider: currentProvider,
+    hasLinkedSession:
+      currentProvider === 'kimi'
+        ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('session_'))
+        : Boolean(currentChat?.linkedProviderSessionId),
+    hasAssistantMessage: currentChatHasAssistantMessage,
+    kimiNativeSession:
+      currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
+      isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion),
+    antigravityApiSession: Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://'))
+  })
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext
@@ -23144,9 +24180,7 @@ function App(): React.JSX.Element {
         setExternalGitSnapshotsByOwner(
           Object.fromEntries(entries.map(([ownerKey, snapshot]) => [ownerKey, snapshot]))
         )
-        setExternalPrByOwner(
-          Object.fromEntries(entries.map(([ownerKey, , pr]) => [ownerKey, pr]))
-        )
+        setExternalPrByOwner(Object.fromEntries(entries.map(([ownerKey, , pr]) => [ownerKey, pr])))
       }
     }
     void fetchAll()
@@ -23312,7 +24346,11 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (
+      paths.length === 0 ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return undefined
     }
     const invalidateAll = (): void => {
@@ -23413,29 +24451,23 @@ function App(): React.JSX.Element {
     setChatPromptDraft
   })
 
-  const currentExternalWorkspaceState = useMemo(
-    () => {
-      const gitSnapshotsByPath = projectExternalWorkspaceOwnerCache(
-        externalPathGrants,
-        externalGitSnapshotsByOwner
-      )
-      const prByPath = projectExternalWorkspaceOwnerCache(
-        externalPathGrants,
-        externalPrByOwner
-      )
-      return deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
-        repoMetadataByPath: externalPathRepoMetadataByPath,
-        gitSnapshotsByPath,
-        prByPath
-      })
-    },
-    [
-      externalGitSnapshotsByOwner,
+  const currentExternalWorkspaceState = useMemo(() => {
+    const gitSnapshotsByPath = projectExternalWorkspaceOwnerCache(
       externalPathGrants,
-      externalPathRepoMetadataByPath,
-      externalPrByOwner
-    ]
-  )
+      externalGitSnapshotsByOwner
+    )
+    const prByPath = projectExternalWorkspaceOwnerCache(externalPathGrants, externalPrByOwner)
+    return deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
+      repoMetadataByPath: externalPathRepoMetadataByPath,
+      gitSnapshotsByPath,
+      prByPath
+    })
+  }, [
+    externalGitSnapshotsByOwner,
+    externalPathGrants,
+    externalPathRepoMetadataByPath,
+    externalPrByOwner
+  ])
 
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const composerTokenTally = chatTokenTally
@@ -23452,10 +24484,7 @@ function App(): React.JSX.Element {
     const options: SideChatTypePickerOption[] = [
       {
         id: 'isolated-side-chat',
-        label:
-          defaultSideChatMode === 'ensembleClone'
-            ? 'Side Ensemble'
-            : 'Side Chat',
+        label: defaultSideChatMode === 'ensembleClone' ? 'Side Ensemble' : 'Side Chat',
         description:
           defaultSideChatMode === 'ensembleClone'
             ? "Clone this ensemble's participants into an isolated side chat"
@@ -23506,10 +24535,6 @@ function App(): React.JSX.Element {
       sideChatTypePickerParentChat?.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
     void openCurrentSideChatPresentation('split', option.mode || fallbackMode)
   }
-  const currentAgentStatus =
-    currentProvider === 'codex' ? codexStatus : agentStatusByProvider[currentProvider]
-  const currentAgentMcpStatus =
-    currentProvider === 'codex' ? codexMcpStatus : agentMcpStatusByProvider[currentProvider]
   const currentProviderCapabilities = providerCapabilitiesByProvider[currentProvider]
   const currentProviderCapabilityWarning = currentProviderCapabilities?.warnings.find(
     (warning) => warning.severity !== 'info'
@@ -23518,8 +24543,7 @@ function App(): React.JSX.Element {
     (job) => job.status === 'queued' && !job.executionGraph
   ).length
   const currentChatQueuedRunCount = runQueueJobs.filter(
-    (job) =>
-      job.chatId === currentChat?.appChatId && job.status === 'queued' && !job.executionGraph
+    (job) => job.chatId === currentChat?.appChatId && job.status === 'queued' && !job.executionGraph
   ).length
   const currentExecutionRuns = useMemo(
     () =>
@@ -23527,7 +24551,7 @@ function App(): React.JSX.Element {
         (currentComposerChatId ? executionRunIdsByChatId[currentComposerChatId] || [] : [])
           .map((executionId) => executionRunsById[executionId])
           .filter((run): run is ExecutionRunProjection => Boolean(run))
-    ),
+      ),
     [currentComposerChatId, executionRunIdsByChatId, executionRunsById]
   )
   const currentPreferredExecutionId = currentComposerChatId
@@ -23536,8 +24560,7 @@ function App(): React.JSX.Element {
   const activeExecutionRun = useMemo(() => {
     return (
       currentExecutionRuns.find(
-        (run) =>
-          run.executionId === currentPreferredExecutionId && !isTerminalExecutionRun(run)
+        (run) => run.executionId === currentPreferredExecutionId && !isTerminalExecutionRun(run)
       ) ||
       currentExecutionRuns.find((run) => !isTerminalExecutionRun(run)) ||
       null
@@ -23563,7 +24586,9 @@ function App(): React.JSX.Element {
     [activeExecutionRun?.executionId, currentExecutionRuns]
   )
   const executionStackViewForChat = useCallback(
-    (chatId: string): {
+    (
+      chatId: string
+    ): {
       projection: ExecutionGraphProjection | null
       history: { runId: string; title: string; statusLabel: string; updatedAt?: string }[]
     } => {
@@ -23574,9 +24599,7 @@ function App(): React.JSX.Element {
       )
       const preferredId = preferredExecutionByChatIdRef.current[chatId]
       const activeRun =
-        runs.find(
-          (run) => run.executionId === preferredId && !isTerminalExecutionRun(run)
-        ) ||
+        runs.find((run) => run.executionId === preferredId && !isTerminalExecutionRun(run)) ||
         runs.find((run) => !isTerminalExecutionRun(run)) ||
         null
       return {
@@ -23664,9 +24687,7 @@ function App(): React.JSX.Element {
         .catch((error) => {
           appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
             type: 'stderr',
-            content: `Could not save graph: ${redactLog(
-              stripElectronInvokeErrorFraming(error)
-            )}`
+            content: `Could not save graph: ${redactLog(stripElectronInvokeErrorFraming(error))}`
           })
         })
         .finally(() => {
@@ -23704,6 +24725,194 @@ function App(): React.JSX.Element {
     },
     [executionRunsById, rememberExecutionRun]
   )
+  /**
+   * Stop a whole durable execution from the thread that owns it.
+   *
+   * Distinct from `handleCancelExecutionStackStep`, which despite its name is
+   * also a full-graph cancel but is gated on a dormant frontier step — it
+   * cannot stop a graph whose current stage is actually running. This is the
+   * killswitch: it revokes every non-terminal lease and cancels the live
+   * provider transport. It existed in preload with no caller at all, which is
+   * why a running UltraTask could not be stopped from the UI.
+   */
+  const handleCancelExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.cancelExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Execution cancellation is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .cancelExecutionRun(executionId, 'Cancelled by user.')
+        .then((projection) => {
+          if (projection) rememberExecutionRun(projection)
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not cancel the execution: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
+  /**
+   * The other half of the killswitch. Until this existed, the only thing that
+   * re-evaluated a paused graph was recover() at app start, so a thread that
+   * came back inside the same session left its graph stopped with no route
+   * forward but restarting the app. Main refuses with a reason when the graph
+   * is terminal, not paused, or its owner is still gone; that reason is shown
+   * rather than swallowed, because a control that silently does nothing is
+   * worse than one that explains itself.
+   */
+  const handleResumeExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.resumeExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Resuming an execution is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .resumeExecutionRun(executionId, 'Resumed by user.')
+        .then((projection) => {
+          if (projection) rememberExecutionRun(projection)
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not resume the execution: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
+  /**
+   * Work-tab listing of this workspace's durable executions, live first.
+   * The Execution Map previously had no route from any surface the user looks
+   * at, so a paused or failed graph pointed at nothing.
+   */
+  const executionRunEntries = useMemo(
+    () =>
+      sortExecutionRunHistory(Object.values(executionRunsById)).map((run) => ({
+        executionId: run.executionId,
+        title: run.title || 'Durable execution',
+        statusLabel: executionRunStatusLabel(run.state),
+        isLive: !isTerminalExecutionRun(run)
+      })),
+    [executionRunsById]
+  )
+  /**
+   * Opening from the Work tab has to select the owning thread first: an effect
+   * closes the map whenever the run's root chat is not the focused composer
+   * chat, so opening it directly would flicker straight back shut.
+   */
+  const handleOpenExecutionRunFromWork = useCallback(
+    (executionId: string, knownRun?: ExecutionRunProjection): void => {
+      const run = knownRun ?? executionRunsById[executionId]
+      const rootChatId = run?.owner?.threadId || run?.rootChatId
+      const chat = rootChatId
+        ? chatByIdRef.current.get(rootChatId) ||
+          chats.find((candidate) => candidate.appChatId === rootChatId)
+        : undefined
+      if (chat) void handleSelectChatRef.current(chat)
+      handleOpenExecutionMap(executionId)
+    },
+    [chats, executionRunsById, handleOpenExecutionMap]
+  )
+  /**
+   * The ways out of a Stack diagnostic notice. Open fetches the run first when
+   * nothing visible has hydrated it (an orphan belongs to no open chat) so the
+   * map can select the owning thread; retry and archive answer with the
+   * refreshed snapshot, from which the notices re-derive, and a refusal lands
+   * on the notice rather than in a thread log the stack may not have.
+   */
+  const handleOpenExecutionStackFromNotice = useCallback(
+    (executionId: string): void => {
+      if (executionRunsById[executionId] || typeof window.api.getExecutionRun !== 'function') {
+        handleOpenExecutionRunFromWork(executionId)
+        return
+      }
+      void window.api
+        .getExecutionRun(executionId)
+        .then((run) => {
+          if (run) rememberExecutionRun(run)
+          handleOpenExecutionRunFromWork(executionId, run ?? undefined)
+        })
+        .catch((error) => {
+          console.warn('[execution graph] failed to load the stack behind its notice', error)
+        })
+    },
+    [executionRunsById, handleOpenExecutionRunFromWork, rememberExecutionRun]
+  )
+  const handleRetryExecutionGraphRecovery = useCallback((executionId: string): void => {
+    if (typeof window.api.retryExecutionGraphRecovery !== 'function') return
+    void window.api
+      .retryExecutionGraphRecovery({ executionId })
+      .then((snapshot) => {
+        setExecutionGraphDiagnostics(snapshot)
+        setExecutionGraphNoticeFailures((current) =>
+          clearExecutionGraphNoticeFailure(current, executionId)
+        )
+      })
+      .catch((error) => {
+        setExecutionGraphNoticeFailures((current) => ({
+          ...current,
+          [executionId]: `Retry refused: ${redactLog(stripElectronInvokeErrorFraming(error))}`
+        }))
+      })
+  }, [])
+  const handleArchiveExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.archiveExecutionRun !== 'function') return
+      void window.api
+        .archiveExecutionRun(executionId, 'Archived from the Stack notice.')
+        .then((result) => {
+          rememberExecutionRun(result.projection)
+          setExecutionGraphDiagnostics(result.diagnostics)
+          setExecutionGraphNoticeFailures((current) =>
+            clearExecutionGraphNoticeFailure(current, executionId)
+          )
+        })
+        .catch((error) => {
+          setExecutionGraphNoticeFailures((current) => ({
+            ...current,
+            [executionId]: redactLog(stripElectronInvokeErrorFraming(error))
+          }))
+        })
+    },
+    [rememberExecutionRun]
+  )
+  const executionGraphAppNotifications = useMemo(
+    () =>
+      executionGraphDiagnosticAppNotifications(
+        executionGraphDiagnosticNotices,
+        {
+          openStack: handleOpenExecutionStackFromNotice,
+          retryRecovery: handleRetryExecutionGraphRecovery,
+          archiveStack: handleArchiveExecutionRun
+        },
+        executionGraphNoticeFailures
+      ),
+    [
+      executionGraphDiagnosticNotices,
+      executionGraphNoticeFailures,
+      handleArchiveExecutionRun,
+      handleOpenExecutionStackFromNotice,
+      handleRetryExecutionGraphRecovery
+    ]
+  )
+  useEffect(() => {
+    publishDynamicAppNotifications(executionGraphAppNotifications)
+  }, [executionGraphAppNotifications])
+  useEffect(() => () => publishDynamicAppNotifications([]), [])
   const handleOpenExecutionThread = useCallback(
     (threadRef: string): void => {
       const chat =
@@ -23749,6 +24958,10 @@ function App(): React.JSX.Element {
       const durableEntries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
         .filter((job) => !job.executionGraph)
         .filter((job) => job.chatId === chatId)
+        .filter(
+          (job) =>
+            job.status !== 'steer_promoting' || failedQueuedSteerRunIds.has(job.runId || job.id)
+        )
         .map((job) => {
           const request = resolveQueuedDesktopRunRequest(job)
           return {
@@ -23798,9 +25011,14 @@ function App(): React.JSX.Element {
           })
         }
       }
-      return entries
+      return filterTranscriptBackedQueuedRunEntries(entries, sourceChat.messages, {
+        // A transcript row proves append, not delivery. If the durable handoff
+        // failed, keep the exact queued row visible so Edit/Delete/Steer remain
+        // available instead of hiding the user's only recovery control.
+        preserveRunIds: failedQueuedSteerRunIds
+      })
     },
-    [queuedRuns, runQueueJobs, workspaces]
+    [failedQueuedSteerRunIds, queuedRuns, runQueueJobs, workspaces]
   )
   const queuedMessagesAboveRowEntries: QueuedMessageRowEntry[] = useMemo(
     () => buildQueuedMessagesAboveRowEntriesForChat(currentChat),
@@ -23910,9 +25128,7 @@ function App(): React.JSX.Element {
             }
             setChatPromptDraft(chat.appChatId, result.prompt || target)
             const restoredAttachments = mapQueuedAttachmentsForComposer(
-              result.imageAttachments?.length
-                ? result.imageAttachments
-                : localEntryAttachments,
+              result.imageAttachments?.length ? result.imageAttachments : localEntryAttachments,
               `ensemble-edit-${chat.appChatId}`
             )
             if (restoredAttachments.length > 0) {
@@ -23940,8 +25156,7 @@ function App(): React.JSX.Element {
               type: 'stderr',
               content: `Queued Ensemble prompt could not be edited: ${redactLog(String(error))}`
             })
-          }
-        )
+          })
         return
       }
       const job = runQueueJobsRef.current.find(
@@ -23953,8 +25168,7 @@ function App(): React.JSX.Element {
       if (!match && !job) return
       const recordedOwnerChatId = match?.chatRecord?.appChatId || job?.chatId || null
       if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
-      const targetChatId =
-        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
+      const targetChatId = targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       if (targetChatId) {
         setChatPromptDraft(
           targetChatId,
@@ -23966,18 +25180,13 @@ function App(): React.JSX.Element {
             ''
         )
         const restoredAttachments = mapQueuedAttachmentsForComposer(
-          match?.imageAttachments?.length
-            ? match.imageAttachments
-            : job?.request?.imageAttachments,
+          match?.imageAttachments?.length ? match.imageAttachments : job?.request?.imageAttachments,
           `queue-edit-${entryId}`
         )
         if (restoredAttachments.length > 0) {
           setImageAttachmentsByChatId((prev) => ({
             ...prev,
-            [targetChatId]: mergeImageAttachments(
-              prev[targetChatId] || [],
-              restoredAttachments
-            )
+            [targetChatId]: mergeImageAttachments(prev[targetChatId] || [], restoredAttachments)
           }))
         }
         const discordSelection =
@@ -23991,15 +25200,11 @@ function App(): React.JSX.Element {
       }
       const scheduledRunAt = match?.scheduledRunAt || job?.request?.scheduledRunAt
       if (scheduledRunAt && targetChatId) {
-        setScheduleRunAtForChat(
-          targetChatId,
-          toDateTimeLocalValue(new Date(scheduledRunAt))
-        )
+        setScheduleRunAtForChat(targetChatId, toDateTimeLocalValue(new Date(scheduledRunAt)))
       }
       setQueuedRuns((prev) =>
         prev.filter(
-          (request) =>
-            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
+          (request) => queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
       const runId = job?.runId || match?.appRunId
@@ -24072,8 +25277,7 @@ function App(): React.JSX.Element {
               type: 'stderr',
               content: `Queued Ensemble prompt could not be removed: ${redactLog(String(error))}`
             })
-          }
-        )
+          })
         return
       }
       const job = runQueueJobsRef.current.find(
@@ -24087,8 +25291,7 @@ function App(): React.JSX.Element {
       if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
       setQueuedRuns((prev) =>
         prev.filter(
-          (request) =>
-            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
+          (request) => queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
       const runId = job?.runId || match?.appRunId
@@ -24100,14 +25303,10 @@ function App(): React.JSX.Element {
           .catch(() => {})
       }
     },
-    [
-      currentChat,
-      updateEnsembleQueuedPromptsForRound,
-      workspaces
-    ]
+    [currentChat, updateEnsembleQueuedPromptsForRound, workspaces]
   )
-  // Steer to a queued item: append it now, then dispatch at this chat's next
-  // natural boundary without cancelling the active provider.
+  // Steer to a queued item: append it now and enter the same provider-qualified
+  // live-or-next-safe-boundary path as a direct composer Steer.
   const handleSteerToQueuedMessage = useCallback(
     async (entryId: string, targetChat?: ChatRecord | null) => {
       const appendFailure = (message: string, context?: string): void => {
@@ -24118,7 +25317,10 @@ function App(): React.JSX.Element {
           appendThreadRawLog(targetChatId, { type: 'stderr', content })
           return
         }
-        setRawLogs((previous) => [...previous, { type: 'stderr', content, timestamp: new Date().toISOString() }])
+        setRawLogs((previous) => [
+          ...previous,
+          { type: 'stderr', content, timestamp: new Date().toISOString() }
+        ])
       }
 
       // Ensemble-queued: main absorbs a plain queued prompt into the current
@@ -24129,19 +25331,34 @@ function App(): React.JSX.Element {
         const idx = Number(ensembleMatch[2])
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
-        if (!chat || !round || round.roundId !== queuedRoundId) return
+        if (!chat || !round || round.roundId !== queuedRoundId) {
+          // The row encodes the round it was queued against, so a
+          // rolled-over round means this click can never land. Say so
+          // rather than reading as a dead button.
+          appendFailure(
+            'Cannot steer this queued message',
+            'the round it was queued against has already finished'
+          )
+          return
+        }
         const ensembleChatId = chat.appChatId
         // The queued-row Steer button is not disabled during the IPC round
         // trip, so ignore re-entrant clicks for this chat until it settles.
         if (ensembleSteerInFlightChatIdsRef.current.has(ensembleChatId)) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
-          ? round.queuedPrompts
-          : round.queuedPrompt
-            ? [round.queuedPrompt]
-            : []
+            ? round.queuedPrompts
+            : round.queuedPrompt
+              ? [round.queuedPrompt]
+              : []
         const prompt = currentQueue[idx]
-        if (!prompt) return
+        if (!prompt) {
+          appendFailure(
+            'Cannot steer this queued message',
+            'it is no longer in the round queue'
+          )
+          return
+        }
         const fanoutPolicy = normalizeEnsembleFanoutPolicy(
           chat.ensemble?.fanoutPolicy,
           chat.ensemble?.concurrentModeEnabled
@@ -24164,19 +25381,11 @@ function App(): React.JSX.Element {
             // Optimistic queue splice mirrors handleDeleteQueuedMessage so the
             // above-row entry vanishes immediately instead of waiting for the
             // main→renderer broadcast.
-            updateEnsembleQueuedPromptsForRound(
-              ensembleChatId,
-              queuedRoundId,
-              (latestQueue) => {
-                const latestIndex =
-                  latestQueue[idx] === prompt ? idx : latestQueue.indexOf(prompt)
-                if (latestIndex < 0) return latestQueue
-                return [
-                  ...latestQueue.slice(0, latestIndex),
-                  ...latestQueue.slice(latestIndex + 1)
-                ]
-              }
-            )
+            updateEnsembleQueuedPromptsForRound(ensembleChatId, queuedRoundId, (latestQueue) => {
+              const latestIndex = latestQueue[idx] === prompt ? idx : latestQueue.indexOf(prompt)
+              if (latestIndex < 0) return latestQueue
+              return [...latestQueue.slice(0, latestIndex), ...latestQueue.slice(latestIndex + 1)]
+            })
             // Optimistic feedback parity with the composer Steer: refresh
             // immediately rather than waiting for the main→renderer broadcast.
             //
@@ -24202,11 +25411,22 @@ function App(): React.JSX.Element {
       const match =
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
-      if (!match) return
+      if (!match) {
+        appendFailure(
+          'Cannot steer this queued message',
+          'its queued request is no longer tracked'
+        )
+        return
+      }
       const recordedOwnerChatId = match.chatRecord?.appChatId || job?.chatId || null
-      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
-      const targetChatId =
-        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
+      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) {
+        appendFailure(
+          'Cannot steer this queued message',
+          'it belongs to a different chat than the pane it was clicked in'
+        )
+        return
+      }
+      const targetChatId = targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       const targetRecord =
         (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
         targetChat ||
@@ -24226,126 +25446,230 @@ function App(): React.JSX.Element {
       const clearQueuedSteerInFlight = (): void => {
         queuedSteerInFlightRunIdsRef.current.delete(runId)
       }
+      // BACKSTOP. Every explicit return below already clears the in-flight
+      // entry, but a throw out of any await did not -- and this ref is what
+      // suppresses a re-entrant click, so a leaked entry left that row's Steer
+      // permanently dead for the session. Deleting is idempotent, so the
+      // existing calls stand.
+      try {
 
-      const promotion = await invokePromoteQueuedRunForSteer({
-        runId,
-        provider: match.provider,
-        chatId: targetChatId,
-        statusReason: 'Promoted from queued-row steer for the next natural boundary.',
-        queueMessageId: entryId,
-        transitionVersion: job?.transitionVersion
-      })
-
-      if (!promotion) {
-        clearQueuedSteerInFlight()
-        appendFailure(
-          'Steer promotion API is unavailable in this TaskWraith build',
-          'skipping queued-row promote+dispatch'
-        )
-        return
-      }
-      const promotionPermitted =
-        promotion.ok === true || promotion.kind === 'dispatch-permission'
-
-      if (!promotionPermitted) {
-        clearQueuedSteerInFlight()
-        appendFailure(
-          'Queued run steer promotion failed',
-          promotion.reason || 'the request could not be handed off safely'
-        )
-        return
-      }
-
-      const matchedRequest = buildSteerQueuedRunRequest(promotion.request, match)
-      const dispatchRequest = attachSteerMetadataToRequest(
-        {
-          ...matchedRequest,
-          appRunId: runId
-        },
-        promotion.promotionToken,
-        promotion.ownerToken
-      )
-
-      const providerLabel = getProviderLabel(dispatchRequest.provider)
-      if (targetChatBusy && targetChatId) {
-        await appendMidRunQueuedRequestToTranscript(
-          {
-            ...dispatchRequest,
-            chatRecord: targetRecord || dispatchRequest.chatRecord
-          },
-          'soloSteer',
-          new Date().toISOString()
-        )
-      }
-
-      const leasePromotedForDispatch = async (): Promise<boolean> => {
-        if (!promotion.ownerToken) return true
-        const lease = await invokeLeasePromotedSteerJob({
+        const promotion = await invokePromoteQueuedRunForSteer({
           runId,
-          ownerToken: promotion.ownerToken,
-          statusReason: 'Queued-row steer was leased for dispatch.'
+          provider: match.provider,
+          chatId: targetChatId,
+          statusReason: 'Promoted from queued-row steer for live or next-safe-boundary delivery.',
+          queueMessageId: midRunQueuedMessageId(runId),
+          transitionVersion: job?.transitionVersion
         })
-        if (lease?.ok === true) return true
-        const reason = lease?.kind || 'steer lease did not succeed'
-        appendFailure('Queued run steer lease failed', reason)
-        const fallback = await invokeFallbackPromotedSteerJob({
-          runId,
-          ownerToken: promotion.ownerToken,
-          reason: `Queued-row steer lease failed: ${reason}.`,
-          fallbackStatus: 'queued'
-        })
-        if (fallback?.ok !== true) {
-          queueRunRequest(
-            dispatchRequest,
-            `Queued-row steer lease failed; queued fallback for this row.`
+
+        if (!promotion) {
+          clearQueuedSteerInFlight()
+          appendFailure(
+            'Steer promotion API is unavailable in this TaskWraith build',
+            'skipping queued-row promote+dispatch'
           )
-        } else {
-          restoreQueuedRunForSteer(dispatchRequest)
+          return
         }
-        return false
-      }
+        const promotionPermitted = promotion.ok === true || promotion.kind === 'dispatch-permission'
 
-      // Remove from the local mirror once steering is authorized so the row
-      // cannot double-dispatch while it waits for the natural boundary.
-      setQueuedRuns((prev) =>
-        prev.filter((request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId)
-      )
+        if (!promotionPermitted) {
+          clearQueuedSteerInFlight()
+          appendFailure(
+            'Queued run steer promotion failed',
+            promotion.reason || 'the request could not be handed off safely'
+          )
+          return
+        }
 
-      if (!targetChatId || !targetChatBusy) {
-        const leased = await leasePromotedForDispatch()
-        if (!leased) {
+        const matchedRequest = buildSteerQueuedRunRequest(promotion.request, match)
+        const dispatchRequest = attachSteerMetadataToRequest(
+          {
+            ...matchedRequest,
+            appRunId: runId
+          },
+          promotion.promotionToken,
+          promotion.ownerToken
+        )
+
+        if (targetChatBusy) {
+          // Promotion is provisional. Retain the exact request locally at FIFO
+          // head until main broadcasts a terminal delivery state; the durable
+          // scheduler consults this mirror when choosing the next queued job.
+          setQueuedRuns((prev) => reserveQueuedRunAtFront(prev, dispatchRequest, queuedRunFallbackId))
+          setFailedQueuedSteerRunIds((previous) => {
+            if (!previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.delete(runId)
+            return next
+          })
+        }
+
+        const providerLabel = getProviderLabel(dispatchRequest.provider)
+        let steeringMessage: ChatMessage | null = null
+        if (targetChatBusy && targetChatId) {
+          steeringMessage = await appendMidRunQueuedRequestToTranscript(
+            {
+              ...dispatchRequest,
+              chatRecord: targetRecord || dispatchRequest.chatRecord
+            },
+            'soloSteer',
+            new Date().toISOString(),
+            { persistImmediately: true }
+          )
+        }
+
+        const leasePromotedForDispatch = async (): Promise<boolean> => {
+          if (!promotion.ownerToken) return true
+          const lease = await invokeLeasePromotedSteerJob({
+            runId,
+            ownerToken: promotion.ownerToken,
+            statusReason: 'Queued-row steer was leased for dispatch.'
+          })
+          if (lease?.ok === true) return true
+          const reason = lease?.kind || 'steer lease did not succeed'
+          appendFailure('Queued run steer lease failed', reason)
+          const fallback = await invokeFallbackPromotedSteerJob({
+            runId,
+            ownerToken: promotion.ownerToken,
+            reason: `Queued-row steer lease failed: ${reason}.`,
+            fallbackStatus: 'queued'
+          })
+          if (fallback?.ok !== true) {
+            queueRunRequest(
+              dispatchRequest,
+              `Queued-row steer lease failed; queued fallback for this row.`
+            )
+          } else {
+            restoreQueuedRunForSteer(dispatchRequest)
+          }
+          return false
+        }
+
+        if (!targetChatId || !targetChatBusy) {
+          setQueuedRuns((prev) =>
+            prev.filter(
+              (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
+            )
+          )
+          const leased = await leasePromotedForDispatch()
+          if (!leased) {
+            clearQueuedSteerInFlight()
+            return
+          }
+          void executeRunRef.current(dispatchRequest)
           clearQueuedSteerInFlight()
           return
         }
-        void executeRunRef.current(dispatchRequest)
-        clearQueuedSteerInFlight()
-        return
-      }
 
-      appendThreadRawLog(targetChatId, {
-        type: 'info',
-        content: `Queued steer appended to the transcript; the active ${providerLabel} turn continues uninterrupted.`
-      })
+        const activeRunId =
+          resolveActiveRunContextForChat(targetChatId)?.runId ||
+          (activeRunChatIdRef.current === targetChatId
+            ? activeRunIdRef.current || undefined
+            : undefined)
+        const liveOutcome =
+          steeringMessage && activeRunId && promotion.ownerToken
+            ? await attemptLiveSteering(window.api, {
+                chatId: targetChatId,
+                activeRunId,
+                queuedRunId: runId,
+                ownerToken: promotion.ownerToken
+              })
+            : ({ kind: 'unavailable' } as const)
+        const rendererFallback =
+          liveOutcome.kind === 'unavailable' && promotion.ownerToken
+            ? await invokeFallbackPromotedSteerJob({
+                runId,
+                ownerToken: promotion.ownerToken,
+                reason: `Queued-row live steering was unavailable; waiting for the active ${providerLabel} turn to finish.`,
+                fallbackStatus: 'queued'
+              })
+            : null
+        let deliveryOwned =
+          liveOutcome.kind === 'accepted' ||
+          liveOutcome.kind === 'boundary' ||
+          (rendererFallback?.ok === true && rendererFallback.jobStatus === 'queued')
+        let durableHandoff: RunQueueJob | null = null
+        let durableLookupCompleted = false
+        if (!deliveryOwned && typeof window.api.getRunQueueJobs === 'function') {
+          try {
+            const latestJobs = await window.api.getRunQueueJobs({
+              chatId: targetChatId,
+              includeTerminal: true
+            })
+            durableLookupCompleted = true
+            durableHandoff = latestJobs.find((candidate) => candidate.runId === runId) || null
+            // A durable row means MAIN still owns the prompt or has recorded its
+            // terminal outcome. Never create a second composer-send path merely
+            // because the original IPC reply was lost.
+            deliveryOwned = Boolean(durableHandoff)
+          } catch {
+            // Unknown main state is not proof of non-admission. Keep the exact
+            // transcript carrier and priority reservation; do not offer a
+            // one-click duplicate under a new run id.
+          }
+        }
+        if (!deliveryOwned) {
+          setFailedQueuedSteerRunIds((previous) => {
+            if (previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.add(runId)
+            return next
+          })
+          if (durableLookupCompleted) {
+            setChatPromptDraft(targetChatId, dispatchRequest.displayPrompt || dispatchRequest.prompt)
+            if (dispatchRequest.imageAttachments.length > 0) {
+              setImageAttachmentsByChatId((prev) => ({
+                ...prev,
+                [targetChatId]: mergeImageAttachments(
+                  prev[targetChatId] || [],
+                  dispatchRequest.imageAttachments
+                )
+              }))
+            }
+          }
+          appendFailure(
+            'Queued-row steer could not cross its durable handoff',
+            durableLookupCompleted
+              ? 'main has no durable row for this request; a draft copy is ready in the composer'
+              : 'main delivery state is unknown; the transcript row is retained and no duplicate draft was created'
+          )
+          clearQueuedSteerInFlight()
+          return
+        }
 
-      while (isChatBusy(targetChatId, { ignoreQueueRunId: runId })) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, DEFAULT_STEER_POLL_INTERVAL_MS)
+        if (
+          durableHandoff?.status === 'failed' ||
+          durableHandoff?.status === 'cancelled' ||
+          (durableHandoff?.status === 'steer_promoting' &&
+            durableHandoff.steerDeliveryPhase !== 'provider_admission_pending')
+        ) {
+          setFailedQueuedSteerRunIds((previous) => {
+            if (previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.add(runId)
+            return next
+          })
+          appendFailure(
+            'Queued-row steer needs attention',
+            durableHandoff.lastError ||
+              durableHandoff.statusReason ||
+              'main retained a terminal steering outcome and did not create a duplicate retry'
+          )
+          clearQueuedSteerInFlight()
+          return
+        }
+
+        appendThreadRawLog(targetChatId, {
+          type: 'info',
+          content:
+            liveOutcome.kind === 'accepted'
+              ? `Queued message accepted for live ${liveOutcome.result.strategy} delivery to ${providerLabel}.`
+              : `Queued steer appended to the transcript and reserved for the next safe ${providerLabel} boundary.`
         })
-      }
-
-      const leased = await leasePromotedForDispatch()
-      if (!leased) {
         clearQueuedSteerInFlight()
-        return
+      } finally {
+        clearQueuedSteerInFlight()
       }
-
-      // Live target chat may have changed while the active turn finished.
-      const currentTarget = chatByIdRef.current.get(targetChatId) || targetRecord || null
-      const liveRequest = currentTarget
-        ? { ...dispatchRequest, chatRecord: currentTarget }
-        : dispatchRequest
-      void executeRunRef.current(liveRequest)
-      clearQueuedSteerInFlight()
     },
     // Queued steering only needs this callback to refresh when the target chat changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -24444,9 +25768,7 @@ function App(): React.JSX.Element {
    * negative seam margin). Keep aura on the input surface only; the
    * glass cap stays neutral (shard 09/10). */
   const composerAboveBarStackAuraClass =
-    composerAgentAuraClass && appearance.composerStyle !== 'default'
-      ? composerAgentAuraClass
-      : ''
+    composerAgentAuraClass && appearance.composerStyle !== 'default' ? composerAgentAuraClass : ''
   // Phase K-followup — `providerSessionLabel` ("New Codex thread" /
   // "{Provider} session linked") removed alongside its only consumer
   // (the non-interactive pill in the composer top-toggles row). The
@@ -24628,14 +25950,14 @@ function App(): React.JSX.Element {
   const liveToolFileSummaryChatId = currentChat?.appChatId ?? null
   const liveToolFileSummaryRunId = currentRun?.runId ?? null
   const liveToolFileSummaryMessages = useMemo(() => {
-    const messages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+    const messages = currentChatTranscript.messages
     return liveToolFileSummaryRunId
       ? selectRunEvidenceMessages(messages, {
           runIds: [liveToolFileSummaryRunId],
-          runs: currentChat?.runs
+          runs: currentChatTranscript.runs
         })
       : EMPTY_CHAT_MESSAGES
-  }, [currentChat?.messages, currentChat?.runs, liveToolFileSummaryRunId])
+  }, [currentChatTranscript, liveToolFileSummaryRunId])
   const liveToolFileSummarySignature = useMemo(
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
@@ -24648,7 +25970,7 @@ function App(): React.JSX.Element {
     }) || null
   useEffect(() => {
     if (!liveToolFileSummaryChatId || liveToolFileSummaryMessages.length === 0) {
-      setLiveToolFileSummaryState(null)
+      commitLiveToolFileSummaryState(null)
       return
     }
     const cached = liveToolFileSummaryCacheRef.current.get(liveToolFileSummaryChatId)
@@ -24657,10 +25979,10 @@ function App(): React.JSX.Element {
       cached.signature === liveToolFileSummarySignature &&
       cached.workspacePath === liveToolFileSummaryWorkspacePath
     ) {
-      setLiveToolFileSummaryState(cached)
+      commitLiveToolFileSummaryState(cached)
       return
     }
-    setLiveToolFileSummaryState(null)
+    commitLiveToolFileSummaryState(null)
     let cancelled = false
     const cancel = scheduleAfterPaint(() => {
       const summaries = getLiveToolFileDiffSummaries(
@@ -24680,13 +26002,14 @@ function App(): React.JSX.Element {
         const oldestKey = liveToolFileSummaryCacheRef.current.keys().next().value
         if (oldestKey) liveToolFileSummaryCacheRef.current.delete(oldestKey)
       }
-      setLiveToolFileSummaryState(entry)
+      commitLiveToolFileSummaryState(entry)
     })
     return () => {
       cancelled = true
       cancel()
     }
   }, [
+    commitLiveToolFileSummaryState,
     liveToolFileSummaryChatId,
     liveToolFileSummaryMessages,
     liveToolFileSummarySignature,
@@ -24738,9 +26061,9 @@ function App(): React.JSX.Element {
     if (!runCompleteNotice) return EMPTY_DIFF_FILE_SUMMARIES
     const roundRunIds = selectCompletionRunIds(currentChat, currentRun)
     if (roundRunIds.size === 0) return EMPTY_DIFF_FILE_SUMMARIES
-    const roundMessages = selectRunEvidenceMessages(currentChat?.messages, {
+    const roundMessages = selectRunEvidenceMessages(currentChatTranscript.messages, {
       runIds: roundRunIds,
-      runs: currentChat?.runs
+      runs: currentChatTranscript.runs
     })
     if (roundMessages.length === 0) return EMPTY_DIFF_FILE_SUMMARIES
     const cacheKey = [
@@ -24760,6 +26083,7 @@ function App(): React.JSX.Element {
   }, [
     runCompleteNotice,
     currentChat,
+    currentChatTranscript,
     currentRun,
     liveToolFileSummaryChatId,
     liveToolFileSummaryWorkspacePath
@@ -24768,8 +26092,8 @@ function App(): React.JSX.Element {
     () =>
       Boolean(
         runCompleteNotice &&
-          currentChat?.chatKind === 'ensemble' &&
-          selectCompletionRunIds(currentChat, currentRun).size > 1
+        currentChat?.chatKind === 'ensemble' &&
+        selectCompletionRunIds(currentChat, currentRun).size > 1
       ),
     [currentChat, currentRun, runCompleteNotice]
   )
@@ -24789,9 +26113,7 @@ function App(): React.JSX.Element {
     ]
   )
   const completionRoundFileChangeSummaries =
-    roundFileChangeSummaries.length > 0
-      ? displayFileChangeSummaries
-      : EMPTY_DIFF_FILE_SUMMARIES
+    roundFileChangeSummaries.length > 0 ? displayFileChangeSummaries : EMPTY_DIFF_FILE_SUMMARIES
   const completionFileChangeSummaryEstimated =
     fileChangeSummaryEstimated ||
     (roundFileChangeSummaries.length > 0 && completionRoundHasMultipleRuns)
@@ -24856,31 +26178,15 @@ function App(): React.JSX.Element {
     focusedPrimaryGitSnapshot
   ])
 
-  const liveGitInvalidationKey = useMemo(
-    () =>
-      displayFileChangeSummaries
-        .map(
-          (item) =>
-            `${item.path}:${item.status}:${item.additions ?? ''}:${item.deletions ?? ''}`
-        )
-        .join('\n'),
-    [displayFileChangeSummaries]
-  )
-
-  useEffect(() => {
-    if (!currentGitPresentationPath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
-      return
-    }
-    void window.api.gitInvalidateSnapshot({
-      workspacePath: currentGitPresentationPath,
-      reason: 'run-diff'
-    })
-  }, [currentGitPresentationPath, liveGitInvalidationKey])
-
   // Welcome / search still read React chat messages. Stream flushes commit the
   // empty→non-empty boundary so welcome unmounts; mid-stream churn is retained
   // and TranscriptPanel reads ChatTranscriptStore instead.
-  const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
+  // Class W (whole-transcript): never search the bounded page. On a paged
+  // shell this stays empty and the escalation effect (above) full-hydrates;
+  // results appear on the hydrated record. TODO(main-side search IPC)
+  const transcriptMessages = currentChatTranscript.paged
+    ? EMPTY_CHAT_MESSAGES
+    : currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).
   // The helper centralises the rule that a chat is in welcome state iff
@@ -24901,64 +26207,61 @@ function App(): React.JSX.Element {
     Boolean(currentChat?.appChatId) &&
     threadSearchChatId === currentChat?.appChatId &&
     threadSearchQuery.trim().length > 0
-  const threadSearchTargets = useMemo(
-    () => {
-      if (!threadSearchCanBuildTargets) return []
-      const chatPooledIdentity =
-        currentChat?.providerMetadata?.pooledAgentIdentity &&
-        typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
-          ? (currentChat.providerMetadata.pooledAgentIdentity as NonNullable<
-              ChatMessage['metadata']
-            >['pooledAgentIdentity'])
-          : undefined
-      const chatPooledAgentId =
-        typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
-          ? currentChat.providerMetadata.pooledAgentId
-          : undefined
-      return buildCurrentChatSearchTargets(
-        isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages),
-        {
-          assistantLabel: (message) => {
-            const assistantMessage =
-              chatPooledIdentity && !message.metadata?.pooledAgentIdentity
-                ? {
-                    ...message,
-                    metadata: {
-                      ...(message.metadata || {}),
-                      ...(chatPooledAgentId ? { pooledAgentId: chatPooledAgentId } : {}),
-                      pooledAgentIdentity: chatPooledIdentity
-                    }
+  const threadSearchTargets = useMemo(() => {
+    if (!threadSearchCanBuildTargets) return []
+    const chatPooledIdentity =
+      currentChat?.providerMetadata?.pooledAgentIdentity &&
+      typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
+        ? (currentChat.providerMetadata.pooledAgentIdentity as NonNullable<
+            ChatMessage['metadata']
+          >['pooledAgentIdentity'])
+        : undefined
+    const chatPooledAgentId =
+      typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
+        ? currentChat.providerMetadata.pooledAgentId
+        : undefined
+    return buildCurrentChatSearchTargets(
+      isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages),
+      {
+        assistantLabel: (message) => {
+          const assistantMessage =
+            chatPooledIdentity && !message.metadata?.pooledAgentIdentity
+              ? {
+                  ...message,
+                  metadata: {
+                    ...(message.metadata || {}),
+                    ...(chatPooledAgentId ? { pooledAgentId: chatPooledAgentId } : {}),
+                    pooledAgentIdentity: chatPooledIdentity
                   }
-                : message
-            const run =
-              message.runId && currentChat?.runs
-                ? currentChat.runs.find((item) => item.runId === message.runId) || null
-                : null
-            const presentation = formatAssistantMessageLabel(
-              assistantMessage,
-              currentProviderLabel,
-              currentProvider,
-              {
-                isEnsembleChat: currentChat?.chatKind === 'ensemble',
-                soloModelId: run?.actualModel || run?.requestedModel || null
-              }
-            )
-            return [presentation.label, presentation.modelBadge].filter(Boolean).join(' ')
-          }
+                }
+              : message
+          const run =
+            message.runId && currentChat?.runs
+              ? currentChat.runs.find((item) => item.runId === message.runId) || null
+              : null
+          const presentation = formatAssistantMessageLabel(
+            assistantMessage,
+            currentProviderLabel,
+            currentProvider,
+            {
+              isEnsembleChat: currentChat?.chatKind === 'ensemble',
+              soloModelId: run?.actualModel || run?.requestedModel || null
+            }
+          )
+          return [presentation.label, presentation.modelBadge].filter(Boolean).join(' ')
         }
-      )
-    },
-    [
-      currentChat?.chatKind,
-      currentChat?.providerMetadata,
-      currentChat?.runs,
-      currentProvider,
-      currentProviderLabel,
-      isWelcomeChat,
-      threadSearchCanBuildTargets,
-      transcriptMessages
-    ]
-  )
+      }
+    )
+  }, [
+    currentChat?.chatKind,
+    currentChat?.providerMetadata,
+    currentChat?.runs,
+    currentProvider,
+    currentProviderLabel,
+    isWelcomeChat,
+    threadSearchCanBuildTargets,
+    transcriptMessages
+  ])
   const threadSearchMatches = useMemo(
     () => findCurrentChatSearchMatches(threadSearchTargets, threadSearchQuery),
     [threadSearchQuery, threadSearchTargets]
@@ -25043,6 +26346,7 @@ function App(): React.JSX.Element {
   const welcomeHeatmapRefreshKey = usageRecords.length + externalUsageVersion
   const shouldBuildWelcomeUsageDashboardDataNow = shouldBuildWelcomeUsageDashboardData({
     isWelcomeChat,
+    isThreadHomeOpen: threadHomeOpen,
     isCurrentGlobalChat,
     usageInitialized,
     isMultiviewSplit
@@ -25099,16 +26403,16 @@ function App(): React.JSX.Element {
   // Until then we show the reserved placeholder instead of mounting
   // the real dashboard (prevents appear → hide → reappear flicker).
   const shouldShowWelcomeUsageDashboard =
-    shouldBuildWelcomeUsageDashboardDataNow &&
-    welcomeUsageDashboardData.lifetimeHasActivity
+    shouldBuildWelcomeUsageDashboardDataNow && welcomeUsageDashboardData.lifetimeHasActivity
   const welcomeWorkspaceHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.workspaceActivityEnabled !== false
   const welcomeTaskWraithHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.taskwraithActivityEnabled !== false
   const welcomeExternalHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.externalActivityEnabled !== false
+  const isWelcomeOrThreadHome = isWelcomeChat || threadHomeOpen
   const welcomeWorkspaceActivityPath =
-    isWelcomeChat && !isCurrentGlobalChat && welcomeWorkspaceHeatmapEnabled
+    isWelcomeOrThreadHome && !isCurrentGlobalChat && welcomeWorkspaceHeatmapEnabled
       ? resolveAppChatChromeWorkspacePath({
           currentWorkspacePath,
           chatWorkspacePath: currentChat?.workspacePath,
@@ -25116,8 +26420,7 @@ function App(): React.JSX.Element {
         })
       : ''
   const shouldShowWelcomeStandaloneHeatmaps =
-    !isMultiviewSplit &&
-    (Boolean(welcomeWorkspaceActivityPath) || shouldShowWelcomeUsageDashboard)
+    !isMultiviewSplit && (Boolean(welcomeWorkspaceActivityPath) || shouldShowWelcomeUsageDashboard)
   // Welcome standalone activity panels now always use the uncluttered cycle
   // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
   // so a legacy "stacked" setting cannot crowd the new-chat screen.
@@ -25203,8 +26506,7 @@ function App(): React.JSX.Element {
       const heatmapHeight = heatmapRect?.height || 0
 
       const composerStyle = window.getComputedStyle(composer)
-      const composerPadding =
-        readPx(composerStyle.paddingTop) + readPx(composerStyle.paddingBottom)
+      const composerPadding = readPx(composerStyle.paddingTop) + readPx(composerStyle.paddingBottom)
       const composerGap = readPx(composerStyle.rowGap === 'normal' ? '0' : composerStyle.rowGap)
       const fullTranscriptPadding = clampPx(72, 0.095, 120)
       const compactTranscriptPadding = clampPx(48, 0.07, 72)
@@ -25237,14 +26539,9 @@ function App(): React.JSX.Element {
       const fullFlowHeight = fullTranscriptPadding + dashboardHeight + flexComposerHeight
       const notificationCollisionHeight = notificationRect
         ? availableHeight +
-          ((heatmapRect || primaryBounds).bottom +
-            clampPx(12, 0.018, 24) -
-            notificationRect.top)
+          ((heatmapRect || primaryBounds).bottom + clampPx(12, 0.018, 24) - notificationRect.top)
         : null
-      const fullHeight = resolveWelcomeFullFitHeight(
-        fullFlowHeight,
-        notificationCollisionHeight
-      )
+      const fullHeight = resolveWelcomeFullFitHeight(fullFlowHeight, notificationCollisionHeight)
       const gridComposerMinHeight =
         composerPadding +
         clampPx(18, 0.03, 48) +
@@ -25260,8 +26557,7 @@ function App(): React.JSX.Element {
       const dashboardHiddenHeight =
         compactTranscriptPadding + flexComposerHeight + clampPx(16, 0.03, 32)
       setWelcomeFitState((current) => {
-        const currentLevel =
-          current.chatId === welcomeFitChatId ? current.level : WELCOME_FIT_FULL
+        const currentLevel = current.chatId === welcomeFitChatId ? current.level : WELCOME_FIT_FULL
         const level = resolveWelcomeFitLevel({
           currentLevel,
           availableHeight,
@@ -25347,6 +26643,20 @@ function App(): React.JSX.Element {
     }
     return Object.keys(style).length > 0 ? style : undefined
   }, [ensembleBlendStyle])
+  // Threads still accountable for an unsettled durable execution. Suppresses
+  // the close-out card there: the provider turn may be over, but the task the
+  // user asked for is not.
+  const liveOwnedExecutionThreads = useMemo(
+    () => liveOwnedExecutionThreadIds(executionRunsById),
+    [executionRunsById]
+  )
+  // Ghost-strip views for every OWNED execution, terminal included: live ones
+  // get their own transcript card, settled ones supply the matching result
+  // card's strip.
+  const ownedExecutionViewsByThreadId = useMemo(
+    () => ownedExecutionViewsByThread(executionRunsById),
+    [executionRunsById]
+  )
   const visibleRunCompleteNotice = deriveVisibleRunCompleteNotice({
     notice: runCompleteNotice,
     isChatRunning: isCurrentChatRunning
@@ -25377,8 +26687,14 @@ function App(): React.JSX.Element {
   )
   const closeoutChildChatsRef = useRef(closeoutChildChats)
   closeoutChildChatsRef.current = closeoutChildChats
+  const closeoutRoundSummaryRefreshKey = roundSummaryRefreshKeyForCloseout(currentChat)
   const closeoutSubagentRefreshKey = useMemo(() => {
-    if (!currentChat || !visibleRunCompleteNotice || settings?.showRunCompleteSummary === false) {
+    if (
+      !currentChat ||
+      !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
+      settings?.showRunCompleteSummary === false
+    ) {
       return ''
     }
     const completedAt = visibleRunCompleteNotice.timestamp
@@ -25386,9 +26702,7 @@ function App(): React.JSX.Element {
       const round = currentChat.ensemble?.activeRound
       if (
         !round ||
-        (round.status !== 'completed' &&
-          round.status !== 'cancelled' &&
-          round.status !== 'failed')
+        (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')
       ) {
         return ''
       }
@@ -25397,7 +26711,7 @@ function App(): React.JSX.Element {
         (run) => run.ensembleRoundId === round.roundId
       )
       return closeoutSubagentRefreshFingerprint({
-        messages: currentChat.messages,
+        messages: currentChatTranscript.messages,
         parentRunIds: roundRuns.map((run) => run.runId),
         window: { startedAt: round.startedAt, completedAt: roundCompletedAt },
         childChats: closeoutChildChats
@@ -25408,7 +26722,7 @@ function App(): React.JSX.Element {
       : currentRun
     if (!run?.runId || !run.endedAt) return ''
     return closeoutSubagentRefreshFingerprint({
-      messages: currentChat.messages,
+      messages: currentChatTranscript.messages,
       parentRunIds: [run.runId],
       window: { startedAt: run.startedAt, completedAt },
       childChats: closeoutChildChats
@@ -25425,6 +26739,7 @@ function App(): React.JSX.Element {
       !currentChat?.appChatId ||
       isWelcomeChat ||
       !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
       settings?.showRunCompleteSummary === false
     ) {
       return
@@ -25434,7 +26749,12 @@ function App(): React.JSX.Element {
     updateChatById(currentChat.appChatId, (source) => {
       if (source.chatKind === 'ensemble') {
         const round = source.ensemble?.activeRound
-        if (!round || (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')) {
+        if (
+          !round ||
+          (round.status !== 'completed' &&
+            round.status !== 'cancelled' &&
+            round.status !== 'failed')
+        ) {
           return source
         }
         const closeoutId = taskWraithRoundCloseoutId(round.roundId)
@@ -25502,6 +26822,7 @@ function App(): React.JSX.Element {
     })
   }, [
     closeoutAiSummaries,
+    closeoutRoundSummaryRefreshKey,
     closeoutSubagentRefreshKey,
     currentChat?.appChatId,
     currentChat?.chatKind,
@@ -25514,6 +26835,53 @@ function App(): React.JSX.Element {
     settings?.showRunCompleteSummary,
     updateChatById,
     visibleRunCompleteNotice
+  ])
+  // Resting Multiview panes: the effect above is keyed to currentChat, so a
+  // round finishing in a NON-focused pane had no close-out author at all — the
+  // pane sat on the bare ephemeral footer card (no Participants/Commits epic
+  // stack, no Worked-for body) until the chat was projected to host, whose
+  // selection finally authored it. Author the deterministic close-out for
+  // every resting pane chat at its completion; the focused effect and the AI
+  // summarizer converge on the same message id once the chat is opened.
+  const restingPaneCloseoutAuthoredRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!isMultiviewSplit) return
+    if (settings?.showRunCompleteSummary === false) return
+    for (const paneChatId of new Set(multiview.paneChatIds)) {
+      if (!paneChatId || paneChatId === currentChatIdRef.current) continue
+      const paneChat = chatByIdRef.current.get(paneChatId)
+      if (!paneChat || isChatSummaryRecord(paneChat)) continue
+      const target = resolveRestingChatCloseoutTarget(paneChat, {
+        isRunning: deriveChatIsRunning({ chat: paneChat, runningChatIds, runQueueJobs }),
+        showRunCompleteSummary: settings?.showRunCompleteSummary
+      })
+      if (!target) continue
+      // Once per completion: late-evidence enrichment (AI summary, commit
+      // repair) stays with the focused effects, and a re-completed round
+      // mints a fresh key. Guarded so steady-state deliveries cost one Set
+      // lookup per pane, not a transcript walk.
+      if (restingPaneCloseoutAuthoredRef.current.has(target.authoringKey)) continue
+      restingPaneCloseoutAuthoredRef.current.add(target.authoringKey)
+      if (restingPaneCloseoutAuthoredRef.current.size > 256) {
+        const oldest = restingPaneCloseoutAuthoredRef.current.values().next().value
+        if (oldest !== undefined) restingPaneCloseoutAuthoredRef.current.delete(oldest)
+      }
+      updateChatById(paneChatId, (source) =>
+        applyRestingChatCloseout(source, target, {
+          childChats: childChatsForCloseout(paneChatId, chats),
+          aiSummaries: closeoutAiSummaries
+        })
+      )
+    }
+  }, [
+    chats,
+    closeoutAiSummaries,
+    isMultiviewSplit,
+    multiview.paneChatIds,
+    runningChatIds,
+    runQueueJobs,
+    settings?.showRunCompleteSummary,
+    updateChatById
   ])
   // One-shot per chat per session: close-outs written while tool details were
   // already stripped but before commit evidence existed harvested zero commits
@@ -25531,10 +26899,26 @@ function App(): React.JSX.Element {
     // would permanently skip the real record, so wait for a record that
     // actually carries messages before spending the one-shot.
     const summaryOnly = (chat as ChatRecord & { summaryOnly?: boolean }).summaryOnly === true
-    if (summaryOnly || !Array.isArray(chat.messages) || chat.messages.length === 0) return
+    const paged = isTranscriptPagedShell(chat)
+    // Paged shell: close-out rows live in the tail the store window already
+    // holds, so inspect the window — never the shell's empty arrays. When
+    // nothing matches but older history is still unloaded, escalate and retry
+    // on the hydrated record instead of tombstoning the one-shot on a
+    // partial view.
+    if (summaryOnly && !paged) return
+    if (!paged && (!Array.isArray(chat.messages) || chat.messages.length === 0)) return
+    if (paged && currentChatTranscript.messages.length === 0) return
     if (closeoutCommitRepairAttemptedRef.current.has(chatId)) return
+    const targets = findCloseoutCommitRepairTargets(
+      paged ? { ...chat, messages: currentChatTranscript.messages } : chat
+    )
+    if (targets.length === 0) {
+      if (paged && currentChatTranscript.hasOlder) {
+        void refreshSingleChat(chatId)
+        return
+      }
+    }
     closeoutCommitRepairAttemptedRef.current.add(chatId)
-    const targets = findCloseoutCommitRepairTargets(chat)
     if (targets.length === 0) return
     const refsByKey = new Map<string, ToolActivityDetailRef>()
     for (const target of targets) {
@@ -25550,14 +26934,17 @@ function App(): React.JSX.Element {
       .getToolActivityDetails(refs)
       .then((details) => {
         if (!Array.isArray(details) || details.length === 0) return
-        updateChatById(chatId, (source) => repairCloseoutCommitTombstones(source, details) || source)
+        updateChatById(
+          chatId,
+          (source) => repairCloseoutCommitTombstones(source, details) || source
+        )
       })
       .catch(() => {
         // Archive unavailable (pruned artifacts, dead run scope) — leave the
         // close-out as-is; the next session may retry.
         closeoutCommitRepairAttemptedRef.current.delete(chatId)
       })
-  }, [currentChat, isWelcomeChat, updateChatById])
+  }, [currentChat, currentChatTranscript, isWelcomeChat, refreshSingleChat, updateChatById])
   // Kick off the on-device AI close-out summary for a just-finished run/round.
   // Fire-and-forget with single-flight per closeout id; 'unavailable' (older
   // macOS, daemon off, Foundation Models missing) simply leaves the
@@ -25568,6 +26955,7 @@ function App(): React.JSX.Element {
       !currentChat?.appChatId ||
       isWelcomeChat ||
       !visibleRunCompleteNotice ||
+      shouldSuppressRunCompleteSummary(visibleRunCompleteNotice) ||
       settings?.showRunCompleteSummary === false ||
       settings?.closeoutAiSummaryEnabled === false
     ) {
@@ -25761,15 +27149,15 @@ function App(): React.JSX.Element {
   )
   const activeWorkProject =
     sidebarActiveTab === 'projects' && activeWorkProjectId
-      ? listProjects().find((project) => project.id === activeWorkProjectId) ?? null
+      ? (listProjects().find((project) => project.id === activeWorkProjectId) ?? null)
       : null
   const isWorkRouteReferencesPinned = shouldPinProjectReferencesOnWorkRoute({
     activeSidebarTab: sidebarActiveTab
   })
-  const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
+  const isTerminalDockAvailable =
+    showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = buildRightDockTabs({
     showHome: showRightDockHome,
-    showCockpit,
     hasSideChat: Boolean(sideChat),
     isSideChatDockPanelOpen,
     showInspector: appearance.showInspector,
@@ -25777,14 +27165,18 @@ function App(): React.JSX.Element {
     showOfficeSuite,
     isCanvasDockPanelOpen,
     isAppDriveDockPanelOpen: Boolean(
-      appDriveDockStatus?.observation || appDriveDockStatus?.control
+      currentChat &&
+        (isAppDriveDockPanelOpen ||
+          (appDriveDockStatus?.chatId === currentChat.appChatId &&
+            (appDriveDockStatus?.observation || appDriveDockStatus?.control)))
     ),
-    isFanoutCandidatesPanelOpen,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
+    // The tab also appears unopened when a site needs re-authentication, so the
+    // notification and the fix are one click apart.
+    isWebSiteLoginsPanelOpen: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
     isPinnedMessagesPanelOpen,
-    isThreadMessagePanelOpen,
     isTerminalDockAvailable
   })
   const rightDockVisible = shouldShowRightDock({
@@ -25841,14 +27233,6 @@ function App(): React.JSX.Element {
       hint: 'Branch a side conversation'
     },
     {
-      id: 'run',
-      label: 'Run',
-      icon: <RunRailSymbolIcon />,
-      enabled: true,
-      group: 'session',
-      hint: 'Live lanes + analyst'
-    },
-    {
       id: 'media',
       label: 'Media',
       icon: <ChatMediaIcon />,
@@ -25869,6 +27253,15 @@ function App(): React.JSX.Element {
       hint: 'Reusable Project reference library'
     },
     {
+      id: 'logins',
+      label: 'Logins',
+      icon: <SiteLoginSymbolIcon />,
+      enabled: isWebSiteLoginsPanelOpen || webSiteLoginAttention > 0,
+      badge: webSiteLoginAttention,
+      group: 'work',
+      hint: webSiteLoginAttention > 0 ? 'A saved sign-in needs you' : 'Sites you stay signed into'
+    },
+    {
       id: 'pins',
       label: 'Notes',
       icon: <PinnedMessagesIcon />,
@@ -25876,15 +27269,6 @@ function App(): React.JSX.Element {
       badge: currentPinnedMessages.length,
       group: 'session',
       hint: 'Pinned messages & board'
-    },
-    {
-      id: 'peers',
-      label: 'Peers',
-      icon: <PeerThreadMessageSymbolIcon />,
-      enabled: Boolean(currentChat),
-      badge: threadMessageInbox.summary.pendingCount,
-      group: 'session',
-      hint: 'Messages to & from other threads'
     },
     {
       id: 'files',
@@ -25904,11 +27288,11 @@ function App(): React.JSX.Element {
     },
     {
       id: 'appdrive',
-      label: 'Drive',
+      label: 'Computer',
       icon: <ScreenWatchSymbolIcon />,
-      enabled: Boolean(appDriveDockStatus?.observation || appDriveDockStatus?.control),
+      enabled: Boolean(currentChat),
       group: 'work',
-      hint: 'Foreground App Drive status & controls'
+      hint: 'Computer Use: browser, app windows & controls'
     },
     {
       id: 'canvas',
@@ -25917,14 +27301,6 @@ function App(): React.JSX.Element {
       enabled: Boolean(currentChat),
       group: 'work',
       hint: 'Live web preview & sketch board'
-    },
-    {
-      id: 'candidates',
-      label: 'Compare',
-      icon: <FanoutCandidatesSymbolIcon />,
-      enabled: Boolean(currentChat) && hasWorkspaceContext,
-      group: 'inspect',
-      hint: 'Fan-out candidates: compare & promote'
     },
     {
       id: 'inspector',
@@ -25950,9 +27326,6 @@ function App(): React.JSX.Element {
       case 'home':
         setShowRightDockHome(false)
         break
-      case 'run':
-        setShowCockpit(false)
-        break
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(false)
         break
@@ -25960,6 +27333,9 @@ function App(): React.JSX.Element {
         if (sidebarActiveTabRef.current !== 'projects') {
           setIsProjectReferencesPanelOpen(false)
         }
+        break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(false)
         break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
@@ -25975,12 +27351,6 @@ function App(): React.JSX.Element {
         break
       case 'appdrive':
         setIsAppDriveDockPanelOpen(false)
-        break
-      case 'candidates':
-        setIsFanoutCandidatesPanelOpen(false)
-        break
-      case 'peers':
-        setIsThreadMessagePanelOpen(false)
         break
       case 'inspector':
         appearance.update({ showInspector: false })
@@ -25998,11 +27368,11 @@ function App(): React.JSX.Element {
       case 'home':
         setShowRightDockHome(true)
         break
-      case 'run':
-        setShowCockpit(true)
-        break
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(true)
+        break
+      case 'logins':
+        setIsWebSiteLoginsPanelOpen(true)
         break
       case 'references':
         setIsProjectReferencesPanelOpen(true)
@@ -26023,21 +27393,7 @@ function App(): React.JSX.Element {
         if (currentChat) setIsCanvasDockPanelOpen(true)
         break
       case 'appdrive':
-        if (
-          currentChat &&
-          (appDriveDockStatus?.observation || appDriveDockStatus?.control)
-        ) setIsAppDriveDockPanelOpen(true)
-        break
-      case 'candidates':
-        if (currentChat && hasWorkspaceContext) setIsFanoutCandidatesPanelOpen(true)
-        break
-      case 'peers':
-        // No workspace requirement: a global chat can still message peers, and
-        // sending has to work from an empty inbox.
-        if (currentChat) {
-          setIsThreadMessagePanelOpen(true)
-          refreshThreadMessageInbox()
-        }
+        if (currentChat) setIsAppDriveDockPanelOpen(true)
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -26056,6 +27412,28 @@ function App(): React.JSX.Element {
     closeOtherRightDockPanels(id)
     openRightDockPanel(id)
     setRightDockTab(id)
+  }
+  const activateCanvasDockSurface = (
+    surface: 'browser' | 'sketch' | 'mesh' | 'simulator'
+  ): void => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    activateRightDockTab('canvas')
+    if (surface === 'mesh') {
+      requestMeshCanvasOpen(chatId)
+      return
+    }
+    if (surface === 'simulator') {
+      requestSimulatorCanvasOpen(chatId)
+      return
+    }
+    const open =
+      surface === 'sketch'
+        ? window.api.canvas?.openSketchEmbedded({ chatId, presentation: 'dock' })
+        : window.api.canvas?.openEmbedded({ chatId, presentation: 'dock' })
+    void open?.catch((error) => {
+      console.warn(`Canvas ${surface} surface could not be opened:`, error)
+    })
   }
   // `mesh_scene_present` is an explicit request to put a 3D scene in front of
   // the user. Focus the active chat's existing Canvas surface; an event for a
@@ -26084,6 +27462,48 @@ function App(): React.JSX.Element {
       setRightDockTab('canvas')
     })
   }, [currentChat?.appChatId])
+  // A Canvas utility window can return its whole live surface to the main dock.
+  // Main has already reparented every WebContentsView before this event; this
+  // renderer only selects the owning chat and mounts the corresponding chrome.
+  useEffect(() => {
+    const api = window.api?.canvas
+    if (!api?.onPopoutDockRequest) return
+    return api.onPopoutDockRequest((payload) => {
+      void (async () => {
+        const target =
+          chatByIdRef.current.get(payload.chatId) ?? (await window.api.getChat(payload.chatId))
+        if (!target) return
+        await handleSelectChatRef.current(target)
+        if (payload.surface === 'media') {
+          closeOtherRightDockPanels('media')
+          setChatMediaPanelOpenPreservingTranscript(true)
+          setRightDockTab('media')
+          return
+        }
+        closeOtherRightDockPanels('canvas')
+        setIsCanvasDockPanelOpen(true)
+        setRightDockTab('canvas')
+        if (payload.surface === 'mesh') requestMeshCanvasOpen(payload.chatId)
+        if (payload.surface === 'simulator') requestSimulatorCanvasOpen(payload.chatId)
+        if (
+          payload.canvases.length === 0 &&
+          (payload.surface === 'browser' || payload.surface === 'sketch')
+        ) {
+          const open =
+            payload.surface === 'sketch'
+              ? window.api.canvas.openSketchEmbedded({
+                  chatId: payload.chatId,
+                  presentation: 'dock'
+                })
+              : window.api.canvas.openEmbedded({
+                  chatId: payload.chatId,
+                  presentation: 'dock'
+                })
+          void open.catch(() => undefined)
+        }
+      })()
+    })
+  }, [closeOtherRightDockPanels, setChatMediaPanelOpenPreservingTranscript])
   // Simulator QA tools present the built-in surface for the active chat. A
   // background chat event never steals the user's current dock context.
   useEffect(() => {
@@ -26142,14 +27562,16 @@ function App(): React.JSX.Element {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
   }
+  /** Work tab -> Logins. App-global, so unlike Refs it needs no Project. */
+  const handleOpenWebSiteLogins = (): void => {
+    activateRightDockTab('logins')
+  }
   /** Transcript citation chip → Work Refs extract viewer. Only when the
    * focused chat belongs to exactly one Project (same ownership rule as
    * Media "Add to library"). When chips degrade to extractId === referenceId
    * (no sync resolver), resolve the ready extract id via IPC before the dock
    * consumes the request. */
-  const handleOpenProjectReferenceCitation = (
-    target: ProjectReferenceCitationOpenTarget
-  ): void => {
+  const handleOpenProjectReferenceCitation = (target: ProjectReferenceCitationOpenTarget): void => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
     const owners = listProjects().filter(
@@ -26163,8 +27585,7 @@ function App(): React.JSX.Element {
     setActiveWorkProjectId(project.id)
     activateRightDockTab('references')
     const projectId = project.id
-    const degradedExtractId =
-      !target.extractId || target.extractId === target.referenceId
+    const degradedExtractId = !target.extractId || target.extractId === target.referenceId
     void (async () => {
       let extractId = target.extractId
       if (degradedExtractId) {
@@ -26358,10 +27779,7 @@ function App(): React.JSX.Element {
   // window-proportional ceiling the drag handlers use, so it opens sensibly
   // for the current window. This is non-destructive: the stored preference
   // is untouched and re-expands up to it when the window grows.
-  const rightPanelWindowMax = Math.min(
-    MAX_RIGHT_PANEL_WIDTH,
-    Math.max(MIN_RIGHT_PANEL_WIDTH, Math.floor(viewportWidth * 0.58))
-  )
+  const rightPanelWindowMax = rightPanelViewportMax(viewportWidth)
   const effectiveInspectorWidth = Math.min(appearance.inspectorWidth, rightPanelWindowMax)
   const rightDockStyle = dockPresence.mounted
     ? ({ '--right-dock-width': `${effectiveInspectorWidth}px` } as CSSProperties)
@@ -26372,7 +27790,6 @@ function App(): React.JSX.Element {
     : []
   const welcomeDiffCount =
     activeDiffSummaries.filter((item) => !item.isNoise).length || displayFileChangeSummaries.length
-  const hasWelcomeDiff = Boolean((activeDiff as any)?.type === 'changes' || welcomeDiffCount > 0)
   const relevantScheduledTasks = isCurrentGlobalChat
     ? []
     : scheduledTasks
@@ -26387,16 +27804,9 @@ function App(): React.JSX.Element {
     isGlobalChat: isCurrentGlobalChat,
     nowHour: new Date().getHours(),
     userName: settings?.userName,
-    hasDiff: hasWelcomeDiff,
-    diffCount: welcomeDiffCount,
-    scheduledTaskCount: relevantScheduledTasks.length,
-    lastRunStatus: currentRun?.status
+    diffCount: welcomeDiffCount
   })
   const visibleScheduledTasks = relevantScheduledTasks.slice(0, 4)
-  const runLanes = useMemo(
-    () => buildRunLanes(runQueueJobs, chats, scheduledTasks, runtimeProfiles),
-    [chats, runQueueJobs, runtimeProfiles, scheduledTasks]
-  )
   const runtimeProfileControl =
     currentProviderRuntimeProfiles.length > 0 ? (
       <label
@@ -26453,9 +27863,7 @@ function App(): React.JSX.Element {
       onSchedule={handleScheduleRun}
       hasPrompt={
         hasAttachmentPromptContent(prompt, imageAttachments) ||
-        Boolean(
-          currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
-        )
+        Boolean(currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble')
       }
       disabled={!hasWorkspaceContext || !(chromeWorkspace || currentWorkspace) || !currentChat}
       disabledReason={scheduleDisabledReason}
@@ -26506,56 +27914,6 @@ function App(): React.JSX.Element {
       setGeminiTrustWriteBusy(false)
     }
   }
-
-  const handleRollbackCodexThread = async (threadId: string) => {
-    if (!threadId || typeof window.api.rollbackAgentThread !== 'function') return
-    const confirmed = window.confirm(
-      'Rollback Codex thread history by one turn? This changes the Codex conversation thread only and does not revert workspace files. Use Diff Studio or git to revert files separately.'
-    )
-    if (!confirmed) return
-    try {
-      const result = await window.api.rollbackAgentThread('codex', threadId, 1)
-      const nextThreadId =
-        result?.result?.thread?.id ||
-        result?.result?.threadId ||
-        result?.thread?.id ||
-        result?.threadId ||
-        threadId
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'info',
-          content:
-            nextThreadId && nextThreadId !== threadId
-              ? 'Codex thread rolled back. New thread id: ' +
-                nextThreadId +
-                '. Files were not reverted.'
-              : 'Codex thread rollback requested. Files were not reverted.'
-        }
-      ])
-      if (
-        currentWorkspace &&
-        currentChat &&
-        currentChat.linkedProviderSessionId === threadId &&
-        nextThreadId &&
-        nextThreadId !== threadId
-      ) {
-        const updatedChat = { ...currentChat, linkedProviderSessionId: nextThreadId }
-        await window.api.saveChat(updatedChat)
-        setCurrentChat(updatedChat)
-        setChats((prev) =>
-          prev.map((chat) => (chat.appChatId === currentChat.appChatId ? updatedChat : chat))
-        )
-      }
-      await refreshCodexThreads()
-    } catch (error) {
-      setRawLogs((prev) => [
-        ...prev,
-        { type: 'stderr', content: error instanceof Error ? error.message : String(error) }
-      ])
-    }
-  }
-
   const handleImportCodexUsageCredential = async () => {
     if (typeof window.api.importCodexUsageCredential !== 'function') return
     try {
@@ -26653,10 +28011,14 @@ function App(): React.JSX.Element {
         openInBrowser: true
       })
       if (result?.ok) {
-        setCreatePrStateFor(workspacePath, {
-          status: 'success',
-          message: result.url ? `Opened ${result.url}` : 'Pull request created.'
-        }, externalChatId)
+        setCreatePrStateFor(
+          workspacePath,
+          {
+            status: 'success',
+            message: result.url ? `Opened ${result.url}` : 'Pull request created.'
+          },
+          externalChatId
+        )
         const refreshPr = async (): Promise<GitPrSummary | null> => {
           if (typeof window.api.githubPrStatus !== 'function') return result as GitPrSummary
           try {
@@ -26678,16 +28040,24 @@ function App(): React.JSX.Element {
           setPrimaryPr(pr)
         }
       } else {
-        setCreatePrStateFor(workspacePath, {
-          status: 'error',
-          message: result?.error || 'Failed to create pull request.'
-        }, externalChatId)
+        setCreatePrStateFor(
+          workspacePath,
+          {
+            status: 'error',
+            message: result?.error || 'Failed to create pull request.'
+          },
+          externalChatId
+        )
       }
     } catch (error) {
-      setCreatePrStateFor(workspacePath, {
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Failed to create pull request.'
-      }, externalChatId)
+      setCreatePrStateFor(
+        workspacePath,
+        {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to create pull request.'
+        },
+        externalChatId
+      )
     }
     window.setTimeout(
       () => setCreatePrStateFor(workspacePath, { status: 'idle' }, externalChatId),
@@ -26710,10 +28080,7 @@ function App(): React.JSX.Element {
   const slashCommandProviderCapabilities =
     providerCapabilitiesByProvider[slashCommandProvider] ||
     (slashCommandProvider === currentProvider ? currentProviderCapabilities : undefined)
-  const slashActionRemainder = (
-    ctx: SlashCommandRunContext,
-    commandPattern: RegExp
-  ): string => {
+  const slashActionRemainder = (ctx: SlashCommandRunContext, commandPattern: RegExp): string => {
     const raw = ctx.rawPrompt.trim()
     return commandPattern.test(raw)
       ? raw.replace(commandPattern, '').trim()
@@ -26725,9 +28092,7 @@ function App(): React.JSX.Element {
     text: string
   ): void => {
     const remainder = slashActionRemainder(ctx, commandPattern)
-    const next = remainder
-      ? `${remainder}\n\n${text}`
-      : text
+    const next = remainder ? `${remainder}\n\n${text}` : text
     ctx.setDraft(next)
     ctx.focusComposer(next.length)
   }
@@ -26757,7 +28122,8 @@ function App(): React.JSX.Element {
             : '/side'
     return sideCommand.seedPrompt ? `${command} ${sideCommand.seedPrompt}` : command
   }
-  const firstSlashArgToken = (arg: string): string => arg.trim().split(/\s+/)[0]?.toLowerCase() || ''
+  const firstSlashArgToken = (arg: string): string =>
+    arg.trim().split(/\s+/)[0]?.toLowerCase() || ''
   const parseScopedToggleSlashArg = (
     ctx: SlashCommandRunContext,
     arg: string,
@@ -26775,24 +28141,30 @@ function App(): React.JSX.Element {
     ctx: SlashCommandRunContext,
     arg: string,
     current: EnsembleFanoutPolicy,
-    hasBossman: boolean,
     usage: string
   ): EnsembleFanoutPolicy | null => {
     const token = firstSlashArgToken(arg)
     if (!token || token === 'toggle') {
-      return current === 'off' ? 'read_only' : 'off'
+      return current === 'off' ? 'all' : 'off'
     }
     if (token === 'off') return 'off'
-    if (token === 'on' || token === 'read' || token === 'read-only' || token === 'readonly') {
-      return 'read_only'
-    }
-    if (token === 'all') return 'all'
-    if (token === 'write' || token === 'writers' || token === 'writer') {
-      return hasBossman ? 'locked_writers_with_boss' : 'locked_writers_user_preflight'
-    }
-    if (token === 'boss' || token === 'bossman') return 'locked_writers_with_boss'
-    if (token === 'preflight' || token === 'user-preflight') {
-      return 'locked_writers_user_preflight'
+    // Fan-out is On/Off now; the retired graded tokens stay accepted as
+    // aliases for On so muscle-memory commands keep working.
+    if (
+      token === 'on' ||
+      token === 'all' ||
+      token === 'read' ||
+      token === 'read-only' ||
+      token === 'readonly' ||
+      token === 'write' ||
+      token === 'writers' ||
+      token === 'writer' ||
+      token === 'boss' ||
+      token === 'bossman' ||
+      token === 'preflight' ||
+      token === 'user-preflight'
+    ) {
+      return 'all'
     }
     rejectSlashCommandWithDraft(ctx, usage)
     return null
@@ -26816,9 +28188,7 @@ function App(): React.JSX.Element {
   }
   const patchScopedEnsembleConfig = (
     chat: ChatRecord,
-    patcher: (
-      ensemble: NonNullable<ChatRecord['ensemble']>
-    ) => NonNullable<ChatRecord['ensemble']>
+    patcher: (ensemble: NonNullable<ChatRecord['ensemble']>) => NonNullable<ChatRecord['ensemble']>
   ): void => {
     updateChatById(chat.appChatId, (source) => {
       if (source.chatKind !== 'ensemble' || !source.ensemble) return source
@@ -26838,27 +28208,50 @@ function App(): React.JSX.Element {
     displayPrompt: string
   ): void => {
     if (chat.chatKind !== 'ensemble' || !chat.ensemble) return
-    const attachments = imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+    const attachments =
+      imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
     const fanoutPolicy = normalizeEnsembleFanoutPolicy(
       chat.ensemble.fanoutPolicy,
       chat.ensemble.concurrentModeEnabled
     )
+    const slashRoundMode = isEnsembleActiveRoundDispatchLive(chat.ensemble.activeRound)
+      ? 'steer'
+      : 'normal'
+    const slashRoundPayload = {
+      chatId: chat.appChatId,
+      prompt: promptText,
+      concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+      fanoutPolicy,
+      imageAttachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        path: attachment.path,
+        name: attachment.name,
+        ...attachmentKindMetadata(attachment),
+        ...persistedAttachmentMetadata(attachment)
+      }))
+    }
     void window.api
-      .runEnsembleRound({
-        chatId: chat.appChatId,
-        prompt: promptText,
-        mode: isEnsembleActiveRoundDispatchLive(chat.ensemble.activeRound) ? 'steer' : 'normal',
-        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-        fanoutPolicy,
-        imageAttachments: attachments.map((attachment) => ({
-          id: attachment.id,
-          path: attachment.path,
-          name: attachment.name,
-          ...attachmentKindMetadata(attachment),
-          ...persistedAttachmentMetadata(attachment)
-        }))
-      })
-      .then(() => {
+      .runEnsembleRound({ ...slashRoundPayload, mode: slashRoundMode })
+      .then(async (receipt) => {
+        // A STEER MUST LAND. A refusal is main stating it did not retain the
+        // prompt, so re-sending as an ordinary round cannot double-deliver: a
+        // live round queues it, an idle chat starts it.
+        const settled =
+          slashRoundMode === 'steer' && ensembleRoundDispatchRefusal(receipt)
+            ? await window.api.runEnsembleRound({ ...slashRoundPayload, mode: 'normal' })
+            : receipt
+        const refusal = ensembleRoundDispatchRefusal(settled)
+        if (refusal) {
+          // Every refusal arrives as a FULFILLED promise, so this used to fall
+          // straight through: the draft was cleared, the attachments dropped
+          // and the Thinking badge lit for a round that was never started.
+          // The .catch below only ever sees a thrown IPC.
+          setRawLogs((prev) => [
+            ...prev,
+            { type: 'info', content: `${displayPrompt} was not sent: ${refusal.message}` }
+          ])
+          return
+        }
         if (attachments.length > 0) {
           setImageAttachmentsByChatId((prev) => ({ ...prev, [chat.appChatId]: [] }))
         }
@@ -26923,6 +28316,7 @@ function App(): React.JSX.Element {
     handleToggleEnsembleCommand,
     handleComposerSurfaceCommand,
     handleSelectMultiviewLayoutCommand,
+    handleSelectTranscriptViewCommand,
     focusPaneForFocusedFlow
   }: {
     chat: ChatRecord | null
@@ -26954,15 +28348,22 @@ function App(): React.JSX.Element {
       ctx: SlashCommandRunContext,
       layout: MultiviewLayout
     ) => void
+    /** `/view <view>` — set this chat's transcript view directly, skipping the
+     * menu. `null` clears the override back to the Appearance default, which is
+     * the menu's "Follow default" row. */
+    handleSelectTranscriptViewCommand: (
+      ctx: SlashCommandRunContext,
+      view: TranscriptView | null
+    ) => void
     focusPaneForFocusedFlow?: () => void
   }): ComposerSlashCommand[] => [
-  /**
-   * Cross-provider TaskWraith actions promoted to first-class slash entries.
-   * These don't have a CommandPaletteItem analog because they fire
-   * renderer-side handlers directly — the slash picker is their only
-   * surface today. Listed in the Custom group below the per-provider
-   * palette-passthrough block.
-   */
+    /**
+     * Cross-provider TaskWraith actions promoted to first-class slash entries.
+     * These don't have a CommandPaletteItem analog because they fire
+     * renderer-side handlers directly — the slash picker is their only
+     * surface today. Listed in the Custom group below the per-provider
+     * palette-passthrough block.
+     */
     {
       kind: 'action',
       id: 'taskwraith-audit',
@@ -27047,9 +28448,7 @@ function App(): React.JSX.Element {
         // Was `handleImportPlanSlashCommand()` (App-level). The composer-side
         // token machinery moved into <Composer>; this closure now drives it
         // through `ctx` so it operates on the INVOKING composer's draft.
-        const candidate = ctx.promptWithoutSlashToken
-          .replace(/^\s*\/import-plan\b/i, '')
-          .trim()
+        const candidate = ctx.promptWithoutSlashToken.replace(/^\s*\/import-plan\b/i, '').trim()
         if (!candidate) {
           rejectSlashCommandWithDraft(
             ctx,
@@ -27086,6 +28485,8 @@ function App(): React.JSX.Element {
           return
         }
         ctx.setDraft('')
+        pendingChatDraftsRef.current.discard(chat.appChatId)
+        rendererTranscriptPersistenceRef.current?.cancel(chat.appChatId)
         // Optimistic local clear, then persist via the IPC. We refresh
         // the chat list right after so the new (empty) transcript is the
         // source of truth across the renderer.
@@ -27191,7 +28592,9 @@ function App(): React.JSX.Element {
         // A bare `/multiview` opens the picker; a named layout skips it. An
         // unrecognised argument also falls through to the picker rather than
         // failing silently, so a typo still lands somewhere useful.
-        const arg = slashActionRemainder(ctx, /^\/multiview\b/i).trim().toLowerCase()
+        const arg = slashActionRemainder(ctx, /^\/multiview\b/i)
+          .trim()
+          .toLowerCase()
         const layout = (MULTIVIEW_LAYOUT_IDS as readonly string[]).includes(arg)
           ? (arg as MultiviewLayout)
           : null
@@ -27200,6 +28603,36 @@ function App(): React.JSX.Element {
           return
         }
         handleComposerSurfaceCommand(ctx, 'multiview')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-transcript-view',
+      command: '/view',
+      label: 'Transcript view',
+      description: `Open the view menu, or name one: default, ${TRANSCRIPT_VIEWS.join(', ')}.`,
+      group: 'Custom',
+      run: (ctx) => {
+        // Bare `/view` opens the menu; a named view skips it. `default` clears
+        // the per-chat override rather than pinning a view — the same thing the
+        // menu's first row does, and the reason both exist.
+        const arg = slashActionRemainder(ctx, /^\/view\b/i)
+          .trim()
+          .toLowerCase()
+        if (arg === 'default') {
+          handleSelectTranscriptViewCommand(ctx, null)
+          return
+        }
+        const view = (TRANSCRIPT_VIEWS as readonly string[]).includes(arg)
+          ? (arg as TranscriptView)
+          : null
+        if (view) {
+          handleSelectTranscriptViewCommand(ctx, view)
+          return
+        }
+        // An unrecognised argument falls through to the menu rather than
+        // failing silently, so a typo still lands somewhere useful.
+        handleComposerSurfaceCommand(ctx, 'view')
       }
     },
     ...(isEnsembleChat
@@ -27245,52 +28678,10 @@ function App(): React.JSX.Element {
           },
           {
             kind: 'action' as const,
-            id: 'taskwraith-ensemble-turn',
-            command: '/ensemble-turn',
-            label: 'Ensemble turn mode',
-            description: 'Switch this ensemble to one-pass turn-bound orchestration.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-turn.')
-                return
-              }
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                orchestrationMode: 'turn_bound',
-                maxContinuationHops: ensemble.maxContinuationHops || 6
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
-            id: 'taskwraith-ensemble-continuous',
-            command: '/ensemble-continuous',
-            label: 'Ensemble continuous mode',
-            description: 'Switch this ensemble to continuous handoff orchestration.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(
-                  ctx,
-                  'Open an ensemble chat to use /ensemble-continuous.'
-                )
-                return
-              }
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                orchestrationMode: 'continuous',
-                maxContinuationHops: ensemble.maxContinuationHops || 6
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
             id: 'taskwraith-ensemble-fanout',
             command: '/ensemble-fanout',
             label: 'Set safe fanout',
-            description:
-              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout off|read|write|all|boss|preflight.',
+            description: 'Toggle or set parallel fan-out. Usage: /ensemble-fanout on|off.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -27305,8 +28696,7 @@ function App(): React.JSX.Element {
                   chat.ensemble.fanoutPolicy,
                   chat.ensemble.concurrentModeEnabled
                 ),
-                Boolean(chat.ensemble.bossmanParticipantId),
-                'Usage: /ensemble-fanout off|read|write|all|boss|preflight.'
+                'Usage: /ensemble-fanout on|off.'
               )
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({
@@ -27318,36 +28708,11 @@ function App(): React.JSX.Element {
           },
           {
             kind: 'action' as const,
-            id: 'taskwraith-ensemble-context',
-            command: '/ensemble-context',
-            label: 'Set ensemble context budget',
-            description: 'Set shared transcript budget in characters. Usage: /ensemble-context 120000.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-context.')
-                return
-              }
-              const arg = slashActionRemainder(ctx, /^\/ensemble-context\b/i)
-              const next = parseScopedPositiveIntSlashArg(ctx, arg, {
-                min: 5_000,
-                max: 256_000,
-                fallback: chat.ensemble.ensembleContextChars || 120_000,
-                usage: 'Usage: /ensemble-context 120000. Valid range: 5000-256000.'
-              })
-              if (next === null) return
-              patchScopedEnsembleConfig(chat, (ensemble) => ({
-                ...ensemble,
-                ensembleContextChars: next
-              }))
-            }
-          },
-          {
-            kind: 'action' as const,
             id: 'taskwraith-ensemble-hops',
             command: '/ensemble-hops',
             label: 'Set continuous handoff limit',
-            description: 'Set maximum continuation hops for continuous rounds. Usage: /ensemble-hops 12.',
+            description:
+              'Set maximum continuation hops for continuous rounds. Usage: /ensemble-hops 12.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -27381,7 +28746,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-reflect',
             command: '/ensemble-reflect',
             label: 'Toggle self-reflective mode',
-            description: 'Toggle or set self-reflective ensemble context. Usage: /ensemble-reflect on|off|toggle.',
+            description:
+              'Toggle or set self-reflective ensemble context. Usage: /ensemble-reflect on|off|toggle.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -27431,7 +28797,10 @@ function App(): React.JSX.Element {
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-skip-reads.')
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  'Open an ensemble chat to use /ensemble-skip-reads.'
+                )
                 return
               }
               void window.api.skipEnsembleReadFanout(chat.appChatId).catch((error) => {
@@ -27447,7 +28816,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-steer',
             command: '/ensemble-steer',
             label: 'Steer ensemble round',
-            description: 'Start or steer the ensemble with the provided prompt. Usage: /ensemble-steer <prompt>.',
+            description:
+              'Start or steer the ensemble with the provided prompt. Usage: /ensemble-steer <prompt>.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -27606,10 +28976,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'split',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'split',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -27632,10 +29003,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'drawer',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'drawer',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -27658,10 +29030,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'popout',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'popout',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -27684,10 +29057,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'main',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'main',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -27944,6 +29318,14 @@ function App(): React.JSX.Element {
     handleSelectMultiviewLayoutCommand: (ctx, layout) => {
       ctx.consumeSlashToken()
       handleSelectMultiviewLayout(layout)
+    },
+    handleSelectTranscriptViewCommand: (ctx, view) => {
+      ctx.consumeSlashToken()
+      // Never write under '' — an empty key notifies every listener while both
+      // readers short-circuit on it, so the store churns and nothing changes.
+      const chatId = currentChat?.appChatId
+      if (!chatId) return
+      setTranscriptViewOverride(chatId, view)
     }
   })
 
@@ -27968,9 +29350,9 @@ function App(): React.JSX.Element {
   // closures reference App handlers) and is passed to <Composer> as a prop.
   const isLinkedChatPopout = Boolean(
     isChatPopoutWindow &&
-      currentChat?.parentChatId &&
-      (currentChat.parentChatRelation === 'sideChat' ||
-        currentChat.parentChatRelation === 'subThread')
+    currentChat?.parentChatId &&
+    (currentChat.parentChatRelation === 'sideChat' ||
+      currentChat.parentChatRelation === 'subThread')
   )
   const chatPopoutParentChat =
     isLinkedChatPopout && currentChat?.parentChatId
@@ -27982,9 +29364,10 @@ function App(): React.JSX.Element {
   const sidePanelLayoutClass = isSideSplitOpen
     ? `side-chat-open side-chat-layout-${sidePanelPresentation} side-chat-docked`
     : ''
-  const appMainStyle = sidebarPresence.mounted && !isChatPopoutWindow
-    ? ({ '--sidebar-width': `${workspaceSidebarWidth}px` } as CSSProperties)
-    : undefined
+  const appMainStyle =
+    sidebarPresence.mounted && !isChatPopoutWindow
+      ? ({ '--sidebar-width': `${workspaceSidebarWidth}px` } as CSSProperties)
+      : undefined
   const chatSplitStyle = rightDockStyle
   const interfaceStyle = appearance.composerStyle
   const primaryModifierLabel = window.api?.hostPlatform === 'darwin' ? '⌘' : 'Ctrl'
@@ -28082,7 +29465,7 @@ function App(): React.JSX.Element {
         setRunCompleteNotice(
           deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
         )
-        setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
+        setRawLogs(rawLogSnapshotForChat(viewerChat.appChatId))
         syncThinkingForChat(viewerChat)
       })
     },
@@ -28109,6 +29492,10 @@ function App(): React.JSX.Element {
       multiview.setFocusedPane(paneIndex)
     },
     [multiview.panes, multiview.setFocusedPane]
+  )
+  const handleCloseMultiviewPane = useCallback(
+    (paneIndex: number) => multiview.dismissPane(paneIndex, currentChatIdRef.current),
+    [multiview.dismissPane]
   )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
@@ -28211,7 +29598,13 @@ function App(): React.JSX.Element {
         void refreshProviderMetadata(paneProvider, workspace.path)
       }
     },
-    [currentWorkspace, multiview.panes, projectMultiviewPaneToHost, refreshWorkspaceTrust, updateChatById]
+    [
+      currentWorkspace,
+      multiview.panes,
+      projectMultiviewPaneToHost,
+      refreshWorkspaceTrust,
+      updateChatById
+    ]
   )
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
@@ -28303,7 +29696,7 @@ function App(): React.JSX.Element {
     ) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
-      const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
+      const panePrompt = composerDraftState.getDraft(chatId)
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
@@ -28359,6 +29752,31 @@ function App(): React.JSX.Element {
     if (!paneChat) return
     void cancelLinkedChatRun(paneChat)
   }, [])
+  const handleSteerMultiviewPane = useCallback(
+    (paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const panePrompt = composerDraftState.getDraft(chatId)
+      const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+      // Steer is a composer gesture in this pane's transcript; relock the pane,
+      // never the host transcript (handleSteer's own relock is focused-gated).
+      multiview.paneRefs[paneIndex]?.relockToLatest()
+      void handleSteerRef.current(undefined, undefined, {
+        chat: paneChat,
+        prompt: panePrompt,
+        claimProjectReferenceContext: true,
+        // Full Access is a focused-renderer grant, not pane-owned state.
+        // A resting pane must never inherit it from whichever chat is focused.
+        sessionTrust:
+          paneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === chatId
+            ? sessionTrust
+            : false,
+        imageAttachments: paneAttachments,
+        discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
+      })
+    },
+    [multiview.focusedPaneIndex, multiview.paneRefs, sessionTrust]
+  )
   const rememberMultiviewPaneComposerSelection = useCallback(
     (chatId: string, patch: Record<string, unknown>) => {
       rememberChatComposerSelectionById(chatId, patch)
@@ -28384,13 +29802,17 @@ function App(): React.JSX.Element {
         approvalMode: paneSelection.approvalMode,
         workflowMode: paneSelection.workflowMode,
         model,
-        previousReasoningEffort:
-          getReasoningEffortForProviderFromSelection(paneSelection, paneSelection.provider)
+        previousReasoningEffort: getReasoningEffortForProviderFromSelection(
+          paneSelection,
+          paneSelection.provider
+        )
       })
       const paneWorkspace = getWorkspaceForChat(paneChat)
       const paneBusy = isChatBusy(chatId)
       const updatedChat = updateChatById(chatId, (source) => {
-        const nextChat = paneBusy ? queueProviderChange(source, change) : applyProviderChange(source, change)
+        const nextChat = paneBusy
+          ? queueProviderChange(source, change)
+          : applyProviderChange(source, change)
         return {
           ...nextChat,
           updatedAt: Date.now()
@@ -28556,11 +29978,7 @@ function App(): React.JSX.Element {
       if (!workspace?.path || isPreparingDiffReview) return
       const reviewPath = resolveComposerEffectiveWorkspacePath(
         workspace.path,
-        composerWorktreeSelectionForChat(
-          composerWorktreeByChatId,
-          chat.appChatId,
-          workspace.path
-        )
+        composerWorktreeSelectionForChat(composerWorktreeByChatId, chat.appChatId, workspace.path)
       )
       if (!reviewPath) return
       setIsPreparingDiffReview(true)
@@ -28628,16 +30046,12 @@ function App(): React.JSX.Element {
       const focusPane = (): void => projectMultiviewPaneToHost(paneIndex, chat.appChatId)
       const paneGitActionPath = resolveComposerEffectiveWorkspacePath(
         workspace?.path,
-        composerWorktreeSelectionForChat(
-          composerWorktreeByChatId,
-          chat.appChatId,
-          workspace?.path
-        )
+        composerWorktreeSelectionForChat(composerWorktreeByChatId, chat.appChatId, workspace?.path)
       )
       if (provider === 'codex') {
         if (item.command === '/status' || item.command === '/permissions') {
           void refreshProviderMetadata(provider, workspace?.path)
-          openInspectorTab('safety')
+          openSettingsTab(item.command === '/permissions' ? 'safety-privacy' : 'providers')
         } else if (
           item.command === '/model' ||
           item.command === '/mcp' ||
@@ -28646,9 +30060,8 @@ function App(): React.JSX.Element {
           void refreshProviderMetadata(provider, workspace?.path)
           if (item.command === '/resume') {
             focusPane()
-            void refreshCodexThreads()
           }
-          openInspectorTab('capabilities')
+          openSettingsTab(item.command === '/mcp' ? 'mcp' : 'providers')
         } else if (item.command === '/diff') {
           if (paneGitActionPath) {
             void window.api.getDiff(paneGitActionPath).then((diffObj) => {
@@ -28663,9 +30076,11 @@ function App(): React.JSX.Element {
           void handleReviewDiffForChat(chat, provider, workspace)
         } else if (item.command === '/fast') {
           const selection = getChatComposerSelection(chat, provider)
-          const modelOption = codexModels.find((option) => option.id === selection.selectedModelType)
+          const modelOption = codexModels.find(
+            (option) => option.id === selection.selectedModelType
+          )
           if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
-            openInspectorTab('capabilities')
+            openSettingsTab('providers')
             return
           }
           const nextTier = selection.codexServiceTier === 'fast' ? '' : 'fast'
@@ -28697,10 +30112,10 @@ function App(): React.JSX.Element {
       ) {
         if (item.command === '/status' || item.command === '/permissions') {
           void refreshProviderMetadata(provider, workspace?.path)
-          openInspectorTab('safety')
+          openSettingsTab(item.command === '/permissions' ? 'safety-privacy' : 'providers')
         } else if (item.command === '/model') {
           void refreshProviderMetadata(provider, workspace?.path)
-          openInspectorTab('capabilities')
+          openSettingsTab('providers')
         } else if (item.command === '/diff') {
           if (paneGitActionPath) {
             void window.api.getDiff(paneGitActionPath).then((diffObj) => {
@@ -28733,7 +30148,6 @@ function App(): React.JSX.Element {
       projectMultiviewPaneToHost,
       handleReviewDiffForChat,
       openInspectorTab,
-      refreshCodexThreads,
       refreshProviderMetadata,
       updateChatById
     ]
@@ -28778,8 +30192,7 @@ function App(): React.JSX.Element {
         // the gate is only meaningful when this pane IS that provider. On any
         // other pane the entry stays listed and its dispatch is a no-op, which
         // is how the pane's other focused-state commands already read.
-        fastModeAvailable:
-          slashProvider === currentProvider ? currentFastModeAvailable : undefined,
+        fastModeAvailable: slashProvider === currentProvider ? currentFastModeAvailable : undefined,
         extraCommands: [
           ...paneSlashCommandHelpers.buildScopedComposerSlashExtraCommands({
             chat,
@@ -28810,7 +30223,9 @@ function App(): React.JSX.Element {
             },
             openSideChatCommand: () => {
               focusPane()
-              window.alert('Side-chat commands open from the focused pane. This pane is now focused.')
+              window.alert(
+                'Side-chat commands open from the focused pane. This pane is now focused.'
+              )
             },
             handleGoalCommand: (ctx) =>
               preserveForFocusedFlow(
@@ -28835,6 +30250,15 @@ function App(): React.JSX.Element {
                 ctx,
                 'Layout changes apply from the focused pane. This pane is now focused; run /multiview again.'
               ),
+            // Not redirected to the focused pane, unlike the surfaces above:
+            // the transcript view is per-CHAT and this pane has one, so
+            // `/view minimal` here means THIS pane's chat. The bare `/view`
+            // popover still redirects, because the open signal is published
+            // globally and would otherwise open every pane's menu at once.
+            handleSelectTranscriptViewCommand: (ctx, view) => {
+              ctx.consumeSlashToken()
+              setTranscriptViewOverride(chat.appChatId, view)
+            },
             focusPaneForFocusedFlow: focusPane
           }),
           ...skillSlashPromptTemplates
@@ -28856,6 +30280,7 @@ function App(): React.JSX.Element {
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
+      setThreadHomeOpen(false)
       // The single-pane host has no reason to duplicate its chat into hook
       // state until the user actually splits. Adopt it exactly once on entry;
       // after that pane records are authoritative and later layout changes
@@ -28903,6 +30328,11 @@ function App(): React.JSX.Element {
       )
     }
     const viewerProvider = getChatProvider(viewerChat)
+    const viewerSelection = getChatComposerSelection(viewerChat, viewerProvider)
+    const viewerProviderPresentation = resolveWorkingIndicatorProviderPresentation(
+      viewerProvider,
+      viewerSelection.selectedModelType
+    )
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
     // The one legacy host projection stays attached to its chat until a
     // host-only action explicitly moves it. Local pane focus must not swap two
@@ -28934,8 +30364,18 @@ function App(): React.JSX.Element {
       runningChatIds,
       runQueueJobs
     })
-    const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
-    const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+    const viewerIsWelcomeChat =
+      !isTranscriptPagedShell(viewerChat) &&
+      shouldRenderWelcome({
+        currentChat: viewerChat,
+        messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
+        isCurrentChatRunning: viewerIsRunning
+      })
+    const viewerRun =
+      selectCurrentChatRun(
+        viewerChat.runs,
+        resolveCurrentChatTranscriptWindow(viewerChat, null).runs
+      ) || null
     // ── Per-pane agent-aura inputs ─────────────────────────────────────────
     // Mirror App's app-global `auraProviderKey` + `runFxStatus` (see ~15834)
     // but scoped to THIS pane's chat, so a non-focused pane self-tints from its
@@ -28948,7 +30388,7 @@ function App(): React.JSX.Element {
     const viewerQueuedRunCount = runQueueJobs.filter(
       (job) => job.chatId === viewerChatId && job.status === 'queued'
     ).length
-    const viewerRawEventCount = rawLogsByChatIdRef.current.get(viewerChatId)?.length ?? 0
+    const viewerRawEventCount = rawLogsByChatIdRef.current.get(viewerChatId)?.size ?? 0
     const viewerShowRunDataViz =
       isAdvancedFxActive &&
       appearance.advancedFx.dataViz &&
@@ -29017,11 +30457,11 @@ function App(): React.JSX.Element {
         case 'home':
           setShowRightDockHome(true)
           break
-        case 'run':
-          setShowCockpit(true)
-          break
         case 'media':
           setChatMediaPanelOpenPreservingTranscript(true)
+          break
+        case 'logins':
+          setIsWebSiteLoginsPanelOpen(true)
           break
         case 'references':
           setIsProjectReferencesPanelOpen(true)
@@ -29044,7 +30484,11 @@ function App(): React.JSX.Element {
       }
       setRightDockTab(panelId)
     }
-    const openPaneChatPopout = (paneIndex: number, chatId: string): void => {
+    const openPaneChatPopout = (
+      paneIndex: number,
+      chatId: string,
+      presentation: ChatPopoutPresentation = 'full'
+    ): void => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const paneScrollState =
@@ -29052,14 +30496,16 @@ function App(): React.JSX.Element {
         (currentChatIdRef.current === chatId ? captureMainTranscriptScrollState() : undefined)
       focusPaneForChromeAction(paneIndex, chatId)
       writeChatPopoutHandoff(chatId, {
-        draft: composerDraftsByChatIdRef.current[chatId] || '',
+        draft: composerDraftState.getDraft(chatId),
         scrollState: paneScrollState,
-        roundExpansion: captureSessionRoundExpansionForChat(chatId)
+        roundExpansion: captureSessionRoundExpansionForChat(chatId),
+        transcriptView: captureTranscriptViewOverrideForChat(chatId)
       })
       void window.api.openWorkspacePopout({
         kind: 'chat',
         chatId,
-        workspacePath: paneChat.workspacePath
+        workspacePath: paneChat.workspacePath,
+        presentation
       })
     }
     const openPaneWorkspacePopout = (
@@ -29150,13 +30596,20 @@ function App(): React.JSX.Element {
         onClick: openPaneChatPopout
       },
       {
+        id: 'compact-companion',
+        title: 'Open pane chat in Compact Companion',
+        ariaLabel: 'Open pane chat in Compact Companion',
+        icon: <ChatPopoutIcon />,
+        disabled: !viewerChat,
+        onClick: (paneIndex, chatId) => openPaneChatPopout(paneIndex, chatId, 'compact')
+      },
+      {
         id: 'popout-workbench',
         title: 'Open workspace Workbench',
         ariaLabel: 'Open workspace Workbench',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('workbench', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('workbench', paneIndex, chatId)
       },
       {
         id: 'popout-diff-studio',
@@ -29164,8 +30617,7 @@ function App(): React.JSX.Element {
         ariaLabel: 'Open workspace Diff Studio',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('diff-studio', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('diff-studio', paneIndex, chatId)
       },
       {
         id: 'popout-file-editor',
@@ -29173,8 +30625,7 @@ function App(): React.JSX.Element {
         ariaLabel: 'Open workspace File Editor',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('file-editor', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('file-editor', paneIndex, chatId)
       },
       {
         id: 'side-chat',
@@ -29214,20 +30665,10 @@ function App(): React.JSX.Element {
             const paneId = multiview.panes[paneIndex]?.id
             if (!paneId) return
             setPreviewMenuTarget((current) =>
-              current?.paneId === paneId && current.chatId === chatId
-                ? null
-                : { paneId, chatId }
+              current?.paneId === paneId && current.chatId === chatId ? null : { paneId, chatId }
             )
           }
         }
-      },
-      {
-        id: 'run-rail',
-        title: showCockpit ? 'Hide Run rail' : 'Open Run rail',
-        ariaLabel: 'Toggle Run rail',
-        icon: <RunRailSymbolIcon />,
-        active: showCockpit,
-        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'run')
       },
       {
         id: 'screen-watch',
@@ -29323,8 +30764,9 @@ function App(): React.JSX.Element {
     // The memoized resting ctx is keyed for render stability, but its
     // `currentChat` comes from chatByIdRef. If that chat object advanced since
     // the memo was built, fall back to the freshly-built pane ctx.
-    const effectivePaneComposerCtx =
-      viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()
+    const effectivePaneComposerCtx = viewerOwnsHostProjection
+      ? composerCtx
+      : resolveRestingPaneComposerCtx()
 
     return (
       <ChatViewPane
@@ -29338,8 +30780,8 @@ function App(): React.JSX.Element {
         chat={viewerChat}
         messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
         provider={viewerProvider}
-        providerLabel={getProviderLabel(viewerProvider)}
-        providerClass={viewerProvider}
+        providerLabel={viewerProviderPresentation.providerLabel}
+        providerClass={viewerProviderPresentation.providerClass}
         interfaceStyle={interfaceStyle}
         isEnsemble={viewerChat.chatKind === 'ensemble'}
         showAura={showAgentAuraFx}
@@ -29359,6 +30801,10 @@ function App(): React.JSX.Element {
         isWelcomeChat={viewerIsWelcomeChat}
         isThinking={viewerIsRunning}
         runCompleteNotice={cachedPaneRunCompleteNotice(viewerChat, { isRunning: viewerIsRunning })}
+        hasLiveOwnedExecution={liveOwnedExecutionThreads.has(viewerChatId)}
+        ownedExecutionViews={ownedExecutionViewsByThreadId.get(viewerChatId)}
+        onCancelOwnedExecution={handleCancelExecutionRun}
+        onResumeOwnedExecution={handleResumeExecutionRun}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -29403,6 +30849,9 @@ function App(): React.JSX.Element {
         compactDensity={appearance.compactDensity}
         liveActivityViewport={appearance.liveActivityViewport}
         fanoutLaneLayout={appearance.fanoutLaneLayout}
+        defaultTranscriptView={appearance.defaultTranscriptView}
+        transcriptTextSize={appearance.transcriptTextSize}
+        transcriptWidth={appearance.transcriptWidth}
         copiedId={copiedId}
         copy={copy}
         onOpenSubThread={handleOpenCockpitThread}
@@ -29418,6 +30867,7 @@ function App(): React.JSX.Element {
         currencyOverestimatePercent={overestimatePercent}
         providerRates={providerRates}
         onFocusPane={handleFocusMultiviewPane}
+        onClosePane={handleCloseMultiviewPane}
       />
     )
   }
@@ -29546,11 +30996,9 @@ function App(): React.JSX.Element {
     patchEnsembleParticipantForChat,
     selectEnsembleParticipantForChat,
     setActiveEnsembleRosterPresetIdForChat,
-    updateEnsembleContextCharsForChat,
     updateEnsembleFanoutIsolationForChat,
     updateEnsembleFanoutPolicyForChat,
-    updateEnsembleMaxContinuationHopsForChat,
-    updateEnsembleOrchestrationModeForChat
+    updateEnsembleMaxContinuationHopsForChat
   }
   const paneCtxHelperImplsRef = useRef(paneCtxHelperImpls)
   paneCtxHelperImplsRef.current = paneCtxHelperImpls
@@ -29586,9 +31034,7 @@ function App(): React.JSX.Element {
         : undefined,
       PLAN_IMPORT_RISK_LABELS,
       acknowledgedElevationDefaults,
-      activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
-      activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
       agentStatusByProvider,
@@ -29609,16 +31055,15 @@ function App(): React.JSX.Element {
       contextUsedPercent,
       onCompactContext,
       onCompactParticipant,
+      onRequestFullChat,
       compactableParticipantIds,
       speakingParticipantId,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
-      currentEnsembleConcurrentMode,
       currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
-      currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
       configuredProviderSnapshot,
@@ -29630,7 +31075,6 @@ function App(): React.JSX.Element {
       ensembleConcurrentLanesAvailable,
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
-      ensembleOllamaContextWarning,
       externalGitSnapshots: currentExternalWorkspaceState.externalGitSnapshots,
       onExternalGitSnapshotRefresh: handleExternalGitSnapshotRefresh,
       externalPrByPath: currentExternalWorkspaceState.externalPrByPath,
@@ -29665,6 +31109,8 @@ function App(): React.JSX.Element {
       multiview,
       onOllamaModelSelected: checkOllamaModelAvailability,
       overestimatePercent,
+      commitEnsembleRosterChange,
+      commitEnsembleLiveRosterMutation,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,
@@ -29701,26 +31147,21 @@ function App(): React.JSX.Element {
       threadTokenTallyTooltip,
       trustResult,
       trustSelectValue,
-      updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleFanoutIsolation,
-      updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
-      updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,
-      workspaces,
+      workspaces
     }),
     [
       composerHandlers,
       isChatPopoutWindow,
       acknowledgedElevationDefaults,
-      activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
-      activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
       agentStatusByProvider,
@@ -29742,16 +31183,15 @@ function App(): React.JSX.Element {
       contextUsedPercent,
       onCompactContext,
       onCompactParticipant,
+      onRequestFullChat,
       compactableParticipantIds,
       speakingParticipantId,
       currentChatIdRef,
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
-      currentEnsembleConcurrentMode,
       currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
-      currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
       configuredProviderSnapshot,
@@ -29763,7 +31203,6 @@ function App(): React.JSX.Element {
       ensembleConcurrentLanesAvailable,
       ensembleConcurrentWriteLanesAvailable,
       ensembleEnabledParticipantsForCurrent,
-      ensembleOllamaContextWarning,
       currentExternalWorkspaceState,
       geminiTrustWriteBusy,
       geminiTrustWriteError,
@@ -29789,6 +31228,8 @@ function App(): React.JSX.Element {
       isSteerBusyForCurrentChat,
       multiview,
       overestimatePercent,
+      commitEnsembleRosterChange,
+      commitEnsembleLiveRosterMutation,
       patchEnsembleParticipantById,
       pendingApprovalQueueByChatId,
       persistentSessionNeedsRestart,
@@ -29823,18 +31264,15 @@ function App(): React.JSX.Element {
       threadTokenTallyTooltip,
       trustResult,
       trustSelectValue,
-      updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleFanoutIsolation,
-      updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
-      updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
       visibleScheduledTasks,
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,
-      workspaces,
+      workspaces
     ]
   )
 
@@ -29868,9 +31306,6 @@ function App(): React.JSX.Element {
       )
       const viewerEnsembleProjection = buildMultiviewEnsembleComposerProjection(
         viewerChat,
-        Array.isArray(agentStatusByProvider.ollama?.models)
-          ? agentStatusByProvider.ollama.models
-          : [],
         viewerSelectedParticipantId,
         pendingEnsembleSeatSelections[viewerChatId]
       )
@@ -29893,8 +31328,18 @@ function App(): React.JSX.Element {
         runningChatIds,
         runQueueJobs
       })
-      const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
-      const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+      const viewerIsWelcomeChat =
+        !isTranscriptPagedShell(viewerChat) &&
+        shouldRenderWelcome({
+          currentChat: viewerChat,
+          messages: viewerChat.messages || EMPTY_CHAT_MESSAGES,
+          isCurrentChatRunning: viewerIsRunning
+        })
+      const viewerRun =
+        selectCurrentChatRun(
+          viewerChat.runs,
+          resolveCurrentChatTranscriptWindow(viewerChat, null).runs
+        ) || null
       // (Per-pane agent-aura inputs are shell-only and live in
       // `renderMultiviewPaneCell`; the composer ctx doesn't need them.)
       const viewerSelection = paneCtxHelpers.getChatComposerSelection(viewerChat, viewerProvider)
@@ -29902,6 +31347,10 @@ function App(): React.JSX.Element {
       // is now built inside the shared <Composer> from `currentProviderModelOptions`
       // (overridden per-pane in paneComposerCtx), mirroring the focused composer.
       const viewerSelectedModel = viewerSelection.selectedModelType
+      const viewerProviderPresentation = resolveWorkingIndicatorProviderPresentation(
+        viewerProvider,
+        viewerSelectedModel
+      )
       const viewerCodexModelOption =
         viewerProvider === 'codex'
           ? codexModels.find((model) => model.id === viewerSelectedModel)
@@ -29925,8 +31374,13 @@ function App(): React.JSX.Element {
         viewerSelection.grokReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerMuseReasoning =
         viewerSelection.museReasoningEffort || MUSE_DEFAULT_REASONING_EFFORT
-      const viewerMistralReasoning =
-        viewerSelection.mistralReasoningEffort || 'medium'
+      const viewerMistralReasoning = viewerSelection.mistralReasoningEffort || 'medium'
+      const viewerDevinReasoning =
+        viewerSelection.devinReasoningEffort ||
+        devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ||
+        ''
+      const viewerPiReasoning = viewerSelection.piReasoningEffort || 'medium'
+      const viewerOllamaReasoning = viewerSelection.ollamaReasoningEffort || ''
       const viewerCursorReasoning =
         viewerSelection.cursorReasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
       const viewerCursorFastMode = Boolean(viewerSelection.cursorFastMode)
@@ -29936,7 +31390,8 @@ function App(): React.JSX.Element {
       // picker-shaped { value, label } here crashed it (it read
       // option.reasoningEffort.charAt(0) on undefined). Kimi builds its own list
       // internally, so no raw list is needed for it.
-      const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts?.length
+      const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts
+        ?.length
         ? viewerCodexModelOption.supportedReasoningEfforts
         : [
             { reasoningEffort: 'low' },
@@ -29944,27 +31399,24 @@ function App(): React.JSX.Element {
             { reasoningEffort: 'high' },
             { reasoningEffort: 'xhigh' }
           ]
-      const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(
-        viewerClaudeModelOption
-      )
+      const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(viewerClaudeModelOption)
       // Fast-mode capability/state, the permission option list, and the
       // enabled-grant set are all derived inside the shared <Composer> (from the
       // per-pane provider/model/selection fields in paneComposerCtx), mirroring
       // the focused composer — so they no longer need pane-local copies here.
       const viewerProviderLocked = Boolean(
         viewerIsRunning ||
-          (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
+        (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
       )
       const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
       const viewerResumeAppWatchSnapshot =
         resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
-      const viewerRunStartedAt = viewerIsRunning
-        ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
-        : null
-      const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(
-        viewerChat.runs,
-        viewerRunStartedAt
-      )
+      const viewerRunStartedAt = resolveComposerRunTimecodeStartedAt({
+        chat: viewerChat,
+        isRunning: viewerIsRunning,
+        currentRunStartedAt: viewerRun?.startedAt
+      })
+      const viewerCumulativeRunBaseMs = resolveCumulativeRunBaseMs(viewerChat, viewerRunStartedAt)
       const viewerShouldShowWelcomeUsageDashboard =
         viewerIsWelcomeChat &&
         usageInitialized &&
@@ -30036,7 +31488,7 @@ function App(): React.JSX.Element {
         ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
         : 'Set active goal'
       const paneViewerSelection = viewerSelection
-      const viewerProviderLabel = getProviderLabel(viewerProvider)
+      const viewerProviderLabel = viewerProviderPresentation.providerLabel
       const paneIsEnsembleChat = viewerChat.chatKind === 'ensemble'
       const paneComposerPlaceholder = paneIsEnsembleChat
         ? 'Ask the ensemble. @ to direct a participant.'
@@ -30059,9 +31511,7 @@ function App(): React.JSX.Element {
         isGlobalChat: viewerIsGlobalChat,
         nowHour: new Date().getHours(),
         userName: settings?.userName,
-        hasDiff: false,
-        diffCount: 0,
-        scheduledTaskCount: 0
+        diffCount: 0
       })
       const paneThreadTokenTallyHasValue =
         viewerTokenTally.totalTokens > 0 || viewerLiveOutputTokens > 0
@@ -30079,14 +31529,10 @@ function App(): React.JSX.Element {
             paneExternalPathGrants,
             externalGitSnapshotsByOwner
           ),
-          prByPath: projectExternalWorkspaceOwnerCache(
-            paneExternalPathGrants,
-            externalPrByOwner
-          )
+          prByPath: projectExternalWorkspaceOwnerCache(paneExternalPathGrants, externalPrByOwner)
         }
       )
-      const paneExternalPathGrantPrompt =
-        externalPathGrantPromptByChatId[viewerChatId] || null
+      const paneExternalPathGrantPrompt = externalPathGrantPromptByChatId[viewerChatId] || null
       const paneExternalPathGrantPromptBusy =
         (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
       const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
@@ -30108,6 +31554,30 @@ function App(): React.JSX.Element {
           dmTargetParticipantId,
           exactPickerParticipantId
         )
+      const paneHandleRunInBackground = (
+        dmTargetParticipantId?: string,
+        exactPickerParticipantId?: string
+      ): Promise<void> | void => {
+        const sourceChat = chatByIdRef.current.get(viewerChatId)
+        if (!sourceChat) return
+        runWelcomeBackgroundTarget(
+          {
+            chat: sourceChat,
+            prompt: composerDraftState.getDraft(viewerChatId),
+            sessionTrust:
+              viewerPaneIndex === multiview.focusedPaneIndex &&
+              currentChatIdRef.current === viewerChatId
+                ? sessionTrust
+                : false,
+            imageAttachments:
+              imageAttachmentsByChatIdRef.current[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
+            discordContextSelection:
+              discordContextSelectionByChatIdRef.current[viewerChatId] || null
+          },
+          dmTargetParticipantId,
+          exactPickerParticipantId
+        )
+      }
       const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
       const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
         handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
@@ -30130,11 +31600,7 @@ function App(): React.JSX.Element {
         paneCtxHelpers.selectEnsembleParticipantForChat(viewerChatId, participantId)
       const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
         if (!paneSlashParticipant) return
-        paneCtxHelpers.patchEnsembleParticipantForChat(
-          viewerChatId,
-          paneSlashParticipant.id,
-          patch
-        )
+        paneCtxHelpers.patchEnsembleParticipantForChat(viewerChatId, paneSlashParticipant.id, patch)
       }
       const panePatchParticipantById = (
         participantId: string,
@@ -30145,8 +31611,7 @@ function App(): React.JSX.Element {
       const paneQueuedMessagesAboveRowEntries =
         paneCtxHelpers.buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
       const paneExecutionStackView = executionStackViewForChat(viewerChatId)
-      const paneIsChatBusyForSteer =
-        viewerIsRunning || viewerEnsembleProjection.isRoundRunning
+      const paneIsChatBusyForSteer = viewerIsRunning || viewerEnsembleProjection.isRoundRunning
       const paneIsSteerBusyForCurrentChat = isSteerInFlight({
         state: steerState,
         chatId: viewerChatId
@@ -30157,6 +31622,11 @@ function App(): React.JSX.Element {
         providerLabel: getProviderLabel(viewerProvider),
         turnLabel: paneIsEnsembleChat ? 'ensemble round' : undefined
       })
+      const panePendingApprovals = projectChatSurfacePendingApprovals(
+        viewerChatId,
+        pendingAgentApprovalByChatId,
+        pendingApprovalQueueByChatId
+      )
       const paneComposerCtx: ComposerProps = {
         // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
         // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -30166,6 +31636,7 @@ function App(): React.JSX.Element {
         // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
         // `composerProps ===` check bail and skip re-rendering this pane's Composer.
         ...detachedComposerSurfaceBase,
+        ...panePendingApprovals,
         // A resting pane receives only the Multiview field Composer consumes.
         // Focus/index changes in the host grid must not invalidate its composer.
         multiview: { layout: multiview.layout },
@@ -30173,9 +31644,6 @@ function App(): React.JSX.Element {
         currentProviderCapabilityWarning: null,
         composerAboveBarStackAuraClass: '',
         composerAgentAuraClass: '',
-        pendingApprovalQueueByChatId: pendingApprovalQueueByChatId[viewerChatId]
-          ? { [viewerChatId]: pendingApprovalQueueByChatId[viewerChatId] }
-          : {},
         // Focused-only churny fields NOT in the stable base: panes get stable
         // placeholders (consistent with the focused-only placeholders further
         // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
@@ -30195,7 +31663,7 @@ function App(): React.JSX.Element {
         compactableParticipantIds: undefined,
         speakingParticipantId: undefined,
         // ── per-chat identity / display ──
-        prompt: composerDraftsByChatId[viewerChatId] || '',
+        prompt: composerDraftState.getDraft(viewerChatId),
         // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
         // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
         // FOCUSED pane's flag, so override it with THIS pane's.
@@ -30218,18 +31686,13 @@ function App(): React.JSX.Element {
         currentComposerMentionParticipants: viewerEnsembleProjection.participants,
         ensembleEnabledParticipantsForCurrent: viewerEnsembleProjection.enabledParticipants,
         ensembleBlendStyle: viewerEnsembleProjection.providerBlendStyle as CSSProperties,
-        currentEnsembleOrchestrationMode: viewerEnsembleProjection.currentOrchestrationMode,
-        activeEnsembleOrchestrationMode: viewerEnsembleProjection.activeOrchestrationMode,
         currentEnsembleFanoutPolicy: viewerEnsembleProjection.currentFanoutPolicy,
         activeEnsembleFanoutPolicy: viewerEnsembleProjection.activeFanoutPolicy,
-        currentEnsembleConcurrentMode: viewerEnsembleProjection.currentConcurrentMode,
-        activeEnsembleConcurrentMode: viewerEnsembleProjection.activeConcurrentMode,
         currentEnsembleContinuationHops: viewerEnsembleProjection.continuationHops,
         currentEnsembleMaxContinuationHops: viewerEnsembleProjection.maxContinuationHops,
         isCurrentEnsembleRoundRunning: viewerEnsembleProjection.isRoundRunning,
         currentEnsembleRoundStatus: viewerEnsembleProjection.roundStatus,
         currentEnsembleActiveGoalStatus: viewerEnsembleProjection.activeGoalStatus,
-        ensembleOllamaContextWarning: viewerEnsembleProjection.ollamaContextWarning,
         applyEnsembleRosterPreset: (preset: EnsembleRosterPreset) =>
           paneCtxHelpers.applyEnsembleRosterPresetToChat(viewerChatId, preset),
         setActiveEnsembleRosterPresetId: (presetId: string | null) =>
@@ -30241,19 +31704,10 @@ function App(): React.JSX.Element {
             paneSlashParticipant.id
           )
         },
-        updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
-          paneCtxHelpers.updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
         updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
         updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolationPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
-        updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
-          paneCtxHelpers.updateEnsembleFanoutPolicyForChat(
-            viewerChatId,
-            enabled ? 'read_only' : 'off'
-          ),
-        updateCurrentEnsembleContextChars: (nextChars: number) =>
-          paneCtxHelpers.updateEnsembleContextCharsForChat(viewerChatId, nextChars),
         updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
           paneCtxHelpers.updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
         queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
@@ -30278,6 +31732,12 @@ function App(): React.JSX.Element {
           paneCtxHelpers.handleDeleteQueuedMessage(entryId, viewerChat),
         handleSteerToQueuedMessage: (entryId: string) =>
           paneCtxHelpers.handleSteerToQueuedMessage(entryId, viewerChat),
+        // Return-key live steer must target THIS pane's chat: the stable base
+        // spreads the FOCUSED handleSteer, which builds its request from the
+        // focused draft — in a resting pane that made Enter a silent no-op
+        // mid-round (or steered the wrong chat when the focused draft was
+        // non-empty).
+        handleSteer: () => handleSteerMultiviewPane(viewerPaneIndex, viewerChatId),
         isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
         isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
         steerIndicatorMessage: paneSteerIndicatorMessage,
@@ -30302,7 +31762,9 @@ function App(): React.JSX.Element {
         openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
           projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
           setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
-          window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
+          window.alert(
+            'Side-chat commands open from the focused pane. This pane is now focused; run the command again.'
+          )
           return false
         },
         currentWorkspace: viewerWorkspace,
@@ -30387,6 +31849,9 @@ function App(): React.JSX.Element {
         grokReasoningEffort: viewerGrokReasoning,
         museReasoningEffort: viewerMuseReasoning,
         mistralReasoningEffort: viewerMistralReasoning,
+        devinReasoningEffort: viewerDevinReasoning,
+        piReasoningEffort: viewerPiReasoning,
+        ollamaReasoningEffort: viewerOllamaReasoning,
         cursorReasoningEffort: viewerCursorReasoning,
         cursorFastMode: viewerCursorFastMode,
         codexServiceTier: paneViewerSelection.codexServiceTier || '',
@@ -30437,15 +31902,12 @@ function App(): React.JSX.Element {
         dualComposerTelemetry: viewerDualTelemetry,
         // ── pane-scoped action handlers ──
         handleRun: paneHandleRun,
+        handleRunInBackground: paneHandleRunInBackground,
         handleCancel: paneHandleCancel,
         handleProviderChange: paneHandleProviderChange,
         handleReviewCurrentDiff: async () => {
           projectMultiviewPaneToHost(viewerPaneIndex, viewerChatId)
-          await paneCtxHelpers.handleReviewDiffForChat(
-            viewerChat,
-            viewerProvider,
-            viewerWorkspace
-          )
+          await paneCtxHelpers.handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)
         },
         handleToggleWelcomeEnsemble: (enabled: boolean) =>
           paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
@@ -30461,8 +31923,7 @@ function App(): React.JSX.Element {
           ),
         handleAttachWindow: () => paneCtxHelpers.handleAttachWindow(viewerChatId),
         handleDetachWindow: () => paneCtxHelpers.handleDetachWindow(viewerChatId),
-        handleClearDiscordContext: () =>
-          paneCtxHelpers.clearDiscordContextForChat(viewerChatId),
+        handleClearDiscordContext: () => paneCtxHelpers.clearDiscordContextForChat(viewerChatId),
         openDiscordContextPicker: () =>
           paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
         rememberCurrentChatComposerSelection: paneRememberComposerSelection,
@@ -30486,14 +31947,14 @@ function App(): React.JSX.Element {
         handleSelectExistingWorkspace: (workspace: WorkspaceRecord) =>
           handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
         handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
-        handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+        handleNewGlobalChat: () =>
+          handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
         handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
           handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
         handleAddKnownWorkspaceAsSecondary: (
           workspacePath: string,
           access: ExternalPathGrant['access']
-        ) =>
-          handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
+        ) => handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
         handleRemoveExternalPathGrant: (grantId: string) =>
           handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
         handleRemoveExternalPathGrantsByPath: (path: string) =>
@@ -30507,14 +31968,16 @@ function App(): React.JSX.Element {
         // matching display field above keeps the picker's selection accurate.
         setSelectedModelType: paneNoopSetter,
         setLastNonCustomModelType: paneNoopSetter,
-        setCustomModel: (value: string) =>
-          paneRememberComposerSelection({ customModel: value }),
+        setCustomModel: (value: string) => paneRememberComposerSelection({ customModel: value }),
         setCodexReasoningEffort: paneNoopSetter,
         setClaudeReasoningEffort: paneNoopSetter,
-      setKimiFastMode: paneNoopSetter,
-      setKimiReasoningEffort: paneNoopSetter,
-      setMistralReasoningEffort: paneNoopSetter,
-      setKimiThinkingEnabled: paneNoopSetter,
+        setKimiFastMode: paneNoopSetter,
+        setKimiReasoningEffort: paneNoopSetter,
+        setMistralReasoningEffort: paneNoopSetter,
+        setDevinReasoningEffort: paneNoopSetter,
+        setPiReasoningEffort: paneNoopSetter,
+        setOllamaReasoningEffort: paneNoopSetter,
+        setKimiThinkingEnabled: paneNoopSetter,
         setGrokReasoningEffort: paneNoopSetter,
         setMuseReasoningEffort: paneNoopSetter,
         setCursorReasoningEffort: paneNoopSetter,
@@ -30551,9 +32014,8 @@ function App(): React.JSX.Element {
         // plus-menu clicks open each pane's slash menu directly.
         openSlashCommandsRequestId: 0,
         // ── focused-only state that would otherwise LEAK into resting panes.
-        // Pending approvals and plan import remain hidden;
-        // git/worktree + secondary-workspace fields are derived per pane below.
-        pendingAgentApproval: null,
+        // Pending approvals are derived pane-correctly above; plan import remains
+        // hidden, while git/worktree + secondary-workspace fields are per-pane below.
         permissionRequestPaths: [],
         permissionRequestTitle: '',
         permissionRequestSource: undefined,
@@ -30608,7 +32070,6 @@ function App(): React.JSX.Element {
       agentModelsByProvider.claude,
       attachedWindow,
       codexModels,
-      composerDraftsByChatId,
       detachedComposerSurfaceBase,
       buildPaneComposerSlashCommands,
       discordContextSelectionByChatId,
@@ -30641,10 +32102,13 @@ function App(): React.JSX.Element {
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
       handleRunMultiviewPane,
+      runWelcomeBackgroundTarget,
+      handleSteerMultiviewPane,
       handleSaveExecutionGraph,
       imageAttachmentsByChatId,
       attachingWindowChatId,
       isMultiviewSplit,
+      pendingAgentApprovalByChatId,
       pendingApprovalQueueByChatId,
       persistExternalPathGrantPromptForChat,
       providerRates,
@@ -30653,6 +32117,7 @@ function App(): React.JSX.Element {
       resumeAppWatchSnapshot,
       runQueueJobs,
       runningChatIds,
+      sessionTrust,
       pendingEnsembleSeatSelections,
       selectedParticipantIdByChatId,
       setChatPromptDraft,
@@ -30671,6 +32136,7 @@ function App(): React.JSX.Element {
       workflowDraft,
       multiviewGitSnapshotStore,
       multiviewPrCiStore,
+      multiview.focusedPaneIndex,
       multiview.layout,
       updateChatById
     ]
@@ -30699,7 +32165,7 @@ function App(): React.JSX.Element {
     buildPaneComposerCtx
   ])
 
-  const composerCtx: ComposerProps = {
+  const composerCtx: ComposerProps & { onOpenCompactChat: () => void } = {
     // Slice H: shared stable base (handlers + chat-independent props).
     ...composerStableBase,
     prompt,
@@ -30714,9 +32180,13 @@ function App(): React.JSX.Element {
     grokReasoningEffort,
     museReasoningEffort,
     mistralReasoningEffort,
+    devinReasoningEffort,
+    piReasoningEffort,
+    ollamaReasoningEffort,
     cursorReasoningEffort,
     cursorFastMode,
     composerAreaRef,
+    registerFocusedRunPromptRoutingReader,
     composerAriaLabel,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
@@ -30744,9 +32214,11 @@ function App(): React.JSX.Element {
     externalPathGrantPromptBusy,
     goalPopoverOpen,
     handleCopyCurrentTranscript,
+    handleRunInBackground,
     imageAttachments,
     isAttachingWindow,
     openSlashCommandsRequestId: slashCommandsOpenRequestId,
+    onOpenCompactChat: openCompactChatCompanion,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
     isCurrentChatLinkedChild: currentChatIsLinkedChild,
@@ -30801,6 +32273,9 @@ function App(): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setMistralReasoningEffort,
+    setDevinReasoningEffort,
+    setPiReasoningEffort,
+    setOllamaReasoningEffort,
     setCodexServiceTier,
     setCustomModel,
     setGrokReasoningEffort,
@@ -30824,12 +32299,13 @@ function App(): React.JSX.Element {
     workspaceTrustMutationDisabledReason,
     welcomeCopy,
     welcomeHeatmapSlots,
-    workflowForCurrentChat,
+    workflowForCurrentChat
   }
 
   const activeWorkspaceBoard =
     activeWorkspaceBoardId != null
-      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId && !board.archived) || null
+      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId && !board.archived) ||
+        null
       : null
   const activeWorkspaceBoardWorkspace =
     activeWorkspaceBoard != null
@@ -30874,18 +32350,13 @@ function App(): React.JSX.Element {
   // Chats holding unsent composer text — kept visible in the sidebar across
   // thread switches (mirrors the reaper's draftChatIds protection; the "one
   // survivable New Chat" itself is derived inside the sidebar).
-  const composerDraftChatIds = useMemo(
-    () =>
-      new Set(
-        Object.entries(composerDraftsByChatId)
-          .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
-          .map(([id]) => id)
-      ),
-    [composerDraftsByChatId]
-  )
+  // Identity-stable across keystrokes inside an existing draft, so typing the
+  // 2nd..Nth character of a draft does not re-render App at all.
+  const composerDraftChatIds = useComposerDraftChatIds()
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
+    activateCanvasDockSurface,
     activeDiff,
     activeProvider,
     activeRightDockTab,
@@ -30932,6 +32403,7 @@ function App(): React.JSX.Element {
     chatByIdRef,
     chatContextNotice,
     chatContextTurns,
+    chatPopoutPresentation,
     chatPopoutParentChat,
     chatSplitRegionRef,
     chatSplitStyle,
@@ -30947,7 +32419,6 @@ function App(): React.JSX.Element {
     codexReasoningEffort,
     codexSandboxFallback,
     codexStatus,
-    codexThreads,
     collaboratingChatIds,
     composerDraftChatIds,
     composerCtx,
@@ -30956,6 +32427,11 @@ function App(): React.JSX.Element {
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
     handleBackFromExecutionMap,
+    handleCancelExecutionRun,
+    handleResumeExecutionRun,
+    handleOpenExecutionMap,
+    executionRunEntries,
+    handleOpenExecutionRunFromWork,
     handleSelectExecutionMapStep: (stepId: string) =>
       setOpenExecutionMap((current) =>
         current ? { ...current, selectedStepId: stepId } : current
@@ -30964,8 +32440,6 @@ function App(): React.JSX.Element {
     handleSaveExecutionGraph,
     copiedId,
     copy,
-    currentAgentMcpStatus,
-    currentAgentStatus,
     currentBlackboardEntries,
     currentChat,
     currentChatIdRef,
@@ -31011,7 +32485,6 @@ function App(): React.JSX.Element {
     focusedPaneSkyEnabled,
     geminiCheckpointingEnabled,
     geminiMcpBridgeEnabled,
-    geminiMcpBridgeStatus,
     geminiTerminalEndRef,
     geminiTerminalInput,
     geminiTerminalStatusLabel,
@@ -31029,20 +32502,18 @@ function App(): React.JSX.Element {
     handleAgentQuestionDismiss,
     handleAgentQuestionSubmit,
     handleEnsemblePollVote,
-    handleArchiveHandoff,
     handleArchiveWorkspaceBoard,
     handleCancelAuditRun,
-    handleCancelRunLane,
     handleCancelWorkflowExecution,
     handleClearClaudeApiKey,
     handleClearCodexUsageCredential,
     handleClearKimiApiKey,
     handleCopyMessage,
-    handleCreateHandoffFromLane,
     handleCreateWorkspaceBoard,
     handleDeleteAllChatHistory,
     handleDeleteChat,
     handleDeleteMessage,
+    handleEditAndResendFromHere,
     handleDeleteQueuedMessage,
     handleDeleteWorkflow,
     handleDeleteWorkspaceBoard,
@@ -31050,8 +32521,6 @@ function App(): React.JSX.Element {
     handleDismissAuditRun,
     handleDismissAuditRunNotice,
     handleDismissOnboardingHint,
-    handleDispatchHandoff,
-    handleDuplicateRunLane,
     handleDuplicateWorkspaceBoard,
     handleEditQueuedMessage,
     handleEditWorkflowInterval,
@@ -31059,8 +32528,6 @@ function App(): React.JSX.Element {
     handleEndCurrentLinkedMainChat,
     handleEndSidePanelChat,
     handleToggleSideChatAuthorityReturn,
-    handleForkCodexThread,
-    handleForkAgentThread,
     handleGeminiTerminalSubmit,
     handleImportCodexUsageCredential,
     handleJumpToLatest,
@@ -31085,7 +32552,6 @@ function App(): React.JSX.Element {
     handleOpenPluginWorkflowTemplate,
     handleOpenWorkflowCompose,
     handleOpenWorkspaceBoard,
-    handlePersistRunAnalysis,
     handlePlanChoiceSubmit,
     handlePromoteCollaboratorComment,
     handleProposedPlanApprove,
@@ -31096,11 +32562,8 @@ function App(): React.JSX.Element {
     handleRenameChat,
     handleRenameWorkspaceBoard,
     handleReorderQueuedMessages,
-    handleResumeCodexThread,
-    handleRetryRunLane,
     handleReturnToSideChatParent,
     handleRightPanelResizeKeyDown,
-    handleRollbackCodexThread,
     handleRunWorkflowNow,
     handleSelectChat,
     handleSelectSideChatTypeOption,
@@ -31121,6 +32584,7 @@ function App(): React.JSX.Element {
     handleSideProviderChange,
     handleSideReasoningChange,
     handleSideRun,
+    handleSideSteer,
     handleSideToggleFastMode,
     handleActiveSidebarTabChange: (tab) => {
       setSidebarActiveTab(tab)
@@ -31132,6 +32596,7 @@ function App(): React.JSX.Element {
       }
     },
     handleOpenProjectReferencesLibrary,
+    handleOpenWebSiteLogins,
     handleSelectedProjectChange: setActiveWorkProjectId,
     workProjectHeader,
     handleSidebarPrimarySurfaceSelect,
@@ -31155,12 +32620,10 @@ function App(): React.JSX.Element {
     handleProviderLogin,
     handleUpgradeProviderCli,
     handleWorkspaceSidebarResizeKeyDown,
-    handoffCards,
     hasCurrentHandoffDraft,
     hasWorkspaceContext,
     hideSideChatPane,
     hostWeather,
-    inspectingRunId,
     installGeminiMcpBridge,
     interfaceStyle,
     isAdvancedFxActive,
@@ -31176,6 +32639,7 @@ function App(): React.JSX.Element {
     isOldVersion,
     isPinnedMessagesPanelOpen,
     isProjectReferencesPanelOpen,
+    isWebSiteLoginsPanelOpen,
     isWorkRouteReferencesPinned,
     isSideChatProviderLocked,
     isSideChatRunning,
@@ -31198,6 +32662,7 @@ function App(): React.JSX.Element {
     ollamaBaseUrl,
     ollamaDefaultModel,
     openChatPopoutWindow,
+    openCompactChatCompanion,
     openCurrentSideChatPresentation,
     openFileChangeInWorkbench,
     openLinkedChatAsMain,
@@ -31229,7 +32694,6 @@ function App(): React.JSX.Element {
     rawLogs,
     rawLogsEndRef,
     refractionEnabled,
-    refreshCodexThreads,
     refreshDiff,
     refreshGeminiMcpBridgeStatus,
     refreshProductOperationsStatus,
@@ -31247,9 +32711,10 @@ function App(): React.JSX.Element {
     roundFileChangeSummaries: completionRoundFileChangeSummaries,
     runCompleteDurationText,
     runCompleteNotice,
+    selectedChatHydrationState: selectedChatHydration.state,
+    retrySelectedChatHydration: selectedChatHydration.retry,
     runDiff,
     runFxStatus,
-    runLanes,
     runPreviewTargetAction,
     runQueueJobs,
     runningChatIds,
@@ -31265,7 +32730,6 @@ function App(): React.JSX.Element {
     setChatPromptDraft,
     setDiffView,
     setGeminiTerminalInput,
-    setInspectingRunId,
     setIsPinnedMessagesPanelOpen,
     setPendingElevation,
     setPopoutMenuOpen,
@@ -31277,14 +32741,12 @@ function App(): React.JSX.Element {
     setSessionTrust,
     setSettingsActiveTab,
     setShowBugReportSheet,
-    setShowCockpit,
     setShowFileEditor,
     setShowFirstLaunchSheet,
     setShowGeminiTerminal,
     setShowGhostCompanion,
     setShowSettings,
     setShowSkyVisualFx,
-    setShowTerminal,
     setWorkspaceBoardCreatorOpen,
     setShowWorkspaceSidebar,
     setSideChatMenuOpen,
@@ -31299,20 +32761,26 @@ function App(): React.JSX.Element {
     showAgentAuraFx,
     showBugReportSheet,
     showChangelogSheet,
-    showCockpit,
     showFileEditor,
     showOfficeSuite,
     isCanvasDockPanelOpen,
     isAppDriveDockPanelOpen,
-    appDriveDockStatus,
+    appDriveDockStatus:
+      appDriveDockStatus?.chatId === currentChat?.appChatId ? appDriveDockStatus : null,
+    handleAppDriveAttach: () => void handleAttachWindow(),
+    handleAppDriveOpenBrowser: () => {
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    },
+    appDriveAttachUnavailableReason: screenWatchUnavailableReason,
+    appDriveControlUnavailableReason: appDriveUnavailableReason,
+    appDriveAttaching: Boolean(attachingWindowChatId),
     handleAppDrivePause: () => void handleAppDriveSessionAction('pause'),
     handleAppDriveResume: () => void handleAppDriveSessionAction('resume'),
     handleAppDriveTakeOver: () => void handleAppDriveSessionAction('takeover'),
     handleAppDriveStop,
-    isFanoutCandidatesPanelOpen,
-    isThreadMessagePanelOpen,
-    threadMessageInbox,
-    onThreadMessageSent: refreshThreadMessageInbox,
+    threadHomeOpen,
+    openThreadHome,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
     onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,
@@ -31434,6 +32902,8 @@ function App(): React.JSX.Element {
     visibleAuditRunNotice,
     visibleGeminiTerminalLogs,
     visibleRunCompleteNotice,
+    liveOwnedExecutionThreads,
+    ownedExecutionViewsByThreadId,
     welcomeDashboardCardEnabled,
     welcomeFitLevel,
     welcomeDashboardRegionRef,
@@ -31445,7 +32915,7 @@ function App(): React.JSX.Element {
     workspaceBoards,
     workspaceSearchShortcutHint,
     workspaceSidebarWidth,
-    workspaces,
+    workspaces
   }
 
   const appView = (
@@ -31454,29 +32924,18 @@ function App(): React.JSX.Element {
         !isBootReady ? 'app-root-booting' : ''
       } ${isBootMaskLeaving ? 'app-root-boot-revealing' : ''} ${
         isChatPopoutWindow ? 'chat-popout-window' : ''
-      }`}
+      } ${isCompactChatCompanion ? 'chat-compact-companion-window' : ''}`}
     >
       <div className="window-drag-strip" aria-hidden />
       {bootMaskVisible && <AppBootMask leaving={isBootMaskLeaving} />}
-      {!isChatPopoutWindow && executionGraphDiagnosticReasons.length > 0 && (
-        <aside className="execution-graph-diagnostics-notice" role="status">
-          <details>
-            <summary>
-              Stack history needs attention
-              <span>{executionGraphDiagnosticReasons.length}</span>
-            </summary>
-            <ul>
-              {executionGraphDiagnosticReasons.slice(0, 12).map((reason, index) => (
-                <li key={`${index}:${reason}`}>{reason}</li>
-              ))}
-            </ul>
-            {executionGraphDiagnosticReasons.length > 12 && (
-              <p>{executionGraphDiagnosticReasons.length - 12} more diagnostics</p>
-            )}
-          </details>
-        </aside>
-      )}
       <MainAppLayout {...mainAppLayoutProps} />
+      {sidebarActiveTab === 'terminal' && !showSettings && !isChatPopoutWindow && (
+        <TerminalWorkbench
+          workspaceSidebarWidth={workspaceSidebarWidth}
+          currentWorkspacePath={currentWorkspacePath}
+          workspaces={workspaces}
+        />
+      )}
 
       {/*
         Settings now renders as a full-app takeover — workspace
@@ -31487,6 +32946,10 @@ function App(): React.JSX.Element {
         return the user to the chat surface.
       */}
       {IOS_REMOTE_ENABLED && <IncomingPairingPrompt />}
+      {/* Degraded workspace-lock authority. Self-hiding on a healthy boot; it
+          is the only user-visible signal that workspace mutation, provider
+          admission, run recovery and scheduling are fail-closed. */}
+      <StartupAuthorityBanner />
       <NeedsInputBanner
         entries={needsInputBanner.entries}
         onOpen={(entry) => {
@@ -31536,14 +32999,15 @@ function App(): React.JSX.Element {
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
         mistralStatus={agentStatusByProvider.mistral}
-        antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes(
-          'antigravity'
-        )}
+        museStatus={agentStatusByProvider.muse}
+        devinStatus={agentStatusByProvider.devin}
+        antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes('antigravity')}
         ollamaProviderAvailable={
           agentStatusByProvider.ollama?.available === true &&
           (typeof agentStatusByProvider.ollama?.modelCount !== 'number' ||
             agentStatusByProvider.ollama.modelCount > 0)
         }
+        ollamaStatus={agentStatusByProvider.ollama}
         usageSummary={usageSummary}
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}
@@ -31857,9 +33321,7 @@ function App(): React.JSX.Element {
                   .updateSettings({ approvalModeElevationAcknowledgements: nextAcks })
                   .catch(() => {})
                 setSettings((prev) =>
-                  prev
-                    ? { ...prev, approvalModeElevationAcknowledgements: nextAcks }
-                    : prev
+                  prev ? { ...prev, approvalModeElevationAcknowledgements: nextAcks } : prev
                 )
               }
             } catch (err) {
@@ -31873,6 +33335,28 @@ function App(): React.JSX.Element {
   return (
     <UsageSummaryStoreContext.Provider value={usageSummaryStore}>
       {appView}
+      <ThreadCatalogueStatus bootRevealed={isBootReady} />
+      <RendererChatConflictNotice
+        chatId={currentChat?.appChatId}
+        drafts={pendingChatDraftsRef.current}
+        getCurrent={(id) => chatByIdRef.current.get(id)}
+        beforeResolve={async (id) => {
+          await rendererTranscriptPersistenceRef.current?.whenIdle(id)
+        }}
+        onResolved={(canonical, advanced) => {
+          if (advanced) chatByIdRef.current.set(canonical.appChatId, advanced)
+          applyHydratedChat(canonical)
+          if (
+            pendingChatDraftsRef.current.has(canonical.appChatId) &&
+            !pendingChatDraftsRef.current.conflicts(canonical.appChatId).length
+          )
+            updateChatById(canonical.appChatId, (chat) => ({ ...chat }))
+        }}
+      />
+      <ChatModeChangeNotice
+        chatIds={[currentChat?.appChatId, ...multiview.paneChatIds]}
+        notices={chatModeChangeNoticesRef.current}
+      />
     </UsageSummaryStoreContext.Provider>
   )
 }

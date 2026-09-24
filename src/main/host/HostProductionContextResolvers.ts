@@ -218,7 +218,10 @@ function reasoningForProvider(
     kimi: ['kimiReasoningEffort', 'reasoningEffort'],
     grok: ['grokReasoningEffort', 'reasoningEffort'],
     mistral: ['mistralReasoningEffort', 'reasoningEffort'],
+    devin: ['devinReasoningEffort', 'reasoningEffort'],
+    pi: ['piReasoningEffort', 'reasoningEffort'],
     muse: ['museReasoningEffort', 'reasoningEffort'],
+    ollama: ['ollamaReasoningEffort', 'reasoningEffort'],
     cursor: ['cursorReasoningEffort', 'reasoningEffort'],
     antigravity: ['geminiReasoningEffort', 'reasoningEffort'],
     gemini: ['geminiReasoningEffort', 'reasoningEffort']
@@ -230,6 +233,13 @@ function reasoningForProvider(
 
 function approvalModeForChat(chat: HostProductionResolverChat): string | undefined {
   return nonEmptyString(chat.providerMetadata?.approvalMode, chat.settingsSnapshot?.approvalMode)
+}
+
+function permissionPresetIdForChat(chat: HostProductionResolverChat): string | undefined {
+  const value = nonEmptyString(chat.providerMetadata?.permissionPresetId)
+  return value === 'read_only' || value === 'default' || value === 'workspace_write'
+    ? value
+    : undefined
 }
 
 function readChat(
@@ -365,6 +375,7 @@ export function createHostProductionContextResolvers(
         return fail<HostBridgeComposerSendContext>('Thread has no canonical provider.')
       }
       const approvalMode = approvalModeForChat(chat)
+      const permissionPresetId = permissionPresetIdForChat(chat)
       const defaultModel = modelForChat(chat)
       const defaultReasoningEffort = reasoningForProvider(provider, chat)
       let selected: TaskWraithThreadSelection = {}
@@ -380,6 +391,7 @@ export function createHostProductionContextResolvers(
         workspaceId: workspace.value,
         provider,
         ...(approvalMode ? { approvalMode } : {}),
+        ...(permissionPresetId ? { permissionPresetId } : {}),
         ...(chat.workflowMode ? { workflowMode: chat.workflowMode } : {}),
         ...(selected.model
           ? { model: selected.model }

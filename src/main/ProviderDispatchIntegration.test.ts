@@ -25,6 +25,36 @@ describe('provider dispatch integration', () => {
   // this scan green and the app un-launchable. Its spread list was also a frozen
   // four names, so it never grew with the roster it claimed to cover.
 
+  it('spells a provider diagnostic into the durable run-event summary', () => {
+    // The compat payload itself is dropped unless storeRawEvents is on, and the
+    // transcript card for these notices is hidden, so the summary is the only
+    // field that durably carries the message. A bare `Provider output:
+    // provider_diagnostic` summary loses it outright.
+    const compat = sourceBetween('function sendAgentCompatLine(', 'function sendAgentCompatError(')
+    const noticeAt = compat.indexOf('readProviderDiagnosticNotice(payload)')
+    const appendAt = compat.indexOf('appendDurableRunEventForRoute(')
+    const formatAt = compat.indexOf('formatProviderDiagnosticNotice(diagnosticNotice)')
+    const fallbackAt = compat.indexOf('`Provider output${')
+
+    expect(noticeAt).toBeGreaterThanOrEqual(0)
+    expect(noticeAt).toBeLessThan(appendAt)
+    expect(formatAt).toBeGreaterThan(appendAt)
+    expect(fallbackAt).toBeGreaterThan(formatAt)
+  })
+
+  it('redacts permission-opportunity bearer ids before every native compat persistence lane', () => {
+    const compat = sourceBetween('function sendAgentCompatLine(', 'function sendAgentCompatError(')
+    const redactAt = compat.indexOf('redactPermissionOpportunityIdsForDurableStorage(payload)')
+    const runItemsAt = compat.indexOf('runItemEventsForCompatPayload(')
+    const durableAt = compat.indexOf('appendDurableRunEventForRoute(')
+    const rendererAt = compat.indexOf('const line = `${JSON.stringify(routedForWire)}\\n`')
+
+    expect(redactAt).toBeGreaterThanOrEqual(0)
+    expect(redactAt).toBeLessThan(runItemsAt)
+    expect(redactAt).toBeLessThan(durableAt)
+    expect(redactAt).toBeLessThan(rendererAt)
+  })
+
   it('drains display-only side channels before flushing terminal assistant text', () => {
     const runner = sourceBetween(
       'async function runCliProviderProcess(',
@@ -185,15 +215,18 @@ describe('provider dispatch integration', () => {
     expect(antigravity).toContain('settleVisibleProviderSetupFailure({')
   })
 
-  it('applies an explicit Cerebras completion cap only inside Pi’s isolated home', () => {
+  it('prepares Cerebras models even without a cap, only inside Pi’s isolated home', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
     expect(pi).toContain("upstream === 'cerebras'")
     expect(pi).toContain('normalizePiCerebrasMaxCompletionTokens(')
     expect(pi).toContain('writePiCerebrasCompletionCapOverride({')
+    expect(pi).toMatch(
+      /if \(upstream === 'cerebras'\) \{\s*try \{\s*writePiCerebrasCompletionCapOverride/
+    )
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiCerebrasCompletionCapOverride({')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -204,7 +237,46 @@ describe('provider dispatch integration', () => {
     expect(pi).toContain('writePiMistralModelRegistration({')
     expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
     expect(pi.indexOf('writePiMistralModelRegistration({')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
+    )
+  })
+
+  it('registers scoped active OpenRouter models only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain("upstream === 'openrouter'")
+    expect(pi).toContain('writePiOpenRouterModelRegistration({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiOpenRouterModelRegistration({')).toBeLessThan(
+      pi.indexOf('runCliProviderProcess(')
+    )
+  })
+
+  it('registers the unbundled Xiaomi MiMo V2.6 rows only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    // pi 0.84.2 (pinned) through 0.87.0 bundle nothing newer than V2.5 Pro, so
+    // without this write every V2.6 run is refused before a request is made.
+    expect(pi).toContain('isPiXiaomiTokenPlanUpstream(upstream)')
+    expect(pi).toContain('writePiXiaomiModelRegistration({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiXiaomiModelRegistration({')).toBeLessThan(
+      pi.indexOf('runCliProviderProcess(')
+    )
+  })
+
+  it('clamps the composer effort through the selected Pi model ladder before argv', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain(
+      'normalizePiReasoningEffortForModel(model, payload.reasoningEffort)'
+    )
+    expect(pi).toContain('...(piThinkingLevel ? { thinkingLevel: piThinkingLevel } : {})')
+    expect(pi).not.toContain(
+      'thinkingLevel: payload.reasoningEffort as import(\'./pi/PiCliArgs\').PiThinkingLevel'
+    )
+    expect(pi.indexOf('normalizePiReasoningEffortForModel(')).toBeLessThan(
+      pi.indexOf('const args = buildPiRpcArgs({')
     )
   })
 
@@ -219,7 +291,7 @@ describe('provider dispatch integration', () => {
       pi.indexOf('const verdict = piModelPolicyVerdict(')
     )
     expect(pi.indexOf('const compatibilityRecipient')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
   })
 
@@ -230,9 +302,23 @@ describe('provider dispatch integration', () => {
     expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piTaskWraithBrokerToken!')
     expect(pi).toContain('mcpBridgeRuntime.revokePiTaskWraithCredential(piTaskWraithBrokerToken)')
     expect(pi.indexOf('issuePiTaskWraithCredential(')).toBeLessThan(
-      pi.indexOf('await runCliProviderProcess(')
+      pi.indexOf('runCliProviderProcess(')
     )
-    expect(pi).toContain('PI_EXACT_FILE_TOOL_NAMES')
+    expect(pi).toContain('exactFileToolsExpected,')
+  })
+
+  it('materializes signed solo UltraTask consent in the real Pi launch allowlist', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(indexSource).toContain("from './pi/PiTaskWraithToolSelection'")
+    expect(pi).toContain('resolvePiTaskWraithToolSelection({')
+    expect(pi).toContain("workspaceScoped: payload.scope === 'workspace'")
+    expect(pi).toContain('effectivePermissions: payload.effectivePermissions')
+    expect(pi).toContain('ultraTaskDelegationExpected,')
+    expect(pi).toContain('toolNames: piTaskWraithToolNames')
+    expect(pi.indexOf('resolvePiTaskWraithToolSelection({')).toBeLessThan(
+      pi.indexOf('preparePiTaskWraithExtension({')
+    )
   })
 
   it('revokes a Pi credential before a readiness timeout writes the read-only fallback', () => {
@@ -256,7 +342,7 @@ describe('provider dispatch integration', () => {
 
   it('releases exact mutation ownership before result and media projection', () => {
     const executor = sourceBetween(
-      'async function executeGeminiMcpTool(',
+      'async function executeUnscopedGeminiMcpTool(',
       'async function startGeminiMcpBroker()'
     )
     const dispatchCompletion = executor.indexOf(
@@ -312,6 +398,8 @@ describe('provider dispatch integration', () => {
     )
 
     expect(kimiAcpProvider).toContain('prepareKimiPrivateRunCwd')
+    expect(kimiAcpProvider).toContain("lifetime: preserveKimiSessionState ? 'session' : 'run'")
+    expect(kimiAcpProvider).toContain('resumeSessionId: productionSession.resumeSessionId')
     expect(kimiAcpProvider).toContain('launchKimiProductionAcp')
     expect(kimiAcpProvider).toContain('assertRuntimeReadyForSpawn')
     expect(kimiAcpProvider).toContain('buildKimiContainedProcessEnv')
@@ -323,6 +411,9 @@ describe('provider dispatch integration', () => {
       kimiAcpProvider.indexOf('launchKimiProductionAcp')
     )
     expect(kimiAcpProvider).toContain('cwd: production.cwd')
+    expect(kimiAcpProvider).toContain(
+      "cwdLifetime: preserveKimiSessionState ? 'session' : 'run'"
+    )
     expect(kimiAcpProvider).toContain('initializeParams: production.initializeParams')
     expect(kimiAcpProvider).toContain('mcpServers: production.mcpServers')
     expect(kimiAcpProvider).not.toContain('cwd: payload.workspace')

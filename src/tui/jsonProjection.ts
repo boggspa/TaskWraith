@@ -1,4 +1,4 @@
-import type { TwMissionManifest } from '../main/host/twmission'
+import type { TwMissionManifest } from '../host-shared/twmission'
 import type { HostSnapshot } from '../shared/hostProtocol'
 import type { TaskWraithTuiState } from './state'
 

@@ -36,6 +36,7 @@ export type ToolFamily =
   | 'browser'
   | 'window-context'
   | 'canvas'
+  | 'site-login'
   | 'image-view'
   | 'image'
   | 'audio'
@@ -176,6 +177,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'ci'
     case 'delegate_to_subthread':
     case 'delegate_wave':
+    case 'ultra_task':
       return 'delegate'
     case 'ensemble_yield':
       return 'yield'
@@ -270,6 +272,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'reasoning'
     case 'approval_status':
     case 'request_tool_permission':
+    case 'redeem_permission_opportunity':
       return 'approval'
     case 'provider_auth_status':
     case 'provider_usage_status':
@@ -317,6 +320,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'tw_recall_find':
     case 'tw_recall_read':
     case 'tw_recall_read_events':
+    case 'tw_history_search':
+    case 'tw_history_read':
+    case 'tw_checkpoint':
       return 'memory'
     case 'canvas_open':
     case 'canvas_render_html':
@@ -340,6 +346,20 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_render_chart':
     case 'canvas_close':
       return 'canvas'
+    // The packaged emulator is a Canvas surface (CanvasService driver), not a
+    // generic MCP call — it rides the canvas family like simulator_* does. No
+    // gamepad glyph exists in the catalog, and a distinct family reusing the
+    // canvas glyph would render identically, so no new family is declared.
+    case 'emulator_open':
+    case 'emulator_observe':
+    case 'emulator_step':
+      return 'canvas'
+    // Saved site logins are their own family, not canvas: the row is about an
+    // account the user holds, and reading it as "just another canvas verb"
+    // hides that an agent is acting AS THE USER somewhere.
+    case 'web_login_list':
+    case 'web_login_open':
+      return 'site-login'
     // Mesh Canvas is its own surface (3D scene service + dock viewer), not the
     // 2D canvas — the scene tools get a wireframe-cube glyph of their own.
     case 'mesh_scene_create':
@@ -391,6 +411,8 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'video'
     case 'mcp_tool':
     case 'dynamic_tool':
+    case 'capability_search':
+    case 'capability_invoke':
     // falls through: a bare `mcp` base means a brokered MCP call whose inner
     // tool name couldn't be unwrapped, plus the raw call wrappers.
     // eslint-disable-next-line no-fallthrough
@@ -408,7 +430,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('browser_')) return 'browser'
   if (normalised.startsWith('canvas_')) return 'canvas'
   if (normalised.startsWith('simulator_')) return 'canvas'
+  if (normalised.startsWith('emulator_')) return 'canvas'
   if (normalised.startsWith('tw_recall_')) return 'memory'
+  if (normalised.startsWith('tw_history_')) return 'memory'
   if (normalised.startsWith('tw_introspection_')) return 'audit'
   if (normalised.startsWith('workspace_board_')) return 'plan'
   // Outlook mail + calendar (reads and draft creation) share one glyph.
@@ -707,6 +731,16 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M7.6 11.5C9.1 8.9 11 8.1 12.8 9.1 14.6 10.1 15.9 9.3 16.8 7.4" />
           <circle cx="7.8" cy="7.5" r="1" />
           <circle cx="16.1" cy="12.5" r="1" />
+        </g>
+      )
+    case 'site-login':
+      // A key, matching SiteLoginSymbolIcon in the Work > Logins dock tab.
+      return (
+        <g>
+          <circle cx="8.4" cy="8.4" r="4.3" />
+          <path d="M11.5 11.5 19.5 19.5" />
+          <path d="M16.8 16.8 15 18.6" />
+          <path d="M18.9 18.9 17.1 20.7" />
         </g>
       )
     case 'mesh':

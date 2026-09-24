@@ -321,7 +321,7 @@ async function loadRevisionAttributions(
     return await loadWorkspaceTaskWraithCommitAttributions({
       chats: liveChats,
       workspaceId,
-      loadWorkspaceChats: (id) => window.api.getChats(id)
+      loadWorkspaceChats: (id) => window.api.getWorkspaceCommitAttributions(id)
     })
   } catch {
     return collectTaskWraithCommitAttributions(liveChats)

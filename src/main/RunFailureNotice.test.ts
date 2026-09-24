@@ -3,6 +3,9 @@ import {
   PROVIDER_RUN_FAILURE_METADATA_KIND,
   STALE_RUN_SETTLEMENT_HINT,
   STALE_RUN_SETTLEMENT_HINT_PLURAL,
+  STALE_RUN_SETTLEMENT_METADATA_KEY,
+  STALE_RUN_SETTLEMENT_ORIGIN,
+  STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
   buildBridgeRunFailureMetadata,
   buildStaleRunSettlementNotice,
   describeUnexplainedBridgeRunFailure,
@@ -11,6 +14,7 @@ import {
   runFailureProviderLabel,
   staleRunSettlementNoticeId
 } from './RunFailureNotice'
+import type { StaleRunSettlementCoverage } from './RunFailureNotice'
 import type { ChatRun } from './store/types'
 
 const NOW = '2026-07-28T12:00:00.000Z'
@@ -195,6 +199,67 @@ describe('buildStaleRunSettlementNotice', () => {
       expect(mixed.metadata).not.toHaveProperty('exitCode')
       expect(mixed.content).toContain('2 runs were still marked active')
       expect(mixed.content).toContain('Providers: Ollama, Codex.')
+    })
+  })
+
+  describe('structured settlement coverage', () => {
+    const coverageOf = (notice: ReturnType<typeof buildStaleRunSettlementNotice>) =>
+      (notice.metadata as Record<string, unknown>)[
+        STALE_RUN_SETTLEMENT_METADATA_KEY
+      ] as StaleRunSettlementCoverage
+
+    it('persists the full batch coverage beside the card blob', () => {
+      expect(coverageOf(notice)).toEqual({
+        schemaVersion: STALE_RUN_SETTLEMENT_SCHEMA_VERSION,
+        origin: STALE_RUN_SETTLEMENT_ORIGIN,
+        chatId: 'chat-1',
+        settledAt: NOW,
+        coveredRunIds: ['1753700000000-abc123'],
+        anchorRunId: '1753700000000-abc123'
+      })
+    })
+
+    it('covers every id even past the three-name prose cap', () => {
+      const wave = buildStaleRunSettlementNotice({
+        chatId: 'chat-1',
+        settlements: ['run-a', 'run-b', 'run-c', 'run-d', 'run-e'].map((runId) => ({
+          run: run({ runId }),
+          previousStatus: 'running'
+        })),
+        reason: REASON,
+        settledAt: NOW
+      })
+      // Prose still summarises; structure must not.
+      expect(wave.content).toContain('Runs: run-a, run-b, run-c +2 more')
+      expect(coverageOf(wave).coveredRunIds).toEqual(['run-a', 'run-b', 'run-c', 'run-d', 'run-e'])
+      expect(coverageOf(wave).anchorRunId).toBe('run-e')
+    })
+
+    it('keeps full coverage on a mixed batch that withholds shared card values', () => {
+      const mixed = buildStaleRunSettlementNotice({
+        chatId: 'chat-1',
+        settlements: [
+          { run: run({ runId: 'run-a', provider: 'ollama' }), previousStatus: 'running' },
+          { run: run({ runId: 'run-b', provider: 'codex', exitCode: 7 }), previousStatus: 'queued' }
+        ],
+        reason: REASON,
+        settledAt: NOW
+      })
+      expect(mixed.metadata).not.toHaveProperty('provider')
+      expect(mixed.metadata).not.toHaveProperty('exitCode')
+      expect(coverageOf(mixed).coveredRunIds).toEqual(['run-a', 'run-b'])
+    })
+
+    it('leaves the bridge-lane card blob without a settlement record', () => {
+      // The coverage record belongs to reconciler sweeps only; the shared
+      // card builder must not stamp it onto bridge-authored rows.
+      const bridge = buildBridgeRunFailureMetadata({
+        provider: 'claude',
+        errorMessage: 'boom',
+        failureAt: NOW,
+        exitCode: 1
+      })
+      expect(bridge).not.toHaveProperty(STALE_RUN_SETTLEMENT_METADATA_KEY)
     })
   })
 })

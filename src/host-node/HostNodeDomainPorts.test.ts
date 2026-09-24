@@ -1,0 +1,4593 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  HOST_PROTOCOL_VERSION,
+  TASKWRAITH_DESKTOP_HOST_ACTOR,
+  type HostCommand
+} from '../shared/hostProtocol'
+import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import { fingerprintHostCommand } from '../host-runtime/HostCommandFingerprint'
+import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
+import {
+  HostPermissionConsentAuthority,
+  createHostPermissionConsentProof
+} from '../host-runtime/HostPermissionConsent'
+import {
+  hostThreadRecordTransferPath,
+  publishHostThreadRecordTransfer
+} from '../host-runtime/HostThreadRecordTransfer'
+import type { MuseRunOutcome, MuseRunSpawnHandle } from '../main/muse/MuseRun'
+import {
+  museMeterSnapshotToProviderStats,
+  unavailableMuseMeterSnapshot
+} from '../main/muse/MuseUsage'
+import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
+import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+import type {
+  HostNodeProvider,
+  HostNodeProviderInstance,
+  HostNodeProviderRunRequest
+} from './HostNodeProvider'
+import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
+import {
+  HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS,
+  HostNodeDomainPorts,
+  TASKWRAITH_HOST_QUEUED_START_ENV,
+  isHostQueuedStartEnabled
+} from './HostNodeDomainPorts'
+import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
+import { createHostNodeRunAdmission } from './HostNodeRunAdmission'
+import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
+import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
+
+const paths: string[] = []
+const actor = { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const }
+const context = {
+  actor,
+  client: { clientId: 'tui-1', clientClass: 'tui' as const, clientVersion: '1.0.0' }
+}
+const desktopContext = {
+  actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR },
+  client: { ...TASKWRAITH_DESKTOP_HOST_ACTOR, clientVersion: '1.0.0' }
+}
+const SESSION_ID = '11111111-1111-4111-8111-111111111111'
+
+function command(
+  name: HostCommand['name'],
+  commandId: string,
+  target: Record<string, string>,
+  arguments_: Record<string, unknown>
+): HostCommand {
+  return {
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId,
+    idempotencyKey: `key-${commandId}`,
+    actor,
+    name,
+    target,
+    arguments: arguments_,
+    issuedAt: '2026-08-24T05:00:00.000Z'
+  }
+}
+
+function desktopCommand(
+  name: HostCommand['name'],
+  commandId: string,
+  target: Record<string, string>,
+  arguments_: Record<string, unknown>
+): HostCommand {
+  return {
+    ...command(name, commandId, target, arguments_),
+    actor: { ...TASKWRAITH_DESKTOP_HOST_ACTOR }
+  }
+}
+
+function spawnHandle(onKill?: () => void): MuseRunSpawnHandle {
+  return {
+    pid: 7,
+    kill() {
+      onKill?.()
+    },
+    onStdout(listener) {
+      void listener
+    },
+    onStderr(listener) {
+      void listener
+    },
+    async wait() {
+      return { code: 0, signal: null }
+    }
+  }
+}
+
+function outcome(status: MuseRunOutcome['status']): MuseRunOutcome {
+  const meter = unavailableMuseMeterSnapshot(SESSION_ID)
+  return {
+    status,
+    sessionId: SESSION_ID,
+    exitCode: status === 'success' ? 0 : null,
+    assistantText: status === 'success' ? 'Muse terminal answer' : '',
+    events: [],
+    meter,
+    providerStats: museMeterSnapshotToProviderStats(meter),
+    warnings: [],
+    argv: ['exec', '--json'],
+    effort: 'high',
+    writeCapable: true,
+    skillPinHash: 'a'.repeat(64),
+    leasePath: '/tmp/muse-lease'
+  }
+}
+
+const museOffers = {
+  providerId: 'muse' as const,
+  offerRevision: 'muse-offer-1',
+  models: [
+    {
+      modelId: 'muse-spark-1.2',
+      label: 'Muse Spark',
+      available: true,
+      default: true,
+      reasoning: [{ reasoningId: 'high', label: 'High', available: true }]
+    },
+    {
+      modelId: 'muse-flow-2',
+      label: 'Muse Flow',
+      available: true,
+      reasoning: [{ reasoningId: 'low', label: 'Low', available: true }]
+    }
+  ],
+  postures: [
+    {
+      postureId: 'workspace_write',
+      label: 'Workspace write',
+      available: true,
+      requiresExplicitConsent: true,
+      ceiling: 'workspace_write' as const
+    },
+    {
+      postureId: 'default',
+      label: 'Default',
+      available: true,
+      requiresExplicitConsent: false,
+      ceiling: 'workspace_write' as const
+    }
+  ]
+}
+
+function open(options: { credential?: boolean; manual?: boolean; killReleases?: boolean } = {}) {
+  const profile = mkdtempSync(join(tmpdir(), 'host-node-domain-'))
+  const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
+  paths.push(profile, workspace)
+  let id = 0
+  const store = new HostProfileDomainStore({
+    profilePath: profile,
+    authority: {
+      assertProfileAuthority() {
+        return undefined
+      }
+    },
+    now: () => Date.UTC(2026, 7, 24, 5, 0, 0),
+    idFactory: () => `id-${++id}`
+  })
+  let releaseRun: (() => void) | undefined
+  const waitForRun = new Promise<void>((resolve) => {
+    releaseRun = resolve
+  })
+  const events: unknown[] = []
+  /** Every prompt the provider was actually handed, for goal-injection proofs. */
+  const prompts: string[] = []
+  const manualBegin = vi.fn()
+  const museFactory = createHostNodeMuseProviderFactory({
+    offers: museOffers,
+    resources: {
+      resolveBinary: async () => ({ binaryPath: '/usr/local/bin/muse' }),
+      getTemporaryRoot: () => '/tmp',
+      readAuthJsonText: async () => null,
+      readMetaApiKeyEnv: () => (options.credential === false ? null : 'env-muse-secret'),
+      spawn: () => spawnHandle(options.killReleases === false ? undefined : releaseRun)
+    },
+    manualAuthHandoff: options.manual
+      ? {
+          begin: manualBegin,
+          cancel: async () => true
+        }
+      : undefined,
+    now: () => Date.UTC(2026, 7, 24, 5, 0, 0),
+    createSessionId: () => SESSION_ID,
+    runMuseProvider: async (input) => {
+      prompts.push(input.prompt)
+      input.spawn({ binaryPath: '/usr/local/bin/muse', argv: [], cwd: workspace, env: {} })
+      await waitForRun
+      return outcome(input.shouldCancel?.() ? 'cancelled' : 'success')
+    }
+  })
+  const domainOptions = {
+    profilePath: profile,
+    store,
+    events: { publish: (_target, event) => events.push(event) },
+    providers: [museFactory],
+    health: () => ({
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    })
+  } satisfies ConstructorParameters<typeof HostNodeDomainPorts>[0]
+  const domain = new HostNodeDomainPorts(domainOptions)
+  return {
+    domain,
+    domainOptions,
+    store,
+    workspace,
+    events,
+    prompts,
+    manualBegin,
+    releaseRun: () => releaseRun?.()
+  }
+}
+
+afterEach(() => {
+  while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
+})
+
+describe('HostNodeDomainPorts', () => {
+  it('requires one-use launch proof plus a live grant for Full Access and cannot revive it from profile bytes', async () => {
+    const { domainOptions, store, workspace } = open()
+    const bootstrapSecret = Buffer.alloc(32, 4)
+    const permissionConsentAuthority = new HostPermissionConsentAuthority(
+      bootstrapSecret,
+      () => '2026-08-24T05:00:00.000Z',
+      Buffer.alloc(32, 5)
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        createHostNodeCodexProvider({
+          resources: {
+            resolveBinary: async () => ({ binaryPath: '/usr/local/bin/codex', source: 'path' }),
+            getAuthState: async () => 'authenticated',
+            getVersion: async () => 'test'
+          }
+        })
+      ],
+      permissionConsentAuthority
+    })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const offers = await domain.providerOffers('codex')
+    expect(offers.postures.find((posture) => posture.postureId === 'full_access')).toMatchObject({
+      available: true,
+      requiresExplicitConsent: true
+    })
+    const commandId = '11111111-1111-4111-8111-111111111111'
+    const proofRequest = {
+      commandId,
+      actor,
+      threadId: thread.appChatId,
+      providerId: 'codex',
+      modelId: 'gpt-5.6-terra',
+      postureId: 'full_access' as const,
+      offerRevision: offers.offerRevision,
+      issuedAt: '2026-08-24T05:00:00.000Z'
+    }
+    const postureConsentProof = createHostPermissionConsentProof(bootstrapSecret, proofRequest)
+    const configure = command(
+      'thread.configure',
+      commandId,
+      { threadId: thread.appChatId },
+      {
+        providerId: proofRequest.providerId,
+        modelId: proofRequest.modelId,
+        postureId: proofRequest.postureId,
+        offerRevision: proofRequest.offerRevision,
+        postureConsent: true,
+        postureConsentProof
+      }
+    )
+
+    await expect(domain.setupExecutor.execute(configure, context)).resolves.toMatchObject({
+      status: 'succeeded'
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      posture: { postureId: 'full_access', verifiedConsent: { authority: 'host-signed' } }
+    })
+    const elevatedRecord = store.getThread(thread.appChatId)!
+    expect(JSON.stringify(elevatedRecord)).not.toContain(postureConsentProof)
+    const snapshot = JSON.stringify(domain.snapshotDonor())
+    expect(snapshot).not.toContain(postureConsentProof)
+    expect(snapshot).not.toContain(
+      String(
+        (
+          elevatedRecord.providerMetadata?.hostPermissionConsent as
+            | { signature?: unknown }
+            | undefined
+        )?.signature
+      )
+    )
+    expect(snapshot).not.toMatch(/effectivePermissions|agenticServices|shellCommands/i)
+
+    const lower = command(
+      'thread.configure',
+      '22222222-2222-4222-8222-222222222222',
+      { threadId: thread.appChatId },
+      {
+        providerId: 'codex',
+        modelId: 'gpt-5.6-terra',
+        postureId: 'default',
+        offerRevision: offers.offerRevision
+      }
+    )
+    await expect(domain.setupExecutor.execute(lower, context)).resolves.toMatchObject({
+      status: 'succeeded'
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      posture: { postureId: 'default' }
+    })
+    await expect(domain.setupExecutor.execute(configure, context)).resolves.toMatchObject({
+      status: 'failed'
+    })
+
+    const loweredRecord = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: loweredRecord.persistenceRevision ?? 0,
+      record: { ...elevatedRecord, persistenceRevision: loweredRecord.persistenceRevision }
+    })
+    expect(domain.runPort.getThread(thread.appChatId)).toBeNull()
+    await domain.shutdown()
+  })
+
+  it('refuses unregistered or unclaimed Git workspace scope before the service can spawn', async () => {
+    const { domainOptions, store, workspace } = open()
+    const read = vi.fn().mockResolvedValue({
+      scope: 'status',
+      repositoryRoot: workspace,
+      branch: 'main',
+      head: 'a'.repeat(40),
+      files: []
+    })
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      gitReadService: { read }
+    } as never)
+    type TestContext = typeof context
+    type TestRequest = { workspaceId?: string; threadId?: string; scope: 'status' }
+    const gitRead = (context_: TestContext, request: TestRequest) =>
+      (
+        domain as unknown as {
+          gitRead(context_: TestContext, request_: TestRequest): Promise<unknown>
+        }
+      ).gitRead(context_, request)
+
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(context, { workspaceId: 'missing-workspace', scope: 'status' })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+
+    const globalThread = store.createThread({ scope: 'global' })
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(context, { threadId: globalThread.appChatId, scope: 'status' })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+
+    const registered = store.registerWorkspace({ path: workspace })
+    const iosContext = {
+      actor: { actorId: 'ios-1', clientId: 'ios-1', clientClass: 'ios' as const },
+      client: { clientId: 'ios-1', clientClass: 'ios' as const, clientVersion: '1.0.0' }
+    }
+    await expect(
+      Promise.resolve().then(() =>
+        gitRead(iosContext as unknown as typeof context, {
+          workspaceId: registered.id,
+          scope: 'status'
+        })
+      )
+    ).rejects.toThrow(/workspace.*unavailable/i)
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('projects registered workspace and thread Git reads into the bounded wire result', async () => {
+    const { domainOptions, store, workspace } = open()
+    const read = vi.fn(async (input: { scope: 'status' | 'diff' | 'log' }) =>
+      input.scope === 'status'
+        ? {
+            scope: 'status' as const,
+            repositoryRoot: workspace,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            files: [
+              {
+                path: 'new.ts',
+                originalPath: 'source.ts',
+                index: 'A',
+                workingTree: ' ',
+                kind: 'copied' as const,
+                staged: true,
+                unstaged: false
+              }
+            ]
+          }
+        : {
+            scope: 'diff' as const,
+            repositoryRoot: workspace,
+            branch: 'main',
+            head: 'a'.repeat(40),
+            text: {
+              text: '\\'.repeat(128 * 1024),
+              truncated: false,
+              byteLength: 128 * 1024
+            }
+          }
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      gitReadService: { read }
+    } as never)
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+
+    await expect(
+      domain.gitRead(context, { workspaceId: registered.id, scope: 'status' })
+    ).resolves.toMatchObject({
+      scope: 'status',
+      files: [{ path: 'new.ts', originalPath: 'source.ts', kind: 'created' }],
+      truncated: false
+    })
+    const diff = await domain.gitRead(context, {
+      threadId: thread.appChatId,
+      scope: 'diff'
+    })
+    expect(diff).toMatchObject({ scope: 'diff', truncated: true })
+    expect(diff.scope === 'diff' && diff.text.length).toBeLessThan(128 * 1024)
+    expect(read).toHaveBeenNthCalledWith(1, {
+      workspaceRealPath: registered.realPath,
+      scope: 'status'
+    })
+    expect(read).toHaveBeenNthCalledWith(2, {
+      workspaceRealPath: registered.realPath,
+      scope: 'diff'
+    })
+  })
+
+  it('allows a local actor to toggle only a seat on the targeted ensemble thread', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const first = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const second = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [first, second]) {
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+    }
+    const firstRecord = store.getThread(first.appChatId)!
+    const secondRecord = store.getThread(second.appChatId)!
+    const firstParticipants = (firstRecord.ensemble as { participants: Array<{ id: string }> })
+      .participants
+    const secondParticipants = (secondRecord.ensemble as { participants: Array<{ id: string }> })
+      .participants
+    const toggle = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-toggle',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[0]!.id, enabled: false }
+    )
+
+    expect(domain.evaluateAuthority(context, toggle)).toEqual({ decision: 'allow' })
+    await expect(domain.executeCommand(context, toggle, { id: 'tui-target' })).resolves.toEqual({
+      status: 'succeeded',
+      resultSummary: 'ensemble_seat_disabled'
+    })
+    expect(
+      (
+        store.getThread(first.appChatId)!.ensemble as {
+          participants: Array<{ id: string; enabled: boolean }>
+        }
+      ).participants.find((participant) => participant.id === firstParticipants[0]!.id)
+    ).toMatchObject({ enabled: false })
+
+    const lastSeat = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-last',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[1]!.id, enabled: false }
+    )
+    expect(domain.evaluateAuthority(context, lastSeat)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_last_seat_required'
+    })
+
+    const crossThread = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-cross-thread',
+      { threadId: first.appChatId },
+      { participantId: secondParticipants[0]!.id, enabled: false }
+    )
+    expect(domain.evaluateAuthority(context, crossThread)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_participant_not_found'
+    })
+
+    const current = store.getThread(first.appChatId)!
+    store.persistThreadRecord({
+      threadId: current.appChatId,
+      expectedRevision: current.persistenceRevision ?? 0,
+      record: {
+        ...current,
+        ensemble: {
+          ...(current.ensemble as Record<string, unknown>),
+          activeRound: { status: 'running' }
+        }
+      }
+    })
+    const activeRoundToggle = command(
+      'ensemble.seat.toggle',
+      'cmd-seat-active-round',
+      { threadId: first.appChatId },
+      { participantId: firstParticipants[0]!.id, enabled: true }
+    )
+    expect(domain.evaluateAuthority(context, activeRoundToggle)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_round_active'
+    })
+
+    const ios = {
+      actor: { actorId: 'ios-1', clientId: 'ios-1', clientClass: 'ios' as const },
+      client: { clientId: 'ios-1', clientClass: 'ios' as const, clientVersion: '1.0.0' }
+    }
+    expect(
+      domain.evaluateAuthority(ios, {
+        ...toggle,
+        actor: ios.actor
+      })
+    ).toEqual({
+      decision: 'deny',
+      reason: 'standalone_local_actor_required'
+    })
+  })
+
+  it('refuses composer.send on an ensemble thread instead of running one provider', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+    store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+    const send = command(
+      'composer.send',
+      'cmd-ensemble-send',
+      { threadId: thread.appChatId },
+      { text: 'This must not masquerade as an ensemble round.' }
+    )
+
+    expect(domain.evaluateAuthority(context, send)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_ensemble_round_unavailable'
+    })
+    await expect(domain.executeCommand(context, send, { id: 'tui-target' })).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'authority_denied'
+    })
+    expect(store.getThread(thread.appChatId)?.runs ?? []).toEqual([])
+  })
+
+  it('reconfigures and runs a composer.send model override instead of ignoring it', async () => {
+    const { domain, store, workspace, releaseRun } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-override-ws', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-override-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-override-configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            reasoningId: 'high',
+            postureId: 'default',
+            offerRevision: 'muse-offer-1'
+          }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // An unknown model stays a hard refusal — the client picks among offers.
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-override-unknown',
+          { threadId },
+          { text: 'Go', model: 'not-an-offer' }
+        ),
+        { id: 'client' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'authority_denied' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-override',
+          { threadId },
+          { text: 'Go', model: 'muse-flow-2', reasoningEffort: 'low' }
+        ),
+        { id: 'client' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const configured = store.getThread(threadId)
+    const metadata = (configured?.providerMetadata ?? {}) as Record<string, unknown>
+    expect(metadata.selectedModelType).toBe('muse-flow-2')
+    expect(metadata.reasoningEffort).toBe('low')
+    expect(configured?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-override', requestedModel: 'muse-flow-2' })
+    ])
+    releaseRun?.()
+  })
+
+  it('denies a composer.send model override on a consent-bound elevated posture', async () => {
+    const { domain, workspace } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-elevated-ws', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-elevated-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-elevated-configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            reasoningId: 'high',
+            postureId: 'workspace_write',
+            offerRevision: 'muse-offer-1',
+            postureConsent: true
+          }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    // Elevated-posture consent provenance pins the exact model; switching it
+    // per-send would run write-capable turns outside the consented selection.
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command(
+          'composer.send',
+          'run-elevated-override',
+          { threadId },
+          { text: 'Go', model: 'muse-flow-2' }
+        )
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_configuration_mismatch' })
+  })
+
+  it('allows only the exact Desktop Host actor to mutate workspace records', async () => {
+    const { domain, store, workspace } = open()
+    const upsert = desktopCommand(
+      'workspace.record.upsert',
+      'cmd-workspace-upsert',
+      { workspaceId: 'workspace-desktop-1' },
+      {
+        path: workspace,
+        displayName: 'Desktop workspace',
+        createdAt: 10,
+        lastOpenedAt: 20,
+        pinned: false,
+        branch: 'main'
+      }
+    )
+    expect(domain.evaluateAuthority(desktopContext, upsert)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, upsert, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_record_upserted' })
+    expect(store.listWorkspaces()).toEqual([
+      expect.objectContaining({ id: 'workspace-desktop-1', branch: 'main' })
+    ])
+
+    const tuiRemove = command(
+      'workspace.record.remove',
+      'cmd-workspace-remove-tui',
+      { workspaceId: 'workspace-desktop-1' },
+      {}
+    )
+    expect(domain.evaluateAuthority(context, tuiRemove)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+
+    const remove = desktopCommand(
+      'workspace.record.remove',
+      'cmd-workspace-remove',
+      { workspaceId: 'workspace-desktop-1' },
+      {}
+    )
+    await expect(
+      domain.executeCommand(desktopContext, remove, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_record_removed' })
+
+    const clear = desktopCommand('workspace.records.clear', 'cmd-workspaces-clear', {}, {})
+    await expect(
+      domain.executeCommand(desktopContext, clear, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'workspace_records_already_empty' })
+  })
+
+  it('executes chat-kind configuration against the standalone Host-owned thread store', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-ensemble-on',
+          { threadId: thread.appChatId },
+          { chatKind: 'ensemble' }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({ chatKind: 'ensemble' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-ensemble-off',
+          { threadId: thread.appChatId },
+          { chatKind: 'single', canonicalProviderId: 'muse' }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      chatKind: 'single',
+      provider: 'muse'
+    })
+  })
+
+  it('persists whole thread records only for the exact authenticated Desktop Host actor', async () => {
+    const { domain, domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111112',
+      record: {
+        ...thread,
+        title: 'Host-mediated ensemble record',
+        futureEnsembleField: { round: 'round-1', lanes: ['worker-1'] }
+      }
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist',
+      { threadId: thread.appChatId },
+      { ...descriptor, expectedRevision: thread.persistenceRevision ?? 0 }
+    )
+
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+
+    const { profilePath: _profilePath, ...withoutProfilePath } = domainOptions
+    const unwiredDomain = new HostNodeDomainPorts(withoutProfilePath)
+    expect(unwiredDomain.evaluateAuthority(desktopContext, persist)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_thread_record_persist_unavailable'
+    })
+
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+    expect(store.getThread(thread.appChatId)).toMatchObject({
+      title: 'Host-mediated ensemble record',
+      persistenceRevision: 1,
+      futureEnsembleField: { round: 'round-1', lanes: ['worker-1'] }
+    })
+
+    const current = store.getThread(thread.appChatId)!
+    const deniedDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111113',
+      record: { ...current, title: 'TUI must not overwrite this record' }
+    })
+    const tuiPersist = command(
+      'thread.record.persist',
+      'cmd-persist-tui',
+      { threadId: thread.appChatId },
+      { ...deniedDescriptor, expectedRevision: current.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(context, tuiPersist)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+    await expect(domain.executeCommand(context, tuiPersist, { id: 'tui-target' })).resolves.toEqual(
+      { status: 'failed', errorCode: 'authority_denied' }
+    )
+    expect(store.getThread(thread.appChatId)?.title).toBe('Host-mediated ensemble record')
+    expect(
+      existsSync(
+        hostThreadRecordTransferPath(domainOptions.profilePath, deniedDescriptor.transferId)
+      )
+    ).toBe(true)
+  })
+
+  it('deletes a thread record only for the exact authenticated Desktop Host actor', async () => {
+    const { domain, store } = open()
+    const thread = store.createThread({ scope: 'global', title: 'Delete through Host' })
+    const remove = desktopCommand(
+      'thread.record.delete',
+      'cmd-delete',
+      { threadId: thread.appChatId },
+      { expectedRevision: thread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, remove)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, remove, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_deleted' })
+    expect(store.getThread(thread.appChatId)).toBeNull()
+
+    const protectedThread = store.createThread({ scope: 'global', title: 'Protected from TUI' })
+    const tuiRemove = command(
+      'thread.record.delete',
+      'cmd-delete-tui',
+      { threadId: protectedThread.appChatId },
+      { expectedRevision: protectedThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(context, tuiRemove)).toEqual({
+      decision: 'deny',
+      reason: 'standalone_desktop_actor_required'
+    })
+    await expect(domain.executeCommand(context, tuiRemove, { id: 'tui-target' })).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'authority_denied'
+    })
+    expect(store.getThread(protectedThread.appChatId)?.title).toBe('Protected from TUI')
+  })
+
+  it('maps missing, integrity, and optimistic-revision failures to distinct outcomes', async () => {
+    const { domain, domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const missing = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-missing',
+      { threadId: thread.appChatId },
+      {
+        transferId: '11111111-1111-4111-8111-111111111114',
+        sha256: 'a'.repeat(64),
+        byteLength: 1,
+        expectedRevision: thread.persistenceRevision ?? 0
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, missing, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_transfer_missing' })
+
+    const integrityDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111115',
+      record: { ...thread, title: 'Digest mismatch' }
+    })
+    const integrity = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-integrity',
+      { threadId: thread.appChatId },
+      {
+        ...integrityDescriptor,
+        sha256: 'b'.repeat(64),
+        expectedRevision: thread.persistenceRevision ?? 0
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, integrity, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_transfer_integrity' })
+    expect(
+      existsSync(
+        hostThreadRecordTransferPath(domainOptions.profilePath, integrityDescriptor.transferId)
+      )
+    ).toBe(false)
+
+    const conflictDescriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-111111111116',
+      record: { ...thread, title: 'Stale update' }
+    })
+    const conflict = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-conflict',
+      { threadId: thread.appChatId },
+      {
+        ...conflictDescriptor,
+        expectedRevision: (thread.persistenceRevision ?? 0) + 1
+      }
+    )
+    await expect(
+      domain.executeCommand(desktopContext, conflict, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'failed', errorCode: 'thread_record_revision_conflict' })
+    expect(store.getThread(thread.appChatId)?.title).not.toBe('Stale update')
+  })
+
+  it('runs setup to a configured Muse thread, acknowledges composer after durable start, then records cancellation/history', async () => {
+    const { domain, store, workspace, events } = open()
+    const workspaceResult = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-workspace', {}, { path: workspace }),
+      { id: 'tui-target' }
+    )
+    const workspaceId = (workspaceResult.resultRef as { workspaceId: string }).workspaceId
+    const threadResult = await domain.executeCommand(
+      context,
+      command('thread.create', 'cmd-thread', {}, { scope: 'workspace', workspaceId }),
+      { id: 'tui-target' }
+    )
+    const threadId = (threadResult.resultRef as { threadId: string }).threadId
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-configure',
+          { threadId },
+          {
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            reasoningId: 'high',
+            postureId: 'workspace_write',
+            offerRevision: 'muse-offer-1',
+            postureConsent: true
+          }
+        ),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-1', { threadId }, { text: 'Run the Muse task' }),
+        { id: 'disconnected-client' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    expect(store.getThread(threadId)?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-1', status: 'running' })
+    ])
+    expect(store.getThread(threadId)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-1', role: 'user', content: 'Run the Muse task' })
+      ])
+    )
+    await expect(
+      domain.executeCommand(
+        context,
+        command('run.cancel', 'cmd-cancel-stale', { threadId }, { expectedWorkId: 'run-old' }),
+        { id: 'disconnected-client' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'run_identity_mismatch' })
+    expect(store.getThread(threadId)?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-1', status: 'running' })
+    ])
+    await expect(
+      domain.executeCommand(
+        context,
+        command('run.cancel', 'cmd-cancel', { threadId }, { expectedWorkId: 'run-1' }),
+        { id: 'disconnected-client' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+    await vi.waitFor(() =>
+      expect(store.getThread(threadId)?.runs).toEqual([
+        expect.objectContaining({ runId: 'run-1', status: 'cancelled' })
+      ])
+    )
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-2',
+          { threadId },
+          { text: 'Complete a background Muse turn' }
+        ),
+        { id: 'disconnected-client' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await vi.waitFor(() =>
+      expect(store.getThread(threadId)?.runs).toEqual(
+        expect.arrayContaining([expect.objectContaining({ runId: 'run-2', status: 'completed' })])
+      )
+    )
+
+    expect(domain.snapshotDonor()).toMatchObject({
+      workspaces: [{ id: workspaceId }],
+      threads: [{ id: threadId, providerId: 'muse' }],
+      runs: [
+        { runId: 'run-1', providerOutcome: 'cancelled' },
+        { runId: 'run-2', providerOutcome: 'completed' }
+      ]
+    })
+    expect(
+      domain.threadHistory({ threadId, limit: 20 }).entries.map((entry) => entry.role)
+    ).toEqual(expect.arrayContaining(['user', 'assistant']))
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'run.status', status: 'cancelled' })
+    )
+  })
+
+  it('denies iOS and unsupported mutations, and fails stale/absent-consent Muse configuration', async () => {
+    const { domain, workspace } = open()
+    const register = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-workspace-2', {}, { path: workspace }),
+      { id: 'target' }
+    )
+    const workspaceId = (register.resultRef as { workspaceId: string }).workspaceId
+    const created = await domain.executeCommand(
+      context,
+      command('thread.create', 'cmd-thread-2', {}, { scope: 'workspace', workspaceId }),
+      { id: 'target' }
+    )
+    const threadId = (created.resultRef as { threadId: string }).threadId
+    const noConsent = command(
+      'thread.configure',
+      'cmd-no-consent',
+      { threadId },
+      {
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        offerRevision: 'muse-offer-1'
+      }
+    )
+    await expect(domain.executeCommand(context, noConsent, { id: 'target' })).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'setup_consent_required'
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'thread.configure',
+          'cmd-stale',
+          { threadId },
+          { ...noConsent.arguments, offerRevision: 'stale' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'setup_stale_offer' })
+    const ios = {
+      actor: { actorId: 'ios', clientId: 'ios', clientClass: 'ios' as const },
+      client: { clientId: 'ios', clientClass: 'ios' as const, clientVersion: '1.0.0' }
+    }
+    expect(domain.evaluateAuthority(ios, noConsent)).toMatchObject({ decision: 'deny' })
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command('question.answer', 'cmd-question', { questionId: 'q' }, { decision: 'dismiss' })
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_command_unsupported' })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('thread.create', 'cmd-global', {}, { scope: 'global' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'setup_execution_failed' })
+  })
+
+  it('admits thread.select for a live workspace thread and refuses unknown or archived threads', async () => {
+    const { domain, workspace } = open()
+    const workspaceResult = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-select-workspace', {}, { path: workspace }),
+      { id: 'tui-target' }
+    )
+    const workspaceId = (workspaceResult.resultRef as { workspaceId: string }).workspaceId
+    const threadResult = await domain.executeCommand(
+      context,
+      command('thread.create', 'cmd-select-thread', {}, { scope: 'workspace', workspaceId }),
+      { id: 'tui-target' }
+    )
+    const threadId = (threadResult.resultRef as { threadId: string }).threadId
+    console.log('DBG threadResult', JSON.stringify(threadResult))
+
+    // The TUI acknowledges every thread switch with thread.select. The Host holds
+    // no watched-thread state, so this validates and succeeds without mutating.
+    expect(
+      domain.evaluateAuthority(context, command('thread.select', 'cmd-select', { threadId }, {}))
+    ).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(context, command('thread.select', 'cmd-select', { threadId }, {}), {
+        id: 'tui-target'
+      })
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command('thread.select', 'cmd-select-missing', { threadId: 'id-absent' }, {})
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_thread_required' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command('thread.archive', 'cmd-select-archive', { threadId }, { archived: true }),
+        { id: 'tui-target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    expect(
+      domain.evaluateAuthority(
+        context,
+        command('thread.select', 'cmd-select-archived', { threadId }, {})
+      )
+    ).toEqual({ decision: 'deny', reason: 'standalone_thread_required' })
+  })
+
+  it('projects curated thread offers for a configured thread and locks one with no provider', async () => {
+    const { domain, workspace } = open()
+    const workspaceResult = await domain.executeCommand(
+      context,
+      command('workspace.register', 'cmd-offers-workspace', {}, { path: workspace }),
+      { id: 'tui-target' }
+    )
+    const workspaceId = (workspaceResult.resultRef as { workspaceId: string }).workspaceId
+    const configured = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-offers-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await domain.executeCommand(
+      context,
+      command(
+        'thread.configure',
+        'cmd-offers-configure',
+        { threadId: configured },
+        {
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          reasoningId: 'high',
+          postureId: 'workspace_write',
+          offerRevision: 'muse-offer-1',
+          postureConsent: true
+        }
+      ),
+      { id: 'tui-target' }
+    )
+
+    const offers = await domain.threadOffers(configured)
+    expect(offers.threadId).toBe(configured)
+    expect(offers.source).toBe('curated')
+    expect(offers.locked).toBeUndefined()
+    expect(offers.currentModel).toBe('muse-spark-1.2')
+    expect(offers.currentReasoningEffort).toBe('high')
+    expect(offers.currentPostureId).toBe('workspace_write')
+    expect(offers.postures?.map((posture) => posture.label)).toEqual(['Workspace write', 'Default'])
+    expect(offers.provider.runtimeProvider).toBe('muse')
+    expect(offers.models.map((model) => model.id)).toEqual(['muse-spark-1.2', 'muse-flow-2'])
+    const model = offers.models[0]
+    expect(model.current).toBe(true)
+    expect(model.isDefault).toBe(true)
+    expect(model.disabled).toBeUndefined()
+    expect(model.reasoningEfforts.map((effort) => effort.id)).toEqual(['high'])
+
+    // A thread created by /new carries no provider until cold start configures it.
+    // Offers must stay honest and locked rather than inventing a catalogue.
+    const bare = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-offers-bare', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    const bareOffers = await domain.threadOffers(bare)
+    expect(bareOffers.models).toEqual([])
+    expect(bareOffers.postures).toBeUndefined()
+    expect(bareOffers.locked).toBeTruthy()
+
+    await expect(domain.threadOffers('id-absent')).rejects.toThrow(/Unknown standalone thread/)
+  })
+
+  it('projects a shipped Kimi selection identically in thread offers and the run port', async () => {
+    const { domainOptions, store, workspace } = open()
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        createHostNodeKimiProvider({
+          discoverManagedModels: async () => null
+        })
+      ]
+    })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'kimi',
+      modelId: 'kimi-k2.7-code',
+      postureId: 'read_only'
+    })
+    const configured = store.getThread(thread.appChatId)!
+    store.persistThreadRecord({
+      threadId: thread.appChatId,
+      expectedRevision: configured.persistenceRevision ?? 0,
+      record: {
+        ...configured,
+        providerMetadata: {
+          ...(configured.providerMetadata ?? {}),
+          kimiReasoningEffort: 'on'
+        }
+      }
+    })
+
+    const offers = await domain.threadOffers(thread.appChatId)
+    expect(offers).toMatchObject({
+      currentModel: 'kimi-k2.8-preview',
+      currentReasoningEffort: 'max'
+    })
+    expect(offers.models.find((model) => model.id === 'kimi-k2.8-preview')).toMatchObject({
+      current: true,
+      reasoningEfforts: expect.arrayContaining([expect.objectContaining({ id: 'max' })])
+    })
+    expect(offers.models.some((model) => model.id === 'kimi-k2.7-code')).toBe(false)
+    expect(domain.runPort.getThread(thread.appChatId)).toMatchObject({
+      modelId: offers.currentModel,
+      reasoningId: offers.currentReasoningEffort
+    })
+    expect(store.getThread(thread.appChatId)?.providerMetadata).toMatchObject({
+      selectedModelType: 'kimi-k2.7-code',
+      kimiReasoningEffort: 'on'
+    })
+    await domain.shutdown()
+  })
+
+  it('prepends the App-authored work state when the thread carries a live goal', async () => {
+    const { domain, domainOptions, prompts, workspace, releaseRun } = open()
+    const workspaceId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('workspace.register', 'cmd-goal-workspace', {}, { path: workspace }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { workspaceId: string }
+    ).workspaceId
+    const threadId = (
+      (
+        await domain.executeCommand(
+          context,
+          command('thread.create', 'cmd-goal-thread', {}, { scope: 'workspace', workspaceId }),
+          { id: 'tui-target' }
+        )
+      ).resultRef as { threadId: string }
+    ).threadId
+    await domain.executeCommand(
+      context,
+      command(
+        'thread.configure',
+        'cmd-goal-configure',
+        { threadId },
+        {
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          reasoningId: 'high',
+          postureId: 'workspace_write',
+          offerRevision: 'muse-offer-1',
+          postureConsent: true
+        }
+      ),
+      { id: 'tui-target' }
+    )
+
+    // Goals are authored by the App onto the very record this Host reads, so the
+    // fixture plants one exactly there rather than inventing a Host-side writer.
+    const recordPath = join(domainOptions.profilePath, 'chats', `${threadId}.json`)
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>
+    record.activeGoal = {
+      id: 'goal-1',
+      objective: 'Ship the standalone goal lens.',
+      status: 'active',
+      mode: 'taskwraith_steered',
+      provider: 'muse',
+      createdAt: '2026-08-29T10:00:00.000Z',
+      updatedAt: '2026-08-29T10:00:00.000Z',
+      specification: { kind: 'prompt', acceptanceCriteria: ['The TUI shows the goal.'] }
+    }
+    writeFileSync(recordPath, JSON.stringify(record))
+
+    // The receipt is the load-bearing assertion, not an afterthought. The Host
+    // proves a run persisted its start before reporting success, and it does so
+    // by matching the stored user message against the prompt it handed the
+    // provider. Goal wrapping rewrites that prompt, so comparing against the
+    // raw composer text failed every goal-live send with `run_not_started` —
+    // after cancelling a perfectly healthy run. Discarding this result is
+    // exactly how that shipped: the prompt assertions below stayed green
+    // throughout, because the provider was still called before the check.
+    const goalSend = await domain.executeCommand(
+      context,
+      command('composer.send', 'cmd-goal-send', { threadId }, { text: 'Carry on.' }),
+      { id: 'tui-target' }
+    )
+    expect(goalSend).toMatchObject({ status: 'succeeded', resultSummary: 'run_started' })
+    releaseRun()
+    await domain.shutdown()
+
+    expect(prompts).toHaveLength(1)
+    const prompt = prompts[0]
+    expect(prompt).toContain('<taskwraith_work_state>')
+    expect(prompt).toContain('Goal id: goal-1')
+    expect(prompt).toContain('Ship the standalone goal lens.')
+    expect(prompt).toContain('The TUI shows the goal.')
+    // The block steers the request, so it must precede it exactly as
+    // injectBeforeCurrentRequest places it in the App.
+    expect(prompt.indexOf('<taskwraith_work_state>')).toBeLessThan(prompt.indexOf('Carry on.'))
+    expect(prompt.endsWith('Carry on.')).toBe(true)
+  })
+
+  it('waits for tracked provider completion during shutdown before reporting stopped', async () => {
+    const { domain, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-shutdown-wait',
+          { threadId: thread.appChatId },
+          { text: 'wait' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    let settled = false
+    const stopping = domain.shutdown().then((result) => {
+      settled = true
+      return result
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    releaseRun()
+    await expect(stopping).resolves.toEqual({
+      stopped: true,
+      alreadyStopped: false,
+      cancelledRuns: 1
+    })
+    await expect(domain.shutdown()).resolves.toEqual({
+      stopped: true,
+      alreadyStopped: true,
+      cancelledRuns: 0
+    })
+  })
+
+  // The production Host's lifetime-stop deadline is summed from this bound
+  // (HOST_LIFETIME_STOP_DEADLINE_MS), so the wait must be the exported one.
+  it('gives up on a provider run that never completes after HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS by default', async () => {
+    const { domain, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-shutdown-bound',
+          { threadId: thread.appChatId },
+          { text: 'never ends' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    vi.useFakeTimers()
+    try {
+      let outcome: unknown = 'pending'
+      void domain.shutdown().then(
+        (result) => {
+          outcome = result
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+      await vi.advanceTimersByTimeAsync(HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS - 1)
+      expect(outcome).toBe('pending')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(outcome).toBeInstanceOf(Error)
+      expect((outcome as Error).message).toBe('Host provider shutdown timed out')
+    } finally {
+      vi.useRealTimers()
+      releaseRun()
+    }
+  })
+
+  it('terminalizes a run when a provider promise rejects after composer acceptance', async () => {
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let rejectRun: ((error: Error) => void) | undefined
+    const rejected = new Promise<void>((_, reject) => {
+      rejectRun = reject
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const rejectingProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({
+        providerId: 'muse',
+        status: 'ready',
+        label: 'Muse'
+      }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: { runId: string; threadId: string; prompt: string }) => {
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await rejected
+        throw new Error('late provider failure')
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => rejectingProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-rejected',
+          { threadId: thread.appChatId },
+          { text: 'reject later' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    rejectRun?.(new Error('late provider failure'))
+    await vi.waitFor(() =>
+      expect(store.getThread(thread.appChatId)?.runs).toEqual([
+        expect.objectContaining({
+          runId: 'run-rejected',
+          status: 'failed',
+          errorCode: 'provider_failed'
+        })
+      ])
+    )
+  })
+
+  it("surfaces the provider's own refusal when a run cannot start", async () => {
+    // A provider that refuses before beginRun (a key-marked model with no API
+    // key, a binary that vanished) used to collapse into a bare
+    // run_not_started with no words. The refusal is the only thing the user
+    // can act on, so it rides the receipt and lands in the transcript.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const refusingProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async () => {
+        throw new Error('Muse model muse-spark-1.2 requires META_API_KEY; sign in first.')
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => refusingProvider
+        }
+      ]
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-refused', { threadId: thread.appChatId }, { text: 'go' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'run_not_started',
+      errorMessage: 'Muse model muse-spark-1.2 requires META_API_KEY; sign in first.'
+    })
+    expect(store.getThread(thread.appChatId)?.messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        runId: 'run-refused',
+        content: 'Run failed · Muse model muse-spark-1.2 requires META_API_KEY; sign in first.'
+      })
+    ])
+  })
+
+  it('waits for a provider that persists its start only after an await', async () => {
+    // Kimi awaits getOffers() before beginRun/appendTranscript; ACP adapters
+    // await session config. A single microtask of grace fired the
+    // persisted-start proof before that persistence landed, so the Host
+    // cancelled a perfectly healthy run and reported run_not_started. The
+    // proof now polls briefly for the durable start instead.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const delayedStartProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: HostNodeProviderRunRequest) => {
+        // The async gap BEFORE beginRun is the behaviour under test: any
+        // provider that awaits auth/session/offers first needs the Host to
+        // wait longer than one microtask for the durable start.
+        await new Promise((resolveLater) => setTimeout(resolveLater, 25))
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'completed', sessionId: SESSION_ID, exitCode: 0 }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => delayedStartProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-delayed-start',
+          { threadId: thread.appChatId },
+          { text: 'hold on' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    releaseRun?.()
+    await domain.shutdown()
+    expect(
+      store
+        .getThread(thread.appChatId)
+        ?.messages.some(
+          (message) =>
+            message.runId === 'run-delayed-start' &&
+            message.role === 'user' &&
+            message.content === 'hold on'
+        )
+    ).toBe(true)
+  })
+
+  it('does not re-read the whole thread record on every durable-start poll', async () => {
+    // `awaitPersistedStart` polls `hasPersistedStart` every
+    // HOST_PERSISTED_START_POLL_MS until the grace expires, and
+    // `store.getThread` is UNCACHED: it stats, reads and JSON.parses the whole
+    // record every call. So a provider that awaits before beginRun -- the case
+    // the sibling test above exists for -- used to cost one whole-record parse
+    // per poll. Measured on a real 27.5MB thread that is ~125ms each: the
+    // grace expired after 16 polls and a healthy run was failed as
+    // `run_not_started`, while the Host's global serial command window stayed
+    // shut for the full two seconds. `hasBegun` is an O(1) Map.get and is
+    // already a conjunct of the answer, so no read may happen before it holds.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const getThread = vi.spyOn(store, 'getThread')
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    // Whole-record reads taken while the provider is asleep and has NOT begun.
+    // Seeded negative so a provider that never runs fails loudly instead of
+    // letting the assertion pass on an untaken measurement.
+    let readsDuringPreBeginGap = -1
+    const delayedStartProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: HostNodeProviderRunRequest) => {
+        const readsBeforeGap = getThread.mock.calls.length
+        // Long enough to span many poll intervals, short enough to stay well
+        // inside the grace window so the send must still succeed.
+        await new Promise((resolveLater) => setTimeout(resolveLater, 250))
+        readsDuringPreBeginGap = getThread.mock.calls.length - readsBeforeGap
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'completed', sessionId: SESSION_ID, exitCode: 0 }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => delayedStartProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    // The durable-start guarantee is unchanged: the send still succeeds, and
+    // still only because the start genuinely landed.
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-poll-reads',
+          { threadId: thread.appChatId },
+          { text: 'hold on' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    expect(readsDuringPreBeginGap).toBe(0)
+    releaseRun?.()
+    await domain.shutdown()
+  })
+
+  it('validates a send against last-known offers when a live refresh fails', async () => {
+    // Every composer.send triggers a live offer refresh, and for providers
+    // whose catalogue probe is a local daemon call a transient failure used to
+    // kill the send: the refresh collapses the registry cache to an empty
+    // unavailable projection, and the gate then rejects the staged model the
+    // client legitimately holds. With a cached offer set the Host must
+    // validate against that last-known-good set instead — and say so.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const flakyCatalogProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getOffers: async () => {
+        throw new Error('daemon unreachable')
+      },
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input: HostNodeProviderRunRequest) => {
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'completed', sessionId: SESSION_ID, exitCode: 0 }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => flakyCatalogProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-stale-offers',
+          { threadId: thread.appChatId },
+          { text: 'still runnable', model: 'muse-spark-1.2' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    releaseRun?.()
+    await domain.shutdown()
+    expect(
+      store
+        .getThread(thread.appChatId)
+        ?.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content ===
+              'Provider catalogue refresh failed · this send was validated against the last known offer set.'
+        )
+    ).toBe(true)
+  })
+
+  it('stays fail-closed when a refresh fails and no runnable offers were ever cached', async () => {
+    // Last-known-good is a bounded relaxation, not an open door: when the
+    // provider never produced a usable offer set this session, a failed
+    // refresh leaves the state genuinely unknown and the send is denied.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    const unreachableProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getOffers: async () => {
+        throw new Error('daemon unreachable')
+      },
+      getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async () => {
+        throw new Error('the run must never start without known offers')
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: { ...museOffers, offerRevision: 'muse-offer-empty', models: [] },
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => unreachableProvider
+        }
+      ]
+    })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-no-known-offers',
+          { threadId: thread.appChatId },
+          { text: 'go' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'provider_offers_unavailable' })
+    await domain.shutdown()
+  })
+
+  it('starts an Ollama send after one failed offers refresh, as the last good refresh offered it', async () => {
+    // The Ollama adapter validated each run against the offers of the latest
+    // refresh, so one failed refresh (a daemon blip, a slow /api/tags) emptied
+    // them and refused every model, even an installed local one, right after
+    // this gate had validated the send against the last-known-good set. The
+    // real adapter and catalog run here with only the network stubbed; the
+    // daemon misses exactly the send's refresh and is back for the run.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'ollama',
+      modelId: 'qwen3.5:9b',
+      postureId: 'plan'
+    })
+    let failingTagReads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.endsWith('/api/tags') && failingTagReads > 0) {
+          failingTagReads -= 1
+          throw new TypeError('fetch failed')
+        }
+        if (url.endsWith('/api/tags')) {
+          return new Response(JSON.stringify({ models: [{ model: 'qwen3.5:9b' }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (url.endsWith('/api/chat')) {
+          const chunk = {
+            model: 'qwen3.5:9b',
+            created_at: '2026-08-24T05:00:00.000Z',
+            message: { role: 'assistant', content: 'Still here.' },
+            done: true
+          }
+          return new Response(`${JSON.stringify(chunk)}\n`, { status: 200 })
+        }
+        throw new TypeError('fetch failed')
+      })
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      hostQueuedStartEnabled: false,
+      providers: [
+        createHostNodeOllamaProviderFactory({
+          offers: hostNodeOllamaOffersFromCatalog({ models: [] }),
+          baseUrl: 'http://127.0.0.1:11434'
+        })
+      ]
+    })
+    try {
+      const good = await domain.providerOffers('ollama')
+      expect(good.models).toEqual([
+        expect.objectContaining({ modelId: 'qwen3.5:9b', available: true })
+      ])
+      // Expire the adapter's one-second catalog cache so the send's refresh
+      // goes to the daemon, which then misses that one read.
+      const adapter = domain.registry.getInstance('ollama') as unknown as {
+        catalogCache?: unknown
+      }
+      adapter.catalogCache = undefined
+      failingTagReads = 1
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-ollama-after-blip',
+            { threadId: thread.appChatId },
+            { text: 'Are you still there?' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(failingTagReads).toBe(0)
+      await vi.waitFor(() =>
+        expect(store.getThread(thread.appChatId)?.runs).toEqual([
+          expect.objectContaining({ runId: 'run-ollama-after-blip', status: 'completed' })
+        ])
+      )
+      expect(
+        store
+          .getThread(thread.appChatId)
+          ?.messages.map((message) => [message.role, message.content])
+      ).toEqual([
+        [
+          'system',
+          'Provider catalogue refresh failed · this send was validated against the last known offer set.'
+        ],
+        ['user', 'Are you still there?'],
+        ['assistant', 'Still here.']
+      ])
+    } finally {
+      await domain.shutdown()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('hands Mistral a bounded transcript for cold sessions, without Host notices in it', async () => {
+    // Vibe opens a fresh process per turn. When its native session cannot be
+    // resumed the provider prompts with this bounded transcript instead, so a
+    // follow-up like "sure" still reaches a model that knows the task.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const mistralOffers = hostProviderOffers('mistral', true)!
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'mistral',
+      modelId: 'mistral-medium-3.5',
+      postureId: 'default'
+    })
+    store.appendTranscript({ threadId: thread.appChatId, role: 'user', content: 'List the tests.' })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      role: 'assistant',
+      content: 'There are two.'
+    })
+    store.appendTranscript({
+      threadId: thread.appChatId,
+      runId: 'earlier-run',
+      role: 'system',
+      content: 'Run failed · vibe-acp exited early.'
+    })
+    const requests: HostNodeProviderRunRequest[] = []
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const recordingProvider: HostNodeProviderInstance = {
+      providerId: 'mistral',
+      getStatus: async () => ({ providerId: 'mistral', status: 'ready', label: 'Mistral' }),
+      getAuthStatus: async () => ({ providerId: 'mistral', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      run: async (input) => {
+        requests.push(input)
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'mistral',
+          modelId: 'mistral-medium-3.5',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        holder.domain!.runPort.appendTranscript({
+          threadId: input.threadId,
+          runId: input.runId,
+          role: 'user',
+          text: input.prompt,
+          createdAt: '2026-08-24T05:00:00.000Z'
+        })
+        await new Promise((resolveLater) => setTimeout(resolveLater, 0))
+        holder.domain!.runPort.finishRun({
+          runId: input.runId,
+          status: 'completed',
+          finishedAt: '2026-08-24T05:00:01.000Z',
+          warningSummaries: []
+        })
+        return { runId: input.runId, status: 'completed' }
+      },
+      cancel: () => true,
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          shortCode: 'MST',
+          offers: mistralOffers,
+          supportsApprovals: true,
+          supportsQuestions: false,
+          create: () => recordingProvider
+        }
+      ]
+    })
+    holder.domain = domain
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-mistral',
+          { threadId: thread.appChatId },
+          { text: 'And the third?' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const request = requests[0]
+    expect(request?.prompt).toBe('And the third?')
+    expect(request?.resumeFallbackPrompt).toContain('User: List the tests.')
+    expect(request?.resumeFallbackPrompt).toContain('assistant: There are two.')
+    expect(request?.resumeFallbackPrompt).toContain('New user message:\nAnd the third?')
+    expect(request?.resumeFallbackPrompt).not.toContain('vibe-acp exited early')
+  })
+
+  it('cancels an unprovable start once and keeps shutdown waiting for its tracked completion', async () => {
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    let releaseRun: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    let cancellationCalls = 0
+    const holder: { domain?: HostNodeDomainPorts } = {}
+    const unprovableProvider: HostNodeProviderInstance = {
+      providerId: 'muse',
+      getStatus: async () => ({
+        providerId: 'muse',
+        status: 'ready',
+        label: 'Muse'
+      }),
+      getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+      getAuthFlows: async () => [],
+      beginAuth: async () => undefined,
+      cancelAuth: async () => false,
+      cancel: () => {
+        cancellationCalls += 1
+        return true
+      },
+      run: async (input: { runId: string; threadId: string }) => {
+        holder.domain!.runPort.beginRun({
+          runId: input.runId,
+          threadId: input.threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+        await pending
+        return { runId: input.runId, status: 'cancelled', sessionId: SESSION_ID, exitCode: null }
+      },
+      shutdown: async () => undefined
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUSE',
+          offers: museOffers,
+          supportsApprovals: false,
+          supportsQuestions: false,
+          create: () => unprovableProvider
+        }
+      ]
+    })
+    holder.domain = domain
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-unprovable',
+          { threadId: thread.appChatId },
+          { text: 'same text' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'failed', errorCode: 'run_not_started' })
+    expect(cancellationCalls).toBe(1)
+    let stopped = false
+    const shutdown = domain.shutdown().then((result) => {
+      stopped = true
+      return result
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    releaseRun?.()
+    await expect(shutdown).resolves.toEqual({
+      stopped: true,
+      alreadyStopped: false,
+      cancelledRuns: 0
+    })
+    expect(cancellationCalls).toBe(1)
+  })
+
+  it('does not guess ownership of legacy or Desktop running rows from their provider', () => {
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const museThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const foreignThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: museThread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    store.configureThread({
+      threadId: foreignThread.appChatId,
+      providerId: 'codex',
+      modelId: 'gpt-5.6'
+    })
+    store.updateRun({
+      threadId: museThread.appChatId,
+      runId: 'run-crashed-muse',
+      status: 'running',
+      provider: 'muse',
+      requestedModel: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    store.updateRun({
+      threadId: foreignThread.appChatId,
+      runId: 'run-foreign',
+      status: 'running',
+      provider: 'codex',
+      requestedModel: 'gpt-5.6',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+
+    new HostNodeDomainPorts(domainOptions)
+
+    expect(store.getThread(museThread.appChatId)?.runs).toEqual([
+      expect.objectContaining({
+        runId: 'run-crashed-muse',
+        status: 'running'
+      })
+    ])
+    expect(store.getThread(foreignThread.appChatId)?.runs).toEqual([
+      expect.objectContaining({ runId: 'run-foreign', status: 'running', provider: 'codex' })
+    ])
+  })
+
+  it('reports provider auth honestly without inventing an authenticated state', async () => {
+    const { domain, manualBegin } = open({ credential: false, manual: true })
+    await expect(domain.providerAuthStatus('muse')).resolves.toEqual({
+      providerId: 'muse',
+      state: 'unauthenticated'
+    })
+    await expect(domain.providerAuthFlows('muse')).resolves.toEqual([
+      expect.objectContaining({ flowId: 'muse.manual-login', kind: 'manual', available: true })
+    ])
+    await expect(
+      domain.setupExecutor.execute(
+        command(
+          'provider.auth.begin',
+          'cmd-auth',
+          { providerId: 'muse' },
+          { flowId: 'muse.manual-login' }
+        ),
+        context
+      )
+    ).resolves.toEqual({
+      status: 'succeeded',
+      resultRef: { kind: 'provider-auth', providerId: 'muse', operationId: 'cmd-auth' }
+    })
+    expect(manualBegin).toHaveBeenCalledWith({ providerId: 'muse', operationId: 'cmd-auth' })
+    await expect(domain.providerAuthStatus('muse')).resolves.toMatchObject({
+      state: 'unauthenticated'
+    })
+  })
+
+  it('cancels registered active runs once during idempotent shutdown and leaves terminal runs alone', async () => {
+    const { domain, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const first = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const second = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [first, second]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const startedAt = '2026-08-24T05:00:00.000Z'
+    for (const [runId, threadId] of [
+      ['run-shutdown-1', first.appChatId],
+      ['run-shutdown-2', second.appChatId]
+    ] as const) {
+      domain.runPort.beginRun({
+        runId,
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt
+      })
+    }
+    let firstCancelled = 0
+    let secondCancelled = 0
+    domain.runPort.registerCancel('run-shutdown-1', () => {
+      firstCancelled += 1
+    })
+    domain.runPort.registerCancel('run-shutdown-2', () => {
+      secondCancelled += 1
+    })
+    domain.runPort.finishRun({
+      runId: 'run-shutdown-2',
+      status: 'completed',
+      finishedAt: startedAt,
+      warningSummaries: []
+    })
+
+    await expect(domain.shutdown()).resolves.toEqual({
+      stopped: true,
+      alreadyStopped: false,
+      cancelledRuns: 1
+    })
+    await expect(domain.shutdown()).resolves.toEqual({
+      stopped: true,
+      alreadyStopped: true,
+      cancelledRuns: 0
+    })
+    expect(firstCancelled).toBe(1)
+    expect(secondCancelled).toBe(0)
+  })
+
+  it('proves advertised approvals resume exactly once through the awaitable seam', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    // Set up a live run/thread that owns the pending card.
+    const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
+    paths.push(workspace)
+    const registered = domainOptions.store.registerWorkspace({ path: workspace })
+    const thread = domainOptions.store.createThread({
+      scope: 'workspace',
+      workspaceId: registered.id
+    })
+    domainOptions.store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const begin = domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(begin.kind).toBe('started')
+    // Verify the live run/thread is visible to the ownership check.
+    expect(domain.runPort.getThread(thread.appChatId)).not.toBeNull()
+    expect(domain.runPort.getThread(thread.appChatId)?.providerId).toBe('muse')
+    expect(domain.runPort.hasBegun('run-1', thread.appChatId)).toBe(true)
+    const settlement = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const result = domain.interactions.decide({
+      id: 'ap-1',
+      decision: 'accept',
+      actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+    })
+    expect(result.settled).toMatchObject({ id: 'ap-1', kind: 'approval' })
+    await expect(settlement).resolves.toMatchObject({
+      id: 'ap-1',
+      kind: 'approval',
+      decision: 'accept'
+    })
+    expect(
+      domain.interactions.decide({
+        id: 'ap-1',
+        decision: 'decline',
+        actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+      }).settled
+    ).toBeNull()
+  })
+
+  it('projects pending approvals and questions into snapshotDonor', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: true,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    void domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: 'thread-1',
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    void domain.interactions.register({
+      id: 'q-1',
+      kind: 'question',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: 'thread-1',
+      title: 'Choose option',
+      summary: 'Pick one',
+      options: ['a', 'b'],
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const snapshot = domain.snapshotDonor()
+    expect(snapshot.approvals).toHaveLength(1)
+    expect(snapshot.approvals[0]).toMatchObject({
+      approvalId: 'ap-1',
+      threadId: 'thread-1',
+      status: 'pending'
+    })
+    expect(snapshot.questions).toHaveLength(1)
+    expect(snapshot.questions[0]).toMatchObject({
+      questionId: 'q-1',
+      threadId: 'thread-1',
+      status: 'open'
+    })
+  })
+
+  it('validates a decision command in authority evaluation without settling it', async () => {
+    const { domainOptions } = open()
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    // Set up a live run/thread that owns the pending card.
+    const workspace = mkdtempSync(join(tmpdir(), 'host-node-domain-workspace-'))
+    paths.push(workspace)
+    const registered = domainOptions.store.registerWorkspace({ path: workspace })
+    const thread = domainOptions.store.createThread({
+      scope: 'workspace',
+      workspaceId: registered.id
+    })
+    domainOptions.store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const begin = domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(begin.kind).toBe('started')
+    const settlement = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const command = {
+      type: 'host.command' as const,
+      protocolVersion: 2 as const,
+      commandId: 'cmd-1',
+      idempotencyKey: 'key-cmd-1',
+      actor: { actorId: 'actor-1', clientId: 'tui-1', clientClass: 'tui' as const },
+      name: 'approval.decide' as const,
+      target: { approvalId: 'ap-1' },
+      arguments: { decision: 'accept' },
+      issuedAt: '2026-08-24T05:00:00.000Z'
+    }
+    const liveThread = domain.runPort.getThread(thread.appChatId)
+    expect(liveThread).not.toBeNull()
+    expect(liveThread?.providerId).toBe('muse')
+    expect(domain.runPort.hasBegun('run-1', thread.appChatId)).toBe(true)
+    const authority = domain.evaluateAuthority(context, command)
+    expect(authority).toEqual({ decision: 'allow' })
+    // Authority evaluation must NOT settle the interaction.
+    expect(domain.interactions.listPending()).toHaveLength(1)
+    // Execution settles exactly once.
+    const result = await domain.executeCommand(context, command, { id: 'tui-1' })
+    expect(result).toMatchObject({ status: 'succeeded' })
+    await expect(settlement).resolves.toMatchObject({ id: 'ap-1', decision: 'accept' })
+    expect(domain.interactions.listPending()).toHaveLength(0)
+  })
+
+  it('cancels matching interactions on run completion while unrelated runs survive', async () => {
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread1 = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const thread2 = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread1.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    store.configureThread({
+      threadId: thread2.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'default',
+      postureConsent: true
+    })
+    const approvalProvider: HostNodeProvider = {
+      providerId: 'muse',
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      offers: museOffers,
+      supportsApprovals: true,
+      supportsQuestions: false,
+      create: () => ({
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+        cancel: () => true,
+        shutdown: async () => undefined
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      providers: [approvalProvider]
+    })
+    domain.runPort.beginRun({
+      runId: 'run-1',
+      threadId: thread1.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    domain.runPort.beginRun({
+      runId: 'run-2',
+      threadId: thread2.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      startedAt: '2026-08-24T05:00:00.000Z'
+    })
+    const run1 = domain.interactions.register({
+      id: 'ap-1',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-1',
+      threadId: thread1.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    const run2 = domain.interactions.register({
+      id: 'ap-2',
+      kind: 'approval',
+      providerId: 'muse',
+      runId: 'run-2',
+      threadId: thread2.appChatId,
+      title: 'Approve tool',
+      summary: 'Allow tool execution',
+      createdAt: '2026-08-24T05:00:00.000Z'
+    })
+    expect(domain.interactions.listPending()).toHaveLength(2)
+    // Complete run-1; run-2 must survive.
+    domain.interactions.cancelByRunId('run-1', 'test: run completed')
+    await expect(run1).rejects.toThrow('test: run completed')
+    expect(domain.interactions.listPending()).toHaveLength(1)
+    expect(domain.interactions.listPending()[0].id).toBe('ap-2')
+    // run-2 is still pending and resolvable.
+    domain.interactions.decide({
+      id: 'ap-2',
+      decision: 'accept',
+      actor: { clientId: 'tui-1', clientClass: 'tui', actorId: 'actor-1' }
+    })
+    await expect(run2).resolves.toMatchObject({ id: 'ap-2', decision: 'accept' })
+  })
+
+  it('rejects over-capacity composer.send without starting a provider or appending a prompt', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 0,
+      shutdownTimeoutMs: 1_000
+    })
+    const offersBefore = domain.registry.getOffers('muse')
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-cap-1',
+          { threadId: firstThread.appChatId },
+          { text: 'first' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-cap-2',
+          { threadId: secondThread.appChatId },
+          { text: 'overflow prompt' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({
+      status: 'failed',
+      errorCode: 'host_saturated',
+      errorMessage: expect.stringMatching(/concurrent run capacity \(1\)/)
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+    expect(store.getThread(secondThread.appChatId)?.messages ?? []).toEqual([])
+    expect(domain.registry.getOffers('muse')).toEqual(offersBefore)
+    releaseRun()
+    await domain.shutdown()
+  })
+
+  it('runAdmission seam: the injected exact instance owns acquire/occupancy/cancel, and absence preserves construction', async () => {
+    // M2 out-of-process seam pin. The injected instance is the SAME object the
+    // domain acquires from, reports occupancy from, cancels queued waiters on,
+    // and shuts down — that identity is what lets the forked-child fixture
+    // witness the domain's real admission over IPC. RED-FIRST: without the
+    // seam the domain constructs its own private instance, so occupancy
+    // observed on the injected object would never move and the acquire spy
+    // would never fire.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const acquire = vi.spyOn(admission, 'acquire')
+    const cancelQueued = vi.spyOn(admission, 'cancelQueued')
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      runAdmission: admission,
+      shutdownTimeoutMs: 1_000
+    })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-seam-hold',
+          { threadId: firstThread.appChatId },
+          { text: 'hold' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    // The domain acquired from THIS instance, not a private one.
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(admission.inflightCount()).toBe(1)
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 0 })
+
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-seam-queued',
+        { threadId: secondThread.appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() => expect(admission.queuedCount()).toBe(1))
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+
+    // Cancel routes through the injected instance too.
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'run.cancel',
+          'cmd-seam-cancel',
+          { threadId: secondThread.appChatId },
+          { expectedWorkId: 'run-seam-queued' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+    expect(cancelQueued).toHaveBeenCalled()
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'run_start_cancelled'
+    })
+    expect(admission.queuedCount()).toBe(0)
+
+    releaseRun()
+    await domain.shutdown()
+
+    // Absence: no runAdmission option constructs exactly as before — the
+    // maxConcurrentRuns/maxQueuedStarts bounds still own behavior.
+    const second = open({ killReleases: false })
+    const secondRegistered = second.store.registerWorkspace({ path: second.workspace })
+    const capped = second.store.createThread({
+      scope: 'workspace',
+      workspaceId: secondRegistered.id
+    })
+    const overflow = second.store.createThread({
+      scope: 'workspace',
+      workspaceId: secondRegistered.id
+    })
+    for (const thread of [capped, overflow]) {
+      second.store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const unseamed = new HostNodeDomainPorts({
+      ...second.domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 0,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      unseamed.executeCommand(
+        context,
+        command('composer.send', 'run-unseamed-1', { threadId: capped.appChatId }, { text: 'a' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await expect(
+      unseamed.executeCommand(
+        context,
+        command('composer.send', 'run-unseamed-2', { threadId: overflow.appChatId }, { text: 'b' }),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+    expect(unseamed.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 0 })
+    second.releaseRun()
+    await unseamed.shutdown()
+  })
+
+  it('queues one extra start, recovers the slot, and cancels a waiter without silent loss', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const thirdThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread, thirdThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-hold', { threadId: firstThread.appChatId }, { text: 'hold' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-queued',
+        { threadId: secondThread.appChatId },
+        { text: 'queued prompt' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+    )
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-overflow',
+          { threadId: thirdThread.appChatId },
+          { text: 'overflow' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+    expect(store.getThread(thirdThread.appChatId)?.messages ?? []).toEqual([])
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'run.cancel',
+          'cmd-cancel-queued',
+          { threadId: secondThread.appChatId },
+          { expectedWorkId: 'run-queued' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'run_start_cancelled'
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+
+    releaseRun()
+    await vi.waitFor(() =>
+      expect(store.getThread(firstThread.appChatId)?.runs).toEqual([
+        expect.objectContaining({ runId: 'run-hold', status: 'completed' })
+      ])
+    )
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-recovered',
+          { threadId: thirdThread.appChatId },
+          { text: 'recovered' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await domain.shutdown()
+  })
+
+  it('16+1 regression: an unrelated thread.record.persist completes while a 17th start is queued', async () => {
+    // M2 slice 3 — the standalone 16+1 interference regression, MODULE LEVEL
+    // (this test keeps TASKWRAITH_HOST_QUEUED_START off, so it pins the
+    // pure admission/persist composition, never the wired-path evidence
+    // M2's exit requires). The saturation mode
+    // host_queue_16_active_1_queued names sixteen active Host-native runs
+    // with a 17th start QUEUED; the regression property is that an unrelated
+    // Desktop thread.record.persist is admitted and completes anyway —
+    // consuming no queue slot, queueing as no waiter, and needing no release
+    // from the queue. §1.1 is unratified, so this asserts the SHAPE only, no
+    // millisecond bound. RED-FIRST: if the persist were ever serialized
+    // behind a queued start, then at inflight 16 with the single waiter
+    // slot taken its admission would refuse as host_saturated — this test
+    // fails immediately, deterministically.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const runThreads = Array.from({ length: 17 }, () =>
+      store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    )
+    for (const thread of runThreads) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const persistThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 16,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+
+    // Sixteen active Host-native runs, held by the fake provider.
+    for (const [index, thread] of runThreads.slice(0, 16).entries()) {
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            `run-active-${index + 1}`,
+            { threadId: thread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    }
+    // The 17th start queues — the regression condition itself.
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-queued-17',
+        { threadId: runThreads[16].appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    )
+
+    // The unrelated Desktop persist: admitted and completed anyway.
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-161616161616',
+      record: persistThread
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-16-plus-1',
+      { threadId: persistThread.appChatId },
+      { ...descriptor, expectedRevision: persistThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    // It consumed nothing: occupancy is exactly as before, and the 17th is
+    // still queued — the unrelated work neither jumped nor drained the queue.
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+
+    // The queue itself is unharmed: releasing admits the 17th normally.
+    releaseRun()
+    await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await domain.shutdown()
+  })
+
+  it('16+1 regression under wired queued-start (flag ON): an unrelated thread.record.persist completes while a 17th start is queued', async () => {
+    // M2 exit evidence — same occupancy/persist shape as the module-level
+    // 16+1, against WIRED DomainPorts with the gate ON. Tests inject
+    // hostQueuedStartEnabled so they do not mutate process.env. The default
+    // remains OFF. RED-FIRST: dropping hostQueuedStartEnabled (injected
+    // lifecycle is ignored while the gate is off) means reserve is never
+    // called, so the 17-call pin fails immediately.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const runThreads = Array.from({ length: 17 }, () =>
+      store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    )
+    for (const thread of runThreads) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const persistThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const lifecycle = createHostNodeQueuedStartLifecycle()
+    const reserve = vi.spyOn(lifecycle, 'reserve')
+    const claim = vi.spyOn(lifecycle, 'claim')
+    const executeStart = vi.spyOn(lifecycle, 'executeStart')
+    const createQueuedStartLifecycle = vi.fn(() => lifecycle)
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 16,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000,
+      hostQueuedStartEnabled: true,
+      createQueuedStartLifecycle
+    })
+    expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+
+    for (const [index, thread] of runThreads.slice(0, 16).entries()) {
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            `run-wired-active-${index + 1}`,
+            { threadId: thread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    }
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-wired-queued-17',
+        { threadId: runThreads[16].appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    )
+    expect(reserve).toHaveBeenCalledTimes(17)
+    expect(claim).toHaveBeenCalledTimes(16)
+    expect(executeStart).toHaveBeenCalledTimes(16)
+
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '22222222-2222-4222-8222-161616161616',
+      record: persistThread
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-16-plus-1-wired',
+      { threadId: persistThread.appChatId },
+      { ...descriptor, expectedRevision: persistThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    expect(reserve).toHaveBeenCalledTimes(17)
+    expect(claim).toHaveBeenCalledTimes(16)
+    expect(executeStart).toHaveBeenCalledTimes(16)
+    expect(
+      reserve.mock.calls.some((call) => call[0].commandId === 'cmd-persist-16-plus-1-wired')
+    ).toBe(false)
+
+    releaseRun()
+    await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    expect(claim).toHaveBeenCalledTimes(17)
+    expect(executeStart).toHaveBeenCalledTimes(17)
+    await domain.shutdown()
+  })
+
+  it('rejects queued composer.send on shutdown instead of dropping the waiter', async () => {
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command('composer.send', 'run-live', { threadId: firstThread.appChatId }, { text: 'live' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-shutdown-queue',
+        { threadId: secondThread.appChatId },
+        { text: 'should not start' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+    )
+    const stopping = domain.shutdown()
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'host_shutting_down'
+    })
+    expect(store.getThread(secondThread.appChatId)?.runs ?? []).toEqual([])
+    releaseRun()
+    await expect(stopping).resolves.toMatchObject({ stopped: true })
+  })
+
+  describe('control_response spans', () => {
+    function createControlledRecorder(now: () => number) {
+      return createWorkSpanRecorder({ process: 'host', maxRetained: 64, now })
+    }
+
+    function expectOneControlResponseSpan(
+      snapshot: ReturnType<ReturnType<typeof createControlledRecorder>['snapshot']>,
+      expectedChatId: string
+    ) {
+      const control = snapshot.spans.filter((span) => span.kind === 'control_response')
+      expect(control).toHaveLength(1)
+      expect(control[0]).toMatchObject({
+        chatId: expectedChatId,
+        kind: 'control_response',
+        process: 'host',
+        resource: 'none'
+      })
+      expect(control[0]!.durationMs).toBeGreaterThanOrEqual(0)
+      expect(snapshot.byKind.control_response?.count).toBe(1)
+    }
+
+    function createInteractionProvider(supports: {
+      supportsApprovals: boolean
+      supportsQuestions: boolean
+    }): HostNodeProvider {
+      return {
+        providerId: 'muse',
+        displayProvider: 'Muse',
+        shortCode: 'MUSE',
+        offers: museOffers,
+        supportsApprovals: supports.supportsApprovals,
+        supportsQuestions: supports.supportsQuestions,
+        create: () => ({
+          providerId: 'muse',
+          getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+          getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+          getAuthFlows: async () => [],
+          beginAuth: async () => undefined,
+          cancelAuth: async () => false,
+          run: async () => ({ runId: 'run-1', status: 'completed' as const }),
+          cancel: () => true,
+          shutdown: async () => undefined
+        })
+      }
+    }
+
+    it('emits a control_response span for run.cancel', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 1000
+      const recorder = createControlledRecorder(() => (clock += 5))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cancel-span-start',
+            { threadId: thread.appChatId },
+            { text: 'start run to cancel' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'run.cancel',
+            'cmd-cancel-span',
+            { threadId: thread.appChatId },
+            { expectedWorkId: 'run-cancel-span-start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+      releaseRun()
+    })
+
+    it('emits a control_response span for approval.decide', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 2000
+      const recorder = createControlledRecorder(() => (clock += 3))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: true, supportsQuestions: false })
+        ],
+        workSpanRecorder: recorder
+      })
+      domainWithRecorder.runPort.beginRun({
+        runId: 'run-approval-span',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domainWithRecorder.interactions.register({
+        id: 'ap-span-1',
+        kind: 'approval',
+        providerId: 'muse',
+        runId: 'run-approval-span',
+        threadId: thread.appChatId,
+        title: 'Approve tool',
+        summary: 'Allow tool execution',
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'approval.decide',
+            'cmd-approval-span',
+            { approvalId: 'ap-span-1' },
+            { decision: 'accept' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'approval_decided' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('emits a control_response span for question.answer', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+
+      let clock = 3000
+      const recorder = createControlledRecorder(() => (clock += 4))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: false, supportsQuestions: true })
+        ],
+        workSpanRecorder: recorder
+      })
+      domainWithRecorder.runPort.beginRun({
+        runId: 'run-question-span',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domainWithRecorder.interactions.register({
+        id: 'q-span-1',
+        kind: 'question',
+        providerId: 'muse',
+        runId: 'run-question-span',
+        threadId: thread.appChatId,
+        title: 'Choose option',
+        summary: 'Pick one',
+        options: ['a', 'b'],
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'question.answer',
+            'cmd-question-span',
+            { questionId: 'q-span-1' },
+            { decision: 'dismiss' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'question_answered' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('emits a control_response span for ensemble.seat.toggle', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      let clock = 4000
+      const recorder = createControlledRecorder(() => (clock += 2))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-span',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+      expectOneControlResponseSpan(recorder.snapshot(), thread.appChatId)
+    })
+
+    it('contains a throwing recorder so the command result is unchanged', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      const throwingRecorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      throwingRecorder.record = () => {
+        throw new Error('recorder must not break control commands')
+      }
+      const domainWithThrowingRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: throwingRecorder
+      })
+
+      await expect(
+        domainWithThrowingRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-throw',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+    })
+
+    it('behaves identically when no recorder is supplied', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+      const domain = new HostNodeDomainPorts(domainOptions)
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-norecorder',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+    })
+
+    it('behaves identically without a recorder for run.cancel', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts(domainOptions)
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cancel-norecorder-start',
+            { threadId: thread.appChatId },
+            { text: 'start run to cancel' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'run.cancel',
+            'cmd-cancel-norecorder',
+            { threadId: thread.appChatId },
+            { expectedWorkId: 'run-cancel-norecorder-start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+      releaseRun()
+    })
+
+    it('behaves identically without a recorder for approval.decide', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: true, supportsQuestions: false })
+        ]
+      })
+      domain.runPort.beginRun({
+        runId: 'run-approval-norecorder',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domain.interactions.register({
+        id: 'ap-norecorder-1',
+        kind: 'approval',
+        providerId: 'muse',
+        runId: 'run-approval-norecorder',
+        threadId: thread.appChatId,
+        title: 'Approve tool',
+        summary: 'Allow tool execution',
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'approval.decide',
+            'cmd-approval-norecorder',
+            { approvalId: 'ap-norecorder-1' },
+            { decision: 'accept' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'approval_decided' })
+    })
+
+    it('behaves identically without a recorder for question.answer', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [
+          createInteractionProvider({ supportsApprovals: false, supportsQuestions: true })
+        ]
+      })
+      domain.runPort.beginRun({
+        runId: 'run-question-norecorder',
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      domain.interactions.register({
+        id: 'q-norecorder-1',
+        kind: 'question',
+        providerId: 'muse',
+        runId: 'run-question-norecorder',
+        threadId: thread.appChatId,
+        title: 'Choose option',
+        summary: 'Pick one',
+        options: ['a', 'b'],
+        createdAt: '2026-08-24T05:00:00.000Z'
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'question.answer',
+            'cmd-question-norecorder',
+            { questionId: 'q-norecorder-1' },
+            { decision: 'dismiss' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'question_answered' })
+    })
+
+    it('skips the thread lookup and clock read when no recorder is supplied', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      let nowCalls = 0
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        now: () => {
+          nowCalls += 1
+          return 1
+        }
+      })
+      const helpers = domain as unknown as {
+        chatIdForCommandThread(threadId: string): string | undefined
+        controlResponseStartedAt(): number | undefined
+      }
+      const getThread = vi.spyOn(store, 'getThread')
+      expect(helpers.chatIdForCommandThread(thread.appChatId)).toBeUndefined()
+      expect(helpers.controlResponseStartedAt()).toBeUndefined()
+      expect(getThread).not.toHaveBeenCalled()
+      expect(nowCalls).toBe(0)
+      getThread.mockRestore()
+    })
+
+    it('contains a throwing thread lookup and clock so spans stay silent', async () => {
+      const { domainOptions } = open()
+      const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      const throwingStore = {
+        getThread: () => {
+          throw new Error('spiked store read')
+        }
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        store: throwingStore as unknown as HostProfileDomainStore,
+        now: () => {
+          throw new Error('spiked clock')
+        },
+        workSpanRecorder: recorder
+      })
+      const helpers = domain as unknown as {
+        chatIdForCommandThread(threadId: string): string | undefined
+        controlResponseStartedAt(): number | undefined
+      }
+      expect(helpers.chatIdForCommandThread('any-thread')).toBeUndefined()
+      expect(helpers.controlResponseStartedAt()).toBeUndefined()
+      expect(recorder.snapshot().spans).toHaveLength(0)
+    })
+
+    it('contains a throwing instrumentation lookup so seat.toggle still succeeds without a span', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+      const record = store.getThread(thread.appChatId)!
+      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
+
+      let clock = 5000
+      const recorder = createControlledRecorder(() => (clock += 2))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      // The authority read is call 1; the instrumentation lookup is call 2
+      // (spiked here); the toggle logic follows. Order-coupled by necessity:
+      // inter-read state change is the only production route to this throw.
+      const original = store.getThread.bind(store)
+      let calls = 0
+      const getThread = vi.spyOn(store, 'getThread').mockImplementation((threadId) => {
+        calls += 1
+        if (calls === 2) throw new Error('spiked instrumentation lookup')
+        return original(threadId)
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'ensemble.seat.toggle',
+            'cmd-seat-spiked-lookup',
+            { threadId: thread.appChatId },
+            { participantId: participants[0]!.id, enabled: false }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+      expect(recorder.snapshot().spans).toHaveLength(0)
+      getThread.mockRestore()
+    })
+  })
+
+  describe('round_start spans', () => {
+    function createControlledRecorder(now: () => number) {
+      return createWorkSpanRecorder({ process: 'host', maxRetained: 64, now })
+    }
+
+    function configureMuseThread(store: HostProfileDomainStore, threadId: string): void {
+      store.configureThread({
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        postureConsent: true
+      })
+    }
+
+    it('emits a round_start span at provider dispatch for composer.send', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      let clock = 1000
+      const recorder = createControlledRecorder(() => (clock += 5))
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-round-start',
+            { threadId: thread.appChatId },
+            { text: 'dispatch me' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      const snapshot = recorder.snapshot()
+      expect(snapshot.spans).toHaveLength(1)
+      expect(snapshot.spans[0]).toMatchObject({
+        chatId: thread.appChatId,
+        runId: 'run-round-start',
+        kind: 'round_start',
+        process: 'host',
+        resource: 'none'
+      })
+      expect(snapshot.spans[0].durationMs).toBeGreaterThanOrEqual(0)
+      expect(snapshot.byKind.round_start?.count).toBe(1)
+      releaseRun()
+    })
+
+    it('does not emit round_start when admission rejects before dispatch', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, firstThread.appChatId)
+      configureMuseThread(store, secondThread.appChatId)
+
+      const recorder = createControlledRecorder(() => 1000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 0,
+        shutdownTimeoutMs: 1_000,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cap-hold',
+            { threadId: firstThread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(recorder.snapshot().byKind.round_start?.count).toBe(1)
+
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-cap-reject',
+            { threadId: secondThread.appChatId },
+            { text: 'overflow' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toHaveLength(
+        1
+      )
+      expect(recorder.snapshot().spans[0]?.runId).toBe('run-cap-hold')
+      releaseRun()
+      await domainWithRecorder.shutdown()
+    })
+
+    it('does not emit round_start for a queued start until it is actually dispatched', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, firstThread.appChatId)
+      configureMuseThread(store, secondThread.appChatId)
+
+      const recorder = createControlledRecorder(() => 2000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 1,
+        shutdownTimeoutMs: 1_000,
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-hold-dispatch',
+            { threadId: firstThread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+
+      const queued = domainWithRecorder.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-queued-dispatch',
+          { threadId: secondThread.appChatId },
+          { text: 'queued prompt' }
+        ),
+        { id: 'target' }
+      )
+      await vi.waitFor(() =>
+        expect(domainWithRecorder.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+      )
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([
+        expect.objectContaining({ runId: 'run-hold-dispatch', kind: 'round_start' })
+      ])
+
+      releaseRun()
+      await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([
+        expect.objectContaining({ runId: 'run-hold-dispatch', kind: 'round_start' }),
+        expect.objectContaining({ runId: 'run-queued-dispatch', kind: 'round_start' })
+      ])
+      await domainWithRecorder.shutdown()
+    })
+
+    it('does not emit round_start when provider.run throws before dispatch returns', async () => {
+      const { domainOptions, store, workspace } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      const museFactory = domainOptions.providers[0]
+      const throwingFactory = {
+        ...museFactory,
+        create: (input: Parameters<NonNullable<typeof museFactory.create>>[0]) => {
+          const instance = museFactory.create(input)
+          return Object.assign(Object.create(instance) as typeof instance, {
+            run: () => {
+              throw new Error('sync dispatch refused')
+            }
+          })
+        }
+      }
+      const recorder = createControlledRecorder(() => 1000)
+      const domainWithRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers: [throwingFactory],
+        workSpanRecorder: recorder
+      })
+      await expect(
+        domainWithRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-sync-throw',
+            { threadId: thread.appChatId },
+            { text: 'never dispatched' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      expect(recorder.snapshot().spans.filter((span) => span.kind === 'round_start')).toEqual([])
+      await domainWithRecorder.shutdown()
+    })
+
+    it('contains a throwing recorder so composer.send still dispatches', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      configureMuseThread(store, thread.appChatId)
+
+      const throwingRecorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
+      throwingRecorder.record = () => {
+        throw new Error('recorder must not break composer.send')
+      }
+      const domainWithThrowingRecorder = new HostNodeDomainPorts({
+        ...domainOptions,
+        workSpanRecorder: throwingRecorder
+      })
+      await expect(
+        domainWithThrowingRecorder.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-round-throw',
+            { threadId: thread.appChatId },
+            { text: 'still dispatch' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      releaseRun()
+    })
+  })
+
+  describe('TASKWRAITH_HOST_QUEUED_START (M2 first consumer)', () => {
+    it('is off by default: absent, empty, and every value other than the exact token 1', () => {
+      expect(isHostQueuedStartEnabled({})).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '0' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'false' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'true' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'on' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '1 ' })).toBe(false)
+    })
+
+    it('is on only for the exact token 1', () => {
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' })).toBe(true)
+    })
+
+    it('consults the queued-start lifecycle on composer.send admission when the gate is on', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const reserve = vi.spyOn(lifecycle, 'reserve')
+      const claim = vi.spyOn(lifecycle, 'claim')
+      const executeStart = vi.spyOn(lifecycle, 'executeStart')
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      const send = command(
+        'composer.send',
+        'run-queued-start-on',
+        { threadId: thread.appChatId },
+        { text: 'admit' }
+      )
+      await expect(domain.executeCommand(context, send, { id: 'target' })).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
+      expect(reserve).toHaveBeenCalledWith({
+        commandId: 'run-queued-start-on',
+        threadId: thread.appChatId,
+        fingerprint: fingerprintHostCommand(send).fingerprint
+      })
+      expect(claim).toHaveBeenCalledWith(
+        'run-queued-start-on',
+        expect.objectContaining({
+          commandId: 'run-queued-start-on',
+          threadId: thread.appChatId
+        })
+      )
+      expect(executeStart).toHaveBeenCalledWith('run-queued-start-on', expect.any(Function))
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('does not construct or consult the queued-start lifecycle when the gate is off', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
+      })
+      const executionClaimStore = {
+        coverageEpoch: 'a'.repeat(64),
+        path: '/ignored/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => {
+          throw new Error('claim store must not run while TASKWRAITH_HOST_QUEUED_START is off')
+        }),
+        list: vi.fn(() => {
+          throw new Error('claim store must not run while TASKWRAITH_HOST_QUEUED_START is off')
+        })
+      }
+      const queuedStartLifecycle = {
+        reserve() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        claim() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        cancel() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        executeStart() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        beginShutdown() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        }
+      } as unknown as ReturnType<typeof createHostNodeQueuedStartLifecycle>
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: false,
+        executionClaimStore,
+        createQueuedStartLifecycle,
+        queuedStartLifecycle
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-queued-start-off',
+            { threadId: thread.appChatId },
+            { text: 'baseline' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      expect(executionClaimStore.record).not.toHaveBeenCalled()
+      expect(executionClaimStore.list).not.toHaveBeenCalled()
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('awaits the injected execution-claim record before provider side effects', async () => {
+      const { domainOptions, store, workspace, prompts, releaseRun } = open({
+        killReleases: false
+      })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      let releaseClaim!: () => void
+      const claimRecorded = new Promise<void>((resolve) => {
+        releaseClaim = resolve
+      })
+      const executionClaimStore = {
+        coverageEpoch: 'a'.repeat(64),
+        path: '/test/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => claimRecorded),
+        list: vi.fn(() => [])
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        executionClaimStore
+      })
+      const starting = domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-durable-claim',
+          { threadId: thread.appChatId },
+          { text: 'claim first' }
+        ),
+        { id: 'target' }
+      )
+
+      await vi.waitFor(() => expect(executionClaimStore.record).toHaveBeenCalledTimes(1))
+      expect(prompts).toEqual([])
+      releaseClaim()
+      await vi.waitFor(() => expect(prompts).toEqual(['claim first']))
+      releaseRun()
+      await expect(starting).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
+      await domain.shutdown()
+    })
+
+    it('fails closed when the injected execution-claim record cannot persist', async () => {
+      const { domainOptions, store, workspace, prompts } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const executionClaimStore = {
+        coverageEpoch: 'b'.repeat(64),
+        path: '/test/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => Promise.reject(new Error('fsync failed'))),
+        list: vi.fn(() => [])
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        executionClaimStore
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-durable-claim-failed',
+            { threadId: thread.appChatId },
+            { text: 'must not start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      expect(executionClaimStore.record).toHaveBeenCalledTimes(1)
+      expect(prompts).toEqual([])
+      await domain.shutdown()
+    })
+
+    it('constructs the lifecycle factory when the gate is on and no instance is injected', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const createQueuedStartLifecycle = vi.fn(() => createHostNodeQueuedStartLifecycle())
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        createQueuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-queued-start-factory',
+            { threadId: thread.appChatId },
+            { text: 'admit' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('wires the flag reader and lifecycle consult in DomainPorts (red if the consumer is deleted)', () => {
+      const src = readFileSync(join(__dirname, 'HostNodeDomainPorts.ts'), 'utf8')
+      expect(src).toContain('isHostQueuedStartEnabled')
+      expect(src).toContain('createHostNodeQueuedStartLifecycle')
+      expect(src).toMatch(/queuedStartLifecycle\.reserve\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.claim\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.executeStart\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.cancel\(/)
+      expect(src).toContain('fingerprintHostCommand')
+      expect(src).toContain('acknowledgeQueuedComposerSend')
+      expect(src).toContain('queuedStartOnStarting')
+      expect(src).toContain('queuedStartOnStarted')
+      const ctorStart = src.indexOf('this.runPort = new HostNodeProfileRunPort')
+      const ctor = src.slice(ctorStart, src.indexOf('this.interactions', ctorStart))
+      expect(src).toMatch(
+        /const queuedStartLifecycle = this\.queuedStartLifecycle\s*\n\s*this\.runPort = new HostNodeProfileRunPort/
+      )
+      expect(ctor).toMatch(/\.\.\.\(queuedStartLifecycle\s*\?/)
+      expect(ctor).toContain('hostQueuedStartEnabled: true')
+      expect(ctor).not.toContain('createQueuedStartLifecycle')
+    })
+
+    it('reserves with the canonical command fingerprint, not the idempotency key', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const reserve = vi.spyOn(lifecycle, 'reserve')
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      const send = command(
+        'composer.send',
+        'run-canonical-fingerprint',
+        { threadId: thread.appChatId },
+        { text: 'admit' }
+      )
+      await expect(domain.executeCommand(context, send, { id: 'target' })).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
+      expect(reserve).toHaveBeenCalledTimes(1)
+      expect(reserve.mock.calls[0][0].fingerprint).toBe(fingerprintHostCommand(send).fingerprint)
+      expect(reserve.mock.calls[0][0].fingerprint).not.toBe(send.idempotencyKey)
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('acknowledgeQueuedComposerSend returns without waiting for a blocked capacity slot', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const threads = Array.from({ length: 2 }, () =>
+        store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      )
+      for (const thread of threads) {
+        store.configureThread({
+          threadId: thread.appChatId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'workspace_write',
+          postureConsent: true
+        })
+      }
+      const startingPhases: Array<{ commandId: string; phase: string }> = []
+      const onStarting = vi.fn((view: { commandId: string; phase: string }) => {
+        startingPhases.push({ commandId: view.commandId, phase: view.phase })
+      })
+      const onStarted = vi.fn()
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 1,
+        shutdownTimeoutMs: 1_000,
+        hostQueuedStartEnabled: true,
+        queuedStartOnStarting: onStarting,
+        queuedStartOnStarted: onStarted
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-held-capacity',
+            { threadId: threads[0]!.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(startingPhases).toContainEqual({
+        commandId: 'run-held-capacity',
+        phase: 'starting'
+      })
+      const ackStarted = Date.now()
+      await expect(
+        domain.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-queued-ack',
+            { threadId: threads[1]!.appChatId },
+            { text: 'queue' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      expect(Date.now() - ackStarted).toBeLessThan(250)
+      expect(startingPhases.some(({ commandId }) => commandId === 'run-queued-ack')).toBe(false)
+      releaseRun()
+      await vi.waitFor(() =>
+        expect(
+          startingPhases.some(
+            ({ commandId, phase }) => commandId === 'run-queued-ack' && phase === 'starting'
+          )
+        ).toBe(true)
+      )
+      await domain.shutdown()
+    })
+
+    it('routes a saturated background dispatch to queuedStartOnDispatchSettled without leaving work untracked', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const threads = Array.from({ length: 2 }, () =>
+        store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      )
+      for (const thread of threads) {
+        store.configureThread({
+          threadId: thread.appChatId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'workspace_write',
+          postureConsent: true
+        })
+      }
+      let releaseDispatchSettlement!: () => void
+      const dispatchSettlementHeld = new Promise<void>((resolve) => {
+        releaseDispatchSettlement = resolve
+      })
+      const onDispatchSettled = vi.fn(
+        async (_commandId: string, _threadId: string, _result: unknown) => {
+          await dispatchSettlementHeld
+        }
+      )
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 0,
+        shutdownTimeoutMs: 1_000,
+        hostQueuedStartEnabled: true,
+        queuedStartOnDispatchSettled: onDispatchSettled
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-held-for-settle',
+            { threadId: threads[0]!.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      await expect(
+        domain.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-saturated-ack',
+            { threadId: threads[1]!.appChatId },
+            { text: 'queue' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
+      expect(onDispatchSettled.mock.calls[0][0]).toBe('run-saturated-ack')
+      expect(onDispatchSettled.mock.calls[0][1]).toBe(threads[1]!.appChatId)
+      expect(onDispatchSettled.mock.calls[0][2]).toMatchObject({
+        status: 'failed',
+        errorCode: 'host_saturated'
+      })
+      releaseRun()
+      let stopped = false
+      const stopping = domain.shutdown().then(() => {
+        stopped = true
+      })
+      await Promise.resolve()
+      expect(stopped).toBe(false)
+      releaseDispatchSettlement()
+      await stopping
+      expect(stopped).toBe(true)
+    })
+
+    it('queued persist proof retains start after beginRun, user prompt, and immediate finish', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const museOffers = hostProviderOffers('muse', true)!
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const holder: { domain?: HostNodeDomainPorts } = {}
+      const fastProvider: HostNodeProviderInstance = {
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async (input) => {
+          holder.domain!.runPort.beginRun({
+            runId: input.runId,
+            threadId: input.threadId,
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            startedAt: '2026-08-24T05:00:00.000Z'
+          })
+          holder.domain!.runPort.appendTranscript({
+            threadId: input.threadId,
+            runId: input.runId,
+            role: 'user',
+            text: input.prompt,
+            createdAt: '2026-08-24T05:00:00.000Z'
+          })
+          holder.domain!.runPort.finishRun({
+            runId: input.runId,
+            status: 'completed',
+            finishedAt: '2026-08-24T05:00:01.000Z',
+            warningSummaries: []
+          })
+          return { runId: input.runId, status: 'completed' }
+        },
+        cancel: () => true,
+        shutdown: async () => undefined
+      }
+      const providers: HostNodeProvider[] = [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUS',
+          offers: museOffers,
+          supportsApprovals: true,
+          supportsQuestions: false,
+          create: () => fastProvider
+        }
+      ]
+      const off = new HostNodeDomainPorts({ ...domainOptions, providers })
+      holder.domain = off
+      await expect(
+        off.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-fast-finish-off',
+            { threadId: thread.appChatId },
+            { text: 'fast' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      await off.shutdown()
+
+      const onDispatchSettled = vi.fn()
+      const on = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers,
+        hostQueuedStartEnabled: true,
+        queuedStartOnDispatchSettled: onDispatchSettled
+      })
+      holder.domain = on
+      await expect(
+        on.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-fast-finish-on',
+            { threadId: thread.appChatId },
+            { text: 'fast' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
+      expect(onDispatchSettled.mock.calls[0][0]).toBe('run-fast-finish-on')
+      expect(onDispatchSettled.mock.calls[0][1]).toBe(thread.appChatId)
+      expect(onDispatchSettled.mock.calls[0][2]).toMatchObject({ status: 'succeeded' })
+      await on.shutdown()
+    })
+
+    it('when the gate is on, ProfileRunPort receives the same Domain-owned lifecycle instance', async () => {
+      const { domainOptions } = open()
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const createQueuedStartLifecycle = vi.fn(() => lifecycle)
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        createQueuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBe(lifecycle)
+      expect(Reflect.get(domain, 'queuedStartLifecycle')).toBe(lifecycle)
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBe(
+        Reflect.get(domain, 'queuedStartLifecycle')
+      )
+      await domain.shutdown()
+    })
+
+    it('when the gate is off, DomainPorts passes no lifecycle to ProfileRunPort', async () => {
+      const { domainOptions } = open()
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
+      })
+      const queuedStartLifecycle = {
+        reserve() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        claim() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        cancel() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        executeStart() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        beginShutdown() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        }
+      } as unknown as ReturnType<typeof createHostNodeQueuedStartLifecycle>
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: false,
+        createQueuedStartLifecycle,
+        queuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      expect(Reflect.get(domain, 'queuedStartLifecycle')).toBeNull()
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBeNull()
+      await domain.shutdown()
+    })
+  })
+})

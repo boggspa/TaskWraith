@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute, resolve } from 'node:path'
+import {
+  beginProviderConfigWait,
+  type ProviderConfigWaitReason,
+  type ProviderConfigWaitSink
+} from '../perf/providerConfigWaitSpan'
 
 /**
  * Cursor reads native-tool and MCP policy from workspace-global files under
@@ -95,6 +100,11 @@ export interface CursorWorkspaceConfigLeaseRequest {
   readonly signal?: AbortSignal
   /** Observational only; it is never awaited and failures cannot affect FIFO. */
   readonly onQueued?: () => void | Promise<void>
+  /** Optional M1 attribution for provider_config_wait. Absence skips the span. */
+  readonly chatId?: string
+  readonly runId?: string
+  readonly participantId?: string
+  readonly laneId?: string
 }
 
 interface PendingRequest {
@@ -233,8 +243,22 @@ export function canonicalCursorWorkspaceConfigResource(resourcePath: string): st
   return resolve(path)
 }
 
-export function cursorWorkspaceConfigurationKey(posture: CursorWorkspaceConfigPosture): string {
-  return `cursor-workspace-config:v1:${posture}`
+/**
+ * Base key for a workspace-overlay lease. The caller appends an intent digest
+ * (see `cursorWorkspaceConfigIntentKey`) that already encodes the exact bytes
+ * installed — allow rules, deny rules, MCP entry — so the base needs to carry
+ * no policy of its own, and PRODUCTION PASSES NONE.
+ *
+ * Passing a posture additionally splits seats whose installed config is
+ * byte-identical, which made a second seat wait out the first seat's entire
+ * turn for no policy reason. Seats whose config genuinely differs still get
+ * different digests and still serialize: that separation is load-bearing,
+ * because `.cursor/cli.json` is workspace-global and its allow rules are what
+ * bound a bridged read-only seat running in Cursor's DEFAULT mode. The optional
+ * posture remains for callers that want deliberately distinct keys.
+ */
+export function cursorWorkspaceConfigurationKey(posture?: CursorWorkspaceConfigPosture): string {
+  return posture ? `cursor-workspace-config:v1:${posture}` : 'cursor-workspace-config:v1'
 }
 
 /**
@@ -309,9 +333,42 @@ function normalizeInstallation(
   })
 }
 
+export interface CursorWorkspaceConfigLeaseCoordinatorOptions {
+  /** Optional M1 provider_config_wait sink. Absence is safe. */
+  readonly spans?: ProviderConfigWaitSink
+}
+
+function classifyCursorProviderConfigWaitReason(
+  state: ResourceState,
+  configurationKey: string
+): ProviderConfigWaitReason {
+  if (state.restoring) return 'cohort_drain'
+  if (state.active) {
+    return state.active.configurationKey === configurationKey
+      ? 'cohort_drain'
+      : 'registration_change'
+  }
+  if (state.installing) {
+    return state.installingConfigurationKey === configurationKey
+      ? 'cold_start'
+      : 'registration_change'
+  }
+  if (state.queue.length > 0) {
+    return state.queue[0]!.configurationKey === configurationKey
+      ? 'cohort_drain'
+      : 'registration_change'
+  }
+  return 'cold_start'
+}
+
 export class CursorWorkspaceConfigLeaseCoordinator {
   private readonly resources = new Map<string, ResourceState>()
   private readonly callbackContext = new AsyncLocalStorage<WorkspaceConfigCallbackContext>()
+  private readonly spans?: ProviderConfigWaitSink
+
+  constructor(options: CursorWorkspaceConfigLeaseCoordinatorOptions = {}) {
+    this.spans = options.spans
+  }
 
   acquire(request: CursorWorkspaceConfigLeaseRequest): Promise<CursorWorkspaceConfigLease> {
     let resourceKey: string
@@ -357,13 +414,27 @@ export class CursorWorkspaceConfigLeaseCoordinator {
     }
 
     return new Promise<CursorWorkspaceConfigLease>((resolveLease, rejectLease) => {
+      const endWait = beginProviderConfigWait(this.spans, {
+        chatId: request.chatId,
+        runId: request.runId,
+        participantId: request.participantId,
+        laneId: request.laneId,
+        resource: 'cursor_overlay',
+        reason: classifyCursorProviderConfigWaitReason(state!, configurationKey)
+      })
       const pending: PendingRequest = {
         configurationKey,
         install: request.install,
         onInstallFailure: request.onInstallFailure,
         signal: request.signal,
-        resolve: resolveLease,
-        reject: rejectLease,
+        resolve: (lease) => {
+          endWait()
+          resolveLease(lease)
+        },
+        reject: (error) => {
+          endWait()
+          rejectLease(error)
+        },
         aborted: false,
         settled: false
       }

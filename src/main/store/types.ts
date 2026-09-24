@@ -1,14 +1,23 @@
+import type { SeatContinuityCheckpoint, ContinuityDelivery } from '../../shared/threadContinuity'
 import type { TodoItem } from '../TodoList'
 import type { FleetWaveClaim } from '../SubThreadWaveClaims'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
+import type { CustomProviderModels } from '../../shared/customProviderModels'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
+import type { ChatMessageOrigin } from '../../shared/messageOrigin'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { SeatChangeLink, SeatChangeRowPayload } from '../../shared/seatChange'
 import type { ContinuationHopsChangePayload } from '../../shared/continuationHopsChange'
+import type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
+import type { BlackboardChangePayload } from '../../shared/blackboardChange'
+import type { ExecutionPlanChangePayload } from '../../shared/executionPlanChange'
+export type { AutoApprovalsChangePayload } from '../../shared/autoApprovalsChange'
+export type { BlackboardChangePayload } from '../../shared/blackboardChange'
+export type { ExecutionPlanChangePayload } from '../../shared/executionPlanChange'
 export type {
   ContinuationHopsChangeActor,
   ContinuationHopsChangePayload
@@ -33,6 +42,8 @@ import type { SoloSteerTranscriptPreparation } from '../../shared/midRunSteering
 import type { EnsembleFanoutIsolationPolicy } from '../../shared/ensembleFanoutIsolation'
 import type { CloseoutReceipt } from '../../shared/closeoutReceipt'
 import type { EnsemblePromptAttribution } from '../../shared/ensemblePromptCostAttribution'
+import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
+import type { ExternalProviderThreadImportMetadata } from '../../shared/externalProviderThreadImport'
 export type {
   EnsembleFanoutIsolation,
   EnsembleFanoutIsolationPolicy
@@ -102,6 +113,18 @@ export type ThemeAppearance =
    * with the obsidian composer's polar twin.
    */
   | 'alabaster'
+  /**
+   * Xcode-inspired High Contrast (Dark). Deep opaque editor background,
+   * saturated syntax tokens matching Xcode's HC palette, prominent blue-band
+   * active-line highlight, seamless gutter. Pairs with `xcode-light`.
+   */
+  | 'xcode-dark'
+  /**
+   * Xcode-inspired High Contrast (Light). Clean white editor background,
+   * saturated syntax tokens matching Xcode's HC Light palette, light-blue
+   * active-line highlight, seamless gutter. Pairs with `xcode-dark`.
+   */
+  | 'xcode-light'
 export type ThemeCornerStyle = 'rounded' | 'hard'
 export type ThemeAccentStyle =
   | 'system'
@@ -161,6 +184,75 @@ export type PromptSurfaceStyle = 'theme' | 'solid' | 'liquid_glass' | 'classic'
  * Only lane cards pair, never ordinary transcript rows.
  */
 export type FanoutLaneLayout = 'stacked' | 'paired'
+/**
+ * How much of a turn's work the transcript renders.
+ *
+ * `standard` is the historical behaviour — every thinking, tool-call and
+ * fan-out viewport renders and expands. `tools` drops thinking viewports and
+ * keeps the rest expandable. `minimal` renders assistant messages plus
+ * collapsed one-liners; the one-liner still names the work ("Ran 2 commands ·
+ * Edited 1 file") and still updates as that work lands, so nothing disappears
+ * silently — it just stops unfolding.
+ *
+ * "Stops unfolding" rather than "cannot be opened at all", which this comment
+ * used to claim and which two shipped decisions have made untrue.
+ * Expandability is NOT a property of the view: a row is expandable iff opening
+ * it would show something. Under Minimal a sub-agent spawn wave therefore
+ * still opens (its segments survive the filter by design), while a
+ * thinking-only stack does not. See `activityStackHasVisibleContent`.
+ *
+ * Minimal is a TURN-CONTENT view, not a row-count view: it quietens what an
+ * agent DID, and does not thin what was SAID or by whom. Which row types it
+ * touches at all is recorded in `TRANSCRIPT_ROW_VIEW_GATING`. Two deliberate
+ * exceptions to the literal wording above live there and in
+ * `transcriptViewFold`: a fan-out lane keeps its result body, and a relayed
+ * sub-thread answer keeps its body while losing only its expander.
+ *
+ * A failed lane or run is deliberately exempt at every level. Folding a
+ * failure into a summary that reads like success is the one thing both this
+ * transcript and the iOS one refuse to do (`isTranscriptPriorityActivity` in
+ * renderer `lib/transcriptViewFold`, `TranscriptStackCollapse.swift`).
+ */
+export type TranscriptView = 'minimal' | 'tools' | 'standard'
+
+/**
+ * How large transcript message text renders, as a NAME rather than a number.
+ *
+ * The three names map to exactly one scale each, in renderer
+ * `lib/transcriptTextSize` — the single place that mapping exists. The token
+ * travels and the number is resolved once, at the one component that both
+ * stamps the CSS variable and mints the virtualiser's layout epoch, so the size
+ * the DOM renders at and the size the height estimator is calibrated for cannot
+ * be two different numbers. Persisting the NUMBER instead would re-open that:
+ * a stored 1.2 and a code default of 1.25 have no way to disagree loudly.
+ *
+ * `default` is today's rendering byte for byte — it resolves to exactly 1,
+ * which is the identity short-circuit in `transcriptLayoutScales` and the empty
+ * cache-key suffix in `transcriptLayoutEpochKeySuffix`.
+ */
+export type TranscriptTextSize = 'small' | 'default' | 'large'
+
+/**
+ * How wide the transcript's reading column runs, as a NAME.
+ *
+ * Deliberately NOT the same shape as `TranscriptTextSize`, and the difference
+ * is the whole design. For a text size the setting IS the number: one map, one
+ * resolution, one `const` handed to both consumers. For a width the setting
+ * only INFLUENCES the number — the column the virtualiser has to estimate for
+ * is the MEASURED `.transcript-inner` box, which depends on this name AND the
+ * window size AND which pane the transcript is in AND that pane's own ceiling
+ * (`--composer-content-max-width` is redefined in four scopes, and General Chat
+ * caps narrower still). So no width in px ever travels through JS: the name
+ * reaches CSS as a `data-transcript-width` attribute on `.transcript-inner`,
+ * CSS resolves it against the pane, and a ResizeObserver reads the resulting
+ * box back as the one width bucket the layout epoch and both height-cache keys
+ * are built from.
+ *
+ * `medium` is today's column byte for byte — it stamps NO attribute, so every
+ * `max-width` in every scope computes exactly what it computed before this
+ * setting existed.
+ */
+export type TranscriptWidth = 'narrow' | 'medium' | 'wide'
 export type ComposerStyle =
   | 'default'
   | 'codex'
@@ -259,6 +351,11 @@ export type ComposerStyle =
 // the two reach different products (API models vs the agent CLI), and because a
 // one-off overlap does not create the circumvention incentive that blanket
 // second-door support would.
+// `devin` is the Devin CLI seat (`devin acp`): an ACP-over-stdio agent lane on
+// the user's own paid seat. Auth is env keys (WINDSURF_API_KEY canonical,
+// DEVIN_API_KEY, lowercase windsurf_api_key) or the stored credentials file
+// (~/.local/share/devin/credentials.toml), with an optional custom
+// api_server_url endpoint. It is live-selectable.
 export type ProviderId =
   | 'gemini'
   | 'codex'
@@ -271,6 +368,7 @@ export type ProviderId =
   | 'pi'
   | 'mistral'
   | 'muse'
+  | 'devin'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -295,7 +393,11 @@ export interface ProviderReroutePlan {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
 }
 export interface ProviderRunPauseState {
@@ -422,6 +524,17 @@ export type ActiveGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
  * deliberately omitted rather than guessed; control-plane features treat only
  * `user` as safe display text. */
 export type ActiveGoalObjectiveSource = 'user' | 'agent'
+export type ActiveGoalSpecificationKind = 'user_prompt' | 'expected_outcome' | 'approved_plan'
+export interface ActiveGoalSpecification {
+  /** Which user-owned surface supplied the binding goal specification. */
+  kind: ActiveGoalSpecificationKind
+  /** Exact ChatMessage containing the untruncated source text when available. */
+  sourceMessageId?: string
+  /** Approved MissionPlanState / plan-artifact identity when the plan is binding. */
+  intendedPlanId?: string
+  /** Concise acceptance conditions; the referenced prompt/plan remains authoritative. */
+  acceptanceCriteria?: string[]
+}
 export type ActiveGoalMode =
   | 'codex_native'
   | 'claude_native'
@@ -450,9 +563,12 @@ export interface GoalRuntimeLedger {
 }
 export interface ActiveGoal {
   id: string
+  /** Bounded display summary. `specification.sourceMessageId` identifies the
+   * untruncated user prompt or approved plan that remains authoritative. */
   objective: string
   /** Provenance of `objective`, not of its lifecycle/status fields. */
   objectiveSource?: ActiveGoalObjectiveSource
+  specification?: ActiveGoalSpecification
   status: ActiveGoalStatus
   mode: ActiveGoalMode
   provider: ProviderId
@@ -466,6 +582,22 @@ export interface ActiveGoal {
   completedAt?: string
   completedSummary?: string
   lastStatusReason?: string
+}
+
+export type ThreadTitleSource = 'placeholder' | 'prompt-fallback' | 'local-ai' | 'user'
+
+/**
+ * Provenance for the current thread title. Missing legacy metadata is decoded
+ * conservatively by the title lifecycle helpers: factory placeholders remain
+ * replaceable, while an unrelated non-placeholder title is treated as user
+ * authored. `sourceMessageId` and `evidenceFingerprint` form the compare-and-
+ * swap guard for an asynchronous on-device refinement.
+ */
+export interface ThreadTitleProvenance {
+  source: ThreadTitleSource
+  sourceMessageId?: string
+  sourceFingerprint?: string
+  evidenceFingerprint?: string
 }
 export type ChatScope = 'workspace' | 'global'
 export type ChatKind = 'single' | 'ensemble'
@@ -498,11 +630,11 @@ export type AgenticServiceId =
   // allow; Ask and Plan stay per-invocation ASK (grant-held). Separate from
   // meshCanvas / canvasInteraction so those grants never open the simulator.
   | 'simulatorCanvas'
-  // Canvas arbitrary `eval` (RCE in the previewed page). Its OWN service so it is
-  // STRICTER than canvasInteraction: signed-elevated — never auto-allowed by any
-  // preset, grant, or session-YOLO (every eval is individually human-approved),
-  // denied outright under read-only, and non-grantable. See PermissionService
-  // (non-grantable), EffectiveRunPermissions (read_only deny), and the YOLO guards.
+  // Canvas arbitrary eval in the previewed page. Its OWN service prevents broad
+  // presets, grants, session-YOLO, or Bossman authority from covering unrelated
+  // surfaces. The first desktop accept instead opens a 12h window for that exact
+  // live Canvas across navigation/later turns; each execution remains receipt-
+  // bound and audited. See PermissionService and the approval gates.
   | 'canvasEval'
   // Cross-thread retrospection reads (tw_recall_find/read/read_events). A
   // DEDICATED grant bucket — grantable like canvasInteraction, NOT signed-
@@ -526,13 +658,14 @@ export type AgenticServiceId =
   // MEDIA_EDITING_TOOLS + taskWraithToolAgenticService.
   | 'mediaEditing'
   // Media recording (future mic / camera capture). DEFAULT-DENY everywhere and
-  // NON-GRANTABLE — like canvasEval, capture always re-prompts (no preset/grant/
-  // YOLO auto-allow) and is denied outright under read-only. SCAFFOLD ONLY: no
+  // NON-GRANTABLE: no preset/grant/YOLO auto-allow, and denied outright under
+  // read-only. SCAFFOLD ONLY: no
   // capture tools classify to it yet; it reserves the grant bucket + posture so
   // the future mic/camera tools land default-closed.
   | 'mediaRecording'
   // Canvas Browser navigation (canvas_navigate: open/goto/back/forward/reload/
-  // stop on the sandboxed web-preview surface). A DEDICATED grant bucket —
+  // stop on the sandboxed web-preview surface, and web_login_open, which binds
+  // one to a saved site login). A DEDICATED grant bucket —
   // grantable like crossThreadRead under Accept Edits — kept separate from
   // `canvasInteraction` so approving read-class browsing never grants click/fill
   // actuation, and separate from `mcpTools` so Ask and Plan can
@@ -618,6 +751,37 @@ export type ExternalPathGrantAccess = 'read' | 'write'
 export type ExternalPathGrantDuration = 'thisRun' | 'thisThread' | 'workspace'
 export type NativeSubAgentRequestPolicy = 'ask' | 'provider' | 'taskwraith'
 export type KeyCommandModifier = 'primary' | 'shift' | 'alt'
+
+/**
+ * A user-authored exact brokered-shell rule. This is intentionally separate
+ * from AgenticWorkspaceGrant: that grant authorizes an entire service, while a
+ * command rule binds one normalized direct argv invocation in one workspace.
+ *
+ * `host_exact_unsandboxed` is a disclosure class, not a read-only assertion.
+ * The rule may launch repository-controlled code; TaskWraith only guarantees
+ * that the future brokered invocation matches this exact compiled identity.
+ */
+export interface CommandRule {
+  schemaVersion: 1
+  kind: 'brokered_shell_exact_argv'
+  id: string
+  workspaceId: string
+  primaryWorkspacePath: string
+  primaryWorkspaceRealPath: string
+  cwdRelativePath: string
+  executableRealPath: string
+  executableSha256: string
+  argv: string[]
+  parserVersion: 'static-shell-argv-v1'
+  fingerprint: string
+  signatureVersion: 'hmac-sha256-v1'
+  signature: string
+  riskClass: 'host_exact_unsandboxed'
+  createdAt: string
+  updatedAt: string
+  createdFromApprovalId?: string
+}
+
 export interface KeyCommandBinding {
   key: string
   modifiers: KeyCommandModifier[]
@@ -747,6 +911,14 @@ export interface EffectiveRunPermissions {
   presetId: PermissionPresetId
   approvalMode: string
   agenticServices: Record<AgenticServiceId, AgenticServicePolicy>
+  /**
+   * Exact, main-minted user consent carried by an UltraTask reasoning
+   * selection. This is part of the HMAC-signed run posture and authorizes only
+   * the bounded sub-thread delegation routes resolved by
+   * UltraTaskDelegationConsent. It is intentionally separate from the
+   * long-lived Agentic Services policy so the consent is run-scoped.
+   */
+  subThreadDelegationAutoAllowSource?: 'ultratask'
   networkAccess: AgenticNetworkPolicy
   externalPathGrants: ExternalPathGrant[]
   workspaceGrantServiceIds: AgenticServiceId[]
@@ -760,6 +932,7 @@ export interface RunPermissionPostureSnapshot {
   presetId?: PermissionPresetId
   readOnly?: boolean
   agenticServices?: Record<AgenticServiceId, AgenticServicePolicy>
+  subThreadDelegationAutoAllowSource?: 'ultratask'
   networkAccess?: AgenticNetworkPolicy
   externalPathGrantCount: number
   externalPathGrantHash?: string
@@ -806,6 +979,14 @@ export type EnsembleParticipantStatus =
    */
   | 'unreachable'
 
+/**
+ * Continuous-only since 2026-09-01: the composer's Turn/Continuous picker was
+ * retired and every round now runs 'continuous'. 'turn_bound' stays in the
+ * union ONLY as a legacy wire/persistence value (older chats, rounds, roster
+ * presets, scheduled snapshots, and remote/iOS callers may still carry it);
+ * every read path normalizes it to 'continuous'. Do not branch new behavior
+ * on it.
+ */
 export type EnsembleOrchestrationMode = 'turn_bound' | 'continuous'
 
 export type EnsembleFanoutPolicy =
@@ -816,7 +997,7 @@ export type EnsembleFanoutPolicy =
   | 'locked_writers_user_preflight'
 
 /**
- * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4;
+ * Staged fan-out (the staged fan-out design, spike 4;
  * permission-agnostic since 2026-08-04) — optional per-participant dispatch
  * stage. A stage is a pure fan-out dispatch role with preferred tooling and
  * NEVER a permission requirement: any seat, on any permission preset, can
@@ -852,6 +1033,8 @@ export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer' | 'background'
 export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
   | 'taskwraith-full-v2'
+  | 'taskwraith-full-v3'
+  | 'taskwraith-full-v4'
   | 'taskwraith-core-v1'
   | 'taskwraith-core-v2'
   | 'taskwraith-gateway-v1'
@@ -902,6 +1085,24 @@ export type TaskWraithMcpProfileId =
   // catalogue without mutating a receipted v16 session.
   | 'taskwraith-gateway-v17'
   | 'taskwraith-gateway-v17-mesh'
+  // v18 directly advertises the host-issued permission-opportunity redemption
+  // verb. Existing receipts retain v1-v17 exact memberships.
+  | 'taskwraith-gateway-v18'
+  | 'taskwraith-gateway-v18-mesh'
+  | 'taskwraith-gateway-v20'
+  | 'taskwraith-gateway-v20-mesh'
+  | 'taskwraith-gateway-solo-v4'
+  | 'taskwraith-gateway-v21'
+  | 'taskwraith-gateway-v21-mesh'
+  | 'taskwraith-gateway-solo-v5'
+  | 'taskwraith-gateway-v19'
+  | 'taskwraith-gateway-v19-mesh'
+  // Solo-v2 is the lean v18-derived birth catalogue; solo-v1 remains frozen.
+  | 'taskwraith-gateway-solo-v2'
+  | 'taskwraith-gateway-solo-v3'
+  // Solo-v1 retains the v17 capability universe while moving specialist
+  // coordination and Canvas tools behind capability discovery.
+  | 'taskwraith-gateway-solo-v1'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -1133,7 +1334,7 @@ export type ConcurrentLaneIntent = 'none' | 'read' | 'write'
 
 export type ConcurrentLaneWriteScopeKind = 'path' | 'glob' | 'workspace'
 
-export type ConcurrentLaneWriteScopeApprover = 'boss' | 'captain' | 'user-preflight'
+export type ConcurrentLaneWriteScopeApprover = EnsembleAuthorityRole | 'user-preflight'
 
 /**
  * Approved mutation envelope for a concurrent writer lane. The lane may still
@@ -1624,6 +1825,9 @@ export type EnsembleBossmanAssignmentStatus =
 
 export interface EnsembleBossmanWorkAssignment {
   id: string
+  /** Root Goal this step advances. Legacy assignments omit it and are treated
+   * as belonging to the currently active Goal until explicitly superseded. */
+  goalId?: string
   participantId: string
   objective: string
   acceptanceCriteria?: string
@@ -1636,6 +1840,9 @@ export interface EnsembleBossmanWorkAssignment {
 }
 
 export interface EnsembleBossmanRoundPlan {
+  /** Agent-facing execution strategy. `goal` remains a persistence alias only. */
+  planSummary?: string
+  /** @deprecated Compatibility alias for pre-work-contract records. */
   goal: string
   phase?: string
   ownerParticipantIds?: string[]
@@ -1743,6 +1950,7 @@ export type EnsembleBossmanPollResolution =
   | 'failed_floor'
   | 'vetoed'
   | 'stale'
+  | 'assignment_blocked'
   | 'gate_blocked'
 
 export interface EnsembleBossmanPoll {
@@ -1856,6 +2064,12 @@ export interface EnsembleConfig {
   }
   sessionActivityLedger?: SessionActivityLedgerEntry[]
   activeRound?: EnsembleRoundState
+  /**
+   * Exact wall duration for terminal Ensemble rounds, keyed by stable round id.
+   * The composer sums these durations and falls back to completed seat-run
+   * intervals only for legacy rounds that predate the ledger.
+   */
+  roundWallMsById?: Record<string, number>
   updatedAt?: string
   /**
    * 1.0.4-AF — opt-in "self-reflective" mode. When true, the ensemble
@@ -2132,6 +2346,7 @@ export type ProviderAdapterTransport =
   | 'pi-cli'
   | 'mistral-vibe-acp'
   | 'muse-exec-json'
+  | 'devin-acp'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 
@@ -2449,8 +2664,30 @@ export interface AppSettings {
   simulatorControlEnabled?: boolean
   /** Encrypted Ollama API key for direct requests to https://ollama.com/api. */
   ollamaApiKey?: string
+  /**
+   * Last DEFINITIVE answer the local Ollama daemon gave about its own account,
+   * so a completed `ollama signin` survives an app quit the way every other
+   * provider's sign-in does. Non-secret by construction: the signed-in flag and
+   * the plan name only, never the account id, email, or key. Main-owned — it is
+   * deliberately absent from the renderer settings-patch allowlist so a
+   * renderer cannot forge a sign-in. See `ollama/OllamaCliSignInMemory.ts`.
+   */
+  ollamaCliSignIn?: { signedIn: boolean; plan?: string; updatedAt: string }
   ollamaBaseUrl?: string
+  /**
+   * Optional custom Devin `api_server_url`. HTTPS only (plain HTTP is accepted
+   * on loopback only); an empty string leaves it unset. An explicit value
+   * overrides both the endpoint env vars and `credentials.toml`; an invalid
+   * value fails the run closed rather than silently falling back to env/TOML.
+   */
+  devinApiServerUrl?: string
   ollamaDefaultModel?: string
+  /** Model ids the user typed into the composer's "Custom model ID"
+   * field, keyed by provider and listed back in the picker so a local
+   * tag does not have to be retyped every turn. Renderer-writable
+   * through the generic settings patch; shape-checked on write by
+   * `sanitizeCustomProviderModels`. */
+  customProviderModels?: CustomProviderModels
   /**
    * Optional, user-selected Pi/Cerebras completion ceiling. Unset retains the
    * full model maximum; lower values help organizations whose Cerebras TPM
@@ -2481,6 +2718,16 @@ export interface AppSettings {
    * settings write, so recording it per run would put a disk write in the hot path.
    */
   ollamaModelContextTokens?: Record<string, number>
+  /**
+   * Per-model shared-transcript ingest overrides for Ensemble seats, keyed
+   * `provider:modelId` (chars). Only the override-eligible model classes —
+   * Codex GPT-5.3 Spark and 4B–12B-param Ollama locals — read this (see
+   * `shared/ensembleSeatIngest.ts`); every other model derives its ingest
+   * budget from its context window. Written from the Context · per
+   * participant panel's per-model slider; IS in SETTINGS_PATCH_KEYS
+   * (renderer-writable), sanitized on write.
+   */
+  ensembleModelIngestChars?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
    * DISABLED by default. Becomes offer/run eligible only when this is true AND
    * `antigravityOptInAcceptedAt` is set — see `isAntigravityOptInEnabled`. */
@@ -2496,6 +2743,12 @@ export interface AppSettings {
    * and never blocks a run — TaskWraith cannot see actual billing, so the hard
    * cap belongs in the user's Google Cloud billing budget. null/absent = no cap. */
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  /** Transport switch for the AntiGravity seat: false/absent = legacy `agy`
+   * CLI lane; true = official ACP binary lane (`agy_acp_server.par`/`.exe`
+   * over stdio). Inert in S1 — no dispatch, catalog, or UI reads it yet.
+   * Stays behind the existing two-part opt-in; default false preserves the
+   * existing format. */
+  antigravityUseAcp?: boolean
   /**
    * Soft calendar-month budget (USD) for Muse Code projected API-equivalent
    * spend. Advisory only — fills the Model Usage meter from the 1st and never
@@ -2582,6 +2835,52 @@ export interface AppSettings {
    * `DEFAULT_FANOUT_LANE_LAYOUT` (renderer `lib/fanoutLanePairing`), not to the
    * historical stack. Only a value written here overrides the default. */
   fanoutLaneLayout?: FanoutLaneLayout
+  /** Appearance default for how much of a turn a transcript renders.
+   * Optional, and ABSENT is the common case on upgrade — the per-chat view and
+   * its menu shipped before this setting did. Absence resolves to
+   * `DEFAULT_TRANSCRIPT_VIEW` (renderer `lib/transcriptViewOverride`), and a
+   * chat's own session override still beats whatever is written here; this is
+   * only the starting point.
+   *
+   * Absence is NOT durable, and that is the `fanoutLaneLayout` precedent rather
+   * than an oversight: `useAppearance.update()` persists its whole literal, so
+   * the FIRST unrelated appearance change a user makes materialises this key at
+   * its resolved value. Both keys behave this way. It is invisible while the
+   * resolved value equals the shipped default; if `DEFAULT_TRANSCRIPT_VIEW`
+   * ever moves, every install that touched any appearance setting is already
+   * pinned to the old one. Read this before treating "key present" as "user
+   * chose". */
+  defaultTranscriptView?: TranscriptView
+  /** Appearance size for transcript message text: `small` | `default` | `large`.
+   * Optional, and ABSENT is the common case on upgrade; absence resolves to
+   * `DEFAULT_TRANSCRIPT_TEXT_SIZE` (renderer `lib/transcriptTextSize`), which is
+   * `default` — scale exactly 1, i.e. today's rendering, today's estimates and
+   * today's cache keys.
+   *
+   * Absence is NOT durable here either, for the `fanoutLaneLayout` /
+   * `defaultTranscriptView` reason directly above: `useAppearance.update()`
+   * persists its whole literal, so the first unrelated appearance change
+   * materialises this key at its resolved value. For a TEXT SCALE that has a
+   * sharper consequence than it does for a view: once shipped, essentially
+   * every install is pinned to whatever `default` resolves to now, so moving
+   * that number later is a silent resize for users who never chose a size.
+   * Treat the three scales as frozen, and add a fourth name rather than
+   * re-pointing an existing one. */
+  transcriptTextSize?: TranscriptTextSize
+  /** Appearance width for the transcript reading column: `narrow` | `medium` |
+   * `wide`. Optional, and ABSENT is the common case on upgrade; absence
+   * resolves to `DEFAULT_TRANSCRIPT_WIDTH` (renderer `lib/transcriptWidth`),
+   * which is `medium` — no attribute stamped, so every pane's column computes
+   * exactly the width it always did.
+   *
+   * Absence is NOT durable here either, for the `fanoutLaneLayout` /
+   * `defaultTranscriptView` / `transcriptTextSize` reason above:
+   * `useAppearance.update()` persists its whole literal, so the first unrelated
+   * appearance change materialises this key at its resolved value. Unlike the
+   * text scale that is harmless to re-point later, because nothing is
+   * calibrated against `medium` — the estimator reads the column it MEASURES,
+   * not the name. */
+  transcriptWidth?: TranscriptWidth
   composerStyle: ComposerStyle
   transcriptFontFamily?: string
   composerFontFamily?: string
@@ -2616,11 +2915,10 @@ export interface AppSettings {
    * Defaults to true; requires the bridge daemon + macOS 26 Foundation
    * Models, so on older hosts it is silently inert. */
   closeoutAiSummaryEnabled?: boolean
-  /** Settings → General toggle for the optional, on-device ranker used by
-   * safe composer continuation suggestions. It receives only host-owned round
-   * enums and opaque candidate ids — never prompt text, transcripts, agent
-   * output, tool output, telemetry, or candidate wording. Defaults to true;
-   * turning it off preserves deterministic + local aggregate ranking. */
+  /** Settings → General toggle for contextual on-device composer drafts.
+   * The main process builds a bounded, authority-labelled evidence snapshot;
+   * Apple Foundation Models may propose grounded text or abstain. Defaults to
+   * true. Turning it off disables composer AutoDraft entirely. */
   composerContinuationAiEnabled?: boolean
   /** Settings → General toggle for evidence-gated host auto-compaction.
    * Generic run input/output is advisory and cannot authorize a session reset;
@@ -2634,6 +2932,15 @@ export interface AppSettings {
    * files default to the collapsed-card behaviour. Set false to restore
    * the flat per-message transcript. */
   ensembleCollapseOlderRounds?: boolean
+  /** Settings → General toggle: hold a `prevent-app-suspension` power
+   * assertion while local agent work is running, so an idle-sleep timer cannot
+   * suspend the app — and the Host with it — part way through a round. The
+   * display still sleeps and the screen still locks; only system suspension is
+   * blocked, and only while work is actually in flight. Defaults to true,
+   * because the failure it prevents (a long round suspended unattended) costs
+   * far more than the idle watts it spends. A closed lid or a user-requested
+   * sleep remains an OS-level ceiling that no assertion can override. */
+  keepAwakeWhileWorking?: boolean
   /**
    * Settings → General: max workers accepted by `delegate_wave` (clamped
    * 2–64; default 8). Structural ceiling is DELEGATE_WAVE_MAX_WORKERS (64),
@@ -2776,6 +3083,12 @@ export interface AppSettings {
   mainPaneOpacityOverride?: boolean
   agenticServices: AgenticServicesSettings
   agenticWorkspaceGrants: AgenticWorkspaceGrant[]
+  /**
+   * Main-owned exact brokered-shell rules. The renderer cannot write this
+   * field through the generic settings IPC; creation and revocation use their
+   * own approval-bound endpoints.
+   */
+  commandRules?: CommandRule[]
   /** User preference for provider-native sub-agent tools (`Task`,
    * `invoke_agent`, etc.) versus TaskWraith durable sub-threads. When
    * unset, the runtime asks on the first observable native request. */
@@ -2802,7 +3115,7 @@ export interface AppSettings {
    */
   approvalModeElevationAcknowledgements?: Record<string, boolean>
   bridgeDaemonEnabled?: boolean
-  /** Separate AppKit/Metal Studio companion. Default-on on macOS; the
+  /** Separate AppKit/Metal Studio companion. Opt-in on macOS; the
    * TASKWRAITH_STUDIO_COMPANION env override preserves force-on/off staging. */
   studioCompanionEnabled?: boolean
   /** iOS remote bridge (relay + E2EE transport). Settings-first so
@@ -3516,6 +3829,10 @@ export interface ChatMessage {
    * (link back to the sub-thread, distinct visual treatment, etc.). */
   metadata?: {
     kind?: 'subThreadReturn' | 'subThreadDelegation' | 'guestParticipantReply' | string
+    /** Provenance of a user row that arrived through a machine channel (the
+     * local-control socket). Host-stamped; the transcript labels the row
+     * "Sent from PID … / …" instead of "You". See `ChatMessageOrigin`. */
+    origin?: ChatMessageOrigin
     /** Sub-thread id for `kind: 'subThreadReturn' | 'subThreadDelegation'`. */
     subThreadId?: string
     /** Sub-thread's provider for badge/icon rendering. */
@@ -3571,6 +3888,18 @@ export interface ChatMessage {
      * Must not affect PromptComposition / mailbox delivery.
      */
     parallelResultWaveId?: string
+    /**
+     * Durable execution-graph result delivery. Graph-native and deliberately
+     * distinct from the subThreadReturn family: a graph stage is not a
+     * sub-thread, so reusing those keys would make closeout harvesting,
+     * attribution and viewport grouping describe the execution incorrectly.
+     */
+    executionId?: string
+    /** Idempotency link to the ExecutionResultMailbox record. */
+    executionMailboxEventId?: string
+    executionOutcome?: 'succeeded' | 'failed' | 'cancelled' | 'requires_action'
+    executionTitle?: string
+    executionSeatId?: string
     providerContextVisibility?: 'projection-only'
     subThreadOutcome?: 'done' | 'requires_action' | 'failed' | 'cancelled'
     /** Relationship of the linked child that produced this return. Missing on
@@ -3633,6 +3962,8 @@ export interface ChatMessage {
       deletions?: number
       owners?: DiffFileSummaryOwner[]
     }>
+    /** Full valid-path count when closeoutFileChanges stores a bounded prefix. */
+    closeoutFileChangesTotal?: number
     /**
      * Slim Sub-threads / Agent Invocation rows for the Task-complete epic stack.
      * Tombstoned at close-out time from durable parent delegation/return cards.
@@ -3679,6 +4010,18 @@ export interface ChatMessage {
      * DigitOdometer transcript row. The carrier's plain `content` remains the
      * fallback for TUI, iOS, export, and older renderers. */
     continuationHopsChange?: ContinuationHopsChangePayload
+    /** Authoritative set_round_plan execution-plan change promoted to the
+     * preserved ExecutionPlanChangeRow. Same carrier/fallback contract as the
+     * hop-limit change; never `proposedPlan`, which is an approval workflow. */
+    executionPlanChange?: ExecutionPlanChangePayload
+    /** Structured thread-wide Auto Approvals consent change. Desktop renders
+     *  the real Auto pill transitioning before -> after; plaintext clients use
+     *  the carrier message's explicit enabled/disabled sentence. */
+    autoApprovalsChange?: AutoApprovalsChangePayload
+    /** Run-authored Blackboard mutation promoted to a provider-accented,
+     *  tool-call-style transcript row. The carrier sentence remains the
+     *  plaintext fallback for TUI, iOS, exports, and older renderers. */
+    blackboardChange?: BlackboardChangePayload
     /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
      *  Persisted on the message so the card survives reload + the decision,
      *  and the raw <proposed_plan> block is stripped from `content`. */
@@ -3742,7 +4085,35 @@ export interface PinnedMessageGroup {
   chats: PinnedMessageChatGroup[]
 }
 
+/**
+ * Per-run provenance stamped ONLY by `settleStaleChatRun`
+ * (src/main/ChatRunReconciler.ts) at the moment it authors a 'failed' seal.
+ * Lets a later repair pass tell a reconciler-authored synthetic field from a
+ * provider-authored one: `authoredEndedAt`/`authoredExitCode` are true exactly
+ * when THIS settlement wrote the field (mirroring the `??` fill), and
+ * `previousStatus` is the active status the run projected before the sweep.
+ * Never infer any of this from prose or a bare `exitCode: 1` — ordinary
+ * provider failures look identical without this stamp and must never revive.
+ * The sweep's batch record (full covered run ids) lives on the settlement
+ * notice's `metadata.staleSettlement`, not here.
+ */
+export interface StaleRunSettlementProvenance {
+  schemaVersion: 1
+  origin: 'stale-run-reconciler'
+  /** Echo of the stamped run's own id, so repair can verify stamp↔run match. */
+  runId: string
+  /** `settledAt` of the sweep that authored this seal. */
+  settledAt: string
+  previousStatus: string
+  authoredEndedAt: boolean
+  authoredExitCode: boolean
+}
+
 export interface ChatRun {
+  hostRunOrigin?: import('../../shared/threadCatalogueTypes').HostCatalogueRunOrigin
+  /** Written only when a checkpoint was handed to this run's provider adapter. */
+  continuityCheckpointDelivery?: ContinuityDelivery
+
   runId: string
   /** Persisted-chat compaction schema applied after this run became historical. */
   historyCompactionGeneration?: number
@@ -3758,6 +4129,14 @@ export interface ChatRun {
   promptMessageId?: string
   requestedModel?: string
   actualModel?: string
+  /**
+   * Provider-reported human model name, kept beside the wire id rather than
+   * replacing it. The Ollama brand matcher tries the id first and this second,
+   * so a shortened tag ("north-mini:30b") can still resolve its maker from the
+   * catalog label. Never treat it as an identity: labels arrive stale, which is
+   * why the id stays authoritative.
+   */
+  modelLabel?: string
   approvalMode?: string
   workflowMode?: ChatWorkflowMode
   permissionPosture?: RunPermissionPostureSnapshot
@@ -3835,6 +4214,9 @@ export interface ChatRun {
   ensembleSleepReason?: string
   ensembleSleepResumeWarning?: string
   runAnalyst?: RunAnalystSnapshot
+  /** Present only when the stale-run reconciler authored this run's terminal
+   * seal. Absent on every provider-sealed run, including ordinary failures. */
+  staleSettlementProvenance?: StaleRunSettlementProvenance
 }
 
 export type MessageFeedbackVote = 'up' | 'down'
@@ -3947,39 +4329,64 @@ export interface CloseoutSummarySnapshot {
   error?: string
 }
 
-/**
- * A strictly bounded on-device ranking request for composer continuation.
- * It deliberately carries no transcript, tool output, telemetry, agent prose,
- * prompt text, or candidate text. The model may select only one of the host
- * generated opaque ids below; the renderer validates it again before use.
- */
-export type ContinuationProposalCandidateKind =
-  | 'picker-dismissed'
-  | 'task-continuation'
-  | 'lane-failed'
-  | 'uncommitted-changes'
+export type ContinuationDraftIntentKind = 'clarify' | 'continue-step' | 'verify' | 'review'
+
+export type ContinuationProposalPurpose = 'draft' | 'title'
 
 export interface ContinuationProposalRequest {
+  schemaVersion: 2
   /** Used by the main process to keep a secondary renderer in its own chat. */
   chatId: string
-  /** Host-created replacement checkpoint identity, not a transcript digest. */
-  checkpointId: string
-  phase: 'none' | 'working' | 'blocked'
-  roundState: 'none' | 'completed' | 'partial-success' | 'all-failed'
-  candidates: Array<{
-    id: string
-    kind: ContinuationProposalCandidateKind
-  }>
+  /** Renderer-local invalidation key. It is echoed, never trusted as evidence. */
+  contextVersion: string
+  purpose: ContinuationProposalPurpose
+}
+
+export interface ContinuationDraftProposal {
+  id: string
+  text: string
+  intentKind: ContinuationDraftIntentKind
+  evidenceIds: string[]
+  /** Deterministic host score in [0, 1], never model self-confidence. */
+  qualityScore: number
+  explanation: string
+  target?: {
+    participantId: string
+    mentionText: string
+  }
 }
 
 export interface ContinuationProposalSnapshot {
-  checkpointId: string
+  schemaVersion: 2
+  chatId: string
+  contextVersion: string
   generatedAt: string
-  status: 'ready' | 'unavailable' | 'error'
-  /** Present only when it exactly matches a candidate id in the request. */
-  candidateId?: string
+  status: 'ready' | 'abstained' | 'stale' | 'unavailable'
+  proposals: ContinuationDraftProposal[]
+  /** Optional three-to-seven-word title proposal; renderer applies it by CAS. */
+  title?: string
+  titleSourceMessageId?: string
+  titleSourceFingerprint?: string
+  titleExpectedCurrent?: string
+  fingerprint?: string
   model?: string
-  error?: string
+  reason?: string
+}
+
+export interface ContinuationTitleApplyRequest {
+  schemaVersion: 1
+  chatId: string
+  title: string
+  sourceMessageId: string
+  sourceFingerprint: string
+  evidenceFingerprint: string
+  expectedTitle: string
+}
+
+export interface ContinuationTitleApplyResult {
+  ok: boolean
+  chat?: ChatRecord
+  reason?: string
 }
 
 export interface StoredOllamaSessionMemory {
@@ -4045,11 +4452,15 @@ export interface FanoutWorktreeCandidate {
 }
 
 export interface ChatRecord {
+  /** Task-scoped agent notes. Main-owned; excluded from chat-list projections. */
+  continuityCheckpoints?: Record<string, SeatContinuityCheckpoint>
+
   appChatId: string
   scope?: ChatScope
   chatKind?: ChatKind
   provider?: ProviderId
   title: string
+  threadTitle?: ThreadTitleProvenance
   workspaceId?: string
   workspacePath?: string
   /** Main-owned durable identity for a thread's isolated Git worktree. */
@@ -4101,6 +4512,8 @@ export interface ChatRecord {
   hiddenFromMainList?: boolean
   /** Per-thread markdown notes shown above this chat's pinned messages. */
   pinnedNotes?: string
+  /** Explicitly user-selected, local, non-resumable provider transcript snapshot. */
+  externalProviderThreadImport?: ExternalProviderThreadImportMetadata
   linkedProviderSessionId?: string
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
@@ -4255,6 +4668,12 @@ export interface ChatRecord {
      * attached to its parent as an async worker, never as an Ensemble seat. */
     workerControl?: SubThreadWorkerControl
     /**
+     * App run id of the parent run that spawned this sub-thread. Written once
+     * at creation so the runManager terminal handler can cascade cancellation
+     * and settlement to wave children when the parent's round/turn terminalizes.
+     */
+    parentAppRunId?: string
+    /**
      * Ephemeral fleet lifecycle. `'ephemeral'` → archive-on-typed-return
      * (die-on-return). Omit / `'durable'` keeps recallable sub-threads.
      */
@@ -4367,14 +4786,53 @@ export interface ChatListRunSummary {
 
 export interface ChatListItem extends ChatRecord {
   summaryOnly: true
+  /** Bounded catalogue chrome is display-only and must never become a full-record save. */
+  catalogueProjection?: true
+  catalogueViewKey?: string
+  catalogueControl?: import('../../shared/taskWraithControlProjection').TaskWraithControlThreadFacts
+  cataloguePresentation?: import('../../shared/threadCatalogueTypes').ThreadCataloguePresentation
+  catalogueEditBase?: import('../../shared/threadCatalogueMerge').CatalogueEditBase
   messageCount: number
   runCount: number
+  /**
+   * Completed thread wall time in milliseconds. Solo and legacy records use
+   * the union of completed run intervals. Current Ensemble records use exact
+   * whole-round durations, including preparation and handoffs, with concurrent
+   * seats counted once.
+   *
+   * Stamped by every projection before it strips `runs` and the compact round
+   * timing ledger, exactly the way `runCount` is. Without it the composer's
+   * TOTAL THREAD timecode has nothing to measure on a summary row and paints
+   * 00:00:00:00 over a thread with hours of history
+   * (`resolveCumulativeRunBaseMs`). Optional because rows projected before the
+   * field existed carry no value — consumers treat `undefined` as unknown and
+   * fall back, never as "this thread never ran".
+   */
+  runWallMs?: number
   lastRun?: ChatRun
   /** Present on all freshly-built items (getChatList rebuilds index entries
    * that lack it, so its presence doubles as the index freshness marker).
    * Optional in the type so pre-existing fixtures/merge shapes stay valid —
    * consumers must handle absence (`item.runsSummary ?? item.runs`). */
   runsSummary?: ChatListRunSummary[]
+  /**
+   * Persisted `ensemble.wakeups` count on the record this row was built from.
+   * Optional because rows written before the field existed carry no value —
+   * and absence must never read as "no wakeups", or the boot recovery sweep
+   * would leave one armed with nothing left to fire it. Consumers treat
+   * `undefined` as unknown and fall back to the canonical read.
+   */
+  ensembleWakeupCount?: number
+  /**
+   * Pending `soloWakeups` count on the record this row was built from.
+   * Counts only `pending` records, deliberately unlike ensembleWakeupCount
+   * (all statuses): the recovery classifier skips non-pending wakeups, so a
+   * chat whose wakeups all expired needs no sweep. Optional because rows
+   * written before the field existed carry no value — and absence must never
+   * read as "no wakeups". Consumers treat `undefined` as unknown and fall
+   * back to the canonical read.
+   */
+  soloWakeupCount?: number
   searchText?: string
   searchPreview?: string
   sourceChatMtimeMs?: number
@@ -4580,8 +5038,11 @@ export type ApprovalLedgerDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  | 'host_destructive'
+  | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'
+  | 'canvas_eval_window'
   | 'system'
 export type ApprovalLedgerExpirationMode =
   | 'pending_timeout'
@@ -4948,7 +5409,11 @@ export interface ScheduledTask {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -5018,7 +5483,11 @@ export type WorkflowRunTemplate = Pick<
   | 'grokReasoningEffort'
   | 'museReasoningEffort'
   | 'mistralReasoningEffort'
+  | 'devinReasoningEffort'
+  | 'piReasoningEffort'
+  | 'ollamaReasoningEffort'
   | 'cursorReasoningEffort'
+  | 'antigravityReasoningEffort'
   | 'cursorFastMode'
   | 'runtimeProfileId'
   | 'geminiAuthProfileId'
@@ -5917,6 +6386,17 @@ export type RunQueueJobSource =
   | 'system'
 
 /**
+ * Durable solo-steer delivery fence.
+ *
+ * `prepared` means no provider admission has been attempted and startup may
+ * safely restore the transcript barrier. `provider_admission_pending` is
+ * written before the first provider-side effect. A process restart cannot
+ * distinguish accepted from merely attempted admission, so recovery must fail
+ * that row attention-visible rather than replay it.
+ */
+export type SoloSteerDeliveryPhase = 'prepared' | 'provider_admission_pending'
+
+/**
  * Content-addressed attachment persisted beyond the immediate live dispatch.
  * `path` is the canonical path in TaskWraith's main-owned media asset store,
  * never the original user/workspace path. The hash + MIME pair is the durable
@@ -5946,15 +6426,33 @@ export interface LegacyPersistedAttachmentPathRef {
 }
 
 /**
+ * Main-HMAC receipt for an exact user-picked external directory. Unlike an
+ * external-path execution grant, this is queue-local provenance: it authorizes
+ * replay of this one attachment only for the exact original job identity and
+ * remains verifiable after the renderer and process-local grant registry exit.
+ */
+export interface RunQueueDirectoryAttachmentReceipt {
+  schemaVersion: 1
+  canonicalPath: string
+  runId: string
+  chatId: string
+  workspaceId: string | null
+  workspacePath: string | null
+  provider: ProviderId
+  signature: string
+}
+
+/**
  * A folder attachment is intentionally a live reference rather than a byte
- * snapshot. Read authority is re-derived from the owning workspace or the
- * main-signed external path grants stored beside the queue request.
+ * snapshot. Read authority is re-derived from its owning workspace, a current
+ * exact picker/grant, or its exact main-signed queue receipt.
  */
 export interface DirectoryAttachmentRef {
   id?: string
   path: string
   name?: string
   kind: 'directory'
+  queueReceipt?: RunQueueDirectoryAttachmentReceipt
 }
 
 export type PersistedOrLegacyAttachmentRef =
@@ -6008,7 +6506,11 @@ export interface RunQueueRequestSnapshot {
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
   mistralReasoningEffort?: string | null
+  devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean | null
   scheduledTaskId?: string
   scheduledRunAt?: string
@@ -6025,6 +6527,11 @@ export interface RunQueueRequestSnapshot {
     threadId: string
     provider: string
     text: string
+    /**
+     * Main/Host-stamped correlation for the original Host receipt. This is
+     * durable queue metadata only and is never reused as a Bridge dispatch id.
+     */
+    readonly hostCommandActionId?: string
     approvalMode?: string
     workflowMode?: ChatWorkflowMode
     permissionPresetId?: string
@@ -6034,7 +6541,11 @@ export interface RunQueueRequestSnapshot {
     grokReasoningEffort?: string | null
     museReasoningEffort?: string | null
     mistralReasoningEffort?: string | null
+    devinReasoningEffort?: string | null
+  piReasoningEffort?: string | null
+    ollamaReasoningEffort?: string | null
     cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
     cursorFastMode?: boolean
     claudeFastMode?: boolean
     kimiFastMode?: boolean
@@ -6044,6 +6555,8 @@ export interface RunQueueRequestSnapshot {
     contextTurns?: number
     extraWorkspaceIds?: string[]
     scheduledRunAt?: string
+    /** Host-stamped origin of a socket prompt, re-emitted on the flushed action. */
+    origin?: ChatMessageOrigin
     /** Phone-attached images, materialized into the chat-owned transcript
      * media store AT ENQUEUE time (durable across restart) — never raw
      * base64 in the job record, which would bloat run-queue persistence.
@@ -6081,6 +6594,7 @@ export interface RunQueueDispatchReceipt {
   remoteComposer?: {
     workspaceId?: string
     threadId?: string
+    hostCommandActionId?: string
     provider?: string
     approvalMode?: string
     workflowMode?: ChatWorkflowMode
@@ -6165,6 +6679,14 @@ export interface RunQueueJob {
   queueMessageId?: string
   /** Main-minted while a solo steer waits for its durable transcript row. */
   steerPreparationKind?: SoloSteerTranscriptPreparation
+  /** Main-owned crash fence for the provider admission side effect. */
+  steerDeliveryPhase?: SoloSteerDeliveryPhase
+  /** Exact active run targeted by the fenced provider admission attempt. */
+  steerDeliveryActiveRunId?: string
+  /** Transport strategy selected for the fenced admission attempt. */
+  steerDeliveryStrategy?: string
+  /** Timestamp written atomically with the admission fence. */
+  steerDeliveryAttemptedAt?: string
   priority: number
   attempt: number
   promptPreview?: string

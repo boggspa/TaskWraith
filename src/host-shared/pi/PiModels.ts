@@ -1,0 +1,770 @@
+/**
+ * MOVED from src/main/pi/PiModels.ts (120 lines) — this is now the single
+ * definition, shared by the pure-Node Host and Electron main.
+ *
+ * src/main/pi/PiModels.ts is a re-export shim, so its public API is byte-identical
+ * and src/main/index.ts needs no change. Node-pure: node: builtins and
+ * src/shared/** only.
+ */
+/**
+ * Curated static catalog for the Pi seat. Wire ids are `<upstream>/<modelId>`
+ * using pi's own provider/id syntax; groq ids contain a second slash
+ * (`groq/openai/gpt-oss-120b`), so always split on the FIRST slash only via
+ * splitPiWireModelId.
+ *
+ * Static-floor rationale (the AntiGravity lesson): a provider whose model
+ * list can transiently be empty vanishes from every picker, so the seat
+ * ships a bundled list rather than shelling out to `pi --list-models`.
+ * Built-in metadata below is extracted from pi 0.84.2's bundled catalog
+ * (@earendil-works/pi-ai providers/data). Newer Mistral deployments, the
+ * curated OpenRouter routes, Cerebras Qwen 3.8 and the Xiaomi MiMo V2.6 pair
+ * are registered per run; re-check every source on pi upgrades.
+ *
+ * Curation is deliberate: flagship coder models per allowed upstream. Resold
+ * duplicates stay out unless they expose a distinct user-paid entitlement
+ * lane (Mistral-hosted GLM-5.2 is the explicit exception); qwen-token-plan's
+ * hosted copies remain omitted. Every entry must satisfy piModelPolicyVerdict;
+ * the test suite enforces it.
+ */
+
+import { isPiModelRetired } from '../../shared/piModelLifecycle'
+import { canonicalPiWireModelId, splitPiWireModelId } from '../../shared/piBrandTable'
+import type { PiUpstreamId } from './PiModelPolicy'
+
+export interface PiModelDefinition {
+  /** TaskWraith wire id: `<upstream>/<modelId>` (pi's own syntax). */
+  wireId: string
+  upstream: PiUpstreamId
+  /** The id pi expects after `--provider <upstream> --model ...`. */
+  modelId: string
+  label: string
+  contextWindow: number
+  maxOutputTokens: number
+  thinking: boolean
+  images: boolean
+}
+
+export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
+  // DeepSeek — first-party API
+  {
+    wireId: 'deepseek/deepseek-v4-pro',
+    upstream: 'deepseek',
+    modelId: 'deepseek-v4-pro',
+    label: 'V4 Pro',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 384_000,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'deepseek/deepseek-v4-flash',
+    upstream: 'deepseek',
+    modelId: 'deepseek-v4-flash',
+    label: 'V4 Flash',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 384_000,
+    thinking: true,
+    images: false
+  },
+  // Z.ai — GLM coding plan
+  {
+    wireId: 'zai/glm-5.2',
+    upstream: 'zai',
+    modelId: 'glm-5.2',
+    label: 'GLM-5.2',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'zai/glm-5.1',
+    upstream: 'zai',
+    modelId: 'glm-5.1',
+    label: 'GLM-5.1',
+    contextWindow: 200_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'zai/glm-4.7',
+    upstream: 'zai',
+    modelId: 'glm-4.7',
+    label: 'GLM-4.7',
+    contextWindow: 204_800,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  // Qwen token plan (Alibaba) — native Qwen models only, no resold copies
+  {
+    wireId: 'qwen-token-plan/qwen3.7-max',
+    upstream: 'qwen-token-plan',
+    modelId: 'qwen3.7-max',
+    label: 'Qwen3.7 Max',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'qwen-token-plan/qwen3.7-plus',
+    upstream: 'qwen-token-plan',
+    modelId: 'qwen3.7-plus',
+    label: 'Qwen3.7 Plus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 65_536,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'qwen-token-plan/qwen3.8-max',
+    upstream: 'qwen-token-plan',
+    modelId: 'qwen3.8-max',
+    label: 'Qwen3.8 Max',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  // MiniMax
+  {
+    wireId: 'minimax/MiniMax-M3',
+    upstream: 'minimax',
+    modelId: 'MiniMax-M3',
+    label: 'M3',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'minimax/MiniMax-M2.7',
+    upstream: 'minimax',
+    modelId: 'MiniMax-M2.7',
+    label: 'M2.7',
+    contextWindow: 204_800,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  // Xiaomi token plan — three regional deployments of the SAME catalog; the
+  // Settings card's region picker files the key under exactly one of them.
+  // V2 Pro, V2.5 and V2.5 Pro metadata is from pi 0.84.2's bundled
+  // xiaomi-token-plan-{cn,sgp,ams} catalogs. The V2.6 pair (released
+  // 2026-09-22) is bundled by no pi release up to 0.87.0, so
+  // PiXiaomiModelRegistration writes the selected row into the isolated
+  // per-run home; its metadata is Xiaomi's own model pages (1M context, 128K
+  // output, text/image/video/audio input, a `thinking.type` toggle) and the
+  // models.dev token-plan entries pi generates from (1,048,576 / 131,072).
+  // Video and audio are not advertised because the Pi RPC transport carries
+  // text and image only. Xiaomi takes V2.5 and V2.5 Pro offline at 10:00
+  // Beijing time on 2026-10-21 (see PI_MODEL_RETIREMENTS).
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2-pro',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2-pro',
+    label: 'MiMo V2 Pro (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.5',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.5',
+    label: 'MiMo V2.5 (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.5-pro',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.5-pro',
+    label: 'MiMo V2.5 Pro (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2-pro',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2-pro',
+    label: 'MiMo V2 Pro (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.5',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.5',
+    label: 'MiMo V2.5 (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.5-pro',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.5-pro',
+    label: 'MiMo V2.5 Pro (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2-pro',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2-pro',
+    label: 'MiMo V2 Pro (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.5',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.5',
+    label: 'MiMo V2.5 (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.5-pro',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.5-pro',
+    label: 'MiMo V2.5 Pro (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  // Mistral API — includes Mistral-hosted third-party and Labs deployments.
+  // Pi 0.82.1 does not bundle six of these ids; PiMistralModelRegistration
+  // registers only the selected missing row inside its isolated per-run home.
+  {
+    wireId: 'mistral/zai-glm-5-2',
+    upstream: 'mistral',
+    modelId: 'zai-glm-5-2',
+    label: 'GLM-5.2 (via Mistral)',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'mistral/mistral-medium-3.5',
+    upstream: 'mistral',
+    modelId: 'mistral-medium-3.5',
+    label: 'Mistral Medium 3.5',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'mistral/mistral-medium-latest',
+    upstream: 'mistral',
+    modelId: 'mistral-medium-latest',
+    label: 'Mistral Medium (Latest)',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'mistral/mistral-small-2603',
+    upstream: 'mistral',
+    modelId: 'mistral-small-2603',
+    label: 'Mistral Small 4',
+    contextWindow: 256_000,
+    maxOutputTokens: 256_000,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'mistral/mistral-large-2512',
+    upstream: 'mistral',
+    modelId: 'mistral-large-2512',
+    label: 'Mistral Large 3',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: true
+  },
+  {
+    wireId: 'mistral/devstral-2512',
+    upstream: 'mistral',
+    modelId: 'devstral-2512',
+    label: 'Devstral 2',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: false
+  },
+  {
+    wireId: 'mistral/codestral-2508',
+    upstream: 'mistral',
+    modelId: 'codestral-2508',
+    label: 'Codestral (Aug 2025)',
+    contextWindow: 131_072,
+    maxOutputTokens: 4_096,
+    thinking: false,
+    images: false
+  },
+  {
+    wireId: 'mistral/labs-leanstral-1-5',
+    upstream: 'mistral',
+    modelId: 'labs-leanstral-1-5',
+    label: 'Leanstral 1.5 (Labs)',
+    contextWindow: 262_144,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: false
+  },
+  {
+    wireId: 'mistral/mistral-medium-2508',
+    upstream: 'mistral',
+    modelId: 'mistral-medium-2508',
+    label: 'Mistral Medium 3.1',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: true
+  },
+  {
+    wireId: 'mistral/mistral-medium-2505',
+    upstream: 'mistral',
+    modelId: 'mistral-medium-2505',
+    label: 'Mistral Medium 3',
+    contextWindow: 131_072,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
+  },
+  {
+    wireId: 'mistral/ministral-14b-2512',
+    upstream: 'mistral',
+    modelId: 'ministral-14b-2512',
+    label: 'Ministral 3 (14B)',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: true
+  },
+  {
+    wireId: 'mistral/ministral-8b-2512',
+    upstream: 'mistral',
+    modelId: 'ministral-8b-2512',
+    label: 'Ministral 3 (8B)',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: true
+  },
+  {
+    wireId: 'mistral/ministral-3b-2512',
+    upstream: 'mistral',
+    modelId: 'ministral-3b-2512',
+    label: 'Ministral 3 (3B)',
+    contextWindow: 262_144,
+    maxOutputTokens: 262_144,
+    thinking: false,
+    images: true
+  },
+  // Groq — open-weights on fast inference silicon
+  {
+    wireId: 'groq/openai/gpt-oss-120b',
+    upstream: 'groq',
+    modelId: 'openai/gpt-oss-120b',
+    label: 'GPT-OSS 120B (Groq)',
+    contextWindow: 131_072,
+    maxOutputTokens: 65_536,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'groq/qwen/qwen3-32b',
+    upstream: 'groq',
+    modelId: 'qwen/qwen3-32b',
+    label: 'Qwen3 32B (Groq)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_960,
+    thinking: true,
+    images: false
+  },
+  // Cerebras — open-weights, ultra-fast
+  {
+    wireId: 'cerebras/zai-glm-4.7',
+    upstream: 'cerebras',
+    modelId: 'zai-glm-4.7',
+    label: 'GLM-4.7 (Cerebras)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_960,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'cerebras/gpt-oss-120b',
+    upstream: 'cerebras',
+    modelId: 'gpt-oss-120b',
+    label: 'GPT-OSS 120B (Cerebras)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_960,
+    thinking: true,
+    images: false
+  },
+  {
+    // Added after Pi 0.84.2; registered in the isolated home before launch.
+    wireId: 'cerebras/qwen-3.8-27b',
+    upstream: 'cerebras',
+    modelId: 'qwen-3.8-27b',
+    label: 'Qwen 3.8 27B (Cerebras)',
+    contextWindow: 131_072,
+    maxOutputTokens: 40_960,
+    thinking: true,
+    images: true
+  },
+  // OpenRouter — user-approved exceptions only. Pi 0.82.1 does not bundle
+  // these models, so PiOpenRouterModelRegistration writes active metadata in
+  // the selected run's isolated home before Pi starts.
+  {
+    // Historical metadata only: lifecycle filtering hides this from current
+    // offers and policy refuses a new run, while saved chats/seats retain its
+    // original label and context window.
+    wireId: 'openrouter/stealth/ox-alpha',
+    upstream: 'openrouter',
+    modelId: 'stealth/ox-alpha',
+    label: 'Ox Alpha',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'openrouter/z-ai/glm-5.2',
+    upstream: 'openrouter',
+    modelId: 'z-ai/glm-5.2',
+    label: 'GLM 5.2',
+    contextWindow: 256_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'openrouter/poolside/laguna-s-2.1',
+    upstream: 'openrouter',
+    modelId: 'poolside/laguna-s-2.1',
+    label: 'Laguna S 2.1',
+    contextWindow: 256_000,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free',
+    upstream: 'openrouter',
+    modelId: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    label: 'Nemotron 3 Ultra',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 65_536,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'openrouter/cohere/north-mini-code:free',
+    upstream: 'openrouter',
+    modelId: 'cohere/north-mini-code:free',
+    label: 'North Mini Code',
+    contextWindow: 256_000,
+    maxOutputTokens: 64_000,
+    thinking: true,
+    images: false
+  },
+  {
+    wireId: 'openrouter/minimax/minimax-m3:free',
+    upstream: 'openrouter',
+    modelId: 'minimax/minimax-m3:free',
+    label: 'M3 (OpenRouter)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 943_718,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'openrouter/thinkingmachines/inkling:free',
+    upstream: 'openrouter',
+    modelId: 'thinkingmachines/inkling:free',
+    label: 'Inkling',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'openrouter/thinkingmachines/inkling-small:free',
+    upstream: 'openrouter',
+    modelId: 'thinkingmachines/inkling-small:free',
+    label: 'Inkling Small',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 262_144,
+    thinking: true,
+    images: true
+  },
+  {
+    // Inception Mercury 2.5 Preview — fastest reasoning dLLM (diffusion LLM).
+    // Released 2026-08-31. OpenRouter model id: inception/mercury-2.5-preview.
+    wireId: 'openrouter/inception/mercury-2.5-preview',
+    upstream: 'openrouter',
+    modelId: 'inception/mercury-2.5-preview',
+    label: 'Mercury 2.5 Preview',
+    contextWindow: 260_000,
+    maxOutputTokens: 32_768,
+    thinking: true,
+    images: false
+  },
+  {
+    // Tencent Hy4 preview — 770B MoE (49B active), 1M context. Released 2026-08-28.
+    // OpenRouter model id: tencent/hy4-preview. Text-only input.
+    wireId: 'openrouter/tencent/hy4-preview',
+    upstream: 'openrouter',
+    modelId: 'tencent/hy4-preview',
+    label: 'Hy4 Preview',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 64_000,
+    thinking: true,
+    images: false
+  },
+  {
+    // Inception Mercury 2.5 — the GA diffusion LLM, released 2026-09-08. Kept
+    // BESIDE `inception/mercury-2.5-preview`: the preview id is still a live
+    // OpenRouter route, so retiring it here would break saved chats and seats.
+    wireId: 'openrouter/inception/mercury-2.5',
+    upstream: 'openrouter',
+    modelId: 'inception/mercury-2.5',
+    label: 'Mercury 2.5',
+    contextWindow: 260_000,
+    maxOutputTokens: 65_536,
+    thinking: true,
+    images: false
+  },
+  {
+    // Nex AGI Nex-N2.5-Mini — agentic coder, released 2026-09-08. Free route,
+    // BF16, Singapore. Text-only; the Pro sibling below is the vision one.
+    wireId: 'openrouter/nex-agi/nex-n2.5-mini:free',
+    upstream: 'openrouter',
+    modelId: 'nex-agi/nex-n2.5-mini:free',
+    label: 'Nex-N2.5-Mini',
+    contextWindow: 262_144,
+    maxOutputTokens: 235_929,
+    thinking: true,
+    images: false
+  },
+  {
+    // Nex AGI Nex-N2.5-Pro — the larger agentic coder, released 2026-09-08.
+    // Free route, FP8, Singapore. Accepts image input for its visual loop.
+    wireId: 'openrouter/nex-agi/nex-n2.5-pro:free',
+    upstream: 'openrouter',
+    modelId: 'nex-agi/nex-n2.5-pro:free',
+    label: 'Nex-N2.5-Pro',
+    contextWindow: 262_144,
+    maxOutputTokens: 235_929,
+    thinking: true,
+    images: true
+  },
+  {
+    // Sakana Fugu Max — the cost-performance route of Sakana AI's Fugu family,
+    // released 2026-09-11. Fugu is a learned multi-agent orchestrator: a model
+    // trained to route tasks across a fixed pool of open-weights and
+    // specialist models (NVIDIA's Nemotron family among them) and to call
+    // instances of itself recursively. Text + image + file input.
+    wireId: 'openrouter/sakana/fugu-max',
+    upstream: 'openrouter',
+    modelId: 'sakana/fugu-max',
+    label: 'Fugu Max',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    thinking: true,
+    images: true
+  },
+  {
+    // Sakana Fugu Ultra v2 — the higher-performance route of the same family,
+    // tuned for complex multi-step reasoning, autonomous research and
+    // full-stack work rather than cost. Same window and output ceiling.
+    wireId: 'openrouter/sakana/fugu-ultra-v2',
+    upstream: 'openrouter',
+    modelId: 'sakana/fugu-ultra-v2',
+    label: 'Fugu Ultra v2',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    thinking: true,
+    images: true
+  },
+  {
+    // Union Alpha — a free stealth preview, released 2026-09-16 and offered
+    // for seven days. `thinking` is FALSE on purpose: the endpoint advertises
+    // only max_tokens/temperature/top_p/tools/tool_choice/response_format,
+    // with no `reasoning` or `reasoning_effort`, so a ladder here would be a
+    // control the route discards. Verified against the OpenRouter Models API
+    // on 2026-09-16.
+    wireId: 'openrouter/stealth/union-alpha',
+    upstream: 'openrouter',
+    modelId: 'stealth/union-alpha',
+    label: 'Union Alpha',
+    contextWindow: 262_144,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
+  },
+  {
+    // Pareto — Unbiased's multimodal composite, released 2026-09-17. A paid
+    // route ($2.50/$7.50 per Mtok, $0.25 cache read) hosted by one provider,
+    // so OpenRouter forwards directly with no routing decision. `thinking`
+    // is FALSE on purpose, same shape as Union Alpha: supported_parameters
+    // are max_tokens, response_format, temperature, tool_choice, tools and
+    // top_p — no `reasoning` or `reasoning_effort` for a ladder to drive.
+    // Verified against the OpenRouter Models API on 2026-09-18.
+    wireId: 'openrouter/unbiased/pareto',
+    upstream: 'openrouter',
+    modelId: 'unbiased/pareto',
+    label: 'Pareto',
+    contextWindow: 262_144,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
+  },
+  {
+    // Jev 1.13 — TypeSafe's first System One structured decision model,
+    // released 2026-09-17. It returns typed choices rather than free-form
+    // text, so there is no reasoning axis and no image input: text in,
+    // structured decisions out. OpenRouter lists the page with a "coming
+    // soon" banner — no endpoints, pricing or output ceiling yet — so
+    // maxOutputTokens is a PLACEHOLDER (8,192, generous for a typed choice)
+    // to re-verify at launch, and the route will 404 until it goes live.
+    // Sources: OpenRouter model page + FAQ, read 2026-09-18.
+    wireId: 'openrouter/typesafe/jev-1.13',
+    upstream: 'openrouter',
+    modelId: 'typesafe/jev-1.13',
+    label: 'Jev 1.13',
+    contextWindow: 32_000,
+    maxOutputTokens: 8_192,
+    thinking: false,
+    images: false
+  },
+  {
+    // Space Bunny Alpha — a free stealth preview from an anonymous lab,
+    // released 2026-09-23. Unlike Union Alpha it DOES reason, and cannot stop:
+    // OpenRouter's reasoning block is `mandatory: true` with supported_efforts
+    // low/medium/high/xhigh/max and a Max default. Text + image + video in;
+    // video is not advertised because the Pi RPC transport carries text and
+    // image only. Verified against the OpenRouter Models API + /endpoints on
+    // 2026-09-23.
+    wireId: 'openrouter/stealth/space-bunny-alpha',
+    upstream: 'openrouter',
+    modelId: 'stealth/space-bunny-alpha',
+    label: 'Space Bunny Alpha',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 524_288,
+    thinking: true,
+    images: true
+  }
+]
+
+export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
+
+/**
+ * Split a wire id on the FIRST slash: upstream vs pi model id.
+ *
+ * The implementation moved to `shared/piBrandTable` when the renderer needed it
+ * for sub-provider hue tinting (the architecture guard forbids a renderer ->
+ * src/main runtime edge). Re-exported here so main call sites are unchanged and
+ * there is exactly ONE splitter — the Groq two-slash rule cannot drift.
+ */
+export { canonicalPiWireModelId, splitPiWireModelId }
+
+export function findPiStaticModel(wireId: string): PiModelDefinition | undefined {
+  const canonicalWireId = canonicalPiWireModelId(wireId)
+  return PI_STATIC_MODELS.find((model) => model.wireId === canonicalWireId)
+}
+
+/** Models whose upstream has a configured key (the picker's visible set). */
+export function piModelsForConfiguredUpstreams(
+  configured: ReadonlySet<string>,
+  now: Date = new Date()
+): PiModelDefinition[] {
+  return PI_STATIC_MODELS.filter(
+    (model) => configured.has(model.upstream) && !isPiModelRetired(model.wireId, now)
+  )
+}

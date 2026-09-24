@@ -32,7 +32,9 @@ export const THEME_APPEARANCE_PREVIEW_OPTIONS: readonly ThemeAppearancePreviewOp
   { value: 'cyber', label: 'Cyber' },
   { value: 'candy', label: 'Candy' },
   { value: 'mist', label: 'Mist' },
-  { value: 'sage', label: 'Sage' }
+  { value: 'sage', label: 'Sage' },
+  { value: 'xcode-dark', label: 'Xcode Dark' },
+  { value: 'xcode-light', label: 'Xcode Light' }
 ]
 
 interface ThemePreviewPalette {
@@ -248,6 +250,26 @@ const THEME_PREVIEW_PALETTES: Record<ThemeAppearance, ThemePreviewPalette> = {
     muted: '#746d64',
     accent: '#8d7e6a',
     accentSecondary: '#b0a193'
+  }),
+  'xcode-dark': palette({
+    app: '#1f1f24',
+    sidebar: '#262629',
+    surface: '#2c2c32',
+    border: 'rgba(255, 255, 255, 0.10)',
+    text: '#ffffff',
+    muted: '#545457',
+    accent: '#2656d0',
+    accentSecondary: '#5dd8ff'
+  }),
+  'xcode-light': palette({
+    app: '#ffffff',
+    sidebar: '#f6f6f6',
+    surface: '#ffffff',
+    border: 'rgba(0, 0, 0, 0.12)',
+    text: '#262626',
+    muted: '#707f8c',
+    accent: '#2656d0',
+    accentSecondary: '#ad3da4'
   })
 }
 

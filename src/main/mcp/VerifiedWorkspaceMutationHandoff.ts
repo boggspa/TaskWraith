@@ -967,9 +967,18 @@ function rewriteUnifiedPatch(
   const rewritten: string[] = []
   const used = new Set<string>()
   let pathHeaderCount = 0
-  let activeHunk: { oldRemaining: number; newRemaining: number } | undefined
+  let hunkIndex = 0
+  let activeHunk:
+    | {
+        index: number
+        oldDeclared: number
+        newDeclared: number
+        oldRemaining: number
+        newRemaining: number
+      }
+    | undefined
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     if (activeHunk) {
       if (line.startsWith('\\')) {
         rewritten.push(line)
@@ -984,10 +993,20 @@ function rewriteUnifiedPatch(
       } else if (prefix === '+') {
         activeHunk.newRemaining -= 1
       } else {
-        return fail('unsafe_patch', 'Patch hunk body does not match its declared line counts.')
+        const oldConsumed = activeHunk.oldDeclared - activeHunk.oldRemaining
+        const newConsumed = activeHunk.newDeclared - activeHunk.newRemaining
+        return fail(
+          'unsafe_patch',
+          `Patch hunk ${activeHunk.index} at patch line ${lineIndex + 1} has a body line without a diff prefix: declared old=${activeHunk.oldDeclared}, new=${activeHunk.newDeclared}; consumed old=${oldConsumed}, new=${newConsumed}.`
+        )
       }
       if (activeHunk.oldRemaining < 0 || activeHunk.newRemaining < 0) {
-        return fail('unsafe_patch', 'Patch hunk body exceeds its declared line counts.')
+        const oldConsumed = activeHunk.oldDeclared - activeHunk.oldRemaining
+        const newConsumed = activeHunk.newDeclared - activeHunk.newRemaining
+        return fail(
+          'unsafe_patch',
+          `Patch hunk ${activeHunk.index} at patch line ${lineIndex + 1} exceeds its declared line counts: declared old=${activeHunk.oldDeclared}, new=${activeHunk.newDeclared}; consumed old=${oldConsumed}, new=${newConsumed}.`
+        )
       }
       rewritten.push(line)
       if (activeHunk.oldRemaining === 0 && activeHunk.newRemaining === 0) {
@@ -1000,21 +1019,31 @@ function rewriteUnifiedPatch(
     if (hunk) {
       const oldRemaining = hunk[2] === undefined ? 1 : Number(hunk[2])
       const newRemaining = hunk[4] === undefined ? 1 : Number(hunk[4])
+      const nextHunkIndex = hunkIndex + 1
       if (
         !Number.isSafeInteger(oldRemaining) ||
         !Number.isSafeInteger(newRemaining) ||
         oldRemaining < 0 ||
         newRemaining < 0
       ) {
-        return fail('unsafe_patch', 'Patch hunk has invalid line counts.')
+        return fail(
+          'unsafe_patch',
+          `Patch hunk ${nextHunkIndex} at patch line ${lineIndex + 1} has invalid declared line counts.`
+        )
       }
+      hunkIndex = nextHunkIndex
       if (oldRemaining !== 0 || newRemaining !== 0) {
-        activeHunk = { oldRemaining, newRemaining }
+        activeHunk = {
+          index: hunkIndex,
+          oldDeclared: oldRemaining,
+          newDeclared: newRemaining,
+          oldRemaining,
+          newRemaining
+        }
       }
       rewritten.push(line)
       continue
     }
-
     const diffHeader = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line)
     if (diffHeader) {
       const oldPath = rewritePatchPath(

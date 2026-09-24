@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus, RunQueueRequestSnapshot } from '../store/types'
 import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
+import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 interface PromoteQueuedJobForSteerRequest {
   runId: string
@@ -38,6 +39,24 @@ interface MaybeAsyncBoolean {
 }
 
 type AsyncOrSync<T> = T | Promise<T>
+
+export function runQueueRequestHasRunnableContent(
+  request: RunQueueRequestSnapshot | null | undefined
+): request is RunQueueRequestSnapshot {
+  if (!request) return false
+
+  const hasAttachment = request.imageAttachments.some(
+    (attachment) => typeof attachment.path === 'string' && attachment.path.trim().length > 0
+  )
+  const hasDiscordContext = Boolean(request.discordContextSelection?.channelId.trim())
+  const hasProjectReference = Boolean(
+    request.projectReferenceContextSelection?.referenceIds.some(
+      (referenceId) => typeof referenceId === 'string' && referenceId.trim().length > 0
+    )
+  )
+
+  return Boolean(request.prompt.trim() || hasAttachment || hasDiscordContext || hasProjectReference)
+}
 
 interface QueuePort {
   getRunQueueJob: (runIdOrId: string) => RunQueueJob | null
@@ -277,7 +296,7 @@ export class RunLifecycleCoordinator {
     }
 
     const request = this.sanitizeRequestSnapshot(promotion.request)
-    if (!request || !request.prompt || request.prompt.length === 0) {
+    if (!runQueueRequestHasRunnableContent(request)) {
       const fallback = await this.tryFallback(runId, {
         ownerToken,
         reason: 'Queued job missing a runnable request payload.',
@@ -375,7 +394,7 @@ export class RunLifecycleCoordinator {
     }
 
     const request = this.sanitizeRequestSnapshot(leased.request)
-    if (!request || !request.prompt) {
+    if (!runQueueRequestHasRunnableContent(request)) {
       return {
         ok: false,
         kind: 'not-available',
@@ -547,6 +566,25 @@ export class RunLifecycleCoordinator {
                 typeof (entry as { id?: unknown }).id === 'string'
                   ? (entry as { id?: string }).id
                   : undefined
+              if (isPersistedAttachmentRef(entry)) {
+                return {
+                  persistenceVersion: 1 as const,
+                  ...(id ? { id } : {}),
+                  path: entry.path,
+                  ...(name ? { name } : {}),
+                  sha256: entry.sha256,
+                  mimeType: entry.mimeType,
+                  byteLength: entry.byteLength
+                }
+              }
+              if ((entry as { kind?: unknown }).kind === 'directory') {
+                return {
+                  ...(id ? { id } : {}),
+                  path,
+                  ...(name ? { name } : {}),
+                  kind: 'directory' as const
+                }
+              }
               return {
                 ...(id ? { id } : {}),
                 path,

@@ -8,6 +8,7 @@ import {
   structuredProviderNetworkReadRequested,
   structuredTaskWraithSafeToolRequested
 } from './GrokMcpAdvertise'
+import type { EffectiveRunPermissions } from '../store/types'
 
 describe('grokTaskWraithSafeToolRequested', () => {
   it('allows the TaskWraith-qualified ask_user_question request emitted by Grok ACP', () => {
@@ -264,6 +265,22 @@ describe('grokTaskWraithSafeToolRequested', () => {
       ])
     ).toMatchObject({ toolName: 'write_file' })
   })
+
+  it('recognizes every exact UltraTask delegation broker route', () => {
+    for (const toolName of ['delegate_wave', 'ultra_task', 'delegate_to_subthread']) {
+      expect(
+        grokTaskWraithBrokerToolRequested({
+          toolName: 'use_tool',
+          toolKind: 'execute',
+          rawToolCall: {
+            kind: 'execute',
+            rawInput: { tool_name: `TaskWraith__${toolName}` }
+          }
+        }),
+        toolName
+      ).toBe(true)
+    }
+  })
 })
 
 describe('structuredProviderNetworkReadRequested', () => {
@@ -338,13 +355,18 @@ describe('structuredProviderNetworkAccessAllowed', () => {
 })
 
 describe('shouldAdvertiseTaskWraithMcpToGrok', () => {
+  const ultraTaskPermissions = {
+    subThreadDelegationAutoAllowSource: 'ultratask'
+  } as EffectiveRunPermissions
+
   it('never advertises outside ACP', () => {
     expect(
       shouldAdvertiseTaskWraithMcpToGrok({
         acpEnabled: false,
         approvalMode: 'default',
         bridgeEnabled: true,
-        readOnlyAdvertiseEnabled: true
+        readOnlyAdvertiseEnabled: true,
+        effectivePermissions: ultraTaskPermissions
       })
     ).toBe(false)
   })
@@ -385,5 +407,28 @@ describe('shouldAdvertiseTaskWraithMcpToGrok', () => {
         readOnlyAdvertiseEnabled: true
       })
     ).toBe(true)
+  })
+
+  it('treats signed UltraTask selection as the read-only broker opt-in', () => {
+    expect(
+      shouldAdvertiseTaskWraithMcpToGrok({
+        acpEnabled: true,
+        approvalMode: 'plan',
+        bridgeEnabled: false,
+        readOnlyAdvertiseEnabled: false,
+        effectivePermissions: ultraTaskPermissions
+      })
+    ).toBe(true)
+    expect(
+      shouldAdvertiseTaskWraithMcpToGrok({
+        acpEnabled: true,
+        approvalMode: 'plan',
+        bridgeEnabled: false,
+        readOnlyAdvertiseEnabled: false,
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultra'
+        } as unknown as EffectiveRunPermissions
+      })
+    ).toBe(false)
   })
 })

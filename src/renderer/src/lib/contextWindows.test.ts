@@ -13,6 +13,18 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('gemini', 'flash-lite', Number.POSITIVE_INFINITY)).toBe(200_000)
   })
 
+  it("keeps the Mistral GLM-5.3 row off Devin's identically-named model", () => {
+    // CONTEXT_WINDOWS_BY_MODEL is keyed by BARE model id and consulted for
+    // every provider, so Mistral's Vibe-subscription GLM-5.3 takes the bare
+    // `glm-5-3` id (1M) while its API-key sibling keeps the `zai-` prefix.
+    // Devin owns the same bare id, so PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES
+    // pins Devin's row to its 262K fallback rather than widening it to 1M.
+    expect(resolveContextWindow('mistral', 'glm-5-3')).toBe(1_000_000)
+    expect(resolveContextWindow('mistral', 'zai-glm-5-3')).toBe(1_000_000)
+    expect(resolveContextWindow('devin', 'glm-5-3')).toBe(262_144)
+    expect(resolveContextWindow('devin', 'glm-5-3-flash')).toBe(262_144)
+  })
+
   it('resolves representative model ids across providers', () => {
     expect(resolveContextWindow('gemini', 'pro')).toBe(1_048_576)
     // GPT-5.6 trio — official raw API window (GA 2026-07-09).
@@ -23,14 +35,27 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('codex', 'gpt-5.4')).toBe(1_050_000)
     expect(resolveContextWindow('codex', 'gpt-5.4-mini')).toBe(400_000)
     expect(resolveContextWindow('claude', 'claude-opus-4-8-1m')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-fable-5-1')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-fable-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-fable-5-1m')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-mythos-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-5')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-sonnet-4-6')).toBe(200_000)
-    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(256_000)
-    expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(256_000)
-    expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(256_000)
+    // d19931eb8 feat(kimi): distinguish K3 context routes — kimi-k3 is the
+    // 1M route; kimi-k3-256k keeps the 256K window.
+    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(1_048_576)
+    expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)
+    expect(resolveContextWindow('kimi', 'kimi-k2.7-code')).toBe(262_144)
+    expect(resolveContextWindow('kimi', 'kimi-k2.6')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/cohere/north-mini-code:free')).toBe(256_000)
+    expect(resolveContextWindow('pi', 'openrouter/minimax/minimax-m3:free')).toBe(1_048_576)
+    expect(resolveContextWindow('pi', 'openrouter/stealth/union-alpha')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/unbiased/pareto')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/typesafe/jev-1.13')).toBe(32_000)
+    expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(1_048_576)
+    expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
+      1_048_576
+    )
     expect(resolveContextWindow('grok', 'grok-composer-2.5-fast')).toBe(200_000)
     expect(resolveContextWindow('grok', 'grok-4.5')).toBe(500_000)
     expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)
@@ -45,6 +70,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'qwen3.6:35b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.6:35b-a3b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.8:27b-mlx')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:12b-it-q4_K_M')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gemma4:31b-mlx')).toBe(262_144)
@@ -52,12 +78,16 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'ornith:latest')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ornith:9b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ornith:35b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'ornith-1.5:35b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'laguna-xs-2.1:q8_0')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'gpt-oss')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'gpt-oss:20b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'minicpm-v4.5:8b')).toBe(40_960)
     expect(resolveContextWindow('ollama', 'granite4.1:3b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'granite4.1:30b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:3b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:8b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'granite4.2:30b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron3:33b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'qwen3.5:4b')).toBe(262_144)
@@ -69,6 +99,8 @@ describe('resolveContextWindow', () => {
     // Both read off the live daemon's `mistral3.context_length`, not the
     // upstream Mistral API tier — Devstral Small 2 is 384k locally.
     expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(393_216)
+    expect(resolveContextWindow('ollama', 'mistral-medium-3.5:latest')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'mistral-medium-3.5:128b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'ministral-3:3b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'muse-glimmer:30b-mlx')).toBe(131_072)
@@ -82,9 +114,11 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'llama3.2:3b')).toBe(131_072)
   })
 
-  it('prefers live Ollama context_length from /api/tags over static table', () => {
+  it('prefers provider-discovered context lengths over static tables', () => {
     expect(resolveContextWindow('ollama', 'qwen3.5:9b', undefined, 128_000)).toBe(128_000)
     expect(resolveContextWindow('ollama', 'unknown-local', undefined, 65_536)).toBe(65_536)
+    expect(resolveContextWindow('kimi', 'kimi-k3', undefined, 1_048_576)).toBe(1_048_576)
+    expect(resolveContextWindow('kimi', 'kimi-k3', undefined, 262_144)).toBe(262_144)
   })
 
   it('uses provider fallbacks for all ten provider identities when the model is unknown', () => {
@@ -92,7 +126,7 @@ describe('resolveContextWindow', () => {
       gemini: 1_048_576,
       codex: 1_050_000,
       claude: 200_000,
-      kimi: 256_000,
+      kimi: 262_144,
       grok: 500_000,
       cursor: 200_000,
       ollama: 262_144,
@@ -101,7 +135,9 @@ describe('resolveContextWindow', () => {
       // Both Vibe seat models sit at 262_144 — NOT Pi's 1_000_000, despite the
       // shared brand word. The two `mistral` identities are different providers.
       mistral: 262_144,
-      muse: 200_000
+      muse: 200_000,
+      // Devin publishes no per-model window; conservative fallback, parity with mistral.
+      devin: 262_144
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<

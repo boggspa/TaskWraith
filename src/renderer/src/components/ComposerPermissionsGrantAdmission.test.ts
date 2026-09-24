@@ -26,7 +26,7 @@ describe('Composer permission-picker admission while running', () => {
     expect(region).not.toMatch(/const pickerDisabled =\s*[\s\S]*isCurrentComposerLocked/)
     expect(region).toContain('providerRunUnavailableReason(')
     expect(region).toContain('effectiveProvider')
-    expect(region).toContain('configuredProviderSnapshot.providerIds')
+    expect(region).not.toContain('configuredProviderSnapshot.providerIds')
   })
 
   it('does not wire the retired Tool Grants column into the composer picker', () => {
@@ -59,10 +59,13 @@ describe('Composer permission-picker admission while running', () => {
       'patchEnsembleParticipantById(participantId, patch)'
     )
     expect(participantEditorRegion).toContain('onLiveRosterMutation={(mutation) =>')
-    expect(participantEditorRegion).toContain(
-      '.requestEnsembleUserRosterMutation({'
-    )
-    expect(participantEditorRegion).toContain('chatId: currentChat.appChatId')
+    // The IPC itself moved to lib/ensembleRosterCommit.ts on 2026-09-11 so the
+    // lane could hold a write claim for the life of the request — inlining it
+    // here is what left Captain and auto-approval changes revertible by a
+    // delivery main built before them. The boundary being pinned is unchanged:
+    // this editor still reaches the live roster mutation, for THIS chat.
+    expect(participantEditorRegion).toContain('commitEnsembleLiveRosterMutation(')
+    expect(participantEditorRegion).toContain('currentChat.appChatId')
   })
 
   it('keeps revocations available during a solo run', () => {
@@ -82,7 +85,7 @@ describe('Composer permission-picker admission while running', () => {
     const attachmentRegion = sourceRegion(
       composerSource,
       '<ComposerAttachmentTray',
-      '{/* A ghost suggestion needs the overlay'
+      '{composerRichActive && ('
     )
     expect(attachmentRegion).not.toContain('disabled={isCurrentComposerLocked}')
 

@@ -69,6 +69,18 @@ describe('HistoryDeletionTransactionCoordinator', () => {
     expect(order).toEqual(['prepare', 'holds', 'quiesce', 'commit', 'release'])
   })
 
+  it('retains holds until the asynchronous durable commit acknowledges', async () => {
+    const commit = deferred()
+    const target = deps({ commit: () => commit.promise })
+    const coordinator = new HistoryDeletionTransactionCoordinator(target)
+    const completion = coordinator.run({ kind: 'global' })
+    await Promise.resolve()
+    expect(target.releaseHolds).not.toHaveBeenCalled()
+    commit.resolve()
+    await completion
+    expect(target.releaseHolds).toHaveBeenCalledOnce()
+  })
+
   it('joins the exact operation and rejects another scope before side effects', async () => {
     const external = deferred()
     let pending: HistoryDeletionPreparation | null = null

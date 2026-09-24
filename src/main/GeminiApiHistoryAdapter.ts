@@ -43,9 +43,11 @@ import {
   isExternalUntrustedMessage,
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
+import { isExternalProviderThreadImportMessage } from '../shared/externalProviderThreadImport'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
+import { isExecutionGraphInternalTranscriptMessage } from '../shared/executionGraphTranscriptVisibility'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
   return (
@@ -166,8 +168,11 @@ export function chatMessagesToGeminiContents(
     // outright. This check is ORDER-INDEPENDENT unlike the `includeSystem`
     // guard below it — a `user`-role row carrying external text would otherwise
     // be replayed as the host's own turn on every resumed Gemini session.
-    if (isExternalUntrustedMessage(message)) continue
+    if (isExternalUntrustedMessage(message) || isExternalProviderThreadImportMessage(message)) {
+      continue
+    }
     if (isRetiredExternalChannelInboundMessage(message)) continue
+    if (isExecutionGraphInternalTranscriptMessage(message)) continue
     if (isTaskWraithCloseoutMessage(message)) continue
     if (
       message.role === 'user' ||

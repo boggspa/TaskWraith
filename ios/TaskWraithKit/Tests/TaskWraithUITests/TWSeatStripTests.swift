@@ -45,6 +45,33 @@ struct TWSeatStripTests {
         #expect(side.roleLabel == "#8 GemProWork")
     }
 
+    @Test func rendersTheOpus55SeatWithTheIosCatalogueLabel() {
+        // Resolved through ModelContextLengths (the iOS catalogue), so a dropped
+        // "claude-opus-5-5" row would fall through to the raw wire id.
+        let side = twSeatStripSide(
+            seat(
+                provider: "claude", model: "claude-opus-5-5", role: "Lead", seatNumber: 1,
+                reasoningEffort: "max", permissionPresetId: "default", grantsCount: 1))
+        #expect(side.modelLabel == "Opus 5.5")
+        #expect(
+            twSeatStripAccessibilityLabel(before: side, after: side)
+                == "Seat: #1 Lead, Claude, Opus 5.5, Max reasoning, Accept Edits, 1 grant")
+    }
+
+    @Test func rendersTheGpt6SolSeatWithTheIosCatalogueLabel() {
+        // Resolved through ModelContextLengths (the iOS catalogue), so a dropped
+        // "gpt-6-sol" row would fall through to the raw wire id.
+        let side = twSeatStripSide(
+            seat(
+                provider: "codex", model: "gpt-6-sol", role: "Builder", seatNumber: 2,
+                reasoningEffort: "max", permissionPresetId: "default", grantsCount: 1))
+        #expect(side.providerLabel == "Codex")
+        #expect(side.modelLabel == "GPT-6-Sol")
+        #expect(
+            twSeatStripAccessibilityLabel(before: side, after: side)
+                == "Seat: #2 Builder, Codex, GPT-6-Sol, Max reasoning, Accept Edits, 1 grant")
+    }
+
     @Test func aRoleWithoutASeatNumberDropsTheHashPrefix() {
         #expect(twSeatStripSide(seat(provider: "claude", role: "Lead")).roleLabel == "Lead")
         #expect(twSeatStripSide(seat(provider: "claude", seatNumber: 3)).roleLabel == "")
@@ -167,11 +194,14 @@ struct TWSeatStripTests {
                 == "Seat: #1 Lead, Claude, Opus 5, Max reasoning, Accept Edits, 1 grant")
         let before = twSeatStripSide(
             seat(
-                provider: "kimi", model: "kimi-k2.7-code", role: "Lead", seatNumber: 1,
+                provider: "kimi", model: "kimi-k2.7-code-highspeed", role: "Lead",
+                seatNumber: 1,
                 thinkingEnabled: true, permissionPresetId: "read_only"))
         let changed = twSeatStripAccessibilityLabel(before: before, after: after)
         #expect(changed.hasPrefix("Seat: #1 Lead, Claude"))
-        #expect(changed.contains("Previously #1 Lead, Kimi, K2.7 Coding, Thinking reasoning, Ask"))
+        #expect(
+            changed.contains(
+                "Previously #1 Lead, Kimi, K2.7 Code Highspeed, Thinking reasoning, Ask"))
     }
 
     @Test func enabledChangeNotesDistinguishBothStatesFromAnOrdinaryEdit() {
@@ -320,5 +350,57 @@ struct TWSeatStripTests {
     /// seats vanish. Same rule, same reason as the change strip above.
     @Test func aRosterRowNeverFoldsIntoASystemNoticeSummary() {
         #expect(twIsPlainSystemNoticeRow(rosterRow()) == false)
+    }
+
+    // MARK: - User-added participant
+
+    private func addedRow() -> RemoteThreadSnapshot.Row {
+        let object: [String: Any] = [
+            "id": "added-1", "role": "system", "kind": "system",
+            "preview": "Participant Added worker added to the live roster.",
+            "seatParticipantAdded": [
+                "participantId": "p-added",
+                "label": "Added worker",
+                "appliedAt": "2026-08-05T12:00:00.000Z",
+                "seat": [
+                    "provider": "kimi", "model": "kimi-k2.7-code",
+                    "role": "Added worker", "seatNumber": 3,
+                    "permissionPresetId": "read_only"
+                ]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return try! JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+    }
+
+    @Test func aProjectedAddedParticipantDecodesAsASingleSeatLink() {
+        let row = addedRow()
+        let link = row.seatParticipantAdded?.renderableLink
+        #expect(link?.participantId == "p-added")
+        #expect(link?.before.provider == "kimi")
+        #expect(link?.after.provider == "kimi")
+        #expect(link?.before.role == "Added worker")
+        #expect(twSeatStripSide(link!.after).permissionLabel == "Ask")
+    }
+
+    /// The added strip is the only thing saying WHICH participant joined;
+    /// folded, the row reads "System · Participant Added worker added..."
+    /// and the seat vanishes. Same rule as the change strip.
+    @Test func anAddedParticipantRowNeverFoldsIntoASystemNoticeSummary() {
+        #expect(twIsPlainSystemNoticeRow(addedRow()) == false)
+    }
+
+    @Test func anAddedParticipantPayloadStandsDownWithoutAResolvableSeat() {
+        let object: [String: Any] = [
+            "id": "added-bad", "role": "system", "kind": "system",
+            "preview": "Participant added.",
+            "seatParticipantAdded": [
+                "participantId": "p-bad",
+                "seat": ["model": "kimi-k2.7-code"]
+            ]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        let row = try! JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+        #expect(row.seatParticipantAdded?.renderableLink == nil)
     }
 }

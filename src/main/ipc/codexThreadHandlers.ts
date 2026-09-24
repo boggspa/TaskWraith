@@ -12,6 +12,16 @@ type ThreadListParams = {
   sortDirection?: string | null
 }
 
+export interface CodexThreadListRequest {
+  limit: number
+  cursor: string | null
+  cwd: string | null
+  archived: boolean
+  searchTerm: string | null
+  sortKey: string
+  sortDirection: string
+}
+
 type ThreadForkParams = {
   excludeTurns?: unknown
   cwd?: string
@@ -44,6 +54,12 @@ export type AgentThreadSenderScope =
 
 export interface CodexThreadHandlersDeps {
   getCodexClient: () => CodexThreadClient
+  /**
+   * Read-only thread discovery may borrow the active compatible app-server.
+   * Keep it separate from the exclusive client used by fork/rollback so a
+   * renderer refresh cannot close provider-cohort admission between turns.
+   */
+  listCodexThreads?: (params: CodexThreadListRequest, timeoutMs: number) => Promise<unknown>
   getAppVersion: () => string
   providerDisplayName: (provider: ProviderId) => string
   resolveSenderAgentThreadScope: (event: IpcMainInvokeEvent) => AgentThreadSenderScope
@@ -197,21 +213,21 @@ export function registerCodexThreadHandlers(deps: CodexThreadHandlersDeps): void
       if (scope.kind === 'chat' && trimmedString(params.cursor)) {
         throw new Error('Provider thread pagination is unavailable in detached chat windows.')
       }
+      const request: CodexThreadListRequest = {
+        limit: params.limit || 40,
+        cursor: params.cursor || null,
+        cwd,
+        archived: Boolean(params.archived),
+        searchTerm: params.searchTerm || null,
+        sortKey: params.sortKey || 'updated_at',
+        sortDirection: params.sortDirection || 'desc'
+      }
+      if (deps.listCodexThreads) {
+        return deps.listCodexThreads(request, 20_000)
+      }
       const client = deps.getCodexClient()
       await client.ensureStarted(deps.getAppVersion())
-      return client.request(
-        'thread/list',
-        {
-          limit: params.limit || 40,
-          cursor: params.cursor || null,
-          cwd,
-          archived: Boolean(params.archived),
-          searchTerm: params.searchTerm || null,
-          sortKey: params.sortKey || 'updated_at',
-          sortDirection: params.sortDirection || 'desc'
-        },
-        20_000
-      )
+      return client.request('thread/list', request, 20_000)
     }
   )
 

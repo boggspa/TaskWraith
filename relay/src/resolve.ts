@@ -51,7 +51,7 @@ export interface ResolveDirectoryOptions {
    * When omitted, the directory creates + owns its own. The Tier-2 relay gateway
    * passes the SAME state so its push-trigger handler can reuse the
    * witnessed-pair registry + the shared anti-replay nonce set
-   * (docs/ios-push-gateway-design.md §5.3 / §8.4). Lifting these out of the
+   * (the APNs gateway design §5.3 / §8.4). Lifting these out of the
    * closure is the point of this seam.
    */
   state?: ResolveDirectoryState

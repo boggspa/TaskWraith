@@ -101,6 +101,7 @@ const homeFsAdapter = {
 }
 
 const privateCwdFsAdapter: KimiPrivateCwdFs = {
+  readFile: (path) => fsp.readFile(path, 'utf8'),
   mkdir: async (path) => {
     await fsp.mkdir(path, { recursive: true, mode: 0o700 })
   },
@@ -577,6 +578,7 @@ async function runProductionTurn(
         return runKimiAcpTurn({
           prompt: productionSnapshot.session.prompt,
           resumeSessionId: productionSnapshot.session.resumeSessionId,
+          cwdLifetime: 'run',
           cwd: productionSnapshot.cwd,
           initializeParams: productionSnapshot.initializeParams,
           mcpServers: productionSnapshot.mcpServers,

@@ -73,6 +73,14 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     platforms: ['darwin', 'linux']
   },
   {
+    id: 'devin',
+    label: 'Devin',
+    command: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
+    source: 'Cognition',
+    platform: 'macOS / Linux',
+    platforms: ['darwin', 'linux']
+  },
+  {
     id: 'pi',
     label: 'Pi',
     command: 'npm i -g @earendil-works/pi-coding-agent',
@@ -107,11 +115,26 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     label: 'Qwen 3.8 (27B-MLX; Ollama 0.32.12+)',
     command: 'ollama run qwen3.8:27b-mlx'
   },
+  {
+    id: 'qwen3.8-flash-next:125b-mlx',
+    label: 'Qwen 3.8 Flash Next (125B-MLX)',
+    command: 'ollama run qwen3.8-flash-next:125b-mlx'
+  },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)', command: 'ollama run gemma3:4b' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
   { id: 'gemma4:31b-mlx', label: 'Gemma 4 (31B-MLX)', command: 'ollama run gemma4:31b-mlx' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
+  {
+    id: 'ornith-1.5:9b',
+    label: 'Ornith 1.5 (9B Param)',
+    command: 'ollama run ornith-1.5:9b'
+  },
+  {
+    id: 'ornith-1.5:35b',
+    label: 'Ornith 1.5 (35B Param)',
+    command: 'ollama run ornith-1.5:35b'
+  },
   {
     id: 'laguna-xs-2.1:q8_0',
     label: 'Laguna XS 2.1 (33B-A3B Q8)',
@@ -128,6 +151,9 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'granite4:3b', label: 'Granite 4.0 (3B Param)', command: 'ollama run granite4:3b' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)', command: 'ollama run granite4.1:3b' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)', command: 'ollama run granite4.1:30b' },
+  { id: 'granite4.2:3b', label: 'Granite 4.2 (3B Param)', command: 'ollama run granite4.2:3b' },
+  { id: 'granite4.2:8b', label: 'Granite 4.2 (8B Param)', command: 'ollama run granite4.2:8b' },
+  { id: 'granite4.2:30b', label: 'Granite 4.2 (30B Param)', command: 'ollama run granite4.2:30b' },
   {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
@@ -144,6 +170,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     label: 'Devstral Small 2 (24B Param)',
     command: 'ollama run devstral-small-2:24b'
   },
+  {
+    id: 'mistral-medium-3.5:128b',
+    label: 'Mistral Medium 3.5 (128B Param)',
+    command: 'ollama run mistral-medium-3.5:128b'
+  },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)', command: 'ollama run ministral-3:3b' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)', command: 'ollama run ministral-3:14b' },
   {
@@ -152,6 +183,11 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     command: 'ollama run muse-glimmer:30b-mlx'
   },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)', command: 'ollama run llama3.1:8b' },
+  // These two keep the "DeepSeek" prefix that the picker rows drop. This list
+  // is a seat-headed install surface — it sits under "Ollama", not under the
+  // spoofed upstream brand — so the label has to name its own maker or the row
+  // reads as an unattributed "R1". Same split the brand-spoof helper documents:
+  // presentation surfaces name the brand, setup/auth surfaces name the seat.
   {
     id: 'deepseek-r1:1.5b',
     label: 'DeepSeek R1 (1.5B Param)',

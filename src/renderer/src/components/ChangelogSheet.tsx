@@ -15,7 +15,7 @@ interface ChangelogSheetProps {
   busy?: boolean
   onCheckForUpdates?: () => Promise<unknown> | unknown
   onDownloadUpdate?: () => Promise<unknown> | unknown
-  onInstallUpdateNow?: () => Promise<unknown> | unknown
+  onInstallUpdateNow?: (options?: { force?: boolean }) => Promise<unknown> | unknown
 }
 
 const SHEET_TITLE_ID = 'changelog-sheet-title'
@@ -56,13 +56,26 @@ export function ChangelogSheet({
   const notesSource = releaseNotes ? 'Release notes' : 'Bundled changelog'
   const releasePageUrl = updateSnapshot?.releasePageUrl
   const updateStatus = updateSnapshot?.status || 'idle'
+  const identityHandoff = updateSnapshot?.identityHandoff
+  const restartDeferral = updateSnapshot?.restartDeferral
   const canAct = !busy && updateStatus !== 'checking' && updateStatus !== 'downloading'
   // Phase-by-phase signpost for the update flow (check → download → ready →
   // installs on restart), so the user is guided through it rather than guessing
   // what each button does.
   const downloadPercent = Math.round(updateSnapshot?.downloadProgress?.percent ?? 0)
-  const statusCaption =
-    updateStatus === 'checking'
+  const statusCaption = identityHandoff
+    ? identityHandoff.phase === 'ready'
+      ? 'TaskWraith 1.9.9 can now move to the public Release identity. Your existing profile stays in place.'
+      : identityHandoff.phase === 'downloading'
+        ? `Downloading and verifying the Release installer… ${downloadPercent}%`
+        : identityHandoff.phase === 'downloaded'
+          ? 'The Release installer is verified and ready to open.'
+          : identityHandoff.phase === 'awaiting-target'
+            ? 'Finish the installer, then launch TaskWraith Release to complete the durable handoff receipt.'
+            : identityHandoff.phase === 'complete'
+              ? 'This profile completed its move to TaskWraith Release.'
+              : null
+    : updateStatus === 'checking'
       ? 'Checking for updates…'
       : updateStatus === 'available'
         ? `Update ${entry.version} available — download to continue.`
@@ -70,16 +83,35 @@ export function ChangelogSheet({
           ? `Downloading update… ${downloadPercent}%`
           : updateStatus === 'downloaded'
             ? updateSnapshot?.restartPending
-              ? `Update ${entry.version} downloaded — TaskWraith will restart when active work completes.`
-              : `Update ${entry.version} downloaded — ready to restart.`
+              ? `Update ${entry.version} downloaded — TaskWraith will restart when active work completes.${
+                  restartDeferral ? ` ${restartDeferral.reason}.` : ''
+                }`
+              : restartDeferral?.expired
+                ? `Update ${entry.version} downloaded — the queued restart stopped waiting (${restartDeferral.reason}). Restart to queue it again, or restart anyway.`
+                : `Update ${entry.version} downloaded — ready to restart.`
             : updateStatus === 'not-available'
               ? "You're on the latest version."
               : null
 
   const handleInstall = useCallback(() => {
     if (!onInstallUpdateNow) return
-    if (!confirm('Install update and restart TaskWraith now?')) return
+    const prompt = identityHandoff
+      ? 'Open the verified TaskWraith Release installer and quit the beta app? Your existing TaskWraith profile will stay in place.'
+      : 'Install update and restart TaskWraith now?'
+    if (!confirm(prompt)) return
     void onInstallUpdateNow()
+  }, [identityHandoff, onInstallUpdateNow])
+
+  const handleForceInstall = useCallback(() => {
+    if (!onInstallUpdateNow) return
+    if (
+      !confirm(
+        'Restart TaskWraith now without waiting for active work? Running agent turns, scheduled tasks, and Host runs will be interrupted.'
+      )
+    ) {
+      return
+    }
+    void onInstallUpdateNow({ force: true })
   }, [onInstallUpdateNow])
 
   const handleOpenRelease = useCallback(() => {
@@ -153,6 +185,18 @@ export function ChangelogSheet({
           </div>
         )}
 
+        {updateSnapshot?.feedNote && (
+          <div className="changelog-sheet-status changelog-sheet-status-feed" role="note">
+            {updateSnapshot.feedNote}
+          </div>
+        )}
+
+        {identityHandoff?.instructions && (
+          <div className="changelog-sheet-status changelog-sheet-status-identity" role="note">
+            {identityHandoff.instructions}
+          </div>
+        )}
+
         <div className="changelog-sheet-notes">
           <pre>{displayNotes}</pre>
         </div>
@@ -174,7 +218,7 @@ export function ChangelogSheet({
               disabled={!canAct}
               onClick={() => void onDownloadUpdate()}
             >
-              Download update
+              {identityHandoff ? 'Download Release installer' : 'Download update'}
             </button>
           )}
           {updateStatus === 'downloaded' && onInstallUpdateNow && (
@@ -184,13 +228,27 @@ export function ChangelogSheet({
               disabled={busy}
               onClick={handleInstall}
             >
-              Restart to install
+              {identityHandoff ? 'Open Release installer' : 'Restart to install'}
             </button>
           )}
+          {updateStatus === 'downloaded' &&
+            onInstallUpdateNow &&
+            !identityHandoff &&
+            (updateSnapshot?.restartPending || restartDeferral) && (
+              <button
+                type="button"
+                className="segmented-control-action segmented-control-action--compact"
+                disabled={busy}
+                onClick={handleForceInstall}
+              >
+                Restart anyway
+              </button>
+            )}
           {(updateStatus === 'error' ||
             updateStatus === 'idle' ||
             updateStatus === 'not-available' ||
             updateStatus === 'disabled') &&
+            identityHandoff?.phase !== 'blocked' &&
             onCheckForUpdates && (
               <button
                 type="button"
@@ -198,7 +256,11 @@ export function ChangelogSheet({
                 disabled={busy || updateStatus === 'disabled'}
                 onClick={() => void onCheckForUpdates()}
               >
-                {updateStatus === 'error' ? 'Check again' : 'Check for updates'}
+                {updateStatus === 'error'
+                  ? identityHandoff
+                    ? 'Resume or verify again'
+                    : 'Check again'
+                  : 'Check for updates'}
               </button>
             )}
           <button

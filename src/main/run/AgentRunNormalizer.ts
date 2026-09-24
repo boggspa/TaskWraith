@@ -1,4 +1,5 @@
 import type { AgentRunPayload } from './AgentRunTypes'
+import { chatMessageOriginFrom, type ChatMessageOrigin } from '../../shared/messageOrigin'
 import type {
   ActiveGoal,
   AppSettings,
@@ -17,10 +18,9 @@ import {
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
-import { normalizeActiveGoalObjective } from '../GoalState'
+import { normalizeActiveGoalObjective, normalizeActiveGoalSpecification } from '../GoalState'
 import {
   claudeModelSupportsFastMode,
-  isKimiK3Model,
   normalizeKimiReasoningEffort
 } from '../providers/StaticProviderModels'
 import type { ExternalPathGrantRunBindingContext } from '../ExternalPathGrantBinding'
@@ -258,10 +258,9 @@ export function normalizeAgentRunPayload(
             optionalStringOrNull(payload.reasoningEffort)
           )
         : optionalStringOrNull(payload.reasoningEffort),
-    serviceTier:
-      provider === 'kimi' && isKimiK3Model(optionalString(payload.model))
-        ? 'standard'
-        : optionalStringOrNull(payload.serviceTier),
+    // Kimi's Fast tier retired when Highspeed became its own picker row, so
+    // every Kimi route dispatches Standard and its own alias carries the rest.
+    serviceTier: provider === 'kimi' ? 'standard' : optionalStringOrNull(payload.serviceTier),
     claudeReasoningEffort: optionalStringOrNull(payload.claudeReasoningEffort),
     claudeFastMode:
       provider === 'claude' &&
@@ -269,8 +268,8 @@ export function normalizeAgentRunPayload(
       typeof payload.claudeFastMode === 'boolean'
         ? payload.claudeFastMode
         : undefined,
-    // Current K2.7 Coding and K3 models both advertise always_thinking. Ignore
-    // stale persisted/off inputs at the universal dispatch boundary.
+    // Every managed Kimi route advertises always_thinking. Ignore stale
+    // persisted/off inputs at the universal dispatch boundary.
     kimiThinking: provider === 'kimi' ? true : undefined,
     approvalMode: clampedPosture.approvalMode,
     workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,
@@ -285,6 +284,7 @@ export function normalizeAgentRunPayload(
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     geminiAuthProfileId: optionalStringOrNull(payload.geminiAuthProfileId),
     handoffSourceRunId: optionalString(payload.handoffSourceRunId),
+    ...hostStampedOriginField(payload.origin),
     failoverHopCount:
       typeof payload.failoverHopCount === 'number' && Number.isFinite(payload.failoverHopCount)
         ? payload.failoverHopCount
@@ -384,9 +384,13 @@ function normalizeAgentRunActiveGoal(value: unknown): ActiveGoal | null | undefi
   } catch {
     return undefined
   }
+  const objectiveSource = optionalString(value.objectiveSource)
+  const specification = normalizeActiveGoalSpecification(value.specification)
   return {
     id,
     objective,
+    ...(objectiveSource === 'user' || objectiveSource === 'agent' ? { objectiveSource } : {}),
+    ...(specification ? { specification } : {}),
     status,
     mode,
     provider,
@@ -436,4 +440,13 @@ function normalizeGoalRuntimeLedger(value: unknown): ActiveGoal['runtimeLedger']
     ...(endStatus === 'completed' || endStatus === 'cancelled' ? { endStatus } : {}),
     intervals
   }
+}
+
+/**
+ * The host-stamped origin survives normalization only in its sanitised shape;
+ * anything else (a wire payload, a renderer guess) yields no field at all.
+ */
+function hostStampedOriginField(value: unknown): { origin?: ChatMessageOrigin } {
+  const origin = chatMessageOriginFrom(value)
+  return origin ? { origin } : {}
 }

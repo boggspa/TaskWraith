@@ -18,7 +18,7 @@ public struct GhostMarkView: View {
 
     public var body: some View {
         Group {
-            if let image = Self.loadImage() {
+            if let image = Self.cachedImage {
                 image
                     .resizable()
                     .scaledToFit()
@@ -31,7 +31,9 @@ public struct GhostMarkView: View {
         .frame(width: size, height: size)
     }
 
-    private static func loadImage() -> Image? {
+    /// Loaded once (disk read + decode), not per `body` — this mark is the
+    /// identity badge's fallback, so it re-resolves with every agent row.
+    private static let cachedImage: Image? = {
         #if canImport(UIKit)
         if let url = Bundle.module.url(forResource: "ghost-mark", withExtension: "png"),
             let data = try? Data(contentsOf: url),
@@ -44,7 +46,7 @@ public struct GhostMarkView: View {
         }
         #endif
         return nil
-    }
+    }()
 }
 
 public struct GhostMonolineMarkView: View {
@@ -815,48 +817,49 @@ extension View {
         }
     }
 
-    /// Glass surface for sheet/full-screen-cover presentations.
+    /// One backdrop shared by sheet and full-screen-cover presentations.
     ///
-    /// The refractive liquid-glass variant is applied directly to the presented
-    /// content over a clear `presentationBackground`. Putting the material fill
-    /// *under* the glass inside the presentation background made the material
-    /// itself the glassed subject, which paints the neutral gray plate by
-    /// construction. The legacy fallback branches keep older systems and Reduce
-    /// Transparency honest.
-    private struct TWSheetGlassSurfaceModifier: ViewModifier {
+    /// This view must live inside presented content over a clear presentation
+    /// host. A glassEffect placed in `presentationBackground` samples the
+    /// sheet container's neutral backing instead of the presenting transcript,
+    /// reproducing the opaque gray plate.
+    private struct TWSheetGlassBackdrop: View {
         var cornerRadius: CGFloat
         var rimmed: Bool
 
-        func body(content: Content) -> some View {
+        var body: some View {
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             let isLight = TWThemeStore.shared.systemTheme.isLight
             let rimTop: Color =
                 isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.18)
             let rimBottom: Color =
                 isLight ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
-            // Light legibility scrim only — heavy composerBg washes read as solid
-            // gray over sheet presentation backgrounds.
-            let scrim =
-                isLight ? Color.white.opacity(0.06) : Color.black.opacity(0.10)
+            // Every iOS presentation owns the same adaptive theme wash. The
+            // fill is deliberately translucent so Liquid Glass can still
+            // refract/blur the presenting view, while text never rides the
+            // nearly bare background exposed by full-screen covers.
+            let backdropFill = TWTheme.appBg.opacity(
+                TWGlassSheetSurfacePolicy.backdropFillAlpha(
+                    glassEnabled: TWTheme.composerGlassEnabled))
 
-            if !TWTheme.composerGlassEnabled {
-                content
-                    .background { shape.fill(TWTheme.surface2) }
-                    .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
-            } else if #available(iOS 26.0, macOS 26.0, *) {
-                content
-                    .glassEffect(.clear, in: shape)
-                    .background(scrim, in: shape)
-                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
-            } else {
-                content
-                    .background {
-                        shape
-                            .fill(.ultraThinMaterial)
-                            .overlay(shape.fill(scrim))
-                    }
-                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
+            Group {
+                if !TWTheme.composerGlassEnabled {
+                    shape.fill(backdropFill)
+                } else if #available(iOS 26.0, macOS 26.0, *) {
+                    shape
+                        .fill(Color.clear)
+                        .glassEffect(.clear, in: shape)
+                        // The theme colour belongs above the sampled glass so
+                        // 0.72 means the same thing for every host.
+                        .overlay(shape.fill(backdropFill))
+                } else {
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay(shape.fill(backdropFill))
+                }
             }
+            .ignoresSafeArea()
+            .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
         }
 
         @ViewBuilder
@@ -870,6 +873,17 @@ extension View {
                             startPoint: .top,
                             endPoint: .bottom),
                         lineWidth: 1)
+            }
+        }
+    }
+
+    private struct TWSheetGlassSurfaceModifier: ViewModifier {
+        var cornerRadius: CGFloat
+        var rimmed: Bool
+
+        func body(content: Content) -> some View {
+            content.background {
+                TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
             }
         }
     }
@@ -895,6 +909,15 @@ extension EnvironmentValues {
 /// glass-hosted sheet (Diff Studio's DiffStudioSheetGlassPolicy delegates its
 /// chrome tier here).
 enum TWGlassSheetSurfacePolicy {
+    /// Adaptive app-background wash under every iOS sheet, full-screen cover,
+    /// popover and picker glass surface. The theme supplies the light/dark
+    /// colour; one alpha keeps presentation hosts visually consistent.
+    static let standardBackdropFillAlpha = 0.72
+
+    static func backdropFillAlpha(glassEnabled: Bool) -> Double {
+        glassEnabled ? standardBackdropFillAlpha : 1.0
+    }
+
     /// Alpha for chrome surfaces (list/form rows, cards, header bars) over the
     /// glass backdrop; nil keeps the host's default opaque fill. Reduce
     /// Transparency (glassEnabled false) keeps surfaces fully opaque over the
@@ -1000,7 +1023,10 @@ extension View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(cornerRadius)
                 .presentationBackground(.clear)
-                .modifier(TWSheetGlassSurfaceModifier(cornerRadius: cornerRadius, rimmed: rimmed))
+                .modifier(
+                    TWSheetGlassSurfaceModifier(
+                        cornerRadius: cornerRadius,
+                        rimmed: rimmed))
                 .twGlassPresentationHostChrome()
         #else
             self
@@ -1099,12 +1125,10 @@ func twSettledRowModelChip(from speaker: String?) -> String? {
 
 /// House surface for custom picker panels.
 ///
-/// iOS/macOS 26 gets the compositor-backed clear Liquid Glass variant applied
-/// directly to the picker content. Applying glass to a translucent background
-/// subview and then lowering that subview's opacity flattens the refraction into
-/// the grey plate this primitive is intended to avoid. Older systems use the
-/// real system ultra-thin material; Reduce Transparency gets an opaque theme
-/// surface instead of blur.
+/// iOS/macOS 26 gets a compositor-backed Liquid Glass background with the
+/// adaptive wash composited above it and picker content above both. Older
+/// systems use the real system ultra-thin material; Reduce Transparency gets
+/// an opaque theme surface instead of blur.
 ///
 /// `tint` is deliberately optional. Picker call sites can attach semantic
 /// accent colour without inventing another material implementation.
@@ -1118,17 +1142,23 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let isLight = TWThemeStore.shared.systemTheme.isLight
-        let scrimOpacity = colorSchemeContrast == .increased ? 0.18 : 0.10
-        let legibilityScrim =
-            isLight ? Color.white.opacity(scrimOpacity) : Color.black.opacity(scrimOpacity)
+        #if os(iOS)
+            let legibilityFill = TWTheme.appBg.opacity(
+                TWGlassSheetSurfacePolicy.backdropFillAlpha(
+                    glassEnabled: !(reduceTransparency || !TWTheme.composerGlassEnabled)))
+        #else
+            let isLight = TWThemeStore.shared.systemTheme.isLight
+            let scrimOpacity = colorSchemeContrast == .increased ? 0.18 : 0.10
+            let legibilityFill =
+                isLight ? Color.white.opacity(scrimOpacity) : Color.black.opacity(scrimOpacity)
+        #endif
         let rimWidth: CGFloat = colorSchemeContrast == .increased ? 1.5 : 1
 
         if reduceTransparency || !TWTheme.composerGlassEnabled {
             content
                 .background {
                     shape
-                        .fill(TWTheme.surface2)
+                        .fill(legibilityFill)
                         .overlay {
                             if let tint {
                                 shape.fill(tint.opacity(0.12))
@@ -1138,21 +1168,25 @@ private struct TWPickerGlassSurfaceModifier: ViewModifier {
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         } else if #available(iOS 26.0, macOS 26.0, *) {
             content
-                .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
-                .background(legibilityScrim, in: shape)
+                .background {
+                    shape
+                        .fill(Color.clear)
+                        .glassEffect(.clear.tint(tint).interactive(interactive), in: shape)
+                        .overlay(shape.fill(legibilityFill))
+                }
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         } else {
             content
                 .background {
                     shape
                         .fill(.ultraThinMaterial)
+                        .overlay(shape.fill(legibilityFill))
                         .overlay {
                             if let tint {
                                 shape.fill(tint.opacity(0.10))
                             }
                         }
                 }
-                .background(legibilityScrim, in: shape)
                 .overlay(shape.strokeBorder(TWTheme.border, lineWidth: rimWidth))
         }
     }
@@ -1170,6 +1204,20 @@ extension View {
                 tint: tint,
                 cornerRadius: cornerRadius,
                 interactive: interactive))
+    }
+
+    /// iOS house chrome for compact popovers that previously painted an
+    /// opaque `surface2` rectangle. Other platforms retain that existing
+    /// solid surface.
+    @ViewBuilder
+    func twPopoverGlassSurface(cornerRadius: CGFloat = 14) -> some View {
+        #if os(iOS)
+            self
+                .twPickerGlassSurface(cornerRadius: cornerRadius)
+                .presentationBackground(.clear)
+        #else
+            self.background(TWTheme.surface2)
+        #endif
     }
 }
 
@@ -2203,15 +2251,16 @@ private struct TWReasoningStop: Identifiable {
 /// capability sets + the requested list). Cursor Composer 2.5 uses a model swap
 /// instead (FastControl.modelSwap); Grok is permanently Fast (locked).
 private let twFastToggleModelIds: Set<String> = [
-    // Codex
+    // Codex (GPT-6 Sol and Luna sit on OpenAI's Fast-mode pricing table)
+    "gpt-6-sol", "gpt-6-luna",
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
     // Claude (supported Opus base + 1M variants; Fable 5 has no Fast tier)
-    "claude-opus-5",
+    "claude-opus-5-5", "claude-opus-5",
     "claude-opus-4-8", "claude-opus-4-8-1m",
     "claude-opus-4-7", "claude-opus-4-7-1m",
     "claude-opus-4-6", "claude-opus-4-6-1m",
-    // Cursor Grok
-    "grok-4.6", "cursor-grok-4.5", "grok-4.5",
+    // Cursor Grok (4.5 retired upstream — Cursor's CLI rejects those ids)
+    "grok-4.6",
     // Kimi K2.7 Coding Highspeed
     "kimi-k2.7-code",
 ]
@@ -2287,6 +2336,12 @@ private let twReasoningStops: [TWReasoningStop] = [
     TWReasoningStop(index: 6, effort: "ultracode", label: "Ultracode"),
 ]
 
+/// Pi exposes a distinct seven-value ladder. Keep every wire value on its own
+/// stop so `minimal` is not collapsed into Off or discarded between Off/Low.
+private let twPiReasoningEfforts = [
+    "off", "minimal", "low", "medium", "high", "xhigh", "max",
+]
+
 /// Coalesce provider synonyms onto the canonical ladder effort strings.
 /// Muse-specific floor/ceiling mapping lives in `twLadderIndex(for:provider:)`
 /// so Codex/Pi `minimal` and Mistral `ultra` are not remapped globally.
@@ -2298,12 +2353,16 @@ private func twNormalizeLadderEffort(_ effort: String) -> String {
     }
 }
 
-/// Map a wire effort onto the shared Off→Ultracode ladder. Muse Meta parks
-/// `minimal` at Off (0) and `ultra` at Ultracode (6) without rewriting those
-/// tokens for other providers.
+/// Map a wire effort onto the provider's seven-stop ladder. Pi uses its native
+/// Off→Max ordering (including a distinct Minimal stop); Muse Meta parks
+/// `minimal` at Off (0), keeps `max` at Max (5), and parks `ultra` at
+/// Ultracode (6) without rewriting those tokens for other providers.
 func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     guard let effort else { return nil }
     let token = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if provider?.lowercased() == "pi" {
+        return twPiReasoningEfforts.firstIndex(of: token)
+    }
     if provider?.lowercased() == "muse" {
         if token == "minimal" { return 0 }
         if token == "ultra" { return 6 }
@@ -2312,9 +2371,14 @@ func twLadderIndex(for effort: String?, provider: String? = nil) -> Int? {
     if normalized == "on" { return 1 }
     return twReasoningStops.first(where: { $0.effort == normalized })?.index
 }
-/// Canonical wire token for a ladder stop. Muse Meta uses `minimal`/`ultra`
-/// (never `off`/`ultracode`) at the shared floor/ceiling indices.
+/// Canonical wire token for a ladder stop. Pi preserves its distinct
+/// Off→Minimal→Low→…→Max ordering. Muse Meta uses `minimal`/`ultra`
+/// (never `off`/`ultracode`) at the shared floor/ceiling indices and keeps
+/// its native `max` token at index 5.
 func twLadderWireEffort(index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "pi" {
+        return twPiReasoningEfforts[max(0, min(twPiReasoningEfforts.count - 1, index))]
+    }
     if provider?.lowercased() == "muse" {
         switch index {
         case 0: return "minimal"
@@ -2328,6 +2392,9 @@ func twLadderWireEffort(index: Int, provider: String?) -> String {
 /// Display label for a ladder stop, resolving Muse floor/ceiling and the top
 /// stop's provider-specific name ("Ultra" on Codex/Muse, "Ultracode" elsewhere).
 private func twLadderStopLabel(_ index: Int, provider: String?) -> String {
+    if provider?.lowercased() == "pi" {
+        return twReasoningDisplayLabel(twPiReasoningEfforts[index], provider: provider)
+    }
     if provider?.lowercased() == "muse" {
         if index == 0 { return "Minimal" }
         if index == 6 { return "Ultra" }
@@ -2854,6 +2921,7 @@ func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     let providerId = provider?.lowercased()
     let isCodex = providerId == "codex"
     let isMuse = providerId == "muse"
+    let isPi = providerId == "pi"
     switch effort.lowercased() {
     case "off": return "Off"
     // Muse Meta floor stop — never "Off"/none on the Meta CLI.
@@ -2871,7 +2939,7 @@ func twReasoningDisplayLabel(_ effort: String, provider: String?) -> String {
     case "high": return "High"
     // Codex + Muse use "Extra High"; Claude renders the same wire token
     // ('xhigh') as "Extra".
-    case "xhigh", "extra": return (isCodex || isMuse) ? "Extra High" : "Extra"
+    case "xhigh", "extra": return (isCodex || isMuse || isPi) ? "Extra High" : "Extra"
     case "max": return "Max"
     // Wire token is 'ultracode' for Codex/Claude; Muse Meta uses wire `ultra`.
     // Both read "Ultra" on Muse/Codex; Claude keeps "Ultracode".
@@ -4138,6 +4206,13 @@ public struct ProviderGlyphIcon: View {
             provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 == "ensemble"
         else { return nil }
+        return cachedEnsembleGlyph
+    }
+
+    /// Resolved once. `UIImage(named:)` is backed by the system asset cache,
+    /// but the bundle fallback beneath it is not — and that fallback is the
+    /// live path in the SwiftPM build, where the glyph is a package resource.
+    private static let cachedEnsembleGlyph: Image? = {
         #if canImport(UIKit)
             if let ui = UIImage(named: "provider-glyph-ensemble") {
                 return Image(uiImage: ui)
@@ -4150,7 +4225,7 @@ public struct ProviderGlyphIcon: View {
             }
         #endif
         return nil
-    }
+    }()
 
     static func bundledResourceURL(for provider: String?) -> URL? {
         guard
@@ -4209,7 +4284,9 @@ enum ProviderLogoAssetResolver {
         switch provider {
         case "gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek":
             return "provider-logo-\(provider)"
-        case "cursor", "grok", "ollama", "pi", "cerebras":
+        case "muse":
+            return "provider-logo-meta"
+        case "cursor", "grok", "ollama", "pi", "cerebras", "devin":
             return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
         default:
             return nil
@@ -4250,19 +4327,22 @@ public struct ProviderLogoIcon: View {
         self.size = size
     }
 
+    @MainActor
     private static func logoImage(named assetName: String) -> Image? {
-        #if canImport(UIKit)
-            if let url = ProviderLogoAssetResolver.resourceURL(for: assetName),
-                let data = try? Data(contentsOf: url),
-                let ui = UIImage(data: data)
-            {
-                return Image(uiImage: ui)
-            }
-            if let ui = UIImage(named: assetName) {
-                return Image(uiImage: ui)
-            }
-        #endif
-        return nil
+        BundledImageCache.image(forKey: "provider-logo:\(assetName)") {
+            #if canImport(UIKit)
+                if let url = ProviderLogoAssetResolver.resourceURL(for: assetName),
+                    let data = try? Data(contentsOf: url),
+                    let ui = UIImage(data: data)
+                {
+                    return Image(uiImage: ui)
+                }
+                if let ui = UIImage(named: assetName) {
+                    return Image(uiImage: ui)
+                }
+            #endif
+            return nil
+        }
     }
 
     public var body: some View {
@@ -4274,12 +4354,23 @@ public struct ProviderLogoIcon: View {
 
         Group {
             if let assetName, let logo = Self.logoImage(named: assetName) {
-                logo
-                    .renderingMode(.original)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(ProviderLogoAssetResolver.opticalScale(for: provider))
-                    .accessibilityHidden(true)
+                if assetName == "provider-logo-meta" {
+                    // Display the leading 340 x 237 mark without altering the source PNG.
+                    logo
+                        .renderingMode(.original)
+                        .resizable()
+                        .frame(width: size * 1024 / 340, height: size * 237 / 340)
+                        .frame(width: size, height: size * 237 / 340, alignment: .leading)
+                        .clipped()
+                        .accessibilityHidden(true)
+                } else {
+                    logo
+                        .renderingMode(.original)
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(ProviderLogoAssetResolver.opticalScale(for: provider))
+                        .accessibilityHidden(true)
+                }
             } else {
                 ProviderGlyphIcon(
                     provider: provider,
@@ -5878,6 +5969,9 @@ struct SubAgentsPanel: View {
             model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
         }
         model.requestThreadSnapshot(child.id)
+        // A genuine open — the one signal that distinguishes this from the
+        // remounts MiniThreadView must survive. See noteMiniThreadOpened.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(child.id)
         inlineThreadId = child.id
     }
 
@@ -6389,7 +6483,7 @@ private struct GoalRailControl: View {
             popoverBody
                 .frame(width: 320)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -6540,7 +6634,7 @@ private struct PlanRailControl: View {
             popoverBody
                 .frame(width: 320)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -7254,25 +7348,35 @@ public struct AgentIdentityBadge: View {
         .degrees(Double(twAgentIdenticonHash(slug ?? name) % 360))
     }
 
+    /// The baked catalog PNG for `slug`, or nil when the character has none.
+    /// Split out from `catalogImage` so the fixture's presence can be asserted
+    /// on platforms without UIKit, where `catalogImage` returns nil for every
+    /// slug and so cannot distinguish "no artwork" from "no UIKit".
+    static func catalogResourceURL(for slug: String) -> URL? {
+        Bundle.module.url(forResource: "identicon-\(slug)", withExtension: "png")
+    }
+
     /// Full hand-drawn catalog character (baked from the named SVGs into
     /// the package resources via qlmanage). Nil when the slug has no baked
     /// asset — the minimal ring badge below covers that.
     /// Internal (not private) so the transcript satellite can reuse it.
+    @MainActor
     static func catalogImage(for slug: String?) -> Image? {
         guard let slug, !slug.isEmpty else { return nil }
-        #if canImport(UIKit)
-            if let url = Bundle.module.url(
-                forResource: "identicon-\(slug)", withExtension: "png"),
-                let data = try? Data(contentsOf: url),
-                let ui = UIImage(data: data)
-            {
-                return Image(uiImage: ui)
-            }
-            if let ui = UIImage(named: "identicon-\(slug)") {
-                return Image(uiImage: ui)
-            }
-        #endif
-        return nil
+        return BundledImageCache.image(forKey: "identicon:\(slug)") {
+            #if canImport(UIKit)
+                if let url = catalogResourceURL(for: slug),
+                    let data = try? Data(contentsOf: url),
+                    let ui = UIImage(data: data)
+                {
+                    return Image(uiImage: ui)
+                }
+                if let ui = UIImage(named: "identicon-\(slug)") {
+                    return Image(uiImage: ui)
+                }
+            #endif
+            return nil
+        }
     }
 
     public var body: some View {
@@ -7511,6 +7615,8 @@ public struct AppSettingsSheet: View {
     @State private var searchText = ""
     /// Non-nil presents the read-only approval ledger for that workspace.
     @State private var approvalLedgerWorkspaceId: String? = nil
+    @State private var connectionLogPresented = false
+    @ObservedObject private var connectionDiagnostics: ConnectionLogStore
     /// Per-device master switch for the workspace terminal (same key the
     /// GitWorkspaceSurface entry reads).
     @AppStorage("tw.terminal.enabled") private var terminalEnabledOnDevice = false
@@ -7522,6 +7628,7 @@ public struct AppSettingsSheet: View {
 
     public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
         self.model = model
+        self.connectionDiagnostics = model.connectionDiagnostics
         self.onOpenFirstLaunchGuide = onOpenFirstLaunchGuide
     }
 
@@ -7963,6 +8070,7 @@ public struct AppSettingsSheet: View {
                     ) {
                         if let workspaceId = approvalLedgerWorkspaceId {
                             ApprovalLedgerSheet(model: model, workspaceId: workspaceId)
+                                .twSheetLiquidGlass(detents: [.large])
                         }
                     }
                 SettingsValueRow(title: "Questions waiting", value: "\(model.questions.count)")
@@ -8110,6 +8218,23 @@ public struct AppSettingsSheet: View {
                     }
                     .buttonStyle(.bordered)
                 }
+            }
+            SettingsCard(title: "Connection log", systemImage: "waveform.path.ecg") {
+                SettingsValueRow(title: "Events recorded", value: "\(connectionDiagnostics.log.entries.count)")
+                SettingsInfoRow(
+                    icon: "doc.on.doc",
+                    title: "Copy it into a bug report",
+                    detail: "Every reconnect decision, dial, establish and liveness probe on this device, newest at the bottom. Nothing leaves the phone unless you copy it."
+                )
+                Button("View log") {
+                    connectionLogPresented = true
+                }
+                .buttonStyle(.bordered)
+                EmptyView()
+                    .sheet(isPresented: $connectionLogPresented) {
+                        ConnectionLogView(store: connectionDiagnostics)
+                            .twSheetLiquidGlass(detents: [.large])
+                    }
             }
             SettingsCard(title: "Paired devices", systemImage: "iphone.and.arrow.forward") {
                 if model.pairedHosts.isEmpty {
@@ -9241,6 +9366,18 @@ public func twBannerSeverity(for message: String) -> TWBannerSeverity {
     {
         return .error
     }
+    // Foundation's Codable/JSON copy ("The data couldn't be read because it
+    // isn't in the correct format.") names no actor and trips none of the
+    // keywords above, so an unreadable payload rendered as a calm blue notice
+    // that auto-faded. Matched on apostrophe-free fragments on purpose:
+    // Foundation localizes with a TYPOGRAPHIC apostrophe (U+2019), so
+    // "couldn't" written with an ASCII quote would never match. Covers the
+    // `PairedHostSessionError.invalidResponse` wrapper too.
+    if lower.contains("be read because") || lower.contains("correct format")
+        || lower.contains("invalid response") || lower.contains("unreadable")
+    {
+        return .error
+    }
     if lower.contains("timeout") || lower.contains("timed out") || lower.contains("lost")
         || lower.contains("reconnect") || lower.contains("retry")
     {
@@ -9252,6 +9389,21 @@ public func twBannerSeverity(for message: String) -> TWBannerSeverity {
         return .success
     }
     return .info
+}
+
+/// Whether a banner's auto-dismiss timer should dismiss when it wakes.
+///
+/// Extracted so the wake decision can be pinned without driving a SwiftUI
+/// `.task`. `waitCancelled` is true when the wait was interrupted rather than
+/// completed.
+public func twBannerShouldAutoDismiss(severity: TWBannerSeverity, waitCancelled: Bool) -> Bool {
+    // Cancellation means SUPERSEDED — SwiftUI restarts `.task(id:)` when the
+    // message changes, i.e. when a DIFFERENT banner replaced this one. The old
+    // `try? await Task.sleep` swallowed that and dismissed anyway, erasing the
+    // banner that had just arrived: two banners in quick succession lost the
+    // second. It never means "time is up".
+    guard !waitCancelled else { return false }
+    return severity == .success || severity == .info
 }
 
 /// Posts a VoiceOver announcement for transient status banners and feedback.
@@ -9317,8 +9469,10 @@ public struct StatusBanner: View {
         .task(id: message) {
             // Non-error feedback fades on its own; errors stay until read.
             let sev = severity
-            if sev == .success || sev == .info {
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
+            guard sev == .success || sev == .info else { return }
+            var waitCancelled = false
+            do { try await Task.sleep(nanoseconds: 3_500_000_000) } catch { waitCancelled = true }
+            if twBannerShouldAutoDismiss(severity: sev, waitCancelled: waitCancelled) {
                 onDismiss()
             }
         }
@@ -10529,8 +10683,15 @@ public struct ComposerDiffPill: View {
 
     public var body: some View {
         if compactInline {
-            Button { onTap?() } label: { pillBody }
-                .buttonStyle(.plain)
+            // `.contentShape` is load-bearing, not decoration: the glass-chromed
+            // `pillBody` leaves the Button with no hit region inside the row's
+            // GlassEffectContainer (iOS 26). Same fix as ComposerWorkspacePill;
+            // the non-compact branch below already names its shape.
+            Button { onTap?() } label: {
+                pillBody.contentShape(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel(accessibilityText)
@@ -10725,7 +10886,18 @@ public struct ComposerWorkspacePill: View {
         Group {
             if let onOpenGitSurface {
                 Button(action: onOpenGitSurface) {
-                    chipBody
+                    // Load-bearing (iOS 26): `chipBody` ends in
+                    // `composerFloatingPillChrome`, whose `glassEffect` is
+                    // rendered by the row's shared `GlassEffectContainer`. A
+                    // Button whose label is nothing but that effect gets NO hit
+                    // region — the pill drew, animated and read correctly to
+                    // VoiceOver, and taps did nothing at all. Naming the shape
+                    // gives the Button its own region back. ComposerToolsPill
+                    // dodges this by passing `interactive: false` and owning its
+                    // Buttons INSIDE the glass; that is not an option here,
+                    // where the whole chip is one target.
+                    chipBody.contentShape(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
             } else if canSwitch {
@@ -10825,7 +10997,16 @@ struct SideChatsPanel: View {
     var onOpenThread: ((String) -> Void)? = nil
     /// Inline-selected side chat — renders the mini chat window (the
     /// desktop's right-hand side-chat pane, phone-idiom).
-    @State private var selectedSideChatId: String? = nil
+    ///
+    /// Backed by the model, not `@State`, so it survives the shell rebuild
+    /// (see `selectedSideChatByThread`). The mini transcript's follow state
+    /// already outlives that rebuild; without this the panel it lives in did
+    /// not, and the whole side chat closed out from under the user on any
+    /// reconnect or settings change.
+    private var selectedSideChatId: String? {
+        get { model.selectedSideChatByThread[threadId] }
+        nonmutating set { model.selectedSideChatByThread[threadId] = newValue }
+    }
     @State private var createSheetPresented = false
     @State private var createProvider = "codex"
     @State private var createModelId: String?
@@ -10934,6 +11115,9 @@ struct SideChatsPanel: View {
                         navigateOnAck: false
                     ) { threadId in
                         if let threadId, threadId != card.threadId {
+                            // Freshly created and opened straight away.
+                            TranscriptFollowStateStore.shared
+                                .noteMiniThreadOpened(threadId)
                             selectedSideChatId = threadId
                             if let workspaceId = card.workspaceId {
                                 model.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
@@ -11035,6 +11219,8 @@ struct SideChatsPanel: View {
             model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
         }
         model.requestThreadSnapshot(child.id)
+        // A genuine open — see noteMiniThreadOpened.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(child.id)
         selectedSideChatId = child.id
     }
 
@@ -11059,6 +11245,10 @@ struct SideChatsPanel: View {
         guard let target = model.inspectorSideChatTarget,
             selectedSideChatCard(target) != nil
         else { return }
+        // Guarded on a non-nil `inspectorSideChatTarget` that is consumed
+        // below, so a remount's `onAppear` cannot re-run this and forge an
+        // open the user did not perform.
+        TranscriptFollowStateStore.shared.noteMiniThreadOpened(target)
         selectedSideChatId = target
         model.inspectorSideChatTarget = nil
         model.requestThreadSnapshot(target)
@@ -11123,9 +11313,19 @@ struct MiniThreadView: View {
     /// all: a bare ScrollView, so new messages never scrolled into view and
     /// nothing disengaged on a manual scroll either.
     @State private var autoFollow = true
+    /// Placeholder only — the real pin is adopted from
+    /// `TranscriptFollowStateStore` in the arming `.task` below, the same way
+    /// ThreadDetailView does it. `@State` cannot reach `card` in its
+    /// initializer, and the sentinel handlers need a non-optional pin in the
+    /// window before `.task` runs.
     @State private var followPin = TranscriptFollowPin()
 
     private var threadId: String { card.id }
+    /// This panel's entry in the follow store — namespaced away from the main
+    /// pane's entry for the same thread. See `miniThreadKey`.
+    private var followStoreKey: String {
+        TranscriptFollowStateStore.miniThreadKey(threadId)
+    }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[threadId] }
     private var transcriptBottomInset: CGFloat { composerOverlayHeight + 12 }
     private var isPadInterface: Bool {
@@ -11158,10 +11358,43 @@ struct MiniThreadView: View {
             }
             .task(id: threadId) {
                 model.requestThreadSnapshot(threadId)
+
+                // Adopt this panel's DURABLE follow state. `@State` dies when
+                // the view's STRUCTURAL identity changes, not merely when its
+                // body re-evaluates, and this panel is torn down by things the
+                // user never asked for and cannot see: AppShell rebuilds the
+                // whole shell on every `model.phase` transition, and the
+                // presenting panel swaps to its "opening…" branch whenever the
+                // side chat's card is momentarily absent from
+                // `model.taskCards` during a resync. A freshly constructed pin
+                // plus the unconditional arm below is what discarded the
+                // scroll position the user had chosen. Same defect and same
+                // fix as the main transcript — see dc00cfb7e.
+                let store = TranscriptFollowStateStore.shared
+                followPin = store.pin(for: followStoreKey)
+
+                guard store.shouldArmOnOpen(
+                    threadId: followStoreKey,
+                    selectionGeneration: store.miniThreadOpenGeneration(threadId))
+                else {
+                    // A remount, not an open. Restore what the user chose and
+                    // do NOT pin — pinning here is what yanked them back to
+                    // the tail.
+                    autoFollow = store.autoFollow(for: followStoreKey)
+                    return
+                }
+
                 followPin.userLatchedOff = false
                 autoFollow = true
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 requestFollowPin(proxy, force: true)
+            }
+            .onChange(of: autoFollow) { _, isFollowing in
+                // Mirror intent into the store on every transition, so a
+                // remount that lands between here and the next open restores
+                // the truth rather than the last armed value.
+                TranscriptFollowStateStore.shared.setAutoFollow(
+                    isFollowing, for: followStoreKey)
             }
         }
     }
@@ -11427,7 +11660,7 @@ struct UsagePanel: View {
 
     private static let providerOrder = [
         "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "mistral", "muse",
-        "antigravity", "ollama", "deepseek", "cerebras",
+        "devin", "antigravity", "ollama", "deepseek", "cerebras",
     ]
 
     private enum UsagePanelView: String, CaseIterable, Identifiable {

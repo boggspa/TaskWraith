@@ -13,15 +13,16 @@ export interface StudioCompanionResolution {
 /**
  * Resolve the production Studio lifecycle without teaching the companion a
  * second settings language. The explicit environment override mirrors the
- * bridge daemon, while the platform gate remains authoritative because the
- * AppKit/Metal product is macOS-only.
+ * bridge daemon, while Studio stays opt-in until its integration is ready.
+ * The platform gate remains authoritative because the AppKit/Metal product
+ * is macOS-only.
  */
 export function resolveStudioCompanionShouldRun(
   settingEnabled: boolean | undefined,
   envValue: string | undefined,
   platform: NodeJS.Platform = process.platform
 ): StudioCompanionResolution {
-  const resolution = resolveDaemonShouldRun(settingEnabled, envValue)
+  const resolution = resolveDaemonShouldRun(settingEnabled ?? false, envValue)
   if (platform !== 'darwin') {
     return {
       ...resolution,

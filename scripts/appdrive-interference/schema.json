@@ -20,7 +20,7 @@
       "const": "scripts/appdrive-interference"
     },
     "prototype": {
-      "const": "prototypes/appdrive-background"
+      "const": ".local-only/prototypes/appdrive-background"
     },
     "generatedAtMs": {
       "type": "number"

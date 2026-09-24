@@ -118,7 +118,8 @@ describe('LocalControlServer', () => {
         sendPrompt,
         cancelRun,
         threadOffers,
-        toggleEnsembleSeat
+        toggleEnsembleSeat,
+        findThreads: () => ({ threads: [], total: 0 })
       }
     })
     await server.start()
@@ -133,14 +134,24 @@ describe('LocalControlServer', () => {
     const welcome = await client.connect()
     expect(welcome.hostVersion).toBe('1.8.9-test')
     expect((await client.getSnapshot()).threads[0]?.id).toBe('demo-thread')
-    expect((await client.selectThread('demo-thread')).rows).toHaveLength(3)
+    // The demo row count is owned by createTaskWraithTuiDemoState; the
+    // tune-lens pass (76394cb1c) trimmed the demo thread from 3 rows to 2.
+    // Assert against the demo itself so selectThread delegation is proven
+    // without pinning a count the TUI can legitimately change.
+    expect(demo.thread!.rows.length).toBeGreaterThan(0)
+    expect((await client.selectThread('demo-thread')).rows).toHaveLength(demo.thread!.rows.length)
     await expect(client.sendPrompt('demo-thread', 'hello')).resolves.toMatchObject({
       dispatched: true
     })
     await expect(client.cancelRun('demo-thread')).resolves.toMatchObject({
       cancelled: true
     })
-    expect(sendPrompt).toHaveBeenCalledWith('demo-thread', 'hello')
+    expect(sendPrompt).toHaveBeenCalledWith(
+      'demo-thread',
+      'hello',
+      undefined,
+      expect.objectContaining({ channel: 'local-control', pid: process.pid })
+    )
     expect(cancelRun).toHaveBeenCalledWith('demo-thread')
 
     await expect(client.threadOffers('demo-thread')).resolves.toMatchObject({
@@ -154,10 +165,12 @@ describe('LocalControlServer', () => {
         reasoningEffort: 'medium'
       })
     ).resolves.toMatchObject({ dispatched: true })
-    expect(sendPrompt).toHaveBeenLastCalledWith('demo-thread', 'tuned', {
-      model: 'claude-opus-4-8-1m',
-      reasoningEffort: 'medium'
-    })
+    expect(sendPrompt).toHaveBeenLastCalledWith(
+      'demo-thread',
+      'tuned',
+      { model: 'claude-opus-4-8-1m', reasoningEffort: 'medium' },
+      expect.objectContaining({ channel: 'local-control', pid: process.pid })
+    )
     await expect(client.toggleEnsembleSeat('demo-thread', 'review', false)).resolves.toMatchObject({
       updated: true
     })
@@ -229,6 +242,7 @@ describe('LocalControlServer', () => {
         threadOffers: () => {
           throw new Error('offers not stubbed')
         },
+        findThreads: () => ({ threads: [], total: 0 }),
         toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
@@ -261,6 +275,7 @@ describe('LocalControlServer', () => {
         threadOffers: () => {
           throw new Error('offers not stubbed')
         },
+        findThreads: () => ({ threads: [], total: 0 }),
         toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
@@ -345,6 +360,7 @@ describe('LocalControlServer', () => {
         threadOffers: () => {
           throw new Error('offers not stubbed')
         },
+        findThreads: () => ({ threads: [], total: 0 }),
         toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
@@ -382,6 +398,7 @@ describe('LocalControlServer', () => {
         threadOffers: () => {
           throw new Error('offers not stubbed')
         },
+        findThreads: () => ({ threads: [], total: 0 }),
         toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
@@ -436,6 +453,7 @@ describe('LocalControlServer', () => {
           threadOffers: () => {
             throw new Error('offers not stubbed')
           },
+          findThreads: () => ({ threads: [], total: 0 }),
           toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
         }
       })
@@ -487,5 +505,282 @@ describe('LocalControlServer', () => {
     first.destroy()
     await firstClose
     await withDeadline(stale.stop(), 500, 'Control server shutdown did not settle.')
+  })
+})
+
+function helloWith(token: string, capabilities: string[]): string {
+  return `${JSON.stringify({
+    type: 'hello',
+    protocolVersion: 1,
+    client: 'taskwraith-tui',
+    clientVersion: '0.1.0-test',
+    token,
+    capabilities
+  })}\n`
+}
+
+/** Every newline-delimited frame the host writes, for as long as the socket lives. */
+function collectFrames(socket: Socket): { frames: Array<Record<string, unknown>> } {
+  const frames: Array<Record<string, unknown>> = []
+  let buffer = ''
+  socket.on('data', (chunk: Buffer | string) => {
+    buffer += chunk.toString()
+    let newline = buffer.indexOf('\n')
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (line.trim()) frames.push(JSON.parse(line) as Record<string, unknown>)
+      newline = buffer.indexOf('\n')
+    }
+  })
+  return { frames }
+}
+
+function request(id: string, method: string, params: Record<string, unknown>): string {
+  return `${JSON.stringify({ type: 'request', id, method, params })}\n`
+}
+
+function eventsOf(frames: Array<Record<string, unknown>>, event: string) {
+  return frames.filter((frame) => frame.type === 'event' && frame.event === event)
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const unusedFacadeStubs = {
+  sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
+  cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+  threadOffers: () => {
+    throw new Error('offers not stubbed')
+  },
+  toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' }),
+  findThreads: () => ({ threads: [], total: 0 })
+}
+
+describe('LocalControlServer subscriber gating and push backpressure', () => {
+  it('never polls the facade for a client that did not subscribe to snapshots', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-gating-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    const snapshot = vi.fn(() => demo.snapshot!)
+    const selectThread = vi.fn(() => demo.thread!)
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      pollIntervalMs: 5,
+      facade: { ...unusedFacadeStubs, snapshot, selectThread }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+
+    // A sender: it will only ever compose, so the host owes it no projection work.
+    const sender = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      sender.destroy()
+    })
+    const { frames } = collectFrames(sender)
+    sender.write(helloWith(token, ['compose']))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    await sleep(60)
+    expect(snapshot).not.toHaveBeenCalled()
+
+    sender.write(request('send-1', 'composer.send', { threadId: 'demo-thread', text: 'hello' }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'response', id: 'send-1' }))
+    )
+    await sleep(60)
+    expect(snapshot).not.toHaveBeenCalled()
+
+    // Without the transcript capability a thread.select is a one-shot page:
+    // answered once, never re-projected, never pushed.
+    sender.write(request('select-1', 'thread.select', { threadId: 'demo-thread', limit: 5 }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(
+        expect.objectContaining({ type: 'response', id: 'select-1', ok: true })
+      )
+    )
+    await sleep(60)
+    expect(selectThread).toHaveBeenCalledTimes(1)
+    expect(snapshot).not.toHaveBeenCalled()
+    expect(eventsOf(frames, 'snapshot.changed')).toHaveLength(0)
+    expect(eventsOf(frames, 'thread.changed')).toHaveLength(0)
+    expect(sender.destroyed).toBe(false)
+  })
+
+  it('skips a snapshot push while the previous one is unflushed, then delivers the latest', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-backpressure-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    // Each push is close to the line cap, so once the paused reader's socket
+    // buffers are full every further push would queue on the host side; the
+    // old server stacked them until the 2 MB drain guard destroyed the client.
+    const padding = 'x'.repeat(900 * 1024)
+    let calls = 0
+    const snapshot = vi.fn(() => {
+      calls += 1
+      return {
+        ...demo.snapshot!,
+        workspaces: [{ ...demo.snapshot!.workspaces[0]!, name: `${padding}${calls}` }]
+      }
+    })
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      pollIntervalMs: 5,
+      facade: { ...unusedFacadeStubs, snapshot, selectThread: () => demo.thread! }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+
+    const subscriber = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      subscriber.destroy()
+    })
+    const { frames } = collectFrames(subscriber)
+    subscriber.write(helloWith(token, ['snapshot']))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    subscriber.pause()
+    await sleep(250)
+    const callsAtResume = calls
+    expect(callsAtResume).toBeGreaterThanOrEqual(8)
+    subscriber.resume()
+
+    const sequenceOf = (frame: Record<string, unknown>): number => {
+      const payload = frame.payload as { workspaces?: Array<{ name?: string }> } | undefined
+      return Number(String(payload?.workspaces?.[0]?.name ?? '').slice(padding.length))
+    }
+    await vi.waitFor(
+      () => {
+        const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
+        expect(Math.max(...delivered)).toBeGreaterThanOrEqual(callsAtResume)
+      },
+      // Each delivery is ~900 KB through a socket the reader just resumed;
+      // 355 ms locally, but the loaded macOS-Intel runner had delivered one
+      // frame after 2 s (run 34984996288). The pin is delivery-in-order
+      // after resume, not delivery speed, so it polls for up to 20 s.
+      { timeout: 20_000 }
+    )
+    const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
+    // Dozens of snapshots were produced while the reader was paused, yet the
+    // subscriber was never mistaken for a client that stopped draining: the
+    // pushes it could not take were skipped, not queued, and once it reads
+    // again delivery resumes with the newest snapshot, in order.
+    expect(delivered).toEqual([...delivered].sort((a, b) => a - b))
+    expect(eventsOf(frames, 'host.closing')).toHaveLength(0)
+    expect(subscriber.destroyed).toBe(false)
+  })
+
+  it('answers thread.find for a compose-only client without any projection work', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-find-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    const snapshot = vi.fn(() => demo.snapshot!)
+    const findThreads = vi.fn(() => ({
+      threads: [
+        {
+          id: 'demo-thread',
+          title: 'Host persistence programme',
+          status: 'working' as const,
+          chatKind: 'ensemble' as const,
+          workspaceId: 'ws-1',
+          workspaceName: 'Repo',
+          workspacePath: '/repo',
+          archived: false,
+          updatedAt: 1_000,
+          messageCount: 3,
+          provider: { displayProvider: 'Codex', model: 'gpt-6-astra' }
+        }
+      ],
+      total: 1
+    }))
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      pollIntervalMs: 5,
+      facade: { ...unusedFacadeStubs, snapshot, selectThread: () => demo.thread!, findThreads }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+    const sender = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      sender.destroy()
+    })
+    const { frames } = collectFrames(sender)
+    sender.write(helloWith(token, ['compose']))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    sender.write(
+      request('find-1', 'thread.find', { query: 'persistence', workspacePath: '/repo/src' })
+    )
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(
+        expect.objectContaining({
+          type: 'response',
+          id: 'find-1',
+          ok: true,
+          result: expect.objectContaining({ total: 1 })
+        })
+      )
+    )
+    expect(findThreads).toHaveBeenCalledWith({ query: 'persistence', workspacePath: '/repo/src' })
+    expect(snapshot).not.toHaveBeenCalled()
+  })
+
+  it('stamps what it observed at hello onto every prompt the client sends', async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-control-origin-'))
+    const demo = createTaskWraithTuiDemoState(1_000)
+    if (!demo.snapshot || !demo.thread) throw new Error('Demo projection is incomplete.')
+    const sendPrompt = vi.fn(async () => ({ dispatched: true, message: 'ok' }))
+    const server = new LocalControlServer({
+      userDataPath,
+      hostVersion: '1.9.8-test',
+      facade: {
+        ...unusedFacadeStubs,
+        sendPrompt,
+        snapshot: () => demo.snapshot!,
+        selectThread: () => demo.thread!
+      }
+    })
+    await server.start()
+    cleanup.push(() => server.stop())
+    const token = (await readFile(server.tokenPath, 'utf8')).trim()
+    const sender = await connectRaw(server.socketPath)
+    cleanup.push(() => {
+      sender.destroy()
+    })
+    const { frames } = collectFrames(sender)
+    sender.write(
+      `${JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        client: 'taskwraith-tui',
+        clientVersion: 'claude-steer-0.1',
+        clientPid: 4242,
+        clientLabel: 'Claude Code',
+        token,
+        capabilities: ['compose']
+      })}\n`
+    )
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'welcome' }))
+    )
+    sender.write(request('send-1', 'composer.send', { threadId: 'demo-thread', text: 'hello' }))
+    await vi.waitFor(() =>
+      expect(frames).toContainEqual(expect.objectContaining({ type: 'response', id: 'send-1' }))
+    )
+    // Host-observed, never sender-asserted: the text carried no attribution.
+    expect(sendPrompt).toHaveBeenCalledWith('demo-thread', 'hello', undefined, {
+      channel: 'local-control',
+      pid: 4242,
+      label: 'Claude Code',
+      clientVersion: 'claude-steer-0.1'
+    })
   })
 })

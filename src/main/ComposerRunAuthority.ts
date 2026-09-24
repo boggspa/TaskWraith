@@ -1,5 +1,5 @@
 import type { ComposerInput } from './services/ComposerService'
-import type { ChatRecord, ScheduledTask } from './store/types'
+import type { ChatRecord, ProviderId, ScheduledTask } from './store/types'
 import type { WorkspacePopoutAuthority } from './WorkspacePopoutAuthority'
 import { assertScheduledRunAuthority } from './ScheduledRunAuthority'
 
@@ -16,6 +16,23 @@ export interface ComposerRunAuthorityInput {
    * into it.
    */
   resolveGraphOwnedComposerInput?: (appRunId: string) => GraphOwnedComposerInputResolution | null
+  /**
+   * Restore only the attachment field from an exact leased queue job. Prompt,
+   * contextual selections, and run-only renderer inputs keep their existing
+   * composition path; the queued media refs themselves are main-owned.
+   */
+  resolveQueuedComposerAttachments?: (input: {
+    appRunId: string
+    appChatId: string
+    provider?: string
+  }) =>
+    | { kind: 'not-applicable' }
+    | { kind: 'invalid' }
+    | {
+        kind: 'resolved'
+        provider: ProviderId
+        imageAttachments: NonNullable<ComposerInput['imageAttachments']>
+      }
   canonicalizePath: (value: string) => string
 }
 
@@ -87,6 +104,7 @@ function scheduledComposerInput(chat: ChatRecord, task: ScheduledTask): Composer
     kimiThinkingEnabled: task.kimiThinkingEnabled,
     grokReasoningEffort: task.grokReasoningEffort,
     museReasoningEffort: task.museReasoningEffort,
+    ollamaReasoningEffort: task.ollamaReasoningEffort,
     cursorReasoningEffort: task.cursorReasoningEffort,
     cursorFastMode: task.cursorFastMode,
     runtimeProfileId: task.runtimeProfileId,
@@ -197,6 +215,26 @@ export function resolveComposerRunAuthority(
     delete authoritativeInput.workspace
   } else {
     authoritativeInput.workspace = chat.workspacePath
+  }
+
+  const queuedAttachmentAuthority =
+    appRunId && input.resolveQueuedComposerAttachments
+      ? input.resolveQueuedComposerAttachments({
+          appRunId,
+          appChatId: chat.appChatId,
+          ...(input.input.provider ? { provider: input.input.provider } : {})
+        })
+      : { kind: 'not-applicable' as const }
+  if (queuedAttachmentAuthority.kind === 'invalid') {
+    throw new Error('Queued attachment authority is invalid for this exact compose request.')
+  }
+  if (queuedAttachmentAuthority.kind === 'resolved') {
+    authoritativeInput.provider = queuedAttachmentAuthority.provider
+    authoritativeInput.imageAttachments = queuedAttachmentAuthority.imageAttachments.map(
+      (attachment) => ({ ...attachment })
+    )
+    delete authoritativeInput.attachments
+    return { input: authoritativeInput, mainOwnedAttachments: true }
   }
   return { input: authoritativeInput }
 }

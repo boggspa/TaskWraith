@@ -1,5 +1,29 @@
 export const MAX_ENSEMBLE_CAPTAINS = 3
 
+/** One canonical authority vocabulary across main, renderer, and AppDrive. */
+export const ENSEMBLE_AUTHORITY_ROLES = ['boss', 'captain'] as const
+export type EnsembleAuthorityRole = (typeof ENSEMBLE_AUTHORITY_ROLES)[number]
+export type EnsembleParticipantAuthority = EnsembleAuthorityRole | 'agent'
+
+/** Compatibility spelling retained only at old bossman-control boundaries. */
+export type LegacyEnsembleAuthorityRole = 'boss' | 'second_in_command'
+
+export function normalizeEnsembleAuthorityRole(value: unknown): EnsembleAuthorityRole | undefined {
+  if (value === 'boss') return 'boss'
+  if (value === 'captain' || value === 'second_in_command') return 'captain'
+  return undefined
+}
+
+export function legacyEnsembleAuthorityRole(
+  role: EnsembleAuthorityRole
+): LegacyEnsembleAuthorityRole {
+  return role === 'captain' ? 'second_in_command' : 'boss'
+}
+
+export function ensembleAuthorityRoleLabel(role: EnsembleAuthorityRole): 'Boss' | 'Captain' {
+  return role === 'captain' ? 'Captain' : 'Boss'
+}
+
 export interface EnsembleAuthorityParticipant {
   id: string
   order?: number

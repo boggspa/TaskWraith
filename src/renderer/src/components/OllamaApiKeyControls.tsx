@@ -6,6 +6,10 @@ export interface OllamaApiKeyStatus {
   encryptionAvailable: boolean
   webSessionConfigured: boolean
   webSessionUpdatedAt?: string
+  /** Remembered `ollama signin` state. Undefined until the daemon answers once. */
+  cliSignedIn?: boolean
+  cliPlan?: string
+  cliSignInUpdatedAt?: string
 }
 
 export interface OllamaApiKeyControlsViewProps {
@@ -41,8 +45,28 @@ export function OllamaApiKeyControlsView({
 }: OllamaApiKeyControlsViewProps): React.JSX.Element {
   const configured = status?.apiKeyConfigured === true
   const webSessionConfigured = status?.webSessionConfigured === true
+  // Projected from the persisted record, not a live probe, so the row is honest
+  // on a cold launch while the daemon is still waking up.
+  const cliSignedIn = status?.cliSignedIn === true
+  const cliSignInKnown = typeof status?.cliSignedIn === 'boolean'
   return (
     <>
+      <div className="settings-pi-upstream-row">
+        <span className="settings-pi-upstream-name">
+          <span
+            className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${cliSignedIn ? 'signed-in' : 'not-available'}`}
+            aria-hidden
+          />
+          <strong>Ollama account</strong>
+          <span className="settings-pi-upstream-hint">
+            {cliSignedIn
+              ? `Signed in — Cloud models unlocked${status?.cliPlan ? ` · ${status.cliPlan}` : ''}`
+              : cliSignInKnown
+                ? 'Not signed in — Cloud models stay locked'
+                : 'Checked once the Ollama daemon answers'}
+          </span>
+        </span>
+      </div>
       <div className="settings-pi-upstream-row">
         <label className="settings-pi-upstream-name" htmlFor="ollama-cloud-api-key">
           <span
@@ -167,6 +191,11 @@ export function OllamaApiKeyControls({
         webSessionConfigured: next.webSessionConfigured === true,
         ...(typeof next.webSessionUpdatedAt === 'string'
           ? { webSessionUpdatedAt: next.webSessionUpdatedAt }
+          : {}),
+        ...(typeof next.cliSignedIn === 'boolean' ? { cliSignedIn: next.cliSignedIn } : {}),
+        ...(typeof next.cliPlan === 'string' ? { cliPlan: next.cliPlan } : {}),
+        ...(typeof next.cliSignInUpdatedAt === 'string'
+          ? { cliSignInUpdatedAt: next.cliSignInUpdatedAt }
           : {})
       })
     } catch {
@@ -176,6 +205,16 @@ export function OllamaApiKeyControls({
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  // `ollama signin` completes in a Terminal window, so the only signal that the
+  // account changed is the user coming back. Without this the card kept showing
+  // the pre-sign-in state until the panel was reopened — and, because the probe
+  // is what persists the record, the sign-in was never remembered either.
+  useEffect(() => {
+    const onFocus = (): void => void refresh()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
   const save = useCallback(async () => {

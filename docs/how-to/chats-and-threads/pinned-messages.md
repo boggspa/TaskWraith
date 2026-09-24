@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Pinned Messages lets you mark important messages in a thread so they stay easy to find, alongside per-thread Notes and the Blackboard (an agent-maintained list of decisions, facts, risks, and reminders). A separate Settings page aggregates every pinned message across all your workspaces and chats in one place.
+Pinned messages mark important messages in a thread so they stay easy to find. A Settings page gathers every pinned message across all your workspaces and chats in one place.
 
 ## Where to find it
 Pin a message from its hover action chip or right-click context menu in any transcript. View pins for the current thread by clicking the **Notes** tab in the right dock rim (toolbar icon shows a pin count badge). View pins across every chat via **Settings → Pinned messages**.

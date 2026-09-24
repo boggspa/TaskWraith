@@ -6,6 +6,42 @@ interface SoloToolEventReducerOptions {
   nowIso?: () => string
   provider?: ProviderId
   runId?: string
+  /**
+   * The run's wire model id (and its human label), stamped onto every tool row
+   * this reducer creates so the row can brand itself.
+   *
+   * An activity row carries no model of its own, which left its accent
+   * depending entirely on finding its run in the chat record — and
+   * `currentChat.runs` is deliberately one render behind, so a settled turn's
+   * rows lost the Pi/Ollama upstream hue and only a reload brought it back.
+   * Assistant bubbles never had the problem because they are stamped exactly
+   * like this. Optional: every field is omitted when absent, so a caller that
+   * passes neither produces the same metadata-free row as before.
+   */
+  model?: string
+  modelLabel?: string
+}
+
+/**
+ * Brand metadata for a created tool row, or null when there is nothing to say.
+ *
+ * Deliberately NOT `assistantProvider` — that field makes a row claim to be an
+ * assistant turn, and a tool row's provider is already resolved from its run
+ * and its activities. And deliberately never `kind`: that is the transcript
+ * CARD discriminator the adoption guard below reads, so stamping one would
+ * stop consecutive tool events collapsing into this row.
+ */
+function toolRowBrandMetadata(
+  model: string | undefined,
+  modelLabel: string | undefined
+): ChatMessage['metadata'] | null {
+  const wireId = String(model || '').trim()
+  const label = String(modelLabel || '').trim()
+  if (!wireId && !label) return null
+  return {
+    ...(wireId ? { providerModel: wireId } : {}),
+    ...(label ? { providerModelLabel: label } : {})
+  }
 }
 
 export interface SoloToolEventReduction {
@@ -53,12 +89,14 @@ export function reduceSoloToolEventMessages(
   event: any,
   options: SoloToolEventReducerOptions
 ): SoloToolEventReduction {
+  const brandMetadata = toolRowBrandMetadata(options.model, options.modelLabel)
   const createToolMessage = (): ChatMessage => ({
     id: options.createMessageId(),
     role: 'tool',
     content: '',
     timestamp: options.nowIso?.() || new Date().toISOString(),
     ...(options.runId ? { runId: options.runId } : {}),
+    ...(brandMetadata ? { metadata: brandMetadata } : {}),
     toolActivities: []
   })
 
@@ -108,7 +146,15 @@ export function reduceSoloToolEventMessages(
   // assistant to the prior tool row would merge tool bursts that are separated
   // by text into one ActivityStack, destroying the interleaving (text → tools
   // → text → tools collapses to [all tools] → [all text]).
-  if (nextMessages.length === 0 || lastMsg?.role !== 'tool') {
+  //
+  // A kind-tagged tool row is a transcript CARD (sub-thread return, guest
+  // participant reply, …), rendered by its own component ahead of the
+  // ActivityStack branch — activities pushed into one are never drawn. Main
+  // appends the sub-thread return card as role:'tool' mid-run, so adopting it
+  // here froze the transcript for the rest of the burst (2026-08-26: 110
+  // events, 8 commits, invisible until the next assistant message). Cards
+  // must open a NEW row; only metadata-less burst rows are adoptable.
+  if (nextMessages.length === 0 || lastMsg?.role !== 'tool' || lastMsg?.metadata?.kind) {
     const toolMessage = createToolMessage()
     nextMessages = [...nextMessages, toolMessage]
     lastMsgIndex = nextMessages.length - 1

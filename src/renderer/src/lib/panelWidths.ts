@@ -1,10 +1,20 @@
+import {
+  MIN_INSPECTOR_PANEL_WIDTH,
+  MAX_INSPECTOR_PANEL_WIDTH,
+  rightPanelViewportMax
+} from '../../../shared/panelWidthLimits'
+
 const DEFAULT_FILE_EDITOR_WIDTH = 390
-const MIN_RIGHT_PANEL_WIDTH = 300
-// Wide-window ceiling. The effective width is additionally clamped to 58%
-// of the viewport (rightPanelWindowMax), so narrow windows are protected by
-// proportion, not by this constant — it only needs to stop the dock from
-// swallowing ultrawide layouts entirely.
-const MAX_RIGHT_PANEL_WIDTH = 1120
+// Single-sourced from shared/panelWidthLimits so main's settings sanitizer
+// can never re-clamp a dragged width below the resize handlers' ceiling
+// (a stale sanitizer-side 720 previously snapped every wide dock back on the
+// next settings round-trip). The effective width is additionally clamped to
+// rightPanelViewportMax, so narrow windows are protected by proportion, not
+// by the constant — it only needs to stop the dock from swallowing ultrawide
+// layouts entirely. Canvas surfaces in the dock (Mesh scenes, desktop-style
+// Browser work) are why the ceiling is generous.
+const MIN_RIGHT_PANEL_WIDTH = MIN_INSPECTOR_PANEL_WIDTH
+const MAX_RIGHT_PANEL_WIDTH = MAX_INSPECTOR_PANEL_WIDTH
 const DEFAULT_SIDE_CHAT_WIDTH = 460
 const MIN_SIDE_CHAT_WIDTH = 340
 const MAX_SIDE_CHAT_WIDTH = 1120
@@ -124,6 +134,7 @@ export {
   DEFAULT_FILE_EDITOR_WIDTH,
   MIN_RIGHT_PANEL_WIDTH,
   MAX_RIGHT_PANEL_WIDTH,
+  rightPanelViewportMax,
   DEFAULT_SIDE_CHAT_WIDTH,
   MIN_SIDE_CHAT_WIDTH,
   MAX_SIDE_CHAT_WIDTH,

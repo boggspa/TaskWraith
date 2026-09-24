@@ -183,6 +183,12 @@ describe('foreground ownership vs detached fan-out lanes', () => {
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
         participant('gemini', 'gemini', 'Researcher', 3, 'workspace_write')
       ])
+      // Continuous-only (2026-09-01): the round no longer closes at the pass
+      // boundary — it auto-continues until the hop budget exhausts. One hop
+      // keeps the tail rideable: pass 1 → authority auto-continue (the fan-out
+      // target) → pass 2 → round completes.
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 1
       await completeCallerWithActiveLane(harness)
 
       // The Reviewer lane is still non-terminal: the round stays open and the
@@ -208,6 +214,17 @@ describe('foreground ownership vs detached fan-out lanes', () => {
       await sleep(FLUSH_MS)
       expect(rowIndex(harness, 'RESEARCHER-NOTE.')).toBeGreaterThanOrEqual(0)
       complete(harness, 2)
+      // Continuous-only: the pass boundary no longer closes the round. With no
+      // assign_work plan the automatic pass follows SERIAL ORDER from the top
+      // of the roster (0082e0f6b, 2026-09-13: "follow serial order when no
+      // explicit handoff resolves"), so the Lead is re-dispatched — not the
+      // fan-out target, which dbcf6909c briefly re-admitted ahead of the
+      // roster to green this pin and e2447a86d reverted after QA. Ride that
+      // pass so the 1-hop budget exhausts and the round completes cleanly
+      // instead of wedging 'running'.
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(harness.dispatched[3].provider).toBe('codex')
+      complete(harness, 3)
       await vi.waitFor(() => {
         expect(harness.chat.ensemble!.activeRound!.status).toBe('completed')
       })

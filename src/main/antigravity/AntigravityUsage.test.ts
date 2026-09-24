@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AGY_USAGE_COMMAND,
   AGY_USAGE_TUI_ARGS,
@@ -10,6 +10,10 @@ import {
   type AgyUsageProbeDependencies
 } from './AntigravityUsage'
 import { isAuthenticatedAgyRateLimitConnection } from './AntigravityCombinedModelCatalog'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from './AntigravityAgyOptInEnabledSignal'
 
 const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1 }
 const now = () => '2026-07-23T12:00:00.000Z'
@@ -219,6 +223,63 @@ describe('parseAgyUsagePanel', () => {
 })
 
 describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
+  // The live consent read main wires from persisted settings. `settings` passed
+  // in is the caller's earlier snapshot; this is what the user holds now.
+  let consentHeld = true
+  beforeEach(() => {
+    consentHeld = true
+    setAntigravityAgyOptInEnabledProbe(() => consentHeld)
+  })
+  afterEach(() => {
+    resetAntigravityAgyOptInEnabledProbeForTests()
+  })
+
+  it('reads consent again after the binary resolves: a withdrawal inside that wait spawns nothing and goes silent', async () => {
+    let releaseBinary!: () => void
+    const resolveBinary = vi.fn(
+      () =>
+        new Promise<{ binaryPath: string; source: 'path' }>((resolve) => {
+          releaseBinary = () =>
+            resolve({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' })
+        })
+    )
+    const spawnPty = vi.fn(() => ptyThatRenders(observedPanel()).pty)
+    const snapshot = fetchAuthenticatedAgyQuotaSnapshot(optedIn, true, {
+      cwd: '/private/tmp/agy-test',
+      resolveBinary,
+      spawnPty,
+      now,
+      ...immediateTimers()
+    })
+    await Promise.resolve()
+    expect(resolveBinary).toHaveBeenCalledTimes(1)
+
+    consentHeld = false
+    releaseBinary()
+
+    await expect(snapshot).resolves.toEqual({
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: false,
+      fetchedAt: '2026-07-23T12:00:00.000Z'
+    })
+    expect(spawnPty).not.toHaveBeenCalled()
+  })
+
+  it('control: with consent still held after the binary resolves, the probe spawns', async () => {
+    const spawnPty = vi.fn(() => ptyThatRenders(observedPanel()).pty)
+    const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(optedIn, true, {
+      cwd: '/private/tmp/agy-test',
+      resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+      spawnPty,
+      now,
+      ...immediateTimers()
+    })
+
+    expect(spawnPty).toHaveBeenCalledTimes(1)
+    expect(snapshot.windows).toHaveLength(4)
+  })
+
   it('keeps the get-agent-rate-limits API-only path side-effect free', async () => {
     const apiOnlyModels = [
       { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini API · flash · separate billing' }

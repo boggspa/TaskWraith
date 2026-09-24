@@ -7,6 +7,7 @@ import {
 import {
   emptyHostSnapshotForTests,
   HOST_TUI_PREVIEW_ROW_KIND,
+  mapHostHistoryEntriesToTranscriptRows,
   mapHostSnapshotToControlSnapshot,
   mapHostSnapshotToThreadDetail
 } from './hostProjectionMap'
@@ -47,6 +48,9 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
         updatedAt: 200,
         messageCount: 4,
         providerId: 'claude',
+        modelId: 'claude-opus-5',
+        reasoningEffort: 'high',
+        permissionPresetId: 'workspace_write',
         latestPreview: 'Bounded preview only',
         previewTruncated: true
       }
@@ -65,6 +69,264 @@ function snapshotWithThread(overrides?: Partial<HostSnapshot>): HostSnapshot {
 }
 
 describe('hostProjectionMap', () => {
+  it('shows the newest completed run instead of an older failure regardless of snapshot order', () => {
+    const snapshot = snapshotWithThread({
+      runs: [
+        {
+          runId: 'a-new',
+          threadId: 'thread-1',
+          providerId: 'claude',
+          providerOutcome: 'completed',
+          startedAt: 300,
+          endedAt: 400
+        },
+        {
+          runId: 'z-old',
+          threadId: 'thread-1',
+          providerId: 'claude',
+          providerOutcome: 'failed',
+          startedAt: 100,
+          endedAt: 200
+        }
+      ]
+    })
+    expect(mapHostSnapshotToControlSnapshot(snapshot).threads[0]?.status).toBe('complete')
+    expect(
+      mapHostSnapshotToControlSnapshot({ ...snapshot, runs: [...snapshot.runs].reverse() })
+        .threads[0]?.status
+    ).toBe('complete')
+    expect(
+      mapHostSnapshotToControlSnapshot({
+        ...snapshot,
+        runs: [
+          ...snapshot.runs,
+          {
+            runId: 'b-active',
+            threadId: 'thread-1',
+            providerId: 'claude',
+            providerOutcome: 'running',
+            startedAt: 500
+          }
+        ]
+      }).threads[0]?.status
+    ).toBe('working')
+  })
+
+  it('never labels a thread with the provider inventory model when the thread names none', () => {
+    // The inventory lists one row per offered model, sorted by id. A thread
+    // row that carries no modelId must render as provider-only rather than
+    // borrowing whichever model sorts first (Codestral, for Mistral).
+    const snapshot = snapshotWithThread({
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'codestral-2508',
+          modelLabel: 'Codestral (Aug 2025)',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        },
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'mistral-medium-3.5',
+          modelLabel: 'Mistral Medium 3.5',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        }
+      ],
+      threads: [
+        {
+          id: 'thread-mistral',
+          workspaceId: 'ws-1',
+          title: 'Unconfigured',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 200,
+          messageCount: 0,
+          providerId: 'mistral'
+        }
+      ]
+    })
+    const thread = mapHostSnapshotToControlSnapshot(snapshot).threads[0]
+    expect(thread.provider.displayProvider).toBe('Mistral')
+    expect(thread.provider.model).toBeUndefined()
+    expect(thread.provider.modelLabel).toBeUndefined()
+    expect(thread.reasoning).toBeUndefined()
+  })
+
+  it('labels a thread by its own configured model even when another inventory row sorts first', () => {
+    const snapshot = snapshotWithThread({
+      providers: [
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'codestral-2508',
+          modelLabel: 'Codestral (Aug 2025)',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        },
+        {
+          providerId: 'mistral',
+          displayProvider: 'Mistral',
+          modelId: 'mistral-medium-3.5',
+          modelLabel: 'Mistral Medium 3.5',
+          shortCode: 'MST',
+          hueKey: 'mistral',
+          available: true
+        }
+      ],
+      threads: [
+        {
+          id: 'thread-mistral',
+          workspaceId: 'ws-1',
+          title: 'Configured',
+          chatKind: 'single',
+          archived: false,
+          pinned: false,
+          updatedAt: 200,
+          messageCount: 0,
+          providerId: 'mistral',
+          modelId: 'mistral-medium-3.5',
+          reasoningEffort: 'xhigh'
+        }
+      ]
+    })
+    const thread = mapHostSnapshotToControlSnapshot(snapshot).threads[0]
+    expect(thread.provider.model).toBe('mistral-medium-3.5')
+    expect(thread.provider.modelLabel).toBe('Mistral Medium 3.5')
+    expect(thread.reasoning).toBe('xhigh')
+  })
+
+  it('attributes Host system notices to TaskWraith, not to the thread provider', () => {
+    const rows = mapHostHistoryEntriesToTranscriptRows(
+      [
+        {
+          entryId: 'notice-1',
+          role: 'system',
+          createdAt: Date.UTC(2026, 8, 1, 22, 54, 34),
+          text: 'Run failed · ACP prompt was rejected.'
+        }
+      ],
+      mapHostSnapshotToControlSnapshot(snapshotWithThread()).threads[0]
+    )
+    expect(rows[0]).toMatchObject({ role: 'system', speaker: 'TaskWraith' })
+    expect(rows[0].provider).toBeUndefined()
+  })
+
+  it('maps bounded Host history entries onto existing transcript rows', () => {
+    expect(
+      mapHostHistoryEntriesToTranscriptRows([
+        {
+          entryId: 'history-1',
+          role: 'assistant',
+          createdAt: Date.UTC(2026, 7, 24, 4, 0, 0),
+          text: 'A bounded Host transcript entry.',
+          label: 'Host assistant'
+        }
+      ])
+    ).toEqual([
+      {
+        id: 'host-history:history-1',
+        role: 'assistant',
+        kind: 'host-history',
+        speaker: 'Host assistant',
+        text: 'A bounded Host transcript entry.',
+        timestamp: '2026-08-24T04:00:00.000Z',
+        truncated: false
+      }
+    ])
+  })
+
+  it('keeps provider, model and effort identity on authoritative assistant history rows', () => {
+    const thread = mapHostSnapshotToThreadDetail(snapshotWithThread(), 'thread-1')!.thread.thread
+    expect(
+      mapHostHistoryEntriesToTranscriptRows(
+        [
+          {
+            entryId: 'history-provider',
+            role: 'assistant',
+            createdAt: 1,
+            text: 'Stable identity'
+          }
+        ],
+        thread
+      )[0]
+    ).toMatchObject({
+      speaker: 'Claude',
+      provider: { runtimeProvider: 'claude' },
+      model: 'Opus 5',
+      reasoning: 'high'
+    })
+  })
+
+  it('maps bounded file-edit activity onto the assistant row', () => {
+    const thread = mapHostSnapshotToThreadDetail(snapshotWithThread(), 'thread-1')!.thread.thread
+    const row = mapHostHistoryEntriesToTranscriptRows(
+      [
+        {
+          entryId: 'history-edit',
+          role: 'assistant',
+          createdAt: 1,
+          text: 'Updated the file.',
+          tools: [
+            {
+              id: 'tool-edit',
+              name: 'Edit File',
+              category: 'write',
+              status: 'success',
+              file: 'src/example.ts',
+              additions: 4,
+              deletions: 2,
+              diff: {
+                hunks: [
+                  {
+                    header: '@@ -1,1 +1,2 @@',
+                    lines: [
+                      { type: 'del', text: 'old', oldLine: 1 },
+                      { type: 'add', text: 'new', newLine: 1 }
+                    ]
+                  }
+                ]
+              },
+              command: { command: 'npm test', output: 'passed', exitCode: 0 }
+            }
+          ]
+        }
+      ],
+      thread
+    )[0]
+    expect(row).toMatchObject({
+      text: 'Updated the file.',
+      tools: [
+        {
+          name: 'Edit File',
+          category: 'write',
+          status: 'success',
+          file: 'src/example.ts',
+          additions: 4,
+          deletions: 2,
+          diff: {
+            hunks: [
+              {
+                header: '@@ -1,1 +1,2 @@',
+                lines: [
+                  { type: 'del', text: 'old', oldLine: 1 },
+                  { type: 'add', text: 'new', newLine: 1 }
+                ]
+              }
+            ]
+          },
+          command: { command: 'npm test', output: 'passed', exitCode: 0 }
+        }
+      ]
+    })
+  })
+
   it('maps workspaces and threads onto the control snapshot shape', () => {
     const mapped = mapHostSnapshotToControlSnapshot(snapshotWithThread())
     expect(mapped.generatedAt).toBe('2026-08-06T12:00:00.000Z')
@@ -87,8 +349,10 @@ describe('hostProjectionMap', () => {
       provider: {
         runtimeProvider: 'claude',
         displayProvider: 'Claude',
-        shortCode: 'CLA'
-      }
+        shortCode: 'CLA',
+        model: 'claude-opus-5'
+      },
+      reasoning: 'high'
     })
   })
 
@@ -273,10 +537,14 @@ describe('hostProjectionMap', () => {
     expect(detail?.thread.rows[0]).toMatchObject({
       kind: HOST_TUI_PREVIEW_ROW_KIND,
       text: 'Bounded preview only',
-      truncated: true
+      truncated: true,
+      provider: { runtimeProvider: 'claude' },
+      model: 'Opus 5',
+      reasoning: 'high'
     })
     expect(detail?.thread.hasMoreAbove).toBe(true)
     expect(detail?.thread.context.workspaces[0]?.access).toBe('read')
+    expect(detail?.thread.context.permission).toBe('workspace_write')
   })
 
   it('returns null when the thread is absent from the Host snapshot', () => {

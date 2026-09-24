@@ -52,6 +52,11 @@ import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { IdentityIconPicker } from './IdentityIconPicker'
 import { ActiveRunsSection } from './ActiveRunsSection'
+import { SidebarOverflowMenu } from './SidebarOverflowMenu'
+import {
+  createSidebarChatPopoutActions,
+  type SidebarChatPopoutHandler
+} from '../lib/sidebarChatPopoutAction'
 import {
   loadSidebarThreadOrderState,
   orderSidebarThreads,
@@ -69,12 +74,17 @@ const PROJECT_CHAT_DRAG_MIME = 'application/x-taskwraith-chat-id'
 
 interface ProjectsSidebarViewProps {
   chats: ChatRecord[]
+  /** Full chat catalog used only to project active linked runs onto their
+   * top-level parent thread. Project membership and listing stay scoped to
+   * `chats`. */
+  activeRunChats?: readonly ChatRecord[]
   currentChat: ChatRecord | null
   activeChatId?: string | null
   runningChatIds?: string[]
   searchQuery: string
   isSearchActive: boolean
   onSelectChat: (chat: ChatRecord) => void
+  onOpenChatPopout?: SidebarChatPopoutHandler
   /** Start a Project Home for an unhomed project: the host creates/focuses a
    * pristine General draft and auto-claims it on its first committed send. */
   onStartProjectHome?: (projectId: string) => void
@@ -242,12 +252,14 @@ function HighlightMatch({ text, query }: { text: string; query: string }): JSX.E
 
 export function ProjectsSidebarView({
   chats,
+  activeRunChats,
   currentChat,
   activeChatId,
   runningChatIds = [],
   searchQuery,
   isSearchActive,
   onSelectChat,
+  onOpenChatPopout,
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
@@ -795,6 +807,12 @@ export function ProjectsSidebarView({
           </span>
           {isRunning && <SidebarRunningGhost />}
         </button>
+        {onOpenChatPopout && (
+          <SidebarOverflowMenu
+            triggerLabel="Thread actions"
+            items={createSidebarChatPopoutActions(chat, onOpenChatPopout)}
+          />
+        )}
         <button
           type="button"
           className={`sidebar-project-icon-button sidebar-project-home-toggle ${
@@ -1307,12 +1325,13 @@ export function ProjectsSidebarView({
   return (
     <section className="sidebar-projects-view" aria-label="Projects">
       <ActiveRunsSection
-        chats={chats}
+        chats={activeRunChats || chats}
         currentChat={currentChat}
         runningChatIds={runningChatIds}
         surface="work"
         workChatIds={workChatIds}
         onSelectChat={onSelectChat}
+        onOpenChatPopout={onOpenChatPopout}
         onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
       />
       <div className="sidebar-section-header sidebar-projects-header">

@@ -12,19 +12,22 @@
 import Foundation
 import CryptoKit
 
-private final class PingContinuationGate: @unchecked Sendable {
+/// Result slot for a WebSocket ping whose completion lands on a URLSession
+/// queue while the probe polls from the actor.
+private final class PingOutcome: @unchecked Sendable {
     private let lock = NSLock()
-    private var didResume = false
+    private var stored: Bool?
 
-    func resume(_ continuation: CheckedContinuation<Bool, Never>, returning value: Bool) {
+    var value: Bool? {
         lock.lock()
-        guard !didResume else {
-            lock.unlock()
-            return
-        }
-        didResume = true
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        if stored == nil { stored = value }
         lock.unlock()
-        continuation.resume(returning: value)
     }
 }
 
@@ -91,7 +94,11 @@ public actor RelayTransportClient {
     private let urlSession: URLSession
 
     private var established = false
-    private var establishedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var establishmentError: Error?
+    /// Every WebSocket frame received on the live socket, authenticated or not —
+    /// proof the relay socket itself is up.
+    private var inboundFrameCount: UInt64 = 0
+    private var establishedWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var ackWaiters: [String: CheckedContinuation<AckResult, Never>] = [:]
     private var requestCounter = 0
 
@@ -114,6 +121,8 @@ public actor RelayTransportClient {
 
     public var isEstablished: Bool { established }
     public var currentSessionId: String? { bootstrap?.sessionId }
+    var establishedWaiterCount: Int { establishedWaiters.count }
+    var receivedFrameCount: UInt64 { inboundFrameCount }
     public nonisolated var identityPublicKeyBase64: String { identityPubKeyB64 }
 
     // ── Pairing entry points ──────────────────────────────────────────────────
@@ -164,27 +173,35 @@ public actor RelayTransportClient {
         urlRequest.setValue(TWProtocol.id, forHTTPHeaderField: "x-taskwraith-protocol")
         let task = urlSession.webSocketTask(with: urlRequest)
         task.resume()
-        let requestData = try JSONEncoder().encode(request)
+        let requestData = try TWCoders.encoder.encode(request)
         guard let requestText = String(data: requestData, encoding: .utf8) else {
             task.cancel(with: .goingAway, reason: nil)
             throw TransportError.invalidRelayUrl
         }
         let message: URLSessionWebSocketTask.Message
         do {
-            message = try await withThrowingTaskGroup(
-                of: URLSessionWebSocketTask.Message.self
-            ) { group in
-                group.addTask {
-                    try await task.send(.string(requestText))
-                    return try await task.receive()
+            message = try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(
+                    of: URLSessionWebSocketTask.Message.self
+                ) { group in
+                    group.addTask {
+                        try await task.send(.string(requestText))
+                        return try await task.receive()
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                        // A cancelled task group still waits for its receive child.
+                        // Close the socket here so an unroutable door cannot hold
+                        // the whole candidate walk past this deadline.
+                        task.cancel(with: .goingAway, reason: nil)
+                        throw TransportError.timeout("resolve")
+                    }
+                    let first = try await group.next()!
+                    group.cancelAll()
+                    return first
                 }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                    throw TransportError.timeout("resolve")
-                }
-                let first = try await group.next()!
-                group.cancelAll()
-                return first
+            } onCancel: {
+                task.cancel(with: .goingAway, reason: nil)
             }
         } catch {
             task.cancel(with: .goingAway, reason: nil)
@@ -199,7 +216,7 @@ public actor RelayTransportClient {
         }
         guard let data else { throw TransportError.resolveNoSession }
         struct ResolveResponse: Decodable { let ok: Bool; let sessionId: String?; let status: Int? }
-        let decoded = try JSONDecoder().decode(ResolveResponse.self, from: data)
+        let decoded = try TWCoders.decoder.decode(ResolveResponse.self, from: data)
         if let status = decoded.status, status != 200 { throw TransportError.resolveFailed(status) }
         guard decoded.ok, let sessionId = decoded.sessionId else {
             throw TransportError.resolveNoSession
@@ -225,12 +242,15 @@ public actor RelayTransportClient {
 
     public func connect() throws {
         guard let bootstrap, let session else { throw TransportError.notScanned }
-        established = false
         let base = bootstrap.relayUrl.hasSuffix("/")
             ? String(bootstrap.relayUrl.dropLast()) : bootstrap.relayUrl
         guard let sessionUrl = URL(string: "\(base)/v1/session/\(bootstrap.sessionId)") else {
             throw TransportError.invalidRelayUrl
         }
+        dropConnection()
+        // A rehandshake must not send output queued for the previous socket.
+        _ = session.drainOutbox()
+        _ = session.takeEstablishedEdge()
         var request = URLRequest(url: sessionUrl)
         request.setValue("iphone", forHTTPHeaderField: "x-taskwraith-role")
         request.setValue(TWProtocol.id, forHTTPHeaderField: "x-taskwraith-protocol")
@@ -248,74 +268,113 @@ public actor RelayTransportClient {
     }
 
     public func waitForEstablished(timeoutMs: Int = 8000) async throws {
+        try Task.checkCancellation()
         if established { return }
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            establishedWaiters.append(c)
-            scheduleEstablishedTimeout(after: timeoutMs)
+        if let establishmentError { throw establishmentError }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    c.resume(throwing: CancellationError())
+                    return
+                }
+                establishedWaiters[id] = c
+                scheduleEstablishedTimeout(id: id, after: timeoutMs)
+            }
+        } onCancel: {
+            Task { await self.failEstablishedWaiter(id, error: CancellationError()) }
         }
-        if !established { throw TransportError.timeout("established") }
     }
 
-    private func scheduleEstablishedTimeout(after ms: Int) {
+    private func scheduleEstablishedTimeout(id: UUID, after ms: Int) {
         Task {
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
-            self.fireEstablishedTimeout()
+            self.failEstablishedWaiter(id, error: TransportError.timeout("established"))
         }
     }
 
-    private func fireEstablishedTimeout() {
-        guard !established else { return }
+    private func failEstablishedWaiter(_ id: UUID, error: Error) {
+        establishedWaiters.removeValue(forKey: id)?.resume(throwing: error)
+    }
+
+    private func failEstablishedWaiters(_ error: Error) {
         let waiters = establishedWaiters
         establishedWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+        for waiter in waiters.values { waiter.resume(throwing: error) }
     }
 
     /// Hard drop (no close handshake), like losing coverage. Session app state
     /// survives; reconnect() re-handshakes on the same session.
     public func dropConnection() {
         established = false
+        establishmentError = nil
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
+        failEstablishedWaiters(TransportError.hostUnavailable)
     }
 
     public func reconnect() throws { try connect() }
 
     public func close() {
         established = false
+        establishmentError = nil
         wsTask?.cancel(with: .normalClosure, reason: nil)
         wsTask = nil
+        failEstablishedWaiters(TransportError.hostUnavailable)
         eventContinuation.yield(.closed)
     }
 
+    /// Prove the relay socket. A WebSocket pong is one proof; ANY inbound frame
+    /// is another, and the second matters: while a large push is streaming in,
+    /// the pong (a control frame) sits behind the data already in flight on the
+    /// same TCP stream and can miss a short deadline on a perfectly healthy
+    /// link. Reading that miss as "dead" tore down live sessions mid-sync, so
+    /// traffic observed during the wait counts as alive.
     public func checkSocketAlive(timeoutMs: Int = 2_500) async -> Bool {
         guard let task = wsTask else { return false }
-        let gate = PingContinuationGate()
-        return await withCheckedContinuation { continuation in
-            task.sendPing { error in
-                gate.resume(continuation, returning: error == nil)
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                gate.resume(continuation, returning: false)
-            }
+        let baseline = inboundFrameCount
+        let outcome = PingOutcome()
+        task.sendPing { error in outcome.set(error == nil) }
+        let pollMs = 100
+        var waitedMs = 0
+        while waitedMs < timeoutMs {
+            guard wsTask === task else { return false }
+            if inboundFrameCount > baseline { return true }
+            if let ponged = outcome.value { return ponged }
+            guard !Task.isCancelled else { return false }
+            let sleepMs = min(pollMs, timeoutMs - waitedMs)
+            try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
+            waitedMs += sleepMs
         }
+        return wsTask === task && inboundFrameCount > baseline
     }
 
     /// Prove the authenticated computer endpoint is awake, not merely the
     /// phone's WebSocket connection to the relay. Repeated encrypted pings make
     /// this a small best-effort wake window on Macs configured for network wake;
     /// a screen-locked but awake Mac answers immediately.
+    ///
+    /// A pong is not the only proof. Any frame that passes the session's GCM
+    /// check was sealed by the peer, so it is equally live evidence — and right
+    /// after an establish the Mac streams a projection snapshot large enough
+    /// that its pong queues behind it past this deadline. Counting those frames
+    /// is what stops a busy-but-healthy Mac from being declared unreachable.
     public func checkPeerAlive(timeoutMs: Int = 6_000) async -> Bool {
-        guard established, let session, wsTask != nil else { return false }
+        guard established, let session, let task = wsTask else { return false }
         let baseline = session.peerPongCount
+        let frameBaseline = session.peerAuthenticatedFrameCount
         let pollMs = 100
         let pingEveryMs = 1_000
         var waitedMs = 0
         var nextPingAtMs = 0
 
         while waitedMs < timeoutMs {
-            guard established, self.session === session, wsTask != nil else { return false }
-            if session.peerPongCount > baseline { return true }
+            guard established, self.session === session, wsTask === task else { return false }
+            if session.peerPongCount > baseline
+                || session.peerAuthenticatedFrameCount > frameBaseline
+            {
+                return true
+            }
             if waitedMs >= nextPingAtMs {
                 session.ping()
                 await drainAndTransmit()
@@ -326,7 +385,9 @@ public actor RelayTransportClient {
             try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
             waitedMs += sleepMs
         }
-        return established && session.peerPongCount > baseline
+        return established && wsTask === task
+            && (session.peerPongCount > baseline
+                || session.peerAuthenticatedFrameCount > frameBaseline)
     }
 
     // ── App messages ────────────────────────────────────────────────────────────
@@ -341,13 +402,20 @@ public actor RelayTransportClient {
     }
 
     /// Send an action and await its correlated `bridge.ack`.
-    public func request(_ method: String, params: [String: Any], timeoutMs: Int = 8000) async throws
-        -> AckResult
-    {
+    public func request(
+        _ method: String, params: [String: Any], timeoutMs: Int = 8000,
+        skipPeerPreflight: Bool = false
+    ) async throws -> AckResult {
         // A relay ping can succeed while the Mac is asleep. Never enqueue a
         // user action into that zombie-looking session: prove the encrypted
         // peer first so callers can reconnect/wake or show a safe notice.
-        guard await checkPeerAlive() else { throw TransportError.hostUnavailable }
+        // Callers that just completed a shared peer probe pass skipPeerPreflight
+        // so we do not spend a second 6s ping on the same proof.
+        if skipPeerPreflight {
+            guard established, wsTask != nil else { throw TransportError.hostUnavailable }
+        } else {
+            guard await checkPeerAlive() else { throw TransportError.hostUnavailable }
+        }
         requestCounter += 1
         let requestId = "ios-req-\(requestCounter)"
         var withId = params
@@ -366,10 +434,18 @@ public actor RelayTransportClient {
     public func requestSerialized(
         _ method: String, paramsData: Data, timeoutMs: Int = 8000
     ) async throws -> AckResult {
+        try await requestSerialized(
+            method, paramsData: paramsData, timeoutMs: timeoutMs, skipPeerPreflight: false)
+    }
+
+    public func requestSerialized(
+        _ method: String, paramsData: Data, timeoutMs: Int, skipPeerPreflight: Bool
+    ) async throws -> AckResult {
         let object =
             (try JSONSerialization.jsonObject(with: paramsData, options: [.fragmentsAllowed])
                 as? [String: Any]) ?? [:]
-        return try await request(method, params: object, timeoutMs: timeoutMs)
+        return try await request(
+            method, params: object, timeoutMs: timeoutMs, skipPeerPreflight: skipPeerPreflight)
     }
 
     private func fireAckTimeout(_ requestId: String) {
@@ -389,34 +465,46 @@ public actor RelayTransportClient {
         while wsTask === task {
             do {
                 let message = try await task.receive()
-                // The relay forwards frames verbatim; the `ws` library re-sends a
-                // received text frame as a Buffer → a BINARY WS frame. So accept
-                // BOTH .string and .data and decode the UTF-8 JSON either way.
-                let data: Data?
-                switch message {
-                case .string(let text): data = text.data(using: .utf8)
-                case .data(let raw): data = raw
-                @unknown default: data = nil
-                }
-                if let data {
-                    dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
-                    if let frame = try? JSONDecoder().decode(E2eeFrame.self, from: data) {
-                        session?.handleFrame(frame)
-                        await drainAndTransmit()
-                    } else {
-                        dbg("recv DECODE-FAIL")
-                    }
-                }
+                await processReceivedMessage(message, from: task)
             } catch {
                 dbg("recv error \(error)")
                 if wsTask === task {
                     established = false
                     wsTask = nil
+                    failEstablishedWaiters(TransportError.hostUnavailable)
                     eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
+                        .error(TransportErrorCopy.friendlyMessage(
+                            for: error, relayUrl: bootstrap?.relayUrl)))
                     eventContinuation.yield(.closed)
                 }
                 return
+            }
+        }
+    }
+
+    /// The actor may be reentered while `receive()` is suspended. A frame from
+    /// the socket we just replaced must not advance the new handshake.
+    func processReceivedMessage(
+        _ message: URLSessionWebSocketTask.Message, from task: URLSessionWebSocketTask
+    ) async {
+        guard wsTask === task else { return }
+        // The relay forwards frames verbatim; the `ws` library re-sends a
+        // received text frame as a Buffer → a BINARY WS frame. So accept
+        // BOTH .string and .data and decode the UTF-8 JSON either way.
+        let data: Data?
+        switch message {
+        case .string(let text): data = text.data(using: .utf8)
+        case .data(let raw): data = raw
+        @unknown default: data = nil
+        }
+        inboundFrameCount &+= 1
+        if let data {
+            dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
+            if let frame = try? TWCoders.decoder.decode(E2eeFrame.self, from: data) {
+                session?.handleFrame(frame)
+                await drainAndTransmit()
+            } else {
+                dbg("recv DECODE-FAIL")
             }
         }
     }
@@ -425,31 +513,37 @@ public actor RelayTransportClient {
     /// frames in order, dispatch delivered messages (+ resolve ack waiters),
     /// surface the confirm code, fulfill establishment, surface errors.
     private func drainAndTransmit() async {
-        guard let session else { return }
+        guard let session, let task = wsTask else { return }
         for frame in session.drainOutbox() {
-            if let data = try? JSONEncoder().encode(frame),
+            if let data = try? TWCoders.encoder.encode(frame),
                 let text = String(data: data, encoding: .utf8)
             {
                 dbg("send \(text.prefix(80))")
                 do {
-                    try await wsTask?.send(.string(text))
+                    try await task.send(.string(text))
                 } catch {
                     dbg("send error \(error)")
-                    established = false
-                    wsTask = nil
-                    eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
-                    eventContinuation.yield(.closed)
+                    if wsTask === task {
+                        established = false
+                        wsTask = nil
+                        failEstablishedWaiters(TransportError.hostUnavailable)
+                        eventContinuation.yield(
+                            .error(TransportErrorCopy.friendlyMessage(
+                                for: error, relayUrl: bootstrap?.relayUrl)))
+                        eventContinuation.yield(.closed)
+                    }
                     return
                 }
+                guard wsTask === task, self.session === session else { return }
             }
         }
+        guard wsTask === task, self.session === session else { return }
         if let code = session.takeConfirmCode() { eventContinuation.yield(.confirmCode(code)) }
         if session.takeEstablishedEdge() {
             established = true
             let waiters = establishedWaiters
             establishedWaiters.removeAll()
-            for waiter in waiters { waiter.resume() }
+            for waiter in waiters.values { waiter.resume() }
             eventContinuation.yield(.established)
         }
         for message in session.drainMessages() {
@@ -470,16 +564,32 @@ public actor RelayTransportClient {
             }
             eventContinuation.yield(.message(method: message.method, params: message.params))
         }
-        if let error = session.takeError() {
-            eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
+        if let error = session.takeError() { reportSessionError(error) }
+    }
+
+    /// Preserve authentication failures for both event consumers and the dial
+    /// awaiting establishment, including a waiter registered after the error.
+    func reportSessionError(_ error: Error) {
+        if !established {
+            establishmentError = error
+            failEstablishedWaiters(error)
         }
+        eventContinuation.yield(
+            .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
     }
 
     private nonisolated static let debugEnabled =
         ProcessInfo.processInfo.environment["TWK_DEBUG"] == "1"
-    private nonisolated func dbg(_ line: String) {
-        if Self.debugEnabled { FileHandle.standardError.write(Data("[twk] \(line)\n".utf8)) }
+    // @autoclosure here is load-bearing, not style. The debug gate is checked
+    // INSIDE this function, so an eagerly-evaluated `String` parameter made
+    // every caller build its message even in production. receiveLoop's
+    // `dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ...))"` thus
+    // UTF-8-validated and allocated a String copy of the ENTIRE inbound frame —
+    // every frame, every streamed token, on the phone's hottest ingest path —
+    // only to throw it away because TWK_DEBUG was unset. Deferring evaluation
+    // costs nothing when debug is off and prints identically when it is on.
+    private nonisolated func dbg(_ line: @autoclosure () -> String) {
+        if Self.debugEnabled { FileHandle.standardError.write(Data("[twk] \(line())\n".utf8)) }
     }
 
     static func httpBase(_ relayUrl: String) -> String {

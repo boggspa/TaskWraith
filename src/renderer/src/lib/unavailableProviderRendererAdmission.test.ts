@@ -29,7 +29,12 @@ describe('unavailable provider renderer admission', () => {
     expect(appSource).not.toContain('Scheduled Kimi runs are unavailable')
   })
 
-  it('blocks direct-copy side chats, run lanes, and handoffs before creation IPC', () => {
+  // The run-lane duplicate and handoff-dispatch admission checks that used to
+  // live here went with the Run rail: `handleDuplicateRunLane` and
+  // `handleDispatchHandoff` were the only callers that created a chat from a
+  // lane, and both were removed with the dock surface. Every surviving
+  // chat-creating path is still asserted below.
+  it('blocks direct-copy side chats before creation IPC', () => {
     const sideChat = sourceBetween(
       'const createSideChatFromCurrentChat =',
       'const openLinkedChatInSidePanel ='
@@ -38,26 +43,6 @@ describe('unavailable provider renderer admission', () => {
       sideChat,
       'if (!isRunnableProvider(sideProvider))',
       'await window.api.createSideChat({'
-    )
-
-    const duplicate = sourceBetween(
-      'const handleDuplicateRunLane =',
-      'const handleCreateHandoffFromLane ='
-    )
-    expectBefore(
-      duplicate,
-      'if (!isRunnableProvider(provider))',
-      'await window.api.createGlobalChat()'
-    )
-
-    const handoff = sourceBetween(
-      'const handleDispatchHandoff =',
-      'const handleArchiveHandoff ='
-    )
-    expectBefore(
-      handoff,
-      'if (!isRunnableProvider(provider))',
-      'await window.api.createGlobalChat()'
     )
   })
 

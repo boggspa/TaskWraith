@@ -2,9 +2,26 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { generateThirdPartyNotices } = require('./third-party-notices.cjs')
+const {
+  distributionMetadataFromPackager,
+  installIdentityHandoffPayload
+} = require('./identity-handoff-payload.cjs')
 
 async function validateNativeModules(context) {
   const resourcesDir = resolveResourcesDir(context)
+  const distributionMetadata = distributionMetadataFromPackager(context)
+  const handoffPayload = installIdentityHandoffPayload({
+    resourcesDir,
+    payloadPath: process.env.TASKWRAITH_IDENTITY_HANDOFF_PAYLOAD,
+    expectedBaseUrl: process.env.TASKWRAITH_HANDOFF_REHEARSAL_BASE_URL,
+    expectedSourceCommit: process.env.TASKWRAITH_IDENTITY_HANDOFF_SOURCE_COMMIT,
+    ...distributionMetadata
+  })
+  console.log(
+    handoffPayload.installed
+      ? `Installed final-beta identity handoff payload: ${handoffPayload.destination}`
+      : `Excluded identity handoff payload from ${distributionMetadata.distributionIdentity} ${distributionMetadata.version}`
+  )
   validateAppAsarSize(resourcesDir)
   const unpackedDir = path.join(resourcesDir, 'app.asar.unpacked')
   const platform = context.electronPlatformName || process.platform
@@ -54,9 +71,16 @@ async function validateNativeModules(context) {
   // net that surfaces a clear error if the binary failed to land in the
   // bundle for any reason (broken swift toolchain, missing config, etc.).
   if (platform === 'darwin') {
+    // The helper is built once by `prebuild:bridge-daemon` with a pre-pack
+    // default identity. The packaged parent Info.plist is the authority for
+    // CFBundleIdentifier and both version strings (beta vs debut appId, build
+    // number), so copy them into the helper here — before signing — and then
+    // validate the helper against the parent rather than against any literal.
+    const parentIdentity = readMacBundleIdentity(resourcesDir, context)
     const bridgeInfoPath = resolveMacBridgeInfoPath(resourcesDir)
+    alignMacBridgeHelperIdentity(resourcesDir, parentIdentity)
     const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
-    validateMacBridgeInfo(bridgeInfo, bridgeInfoPath)
+    validateMacBridgeInfo(bridgeInfo, bridgeInfoPath, parentIdentity)
     const daemonPath = resolveMacBridgeDaemonPath(resourcesDir)
     if (!fs.existsSync(daemonPath)) {
       throw new Error(
@@ -208,11 +232,33 @@ function resolveMacBridgeInfoPath(resourcesDir) {
   )
 }
 
-function validateMacBridgeInfo(info, infoPath) {
-  if (info.CFBundleIdentifier !== 'com.chrisizatt.taskwraith') {
+// Parent-app fields the bridge helper must mirror exactly. The helper shares
+// the app's TCC consent identity, so its identifier and both version strings
+// are copied from the packaged parent Info.plist rather than hard-coded.
+const MAC_BUNDLE_IDENTITY_KEYS = Object.freeze([
+  ['bundleIdentifier', 'CFBundleIdentifier'],
+  ['shortVersion', 'CFBundleShortVersionString'],
+  ['bundleVersion', 'CFBundleVersion']
+])
+
+function validateMacBridgeInfo(info, infoPath, expected) {
+  if (!expected || typeof expected !== 'object') {
     throw new Error(
-      `TaskWraith Bridge at ${infoPath} must share bundle identifier com.chrisizatt.taskwraith.`
+      `TaskWraith Bridge at ${infoPath} cannot be validated without the parent app bundle identity.`
     )
+  }
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const want = expected[field]
+    if (typeof want !== 'string' || want.trim().length === 0) {
+      throw new Error(
+        `Parent app bundle identity is missing ${key}; refusing to validate TaskWraith Bridge at ${infoPath}.`
+      )
+    }
+    if (info[key] !== want) {
+      throw new Error(
+        `TaskWraith Bridge at ${infoPath} must share parent ${key} ${want}, got ${String(info[key])}.`
+      )
+    }
   }
   if (info.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
     throw new Error(
@@ -226,6 +272,74 @@ function validateMacBridgeInfo(info, infoPath) {
     throw new Error(
       `TaskWraith Bridge at ${infoPath} must declare a non-empty NSSpeechRecognitionUsageDescription.`
     )
+  }
+}
+
+function bundleIdentityFromInfo(info, infoPath) {
+  const identity = {}
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const value = info && info[key]
+    if (typeof value !== 'string' || value.trim().length === 0 || value !== value.trim()) {
+      throw new Error(`${infoPath} must declare a non-empty ${key}.`)
+    }
+    identity[field] = value
+  }
+  return identity
+}
+
+/**
+ * Read the packaged parent app's bundle identity from its finalized
+ * Contents/Info.plist. electron-builder has already applied appId, version
+ * normalization and the build number by afterPack, so the plist is the
+ * authority; the packager's resolved appId is only cross-checked against it.
+ */
+function readMacBundleIdentity(resourcesDir, context) {
+  const infoPath = path.join(path.dirname(resourcesDir), 'Info.plist')
+  const info = readPlistAsJson(infoPath, 'packaged app Info.plist')
+  const identity = bundleIdentityFromInfo(info, infoPath)
+  const appInfo = context && context.packager && context.packager.appInfo
+  const resolvedAppId = appInfo && typeof appInfo.id === 'string' ? appInfo.id.trim() : ''
+  if (resolvedAppId && resolvedAppId !== identity.bundleIdentifier) {
+    throw new Error(
+      `packaged app Info.plist at ${infoPath} declares CFBundleIdentifier ${identity.bundleIdentifier} but electron-builder resolved appId ${resolvedAppId}.`
+    )
+  }
+  return identity
+}
+
+/**
+ * Copy the parent identity into the TaskWraith Bridge helper Info.plist.
+ * Idempotent: only keys that differ are rewritten, so running it again on an
+ * already-aligned helper (or on both slices of a universal merge) is a no-op.
+ * Every other helper key — executable, name, consent descriptions — is left
+ * exactly as build-bridge-daemon.cjs wrote it.
+ */
+function alignMacBridgeHelperIdentity(resourcesDir, expected) {
+  const infoPath = resolveMacBridgeInfoPath(resourcesDir)
+  const before = readPlistAsJson(infoPath, 'TaskWraith Bridge Info.plist')
+  const rewritten = []
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const want = expected && expected[field]
+    if (typeof want !== 'string' || want.trim().length === 0) {
+      throw new Error(`Parent app bundle identity is missing ${key}; cannot align ${infoPath}.`)
+    }
+    if (before[key] !== want) {
+      replacePlistString(infoPath, key, want)
+      rewritten.push(key)
+    }
+  }
+  const after = readPlistAsJson(infoPath, 'TaskWraith Bridge Info.plist')
+  validateMacBridgeInfo(after, infoPath, expected)
+  if (rewritten.length > 0) {
+    console.log(
+      `Aligned TaskWraith Bridge identity (${rewritten.join(', ')}) with ${expected.bundleIdentifier} ${expected.shortVersion} (${expected.bundleVersion}).`
+    )
+  }
+  return {
+    infoPath,
+    changed: rewritten.length > 0,
+    rewritten,
+    identity: bundleIdentityFromInfo(after, infoPath)
   }
 }
 
@@ -753,3 +867,7 @@ module.exports.resolveMacBridgeDaemonPath = resolveMacBridgeDaemonPath
 module.exports.resolveMacBridgeInfoPath = resolveMacBridgeInfoPath
 module.exports.validateMacBridgeInfo = validateMacBridgeInfo
 module.exports.normalizeMacElectronHelperBundles = normalizeMacElectronHelperBundles
+module.exports.readPlistAsJson = readPlistAsJson
+module.exports.bundleIdentityFromInfo = bundleIdentityFromInfo
+module.exports.readMacBundleIdentity = readMacBundleIdentity
+module.exports.alignMacBridgeHelperIdentity = alignMacBridgeHelperIdentity

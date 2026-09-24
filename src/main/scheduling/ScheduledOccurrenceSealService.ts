@@ -65,6 +65,7 @@ import { grokWriteCapable } from '../grok/GrokCliArgs'
 import { scrubMistralCredentialEnv } from '../mistral/MistralCliArgs'
 import { cursorWriteCapable } from '../cursor/CursorCliArgs'
 import { ollamaAdvertisedToolNames } from '../ollama/OllamaToolTiers'
+import { isOllamaSmallLocalModel } from '../ollama/OllamaSmallLocalModelProfile'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
 
 /**
@@ -145,12 +146,6 @@ export interface ScheduledOccurrenceSealServiceDeps {
     approvalMode: string | undefined,
     settings: AppSettings
   ): 'never' | 'on-request'
-  codexSandboxPolicyForMode(
-    approvalMode: string | undefined,
-    workspace: string,
-    settings: AppSettings,
-    fullAccessGranted: boolean
-  ): CanonicalEvidenceValue
   claudeMcpFacts(input: {
     appRunId: string
     appChatId: string
@@ -517,7 +512,13 @@ export class ScheduledOccurrenceSealService {
         taskWraithMcpProfileId: composed.taskWraithMcpProfileId,
         advertisedToolNames: ollamaAdvertisedToolNames({
           networkAccess: permissions.networkAccess,
-          readOnly: permissions.readOnly
+          readOnly: permissions.readOnly,
+          // The seal must record the surface the run will actually advertise.
+          // Only the model id is known here, which carries the size token for
+          // virtually every tag; the launch plan additionally consults the
+          // daemon's reported parameter_size, so a tag with no size token whose
+          // /api/show says otherwise is the one residual disagreement.
+          smallLocalModel: isOllamaSmallLocalModel(composed.model)
         }),
         capabilityContract,
         userMcpConfiguration
@@ -612,8 +613,7 @@ export class ScheduledOccurrenceSealService {
         capabilityContract,
         userMcpConfiguration,
         policy: {
-          approvalPolicyForMode: this.deps.codexApprovalPolicyForMode,
-          sandboxPolicyForMode: this.deps.codexSandboxPolicyForMode
+          approvalPolicyForMode: this.deps.codexApprovalPolicyForMode
         }
       })
       return {

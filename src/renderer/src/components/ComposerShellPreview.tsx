@@ -1,5 +1,6 @@
 import React from 'react'
 import {
+  AppleTerminalIcon,
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
   FolderSymbolIcon,
@@ -7,31 +8,46 @@ import {
   GoalSymbolIcon,
   PlusSymbolIcon,
   RunSymbolIcon,
-  ScreenWatchSymbolIcon
+  ScreenWatchSymbolIcon,
+  WaveformSymbolIcon
 } from './AppChromeSymbols'
 import { ComposerThreadTimecodeBar } from './ComposerTimecodes'
 import { FONT_STACKS, resolveComposerFontFamily } from '../lib/typefaceOptions'
 import { composerGitActionUsesCommitIcon } from '../lib/composerGitActionIcon'
+import { useComposerAboveBarStyleState } from '../hooks/useComposerAboveBarStyleState'
+import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import type {
+  ChatRecord,
   ComposerStyle,
   ExternalPathGrant,
   ProviderId,
   ThemeAppearance,
   WorkspaceRecord
 } from '../../../main/store/types'
+import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { ComposerPlusPicker, type ComposerPlusPickerSection } from './ComposerPlusPicker'
-import {
-  CombinedModelPicker,
-  type CombinedModelPickerProviderGroup
-} from './CombinedModelPicker'
-import {
-  CombinedPermissionsPicker,
-  type PermissionOption
-} from './CombinedPermissionsPicker'
+import { CombinedModelPicker, type CombinedModelPickerProviderGroup } from './CombinedModelPicker'
+import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import type { ContextMeterModel } from '../lib/contextMeter'
 import { ComposerWorkspaceSwitcher } from './ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton, type CopyTranscriptResult } from './CopyTranscriptButton'
+import { ComposerBranchWorktreePopover } from './ComposerBranchWorktreePopover'
+import { GitMergeBadge, GitSyncChip } from './GitStatusChips'
+import { WorkspaceDiffStatsButton } from './WorkspaceDiffStatsButton'
+import { LiveThreadTokenTally } from './LiveThreadTokenTally'
+import type { ChatTokenTally } from '../lib/threadTokenTally'
+import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
+import { TranscriptViewPicker } from './TranscriptViewPicker'
+import { MultiviewLayoutPicker } from './MultiviewLayoutPicker'
+import { CanvasComposerTrigger } from './CanvasComposerTrigger'
+import { ComposerAboveRowsToggleButton } from './ComposerAboveRowsToggleButton'
+import { ComposerVoiceControls } from './ComposerVoiceControls'
+import {
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_REASONING_EFFORTS
+} from '../../../shared/kimiModels'
 
 /**
  * ComposerShellPreview — the single source of truth for the inert composer
@@ -82,21 +98,22 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
       // Codex provider (hence the GPT model chip).
       return {
         providerLabel: 'ChatGPT',
-        modelLabel: 'GPT-5.6-Sol',
+        // GPT-6 Sol (2026-09-22) — same label form as the live Codex picker row.
+        modelLabel: 'GPT-6-Sol',
         permissionLabel: 'Accept Edits',
         placeholder: 'Message ChatGPT'
       }
     case 'claude':
       return {
         providerLabel: 'Claude',
-        // Opus 5 (launched 2026-07-24) leads the Claude picker; keep the
+        // Opus 5.5 (released 2026-09-22) leads the Claude picker; keep the
         // preview in step with the live composer chip.
-        modelLabel: 'Opus 5',
+        modelLabel: 'Opus 5.5',
         permissionLabel: 'Plan',
         placeholder: 'Describe a task or ask a question'
       }
     case 'cursor':
-      // Preview-only. Cursor here is the VISUAL shell, not the provider —
+      // Preview-only.
       // the flat-gray CSS strips all chroma regardless of provider.
       return {
         providerLabel: 'Cursor',
@@ -121,7 +138,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'kimi':
       return {
         providerLabel: 'Kimi',
-        modelLabel: 'K2.7 Coding Thinking',
+        modelLabel: KIMI_K28_MODEL_LABEL,
         permissionLabel: 'Read workspace',
         placeholder: 'Type "/" to quickly access skills'
       }
@@ -187,9 +204,9 @@ function previewModelIdForStyle(style: ComposerStyle): string {
     case 'codex':
       return 'gpt-5.5'
     case 'chatgpt':
-      return 'gpt-5.5'
+      return 'gpt-6-sol'
     case 'claude':
-      return 'claude-opus-5'
+      return 'claude-opus-5-5'
     case 'cursor':
       return 'composer-2.5'
     case 'grok':
@@ -197,7 +214,7 @@ function previewModelIdForStyle(style: ComposerStyle): string {
     case 'gemini':
       return 'pro'
     case 'kimi':
-      return 'kimi-k2.7-code'
+      return KIMI_K28_MODEL_ID
     case 'terminal':
       return 'preview-shell'
     default:
@@ -213,6 +230,10 @@ function previewPermissionValueForStyle(style: ComposerStyle): string {
 }
 
 const NOOP = (): void => {}
+const PREVIEW_KIMI_REASONING_OPTIONS = KIMI_K3_REASONING_EFFORTS.map((value) => ({
+  value,
+  label: value.charAt(0).toUpperCase() + value.slice(1)
+}))
 const PREVIEW_PLUS_SECTIONS: ComposerPlusPickerSection[] = [
   {
     id: 'preview-add',
@@ -263,16 +284,68 @@ const PREVIEW_COPY_RESULT: CopyTranscriptResult = {
   charCount: 128,
   omissions: []
 }
+/**
+ * Sample git state for the primary workspace above-row. The live row derives
+ * its branch trigger, merge badge, sync chip and diff-stats pill from a
+ * `GitRepositorySnapshot`; the preview feeds the same components a tidy,
+ * in-sync snapshot with two uncommitted files so the row renders exactly the
+ * chrome a real dirty checkout on `main` would (no merge badge, no sync chip).
+ */
+const PREVIEW_GIT_SNAPSHOT: GitRepositorySnapshot = {
+  requestedPath: PREVIEW_WORKSPACE.path,
+  repoRoot: PREVIEW_WORKSPACE.path,
+  branch: 'main',
+  commit: 'preview',
+  detached: false,
+  upstream: 'origin/main',
+  remoteName: 'origin',
+  remoteUrl: 'https://example.invalid/preview/workspace.git',
+  ahead: 0,
+  behind: 0,
+  totalCommits: 128,
+  files: [],
+  counts: { changed: 2, staged: 0, unstaged: 2, untracked: 0 },
+  clean: false,
+  mergeState: null,
+  conflicts: 0,
+  lineStats: { additions: 42, deletions: 8 }
+}
+const PREVIEW_DIFF_FILES_CHANGED = 2
+/** Minimal saved chat so the chat-scoped telemetry controls (Plan, View,
+ *  Canvas) mount their real triggers instead of returning null. */
+const PREVIEW_CHAT = {
+  appChatId: 'composer-shell-preview',
+  title: 'Composer preview',
+  createdAt: 1,
+  updatedAt: 1,
+  archived: false,
+  messages: []
+} as unknown as ChatRecord
+const PREVIEW_TOKEN_TALLY: ChatTokenTally = {
+  inputTokens: 1_200_000,
+  outputTokens: 5_000,
+  totalTokens: 1_205_000,
+  explicitCostUsd: 0,
+  peakMemoryRssGb: 0
+}
 const copyPreviewTranscript = async (): Promise<CopyTranscriptResult> => PREVIEW_COPY_RESULT
 const copyPreviewMessages = async (): Promise<CopyTranscriptResult> => PREVIEW_COPY_RESULT
 
 /**
  * The send-button glyph mirrors the live composer's switch
- * (Composer.tsx — `claude` → return arrow, the pill-layout branded shells →
- * up-arrow, everything else → the native run glyph).
+ * (Composer.tsx — `claude` → return arrow, `codex` with an empty draft → the
+ * voice-mode waveform, the pill-layout branded shells → up-arrow, everything
+ * else → the native run glyph).
  */
-function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): React.ReactElement {
+function PreviewSendGlyph({
+  composerStyle,
+  hasSendablePromptContent
+}: {
+  composerStyle: ComposerStyle
+  hasSendablePromptContent: boolean
+}): React.ReactElement {
   if (composerStyle === 'claude') return <ClaudeReturnSymbolIcon />
+  if (composerStyle === 'codex' && !hasSendablePromptContent) return <WaveformSymbolIcon />
   if (
     composerStyle === 'codex' ||
     composerStyle === 'chatgpt' ||
@@ -352,7 +425,11 @@ export function ComposerShellPreview({
       percent: previewContextPercent
     }
   }
-  const aboveRowsFloatAboveStack = composerStyle === 'cursor' || composerStyle === 'codex'
+  const aboveRowsFloatAboveStack =
+    composerStyle === 'cursor' || composerStyle === 'codex' || composerStyle === 'chatgpt'
+  // Same hook as the live composer, so preview and product cannot disagree
+  // about the above-bar flag classes. See lib/ComposerAboveBarStyleState.ts.
+  const composerAboveBarStackRef = useComposerAboveBarStyleState<HTMLDivElement>()
   const useGitIconAction = composerGitActionUsesCommitIcon(composerStyle)
   const actionClassName = [
     'composer-above-bar-action',
@@ -360,15 +437,22 @@ export function ComposerShellPreview({
   ]
     .filter(Boolean)
     .join(' ')
+  // Same label resolution as the live row: Cursor relabels the idle git action
+  // to "Commit", Claude keeps "Create PR", and every other shell names the
+  // real next git step — "Review changes" while the tree has a diff.
+  const previewCreatePrLabel = composerStyle === 'cursor' ? 'Commit' : 'Create PR'
   const previewActionLabel =
-    composerStyle === 'cursor'
-      ? 'Commit'
-      : composerStyle === 'codex' || composerStyle === 'grok' || composerStyle === 'claude'
-        ? 'Create PR'
-        : 'Review changes'
+    composerStyle === 'cursor' || composerStyle === 'claude'
+      ? previewCreatePrLabel
+      : 'Review changes'
+  const hasSendablePromptContent = Boolean((value ?? '').trim())
+  const voicePlacement = composerVoicePlacementForStyle(composerStyle)
+  // Share the live button chrome without mounting microphone discovery or
+  // capture effects. `inert` blocks input, but does not suppress React effects.
+  const previewVoiceButton = <ComposerVoiceControls composerStyle={composerStyle} />
   const workspaceAboveRow = (
     <div
-      className={`composer-above-bar style-unified composer-workspace-above-row${
+      className={`composer-above-bar style-unified composer-workspace-above-row composer-workspace-above-row--primary${
         aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
       }`}
       inert
@@ -393,21 +477,27 @@ export function ComposerShellPreview({
             <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
           </svg>
           <span>
-            Preview workspace ·{' '}
-            <span className="composer-above-bar-secondary-branch git-tone-main">main</span>
+            {PREVIEW_WORKSPACE.displayName}
+            {' · '}
+            <ComposerBranchWorktreePopover
+              workspacePath={PREVIEW_WORKSPACE.path}
+              gitSnapshot={PREVIEW_GIT_SNAPSHOT}
+              fallbackBranch={PREVIEW_WORKSPACE.branch}
+              detached={false}
+              composerStyle={composerStyle}
+            />
           </span>
         </span>
+        <GitMergeBadge snapshot={PREVIEW_GIT_SNAPSHOT} />
+        <GitSyncChip snapshot={PREVIEW_GIT_SNAPSHOT} />
       </div>
       <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-        <span className="composer-above-bar-files-cluster">
-          <span className="composer-above-bar-files">
-            <strong>2</strong> files changed
-          </span>
-          <span className="composer-above-bar-stats">
-            <span className="composer-diff-add">+42</span>
-            <span className="composer-diff-del">-8</span>
-          </span>
-        </span>
+        <WorkspaceDiffStatsButton
+          filesChanged={PREVIEW_DIFF_FILES_CHANGED}
+          additions={PREVIEW_GIT_SNAPSHOT.lineStats.additions}
+          deletions={PREVIEW_GIT_SNAPSHOT.lineStats.deletions}
+          onOpen={NOOP}
+        />
       </div>
       <div className="composer-above-bar-pill composer-above-bar-pill--action">
         <button type="button" className={actionClassName}>
@@ -455,7 +545,7 @@ export function ComposerShellPreview({
           aria-label={`${meta.providerLabel} composer preview`}
         >
           {aboveRowsFloatAboveStack && workspaceAboveRow}
-          <div className="composer-above-bar-stack">
+          <div ref={composerAboveBarStackRef} className="composer-above-bar-stack">
             {!aboveRowsFloatAboveStack && workspaceAboveRow}
           </div>
           <div className="composer-surface settings-composer-preview-surface">
@@ -490,6 +580,13 @@ export function ComposerShellPreview({
                         sections={PREVIEW_PLUS_SECTIONS}
                         triggerIcon={<PlusSymbolIcon />}
                       />
+                      {/* Codex-ONLY by real-composer parity: Composer.tsx
+                          mounts ContextMeterPopover in this cluster solely for
+                          composerStyle === 'codex' — the ChatGPT shell has no
+                          donut there. (A 2026-09-07 chatgpt-parity sweep added
+                          `|| chatgpt &&` here, which && precedence turned into
+                          "codex renders bare `true`, chatgpt gets the donut" —
+                          both halves wrong.) */}
                       {composerStyle === 'codex' && (
                         <ContextMeterPopover
                           meter={previewContextMeter}
@@ -507,10 +604,13 @@ export function ComposerShellPreview({
                         onSelectModel={NOOP}
                         providerGroups={previewProviderGroups}
                         onSelectProviderModel={NOOP}
-                        reasoningOptions={[]}
-                        selectedReasoning={composerStyle === 'kimi' ? 'on' : ''}
+                        reasoningOptions={
+                          composerStyle === 'kimi' ? PREVIEW_KIMI_REASONING_OPTIONS : []
+                        }
+                        selectedReasoning={composerStyle === 'kimi' ? 'max' : ''}
                         onSelectReasoning={NOOP}
                         kimiThinkingEnabled={composerStyle === 'kimi'}
+                        kimiReasoningEffort={composerStyle === 'kimi' ? 'max' : undefined}
                       />
                       <CombinedPermissionsPicker
                         provider={previewProviderId}
@@ -519,6 +619,7 @@ export function ComposerShellPreview({
                         selectedPermission={previewPermissionValue}
                         onSelectPermission={NOOP}
                       />
+                      {voicePlacement === 'permissions' && previewVoiceButton}
                     </div>
                     <div className="composer-inline-actions">
                       {composerStyle !== 'codex' && (
@@ -530,14 +631,19 @@ export function ComposerShellPreview({
                           composerStyle={composerStyle}
                         />
                       )}
+                      {voicePlacement === 'action-row' && previewVoiceButton}
                       <span className="composer-send-cluster">
+                        {voicePlacement === 'send-cluster' && previewVoiceButton}
                         <button
                           type="button"
                           className="composer-action-btn run-btn"
                           title="Run"
                           aria-label="Preview send button"
                         >
-                          <PreviewSendGlyph composerStyle={composerStyle} />
+                          <PreviewSendGlyph
+                            composerStyle={composerStyle}
+                            hasSendablePromptContent={hasSendablePromptContent}
+                          />
                         </button>
                       </span>
                     </div>
@@ -559,8 +665,22 @@ export function ComposerShellPreview({
                   className="composer-screen-watch-button composer-hint-pill"
                   data-hint-label="Screen Watch"
                   aria-label="Open Screen Watch picker"
+                  data-streaming="false"
+                  data-resumable="false"
                 >
                   <ScreenWatchSymbolIcon />
+                </button>
+                {/* The live cluster shows the workspace terminal toggle whenever a
+                    workspace is bound; the preview always previews a bound one. */}
+                <button
+                  type="button"
+                  className="composer-terminal-button composer-hint-pill"
+                  data-hint-label="Terminal"
+                  title="Open workspace terminal"
+                  aria-label="Open workspace terminal"
+                  aria-pressed={false}
+                >
+                  <AppleTerminalIcon />
                 </button>
                 <span className="composer-goal-control-wrap">
                   <button
@@ -572,6 +692,7 @@ export function ComposerShellPreview({
                     <GoalSymbolIcon />
                   </button>
                 </span>
+                <ComposerPlanPopoverButton chat={PREVIEW_CHAT} composerStyle={composerStyle} />
                 <CopyTranscriptButton
                   resetKey="composer-shell-preview"
                   composerStyle={composerStyle}
@@ -579,6 +700,19 @@ export function ComposerShellPreview({
                   onCopyMessages={copyPreviewMessages}
                   onDownload={copyPreviewMessages}
                 />
+                <TranscriptViewPicker
+                  chatId={PREVIEW_CHAT.appChatId}
+                  provider={previewProviderId}
+                  composerStyle={composerStyle}
+                />
+                <MultiviewLayoutPicker
+                  layout="single"
+                  onSelectLayout={NOOP}
+                  provider={previewProviderId}
+                  composerStyle={composerStyle}
+                />
+                <CanvasComposerTrigger />
+                <ComposerAboveRowsToggleButton minimized={false} onToggle={NOOP} />
               </div>
               <div className="composer-telemetry-side composer-telemetry-side--left">
                 <ComposerWorkspaceSwitcher
@@ -592,7 +726,17 @@ export function ComposerShellPreview({
                 />
               </div>
               <div className="composer-telemetry-side composer-telemetry-side--right">
-                <span className="composer-thread-token-tally">1.2M in / 5k out</span>
+                <LiveThreadTokenTally
+                  baseTally={PREVIEW_TOKEN_TALLY}
+                  currency="USD"
+                  model={previewModelId}
+                  overestimatePercent={0}
+                  provider={previewProviderId}
+                  providerRates={{}}
+                  running={false}
+                  liveOutputTokens={0}
+                  title="Preview thread token tally"
+                />
               </div>
             </div>
           </div>

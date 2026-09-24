@@ -55,8 +55,12 @@ const {
   stableNodePath,
   dirtyEntries,
   advanceHeartbeats,
-  MAX_LEASE_MS
+  MAX_LEASE_MS,
+  buildTimerPlist,
+  TIMER_INTERVAL_SECONDS
 } = require('./work-guard.cjs') as {
+  buildTimerPlist: (root: string, nodeBin: string) => string
+  TIMER_INTERVAL_SECONDS: number
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
   claimToMatcher: (claim: string) => (file: string) => boolean
@@ -229,10 +233,11 @@ describe('liveness — backward compatibility', () => {
   })
 })
 
-describe('liveness — a sandboxed seat claims by lock owner id, not pid', () => {
-  // A seat cannot record a pid, so it authenticates with the per-seat
+describe('liveness — an owner-id-only seat claim has no pid', () => {
+  // A seat using the narrow per-seat identity authenticates with the
   // TASKWRAITH_LOCK_OWNER_ID it carries in its environment, and
-  // `.githooks/pre-commit` BLOCKS on that claim. This tool must agree.
+  // `.githooks/pre-commit` BLOCKS on that claim. This tool must agree. A
+  // separately verified stable-PID fallback uses the ordinary pid lane above.
   //
   // Measured before this lane existed: a marker the hook was actively blocking
   // on reported live:false here, and its own claimed paths were simultaneously
@@ -246,7 +251,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       root,
       writeMarker(root, 'seat', {
         pid: null,
-        lockOwnerId: 'seat-owner-1',
+        lockOwnerId: '11111111-1111-4111-a111-111111111111',
         expires: iso(NOW + 3_600_000),
         paths: ['src/']
       })
@@ -267,7 +272,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       root,
       writeMarker(root, 'seat-clean', {
         pid: null,
-        lockOwnerId: 'seat-owner-2',
+        lockOwnerId: '22222222-2222-4222-a222-222222222222',
         expires: iso(NOW + 3_600_000),
         paths: ['src/untouched.ts']
       })
@@ -281,7 +286,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       root,
       writeMarker(root, 'seat-expired', {
         pid: null,
-        lockOwnerId: 'seat-owner-3',
+        lockOwnerId: '33333333-3333-4333-a333-333333333333',
         expires: iso(NOW - 60_000),
         paths: ['src/']
       })
@@ -289,14 +294,14 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
     expect(liveness(seat, {}, NOW).live).toBe(false)
   })
 
-  it('caps a lease at 15 minutes from started, however far off expires is', () => {
+  it('caps a lease at 20 minutes from started, however far off expires is', () => {
     const root = makeRepo()
     const stale = markerFor(
       root,
       writeMarker(root, 'seat-2099', {
         pid: null,
-        lockOwnerId: 'seat-owner-5',
-        started: iso(NOW - 20 * 60_000),
+        lockOwnerId: '55555555-5555-4555-a555-555555555555',
+        started: iso(NOW - 25 * 60_000),
         expires: '2099-01-01T00:00:00Z',
         paths: ['src/']
       })
@@ -310,7 +315,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
       root,
       writeMarker(root, 'seat-fresh', {
         pid: null,
-        lockOwnerId: 'seat-owner-6',
+        lockOwnerId: '66666666-6666-4666-a666-666666666666',
         started: iso(NOW - 5 * 60_000),
         expires: '2099-01-01T00:00:00Z',
         paths: ['src/']
@@ -324,7 +329,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
     const file = '.WORK-IN-PROGRESS-unbounded.md'
     writeFileSync(
       join(root, file),
-      `---\nlockOwnerId: seat-owner-7\nexpires: 2099-01-01T00:00:00Z\npaths:\n  - src/\n---\nbody\n`
+      `---\nlockOwnerId: 77777777-7777-4777-a777-777777777777\nexpires: 2099-01-01T00:00:00Z\npaths:\n  - src/\n---\nbody\n`
     )
     expect(liveness(markerFor(root, file), {}, NOW).live).toBe(false)
   })
@@ -376,7 +381,7 @@ describe('liveness — a sandboxed seat claims by lock owner id, not pid', () =>
     const file = '.WORK-IN-PROGRESS-seat-leaseless.md'
     writeFileSync(
       join(root, file),
-      '---\nsession: test\nagent: test agent\nlockOwnerId: seat-owner-4\npaths:\n  - src/\n---\nbody\n'
+      '---\nsession: test\nagent: test agent\nlockOwnerId: 44444444-4444-4444-a444-444444444444\npaths:\n  - src/\n---\nbody\n'
     )
     const seat = markerFor(root, file)
     expect(seat.expiresMs).toBeNull()
@@ -862,5 +867,42 @@ describe('runtime marker dialect', () => {
     )
     const marker = markerFor(root, file)
     expect(marker.matchers.some((match) => match('anywhere/at/all.ts'))).toBe(true)
+  })
+})
+
+describe('launchd timer plist', () => {
+  // The agent ran fine (exit 0, 19 runs) while the pre-commit hook still said
+  // "timer looks dead — snapshots are NOT being taken". Measured cause: the
+  // job was declared `ProcessType: Background`, launchd's lowest band, where
+  // CPU/IO are throttled and the interval timer is aggressively coalesced. The
+  // 300s StartInterval was landing every 11.7-26.5min (measured over 20
+  // consecutive refs/wip snapshots; the FLOOR was 11.7min, never near 5min).
+  // TICK_STALE_MS is 20min, so the longer gaps tripped the staleness warning
+  // and — the part that actually matters — the real snapshot cadence was
+  // 2.4-5x longer than designed, leaving that much more uncommitted work
+  // unsnapshotted in a repo where several agents share one tree.
+  const plist = () => buildTimerPlist('/repo', '/opt/homebrew/bin/node')
+
+  it('does not put the snapshot timer in launchd’s throttled Background band', () => {
+    expect(plist()).not.toContain('<string>Background</string>')
+  })
+
+  it('declares the interval the staleness threshold is calibrated against', () => {
+    expect(plist()).toContain(
+      `<key>StartInterval</key><integer>${TIMER_INTERVAL_SECONDS}</integer>`
+    )
+  })
+
+  it('keeps the staleness threshold a clear multiple of the interval', () => {
+    // Ties the two constants together: changing one without the other either
+    // cries wolf on every commit or hides a genuinely dead timer for hours.
+    expect(TICK_STALE_MS).toBeGreaterThanOrEqual(TIMER_INTERVAL_SECONDS * 1000 * 4)
+  })
+
+  it('still points launchd at the repo it snapshots', () => {
+    const xml = plist()
+    expect(xml).toContain('<key>WorkingDirectory</key><string>/repo</string>')
+    expect(xml).toContain('<string>/opt/homebrew/bin/node</string>')
+    expect(xml).toContain('<key>RunAtLoad</key><true/>')
   })
 })

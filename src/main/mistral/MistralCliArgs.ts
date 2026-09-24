@@ -7,7 +7,7 @@
 //
 //   usage: vibe-acp [-h] [-v] [--setup]
 //
-// (verified against vibe-acp 2.22.0, 2026-07-26). There is no model flag, no
+// (verified against vibe-acp 2.22.0 and 2.24.3). There is no model flag, no
 // mode flag, no tool/deny flag, no sandbox flag. `buildMistralAcpCliArgs`
 // therefore returns an EMPTY argv, and it exists precisely so that fact is
 // explicit, single-sourced and bound into the launch seal rather than being an
@@ -20,9 +20,10 @@
 // per tier is the security decision this module encodes.
 //
 // ── THE MODE LADDER ───────────────────────────────────────────────────────
-// `session/new` advertises five modes. Two of them are traps:
+// `session/new` advertises gated and ungated modes. Two are traps:
 //
-//   default        Requires approval for tool executions   ← WRITE tier
+//   ask             Requires approval for tool executions   ← WRITE tier (Vibe 2.24+)
+//   default         Same gated mode id on Vibe <=2.23        ← legacy fallback
 //   plan           Read-only agent for exploration          ← READ-ONLY tier
 //   accept-edits   Auto-approves file edits only            ← NEVER
 //   auto-approve   Auto-approves ALL tool executions        ← NEVER
@@ -36,12 +37,13 @@
 // `mistralSessionModeForSeat`, and `ScheduledOccurrenceSeal` refuses a sealed
 // occurrence that claims one.
 //
-// `default` is the write tier BECAUSE it gates: every tool execution raises
-// `session/request_permission`, which the host answers. `plan` is the
-// read-only tier and is defence-in-depth — the host gate still auto-denies
+// `ask`/legacy `default` is the write tier BECAUSE it gates: every tool
+// execution raises `session/request_permission`, which the host answers.
+// `plan` is the read-only tier and is defence-in-depth — the host gate still auto-denies
 // mutations underneath it.
 
 import type { MistralPlanId } from './MistralQuotaEstimate'
+import { noToolsOverrideClause } from '../providers/NoToolsOverrideClause'
 
 /**
  * The binary. NOT `mistral` and NOT `vibe` — `vibe` is the interactive TUI and
@@ -56,8 +58,9 @@ export const MISTRAL_BINARY_NAME = 'vibe-acp'
  *
  * Vibe resolves credentials API-KEY-FIRST: if this is set, the child bills the
  * user's metered API account and the plan subscription is never consulted. No
- * error, no warning — just a different bill. Scrubbing it is what makes this a
- * subscription seat rather than a second BYOK path onto the same key.
+ * error, no warning — just a different bill. Scrubbing it is what makes a
+ * Vibe-capable model use the subscription lane rather than the key-marked BYOK
+ * lane. `MistralCredentialLane` owns that model-to-lane decision.
  */
 export const MISTRAL_API_KEY_ENV = 'MISTRAL_API_KEY'
 
@@ -66,7 +69,13 @@ export const MISTRAL_TOKEN_ENV = 'MISTRAL_TOKEN'
 
 export const MISTRAL_CREDENTIAL_ENV_VARS = [MISTRAL_API_KEY_ENV, MISTRAL_TOKEN_ENV] as const
 
-export type MistralSessionMode = 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
+export type MistralSessionMode =
+  | 'ask'
+  | 'default'
+  | 'plan'
+  | 'accept-edits'
+  | 'auto-approve'
+  | 'chat'
 
 /** Modes that auto-approve inside the agent, bypassing the host gate entirely. */
 export const MISTRAL_UNGATED_SESSION_MODES: readonly MistralSessionMode[] = [
@@ -96,7 +105,14 @@ export function mistralWriteCapable(approvalMode: string | null | undefined): bo
  * for both tiers; the ungated modes are not reachable from here by design.
  */
 export function mistralSessionModeForSeat(readOnlySeat: boolean): MistralSessionMode {
-  return readOnlySeat ? 'plan' : 'default'
+  return readOnlySeat ? 'plan' : 'ask'
+}
+
+/** Equivalent older Vibe mode ids accepted when the preferred id is absent. */
+export function mistralSessionModeFallbacksForSeat(
+  readOnlySeat: boolean
+): readonly MistralSessionMode[] {
+  return readOnlySeat ? [] : ['default']
 }
 
 /**
@@ -109,10 +125,22 @@ export const MISTRAL_NATIVE_TOOL_POLICY = {
   containment: 'acp-session-mode',
   argvContainment: 'none-available',
   readOnlyModeId: 'plan',
-  writeModeId: 'default',
+  writeModeId: 'ask',
+  legacyWriteModeIds: ['default'],
   ungatedModesNeverSelected: [...MISTRAL_UNGATED_SESSION_MODES],
   allToolCallsRaisePermissionRequest: true,
-  clientFsCapabilityAdvertised: false
+  clientFsCapabilityAdvertised: false,
+  // Native shell is no longer refused outright on a write-capable seat whose
+  // signed shell posture permits it; it is routed to the host approval gate,
+  // where the non-grantable host-destructive wall and the destructive-command
+  // ask wall both apply. Recorded here because the occurrence seal digests this
+  // document: an unattended run's signed posture has to state which containment
+  // it was minted under. Adding these fields changes the digest, so previously
+  // minted Mistral occurrence seals no longer verify and their scheduled tasks
+  // need re-sealing. That is the intended behaviour of a containment change.
+  nativeShell: 'host-approval-gated-when-posture-permits',
+  nativeShellRuntimeSandbox: 'none-available',
+  nativeShellDenyWall: 'host-destructive+destructive-shell-ask'
 } as const
 
 /**
@@ -127,33 +155,52 @@ export function buildMistralAcpCliArgs(): string[] {
 
 // ── Models ────────────────────────────────────────────────────────────────
 // Sourced from the CLI's own bundled catalogue
-// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0). Vibe exposes each
-// model under an ALIAS in the ACP `model` config option while its own config
-// stores the canonical `name`; the ACP surface speaks aliases, so aliases are
-// what this seat uses as model ids.
+// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.25.0) plus the
+// GrowthBook-injected extra `glm-5-2` that Vibe's TUI shows as
+// "GLM-5.2 (Mistral Hosted)". Vibe exposes each model under an ALIAS in the
+// ACP `model` config option while its own config stores the canonical `name`;
+// the ACP surface speaks aliases, so aliases are what this seat uses as ids.
+//
+// Vibe 2.25's DEFAULT_MODELS is only Medium 3.5 + llamacpp `local`. Hosted
+// Devstral Small / Devstral 2 were retired from the API (2026-03-31 and
+// 2026-07-31) and removed from Vibe's picker; Medium 3.5 is the documented
+// successor. TaskWraith still offers the live BYOK API chat models below
+// because those remain on the Mistral limits page.
 
-/** Flagship. Alias of `mistral-vibe-cli-latest`. Available on the FREE plan. */
+/** Flagship. Alias of `mistral-vibe-cli-latest`. Vibe 2.25 default. */
 export const MISTRAL_MODEL_MEDIUM = 'mistral-medium-3.5'
-/** Cheap coding model. Alias of `devstral-small-latest`. ~26x cheaper. */
+/** Retired hosted Devstral Small. Kept only so stale threads remap. */
 export const MISTRAL_MODEL_DEVSTRAL_SMALL = 'devstral-small'
+/** Retired hosted Devstral 2. Kept only so stale threads remap. */
+export const MISTRAL_MODEL_DEVSTRAL_2 = 'devstral-2512'
 /**
- * Vibe's third catalogue entry is `local` — a llamacpp backend pointed at
- * 127.0.0.1:8080. It is not a Mistral cloud model, needs a llama-server the
- * user runs themselves, and bills nothing. Deliberately NOT offered by this
- * seat: local inference is Ollama's lane in TaskWraith, and surfacing it here
- * would put a silently-dead model in the picker for every user without a local
- * server.
+ * Vibe's other bundled catalogue entry is `local` — a llamacpp backend pointed
+ * at 127.0.0.1:8080 (the TUI label is "Devstral (local)"). It is not a Mistral
+ * cloud model, needs a llama-server the user runs themselves, and bills
+ * nothing. Deliberately NOT offered by this seat: local inference is Ollama's
+ * lane in TaskWraith (`devstral-small-2:24b`), and surfacing it here would put
+ * a silently-dead model in the picker for every user without a local server.
  */
 export const MISTRAL_LOCAL_ALIAS_EXCLUDED = 'local'
 
-export const MISTRAL_SEAT_MODELS = [
+/** Hosted Devstral ids Vibe 2.25 no longer accepts. Remap to Medium 3.5. */
+export const MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS = [
   MISTRAL_MODEL_DEVSTRAL_SMALL,
+  'devstral-small-latest',
+  MISTRAL_MODEL_DEVSTRAL_2
+] as const
+
+export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_MEDIUM,
+  'glm-5-2',
+  // Hosted GLM-5.3 on the Vibe subscription (added 2026-09-21), mirroring the
+  // `glm-5-2` subscription extra. Distinct from the API-key `zai-glm-5-3`.
+  'glm-5-3',
   'mistral-large-2512',
+  'zai-glm-5-3',
   'zai-glm-5-2',
   'codestral-2508',
   'mistral-small-2603',
-  'devstral-2512',
   'labs-leanstral-1-5',
   'mistral-medium-latest',
   'mistral-medium-2508',
@@ -166,13 +213,11 @@ export const MISTRAL_SEAT_MODELS = [
 /**
  * Default model for a new Mistral seat.
  *
- * devstral-small, not the flagship: graded head-to-head on an identical task
- * with a known-correct answer (2026-07-26), devstral-small was 26x cheaper,
- * used fewer turns, AND got the answer right where medium-3.5 did not. It is
- * also the model whose price makes the heuristic quota meter forgiving rather
- * than alarming.
+ * Vibe 2.25 made Medium 3.5 the only cloud default (it replaces Devstral 2 in
+ * the coding agent). Hosted Devstral Small is retired, so it can no longer be
+ * the TaskWraith default either.
  */
-export const MISTRAL_DEFAULT_MODEL = MISTRAL_MODEL_DEVSTRAL_SMALL
+export const MISTRAL_DEFAULT_MODEL = MISTRAL_MODEL_MEDIUM
 
 /**
  * Clamp an arbitrary stored model id onto this seat's catalogue.
@@ -194,8 +239,8 @@ export function normalizeMistralModel(model: string | null | undefined): string 
   if (lowered === MISTRAL_MODEL_MEDIUM || lowered === 'mistral-vibe-cli-latest') {
     return MISTRAL_MODEL_MEDIUM
   }
-  if (lowered === MISTRAL_MODEL_DEVSTRAL_SMALL || lowered === 'devstral-small-latest') {
-    return MISTRAL_MODEL_DEVSTRAL_SMALL
+  if ((MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS as readonly string[]).includes(lowered)) {
+    return MISTRAL_MODEL_MEDIUM
   }
   const match = MISTRAL_SEAT_MODELS.find((m) => m.toLowerCase() === lowered)
   if (match) return match
@@ -229,7 +274,7 @@ export function normalizeMistralThinkingLevel(
   if ((MISTRAL_THINKING_LEVELS as readonly string[]).includes(raw)) {
     return raw as MistralThinkingLevel
   }
-  if (raw === 'xhigh' || raw === 'ultra' || raw === 'maximum') return 'max'
+  if (raw === 'xhigh' || raw === 'ultra' || raw === 'maximum' || raw === 'ultratask') return 'max'
   if (raw === 'none' || raw === 'minimal') return 'off'
   return null
 }
@@ -241,10 +286,11 @@ export function normalizeMistralThinkingLevel(
 
 export const MISTRAL_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
-  'inspect freely — read files and run read-only shell commands such as ls, ' +
-  'cat, grep, find, and git log / status / diff. An explicit no-tools instruction ' +
-  'in the user request or role brief overrides that allowance: do not call read, ' +
-  'shell, file, or any other tool. File writes and edits, and MUTATING shell ' +
+  'inspect within your assigned workspace scope. Prefer the listed TaskWraith ' +
+  'shell for ls, cat, grep, find, and git log / status / diff; native shell ' +
+  'remains subject to the host workspace preflight. ' +
+  `${noToolsOverrideClause('read, shell, file, or any other tool')} ` +
+  'File writes and edits, and MUTATING shell ' +
   'commands (anything that changes files or git state, installs packages, or has ' +
   'other side effects) are refused by the host — do not attempt them; if the task ' +
   'would need one, describe what you would change instead. If a tool call is ' +
@@ -252,20 +298,38 @@ export const MISTRAL_READ_ONLY_PROMPT_PREAMBLE =
   'did and answer the user directly.'
 
 export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
-  'When the task requests file changes, use your edit tools; each call is ' +
-  'reviewed by the host before it runs, so expect an approval round-trip rather ' +
-  'than an instant result. An explicit no-tools instruction in the user request ' +
-  'or role brief overrides that allowance: do not call shell, file, or any other ' +
-  'tool. If a tool call is refused or fails, do not end your turn; retry only the ' +
-  'same requested operation with an equivalent allowed tool, and never substitute ' +
-  'an unrelated shell or file call for a failed one. Otherwise report the failure ' +
-  'and answer in prose.'
+  'When the task requests file changes, use the actually listed TaskWraith ' +
+  'replace/apply_patch tools for existing files and write_file for new files. ' +
+  'Use the listed TaskWraith run_shell_command for shell work. Current Vibe ' +
+  'names include TaskWraith_replace and TaskWraith_run_shell_command; copy the ' +
+  'exact name from your current tool list. Native edit/write tools are refused ' +
+  'automatically by TaskWraith; they do not open a human approval card. Brokered ' +
+  'operations enforce the effective grants and assigned paths, asking only when ' +
+  'the policy requires it. ' +
+  `${noToolsOverrideClause('shell, file, or any other tool')} ` +
+  'A decline you can point to — never one you assume — settles a tool request: do ' +
+  'not retry it, reword the same edit, or substitute another tool for the same side ' +
+  'effect. Report that blocker and continue with the rest of the permitted work. ' +
+  'For a technical tool failure, use an applicable ' +
+  'allowed route once if one is available; otherwise report the failure and ' +
+  'answer from the evidence already available.'
+
+export const MISTRAL_REFUSAL_ATTRIBUTION_PREAMBLE =
+  'TaskWraith decides native ACP permission requests automatically. Vibe may ' +
+  'render a host refusal as "User rejected the tool call"; that wording alone ' +
+  'does not establish a human decision. A broker refusal ' +
+  'can still be an actual human decline: respect its receipt. For host containment, ' +
+  'route the original scoped action once through an applicable listed broker tool. ' +
+  'Do not route around scope or policy refusals. For an unknown origin, do not ' +
+  'attribute it to the user or retry the side effect. Only after you have attempted ' +
+  'the route: if it is absent, or the same refusal repeats without new evidence, record ' +
+  'the exact blocker, finish the lane, and let the coordinator recover after it settles.'
 
 export function applyMistralPromptPreamble(prompt: string, writeCapable: boolean): string {
   const preamble = writeCapable
     ? MISTRAL_WRITE_MODE_PROMPT_PREAMBLE
     : MISTRAL_READ_ONLY_PROMPT_PREAMBLE
-  return `${preamble}\n\n${prompt}`
+  return `${preamble}\n\n${MISTRAL_REFUSAL_ATTRIBUTION_PREAMBLE}\n\n${prompt}`
 }
 
 /**

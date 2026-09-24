@@ -26,9 +26,9 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   sketchCanvas: 'Sketch Canvas',
   meshCanvas: 'Mesh Canvas',
   simulatorCanvas: 'Simulator Canvas',
-  // canvasEval is NON-GRANTABLE (RCE / signed-elevated), so it is deliberately
-  // ABSENT from WORKSPACE_POLICY_SERVICES below — no per-workspace grant row. The
-  // label still exists for audit/ledger rendering of canvasEval rows.
+  // canvasEval is deliberately absent from the broad per-workspace grant list.
+  // Its own first desktop accept opens a 12h exact-live-surface window instead.
+  // The label still exists for audit/ledger rendering of canvasEval rows.
   canvasEval: 'Canvas eval',
   // crossThreadRead is granted via the approval prompt (expiring), not the
   // per-workspace WORKSPACE_POLICY_SERVICES list below, so — like canvasEval —
@@ -64,8 +64,8 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
     'Create, import, edit, and present chat-owned 3D scenes using workspace-local mesh assets without asking again.',
   simulatorCanvas:
     'Control iOS / watchOS Simulator Canvas surfaces without asking again.',
-  // Non-grantable: shown for completeness only; canvas_eval always re-prompts.
-  canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).',
+  canvasEval:
+    'The first eval on a live Canvas surface asks on desktop; accepting opens a 12-hour same-surface window across navigation and later turns.',
   crossThreadRead:
     'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.',
   threadMessage:
@@ -76,7 +76,7 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   mediaRecording:
     'Microphone / camera capture always asks (cannot be pre-authorised). Coming soon.',
   webBrowsing:
-    'Open and navigate websites in the sandboxed Canvas Browser without asking again. Clicking, typing, and eval stay separately gated.'
+    'Open and navigate websites in the sandboxed Canvas Browser without asking again. Clicking, typing, and the first eval on each live surface keep their separate approval paths.'
 }
 
 export function getWorkspacePolicyServiceLabel(service: AgenticServiceId): string {

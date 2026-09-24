@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { matchOllamaBrand, resolveHealthEntryPresentation } from './ollamaBrandTable'
+import {
+  OLLAMA_DISPLAY_BRANDS,
+  matchOllamaBrand,
+  resolveHealthEntryPresentation
+} from './ollamaBrandTable'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from './piBrandTable'
 
 describe('resolveHealthEntryPresentation', () => {
@@ -11,6 +15,17 @@ describe('resolveHealthEntryPresentation', () => {
     expect(resolveHealthEntryPresentation('ollama', 'qwen3.8:27b-mlx', 'Ollama')).toEqual({
       displayProviderLabel: 'Alibaba',
       displayHueClass: 'alibaba'
+    })
+    expect(
+      resolveHealthEntryPresentation('ollama', 'qwen3.8-flash-next:125b-mlx', 'Ollama')
+    ).toEqual({ displayProviderLabel: 'Alibaba', displayHueClass: 'alibaba' })
+    expect(resolveHealthEntryPresentation('ollama', 'granite4.2:8b', 'Ollama')).toEqual({
+      displayProviderLabel: 'IBM',
+      displayHueClass: 'ibm'
+    })
+    expect(resolveHealthEntryPresentation('ollama', 'mistral-medium-3.5:128b', 'Ollama')).toEqual({
+      displayProviderLabel: 'Mistral',
+      displayHueClass: 'mistral'
     })
     expect(
       resolveHealthEntryPresentation('ollama', 'nemotron-3.5-lightning:30b-mlx', 'Ollama')
@@ -40,6 +55,11 @@ describe('resolveHealthEntryPresentation', () => {
 
   it('freezes every Pi upstream brand label and hue from its wire model', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // The bare `openrouter` brand has no representative left in the label
+      // table — every catalogued route is claimed by a per-vendor override —
+      // so it gets its own case below rather than whichever override happens
+      // to sit first in PI_MODEL_LABELS.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(resolveHealthEntryPresentation('pi', modelId, 'Pi')).toEqual({
@@ -49,10 +69,66 @@ describe('resolveHealthEntryPresentation', () => {
     }
   })
 
+  it('reaches the generic OpenRouter brand only through an unclaimed namespace', () => {
+    // Every OpenRouter route TaskWraith catalogues now carries a per-vendor
+    // override — `openrouter/stealth` was the last one without, until Union
+    // Alpha landed on 2026-09-16. So the generic OpenRouter red is reachable
+    // only for a namespace no override claims, which is the fallback arm of
+    // resolvePiUpstreamBrand rather than a catalogued row.
+    for (const id of Object.keys(PI_MODEL_LABELS)) {
+      if (!id.startsWith('openrouter/')) continue
+      expect(resolveHealthEntryPresentation('pi', id, 'Pi').displayHueClass).not.toBe('openrouter')
+    }
+    expect(
+      resolveHealthEntryPresentation('pi', 'openrouter/unclaimed-lab/some-model', 'Pi')
+    ).toEqual({
+      displayProviderLabel: 'OpenRouter',
+      displayHueClass: 'openrouter'
+    })
+  })
+
   it('uses generic Pi presentation when the upstream is unknown', () => {
     expect(resolveHealthEntryPresentation('pi', 'unknown/model', 'Pi')).toEqual({
       displayProviderLabel: 'Pi',
       displayHueClass: 'pi'
+    })
+  })
+})
+
+describe('brand labels never repeat their own brand', () => {
+  // Every surface that shows fallbackModelLabel shows it BESIDE providerLabel,
+  // so a label that opens with its own brand renders "DeepSeek DeepSeek R1".
+  // Mistral and Qwen are the standing exception — their product names
+  // canonically carry the vendor word — but neither reaches this table's
+  // fallbacks, so the rule holds here with no carve-out.
+  it.each(OLLAMA_DISPLAY_BRANDS.map((brand) => [brand.id, brand] as const))(
+    'the %s fallback label does not open with its own brand',
+    (_id, brand) => {
+      expect(brand.fallbackModelLabel.toLowerCase()).not.toMatch(
+        new RegExp(`^${brand.providerLabel.toLowerCase()}\\b`)
+      )
+    }
+  )
+})
+
+describe('matchOllamaBrand', () => {
+  it('treats the wire model id as authoritative over a stale display label', () => {
+    expect(matchOllamaBrand('deepseek-r1:8b', 'Qwen 3.5 (9B Param)')).toMatchObject({
+      providerLabel: 'DeepSeek',
+      providerClass: 'deepseek'
+    })
+  })
+
+  it('keeps bare Cloud tidy-ups on their existing maker accents', () => {
+    expect(matchOllamaBrand('deepseek-v4-pro:cloud')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('deepseek-v4-flash:cloud')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('gemma4:cloud')?.providerClass).toBe('google')
+  })
+
+  it('uses a display label only when the wire model id has no known brand', () => {
+    expect(matchOllamaBrand('private/local-model', 'Qwen 3.5 (9B Param)')).toMatchObject({
+      providerLabel: 'Alibaba',
+      providerClass: 'alibaba'
     })
   })
 })
@@ -121,6 +197,10 @@ describe('matchOllamaBrand', () => {
   })
 
   it('applies maker accents to Ollama Cloud model ids', () => {
+    expect(matchOllamaBrand('glm-5.3-flash:cloud')).toMatchObject({
+      providerLabel: 'Z.ai',
+      providerClass: 'zai'
+    })
     expect(matchOllamaBrand('glm-5.2:cloud')).toMatchObject({
       providerLabel: 'Z.ai',
       providerClass: 'zai'

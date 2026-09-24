@@ -61,6 +61,12 @@ export interface LiveActivityContentState {
   additions: number
   deletions: number
   seats: LiveActivitySeat[]
+  /** Mapped running seats; omitted on old Macs and derived from seats. */
+  activeSeats: number
+  /** Mapped complete seats; omitted on old Macs and derived from seats. */
+  respondedSeats: number
+  /** Mapped failed seats; omitted on old Macs and derived from seats. */
+  blockedSeats: number
   /** One for the existing run card; 2+ for an anonymous workspace summary. */
   activeRuns: number
   /** Local Git divergence counts. Ref/branch/upstream names never travel. */
@@ -119,6 +125,29 @@ function coercePhase(value: unknown): LiveActivityPhase {
     : 'running'
 }
 
+/** Counts the existing stable wire phases; cancelled seats are excluded. */
+export function summarizeLiveActivitySeats(
+  seats: readonly { phase?: unknown }[]
+): Pick<LiveActivityContentState, 'activeSeats' | 'respondedSeats' | 'blockedSeats'> {
+  let activeSeats = 0
+  let respondedSeats = 0
+  let blockedSeats = 0
+  for (const seat of seats) {
+    switch (coercePhase(seat.phase)) {
+      case 'running':
+        activeSeats++
+        break
+      case 'complete':
+        respondedSeats++
+        break
+      case 'failed':
+        blockedSeats++
+        break
+    }
+  }
+  return { activeSeats, respondedSeats, blockedSeats }
+}
+
 /**
  * THE ONLY WAY to build a content state. Named primitives in, named primitives
  * out — a caller physically cannot pass a thread title or a file path through
@@ -131,6 +160,9 @@ export function buildLiveActivityContentState(input: {
   additions?: unknown
   deletions?: unknown
   seats?: readonly { provider?: unknown; phase?: unknown }[]
+  activeSeats?: unknown
+  respondedSeats?: unknown
+  blockedSeats?: unknown
   activeRuns?: unknown
   ahead?: unknown
   behind?: unknown
@@ -140,22 +172,36 @@ export function buildLiveActivityContentState(input: {
     typeof input.startedAtUnix === 'number' && Number.isFinite(input.startedAtUnix)
       ? Math.floor(input.startedAtUnix)
       : 0
+  const seats = (input.seats ?? []).slice(0, MAX_LIVE_ACTIVITY_SEATS).map((seat) => ({
+    // A provider id is a PRODUCT name ("codex"), not user content. Coerced to
+    // a string so a malformed projection cannot smuggle an object through.
+    provider: typeof seat.provider === 'string' ? seat.provider : 'ensemble',
+    phase: coercePhase(seat.phase)
+  }))
+  const derivedSeatSummary = summarizeLiveActivitySeats(seats)
   return {
     phase: coercePhase(input.phase),
     startedAtUnix,
     filesChanged: clampCount(input.filesChanged),
     additions: clampCount(input.additions),
     deletions: clampCount(input.deletions),
+    activeSeats:
+      input.activeSeats === undefined
+        ? derivedSeatSummary.activeSeats
+        : clampCount(input.activeSeats),
+    respondedSeats:
+      input.respondedSeats === undefined
+        ? derivedSeatSummary.respondedSeats
+        : clampCount(input.respondedSeats),
+    blockedSeats:
+      input.blockedSeats === undefined
+        ? derivedSeatSummary.blockedSeats
+        : clampCount(input.blockedSeats),
     activeRuns: input.activeRuns === undefined ? 1 : clampCount(input.activeRuns),
     ahead: clampCount(input.ahead),
     behind: clampCount(input.behind),
     hasGitSnapshot: input.hasGitSnapshot === true,
-    seats: (input.seats ?? []).slice(0, MAX_LIVE_ACTIVITY_SEATS).map((seat) => ({
-      // A provider id is a PRODUCT name ("codex"), not user content. Coerced to
-      // a string so a malformed projection cannot smuggle an object through.
-      provider: typeof seat.provider === 'string' ? seat.provider : 'ensemble',
-      phase: coercePhase(seat.phase)
-    }))
+    seats
   }
 }
 

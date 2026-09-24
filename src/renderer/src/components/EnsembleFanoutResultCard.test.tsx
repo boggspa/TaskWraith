@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, ToolActivity } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
@@ -72,6 +74,26 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('<strong>Scout finding</strong>')
   })
 
+  it('halves the collapsed band for lanes of a six-plus round, and only for them', () => {
+    // The published CSS variable IS the band: the reserve rules and the cap
+    // both read `--live-activity-collapsed-height` from the component, so the
+    // rendered value is what a compact lane actually gets.
+    const full = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
+    )
+    expect(full).toContain('--live-activity-collapsed-height:331px')
+
+    const compact = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage()}
+        compactLaneBand
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(compact).toContain('--live-activity-collapsed-height:166px')
+    expect(compact).not.toContain('--live-activity-collapsed-height:331px')
+  })
+
   it('themes each card with its own participant accent, not the pane accent', () => {
     const html = renderToStaticMarkup(
       <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
@@ -136,7 +158,15 @@ describe('EnsembleFanoutResultCard', () => {
 
   it('spoofs every Pi upstream accent on its fan-out viewport card', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      // Every catalogued OpenRouter route is claimed by a per-vendor override —
+      // `openrouter/stealth` was the last one without, until Union Alpha took
+      // that namespace on 2026-09-16 — so a startsWith search returns a model
+      // belonging to a DIFFERENT brand. The bare `openrouter` brand is now
+      // reachable only through a namespace no override claims.
+      const model =
+        upstream === 'openrouter'
+          ? 'openrouter/unclaimed-lab/some-model'
+          : Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       const html = renderToStaticMarkup(
         <EnsembleFanoutResultCard
@@ -183,7 +213,7 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(html).toContain('provider-deepseek')
     expect(html).toContain('>DeepSeek<')
-    expect(html).toContain('>DeepSeek V4 Pro<')
+    expect(html).toContain('>V4 Pro<')
   })
 
   it('labels write-intent lanes as writer fan-out', () => {
@@ -263,6 +293,48 @@ describe('EnsembleFanoutResultCard', () => {
     expect(expandedHtml).toContain('Expand tool calls')
     expect(expandedHtml).toContain('activity-timeline')
     expect(expandedHtml).toContain('Read file')
+  })
+
+  it('keeps folded write totals visible in a settled fan-out lane', () => {
+    const edit = toolActivity({
+      id: 'fanout-edit',
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      category: 'write',
+      parameters: { path: 'src/a.ts', old_string: 'old', new_string: 'new\nnext' },
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'string_replace',
+        confidence: 'estimated'
+      }
+    })
+    const message = fanoutMessage({
+      content: 'Writer completed.',
+      toolActivities: [edit],
+      metadata: {
+        ...fanoutMessage().metadata,
+        ensembleLaneIntent: 'write',
+        groupedFanoutMessageIds: ['fanout-edit'],
+        groupedToolMessageIds: ['fanout-edit'],
+        ensembleFanoutTranscriptParts: [
+          {
+            kind: 'tools',
+            id: 'fanout-edit',
+            messageIds: ['fanout-edit'],
+            toolActivities: [edit]
+          }
+        ]
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={message} onPreviewImage={() => {}} />
+    )
+
+    expect(html).toContain('collapsed-activity-stack-diff')
+    expect(html).toContain('+2')
+    expect(html).toContain('-1')
   })
 
   it('folds completed history while keeping the current fan-out activity visible', () => {
@@ -584,13 +656,43 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     configuredPermissionPresetId: 'read_only'
   }
 
-  const render = (extra: Record<string, unknown>) =>
+  const render = (extra: Record<string, unknown>, chat?: ChatRecord) =>
     renderToStaticMarkup(
       <EnsembleFanoutResultCard
         message={fanoutMessage({ metadata: { ...fanoutMessage().metadata, ...extra } })}
+        chat={chat}
         onPreviewImage={() => {}}
       />
     )
+
+  // A chat whose run store seals `runId` at `presetId`. The lane row's own
+  // runId is 'codex-run-1'.
+  const chatSealing = (presetId: string, runId = 'codex-run-1'): ChatRecord =>
+    ({
+      appChatId: 'chat-1',
+      messages: [],
+      runs: [
+        {
+          runId,
+          startedAt: '2026-09-07T12:00:00.000Z',
+          permissionPosture: {
+            schemaVersion: 1,
+            presetId,
+            readOnly: presetId === 'read_only',
+            externalPathGrantCount: 0,
+            postureHash: 'hash',
+            signaturePresent: true
+          }
+        }
+      ]
+    }) as unknown as ChatRecord
+
+  const chatWithoutPosture = (): ChatRecord =>
+    ({
+      appChatId: 'chat-1',
+      messages: [],
+      runs: [{ runId: 'codex-run-1', startedAt: '2026-09-07T12:00:00.000Z' }]
+    }) as unknown as ChatRecord
 
   it('renders the shared seat chips instead of the old segmented pills', () => {
     const html = render({ ensembleSeatSnapshot: SNAPSHOT })
@@ -602,6 +704,38 @@ describe('EnsembleFanoutResultCard — the lane wears the seat element', () => {
     // The flat metadata cannot carry this; without the snapshot the chip would
     // fall back to the default tier and misreport a read-only lane.
     expect(render({ ensembleSeatSnapshot: SNAPSHOT })).toContain('Ask')
+  })
+
+  it('shows the SEALED tier when the roster config and the run DISAGREE', () => {
+    // The reported defect. The roster had this lane at workspace_write and the
+    // round sealed it read_only; the card wore "Full WS Access" while the
+    // close-out table on the same screen correctly said "Ask" for the same
+    // lane. The seal is what executed, so the seal is what the badge claims.
+    const configured = { ...SNAPSHOT, configuredPermissionPresetId: 'workspace_write' }
+    expect(render({ ensembleSeatSnapshot: configured })).toContain('Full WS Access')
+
+    const withSeal = render({ ensembleSeatSnapshot: configured }, chatSealing('read_only'))
+    expect(withSeal).toContain('Ask')
+    expect(withSeal).toContain('data-permission-value="read_only"')
+    expect(withSeal).not.toContain('Full WS Access')
+    expect(withSeal).not.toContain('data-permission-value="workspace_write"')
+  })
+
+  it('falls back to the captured config when the run records no posture', () => {
+    // Rows written before postures were recorded keep the tier they captured,
+    // and a row with neither still renders NO chip rather than a default.
+    expect(render({ ensembleSeatSnapshot: SNAPSHOT }, chatWithoutPosture())).toContain('Ask')
+    expect(render({ ensembleSeatSnapshot: undefined }, chatWithoutPosture())).not.toContain(
+      'data-permission-value'
+    )
+  })
+
+  it('never reads a FOREIGN run posture onto this lane', () => {
+    // Matched on `message.runId` alone, never the streaming/boundary run: for a
+    // lane row that can be another seat's turn, and a wrong run's posture is
+    // just a new way to lie. Config stands when this row's run is absent.
+    const html = render({ ensembleSeatSnapshot: SNAPSHOT }, chatSealing('full_access', 'boss-run'))
+    expect(html).toContain('data-permission-value="read_only"')
   })
 
   it('keeps a long model label inside the seat strip with a hover title', () => {
@@ -681,5 +815,130 @@ describe('EnsembleFanoutResultCard — authority glyph', () => {
     expect(render({ ensembleSeatSnapshot: SNAP, ensembleStageRole: 'worker' })).toContain(
       'Worker · #2 Reader'
     )
+  })
+})
+
+describe('a fan-out lane under a filtering transcript view', () => {
+  // This suite renders the card 27 other times and passes `transcriptView` at
+  // none of them, so every one of those is implicitly standard. These are the
+  // view-aware cases.
+
+  const LANE_THINK = 'LANE-THINKING-MARKER'
+
+  function liveThinkingLane(): ChatMessage {
+    const think = {
+      id: 'lane-think-1',
+      toolName: 'reasoning',
+      displayName: 'Thinking',
+      category: 'task',
+      status: 'running',
+      parameters: { kind: 'thinking' },
+      outputPreview: LANE_THINK,
+      resultSummary: LANE_THINK
+    } as ToolActivity
+    return fanoutMessage({
+      content: '',
+      toolActivities: [think],
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: ['live-tools'],
+        groupedToolMessageIds: ['live-tools'],
+        ensembleFanoutTranscriptParts: [
+          { kind: 'tools', id: 'live-tools', messageIds: ['live-tools'], toolActivities: [think] }
+        ]
+      }
+    })
+  }
+
+  const render = (view?: 'minimal' | 'tools' | 'standard') =>
+    renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={liveThinkingLane()}
+        working
+        transcriptView={view}
+        onPreviewImage={() => {}}
+      />
+    )
+
+  it('folds a live lane to a one-liner instead of rendering nothing', () => {
+    // MEASURED BEFORE THE FIX: minimal and tools emitted no tool area at all —
+    // no thinking body, no viewport, and no one-liner either. The strict
+    // predicate refuses to fold running work, so the part fell through to the
+    // full ActivityStack, whose empty-guard returns null once the view has
+    // removed every segment. A working lane looked idle.
+    for (const view of ['minimal', 'tools'] as const) {
+      const html = render(view)
+      expect(html, view).toContain('collapsed-activity-stack')
+      expect(html, view).not.toContain(LANE_THINK)
+      expect(html, view).not.toContain('ensemble-fanout-tools-viewport')
+    }
+  })
+
+  it('leaves standard rendering the full viewport', () => {
+    // The positive control. Without it the assertions above would also pass on
+    // a card that had stopped rendering its tool area in every view.
+    const html = render('standard')
+    expect(html).toContain(LANE_THINK)
+    expect(html).toContain('ensemble-fanout-tools-viewport')
+    expect(html).not.toContain('collapsed-activity-stack')
+  })
+
+  it('treats an absent view exactly as standard', () => {
+    expect(render(undefined)).toBe(render('standard'))
+  })
+
+  it('makes the folded one-liner inert when nothing survives the filter', () => {
+    // A thinking-only part under minimal or tools has nothing left to show, so
+    // the one-liner must not offer to open onto an empty stack. The fold and
+    // `canExpand` read ONE fact for exactly this reason.
+    // Scoped to the row's own marker, NOT to `<button` over the whole card:
+    // the card carries other buttons (the result viewport's expander, the
+    // actions chip), so a card-wide assertion would fail on every input and
+    // prove nothing about this row.
+    for (const view of ['minimal', 'tools'] as const) {
+      expect(render(view), view).toContain('is-inert')
+    }
+    // And the same row is NOT inert when something survives. Note the control
+    // has to be `standard`: under minimal a settled READ is inert too, and
+    // correctly so — minimal hides tool viewports, so there is nothing behind
+    // that row either. Picking a tool fixture under minimal as the "positive"
+    // control asserts the opposite of the truth.
+    const settledRead = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({
+          content: '',
+          toolActivities: [toolActivity()],
+          metadata: {
+            ...fanoutMessage().metadata,
+            groupedFanoutMessageIds: ['done-tools'],
+            groupedToolMessageIds: ['done-tools'],
+            ensembleFanoutTranscriptParts: [
+              {
+                kind: 'tools',
+                id: 'done-tools',
+                messageIds: ['done-tools'],
+                toolActivities: [toolActivity()]
+              }
+            ]
+          }
+        })}
+        transcriptView="standard"
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(settledRead).toContain('collapsed-activity-stack')
+    expect(settledRead).not.toContain('is-inert')
+  })
+
+  it('reads one visibility fact for both the fold and the expander', () => {
+    // Source guard: the two decisions are computed in different places in the
+    // render and there is no fixture that separates them — a part that folds
+    // but cannot expand looks identical to one that neither folds nor renders
+    // until you are the reader staring at a blank lane.
+    const source = readFileSync(join(__dirname, 'EnsembleFanoutResultCard.tsx'), 'utf8')
+    const at = source.indexOf('const partHasVisibleContent =')
+    expect(at).toBeGreaterThan(-1)
+    expect(source).toContain('canExpand={partHasVisibleContent}')
+    expect(source.split('activityStackHasVisibleContent(').length - 1).toBe(1)
   })
 })

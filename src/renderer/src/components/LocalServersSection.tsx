@@ -32,13 +32,18 @@ function SectionChevron({ isExpanded }: { isExpanded: boolean }): JSX.Element {
  */
 interface LocalServersSectionProps {
   onAddLocalServerToWorkspaceBoard?: (server: LocalServerEntry) => void
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
 }
 
 export function LocalServersSection({
-  onAddLocalServerToWorkspaceBoard
+  onAddLocalServerToWorkspaceBoard,
+  collapsed: controlledCollapsed,
+  onToggleCollapsed
 }: LocalServersSectionProps): JSX.Element | null {
   const { servers, busy, stop, stopAll } = useLocalServers()
-  const [collapsed, setCollapsed] = useState(true)
+  const [localCollapsed, setLocalCollapsed] = useState(true)
+  const collapsed = controlledCollapsed ?? localCollapsed
   const headerMenuItems = useMemo(
     () => [
       {
@@ -63,7 +68,13 @@ export function LocalServersSection({
         <button
           type="button"
           className="sidebar-section-header-toggle"
-          onClick={() => setCollapsed((current) => !current)}
+          onClick={() => {
+            if (onToggleCollapsed) {
+              onToggleCollapsed()
+            } else {
+              setLocalCollapsed((current) => !current)
+            }
+          }}
           aria-expanded={!collapsed}
           title={collapsed ? 'Expand Local Servers' : 'Collapse Local Servers'}
         >

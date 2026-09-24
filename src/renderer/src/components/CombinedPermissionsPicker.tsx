@@ -7,10 +7,47 @@
  * they are no longer a second composer-time decision layer.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
+import {
+  PermissionApproveGlyphIcon,
+  PermissionAskGlyphIcon,
+  PermissionElevatedGlyphIcon,
+  PermissionPlanGlyphIcon
+} from './AppChromeSymbols'
+
+/** Codex Desktop's permission chip leads with the selected mode's icon. Only
+ * the Codex composer shell renders one; the mapping mirrors its approval menu
+ * (Ask = raised hand, Accept Edits = "Approve for me" badge, elevated presets =
+ * warning ring; Plan has no Codex counterpart and takes a checklist). */
+export const permissionModeGlyph = (value: string): React.JSX.Element | null => {
+  switch (value) {
+    case 'plan':
+      return <PermissionPlanGlyphIcon />
+    case 'read_only':
+      return <PermissionAskGlyphIcon />
+    case 'default':
+      return <PermissionApproveGlyphIcon />
+    case 'workspace_write':
+    case 'full_access':
+      return <PermissionElevatedGlyphIcon />
+    default:
+      return null
+  }
+}
+
+/** Claude Desktop writes its permission labels in sentence case ("Accept
+ * edits"). The shared label constants stay Title Case for every other shell,
+ * so only the Claude composer shell lowers Title-Case words after the first;
+ * anything that is not a plain Capitalised word (acronyms, hyphenated terms)
+ * is left alone. */
+export const toClaudeSentenceCase = (label: string): string =>
+  label
+    .split(' ')
+    .map((word, index) => (index > 0 && /^[A-Z][a-z]+$/.test(word) ? word.toLowerCase() : word))
+    .join(' ')
 
 export interface PermissionOption {
   /** Internal token, usually a PermissionPresetId. */
@@ -52,6 +89,14 @@ interface CombinedPermissionsPickerProps {
    * Roster passes true because its pickers live inside a scrolling list.
    */
   repositionOnScroll?: boolean
+  /** Optional class on the body-portaled surface for caller-specific layering. */
+  popoverClassName?: string
+  /**
+   * Optional full-width content below the permission column — the composer
+   * mounts the Ensemble seat-navigator rail here, mirroring the
+   * CombinedModelPicker slot of the same name.
+   */
+  bottomContent?: ReactNode
 }
 
 export function CombinedPermissionsPicker({
@@ -65,7 +110,9 @@ export function CombinedPermissionsPicker({
   onApplyToAllParticipants,
   onStartTrustedSession,
   onStopTrustedSession,
-  repositionOnScroll
+  repositionOnScroll,
+  popoverClassName,
+  bottomContent
 }: CombinedPermissionsPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -184,10 +231,18 @@ export function CombinedPermissionsPicker({
     }
   }, [open, permissionOptions, permissionHighlight, choosePermissionOption])
 
+  const hasBottomContent = Boolean(bottomContent)
+  // Claude shell only: chip and menu rows share one casing so the open menu
+  // matches the visible chip.
+  const displayLabel = (label: string): string =>
+    composerStyle === 'claude' ? toClaudeSentenceCase(label) : label
+
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
-      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}`}
+      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}${
+        hasBottomContent ? ' has-bottom-content' : ''
+      }${popoverClassName ? ` ${popoverClassName}` : ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
@@ -215,7 +270,9 @@ export function CombinedPermissionsPicker({
               title={option.disabledReason}
             >
               <span className="composer-combined-picker-row-body">
-                <span className="composer-combined-picker-row-label">{option.label}</span>
+                <span className="composer-combined-picker-row-label">
+                  {displayLabel(option.label)}
+                </span>
                 {optionDescription && (
                   <span className="composer-combined-picker-row-sub">{optionDescription}</span>
                 )}
@@ -250,6 +307,9 @@ export function CombinedPermissionsPicker({
           </button>
         ) : null}
       </div>
+      {hasBottomContent && (
+        <div className="composer-combined-picker-bottom-content">{bottomContent}</div>
+      )}
     </div>
   )
 
@@ -268,7 +328,10 @@ export function CombinedPermissionsPicker({
         title={disabledReason || 'Permission mode'}
         aria-label={disabledReason || 'Choose permission mode'}
       >
-        <span className="composer-combined-picker-trigger-primary">{selectedOption.label}</span>
+        {composerStyle === 'codex' ? permissionModeGlyph(selectedPermission) : null}
+        <span className="composer-combined-picker-trigger-primary">
+          {displayLabel(selectedOption.label)}
+        </span>
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}
     </>

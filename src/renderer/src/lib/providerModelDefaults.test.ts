@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveOllamaReasoningSupport } from '../../../shared/ollamaReasoning'
 import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
@@ -10,8 +11,35 @@ import {
   KIMI_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
+  MISTRAL_DEFAULT_MODELS,
+  MUSE_DEFAULT_MODELS,
   isClaudeModelId
 } from './providerModelDefaults'
+
+describe('UltraTask fallback capability metadata', () => {
+  it('marks every curated concrete row explicitly and leaves custom ids unknown', () => {
+    const catalogs = [
+      CODEX_DEFAULT_MODELS,
+      CLAUDE_DEFAULT_MODELS,
+      GEMINI_DEFAULT_MODELS,
+      GROK_DEFAULT_MODELS,
+      KIMI_DEFAULT_MODELS,
+      CURSOR_DEFAULT_MODELS,
+      MISTRAL_DEFAULT_MODELS,
+      MUSE_DEFAULT_MODELS,
+      OLLAMA_DEFAULT_MODELS
+    ]
+    for (const model of catalogs.flat()) {
+      if (model.id === 'custom') {
+        expect(model.ultraTaskSupported).toBeUndefined()
+      } else if (model.id === 'claude-haiku-4-5') {
+        expect(model.ultraTaskSupported).toBe(false)
+      } else {
+        expect(model.ultraTaskSupported, model.id).toBe(true)
+      }
+    }
+  })
+})
 
 describe('Codex provider model defaults', () => {
   it('offers Light/low reasoning on every fallback Codex model row', () => {
@@ -22,14 +50,24 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('offers the full Spark ladder in the provider/model/reasoning popover fallback', () => {
-    const spark = CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.3-codex-spark')
-    expect(spark?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+  it('offers the full ladder in the provider/model/reasoning popover fallback', () => {
+    const flagship = CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')
+    expect(flagship?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
       'high',
       'xhigh'
     ])
+  })
+
+  it('keeps the user-retired Codex rows out of the pre-IPC fallback', () => {
+    // This list is what the picker renders BEFORE the live model/list lands,
+    // so a retired row surviving here flashes a model the user cannot run.
+    expect(CODEX_DEFAULT_MODELS.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(CODEX_DEFAULT_MODELS.find((model) => model.id === modelId)).toBeUndefined()
+    }
+    expect(CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')).toBeDefined()
   })
 
   it('exposes GPT-5.6 rows with official GA metadata (tiers, names, defaults)', () => {
@@ -59,14 +97,53 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with the GPT-5.6 trio (above 5.5) but keeps 5.5 the default', () => {
+  it('leads the picker with Astra, GPT-6 Sol and Luna, then the GPT-5.6 trio, keeping 5.5 the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
-    // Trio sits at the very top, in Sol → Terra → Luna order, above 5.5.
-    expect(ids.slice(0, 3)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    // Astra leads from 2026-09-03; GPT-6 Sol and Luna (2026-09-22) follow it,
+    // above the 5.6 trio in Sol → Terra → Luna order.
+    expect(ids.slice(0, 6)).toEqual([
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
+    expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
     // The default must NOT follow the reorder to position 0 — it stays 5.5.
     expect(CODEX_DEFAULT_MODEL).toBe('gpt-5.5')
   })
+
+  it('offers Astra the full low..ultracode ladder in the pre-IPC fallback', () => {
+    const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(
+      byId.get('gpt-6-astra')?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(byId.get('gpt-6-astra')?.defaultReasoningEffort).toBe('low')
+  })
+
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
+    ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
+  ])(
+    'offers %s the documented low..max ladder with a Medium default and Fast mode',
+    (id, label, description) => {
+      const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+      expect(byId.get(id)).toMatchObject({ label, description, defaultReasoningEffort: 'medium' })
+      // The official model pages document none..max and no `ultra`, so the
+      // internal `ultracode` tier is withheld until the live catalog lists it.
+      expect(byId.get(id)?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(byId.get(id)?.additionalSpeedTiers).toContain('fast')
+      expect(byId.get(id)).not.toMatchObject({ isDefault: true })
+    }
+  )
 
   it('keeps active GPT-5.4 fallbacks without a retirement warning', () => {
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
@@ -91,9 +168,9 @@ describe('Cursor provider model defaults', () => {
       defaultReasoningEffort: 'high',
       additionalSpeedTiers: ['fast']
     })
-    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Cursor Grok 4.5'
-    })
+    // Cursor retired the Grok 4.5 family upstream; offering it would fail the
+    // run outright ("Cannot use this model", exit 1).
+    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toBeUndefined()
   })
 })
 
@@ -101,6 +178,7 @@ describe('Claude provider model defaults', () => {
   it('exposes Sonnet 5 and Fable 5 as real rows while keeping Mythos out of the picker', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
+    expect(ids).toContain('claude-fable-5-1')
     expect(ids).toContain('claude-fable-5')
     expect(ids).not.toContain('claude-mythos-5')
     expect(ids).not.toContain('claude-fable-5-1m')
@@ -113,6 +191,9 @@ describe('Claude provider model defaults', () => {
 
   it('uses Sonnet 5 as the concrete Claude fallback model', () => {
     expect(CLAUDE_DEFAULT_MODELS.find((model) => model.isDefault)?.id).toBe('claude-sonnet-5')
+    expect(
+      CLAUDE_DEFAULT_MODELS.find((model) => model.id === 'claude-haiku-4-5')?.ultraTaskSupported
+    ).toBe(false)
   })
 
   it('accepts returned Fable / Mythos selections while rejecting preview placeholders', () => {
@@ -121,6 +202,7 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('fable')).toBe(true)
     expect(isClaudeModelId('mythos')).toBe(true)
     expect(isClaudeModelId('claude-sonnet-5')).toBe(true)
+    expect(isClaudeModelId('claude-fable-5-1')).toBe(true)
     expect(isClaudeModelId('claude-fable-5')).toBe(true)
     expect(isClaudeModelId('claude-fable-5-1m')).toBe(true)
     expect(isClaudeModelId('claude-mythos-5')).toBe(true)
@@ -129,6 +211,7 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('preview:anthropic:claude-mythos-5')).toBe(false)
     expect(isClaudeModelId('claude-opus-4-8')).toBe(true)
     expect(isClaudeModelId('claude-opus-5')).toBe(true)
+    expect(isClaudeModelId('claude-opus-5-5')).toBe(true)
   })
 
   it('exposes only 1M Opus defaults while keeping Sonnet as the default model', () => {
@@ -136,6 +219,7 @@ describe('Claude provider model defaults', () => {
     // Opus 5 is 1M by default, so its base id IS the 1M row (no -1m variant).
     expect(ids).toContain('claude-opus-5')
     expect(ids).not.toContain('claude-opus-5-1m')
+    expect(ids).toContain('claude-opus-5-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).not.toContain('claude-opus-4-7')
     expect(ids).not.toContain('claude-opus-4-6')
@@ -147,10 +231,48 @@ describe('Claude provider model defaults', () => {
 
   it('offers Fast mode on supported Opus rows but not Fable 5', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-opus-5-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
+    expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
+  it('offers Opus 5.5 as the leading Claude row on the full Opus ladder with a Medium default', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(CLAUDE_DEFAULT_MODELS[0]?.id).toBe('claude-opus-5-5')
+    expect(byId.get('claude-opus-5-5')).toMatchObject({
+      label: 'Opus 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(byId.get('claude-opus-5-5')).not.toMatchObject({ isDefault: true })
+    expect(
+      (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option: { reasoningEffort: string; disabled?: boolean }) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+  })
+
+  it('offers Fable 5.1 as the current Fable row and relabels Fable 5 as Legacy', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-fable-5-1')).toMatchObject({ label: 'Fable 5.1' })
+    expect(byId.get('claude-fable-5')).toMatchObject({
+      label: 'Fable 5 Legacy',
+      description: '1M context window — legacy Fable'
+    })
+    expect(CLAUDE_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-fable-5-1',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-sonnet-4-6',
+      'claude-opus-4-8-1m',
+      'claude-opus-4-7-1m',
+      'claude-haiku-4-5'
+    ])
   })
 
   it('resolves family-specific Claude reasoning defaults', () => {
@@ -209,11 +331,14 @@ describe('Ollama provider model defaults', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'qwen3.8:27b-mlx',
+      'qwen3.8-flash-next:125b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'gemma4:31b-mlx',
       'ornith:9b',
       'ornith:35b',
+      'ornith-1.5:9b',
+      'ornith-1.5:35b',
       'laguna-xs-2.1:q8_0',
       'gpt-oss:20b',
       'lfm2.5-thinking:1.2b',
@@ -222,10 +347,14 @@ describe('Ollama provider model defaults', () => {
       'granite4:3b',
       'granite4.1:3b',
       'granite4.1:30b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
+      'mistral-medium-3.5:128b',
       'ministral-3:3b',
       'ministral-3:14b',
       'muse-glimmer:30b-mlx',
@@ -239,56 +368,106 @@ describe('Ollama provider model defaults', () => {
       'custom'
     ])
   })
+
+  it('classifies every curated Ollama row without an unknown reasoning state', () => {
+    const classifications = OLLAMA_DEFAULT_MODELS.filter((model) => model.id !== 'custom').map(
+      (model) => [model.id, resolveOllamaReasoningSupport({ modelId: model.id }).kind] as const
+    )
+    expect(classifications.filter(([, kind]) => kind === 'toggle')).toHaveLength(21)
+    expect(classifications.filter(([, kind]) => kind === 'levels')).toEqual([
+      ['gpt-oss:20b', 'levels'],
+      ['mistral-medium-3.5:128b', 'levels']
+    ])
+    expect(classifications.filter(([, kind]) => kind === 'unsupported')).toHaveLength(17)
+    // The invariant that actually matters: an `unknown` row renders as
+    // "Reasoning is not configurable for this model", so a curated row must
+    // never land there.
+    expect(classifications.filter(([, kind]) => kind === 'unknown')).toEqual([])
+  })
 })
 
 describe('Grok provider model defaults', () => {
-  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
+  it('uses Grok 4.7 as the default with a Fast pair, retaining 4.6 and 4.5', () => {
     expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'grok-4.6',
-      label: 'Grok 4.6 Fast',
+      id: 'grok-4.7',
+      label: 'Grok 4.7',
       description: '500K context - low/medium/high/extra-high reasoning',
       isDefault: true
     })
     expect(
       GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    // grok-composer-2.5-fast retired 2026-09-18. This renderer list is what
+    // the composer picker renders, so it must match main's exactly —
+    // providerFallthroughGuards compares the two.
     expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-fast',
       'grok-4.6',
-      'grok-4.5',
-      'grok-composer-2.5-fast'
+      'grok-4.5'
     ])
     expect(GROK_DEFAULT_MODELS[1]).toMatchObject({
+      id: 'grok-4.7-fast',
+      label: 'Grok 4.7 Fast'
+    })
+    expect(GROK_DEFAULT_MODELS[3]).toMatchObject({
       id: 'grok-4.5',
       label: 'Grok 4.5 Fast'
     })
-    expect(GROK_DEFAULT_MODELS[2].supportedReasoningEfforts).toBeUndefined()
+    expect(GROK_DEFAULT_MODELS[3].supportedReasoningEfforts?.length).toBeGreaterThan(0)
   })
 })
 
 describe('provider model picker sentinels', () => {
-  it('keeps K2.7 Coding as the Fast-capable default row with K3 selectable after it', () => {
-    expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
-    expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'kimi-k2.7-code',
-      label: 'K2.7 Coding',
-      isDefault: true,
-      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-      defaultReasoningEffort: 'on',
-      additionalSpeedTiers: ['fast']
-    })
-    // K3 is NOT the default and has no Highspeed tier — Fast stays exclusive
-    // to K2.7 Coding; K3 exposes its always-on effort choices.
-    const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')
-    expect(k3?.label).toBe('K3')
-    expect(k3?.defaultReasoningEffort).toBe('max')
-    expect(k3?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
-      'low',
-      'high',
-      'max'
+  it('keeps K2.8 Preview as the default row with Highspeed and both K3 routes after it', () => {
+    expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
+      'kimi-k3',
+      'kimi-k3-256k'
     ])
-    expect(k3?.isDefault).toBeUndefined()
-    expect(k3?.additionalSpeedTiers).toBeUndefined()
-    expect(k3?.description).toContain('256K on Moderato, up to 1M on Allegretto+')
+    // The standard `kimi-for-coding` route is K2.8 Preview since 2026-09-11 and
+    // carries the same Low/High/Max axis as K3, defaulting to Max.
+    expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
+      id: 'kimi-k2.8-preview',
+      label: 'K2.8 Preview',
+      isDefault: true,
+      supportedReasoningEfforts: [
+        { reasoningEffort: 'low' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'max' }
+      ],
+      defaultReasoningEffort: 'max'
+    })
+    // Highspeed is its own row now, not K2.8's Fast tier: it stayed on K2.7 and
+    // has always-on thinking with no effort axis.
+    expect(KIMI_DEFAULT_MODELS[1]).toMatchObject({
+      id: 'kimi-k2.7-code-highspeed',
+      label: 'K2.7 Code Highspeed',
+      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+      defaultReasoningEffort: 'on'
+    })
+    // No Kimi row carries a Fast/Highspeed speed tier any more — Highspeed is a
+    // row, so a toggle here would silently re-route the row the picker shows.
+    expect(KIMI_DEFAULT_MODELS.length).toBeGreaterThan(0)
+    for (const model of KIMI_DEFAULT_MODELS as unknown as readonly Record<string, unknown>[]) {
+      expect(model.additionalSpeedTiers).toBeUndefined()
+    }
+    // Neither K3 route is the default; both expose the same effort choices.
+    for (const modelId of ['kimi-k3', 'kimi-k3-256k']) {
+      const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === modelId)
+      expect(k3?.defaultReasoningEffort).toBe('max')
+      expect(k3?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+        'low',
+        'high',
+        'max'
+      ])
+      expect(k3?.isDefault).toBeUndefined()
+    }
+    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')?.label).toBe('K3 (1M)')
+    expect(KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3-256k')?.label).toBe(
+      'K3 (256K)'
+    )
   })
 
   it('does not expose Default or CLI Default as selectable model rows', () => {

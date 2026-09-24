@@ -423,8 +423,8 @@ describe('taskWraithToolAgenticService — Run-Button launch bucket', () => {
   })
 })
 
-describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval / RCE)', () => {
-  it('clamps an automatic allow down to a prompt', () => {
+describe('resolveNativeApprovalPreflightDecision — canvas_eval ambient-auto-allow hold', () => {
+  it('clamps a broad automatic allow to ask before the surface-window check', () => {
     // A workspace/session grant would normally auto-allow (decision: 'allow').
     expect(
       resolveNativeApprovalPreflightDecision({
@@ -434,7 +434,7 @@ describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval
     ).toMatchObject({ kind: 'ask' })
   })
 
-  it('clamps session-YOLO down to a prompt for a non-read-only run', () => {
+  it('clamps session-YOLO to ask before the surface-window check', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('ask'),
@@ -445,7 +445,7 @@ describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval
     ).toMatchObject({ kind: 'ask' })
   })
 
-  it('still lets an explicit deny win over neverAutoAllow', () => {
+  it('still lets an explicit deny win before the surface-window check', () => {
     expect(
       resolveNativeApprovalPreflightDecision({
         resolution: resolution('deny'),
@@ -746,5 +746,30 @@ describe('resolveNativeApprovalPreflightDecision — external read split (slice 
         externalPathReadAutoAllowed: true
       })
     ).toMatchObject({ kind: 'deny' })
+  })
+})
+
+describe('resolveNativeApprovalPreflightDecision — host-destructive deny-wall', () => {
+  it('denies disk-wipe and power-off even when policy would allow', () => {
+    for (const shellCommand of ['rm -rf /', 'ls && rm -rf /', 'shutdown now']) {
+      expect(
+        resolveNativeApprovalPreflightDecision({
+          resolution: resolution('allow', 'allow'),
+          sessionYoloEnabled: true,
+          shellCommand
+        }),
+        shellCommand
+      ).toMatchObject({ kind: 'deny' })
+    }
+  })
+
+  it('does not deny ordinary in-workspace recursive rm', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('allow', 'allow'),
+        sessionYoloEnabled: true,
+        shellCommand: 'rm -rf node_modules'
+      })
+    ).toMatchObject({ kind: 'allow' })
   })
 })

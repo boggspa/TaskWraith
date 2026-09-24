@@ -21,6 +21,7 @@ import {
   type ExecutionPermissionCeilingRef,
   type ExecutionRunState,
   type ExecutionStepResult,
+  type ExecutionOwnerRef,
   type ExecutionTenantRef,
   type StepActivation,
   type StepActivationState,
@@ -56,6 +57,8 @@ export interface ExecutionCreatedEvent extends ExecutionRunEventCommon {
   readonly tenant: ExecutionTenantRef
   readonly rootChatId?: string
   readonly anchorRunRef?: string
+  /** Absent on pre-ownership ledgers, which stay valid and decode as unowned. */
+  readonly owner?: ExecutionOwnerRef
   readonly baseRevision?: ExecutionGraphRevisionRef
   readonly permissionCeilingRef: ExecutionPermissionCeilingRef
 }
@@ -144,6 +147,7 @@ export interface ExecutionRunProjection {
   readonly tenant?: ExecutionTenantRef
   readonly rootChatId?: string
   readonly anchorRunRef?: string
+  readonly owner?: ExecutionOwnerRef
   readonly state: ExecutionRunState
   readonly createdAt?: string
   readonly updatedAt?: string
@@ -700,6 +704,7 @@ export function foldExecutionRun(
   let tenant: ExecutionTenantRef | undefined
   let rootChatId: string | undefined
   let anchorRunRef: string | undefined
+  let owner: ExecutionOwnerRef | undefined
   let state: ExecutionRunState = 'pending'
   let createdAt: string | undefined
   let updatedAt: string | undefined
@@ -735,6 +740,7 @@ export function foldExecutionRun(
       tenant = event.tenant
       rootChatId = event.rootChatId
       anchorRunRef = event.anchorRunRef
+      owner = event.owner
       createdAt = event.timestamp
       updatedAt = event.timestamp
       baseRevision = event.baseRevision
@@ -1030,6 +1036,7 @@ export function foldExecutionRun(
     ...(tenant ? { tenant } : {}),
     ...(rootChatId ? { rootChatId } : {}),
     ...(anchorRunRef ? { anchorRunRef } : {}),
+    ...(owner ? { owner } : {}),
     state,
     ...(createdAt ? { createdAt } : {}),
     ...(updatedAt ? { updatedAt } : {}),

@@ -13,7 +13,7 @@ import type { ProviderId } from '../store/types'
  * Inspector Prompt tab joins them to the run's composed envelope.
  *
  * Transports whose wire text is byte-identical to the composed prompt
- * (Muse exec, AntiGravity argv, Codex app-server text items) deliberately
+ * (Muse exec, AntiGravity argv) deliberately
  * emit nothing: the composed envelope IS the wire truth there, and the
  * Prompt tab says exactly that when no capture exists.
  *
@@ -29,6 +29,9 @@ export interface WirePromptCaptureInput {
   appRunId?: string | null
   appChatId?: string | null
   provider: ProviderId
+  /** Exact selected native session, when the transport knows it. */
+  providerSessionId?: string | null
+  promptKind?: 'initial' | 'retry' | 'steer'
   /** Transport label, e.g. 'grok-acp', 'cursor-path-b', 'ollama-api'. */
   transport: string
   /** Which part of the dispatch this text is: 'user' | 'system' | 'kickoff' | 'argv' | … */
@@ -42,6 +45,8 @@ export interface WirePromptCaptureInput {
 }
 
 export interface WirePromptCaptureDeps {
+  /** In-memory observation, independent of optional persisted raw capture. */
+  onSelectedPrompt?: (input: WirePromptCaptureInput) => void
   /**
    * Bridge to the main-process durable run-event appender
    * (appendDurableRunEventForRoute with kind 'lifecycle', phase 'control').
@@ -54,6 +59,22 @@ export interface WirePromptCaptureDeps {
   ) => void
   /** settings.storeRawEvents === true at capture time. */
   storeContent: () => boolean
+}
+
+/** Codex chooses its final prompt and native thread after resume/fallback handling. */
+export function emitCodexWirePrompt(
+  route: { appRunId?: string; appChatId?: string },
+  threadId: string,
+  text: string
+): void {
+  emitWirePromptCapture({
+    ...route,
+    provider: 'codex',
+    providerSessionId: threadId,
+    transport: 'codex-app-server',
+    part: 'user',
+    text
+  })
 }
 
 let deps: WirePromptCaptureDeps | null = null
@@ -82,6 +103,11 @@ export function emitWirePromptCapture(input: WirePromptCaptureInput): void {
   const active = deps
   if (!active) return
   if (!input.appRunId || typeof input.text !== 'string') return
+  try {
+    active.onSelectedPrompt?.(input)
+  } catch {
+    /* Observation never changes dispatch. */
+  }
   try {
     active.appendForRoute(
       input.provider,

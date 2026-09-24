@@ -32,6 +32,10 @@ const PACKAGE_PATH = join(REPO_ROOT, 'swift', 'TaskWraithBridge')
 const RELEASE_BINARY_PATH = join(PACKAGE_PATH, '.build', 'release', 'TaskWraithBridgeDaemon')
 const HELPER_APP_PATH = join(PACKAGE_PATH, '.build', 'bridge', 'TaskWraith Bridge.app')
 const HELPER_EXECUTABLE_PATH = join(HELPER_APP_PATH, 'Contents', 'MacOS', 'TaskWraithBridgeDaemon')
+// Pre-pack default only. afterPack (build/validate-native-modules.cjs) copies
+// the packaged parent app's CFBundleIdentifier, CFBundleShortVersionString and
+// CFBundleVersion into the helper, so the beta/debut identity of a shipped
+// bundle never depends on this literal or on package.json's version.
 const APP_IDENTIFIER = 'com.chrisizatt.taskwraith'
 const DEPLOYMENT_TARGET = process.env.MACOSX_DEPLOYMENT_TARGET || '14.0'
 const REQUESTED_ARCH = process.env.TASKWRAITH_BRIDGE_ARCH || 'host'
@@ -182,7 +186,7 @@ function helperInfoPlist() {
   <key>LSMinimumSystemVersion</key>
   <string>${DEPLOYMENT_TARGET}</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>TaskWraith transcribes audio files you select entirely on-device so agents can read back what was said.</string>
+  <string>TaskWraith transcribes audio files you point it at with macOS Speech Recognition without sending audio from your Mac, so agents can read back what was said.</string>
 </dict>
 </plist>
 `

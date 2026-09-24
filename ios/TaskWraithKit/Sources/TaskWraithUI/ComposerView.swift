@@ -15,8 +15,30 @@ import TaskWraithKit
     import PhotosUI
     import UIKit
 
-    private let twMaxComposerImageAttachments = 15
+    private let twMaxComposerImageAttachments = ComposerMarkupWiring.maxComposerImageAttachments
 #endif
+
+/// Exact saved reasoning value used when the composer re-binds to an existing
+/// thread. Provider-specific fields must survive this hop or opening a thread
+/// silently replaces its effort with the model default on the next send.
+func twRemoteCardReasoningEffort(
+    _ card: RemoteTaskCard,
+    selectedProvider: String
+) -> String? {
+    let provider = (card.provider ?? selectedProvider).lowercased()
+    let value: String?
+    switch provider {
+    case "claude": value = card.claudeReasoningEffort
+    case "codex": value = card.codexReasoningEffort
+    case "kimi": value = card.kimiReasoningEffort
+    case "pi": value = card.piReasoningEffort
+    default: value = nil
+    }
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty
+    else { return nil }
+    return trimmed
+}
 
 struct Composer: View {
     @ObservedObject var model: RemoteSessionModel
@@ -139,7 +161,14 @@ struct Composer: View {
     @State private var selectedKimiThinking: Bool = true
     #if canImport(UIKit)
         @State private var pickedItems: [PhotosPickerItem] = []
-        @State private var attachments: [(name: String, image: UIImage)] = []
+        @State private var attachments: [ComposerQueuedImage] = []
+        @ObservedObject private var markupInbox = ComposerMarkupInbox.shared
+        #if os(iOS)
+            /// Composer-local dictation. Lives next to `photosButton`; the
+            /// live session is iOS-only (`onDevice()`), matching the Speech
+            /// + AVAudioEngine stack. Denied/unavailable must stay visible.
+            @StateObject private var voiceController = ComposerVoiceController.onDevice()
+        #endif
     #endif
 
     /// Participants available to @-mention: a true ensemble's round participants.
@@ -205,17 +234,7 @@ struct Composer: View {
         return selected
     }
     private var cardReasoningEffort: String? {
-        let provider = (card.provider ?? selectedProvider).lowercased()
-        if provider == "claude" {
-            return nonEmpty(card.claudeReasoningEffort)
-        }
-        if provider == "codex" {
-            return nonEmpty(card.codexReasoningEffort)
-        }
-        if provider == "kimi" {
-            return nonEmpty(card.kimiReasoningEffort)
-        }
-        return nil
+        twRemoteCardReasoningEffort(card, selectedProvider: selectedProvider)
     }
     // Fast toggle + Kimi thinking the loaded thread last used (provider-specific
     // wire fields). Cursor/Claude are Bools; Codex uses a 'fast' service tier.
@@ -392,7 +411,24 @@ struct Composer: View {
             // Composer is reused across threads on iPhone (no per-thread .id) —
             // clear focus so thread B doesn't inherit thread A's expanded state.
             inputFocused = false
+            #if os(iOS)
+                // A reused composer must not keep the previous thread's mic hot.
+                voiceController.cancel()
+                bindVoiceTranscript()
+            #endif
+            #if canImport(UIKit)
+                absorbPendingMarkup()
+            #endif
         }
+        #if os(iOS)
+            .onAppear { bindVoiceTranscript() }
+            .onDisappear { voiceController.cancel() }
+        #endif
+        #if canImport(UIKit)
+            .onChange(of: markupInbox.generation) { _, _ in
+                absorbPendingMarkup()
+            }
+        #endif
         .onChange(of: isExpanded, initial: true) { _, expanded in
             onExpandedChange?(expanded)
         }
@@ -726,6 +762,9 @@ struct Composer: View {
                     }
                 }
             }
+            #if os(iOS)
+                voiceStatusBanner
+            #endif
             #if canImport(UIKit)
                 if !attachments.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -738,8 +777,20 @@ struct Composer: View {
                                         .scaledToFill()
                                         .frame(width: 52, height: 52)
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    if attachment.markup != nil {
+                                        Image(systemName: "pencil.circle.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(.white, TWTheme.chroma1)
+                                            .offset(x: -16, y: 16)
+                                            .accessibilityLabel("Annotated")
+                                    }
                                     Button {
                                         attachments.remove(at: index)
+                                        // A prior annotate action may have been retained
+                                        // because all 15 slots were full. Refill the freed
+                                        // slot immediately instead of waiting for a thread
+                                        // switch or another inbox generation.
+                                        absorbPendingMarkup()
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .font(.caption)
@@ -780,6 +831,9 @@ struct Composer: View {
                     HStack(alignment: .bottom, spacing: 8) {
                         #if canImport(UIKit)
                             photosButton
+                            #if os(iOS)
+                                micButton
+                            #endif
                         #endif
                         if shell.effects.contains(.terminalCaret) {
                             Text(">")
@@ -826,6 +880,9 @@ struct Composer: View {
                     #if canImport(UIKit)
                         // Ensembles included: steer now carries attachments.
                         photosButton
+                        #if os(iOS)
+                            micButton
+                        #endif
                     #endif
                     if shell.effects.contains(.terminalCaret) {
                         Text(">")
@@ -877,7 +934,7 @@ struct Composer: View {
                 )
                 .frame(width: 280)
                 .padding(12)
-                .background(TWTheme.surface2)
+                .twPopoverGlassSurface()
                 .presentationCompactAdaptation(.popover)
             }
         }
@@ -971,6 +1028,21 @@ struct Composer: View {
     /// usage (the ring only surfaces once a run has consumed context), so a
     /// fresh composer stays clean. Window size comes from the model-id →
     /// provider-fallback table; usage is the latest run summary's total tokens.
+    private func discoveredContextWindow(provider: String?, modelId: String?) -> Int? {
+        guard let provider, let modelId else { return nil }
+        let key = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawModel = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let catalogModelId: String
+        if key == "kimi", ["k3", "kimi-code/k3"].contains(rawModel) {
+            catalogModelId = "kimi-k3"
+        } else if key == "kimi", ["k3-256k", "kimi-code/k3-256k"].contains(rawModel) {
+            catalogModelId = "kimi-k3-256k"
+        } else {
+            catalogModelId = modelId
+        }
+        return model.providerModels[key]?.first { $0.id == catalogModelId }?.contextWindow
+    }
+
     private var contextUsedPercent: Double? {
         // Ensemble: the donut reflects the per-participant rows — the participant
         // CLOSEST to its own window (max %), so the ring agrees with the popover.
@@ -988,7 +1060,10 @@ struct Composer: View {
         let used = active.totalTokens ?? ((active.tokensIn ?? 0) + (active.tokensOut ?? 0))
         guard used > 0 else { return nil }
         let window = ContextWindows.resolve(
-            provider: active.provider ?? card.provider, model: active.model)
+            provider: active.provider ?? card.provider,
+            model: active.model,
+            discoveredContextWindow: discoveredContextWindow(
+                provider: active.provider ?? card.provider, modelId: active.model))
         guard window > 0 else { return nil }
         return min(100, Double(used) / Double(window) * 100)
     }
@@ -1018,7 +1093,10 @@ struct Composer: View {
                         model: entry.model,
                         usedTokens: entry.contextTokens ?? 0,
                         windowTokens: ContextWindows.resolve(
-                            provider: entry.provider, model: entry.model))
+                            provider: entry.provider,
+                            model: entry.model,
+                            discoveredContextWindow: discoveredContextWindow(
+                                provider: entry.provider, modelId: entry.model)))
                 }
         }
         // Solo only — an ensemble without a projected roster shows nothing rather
@@ -1037,7 +1115,11 @@ struct Composer: View {
                 provider: providerStr,
                 model: active.model,
                 usedTokens: used,
-                windowTokens: ContextWindows.resolve(provider: providerStr, model: active.model))
+                windowTokens: ContextWindows.resolve(
+                    provider: providerStr,
+                    model: active.model,
+                    discoveredContextWindow: discoveredContextWindow(
+                        provider: providerStr, modelId: active.model)))
         ]
     }
 
@@ -1249,7 +1331,7 @@ struct Composer: View {
                             let data = try? await item.loadTransferable(type: Data.self),
                             let image = UIImage(data: data)
                         else { continue }
-                        attachments.append((name: "photo.jpg", image: image))
+                        attachments.append(ComposerQueuedImage(name: "photo.jpg", image: image))
                     }
                     pickedItems = []
                 }
@@ -1257,12 +1339,154 @@ struct Composer: View {
         }
     #endif
 
+    #if os(iOS)
+        /// Composer-local microphone. Button chrome is derived from the
+        /// controller state so denied/unavailable cannot render as a dead mic.
+        private var micButton: some View {
+            let chrome = ComposerVoiceWiring.chrome(for: voiceController.state)
+            let iconColor: Color = {
+                if chrome.isFailure { return TWTheme.statusFailed }
+                if chrome.isListening { return TWTheme.chroma1 }
+                return TWTheme.textSecondary
+            }()
+            return Button {
+                ComposerVoiceWiring.perform(
+                    chrome.tap,
+                    start: { voiceController.start() },
+                    stop: { voiceController.stop() })
+            } label: {
+                Image(systemName: chrome.systemImage)
+                    .font(.body)
+                    .foregroundStyle(iconColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(chrome.tap == .none)
+            .accessibilityLabel(chrome.accessibilityLabel)
+            .accessibilityHint(chrome.accessibilityHint)
+            .accessibilityValue(chrome.accessibilityValue)
+        }
+
+        /// Denied/unavailable captions, plus a live preview of the partial
+        /// transcript. Partials never touch `text` — only `onTranscriptReady`
+        /// does, via `ComposerVoiceWiring.appendFinalTranscript`.
+        @ViewBuilder private var voiceStatusBanner: some View {
+            let chrome = ComposerVoiceWiring.chrome(for: voiceController.state)
+            if let caption = chrome.statusCaption {
+                Text(caption)
+                    .font(.caption2)
+                    .foregroundStyle(chrome.isFailure ? TWTheme.statusFailed : TWTheme.textSecondary)
+                    .accessibilityLabel(caption)
+            } else if chrome.isListening, !voiceController.partialTranscript.isEmpty {
+                Text(voiceController.partialTranscript)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(2)
+                    .accessibilityLabel("Dictation preview")
+                    .accessibilityValue(voiceController.partialTranscript)
+                    .accessibilityHint(
+                        "Not inserted yet. Stop dictation to add this to the message.")
+            }
+        }
+
+        private func bindVoiceTranscript() {
+            voiceController.onTranscriptReady = { final in
+                text = ComposerVoiceWiring.appendFinalTranscript(final, to: text)
+            }
+        }
+    #endif
+
+    /// Short, single-line preview of a dropped prompt, so an eviction names
+    /// what it dropped instead of just admitting one happened.
+    private static func outboxPreview(_ text: String) -> String {
+        let flat =
+            text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return flat.count <= 40 ? flat : String(flat.prefix(40)) + "…"
+    }
+
+    #if canImport(UIKit)
+        private func absorbPendingMarkup() {
+            let result = ComposerMarkupWiring.absorb(
+                from: markupInbox,
+                threadId: card.id,
+                currentlyAttached: attachments.count)
+            attachments.append(
+                contentsOf: ComposerMarkupWiring.queuedImages(from: result.taken))
+            if let message = result.refusalMessage {
+                model.reportOfflineOutboxOutcome(message)
+            }
+        }
+    #endif
+
     private func sendCurrent() {
+        #if os(iOS)
+            // Drop in-flight dictation so a late final cannot append after send.
+            voiceController.cancel()
+        #endif
+        // ITEM 1 — ACCEPT AND QUEUE.
+        //
+        // Before this branch an offline send fell straight through the
+        // `providerAdmission.isLive` guard below and silently did nothing: the
+        // exact "app seems broken" failure this feature replaces. Only the
+        // honestly-reachable liveness states divert here — see
+        // `shouldQueueOutboundSends`, which deliberately does NOT divert on
+        // `.stale`, because queueing a send that would have succeeded is its own
+        // small dishonesty.
+        #if canImport(UIKit)
+            let offlineAttachmentCount = attachments.count
+        #else
+            let offlineAttachmentCount = 0
+        #endif
+        switch OfflineComposerSendPolicy.decide(
+            shouldQueue: model.shouldQueueOutboundSends,
+            threadId: card.id,
+            text: text,
+            attachmentCount: offlineAttachmentCount)
+        {
+        case .refuseAttachments:
+            // KEEP BOTH TEXT AND IMAGES. The text outbox cannot durably retain
+            // attachment bytes yet, so accepting this would split one send and
+            // silently deliver only half of what the user committed.
+            model.reportOfflineOutboxOutcome(
+                "Not sent. Image attachments can't be saved to the offline outbox yet. "
+                    + "Your message and images are still here.")
+            return
+        case .queueText(let offlineTrimmed):
+            switch model.enqueueOfflinePrompt(threadId: card.id, text: offlineTrimmed) {
+            case .queued:
+                // Delivery of the ATTEMPT is all we promise. The Mac stays
+                // authoritative and may still reject this on flush, so the copy
+                // must never say the work "will run".
+                model.reportOfflineOutboxOutcome(
+                    model.hostLiveness?.copy.queueNotice
+                        ?? "Saved. This sends as soon as your Mac answers.")
+                text = ""
+            case let .queuedEvicting(_, evicted):
+                // R2: an eviction is never silent, and it names its victim.
+                model.reportOfflineOutboxOutcome(
+                    "Saved. The outbox was full, so the oldest waiting prompt was dropped: "
+                        + "“\(Self.outboxPreview(evicted.text))”")
+                text = ""
+            case let .rejectedFull(capacity):
+                // KEEP THE TEXT. Clearing it here would lose the prompt
+                // outright — strictly worse than the refusal being reported.
+                model.reportOfflineOutboxOutcome(
+                    "Not sent. \(capacity) prompts are already waiting and none can be dropped "
+                        + "safely. Your message is still here — try again once your Mac answers.")
+            case .rejectedEmpty:
+                break
+            }
+            return
+        case .sendNormally:
+            break
+        }
+
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if canImport(UIKit)
             let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                twEncodeImageAttachment($0.image, name: $0.name)
+                ComposerMarkupWiring.encode($0)
             }
             let hasAttachments = !encoded.isEmpty
         #else
@@ -1367,7 +1591,7 @@ struct Composer: View {
         }
         #if canImport(UIKit)
             let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                twEncodeImageAttachment($0.image, name: $0.name)
+                ComposerMarkupWiring.encode($0)
             }
         #else
             let encoded: [[String: Any]] = []
@@ -1391,6 +1615,9 @@ struct Composer: View {
     }
 
     private func scheduleCurrent(runAt: Date) {
+        #if os(iOS)
+            voiceController.cancel()
+        #endif
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, canScheduleFromThisComposer else { return }
@@ -1414,7 +1641,7 @@ struct Composer: View {
         } else {
             #if canImport(UIKit)
                 let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
-                    twEncodeImageAttachment($0.image, name: $0.name)
+                    ComposerMarkupWiring.encode($0)
                 }
             #else
                 let encoded: [[String: Any]] = []
@@ -1443,6 +1670,152 @@ struct Composer: View {
             return "Ask the Ensemble"
         }
         return "Ask \(providerName) anything…"
+    }
+}
+
+/// Presentation + insertion for the composer microphone button.
+///
+/// Extracted from `Composer` so the wiring can be tested on the macOS
+/// `swift test` build without standing up SwiftUI or a microphone. The view
+/// is a thin adapter over these two functions: chrome for the button, and
+/// `appendFinalTranscript` as the only path that mutates the draft. Partials
+/// never go through that path — they stay on `controller.partialTranscript`.
+enum ComposerVoiceWiring {
+    enum Tap: Equatable {
+        /// Idle — begin a take.
+        case start
+        /// Authorizing or listening — stop (authorizing is cancel-equivalent).
+        case stop
+        /// Denied / unavailable — `start()` re-requests authorization so a
+        /// refused mic is not a dead control.
+        case retry
+        /// Finalizing — ignore extra taps while the transcript flushes.
+        case none
+    }
+
+    struct Chrome: Equatable {
+        var systemImage: String
+        var accessibilityLabel: String
+        var accessibilityHint: String
+        var accessibilityValue: String
+        var isListening: Bool
+        var isFinalizing: Bool
+        var isFailure: Bool
+        var tap: Tap
+        /// Visible caption so denied/unavailable cannot be a silent no-op.
+        var statusCaption: String?
+    }
+
+    static func chrome(for state: ComposerVoiceState) -> Chrome {
+        switch state {
+        case .idle:
+            return Chrome(
+                systemImage: "mic",
+                accessibilityLabel: "Dictate",
+                accessibilityHint: "Starts on-device dictation into this message.",
+                accessibilityValue: "Idle",
+                isListening: false,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .start,
+                statusCaption: nil)
+        case .authorizing:
+            return Chrome(
+                systemImage: "mic",
+                accessibilityLabel: "Waiting for microphone permission",
+                accessibilityHint: "Stops and cancels the permission request.",
+                accessibilityValue: "Authorizing",
+                isListening: true,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .stop,
+                statusCaption: "Waiting for permission…")
+        case .listening:
+            return Chrome(
+                systemImage: "mic.fill",
+                accessibilityLabel: "Stop dictation",
+                accessibilityHint: "Stops listening and inserts the final transcript.",
+                accessibilityValue: "Listening",
+                isListening: true,
+                isFinalizing: false,
+                isFailure: false,
+                tap: .stop,
+                statusCaption: nil)
+        case .finalizing:
+            return Chrome(
+                systemImage: "mic.fill",
+                accessibilityLabel: "Finishing dictation",
+                accessibilityHint: "Inserting the final transcript.",
+                accessibilityValue: "Finalizing",
+                isListening: false,
+                isFinalizing: true,
+                isFailure: false,
+                tap: .none,
+                statusCaption: "Finishing…")
+        case .denied(let reason):
+            let label: String
+            switch reason {
+            case .speechRecognitionDenied:
+                label = "Speech recognition permission denied"
+            case .microphoneDenied:
+                label = "Microphone permission denied"
+            case .restricted:
+                label = "Speech recognition is restricted"
+            }
+            return Chrome(
+                systemImage: "mic.slash",
+                accessibilityLabel: label,
+                accessibilityHint:
+                    "Tries again. If permission stays denied, enable Microphone and Speech Recognition in Settings.",
+                accessibilityValue: "Denied",
+                isListening: false,
+                isFinalizing: false,
+                isFailure: true,
+                tap: .retry,
+                statusCaption: label)
+        case .unavailable(let reason):
+            let label: String
+            let value: String
+            switch reason {
+            case .recognizerUnavailable:
+                label = "On-device dictation unavailable"
+                value = "Unavailable"
+            case .audioEngineFailure(let detail):
+                label = "Microphone failed to start"
+                value = detail.isEmpty ? "Unavailable" : detail
+            }
+            return Chrome(
+                systemImage: "mic.slash",
+                accessibilityLabel: label,
+                accessibilityHint: "Tries to start dictation again.",
+                accessibilityValue: value,
+                isListening: false,
+                isFinalizing: false,
+                isFailure: true,
+                tap: .retry,
+                statusCaption: label)
+        }
+    }
+
+    static func perform(_ tap: Tap, start: () -> Void, stop: () -> Void) {
+        switch tap {
+        case .start, .retry: start()
+        case .stop: stop()
+        case .none: break
+        }
+    }
+
+    /// Append a finalized transcript the way a committed paste would. Never
+    /// call this with a partial — MentionTextView already refuses to publish
+    /// while `markedTextRange` is set, and this helper is the Swift-side twin:
+    /// only `onTranscriptReady` (the automatic final / leftover-on-stop) may
+    /// mutate the composer draft.
+    static func appendFinalTranscript(_ transcript: String, to draft: String) -> String {
+        let piece = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !piece.isEmpty else { return draft }
+        if draft.isEmpty { return piece }
+        if let last = draft.last, last.isWhitespace { return draft + piece }
+        return draft + " " + piece
     }
 }
 

@@ -91,7 +91,7 @@ public func encodePairedHostRequest<Parameters: Encodable>(
   kind: PairedHostRequestKind,
   params: Parameters
 ) throws -> Data {
-  try JSONEncoder().encode(PairedHostRequestEnvelope(kind: kind, params: params))
+  try TWCoders.encoder.encode(PairedHostRequestEnvelope(kind: kind, params: params))
 }
 
 public func makePairedHostCommand(
@@ -101,7 +101,7 @@ public func makePairedHostCommand(
   arguments: [String: HostJSONAny],
   commandId: String = UUID().uuidString.lowercased(),
   idempotencyKey: String = UUID().uuidString.lowercased(),
-  issuedAt: String = ISO8601DateFormatter().string(from: Date())
+  issuedAt: String = TWCoders.iso8601Now()
 ) -> HostCommand {
   HostCommand(
     commandId: commandId,
@@ -118,7 +118,7 @@ public func makePairedHostCommand(
 
 private func normalizedSnapshot(_ snapshot: HostSnapshot) -> HostDecodeResult<HostSnapshot> {
   do {
-    return decodeHostSnapshot(from: try JSONEncoder().encode(snapshot))
+    return decodeHostSnapshot(from: try TWCoders.encoder.encode(snapshot))
   } catch {
     return .error("snapshot encode failed: \(error.localizedDescription)")
   }
@@ -135,7 +135,7 @@ public func stalePairedHostSnapshot(_ snapshot: HostSnapshot) -> HostSnapshot? {
 
 private func decodeSnapshotFrame(_ data: Data) -> HostDecodeResult<HostSnapshotFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostSnapshotFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostSnapshotFrame.self, from: data)
     guard frame.type == "host.snapshot" else { return .error("type must be host.snapshot") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -180,7 +180,7 @@ private func validateDeltasPayload(
 
 private func decodeDeltasFrame(_ data: Data) -> HostDecodeResult<HostDeltasFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostDeltasFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostDeltasFrame.self, from: data)
     guard frame.type == "host.deltas" else { return .error("type must be host.deltas") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -205,7 +205,7 @@ private func decodeDeltasFrame(_ data: Data) -> HostDecodeResult<HostDeltasFrame
 
 private func decodeHealthFrame(_ data: Data) -> HostDecodeResult<HostHealthFrame> {
   do {
-    let frame = try JSONDecoder().decode(HostHealthFrame.self, from: data)
+    let frame = try TWCoders.decoder.decode(HostHealthFrame.self, from: data)
     guard frame.type == "host.health" else { return .error("type must be host.health") }
     guard frame.protocolVersion == HostProtocolConstants.protocolVersion else {
       return .error("unsupported protocol version")
@@ -296,7 +296,13 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
     guard required.isSubset(of: capabilities) else {
       return reject("welcome is missing required projection capabilities")
     }
-    if let snapshot, snapshot.generation > value.generation {
+    // Offline bytes describe a previous Host epoch. The newly authenticated
+    // welcome is authoritative even if that Host rebuilt its projection at a
+    // lower generation after local state recovery. Delta-advanced snapshots
+    // are .cached while still current, so only .stale bytes bypass this fence.
+    if let snapshot, snapshot.freshness != .stale,
+      snapshot.generation > value.generation
+    {
       return .ignored
     }
     welcome = value
@@ -315,7 +321,10 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
     guard frame.snapshot.generation == welcome.generation else {
       return requireSnapshot("snapshot_generation_mismatch")
     }
-    if let current = snapshot {
+    // A stale cache must never fence a fresh seed. The Host may have reset its
+    // projection cursor while the phone was offline; comparing those cursors
+    // left the phone permanently reconnecting despite a valid new snapshot.
+    if let current = snapshot, current.freshness != .stale {
       if frame.snapshot.generation < current.generation { return .ignored }
       if frame.snapshot.generation == current.generation,
         frame.snapshot.cursor < current.cursor
@@ -380,11 +389,14 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
   private mutating func receiveState(_ data: Data) -> PairedHostProjectionApplyResult {
     let state: PairedHostProjectionStateMessage
     do {
-      state = try JSONDecoder().decode(PairedHostProjectionStateMessage.self, from: data)
+      state = try TWCoders.decoder.decode(PairedHostProjectionStateMessage.self, from: data)
     } catch {
       return reject("state decode failed: \(error.localizedDescription)")
     }
     if state.phase == .live {
+      guard welcome != nil else {
+        return requireSnapshot("live_state_before_welcome")
+      }
       guard let generation = state.generation, let cursor = state.cursor else {
         return reject("live state requires generation and cursor")
       }
@@ -393,6 +405,20 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
         snapshot.cursor == cursor
       else {
         return requireSnapshot("live_state_cursor_mismatch")
+      }
+      // A cached snapshot is valid here only when it was coherently advanced by
+      // ordered live deltas. Explicit `.stale` / `.staleCache` bytes come from
+      // offline or reconnect demotion and must never be certified current merely
+      // because the Host cursor did not move while the fresh snapshot frame was
+      // lost. Keep the replica reconnecting so the controller's existing
+      // full-snapshot recovery can replace those bytes before publishing live.
+      guard snapshot.freshness != .stale,
+        snapshot.health.freshness != .stale,
+        snapshot.health.connectionPhase != .staleCache,
+        health?.freshness != .stale,
+        health?.connectionPhase != .staleCache
+      else {
+        return requireSnapshot("live_state_stale_snapshot")
       }
     }
     phase = state.phase
@@ -444,9 +470,9 @@ public func decodePairedHostSnapshotResponse(
   _ data: Data
 ) -> HostDecodeResult<HostSnapshotFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostSnapshotResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostSnapshotResponse.self, from: data)
     guard response.kind == .snapshotGet else { return .error("unexpected response kind") }
-    return decodeSnapshotFrame(try JSONEncoder().encode(response.frame))
+    return decodeSnapshotFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("snapshot response decode failed: \(error.localizedDescription)")
   }
@@ -456,9 +482,9 @@ public func decodePairedHostDeltasResponse(
   _ data: Data
 ) -> HostDecodeResult<HostDeltasFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostDeltasResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostDeltasResponse.self, from: data)
     guard response.kind == .deltasSince else { return .error("unexpected response kind") }
-    return decodeDeltasFrame(try JSONEncoder().encode(response.frame))
+    return decodeDeltasFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("deltas response decode failed: \(error.localizedDescription)")
   }
@@ -468,9 +494,9 @@ public func decodePairedHostHealthResponse(
   _ data: Data
 ) -> HostDecodeResult<HostHealthFrame> {
   do {
-    let response = try JSONDecoder().decode(PairedHostHealthResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostHealthResponse.self, from: data)
     guard response.kind == .healthGet else { return .error("unexpected response kind") }
-    return decodeHealthFrame(try JSONEncoder().encode(response.frame))
+    return decodeHealthFrame(try TWCoders.encoder.encode(response.frame))
   } catch {
     return .error("health response decode failed: \(error.localizedDescription)")
   }
@@ -480,9 +506,9 @@ public func decodePairedHostCommandResponse(
   _ data: Data
 ) -> HostDecodeResult<HostCommandReceipt> {
   do {
-    let response = try JSONDecoder().decode(PairedHostCommandResponse.self, from: data)
+    let response = try TWCoders.decoder.decode(PairedHostCommandResponse.self, from: data)
     guard response.kind == .commandSubmit else { return .error("unexpected response kind") }
-    return decodeHostCommandReceipt(from: try JSONEncoder().encode(response.receipt))
+    return decodeHostCommandReceipt(from: try TWCoders.encoder.encode(response.receipt))
   } catch {
     return .error("command response decode failed: \(error.localizedDescription)")
   }
@@ -531,7 +557,7 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
 
   public init(
     defaults: UserDefaults = .standard,
-    keyPrefix: String = "tw.host-projection.v1."
+    keyPrefix: String = UserDefaultsPairedHostSnapshotStore.defaultKeyPrefix
   ) {
     self.defaults = defaults
     self.keyPrefix = keyPrefix
@@ -545,7 +571,7 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     guard let data else { return nil }
     guard data.count <= Self.maxEncodedBytes else { return .error("cached snapshot is oversized") }
     do {
-      let envelope = try JSONDecoder().decode(PairedHostSnapshotStoreEnvelope.self, from: data)
+      let envelope = try TWCoders.decoder.decode(PairedHostSnapshotStoreEnvelope.self, from: data)
       guard envelope.schemaVersion == 1 else { return .error("unsupported cache schema") }
       switch normalizedSnapshot(envelope.snapshot) {
       case .ok(let snapshot):
@@ -572,10 +598,10 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     }
     let data: Data
     do {
-      data = try JSONEncoder().encode(
+      data = try TWCoders.encoder.encode(
         PairedHostSnapshotStoreEnvelope(
           schemaVersion: 1,
-          savedAt: ISO8601DateFormatter().string(from: Date()),
+          savedAt: TWCoders.iso8601Now(),
           snapshot: validated))
     } catch {
       throw PairedHostSnapshotStoreError.encodeFailed(error.localizedDescription)
@@ -600,5 +626,40 @@ public final class UserDefaultsPairedHostSnapshotStore: PairedHostSnapshotStore,
     guard !bounded.isEmpty, bounded.utf8.count <= 4_096 else { return nil }
     let digest = SHA256.hash(data: Data(bounded.utf8))
     return keyPrefix + digest.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+extension UserDefaultsPairedHostSnapshotStore {
+  public static let defaultKeyPrefix = "tw.host-projection.v1."
+
+  /// One-time copy of cached host snapshots from the app-private `.standard`
+  /// domain into the App Group suite WidgetKit / NSE share. Never clobbers a
+  /// key the destination already holds.
+  public static func migrate(
+    from source: UserDefaults,
+    to destination: UserDefaults,
+    keyPrefix: String = defaultKeyPrefix
+  ) {
+    let keys = source.dictionaryRepresentation().keys.filter { $0.hasPrefix(keyPrefix) }
+    for key in keys {
+      guard destination.object(forKey: key) == nil else { continue }
+      if let data = source.data(forKey: key) {
+        destination.set(data, forKey: key)
+      }
+    }
+  }
+}
+
+public enum PairedHostAppGroupBootstrap {
+  public static func migrateAndMakeStores(
+    sharedDefaults: UserDefaults,
+    standardDefaults: UserDefaults = .standard
+  ) -> (pairingStore: UserDefaultsPairedHostStore, snapshotStore: UserDefaultsPairedHostSnapshotStore) {
+    UserDefaultsPairedHostStore.migrate(from: standardDefaults, to: sharedDefaults)
+    UserDefaultsPairedHostSnapshotStore.migrate(from: standardDefaults, to: sharedDefaults)
+    return (
+      UserDefaultsPairedHostStore(defaults: sharedDefaults),
+      UserDefaultsPairedHostSnapshotStore(defaults: sharedDefaults)
+    )
   }
 }

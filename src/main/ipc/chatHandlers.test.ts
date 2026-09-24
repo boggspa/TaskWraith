@@ -1,11 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerChatHandlers } from './chatHandlers'
-import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
-import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
+import {
+  CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS,
+  ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS,
+  registerChatHandlers
+} from './chatHandlers'
+import type { AppSettings, ChatListItem, ChatRecord, EnsembleParticipant } from '../store/types'
+import type {
+  RebindChatWorkspaceInput,
+  RebindChatWorkspaceOptions,
+  SetChatKindInput
+} from '../services/ChatService'
 import { queuePendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 
 vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => '/tmp/taskwraith-chat-handler-test'),
+    getVersion: vi.fn(() => 'test')
+  },
   ipcMain: {
     handle: vi.fn()
   }
@@ -44,12 +56,29 @@ function chatListItem(record: ChatRecord): ChatListItem {
 function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0]> = {}) {
   const settings = { ensembleModeEnabled: true } as AppSettings
   return {
+    // Required rather than optional: the title repair pass defers a busy chat,
+    // and a missing liveness source must be a compile error rather than a
+    // silent "nothing is running".
+    isChatBusy: vi.fn(() => false),
     chatService: {
       getChats: vi.fn(() => [chat('chat-1')]),
+      // The reaper's narrow source. `parentChatIds` is deliberately non-empty:
+      // it is derived from the WHOLE corpus (including chats the prefilter
+      // skipped), so the handler must thread it through rather than let the
+      // reaper re-derive parentage from the narrowed list.
+      getAbandonedReapCandidates: vi.fn(() => ({
+        chats: [chat('chat-1')],
+        parentChatIds: new Set<string>(['parent-1'])
+      })),
+      getWorkspaceCommitAttributionProjections: vi.fn(() => [chat('chat-1')]),
       getChatList: vi.fn(() => []),
       getPinnedMessages: vi.fn(() => []),
       getChat: vi.fn((chatId: string) => chat(chatId)),
       saveChat: vi.fn((record: ChatRecord) => record),
+      patchChatComposerSelection: vi.fn(async (request) => ({
+        chat: chat(request.chatId),
+        changed: true
+      })),
       deleteChat: vi.fn(),
       truncateChatHistory: vi.fn((chatId: string) => chat(chatId, { messages: [], runs: [] })),
       clearChats: vi.fn(),
@@ -63,8 +92,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getSubThreads: vi.fn(() => [chat('sub-thread')]),
       createSideChat: vi.fn(() => chat('side-chat', { parentChatRelation: 'sideChat' })),
       getSideChats: vi.fn(() => [chat('side-chat')]),
-      listHumanCollaborationShares: vi.fn(() => []),
-      setChatKind: vi.fn((args: { chatId: string; targetKind: 'single' | 'ensemble' }) =>
+      setChatKind: vi.fn((args: SetChatKindInput) =>
         chat(args.chatId, { chatKind: args.targetKind })
       ),
       rebindChatWorkspace: vi.fn(
@@ -127,6 +155,8 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     broadcastThreadUpdate: vi.fn(),
     broadcastThreadList: vi.fn(),
     broadcastChatUpdated: vi.fn(),
+    adoptRendererChatMutation: vi.fn(() => true),
+    broadcastChatUpdatedExcept: vi.fn(),
     broadcastChatPopoutUpdate: vi.fn(),
     pushRemoteTaskCardDelta: vi.fn(),
     pushRemoteThreadSnapshot: vi.fn(),
@@ -144,6 +174,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     assertSenderChatScope: vi.fn(),
     assertSenderCanRebindChatWorkspace: vi.fn(),
     getChatWorkspaceRebindBlocker: vi.fn(() => null),
+    awaitChatRecordPersisted: vi.fn(async () => undefined),
     ...overrides
   }
 }
@@ -160,15 +191,155 @@ function handlerFor(channel: string): RegisteredHandler {
 }
 
 describe('registerChatHandlers', () => {
+  it('waits on the migration inventory for creation and rechecks the canonical save after its handoff', async () => {
+    let release!: () => void
+    let held = true
+    const pending = new Promise<void>((resolve) => {
+      release = () => {
+        held = false
+        resolve()
+      }
+    })
+    const deps = createDeps({
+      beforeChatInventoryWrite: () => (held ? pending : undefined),
+      beforeSaveChat: () => (held ? pending : undefined)
+    })
+    registerChatHandlers(deps)
+    const create = handlerFor('create-global-chat')({})
+    const save = handlerFor('save-chat')({}, chat('chat-1', { title: 'After migration' }))
+    expect(deps.chatService.createGlobalChat).not.toHaveBeenCalled()
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.chatService.getChat).not.toHaveBeenCalled()
+    release()
+    await Promise.all([create, save])
+    expect(deps.chatService.createGlobalChat).toHaveBeenCalledOnce()
+    expect(deps.chatService.saveChat).toHaveBeenCalledOnce()
+    expect(deps.chatService.getChat).toHaveBeenCalledWith('chat-1')
+  })
+
   it('registers residual chat CRUD handlers', () => {
     registerChatHandlers(createDeps())
 
     expect(handlerFor('save-chat')).toBeTypeOf('function')
+    expect(handlerFor('patch-chat-composer-selection')).toBeTypeOf('function')
+    expect(handlerFor('mutate-chat-transcript')).toBeTypeOf('function')
     expect(handlerFor('rebind-chat-workspace')).toBeTypeOf('function')
     expect(handlerFor('delete-chat')).toBeTypeOf('function')
     expect(handlerFor('reap-abandoned-chats')).toBeTypeOf('function')
     expect(handlerFor('truncate-chat')).toBeTypeOf('function')
     expect(handlerFor('clear-chats')).toBeTypeOf('function')
+  })
+
+  it('patches composer metadata without a renderer chat-record payload', async () => {
+    const messages = [
+      {
+        id: 'message-1',
+        role: 'user' as const,
+        content: 'large transcript stays main-owned',
+        timestamp: '2026-08-26T12:00:00.000Z'
+      }
+    ]
+    const canonical = chat('chat-1', {
+      provider: 'claude',
+      messages,
+      persistenceRevision: 4,
+      providerMetadata: { selectedModelType: 'claude-sonnet-5' }
+    })
+    const saved = {
+      ...canonical,
+      providerMetadata: { selectedModelType: 'claude-opus-5' },
+      persistenceRevision: 5,
+      updatedAt: 5
+    }
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChat: vi.fn(() => canonical),
+        patchChatComposerSelection: vi.fn(async () => ({ chat: saved, changed: true }))
+      }
+    })
+    registerChatHandlers(deps)
+
+    const result = await handlerFor('patch-chat-composer-selection')({} as any, {
+      chatId: canonical.appChatId,
+      provider: 'claude',
+      deferProviderScoped: false,
+      patch: { selectedModelType: 'claude-opus-5' }
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      changed: true,
+      chatId: canonical.appChatId,
+      revision: 5,
+      updatedAt: 5
+    })
+    expect(deps.chatService.patchChatComposerSelection).toHaveBeenCalledWith({
+      chatId: canonical.appChatId,
+      provider: 'claude',
+      deferProviderScoped: false,
+      patch: { selectedModelType: 'claude-opus-5' }
+    })
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.assertSenderChatScope).toHaveBeenCalledWith(
+      expect.anything(),
+      canonical.appChatId,
+      'patch-chat-composer-selection'
+    )
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(saved)
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith(canonical.appChatId)
+  })
+
+  it('skips broadcast for an exact composer selection no-op', async () => {
+    const canonical = chat('chat-1', {
+      provider: 'claude',
+      persistenceRevision: 4,
+      providerMetadata: { selectedModelType: 'claude-opus-5' }
+    })
+    const deps = createDeps({
+      chatService: {
+        ...createDeps().chatService,
+        getChat: vi.fn(() => canonical),
+        patchChatComposerSelection: vi.fn(async () => ({ chat: canonical, changed: false }))
+      }
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: canonical.appChatId,
+        provider: 'claude',
+        patch: { selectedModelType: 'claude-opus-5' }
+      }) as Promise<unknown>
+    ).resolves.toEqual({
+      ok: true,
+      changed: false,
+      chatId: canonical.appChatId,
+      revision: 4,
+      updatedAt: canonical.updatedAt
+    })
+    expect(deps.chatService.patchChatComposerSelection).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed or unsafe composer selection patch payloads', async () => {
+    const deps = createDeps()
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: 'chat-1',
+        provider: 'claude',
+        patch: { messages: [] }
+      }) as Promise<unknown>
+    ).rejects.toThrow(/Invalid chat composer selection patch/)
+    await expect(
+      handlerFor('patch-chat-composer-selection')({} as any, {
+        chatId: '../settings',
+        provider: 'claude',
+        patch: { selectedModelType: 'claude-opus-5' }
+      }) as Promise<unknown>
+    ).rejects.toThrow(/safe chat id/i)
   })
 
   it('registers chat read handlers against the injected chat service', () => {
@@ -303,6 +474,43 @@ describe('registerChatHandlers', () => {
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
   })
 
+  it('keeps a created ensemble chat when the Host record persist fails', async () => {
+    // Regression: a failed Host persist rejected the whole IPC, so the renderer's
+    // discarded create promise turned a Host fault into a dead "New Workspace
+    // Chat" menu item. Creation must survive; EnsembleOrchestrator's
+    // persistChatBarrier is the hard durability gate before a round dispatches.
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => {
+        throw new Error('Host persistence failed.')
+      })
+    })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('create-ensemble-chat')({} as any, undefined)).resolves.toEqual(
+      chat('ensemble', { chatKind: 'ensemble' })
+    )
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('ensemble')
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
+  })
+
+  it('does not block ensemble chat creation on a Host that never confirms the record', async () => {
+    vi.useFakeTimers()
+    try {
+      const deps = createDeps({
+        awaitChatRecordPersisted: vi.fn(() => new Promise<void>(() => {}))
+      })
+      registerChatHandlers(deps)
+
+      const pending = handlerFor('create-ensemble-chat')({} as any, undefined)
+      await vi.advanceTimersByTimeAsync(ENSEMBLE_CREATE_PERSIST_BARRIER_TIMEOUT_MS + 1)
+
+      await expect(pending).resolves.toEqual(chat('ensemble', { chatKind: 'ensemble' }))
+      expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('preserves the ensemble disabled guard before provider detection', async () => {
     const deps = createDeps({
       getSettings: vi.fn(() => ({ ensembleModeEnabled: false }) as AppSettings)
@@ -371,100 +579,203 @@ describe('registerChatHandlers', () => {
     }
   )
 
-  it('routes set-chat-kind through the chat service and broadcasts the result', () => {
+  it('routes the complete set-chat-kind request through canonical ChatService and broadcasts', async () => {
     const deps = createDeps()
     registerChatHandlers(deps)
 
-    const result = handlerFor('set-chat-kind')({} as any, {
+    const seedParticipant = {
+      id: 'seed-1',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'Boss',
+      instructions: '',
+      order: 1
+    }
+    const args: SetChatKindInput = {
       chatId: 'chat-1',
-      targetKind: 'ensemble'
-    })
+      targetKind: 'ensemble',
+      seedParticipant
+    }
+    const result = await handlerFor('set-chat-kind')({} as any, args)
     expect(result).toEqual(chat('chat-1', { chatKind: 'ensemble' }))
-    expect(deps.chatService.setChatKind).toHaveBeenCalledWith({
-      chatId: 'chat-1',
-      targetKind: 'ensemble'
-    })
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith(args)
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
   })
 
-  it('blocks a solo→ensemble conversion when ensemble mode is disabled', () => {
+  it('blocks a solo→ensemble conversion when ensemble mode is disabled', async () => {
     const deps = createDeps({
       getSettings: vi.fn(() => ({ ensembleModeEnabled: false }) as AppSettings)
     })
     registerChatHandlers(deps)
 
-    expect(() =>
+    await expect(
       handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'ensemble' })
-    ).toThrow('Ensemble Mode is disabled.')
+    ).rejects.toThrow('Ensemble Mode is disabled.')
     expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
   })
 
-  it('allows an ensemble→solo conversion even when ensemble mode is disabled', () => {
+  it('allows an ensemble→solo conversion even when ensemble mode is disabled', async () => {
     const deps = createDeps({
       getSettings: vi.fn(() => ({ ensembleModeEnabled: false }) as AppSettings)
     })
     registerChatHandlers(deps)
 
-    const result = handlerFor('set-chat-kind')({} as any, {
+    const args: SetChatKindInput = {
       chatId: 'chat-1',
-      targetKind: 'single'
-    })
+      targetKind: 'single',
+      canonicalProvider: 'kimi',
+      canonicalProviderMetadata: { selectedModelType: 'kimi-k2.7-code' }
+    }
+    const result = await handlerFor('set-chat-kind')({} as any, args)
     expect(result).toEqual(chat('chat-1', { chatKind: 'single' }))
-    expect(deps.chatService.setChatKind).toHaveBeenCalledWith({
-      chatId: 'chat-1',
-      targetKind: 'single'
+    expect(deps.chatService.setChatKind).toHaveBeenCalledWith(args)
+  })
+
+  it('fails loudly when the mode switch never reached the durable Host record', async () => {
+    // 2026-08-30 wedge: a mode change that silently misses the durable record
+    // reverts the user's choice on the next stale delivery (ensemble forced
+    // back on mid-session). The handler must throw — and must not broadcast the
+    // optimistic record — instead of reporting a success the Host never stored.
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' })),
+      // Zero so this does not sleep through the post-barrier re-read window.
+      chatKindPersistVerifyWindowMs: 0
     })
-  })
-
-  /**
-   * A shared panel must not be collapsible. The collapse path strips the roster
-   * and stashes it, and AppStore.setChatKind's solo→ensemble branch restores
-   * that stash — so a seat removed by a collapse can come back. With external collaborators holding
-   * seats that means a removed person's seat could resurrect, which is why this
-   * is refused at the main-side gate rather than made collapse-aware.
-   */
-  it('refuses to collapse a SHARED ensemble chat out of panel mode', () => {
-    const deps = createDeps({})
-    // ACTIVE participants are the discriminator, not the share record: both
-    // revoke paths leave an enabled share behind with nobody admitted, and
-    // refusing on that basis blocked the revert this guard exists to make safe.
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: true, participants: [{ status: 'active' }] } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
     registerChatHandlers(deps)
 
-    expect(() =>
+    await expect(
       handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    ).toThrow(/shared/i)
-    expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
+    ).rejects.toThrow('could not be persisted')
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
   })
 
-  it('still allows the collapse when the share is disabled', () => {
-    const deps = createDeps({})
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: false } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+  it('confirms a mode switch once the durable Host record carries it', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+    })
     registerChatHandlers(deps)
 
-    handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    expect(deps.chatService.setChatKind).toHaveBeenCalled()
+    const result = await handlerFor('set-chat-kind')({} as any, {
+      chatId: 'chat-1',
+      targetKind: 'ensemble',
+      seedParticipant: {
+        id: 'seed-1',
+        provider: 'codex' as const,
+        enabled: true,
+        role: 'Boss',
+        instructions: '',
+        order: 1
+      }
+    })
+    expect(result).toEqual(chat('chat-1', { chatKind: 'ensemble' }))
+    expect(deps.awaitChatRecordPersisted).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
   })
 
-  // A shared chat that is ALREADY solo is not a collapse — refusing there would
-  // reject a harmless no-op, and a shared solo thread is a real state (it only
-  // PRESENTS as a panel; the persisted kind stays 'single').
-  it('does not refuse a no-op on a shared chat that is already solo', () => {
-    const deps = createDeps({})
-    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: true } as never
-    ])
-    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+  it('skips durable verification when no Host record exists (history disabled)', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => null)
+    })
     registerChatHandlers(deps)
 
-    handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
-    expect(deps.chatService.setChatKind).toHaveBeenCalled()
+    await expect(
+      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    ).resolves.toEqual(chat('chat-1', { chatKind: 'single' }))
+  })
+
+  // 2026-09-11 — "Not allowing me to enable Ensemble". The barrier bound is not
+  // a failure signal, it only stops waiting, and the Host client's own ceiling
+  // is six times longer. Asserting the instant it expires read a record that was
+  // merely still in flight and reported a failure the renderer then buried in
+  // the thread log, so the toggle looked inert.
+  it('confirms a switch whose durable write lands just after the barrier', async () => {
+    let reads = 0
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => {
+        reads += 1
+        // Stale for the first two reads, then the Host write lands.
+        return chat('chat-1', { chatKind: reads > 2 ? 'ensemble' : 'single' })
+      })
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
+    expect(reads).toBeGreaterThan(1)
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  // Turning local history off stops the write entirely but never purges
+  // chats/<id>.json, so verifying against that file failed EVERY mode toggle on
+  // any profile that once had history on.
+  it('skips durable verification entirely when local history is disabled', async () => {
+    const readDurableChatRecord = vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord,
+      chatKindPersistVerifyWindowMs: 0,
+      getSettings: vi.fn(() => ({ storeLocalChatHistory: false }) as AppSettings)
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
+    expect(readDurableChatRecord).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('does not surface an unreadable durable record as a mode-change failure', async () => {
+    const deps = createDeps({
+      awaitChatRecordPersisted: vi.fn(async () => undefined),
+      readDurableChatRecord: vi.fn(() => {
+        throw new SyntaxError('Unexpected end of JSON input')
+      }),
+      chatKindPersistVerifyWindowMs: 0
+    })
+    registerChatHandlers(deps)
+
+    await expect(
+      handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'ensemble',
+        seedParticipant: { id: 'seat-1', provider: 'codex' } as EnsembleParticipant
+      })
+    ).resolves.toBeDefined()
+  })
+
+  it('does not wait forever on a set-chat-kind barrier that never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const deps = createDeps({
+        awaitChatRecordPersisted: vi.fn(() => new Promise<void>(() => {})),
+        readDurableChatRecord: vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+      })
+      registerChatHandlers(deps)
+
+      const pending = handlerFor('set-chat-kind')({} as any, {
+        chatId: 'chat-1',
+        targetKind: 'single'
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_KIND_PERSIST_BARRIER_TIMEOUT_MS + 1)
+      await expect(pending).resolves.toEqual(chat('chat-1', { chatKind: 'single' }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
@@ -472,7 +783,7 @@ describe('registerChatHandlers', () => {
       channel: 'set-chat-kind',
       args: [{ chatId: 'other-chat', targetKind: 'single' }],
       capability: 'set-chat-kind',
-      service: 'setChatKind'
+      service: null
     },
     {
       channel: 'create-side-chat',
@@ -488,7 +799,7 @@ describe('registerChatHandlers', () => {
     }
   ] as const)(
     'rejects a secondary renderer attempting cross-chat $capability before service or broadcast effects',
-    ({ channel, args, capability, service }) => {
+    async ({ channel, args, capability, service }) => {
       const assertSenderChatScope = vi.fn(() => {
         throw new Error('Renderer chat ownership does not match this request.')
       })
@@ -496,12 +807,13 @@ describe('registerChatHandlers', () => {
       registerChatHandlers(deps)
       const event = { sender: { id: 99 } }
 
-      expect(() => handlerFor(channel)(event, ...args)).toThrow(
-        'Renderer chat ownership does not match this request.'
-      )
+      await expect(
+        Promise.resolve().then(() => handlerFor(channel)(event, ...args))
+      ).rejects.toThrow('Renderer chat ownership does not match this request.')
 
       expect(assertSenderChatScope).toHaveBeenCalledWith(event, 'other-chat', capability)
-      expect(deps.chatService[service]).not.toHaveBeenCalled()
+      if (service) expect(deps.chatService[service]).not.toHaveBeenCalled()
+      expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
       expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
       expect(deps.broadcastThreadList).not.toHaveBeenCalled()
       expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
@@ -788,6 +1100,106 @@ describe('registerChatHandlers', () => {
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(canonical)
   })
 
+  it('applies compact transcript operations and ACKs without echoing to the sender', () => {
+    const previous = chat('chat-1', {
+      persistenceRevision: 3,
+      messages: [
+        {
+          id: 'stream',
+          role: 'assistant',
+          content: 'hel',
+          timestamp: 'now'
+        }
+      ]
+    })
+    const nextMessage = { ...previous.messages[0], content: 'hello' }
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(previous)
+    vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
+      ...record,
+      persistenceRevision: 4,
+      updatedAt: 2
+    }))
+    registerChatHandlers(deps)
+    const event = { sender: { id: 41 } }
+
+    const result = handlerFor('mutate-chat-transcript')(event, {
+      version: 1,
+      chatId: 'chat-1',
+      baseRevision: 3,
+      transcriptOps: [{ op: 'update', id: 'stream', message: nextMessage }]
+    })
+
+    expect(result).toEqual({
+      version: 1,
+      accepted: true,
+      chatId: 'chat-1',
+      revision: 4,
+      updatedAt: 2,
+      messageCount: 1,
+      recordHash: expect.any(String)
+    })
+    expect(deps.chatService.saveChat).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [nextMessage] }),
+      expect.objectContaining({
+        authoredTranscript: expect.objectContaining({
+          transcriptOps: [{ op: 'update', id: 'stream', message: nextMessage }],
+          changedMessageCount: 1
+        })
+      })
+    )
+    expect(deps.broadcastChatUpdatedExcept).toHaveBeenCalledWith(
+      expect.objectContaining({ persistenceRevision: 4 }),
+      41
+    )
+    expect(deps.adoptRendererChatMutation).toHaveBeenCalledWith(
+      41,
+      expect.objectContaining({ persistenceRevision: 4 }),
+      3
+    )
+    expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
+  })
+
+  it('returns a full canonical record only for compact mutation recovery', () => {
+    const canonical = chat('chat-1', { persistenceRevision: 5 })
+    const deps = createDeps()
+    vi.mocked(deps.chatService.getChat).mockReturnValue(canonical)
+    registerChatHandlers(deps)
+
+    expect(
+      handlerFor('mutate-chat-transcript')(
+        { sender: { id: 41 } },
+        {
+          version: 1,
+          chatId: 'chat-1',
+          baseRevision: 4,
+          transcriptOps: [
+            {
+              op: 'append',
+              messages: [
+                {
+                  id: 'stream',
+                  role: 'assistant',
+                  content: 'hello',
+                  timestamp: 'now'
+                }
+              ]
+            }
+          ]
+        }
+      )
+    ).toEqual({
+      version: 1,
+      accepted: false,
+      chatId: 'chat-1',
+      revision: 5,
+      reason: 'revision-conflict',
+      canonical
+    })
+    expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    expect(deps.broadcastChatUpdatedExcept).not.toHaveBeenCalled()
+  })
+
   it('preserves main-owned graph transcript evidence across renderer saves', () => {
     const durable = chat('chat-1', {
       messages: [
@@ -1066,6 +1478,10 @@ describe('registerChatHandlers', () => {
     )
     const reaperDeps = reapAbandonedChats.mock.calls[0]![0]
     expect(reaperDeps.getChats()).toEqual([chat('chat-1')])
+    // Whole-corpus parentage reaches the reaper. Without it the reaper falls
+    // back to deriving parents from the narrowed list, which no longer holds
+    // the started children that prove a shell is a parent.
+    expect(reaperDeps.getParentChatIds?.()).toEqual(new Set(['parent-1']))
     expect(deps.deleteChatWithLifecycle).toHaveBeenCalledWith('old-chat')
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
 

@@ -14,6 +14,8 @@ import {
   contentVersion,
   estimatedHeightFor,
   projectRows,
+  projectRowsAfterSharedPrefix,
+  headExtensionScrollTop,
   measurementKey,
   isActiveLiveRowKey,
   measurementContentVersion,
@@ -32,8 +34,10 @@ import {
   computeAnchorDelta,
   windowReachesEnd,
   findScrollAnchor,
+  decideScrollerBoxRefresh,
   type VirtualRow
 } from './TranscriptVirtualWindow'
+import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
 
 // --- fixtures -------------------------------------------------------------
 
@@ -346,23 +350,65 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 
-    it('halves a fan-out lane estimate while the paired layout shares a grid row', () => {
-      // Two paired lanes occupy ONE row, so two half estimates must sum to the
-      // band they really cost. Anything larger inflates the bottom spacer and
-      // brings back the auto-follow lurch the cap above exists to prevent.
-      const stacked = estimatedHeightFor('fanoutResult', false, 100000)
-      const paired = estimatedHeightFor('fanoutResult', false, 100000, true)
-      expect(paired).toBe(Math.round(stacked / 2))
-      expect(paired * 2).toBe(stacked)
+    it('divides a lane estimate by the tracks the epoch fits, as LITERAL heights', () => {
+      /*
+       * N lane cards occupy ONE grid row, so N divided estimates must sum to
+       * the band they really cost. Anything larger inflates the bottom spacer
+       * and brings back the auto-follow lurch the cap above exists to prevent.
+       *
+       * LITERALS, at NON-DEFAULT epochs, and that is the whole point of this
+       * table. The predecessor asserted `paired * 2 === stacked` at the default
+       * epoch — which stays true forever if the divisor is hard-coded back to
+       * 2, and which the estimate goldens already record is false off the even
+       * saturation point. A pin that cannot tell a derived N from a constant 2
+       * is not a pin on the derivation.
+       */
+      const at = (bucket: number): TranscriptLayoutEpoch => ({ widthBucket: bucket, fontScale: 1 })
+      // bucket 0 — Medium, first paint, every renderToStaticMarkup suite: 980px
+      // of assumed column, two tracks. The two-across numbers, unchanged.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, false, at(0))).toBe(360)
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(0))).toBe(180)
+      expect(estimatedHeightFor('return', false, 100000, true, at(0))).toBe(180)
+      // bucket 8 — a 640px Narrow column, ONE track. The lane spans, so the
+      // divided estimate is the stacked one: the 2x under-estimate the shipped
+      // unconditional halving produced at Narrow is gone.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(8))).toBe(360)
+      expect(estimatedHeightFor('return', false, 100000, true, at(8))).toBe(360)
+      expect(estimatedHeightFor('fanoutResult', false, 300, true, at(8))).toBe(320)
+      // bucket 14 — a ~1179px Wide column, THREE tracks. Note the rounding is
+      // real: 320 / 3 is 106.67.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(14))).toBe(120)
+      expect(estimatedHeightFor('fanoutResult', false, 300, true, at(14))).toBe(107)
+      expect(estimatedHeightFor('return', false, 300, true, at(14))).toBe(93)
+      // bucket 26 — a ~2156px Wide column, FIVE tracks. The shipped halving was
+      // a 2.5x OVER-estimate here, which is the dangerous direction.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(26))).toBe(72)
+      expect(estimatedHeightFor('return', false, 300, true, at(26))).toBe(56)
+      // 4K and 6K columns.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(42))).toBe(40)
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(68))).toBe(26)
     })
 
-    it('halves a sub-thread return estimate while the paired layout shares a grid row', () => {
-      // Once pairing stamps return slots alongside fan-out lanes, a paired
-      // return must contribute half a row — same invariant as fanoutResult.
-      const stacked = estimatedHeightFor('return', false, 100000)
-      const paired = estimatedHeightFor('return', false, 100000, true)
-      expect(paired).toBe(Math.round(stacked / 2))
-      expect(paired * 2).toBe(stacked)
+    it('leaves the UNDIVIDED estimate alone at every epoch, paired or not', () => {
+      // The gate's positive control: widening the column must not move the
+      // stacked estimate, or the division has leaked out of its branch.
+      for (const bucket of [0, 8, 14, 26, 42, 68]) {
+        const epoch: TranscriptLayoutEpoch = { widthBucket: bucket, fontScale: 1 }
+        expect(estimatedHeightFor('fanoutResult', false, 100000, false, epoch), `b${bucket}`).toBe(
+          360
+        )
+        expect(estimatedHeightFor('return', false, 300, false, epoch), `b${bucket}`).toBe(280)
+      }
+    })
+
+    it('keeps a degenerate epoch finite rather than dividing by zero tracks', () => {
+      // Bucket 1 is a 0-width pane mid-unmount: a 160px assumed column, which
+      // fits no whole track. A zero divisor would make the estimate Infinity
+      // and the bottom spacer unbounded.
+      const degenerate: TranscriptLayoutEpoch = { widthBucket: 1, fontScale: 1 }
+      const estimate = estimatedHeightFor('fanoutResult', false, 100000, true, degenerate)
+      expect(Number.isFinite(estimate)).toBe(true)
+      expect(estimate).toBe(360)
     })
 
     it('leaves every other row type alone under the paired layout', () => {
@@ -1141,5 +1187,199 @@ describe('getRowHeight geometry fallback (mid-transcript updating rows)', () => 
     const geometry = new Map([[geometryKey('m1#3', 820, false), 260]]) // other bucket
     expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, geometry)).toBe(1200)
     expect(getRowHeight(row, new Map(), 900, false, row.contentVersion, undefined)).toBe(1200)
+  })
+})
+
+describe('decideScrollerBoxRefresh (pane-local scroller resize policy)', () => {
+  it('re-selects the window pre-scroll only when the viewport actually changed', () => {
+    // Before the first real scroll the window is driven by the
+    // forced-bottom-on-load position, which depends on the viewport height.
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: false,
+        bucketChanged: false,
+        viewportChanged: true,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: true })
+    // The observer's initial fire reports the size it already had — a no-op.
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: false,
+        bucketChanged: false,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: false })
+  })
+
+  it('after a real scroll, a grown pane re-baselines the anchor and re-selects on band change', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: false,
+        viewportChanged: true,
+        bandChanged: true
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: true, reselectWindow: true })
+  })
+
+  it('a width-bucket change invalidates measurements and re-baselines, even mid-history', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: true,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: true, rebaselineAnchor: true, reselectWindow: false })
+  })
+
+  it('an unchanged box after scrolling does nothing', () => {
+    expect(
+      decideScrollerBoxRefresh({
+        hasScrolled: true,
+        bucketChanged: false,
+        viewportChanged: false,
+        bandChanged: false
+      })
+    ).toEqual({ remeasure: false, rebaselineAnchor: false, reselectWindow: false })
+  })
+})
+
+describe('useTranscriptVirtualization wiring (scroller box observer)', () => {
+  it('observes the scroller box and refreshes without flipping hasScrolled', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/TranscriptPanel.tsx'),
+      'utf8'
+    )
+    const start = source.indexOf('scrollerBoxObserver')
+    // A Multiview divider drag, layout switch, or composer chrome collapse
+    // resizes the pane's scroller with neither a window resize nor a scroll
+    // event; the virtualizer must observe the scroller box itself or its
+    // viewport/bucket metrics go stale and the mounted band under-covers the
+    // viewport (the resting-pane blank-gap-until-scroll report, 2026-08-27).
+    expect(start).toBeGreaterThan(-1)
+    const effectEnd = source.indexOf('// Shared ResizeObserver on individual mounted blocks', start)
+    expect(effectEnd).toBeGreaterThan(start)
+    const wiring = source.slice(start, effectEnd)
+    expect(wiring).toContain('decideScrollerBoxRefresh({')
+    expect(wiring).toContain('.observe(scroller)')
+    // The observer fires once at observe time; that initial fire is NOT a
+    // scroll, and forced-bottom-on-load depends on hasScrolledRef staying
+    // false until the snap-to-bottom runs.
+    expect(wiring).not.toContain('hasScrolledRef.current = true')
+  })
+})
+
+describe('row keys survive accumulated infinite scroll', () => {
+  const ids = (rows: VirtualRow[]): string[] => rows.map((row) => row.rowKey)
+
+  it('keys a row by message id and occurrence, not by list index', () => {
+    const rows = projectRows([msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })])
+    expect(ids(rows)).toEqual(['a#0', 'b#0', 'c#0'])
+  })
+
+  it('keeps every existing row key identical when older history is prepended', () => {
+    const before = projectRows([msg({ id: 'c' }), msg({ id: 'd' })])
+    // Exactly what a prepend produces: the same tail, now at indices 2 and 3.
+    const after = projectRows([
+      msg({ id: 'a' }),
+      msg({ id: 'b' }),
+      msg({ id: 'c' }),
+      msg({ id: 'd' })
+    ])
+
+    // Index-embedded keys would have renamed c#0/d#1 to c#2/d#3 here, orphaning
+    // the measurement slot and DOM element of every row already on screen and
+    // forcing a re-measure from coarse estimates — the visible jolt seamless
+    // scrolling exists to remove.
+    expect(ids(after).slice(2)).toEqual(ids(before))
+    expect(new Set(ids(after)).size).toBe(4)
+  })
+
+  it('keeps existing row keys identical when newer history is appended', () => {
+    const before = projectRows([msg({ id: 'a' }), msg({ id: 'b' })])
+    const after = projectRows([msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })])
+    expect(ids(after).slice(0, 2)).toEqual(ids(before))
+  })
+
+  it('still gives duplicate message ids distinct keys', () => {
+    // Duplicate ids exist in historical/imported transcripts; two rows sharing
+    // one measurement slot would mis-size both.
+    const rows = projectRows([msg({ id: 'dup' }), msg({ id: 'other' }), msg({ id: 'dup' })])
+    expect(ids(rows)).toEqual(['dup#0', 'other#0', 'dup#1'])
+    expect(new Set(ids(rows)).size).toBe(3)
+  })
+
+  it('never lets a prepended duplicate collide with the row already on screen', () => {
+    const rows = projectRows([msg({ id: 'dup' }), msg({ id: 'x' }), msg({ id: 'dup' })])
+    expect(new Set(ids(rows)).size).toBe(rows.length)
+  })
+
+  describe('projectRowsAfterSharedPrefix (streaming re-projection)', () => {
+    it('reuses prefix row objects by reference', () => {
+      const messages = [msg({ id: 'a' }), msg({ id: 'b' })]
+      const cached = projectRows(messages)
+      const next = projectRowsAfterSharedPrefix(cached, [...messages, msg({ id: 'c' })], 2)
+      expect(next[0]).toBe(cached[0])
+      expect(next[1]).toBe(cached[1])
+      expect(ids(next)).toEqual(['a#0', 'b#0', 'c#0'])
+    })
+
+    it('carries prefix occurrence counts into the streamed tail', () => {
+      // `dup` is first seen INSIDE the reused prefix. The tail walk starts with
+      // an empty counter unless the prefix counts are carried in, which would
+      // key this second row `dup#0` as well — two rows on one measurement slot
+      // and one DOM element, i.e. the 1.0.7 duplicate-id bug re-created for
+      // lists that stream.
+      const prefix = [msg({ id: 'dup' }), msg({ id: 'x' })]
+      const cached = projectRows(prefix)
+      const next = projectRowsAfterSharedPrefix(cached, [...prefix, msg({ id: 'dup' })], 2)
+      expect(ids(next)).toEqual(['dup#0', 'x#0', 'dup#1'])
+      expect(new Set(ids(next)).size).toBe(next.length)
+    })
+
+    it('drops cached rows beyond the shared prefix', () => {
+      const messages = [msg({ id: 'a' }), msg({ id: 'b' }), msg({ id: 'c' })]
+      const cached = projectRows(messages)
+      const next = projectRowsAfterSharedPrefix(cached, [msg({ id: 'a' }), msg({ id: 'z' })], 1)
+      expect(ids(next)).toEqual(['a#0', 'z#0'])
+    })
+  })
+})
+
+describe('headExtensionScrollTop (prepend scroll anchoring)', () => {
+  // 40 older rows landed above the viewport and added 1200px to the scroller.
+  const measured = {
+    previousWindowStart: 100,
+    windowStart: 60,
+    previousScrollHeight: 4000,
+    scrollHeight: 5200,
+    scrollTop: 300
+  }
+
+  it('corrects scrollTop by the measured growth when the window head extends', () => {
+    // The content the reader was looking at is now 1200px further down, so
+    // scrollTop follows it exactly and the prepend is invisible.
+    expect(headExtensionScrollTop(measured)).toBe(1500)
+  })
+
+  it('leaves an append alone: the head did not move and growth is below the viewport', () => {
+    expect(headExtensionScrollTop({ ...measured, windowStart: 100 })).toBeNull()
+  })
+
+  it('leaves a wholesale replace / jump alone: the head moved LATER', () => {
+    expect(headExtensionScrollTop({ ...measured, windowStart: 140 })).toBeNull()
+  })
+
+  it('is a no-op on first paint, before any height was measured', () => {
+    expect(headExtensionScrollTop({ ...measured, previousScrollHeight: 0 })).toBeNull()
+  })
+
+  it('is a no-op while the head extended but nothing has been laid out yet', () => {
+    expect(headExtensionScrollTop({ ...measured, scrollHeight: 4000 })).toBeNull()
   })
 })

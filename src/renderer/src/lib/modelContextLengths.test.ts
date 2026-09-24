@@ -46,6 +46,13 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 1_000_000,
       formatted: '1.0M'
     })
+    // Opus 5.5 (2026-09-22) is 1M on its base id too, and leads the group.
+    expect(claudeGroup!.models[0]?.modelId).toBe('claude-opus-5-5')
+    expect(claudeGroup!.models.find((m) => m.modelId === 'claude-opus-5-5')).toMatchObject({
+      label: 'Opus 5.5',
+      contextWindow: 1_000_000,
+      formatted: '1.0M'
+    })
   })
 
   it('codex gpt-5.5 resolves to 1.1M (1_050_000)', () => {
@@ -58,14 +65,28 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('1.1M')
   })
 
-  it('codex gpt-5.4-mini resolves to 400k', () => {
+  it('mistral GLM-5.3 resolves to 1M on the zai- prefixed id', () => {
+    // Replaces the old gpt-5.4-mini row, retired 2026-09-18. Same shape of
+    // check: a catalogue row whose window comes from the shared static table
+    // rather than the provider fallback.
+    const groups = buildModelContextLengthGroups()
+    const mistralGroup = groups.find((g) => g.provider === 'mistral')
+    expect(mistralGroup).toBeDefined()
+    const row = mistralGroup!.models.find((m) => m.modelId === 'zai-glm-5-3')
+    expect(row).toBeDefined()
+    expect(row!.contextWindow).toBe(1_000_000)
+    expect(row!.formatted).toBe('1.0M')
+  })
+
+  it('drops the retired Codex rows from the Model Usage table', () => {
     const groups = buildModelContextLengthGroups()
     const codexGroup = groups.find((g) => g.provider === 'codex')
     expect(codexGroup).toBeDefined()
-    const row = codexGroup!.models.find((m) => m.modelId === 'gpt-5.4-mini')
-    expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(400_000)
-    expect(row!.formatted).toBe('400k')
+    expect(codexGroup!.models.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(codexGroup!.models.find((m) => m.modelId === modelId)).toBeUndefined()
+    }
+    expect(codexGroup!.models.find((m) => m.modelId === 'gpt-5.5')).toBeDefined()
   })
 
   it('cursor composer-2.5 resolves via provider fallback to contextWindow 200000 / formatted 200k', () => {
@@ -80,26 +101,42 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('200k')
   })
 
-  it('kimi kimi-k2.7-code resolves to 256k', () => {
+  it('shows K2.8 at 1M and its separate K2.7 Highspeed route at 256k', () => {
     const groups = buildModelContextLengthGroups()
     const kimiGroup = groups.find((g) => g.provider === 'kimi')
     expect(kimiGroup).toBeDefined()
-    const row = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.7-code')
-    expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(256_000)
-    expect(row!.formatted).toBe('256k')
+    const standard = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.8-preview')
+    const highspeed = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.7-code-highspeed')
+    expect(standard).toMatchObject({ contextWindow: 1_048_576, formatted: '1.0M' })
+    expect(highspeed).toMatchObject({ contextWindow: 262_144, formatted: '256k' })
+    expect(kimiGroup!.models.map((model) => model.modelId)).not.toContain('kimi-k2.7-code')
   })
 
-  it('shows K3 as a plan-dependent 256k to 1M range', () => {
+  it('shows the long-context K3 route as an official fixed 1.0M window', () => {
+    // Since the K3 split (d19931eb8) each route is a concrete catalog row, so
+    // the old plan-dependent '256k–1.0M' range display is retired: 'kimi-k3'
+    // IS the 1M route (f661ac2a1 moved its official window to 1_048_576).
     const groups = buildModelContextLengthGroups()
     const row = groups
       .find((group) => group.provider === 'kimi')
       ?.models.find((model) => model.modelId === 'kimi-k3')
 
     expect(row).toMatchObject({
-      contextWindow: 256_000,
-      maxContextWindow: 1_048_576,
-      formatted: '256k–1.0M'
+      contextWindow: 1_048_576,
+      formatted: '1.0M'
+    })
+    expect(row && 'maxContextWindow' in row).toBe(false)
+  })
+
+  it('shows the quota-efficient K3 route as an exact fixed 256k window', () => {
+    const groups = buildModelContextLengthGroups()
+    const row = groups
+      .find((group) => group.provider === 'kimi')
+      ?.models.find((model) => model.modelId === 'kimi-k3-256k')
+
+    expect(row).toMatchObject({
+      contextWindow: 262_144,
+      formatted: '256k'
     })
   })
 
@@ -183,7 +220,7 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 131_072
     })
     expect(byId.get('deepseek-r1:8b')).toMatchObject({
-      label: 'DeepSeek R1 (8B Param)',
+      label: 'R1 (8B Param)',
       contextWindow: 131_072
     })
     expect(byId.get('rnj-1')).toMatchObject({ contextWindow: 32_768, formatted: '33k' })
@@ -207,6 +244,17 @@ describe('buildModelContextLengthGroups', () => {
       label: 'Qwen 3.8 (27B-MLX)',
       contextWindow: 262_144
     })
+    expect(byId.get('qwen3.8-flash-next:125b-mlx')).toMatchObject({
+      label: 'Qwen 3.8 Flash Next (125B-MLX)',
+      contextWindow: 262_144
+    })
+    expect(byId.get('mistral-medium-3.5:128b')).toMatchObject({
+      label: 'Mistral Medium 3.5 (128B Param)',
+      contextWindow: 262_144
+    })
+    expect(byId.get('granite4.2:3b')).toMatchObject({ contextWindow: 131_072 })
+    expect(byId.get('granite4.2:8b')).toMatchObject({ contextWindow: 131_072 })
+    expect(byId.get('granite4.2:30b')).toMatchObject({ contextWindow: 131_072 })
     expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
   })
 

@@ -5,25 +5,74 @@ import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTabl
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
+  CombinedModelPickerProviderTab,
   buildOllamaProviderGroups,
+  buildProviderTabSections,
   emptyProviderModelsLabel,
-  flattenUnifiedProviderModels,
+  flattenProviderTabEntries,
   getCombinedModelPickerResetSignature,
   modelPickerHueClass,
+  resolveActiveProviderTab,
   resolveCombinedModelPickerEnterAction,
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition,
-  runCombinedModelPickerConfirmAction
+  runCombinedModelPickerConfirmAction,
+  shouldScrollHighlightedRowIntoView,
+  stepProviderTab
 } from './CombinedModelPicker'
-import {
-  OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL,
-  OllamaCloudIcon
-} from './icons/OllamaCloudIcon'
+import type { ProviderId } from '../../../main/store/types'
+import { OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL, OllamaCloudIcon } from './icons/OllamaCloudIcon'
 import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
 import { mergeOllamaModelCatalog } from '../lib/ollamaModelCatalog'
+import {
+  getEnsembleModelDefaults,
+  getEnsembleReasoningOptions,
+  resolveEnsembleParticipantSettings
+} from '../lib/ensembleProviderDefaults'
 
 describe('CombinedModelPicker', () => {
+  it.each([
+    ['cerebras/qwen-3.8-27b', 'Qwen 3.8 27B (Cerebras)', ['off', 'low', 'medium', 'high'], 'high']
+  ] as const)(
+    'offers %s in composer and participant pickers with Cerebras identity',
+    (modelId, label, efforts, defaultEffort) => {
+      const modelOptions = getEnsembleModelDefaults('pi').modelOptions
+      expect(modelOptions).toContainEqual(expect.objectContaining({ id: modelId, label }))
+      const reasoningOptions = getEnsembleReasoningOptions('pi', modelId)
+      expect(reasoningOptions.map((option) => option.value)).toEqual(efforts)
+      expect(resolveEnsembleParticipantSettings({ provider: 'pi', model: modelId })).toMatchObject({
+        model: modelId,
+        reasoningEffort: defaultEffort
+      })
+
+      for (const addParticipant of [false, true]) {
+        const html = renderToStaticMarkup(
+          <CombinedModelPicker
+            provider="pi"
+            composerStyle="default"
+            modelOptions={modelOptions}
+            providerGroups={[{ provider: 'pi', label: 'Pi', modelOptions }]}
+            selectedModelId={modelId}
+            onSelectModel={() => undefined}
+            onSelectProviderModel={() => undefined}
+            reasoningOptions={reasoningOptions}
+            selectedReasoning={defaultEffort}
+            onSelectReasoning={() => undefined}
+            confirmAction={
+              addParticipant ? { label: 'Add participant', onConfirm: () => undefined } : undefined
+            }
+          />
+        )
+        expect(html).toContain(label)
+        expect(html).toContain('data-provider-hue="cerebras"')
+        expect(html).toContain('data-provider-logo="cerebras"')
+        expect(html).toContain('--chip-accent:var(--provider-cerebras-color, var(--accent))')
+        expect(html).toContain(`data-selected-reasoning="${defaultEffort}"`)
+      }
+    }
+  )
+
   it('uses shared compact primary chrome for confirmation actions', () => {
     const html = renderToStaticMarkup(
       <CombinedModelPickerConfirmButton
@@ -47,9 +96,7 @@ describe('CombinedModelPicker', () => {
     expect(confirmLayoutRule).toContain('var(--accent) 38%')
     expect(confirmLayoutRule).toContain('var(--accent) 10%')
     expect(confirmLayoutRule).toContain('var(--accent) 18%')
-    expect(confirmLayoutRule).not.toMatch(
-      /(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/
-    )
+    expect(confirmLayoutRule).not.toMatch(/(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/)
   })
 
   it('keeps Add open while Done is the Return-key action that closes', () => {
@@ -72,9 +119,9 @@ describe('CombinedModelPicker', () => {
       true
     )
     expect(events).toEqual(['add'])
-    expect(
-      runCombinedModelPickerConfirmAction(doneAction, false, () => events.push('close'))
-    ).toBe(true)
+    expect(runCombinedModelPickerConfirmAction(doneAction, false, () => events.push('close'))).toBe(
+      true
+    )
     expect(events).toEqual(['add', 'done', 'close'])
   })
 
@@ -224,7 +271,7 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('>Codex<')
   })
 
-  it('uses the selected Ollama model spoof hue without changing its runtime provider or mark', () => {
+  it('uses the Ollama spoof hue while surfacing its selected reasoning value', () => {
     const model = { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' }
     const html = renderToStaticMarkup(
       <CombinedModelPicker
@@ -235,8 +282,11 @@ describe('CombinedModelPicker', () => {
         selectedModelId={model.id}
         onSelectModel={() => undefined}
         onSelectProviderModel={() => undefined}
-        reasoningOptions={[]}
-        selectedReasoning=""
+        reasoningOptions={[
+          { value: 'off', label: 'Off' },
+          { value: 'on', label: 'On' }
+        ]}
+        selectedReasoning="on"
         onSelectReasoning={() => undefined}
       />
     )
@@ -244,6 +294,8 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('data-provider="ollama"')
     expect(html).toContain('data-provider-hue="alibaba"')
     expect(html).toContain('--chip-accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).toContain('data-selected-reasoning="on"')
+    expect(html).toContain('Thinking')
     expect(html).toContain('>Alibaba<')
     expect(html).toContain('data-provider-logo="ollama"')
     expect(html).toContain('<img class="provider-brand-logo-image')
@@ -254,6 +306,7 @@ describe('CombinedModelPicker', () => {
 
   it('separates Ollama Cloud models from local upstream-brand groups', () => {
     const groups = buildOllamaProviderGroups([
+      { id: 'glm-5.3-flash:cloud', label: 'GLM 5.3 Flash' },
       { id: 'glm-5.2:cloud', label: 'GLM 5.2' },
       { id: 'qwen3.5:cloud', label: 'Qwen 3.5' },
       { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
@@ -267,13 +320,17 @@ describe('CombinedModelPicker', () => {
       isCloud: true
     })
     expect(groups[0]?.models.map((model) => model.id)).toEqual([
+      'glm-5.3-flash:cloud',
       'glm-5.2:cloud',
       'qwen3.5:cloud'
     ])
-    expect(groups.slice(1).flatMap((group) => group.models).map((model) => model.id)).toEqual([
-      'qwen3.5:9b',
-      'granite4.1:3b'
-    ])
+    expect(
+      groups
+        .slice(1)
+        .flatMap((group) => group.models)
+        .map((model) => model.id)
+    ).toEqual(['qwen3.5:9b', 'granite4.1:3b'])
+    expect(modelPickerHueClass('ollama', 'glm-5.3-flash:cloud', 'GLM 5.3 Flash')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'glm-5.2:cloud', 'GLM 5.2')).toBe('zai')
     expect(modelPickerHueClass('ollama', 'minimax-m3:cloud', 'MiniMax M3')).toBe('minimax')
     expect(modelPickerHueClass('ollama', 'kimi-k3:cloud', 'Kimi K3')).toBe('kimi')
@@ -288,11 +345,11 @@ describe('CombinedModelPicker', () => {
     expect(html).not.toMatch(/stroke="#|fill="#/)
   })
 
-  it('labels a selected Cloud model distinctly in the trigger', () => {
+  it('brands a selected Cloud model by its upstream, keeping the glyph as the source classifier', () => {
     const catalogModel = mergeOllamaModelCatalog([
       { id: 'minimax-m3:cloud', label: 'minimax-m3' }
     ]).find((option) => option.id === 'minimax-m3:cloud')!
-    expect(catalogModel.label).toBe('MiniMax M3')
+    expect(catalogModel.label).toBe('M3')
     const model = { id: catalogModel.id, label: catalogModel.label! }
     const html = renderToStaticMarkup(
       <CombinedModelPicker
@@ -307,8 +364,15 @@ describe('CombinedModelPicker', () => {
       />
     )
 
-    expect(html).toContain('>Ollama Cloud<')
-    expect(html).toContain('composer-combined-picker-trigger-primary">MiniMax M3</span>')
+    // The seat is still `ollama`, but the trigger names the upstream brand, the
+    // same spoof every other surface (seat changes, close-outs, transcript
+    // headers, the TUI projection) has always applied to cloud rows.
+    expect(html).toContain('composer-combined-picker-trigger-provider-label">MiniMax</span>')
+    expect(html).not.toContain('composer-combined-picker-trigger-provider-label">Ollama Cloud<')
+    // And the label must not repeat the brand: 'MiniMax M3' would read
+    // 'MiniMax MiniMax M3' once the two sit side by side.
+    expect(html).toContain('composer-combined-picker-trigger-primary">M3</span>')
+    // Cloud-ness is carried by the glyph beside the label, not by naming the seat.
     expect(html).toContain('composer-combined-picker-trigger-cloud-indicator')
     expect(html).toContain('aria-label="Ollama Cloud model"')
     expect(html).toContain('data-provider-hue="minimax"')
@@ -339,13 +403,19 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
   })
 
-  it('uses every selected Pi model upstream hue without changing its runtime provider mark', () => {
+  it('uses each Pi upstream hue and the Cerebras logo override', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const id = Object.keys(PI_MODEL_LABELS).find((model) =>
-        model.startsWith(`${upstream}/`)
-      )
+      // Every catalogued OpenRouter route is claimed by a per-vendor override —
+      // `openrouter/stealth` was the last one without, until Union Alpha took
+      // that namespace on 2026-09-16 — so a startsWith search returns a model
+      // belonging to a DIFFERENT brand. The bare `openrouter` brand is now
+      // reachable only through a namespace no override claims.
+      const id =
+        upstream === 'openrouter'
+          ? 'openrouter/unclaimed-lab/some-model'
+          : Object.keys(PI_MODEL_LABELS).find((model) => model.startsWith(`${upstream}/`))
       expect(id, `missing representative Pi model for ${upstream}`).toBeTruthy()
-      const model = { id: id!, label: PI_MODEL_LABELS[id!] }
+      const model = { id: id!, label: PI_MODEL_LABELS[id!] ?? 'Some Model' }
       const html = renderToStaticMarkup(
         <CombinedModelPicker
           provider="pi"
@@ -364,11 +434,79 @@ describe('CombinedModelPicker', () => {
       expect(modelPickerHueClass('pi', model.id, model.label)).toBe(brand.hueClass)
       expect(html).toContain('data-provider="pi"')
       expect(html).toContain(`data-provider-hue="${brand.hueClass}"`)
-      expect(html).toContain(
-        `--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`
-      )
-      expect(html).toContain('data-provider-logo="pi"')
+      expect(html).toContain(`--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`)
+      expect(html).toContain(`data-provider-logo="${upstream === 'cerebras' ? 'cerebras' : 'pi'}"`)
     }
+  })
+
+  it.each([
+    {
+      id: 'openrouter/cohere/north-mini-code:free',
+      label: 'North Mini Code',
+      brand: 'Cohere',
+      hueClass: 'cohere'
+    },
+    {
+      // Disambiguated the way the (Groq)/(Cerebras) rows are: the direct
+      // MiniMax lane also offers M3, and the two rows sit in one flat list.
+      id: 'openrouter/minimax/minimax-m3:free',
+      label: 'M3 (OpenRouter)',
+      brand: 'MiniMax',
+      hueClass: 'minimax'
+    },
+    {
+      id: 'openrouter/thinkingmachines/inkling:free',
+      label: 'Inkling',
+      brand: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    },
+    {
+      id: 'openrouter/thinkingmachines/inkling-small:free',
+      label: 'Inkling Small',
+      brand: 'Thinking Machines',
+      hueClass: 'thinkingmachines'
+    },
+    {
+      // GA Mercury reuses the Inception override the Preview row minted.
+      id: 'openrouter/inception/mercury-2.5',
+      label: 'Mercury 2.5',
+      brand: 'Inception',
+      hueClass: 'inception'
+    },
+    {
+      id: 'openrouter/nex-agi/nex-n2.5-mini:free',
+      label: 'Nex-N2.5-Mini',
+      brand: 'Nex AGI',
+      hueClass: 'nexagi'
+    },
+    {
+      id: 'openrouter/nex-agi/nex-n2.5-pro:free',
+      label: 'Nex-N2.5-Pro',
+      brand: 'Nex AGI',
+      hueClass: 'nexagi'
+    }
+  ])('humanises and brands the $label Pi picker row', ({ id, label, brand, hueClass }) => {
+    const model = { id, label: PI_MODEL_LABELS[id] }
+    expect(model.label).toBe(label)
+    const html = renderToStaticMarkup(
+      <CombinedModelPicker
+        provider="pi"
+        composerStyle="default"
+        modelOptions={[model]}
+        providerGroups={[{ provider: 'pi', label: 'Pi', modelOptions: [model] }]}
+        selectedModelId={model.id}
+        onSelectModel={() => undefined}
+        onSelectProviderModel={() => undefined}
+        reasoningOptions={[]}
+        selectedReasoning=""
+        onSelectReasoning={() => undefined}
+      />
+    )
+
+    expect(html).toContain(`>${brand}<`)
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain(`data-provider-hue="${hueClass}"`)
+    expect(html).toContain('data-provider-logo="pi"')
   })
 
   it('uses the model-row accent variable for row interactions and affordances', () => {
@@ -377,9 +515,7 @@ describe('CombinedModelPicker', () => {
       'utf8'
     )
     const blocks = (selector: string): string[] =>
-      [...css.matchAll(new RegExp(`${selector}\\s*\\{[\\s\\S]*?\\}`, 'g'))].map(
-        (match) => match[0]
-      )
+      [...css.matchAll(new RegExp(`${selector}\\s*\\{[\\s\\S]*?\\}`, 'g'))].map((match) => match[0])
 
     expect(css).toMatch(
       /\.composer-combined-picker-row:hover,\s*\.composer-combined-picker-row\.is-highlighted\s*\{[\s\S]*?var\(--model-row-accent, var\(--accent\)\)/
@@ -396,39 +532,257 @@ describe('CombinedModelPicker', () => {
     ).toBe(true)
   })
 
-  it('flattens provider groups without losing provider order or duplicate model ids', () => {
-    const entries = flattenUnifiedProviderModels([
+  describe('provider tabs', () => {
+    const groups = [
       {
-        provider: 'codex',
+        provider: 'codex' as ProviderId,
         modelOptions: [
           { id: 'shared', label: 'Codex Shared' },
           { id: 'codex-only', label: 'Codex Only' }
         ]
       },
       {
-        provider: 'claude',
+        provider: 'claude' as ProviderId,
         modelOptions: [{ id: 'shared', label: 'Claude Shared' }]
-      }
-    ])
+      },
+      { provider: 'kimi' as ProviderId, modelOptions: [] }
+    ]
 
-    expect(entries.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
-      'codex:shared',
-      'codex:codex-only',
-      'claude:shared'
-    ])
+    it("opens on the current model's tab, honours a browsed tab, and falls back to the first", () => {
+      expect(resolveActiveProviderTab(groups, null, 'claude')).toBe('claude')
+      expect(resolveActiveProviderTab(groups, 'kimi', 'claude')).toBe('kimi')
+      // A browsed tab that vanished (catalogue refresh) follows the model again.
+      expect(resolveActiveProviderTab(groups, 'grok', 'claude')).toBe('claude')
+      // A current provider with no tab (retired / not admitted) opens the first.
+      expect(resolveActiveProviderTab(groups, null, 'gemini')).toBe('codex')
+      expect(resolveActiveProviderTab([], null, 'codex')).toBeNull()
+    })
+
+    it('steps the rail with arrow keys and clamps at both ends', () => {
+      expect(stepProviderTab(groups, 'codex', 1)).toBe('claude')
+      expect(stepProviderTab(groups, 'claude', 1)).toBe('kimi')
+      expect(stepProviderTab(groups, 'kimi', 1)).toBe('kimi')
+      expect(stepProviderTab(groups, 'codex', -1)).toBe('codex')
+      expect(stepProviderTab(groups, 'claude', -1)).toBe('codex')
+      expect(stepProviderTab([], 'codex', 1)).toBeNull()
+    })
+
+    it("navigates only the active tab's rows, keeping duplicate ids per provider", () => {
+      const codex = flattenProviderTabEntries('codex', buildProviderTabSections(groups[0]!))
+      const claude = flattenProviderTabEntries('claude', buildProviderTabSections(groups[1]!))
+      expect(codex.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
+        'codex:shared',
+        'codex:codex-only'
+      ])
+      expect(claude.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
+        'claude:shared'
+      ])
+      // An ordinary provider is one flat, unlabelled run in catalogue order.
+      expect(buildProviderTabSections(groups[0]!)).toEqual([
+        {
+          id: 'all',
+          label: null,
+          hueClass: null,
+          isCloud: false,
+          options: groups[0]!.modelOptions
+        }
+      ])
+    })
+
+    it('splits Ollama into Cloud plus local brands and Pi into upstreams', () => {
+      const ollama = buildProviderTabSections({
+        provider: 'ollama',
+        modelOptions: [
+          { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
+          { id: 'glm-5.2:cloud', label: 'GLM 5.2' },
+          { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' }
+        ]
+      })
+      expect(ollama.map((section) => [section.label, section.isCloud])).toEqual([
+        ['Ollama Cloud', true],
+        ['Alibaba', false],
+        ['IBM', false]
+      ])
+      // Keyboard order follows the grouped display order, not catalogue order.
+      expect(flattenProviderTabEntries('ollama', ollama).map((entry) => entry.option.id)).toEqual([
+        'glm-5.2:cloud',
+        'qwen3.5:9b',
+        'granite4.1:3b'
+      ])
+
+      const piModels = Object.keys(PI_MODEL_LABELS)
+      const firstUpstream = piModels[0]!.split('/')[0]
+      const otherUpstream = piModels.find((id) => id.split('/')[0] !== firstUpstream)!
+      const pi = buildProviderTabSections({
+        provider: 'pi',
+        modelOptions: [piModels[0]!, otherUpstream].map((id) => ({
+          id,
+          label: PI_MODEL_LABELS[id]!
+        }))
+      })
+      expect(pi).toHaveLength(2)
+      expect(pi.every((section) => section.label && section.hueClass)).toBe(true)
+    })
+
+    it('keeps a single-brand grouped provider as one flat list', () => {
+      expect(
+        buildProviderTabSections({
+          provider: 'ollama',
+          modelOptions: [
+            { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
+            { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)' }
+          ]
+        }).map((section) => section.label)
+      ).toEqual([null])
+    })
+
+    it('renders each provider as an accessible tab that never takes focus from the trigger', () => {
+      const active = renderToStaticMarkup(
+        <CombinedModelPickerProviderTab
+          provider="kimi"
+          label="Kimi"
+          active
+          current
+          tabId="t-kimi"
+          panelId="panel"
+          onSelect={() => undefined}
+        />
+      )
+      const paused = renderToStaticMarkup(
+        <CombinedModelPickerProviderTab
+          provider="grok"
+          label="Grok"
+          active={false}
+          current={false}
+          pauseLabel="Paused until 16:00"
+          rerouteLabel="Rerouting to Codex"
+          onSelect={() => undefined}
+        />
+      )
+
+      expect(active).toContain('role="tab"')
+      expect(active).toContain('aria-selected="true"')
+      expect(active).toContain('aria-controls="panel"')
+      expect(active).toContain('id="t-kimi"')
+      expect(active).toContain('aria-label="Kimi · current model"')
+      expect(active).toContain('class="composer-combined-picker-provider-tab is-active is-current"')
+      expect(active).toContain('--provider-tab-accent:var(--provider-kimi-color, var(--accent))')
+      expect(active).toContain('data-provider-logo="kimi"')
+      // Keyboard stays on the trigger's column model; tabs are not Tab stops.
+      expect(active).toContain('tabindex="-1"')
+
+      expect(paused).toContain('aria-selected="false"')
+      expect(paused).toContain('aria-label="Grok · paused"')
+      expect(paused).toContain('class="composer-combined-picker-provider-tab is-paused"')
+      expect(paused).toContain('composer-combined-picker-provider-tab-paused')
+      // The tooltip stacks one line per fact; read it back as lines, not bytes.
+      expect(paused.match(/ title="(Grok[^"]*)"/)?.[1].split('\n')).toEqual([
+        'Grok · paused',
+        'Paused until 16:00',
+        'Rerouting to Codex'
+      ])
+    })
   })
 
-  it('keeps the unified model rail fixed-height and independently scrollable', () => {
+  it('never scrolls the row the cursor is already resting on', () => {
+    // Hover-scrolling moves the list under a stationary pointer. When it lands
+    // between mousedown and mouseup the two events hit different rows, so the
+    // browser dispatches click on their common ancestor and no row handler
+    // runs: the pick is dropped and the jump reads as a refusing picker.
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'pointer', modelHighlight: 4 })
+    ).toBe(false)
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: 4 })
+    ).toBe(true)
+    // A tab browsed away from the current model (or an empty tab) parks the
+    // highlight at -1; there is no row to reveal.
+    expect(
+      shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: -1 })
+    ).toBe(false)
+  })
+
+  it('marks every hover-driven highlight move as pointer-sourced', () => {
+    const source = readFileSync(new URL('./CombinedModelPicker.tsx', import.meta.url), 'utf8')
+
+    // The reveal effect is only as safe as its callers: a hover handler that
+    // moves a highlight without stamping the source reopens the swallowed
+    // click, and nothing else in the suite would notice.
+    const hoverHandlers = source.match(/onMouseEnter=\{\(\) => \{[\s\S]*?\n\s*\}\}/g) || []
+    expect(hoverHandlers.length).toBe(3)
+    for (const handler of hoverHandlers) {
+      expect(handler).toMatch(/setModelHighlight|setProviderHighlight/)
+      expect(handler).toContain("highlightSourceRef.current = 'pointer'")
+    }
+
+    // ...and the effect must actually consult the guard rather than scroll
+    // unconditionally.
+    const revealEffect = source.match(
+      /if \(!open \|\| !isUnifiedProviderPicker \|\| focusedColumn !== 'model'\) return[\s\S]*?scrollIntoView/
+    )?.[0]
+    expect(revealEffect).toBeDefined()
+    expect(revealEffect).toContain('shouldScrollHighlightedRowIntoView')
+  })
+
+  it('titles the tab panel in the provider accent with the shared OS UI font and natural case', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
       'utf8'
     )
-    expect(css).toMatch(
-      /\.composer-combined-picker-popover\.is-unified-provider-picker\s*\{[\s\S]*?height:\s*min\(322px, calc\(100vh - 24px\)\);/
+    const headerRule = css.match(/\.composer-combined-picker-tab-panel-header\s*\{([^}]*)\}/)?.[1]
+    const titleRule = css.match(/\.composer-combined-picker-tab-panel-title\s*\{([^}]*)\}/)?.[1]
+
+    expect(headerRule).toBeDefined()
+    expect(headerRule).toContain('font-family: var(--font-sans)')
+    expect(titleRule).toBeDefined()
+    expect(titleRule).toContain('var(--model-provider-accent, var(--accent)) 78%')
+    expect(titleRule).toContain('letter-spacing: 0;')
+    expect(titleRule).toContain('text-transform: none;')
+    // The collapsible stacks are gone, not left behind as dead selectors.
+    for (const retired of [
+      '.composer-combined-picker-provider-group',
+      '.composer-combined-picker-provider-header',
+      '.composer-combined-picker-provider-chevron',
+      '.composer-combined-picker-empty-provider'
+    ]) {
+      expect(css).not.toContain(retired)
+    }
+  })
+
+  it('lays the unified picker out as a tab rail beside a fixed-height scrolling list', () => {
+    const css = readFileSync(
+      new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+      'utf8'
     )
-    expect(css).toMatch(
-      /\.composer-combined-picker-models\.is-unified-model-list\s*\{[\s\S]*?overflow-y:\s*auto;/
+    const popoverRule = css.match(
+      /\.composer-combined-picker-popover\.is-unified-provider-picker\s*\{([^}]*)\}/
+    )?.[1]
+    const listRule = css.match(
+      /\.is-unified-provider-picker\s+\.composer-combined-picker-models\.is-unified-model-list\s*\{([^}]*)\}/
+    )?.[1]
+    const rowsRule = css.match(/\.composer-combined-picker-tab-panel-rows\s*\{([^}]*)\}/)?.[1]
+    const indicatorRule = css.match(
+      /\.composer-combined-picker-provider-tab-indicator\s*\{([^}]*)\}/
+    )?.[1]
+
+    expect(popoverRule).toContain(
+      'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;'
     )
+    expect(popoverRule).toContain('height: min(334px, calc(100vh - 24px));')
+    // The column holds the header still; only the rows beneath it scroll.
+    expect(listRule).toContain('overflow: hidden;')
+    expect(rowsRule).toContain('overflow-y: auto;')
+    // One pill glides between tabs, positioned declaratively from the index.
+    expect(indicatorRule).toContain('var(--provider-tab-active-index, 0)')
+    expect(indicatorRule).toContain('transition:')
+    // A fill-mode would park the list invisible in an unfocused window.
+    const enterRules = css.match(
+      /\.composer-combined-picker-tab-panel-rows\[data-enter="(?:down|up)"\]\s*\{[^}]*\}/g
+    )
+    expect(enterRules).toHaveLength(2)
+    for (const rule of enterRules ?? []) {
+      expect(rule).not.toMatch(/\b(?:forwards|both|backwards)\b/)
+    }
   })
 
   it('opens below a high trigger and above a low trigger without leaving the viewport', () => {

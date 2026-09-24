@@ -77,8 +77,8 @@ describe('history deletion startup integration', () => {
   })
 
   it('defers ordinary ownership reconciliation until after first paint under a capture hold', () => {
-    const readyToShowStart = indexSource.indexOf("mainWindow.on('ready-to-show', () => {")
-    const readyToShowEnd = indexSource.indexOf("mainWindow.on('resize'", readyToShowStart)
+    const readyToShowStart = indexSource.indexOf("window.on('ready-to-show', () => {")
+    const readyToShowEnd = indexSource.indexOf("window.on('resize'", readyToShowStart)
     const readyToShowSource = indexSource.slice(readyToShowStart, readyToShowEnd)
     const startupStart = indexSource.indexOf(
       '// A crash after durable history prepare must replay every unreceipted'
@@ -124,15 +124,14 @@ describe('history deletion startup integration', () => {
       source.indexOf('AppStore.recoverRunQueueAfterStartup()')
     )
     expect(source).toMatch(SCHEDULED_OCCURRENCE_GATE)
-    const wakeupRecovery = indexSource.lastIndexOf('recoverPersistedEnsembleWakeups()')
+    // Sweep-budget args (perf-boot 04989a0e2): the calls take a budget, so pin
+    // the callee name, not the empty parens.
+    const wakeupRecovery = indexSource.lastIndexOf('recoverPersistedEnsembleWakeups(')
     const wakeupGuard = indexSource.lastIndexOf(
       '!historyDeletionStartupRecoveryBlockedReason',
       wakeupRecovery
     )
-    const mailboxRecovery = indexSource.indexOf(
-      'recoverSubThreadControlPlane()',
-      wakeupRecovery
-    )
+    const mailboxRecovery = indexSource.indexOf('recoverSubThreadControlPlane(', wakeupRecovery)
     const mailboxGuard = lastGateIndexAtOrBefore(indexSource, mailboxRecovery)
     expect(wakeupGuard).toBeGreaterThan(end)
     expect(wakeupGuard).toBeLessThan(wakeupRecovery)
@@ -167,7 +166,10 @@ describe('history deletion startup integration', () => {
   })
 
   it('releases the correlated usage hold only from the post-commit release phase', () => {
-    const commit = indexSource.indexOf('commit: (operationId) => {')
+    // ce8d076da fix(main): route chat delete, truncate and clear through the
+    // Host — the commit phase now awaits the Host, so the shipped seam is
+    // `commit: async (operationId) => {`.
+    const commit = indexSource.indexOf('commit: async (operationId) => {')
     // Checkpoint and collaboration purges run under the frozen intent, before
     // the store commit inside the same commit phase (TW-SEC-2026-014).
     const checkpointPurge = indexSource.indexOf('store.purgeForHistoryDeletionScope(', commit)

@@ -164,6 +164,7 @@ describe('shouldBuildWelcomeUsageDashboardData', () => {
     expect(
       shouldBuildWelcomeUsageDashboardData({
         isWelcomeChat: true,
+        isThreadHomeOpen: false,
         isCurrentGlobalChat: false,
         usageInitialized: true,
         isMultiviewSplit: false
@@ -175,6 +176,7 @@ describe('shouldBuildWelcomeUsageDashboardData', () => {
     expect(
       shouldBuildWelcomeUsageDashboardData({
         isWelcomeChat: false,
+        isThreadHomeOpen: false,
         isCurrentGlobalChat: false,
         usageInitialized: true,
         isMultiviewSplit: false
@@ -182,10 +184,23 @@ describe('shouldBuildWelcomeUsageDashboardData', () => {
     ).toBe(false)
   })
 
+  it('allows usage aggregation for full Thread Home heatmaps', () => {
+    expect(
+      shouldBuildWelcomeUsageDashboardData({
+        isWelcomeChat: false,
+        isThreadHomeOpen: true,
+        isCurrentGlobalChat: false,
+        usageInitialized: true,
+        isMultiviewSplit: false
+      })
+    ).toBe(true)
+  })
+
   it('skips dashboard aggregation for global, pre-usage, and split-view surfaces', () => {
     expect(
       shouldBuildWelcomeUsageDashboardData({
         isWelcomeChat: true,
+        isThreadHomeOpen: false,
         isCurrentGlobalChat: true,
         usageInitialized: true,
         isMultiviewSplit: false
@@ -194,6 +209,7 @@ describe('shouldBuildWelcomeUsageDashboardData', () => {
     expect(
       shouldBuildWelcomeUsageDashboardData({
         isWelcomeChat: true,
+        isThreadHomeOpen: false,
         isCurrentGlobalChat: false,
         usageInitialized: false,
         isMultiviewSplit: false
@@ -202,6 +218,7 @@ describe('shouldBuildWelcomeUsageDashboardData', () => {
     expect(
       shouldBuildWelcomeUsageDashboardData({
         isWelcomeChat: true,
+        isThreadHomeOpen: false,
         isCurrentGlobalChat: false,
         usageInitialized: true,
         isMultiviewSplit: true

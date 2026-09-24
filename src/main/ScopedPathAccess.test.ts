@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   readScopedDirectory,
   readScopedRegularFile,
+  readScopedRegularFileLineWindow,
   ScopedPathTargetMissingError,
   setScopedPathAccessTestHookForTests,
   updateScopedUtf8File,
@@ -63,6 +64,97 @@ describe('ScopedPathAccess', () => {
 
     await expect(
       readScopedRegularFile({ rootPath, targetPath }, { maxBytes: 100 })
+    ).rejects.toThrow()
+  })
+
+  // S4 — the streaming line-window read opens its OWN descriptor, so the jail
+  // has to hold there independently. The contract test pins that the guard
+  // CALLS are present; these prove the guards actually REFUSE. A source pin
+  // alone would still pass if a guard were called with the wrong argument.
+  it('serves a bounded line window through a stable nofollow descriptor', async () => {
+    const rootPath = tempDir('tw-scoped-window-')
+    const targetPath = path.join(rootPath, 'notes.txt')
+    fs.writeFileSync(targetPath, 'one\ntwo\nthree\nfour\nfive')
+
+    const result = await readScopedRegularFileLineWindow(
+      { rootPath, targetPath },
+      { startLine: 2, maxLines: 2 },
+      { maxWindowBytes: 100 }
+    )
+
+    expect(result.window.toString('utf8')).toBe('two\nthree')
+    expect(result.totalLines).toBe(5)
+    expect(result.endLine).toBe(3)
+  })
+
+  it('denies a parent symlink swap before returning window bytes', async () => {
+    const rootPath = tempDir('tw-scoped-window-root-')
+    const outside = tempDir('tw-scoped-window-outside-')
+    const parentPath = path.join(rootPath, 'nested')
+    const originalParent = path.join(rootPath, 'nested-original')
+    const targetPath = path.join(parentPath, 'secret.txt')
+    fs.mkdirSync(parentPath)
+    fs.writeFileSync(targetPath, 'workspace bytes\nsecond line')
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'outside bytes\nsecond line')
+    setScopedPathAccessTestHookForTests((stage) => {
+      if (stage !== 'after_directory_snapshot') return
+      fs.renameSync(parentPath, originalParent)
+      fs.symlinkSync(outside, parentPath, 'dir')
+    })
+
+    await expect(
+      readScopedRegularFileLineWindow(
+        { rootPath, targetPath },
+        { startLine: 1, maxLines: 5 },
+        { maxWindowBytes: 100 }
+      )
+    ).rejects.toThrow()
+  })
+
+  it('refuses a line-window target outside the authorized root', async () => {
+    const rootPath = tempDir('tw-scoped-window-jail-')
+    const outside = tempDir('tw-scoped-window-escape-')
+    const targetPath = path.join(outside, 'secret.txt')
+    fs.writeFileSync(targetPath, 'outside bytes')
+
+    // Vacuity guard: the file really is readable, so the refusal below is the
+    // jail refusing, not a missing fixture quietly passing the assertion.
+    expect(fs.readFileSync(targetPath, 'utf8')).toBe('outside bytes')
+
+    await expect(
+      readScopedRegularFileLineWindow(
+        { rootPath, targetPath },
+        { startLine: 1, maxLines: 1 },
+        { maxWindowBytes: 100 }
+      )
+    ).rejects.toThrow('outside the authorized filesystem root')
+    // Parity: the window path must be no weaker than the buffered path.
+    await expect(
+      readScopedRegularFile({ rootPath, targetPath }, { maxBytes: 100 })
+    ).rejects.toThrow('outside the authorized filesystem root')
+  })
+
+  it('refuses a symlinked line-window target instead of following it', async () => {
+    const rootPath = tempDir('tw-scoped-window-link-')
+    const outside = tempDir('tw-scoped-window-linked-')
+    const realPath = path.join(outside, 'secret.txt')
+    const linkPath = path.join(rootPath, 'alias.txt')
+    fs.writeFileSync(realPath, 'outside bytes')
+    fs.symlinkSync(realPath, linkPath, 'file')
+
+    // Vacuity guard: following the link WOULD leak the outside bytes.
+    expect(fs.readFileSync(linkPath, 'utf8')).toBe('outside bytes')
+
+    await expect(
+      readScopedRegularFileLineWindow(
+        { rootPath, targetPath: linkPath },
+        { startLine: 1, maxLines: 1 },
+        { maxWindowBytes: 100 }
+      )
+    ).rejects.toThrow()
+    // Parity with the buffered reader on the same fixture.
+    await expect(
+      readScopedRegularFile({ rootPath, targetPath: linkPath }, { maxBytes: 100 })
     ).rejects.toThrow()
   })
 

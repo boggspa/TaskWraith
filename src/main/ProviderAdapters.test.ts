@@ -82,6 +82,16 @@ describe('ProviderAdapters', () => {
         workspaceGrants: true
       }
     })
+    expect(defaultProviderDescriptor('muse')).toMatchObject({
+      transport: 'muse-exec-json',
+      capabilitySource: 'mixed',
+      features: {
+        agentBenchMcpBridge: true,
+        providerManagedMcp: true,
+        nativeThreadTools: true
+      },
+      capabilities: { perThreadMcp: true }
+    })
     // Derived from the registration baseline rather than a frozen literal: the
     // claim is "every registered identity dispatches on run-agent", which is
     // true of the set whatever its size. A hardcoded copy only re-states the
@@ -241,6 +251,11 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.imageAttachments).toBe(true)
   })
 
+  it('pi advertises its model-gated RPC image transport', () => {
+    const cap = defaultProviderDescriptor('pi').capabilities
+    expect(cap.imageAttachments).toBe(true)
+  })
+
   it('claude supports reasoning effort + fast mode', () => {
     const cap = defaultProviderDescriptor('claude').capabilities
     expect(cap.reasoningEffort).toBe(true)
@@ -259,6 +274,13 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(descriptor.features.agentBenchMcpBridge).toBe(true)
     expect(descriptor.features.providerManagedMcp).toBe(false)
     expect(cap.perThreadMcp).toBe(true)
+  })
+
+  it('advertises image input for every runtime-negotiated adapter', () => {
+    for (const provider of ['kimi', 'grok', 'mistral'] as const) {
+      expect(defaultProviderDescriptor(provider).capabilities.imageAttachments).toBe(true)
+    }
+    expect(defaultProviderDescriptor('ollama').capabilities.imageAttachments).toBe(true)
   })
 
   it('live TaskWraith-gated providers advertise workspace grants', () => {

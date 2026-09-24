@@ -308,6 +308,14 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).toContain('Detach')
   })
 
+  it('offers the same dock-to-window placement action as other Canvas surfaces', () => {
+    const html = renderToStaticMarkup(
+      <ChatMediaDockPanel refs={[]} onClose={() => undefined} onPopOut={() => undefined} />
+    )
+    expect(html).toContain('aria-label="Move Media Viewer to a floating window"')
+    expect(html).toContain('Pop out')
+  })
+
   it('renders selected right dock audio through the waveform player', () => {
     const refs: ChatMediaRef[] = [
       {

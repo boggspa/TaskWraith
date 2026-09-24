@@ -16,10 +16,12 @@ const {
     applePassword?: string
     teamId?: string
     keychainProfile?: string
+    channel?: string
     notarize?: boolean
     run?: (command: string, args: string[], label: string) => void
     retryWait?: (milliseconds: number) => void
   }) => {
+    feedPath: string
     metadata: { dmg: { sha512: string; size: number } }
     removedBlockmaps: string[]
   }
@@ -29,7 +31,8 @@ const {
 }: {
   validateMacUpdateFeedFile: (
     feedPath: string,
-    version: string
+    version: string,
+    expectedChannel?: string
   ) => { ok: boolean; errors: string[] }
 } = require('./validate-mac-update-feed.cjs')
 
@@ -121,6 +124,33 @@ describe('macOS release artifact finalization', () => {
       expect(calls[0]).toContain('--keychain-profile')
       expect(calls[0]).toContain('taskwraith-notary')
       expect(calls[0]).not.toContain('--apple-id')
+    } finally {
+      fs.rmSync(distDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refreshes the public identity release feed without consulting package semver', () => {
+    const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-finalize-'))
+    const version = '0.1.0'
+    for (const name of [
+      `TaskWraith-${version}-universal-mac.dmg`,
+      `TaskWraith-${version}-universal-mac.zip`,
+      `TaskWraith-${version}-universal-mac.zip.blockmap`,
+      'release-mac.yml'
+    ]) {
+      fs.writeFileSync(path.join(distDir, name), 'artifact')
+    }
+    try {
+      const result = finalizeMacReleaseArtifacts({
+        distDir,
+        version,
+        channel: 'release',
+        notarize: false
+      })
+      expect(path.basename(result.feedPath)).toBe('release-mac.yml')
+      expect(validateMacUpdateFeedFile(result.feedPath, version, 'release')).toMatchObject({
+        ok: true
+      })
     } finally {
       fs.rmSync(distDir, { recursive: true, force: true })
     }

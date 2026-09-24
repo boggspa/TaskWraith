@@ -1784,7 +1784,8 @@ export function ChatMediaDockPanel({
   onClose,
   onPreviewImage,
   onDetachToPane,
-  promoteToProjectLibrary
+  promoteToProjectLibrary,
+  onPopOut
 }: {
   refs: ChatMediaRef[]
   workspacePath?: string
@@ -1792,6 +1793,7 @@ export function ChatMediaDockPanel({
   onPreviewImage?: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
   promoteToProjectLibrary?: MediaPromoteToProjectLibrary
+  onPopOut?: () => void
 }) {
   const { copiedId, copy } = useCopyFeedback()
   const [selectedId, setSelectedId] = useState(() => defaultDockMediaRef(refs)?.id || '')
@@ -1814,13 +1816,25 @@ export function ChatMediaDockPanel({
           <span className="right-dock-kicker">Media</span>
           <strong>Uploads and paths</strong>
         </div>
-        <button
-          type="button"
-          className="segmented-control-action segmented-control-action--compact"
-          onClick={onClose}
-        >
-          Close
-        </button>
+        <div className="right-dock-panel-header-actions">
+          {onPopOut ? (
+            <button
+              type="button"
+              className="segmented-control-action segmented-control-action--compact"
+              onClick={onPopOut}
+              aria-label="Move Media Viewer to a floating window"
+            >
+              Pop out
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="segmented-control-action segmented-control-action--compact"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
       </header>
 
       {refs.length === 0 || !selectedRef ? (

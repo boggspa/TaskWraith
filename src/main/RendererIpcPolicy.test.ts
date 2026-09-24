@@ -51,13 +51,10 @@ describe('RendererIpcPolicy', () => {
     'ensemble-roster-presets:sync',
     'attach-window:pick',
     'attach-window:control-session',
-    'canvas:open-embedded',
-    'canvas:adopt-embedded',
-    'canvas:set-bounds',
+    'canvas:open-window',
+    'canvas:open-emulator-embedded',
     'canvas:clear-browser-profile',
-    'mesh-scene:import-user-model',
-    'mesh-scene:import-user-package',
-    'mesh-scene:view',
+    'simulator-control:setup',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',
     'execution-graphs:diagnostics',
@@ -66,6 +63,9 @@ describe('RendererIpcPolicy', () => {
     'execution-runs:cancel',
     'execution-runs:formalize',
     'work-locks:force-release-recovery',
+    'command-rules:list',
+    'command-rules:remove',
+    'import-external-provider-thread',
     'app:quit'
   ])('keeps %s behind main-renderer authority', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
@@ -75,11 +75,15 @@ describe('RendererIpcPolicy', () => {
     'get-settings',
     'get-agent-models',
     'get-chat',
+    'get-chat-transcript-page',
     'unarchive-chat',
     'export-archived-chat',
     'save-chat',
+    'patch-chat-composer-selection',
+    'mutate-chat-transcript',
     'run-agent',
     'save-clipboard-image-attachment',
+    'get-pending-agent-approvals',
     'get-run-queue-jobs',
     'check-trust',
     'audit-run:start',
@@ -88,6 +92,9 @@ describe('RendererIpcPolicy', () => {
     'git:unpushed-commits',
     'git:workspace-stats',
     'git:work-provenance',
+    'git:shared-workspace',
+    'git:contribution-preview',
+    'git:contribution-action',
     'github:create-commit-group-pr',
     'github:manage-pr',
     'github:pr-workspace',
@@ -101,6 +108,25 @@ describe('RendererIpcPolicy', () => {
   ])('allows %s to reach its read or owner-scoped domain policy', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+  })
+
+  it.each([
+    'canvas:open-popout',
+    'canvas:dock-popout',
+    'canvas:open-embedded',
+    'canvas:adopt-embedded',
+    'canvas:set-bounds',
+    'canvas:navigate-chat',
+    'mesh-scene:view',
+    'mesh-scene:import-user-model',
+    'simulator-canvas:session',
+    'simulator-canvas:screenshot',
+    'simulator-canvas:tap',
+    'simulator-control:setup-status'
+  ])('lets a Canvas pop-out reach the exact-owner policy for %s', (channel) => {
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(false)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
   it.each(['brand-new-settings-channel', 'get-setting', '', 'authorize-image-preview'])(
@@ -123,7 +149,11 @@ describe('RendererIpcPolicy', () => {
   })
 
   it('keeps the process-wide Host lifecycle main-renderer-only', () => {
-    for (const channel of ['host-lifecycle:status', 'host-lifecycle:set']) {
+    for (const channel of [
+      'host-lifecycle:status',
+      'host-lifecycle:set',
+      'host-lifecycle:inspect'
+    ]) {
       expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
       expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
       expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
@@ -197,6 +227,28 @@ describe('RendererIpcPolicy', () => {
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
+  it.each(['execution-runs:archive', 'execution-graphs:retry-recovery'])(
+    'keeps the Stack recovery control %s main-renderer-only',
+    (channel) => {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+      expect(IPC_ARGUMENT_SCHEMAS).toHaveProperty(channel)
+    }
+  )
+
+  it('exposes Stack recovery retry and archive on the preload bridge with matching types', () => {
+    const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
+    const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
+
+    expect(preload).toMatch(/ipcRenderer\.invoke\(\s*'execution-runs:archive'/)
+    expect(preload).toMatch(/ipcRenderer\.invoke\(\s*'execution-graphs:retry-recovery'/)
+    expect(preloadTypes).toContain('archiveExecutionRun: (')
+    expect(preloadTypes).toContain('Promise<ExecutionGraphArchiveResult>')
+    expect(preloadTypes).toContain('retryExecutionGraphRecovery: (')
+    expect(preloadTypes).toContain('command?: ExecutionGraphRecoveryRetryCommand')
+  })
+
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
     const unclassified = registeredChannels.filter(
@@ -241,29 +293,44 @@ describe('RendererIpcPolicy', () => {
   it('keeps picker and detached OS file drops on main/preload-minted attachment capabilities', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const imageAttachmentPreview = readFileSync(
+      join(process.cwd(), 'src/main/ipc/imageAttachmentPreviewHandlers.ts'),
+      'utf8'
+    )
 
     expect(main).toContain("ipcMain.handle('select-image-files'")
-    expect(main).toContain('for (const filePath of filePaths)')
-    expect(main).toContain('authorizeImagePreviewPath(filePath, {')
+    expect(imageAttachmentPreview).toContain('for (const filePath of filePaths)')
+    expect(imageAttachmentPreview).toContain('authorizeImagePreviewPath(filePath, {')
     expect(preload).toContain("ipcRenderer.send('authorize-dropped-attachment', filePath)")
     expect(main).toContain("ipcMain.on('authorize-dropped-attachment'")
   })
 
-  it('exposes Canvas dock adoption and profile reset only through the main-renderer bridge', () => {
+  it('exposes scoped Canvas dock adoption while keeping profile reset main-only', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
 
-    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:adopt-embedded')).toBe(false)
     expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:clear-browser-profile')).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has('canvas:open-emulator-embedded')).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has('canvas:open-emulator-embedded')).toBe(false)
     expect(preload).toContain("ipcRenderer.invoke('canvas:adopt-embedded', args)")
+    expect(preload).toContain("ipcRenderer.invoke('canvas:open-emulator-embedded', args)")
     expect(preload).toContain("ipcRenderer.invoke('canvas:clear-browser-profile')")
     expect(preloadTypes).toContain('adoptEmbedded: (args: { chatId: string; canvasId: string })')
+    expect(preloadTypes).toContain(
+      "openEmulatorEmbedded: (args: { chatId: string; presentation?: 'dock' })"
+    )
     expect(preloadTypes).toContain('clearBrowserProfile: () => Promise<')
   })
 
   it('requires a preload-minted trusted one-shot intent for host clipboard image reads', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const imageAttachmentPreview = readFileSync(
+      join(process.cwd(), 'src/main/ipc/imageAttachmentPreviewHandlers.ts'),
+      'utf8'
+    )
 
     expect(ipcChannelRequiresMainRenderer('save-clipboard-image-attachment')).toBe(false)
     expect(preload).toContain("window.addEventListener(\n  'paste'")
@@ -273,9 +340,10 @@ describe('RendererIpcPolicy', () => {
       "ipcRenderer.invoke('save-clipboard-image-attachment', appChatId, intent.token)"
     )
     expect(main).toContain("ipcMain.on('authorize-clipboard-paste-intent'")
-    expect(main).toContain('saveClipboardImageFromTrustedPaste({')
-    expect(main).toContain('assetStore: getTranscriptMediaAssetStore()')
+    expect(imageAttachmentPreview).toContain('saveClipboardImageFromTrustedPaste({')
+    expect(imageAttachmentPreview).toContain('assetStore: deps.getTranscriptMediaAssetStore()')
     expect(main).not.toContain('taskwraith-paste-')
+    expect(imageAttachmentPreview).not.toContain('taskwraith-paste-')
   })
 
   it('keeps sandboxed preload code free of unsupported Node crypto/util imports', () => {

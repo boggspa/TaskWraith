@@ -1,16 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createChildProcessMuseSpawn,
   defaultMuseAuthJsonPath,
+  MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER,
   museExecEventToCompatPayload,
   readDefaultMuseAuthJsonText,
   runMuseProviderFromIpc,
   type MuseIpcBridgeDeps
 } from './MuseIpcBridge'
-import type { MuseRunOutcome, MuseRunSpawnHandle } from './MuseRun'
+import type { MuseRunInput, MuseRunOutcome, MuseRunSpawnHandle } from './MuseRun'
 import { unavailableMuseMeterSnapshot, museMeterSnapshotToProviderStats } from './MuseUsage'
 
 const temps: string[] = []
@@ -196,6 +198,207 @@ describe('museExecEventToCompatPayload', () => {
 describe('runMuseProviderFromIpc', () => {
   const event = { sender: { id: 'webcontents-stub' } }
 
+  // These exercise the EXEC lane, and the MSP transport is now default-ON. Pin
+  // the gate off rather than injecting `runMuseMspProvider`: injecting it would
+  // turn a loud failure into a test that passes without exercising the lane it
+  // names.
+  beforeEach(() => {
+    process.env.TASKWRAITH_MUSE_MSP = '0'
+  })
+  afterEach(() => {
+    delete process.env.TASKWRAITH_MUSE_MSP
+  })
+
+  it.each(['exec', 'msp'])(
+    'opens straight into %s work with no private pre-turn pass, then seals exit-before-finish',
+    async (lane) => {
+      process.env.TASKWRAITH_MUSE_MSP = lane === 'msp' ? '1' : '0'
+      const order: string[] = []
+      const sendCompatLine = vi.fn((_, payload) => {
+        order.push(`emit:${payload.type}`)
+      })
+      const workStats = {
+        ...successOutcome().providerStats,
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        reasoning_tokens: 5,
+        _taskwraith_token_count_confidence: 'reported' as const
+      }
+      let providerRuns = 0
+      const work = async (input: Pick<MuseRunInput, 'prompt' | 'introductionText' | 'onEvent'>) => {
+        providerRuns += 1
+        order.push('start-work')
+        expect(input.prompt).toBe('say hi')
+        // Nothing pre-composes an opening any more. That is precisely what
+        // keeps `composeMuseLaunchPrompt` on its no-introduction path, which
+        // is the path that applies MUSE_OPENING_STEER_NOTE.
+        expect(input.introductionText).toBeUndefined()
+        expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+        input.onEvent?.({
+          type: 'tool_use',
+          payloadType: 'test',
+          toolId: 'read-1',
+          toolName: 'read_file',
+          raw: {}
+        })
+        input.onEvent?.({ type: 'terminal', payloadType: 'test', terminal: 'completed', raw: {} })
+        expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+        return successOutcome({ providerStats: workStats })
+      }
+      await runMuseProviderFromIpc(
+        event,
+        basePayload({ taskWraithMcpAdvertised: false }),
+        baseDeps({
+          sendCompatLine,
+          runMuseProvider: work,
+          runMuseMspProvider: work,
+          sendExit: () => {
+            order.push('exit')
+          },
+          finishRun: () => {
+            order.push('finish')
+          }
+        })
+      )
+      // Nothing runs between the init line and the first tool call: no second
+      // `muse exec`, so no billed sub-run and no dead latency ahead of work.
+      expect(order).toEqual([
+        'emit:init',
+        'start-work',
+        'emit:tool_use',
+        'emit:result',
+        'exit',
+        'finish'
+      ])
+      expect(providerRuns).toBe(1)
+      // The pre-turn pass emitted the opening as a `content` line and its own
+      // failure as a `provider_warning` that rendered nowhere. Both are gone.
+      const emitted = sendCompatLine.mock.calls.map((call) => call[1].type)
+      expect(emitted).not.toContain('content')
+      expect(emitted).not.toContain('provider_warning')
+      // The work run is the only run, so its usage is the turn's usage —
+      // carried through field for field rather than summed with a second run.
+      expect(sendCompatLine.mock.calls.at(-1)?.[1].stats).toMatchObject({
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        reasoning_tokens: 5,
+        _taskwraith_token_count_confidence: 'reported'
+      })
+    }
+  )
+
+  it('routes reasoning through standard Thinking activities under the same chat and run', async () => {
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      event,
+      basePayload(),
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: async (input) => {
+          input.onEvent?.({
+            type: 'content',
+            payloadType: 'run.output.delta',
+            text: 'I will inspect the fixture.',
+            raw: {}
+          })
+          const thought = {
+            type: 'thinking' as const,
+            payloadType: 'runtime.session',
+            thinkingId: 'native-message',
+            thinkingCumulative: true,
+            text: 'Check the fixture.',
+            raw: {}
+          }
+          input.onEvent?.(thought)
+          input.onEvent?.(thought)
+          input.onEvent?.({
+            type: 'tool_use',
+            payloadType: 'runtime.session',
+            toolId: 'read-1',
+            toolName: 'read_file',
+            raw: {}
+          })
+          input.onEvent?.({ ...thought, text: 'Check the fixture.\n\nVerify the output.' })
+          return successOutcome()
+        }
+      })
+    )
+    const payloads = sendCompatLine.mock.calls.map((call) => call[1])
+    expect(payloads.map((payload) => payload.type)).toEqual([
+      'init',
+      'content',
+      'tool_use',
+      'tool_result',
+      'tool_use',
+      'tool_use',
+      'tool_result',
+      'result'
+    ])
+    expect(payloads.filter((payload) => payload.tool_name === 'muse_thinking')).toMatchObject([
+      { type: 'tool_use', parameters: { kind: 'reasoning' } },
+      { type: 'tool_result', output: 'Check the fixture.' },
+      { type: 'tool_use', tool_id: expect.stringContaining('-seg2') },
+      { type: 'tool_result', output: '\n\nVerify the output.' }
+    ])
+    for (const call of sendCompatLine.mock.calls) {
+      expect(call[2]).toEqual({ appRunId: 'run-muse-1', appChatId: 'chat-1' })
+    }
+  })
+
+  it('publishes final answer and measured usage once, after all Thinking and tool events', async () => {
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      event,
+      basePayload(),
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: async (input) => {
+          input.onEvent?.({
+            type: 'terminal',
+            payloadType: 'run.terminal.completed',
+            terminal: 'completed',
+            text: 'Verified 23.',
+            raw: {}
+          })
+          expect(sendCompatLine.mock.calls.some((call) => call[1].type === 'result')).toBe(false)
+          input.onEvent?.({
+            type: 'thinking',
+            payloadType: 'runtime.session',
+            thinkingId: 'summary',
+            thinkingCumulative: true,
+            text: 'Verify both files.',
+            raw: {}
+          })
+          return successOutcome({
+            assistantText: 'Verified 23.',
+            providerStats: {
+              ...successOutcome().providerStats,
+              input_tokens: 100,
+              output_tokens: 30,
+              total_tokens: 130,
+              reasoning_tokens: 20
+            }
+          })
+        }
+      })
+    )
+    const payloads = sendCompatLine.mock.calls.map((call) => call[1])
+    expect(payloads.filter((payload) => payload.type === 'result')).toEqual([
+      expect.objectContaining({
+        type: 'result',
+        result: 'Verified 23.',
+        stats: expect.objectContaining({
+          input_tokens: 100,
+          output_tokens: 30,
+          reasoning_tokens: 20
+        })
+      })
+    ])
+    expect(payloads.at(-1).type).toBe('result')
+  })
+
   it('fails closed with a clear error when the Muse binary is missing', async () => {
     const settleSetupFailure = vi.fn()
     const runMuseProvider = vi.fn()
@@ -377,6 +580,204 @@ describe('runMuseProviderFromIpc', () => {
     )
   })
 
+  it('publishes the provider exit after the terminal result and before finishRun', async () => {
+    const order: string[] = []
+    const sendCompatLine = vi.fn((_sender: unknown, payload: Record<string, unknown>) => {
+      order.push(`compat:${String(payload.type)}`)
+    })
+    const sendExit = vi.fn((_sender: unknown, exitCode: number) => {
+      order.push(`exit:${exitCode}`)
+    })
+    const finishRun = vi.fn(() => {
+      order.push('finish')
+    })
+    const runMuseProvider = vi.fn(async () => successOutcome())
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ sendCompatLine, sendExit, finishRun, runMuseProvider })
+    })
+
+    expect(sendExit).toHaveBeenCalledTimes(1)
+    expect(sendExit).toHaveBeenCalledWith(event.sender, 0, {
+      appRunId: 'run-muse-1',
+      appChatId: 'chat-1'
+    })
+    // The exit must reach the renderer while main still holds the run's
+    // persistence authority. RunManager.finish releases that authority, after
+    // which the exit emitter discards the event and the renderer never seals
+    // the run: the chat stays "running", the composer keeps queueing, and a
+    // queued provider change never applies.
+    expect(order).toEqual(['compat:init', 'compat:result', 'exit:0', 'finish'])
+  })
+
+  it('publishes the exit once when the terminal result already rode the stdout lane', async () => {
+    const sendCompatLine = vi.fn()
+    const sendExit = vi.fn()
+    const finishRun = vi.fn()
+    const runMuseProvider = vi.fn(async (input: MuseRunInput) => {
+      input.onEvent?.({
+        type: 'content',
+        payloadType: 'run.output.delta',
+        text: 'hello',
+        raw: {}
+      })
+      input.onEvent?.({
+        type: 'terminal',
+        payloadType: 'run.terminal.completed',
+        terminal: 'completed',
+        raw: {}
+      })
+      return successOutcome()
+    })
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ sendCompatLine, sendExit, finishRun, runMuseProvider })
+    })
+
+    const resultLines = sendCompatLine.mock.calls.filter(
+      ([, payload]) => (payload as Record<string, unknown>).type === 'result'
+    )
+    expect(resultLines).toHaveLength(1)
+    expect(sendExit).toHaveBeenCalledTimes(1)
+    expect(sendExit).toHaveBeenCalledWith(event.sender, 0, expect.anything())
+    expect(finishRun).toHaveBeenCalledTimes(1)
+    expect(sendExit.mock.invocationCallOrder[0]).toBeLessThan(finishRun.mock.invocationCallOrder[0])
+  })
+
+  it('maps failed and cancelled outcomes onto non-zero exit codes', async () => {
+    const failedExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: failedExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'failed', exitCode: 2 }))
+      })
+    })
+    expect(failedExit).toHaveBeenCalledWith(event.sender, 2, expect.anything())
+
+    const failedWithoutCodeExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: failedWithoutCodeExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'failed', exitCode: 0 }))
+      })
+    })
+    expect(failedWithoutCodeExit).toHaveBeenCalledWith(event.sender, 1, expect.anything())
+
+    const cancelledExit = vi.fn()
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({
+        sendExit: cancelledExit,
+        runMuseProvider: vi.fn(async () => successOutcome({ status: 'cancelled', exitCode: null }))
+      })
+    })
+    expect(cancelledExit).toHaveBeenCalledWith(event.sender, 130, expect.anything())
+  })
+
+  it('prepares a route-bound MCP server before launching an advertised Muse turn', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const prepareTaskWraithMcp = vi.fn(async () => ({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        TASKWRAITH_PARENT_PROVIDER: 'muse',
+        TASKWRAITH_RUN_ID: 'run-muse-1'
+      }
+    }))
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        taskWraithMcpAdvertised: true,
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      }),
+      baseDeps({ runMuseProvider, prepareTaskWraithMcp })
+    )
+
+    expect(prepareTaskWraithMcp).toHaveBeenCalledWith({
+      appRunId: 'run-muse-1',
+      appChatId: 'chat-1',
+      workspacePath: '/tmp/muse-ws',
+      approvalMode: 'plan',
+      taskWraithMcpProfileId: 'taskwraith-full-v1'
+    })
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpSettings: {
+          mcp_servers: {
+            taskwraith: expect.objectContaining({
+              transport: 'stdio',
+              mode: 'required',
+              env: expect.objectContaining({ TASKWRAITH_PARENT_PROVIDER: 'muse' })
+            })
+          }
+        }
+      })
+    )
+  })
+
+  it('does not start an advertised Muse turn when its required MCP bridge cannot be prepared', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const settleSetupFailure = vi.fn()
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({ taskWraithMcpAdvertised: true }),
+      baseDeps({
+        runMuseProvider,
+        settleSetupFailure,
+        prepareTaskWraithMcp: async () => {
+          throw new Error('broker unavailable')
+        }
+      })
+    )
+
+    expect(runMuseProvider).not.toHaveBeenCalled()
+    expect(settleSetupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/MCP bridge.*broker unavailable/i) })
+    )
+  })
+
+  it('derives Muse native delegation only from the signed UltraTask posture marker', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const auth = async () => JSON.stringify({ providers: { meta: { api_key: 'meta-secret' } } })
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        reasoningEffort: 'ultraTask',
+        effectivePermissions: { subThreadDelegationAutoAllowSource: 'ultratask' }
+      }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: true })
+    )
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({ reasoningEffort: 'ultraTask', effectivePermissions: null }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: false })
+    )
+
+    await runMuseProviderFromIpc(
+      event,
+      basePayload({
+        reasoningEffort: 'high',
+        effectivePermissions: {
+          subThreadDelegationAutoAllowSource: 'ultra'
+        } as never
+      }),
+      baseDeps({ readAuthJsonText: auth, runMuseProvider })
+    )
+    expect(runMuseProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ultraTaskDelegationAutoAllow: false })
+    )
+  })
+
   it('passes muse login OAuth through as run-local auth.json instead of an API key', async () => {
     const runMuseProvider = vi.fn(async () => successOutcome())
     const authJsonText = JSON.stringify({
@@ -387,6 +788,33 @@ describe('runMuseProviderFromIpc', () => {
           access_token: 'oauth-access-secret',
           refresh_token: 'oauth-refresh-secret',
           expires_at: 1_900_000_000
+        }
+      }
+    })
+    const readAuthJsonText = vi.fn(async () => authJsonText)
+
+    await runMuseProviderFromIpc(event, basePayload(), {
+      ...baseDeps({ readAuthJsonText, runMuseProvider })
+    })
+
+    expect(readAuthJsonText).toHaveBeenCalledOnce()
+    expect(runMuseProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: null,
+        authJsonText
+      })
+    )
+  })
+
+  it('passes schema-v2 keychain OAuth metadata through as run-local auth.json', async () => {
+    const runMuseProvider = vi.fn(async () => successOutcome())
+    const authJsonText = JSON.stringify({
+      schema_version: 2,
+      providers: {
+        meta: {
+          mechanism: 'oauth',
+          storage: 'keychain',
+          obtained_via: 'device_code'
         }
       }
     })
@@ -450,7 +878,7 @@ describe('createChildProcessMuseSpawn', () => {
   it('adapts child_process.spawn into a MuseRunSpawnHandle and pipes stdin', async () => {
     const stdoutHandlers: Array<(chunk: Buffer | string) => void> = []
     const closeHandlers: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
-    const stdin = { write: vi.fn(), end: vi.fn() }
+    const stdin = { write: vi.fn(), end: vi.fn(), once: vi.fn() }
     const child = {
       pid: 7,
       stdin,
@@ -516,5 +944,444 @@ describe('readDefaultMuseAuthJsonText', () => {
     const text = await readDefaultMuseAuthJsonText({ env: {}, home: root })
     expect(text).toContain('from-login')
     expect(defaultMuseAuthJsonPath({}, root)).toBe(authPath)
+  })
+})
+
+describe('createChildProcessMuseSpawn', () => {
+  it('absorbs an EPIPE on the child stdin instead of crashing Electron main', async () => {
+    const stdin = new EventEmitter() as EventEmitter & {
+      write: (payload: string) => boolean
+      end: () => void
+    }
+    const child = new EventEmitter() as EventEmitter & Record<string, unknown>
+    stdin.write = () => {
+      // The muse binary exited before draining the API key: the write fails
+      // after the fact, as an 'error' event on the stdin socket.
+      process.nextTick(() => {
+        stdin.emit(
+          'error',
+          Object.assign(new Error('write EPIPE'), { code: 'EPIPE', syscall: 'write' })
+        )
+        child.emit('close', 1, null)
+      })
+      return false
+    }
+    stdin.end = () => undefined
+    Object.assign(child, {
+      pid: 12,
+      stdin,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn()
+    })
+    const spawnImpl = vi.fn(() => child) as never
+    const handle = createChildProcessMuseSpawn(spawnImpl)({
+      binaryPath: '/bin/muse',
+      argv: ['exec', '--json'],
+      cwd: tmpdir(),
+      env: { PATH: '/bin' },
+      stdin: 'api-key'
+    })
+    await expect(handle.wait()).resolves.toEqual({ code: 1, signal: null })
+  })
+})
+
+describe('runMuseProviderFromIpc — transport selection', () => {
+  const MSP_ENV = 'TASKWRAITH_MUSE_MSP'
+
+  function ipcEvent(): { sender: unknown } {
+    return { sender: {} }
+  }
+
+  afterEach(() => {
+    delete process.env[MSP_ENV]
+  })
+
+  it('runs the exec lane while the MSP gate is off', async () => {
+    process.env[MSP_ENV] = '0'
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async () => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        getSeatHome: () => ({ boundaryRoot: '/seats', path: '/seats/a' })
+      })
+    )
+    expect(execRun).toHaveBeenCalledTimes(1)
+    expect(mspRun).not.toHaveBeenCalled()
+  })
+
+  it('runs the MSP lane against the chat seat when the gate is on', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ sessionId: 'sess-msp' })
+    )
+    const getSeatHome = vi.fn(() => ({ boundaryRoot: '/seats', path: '/seats/a' }))
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        ensembleRun: { participantId: 'worker' },
+        providerSessionId: 'sess-stored',
+        imagePaths: ['/chat/a.png'],
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        getSeatHome
+      })
+    )
+    expect(execRun).not.toHaveBeenCalled()
+    expect(getSeatHome).toHaveBeenCalledWith('chat-1', 'worker')
+    expect(mspRun.mock.calls[0][0]).toMatchObject({
+      durableSeat: { boundaryRoot: '/seats', path: '/seats/a' },
+      resumeSessionId: 'sess-stored',
+      imagePaths: ['/chat/a.png']
+    })
+  })
+
+  it('never asks to resume a session whose log no seat is holding', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        providerSessionId: 'sess-stored',
+        taskWraithMcpAdvertised: false
+      },
+      // No getSeatHome: a disposable home has no log to resume into, and MSP
+      // rejects a resume for a session it cannot find.
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    expect(mspRun.mock.calls[0][0]).toMatchObject({ resumeSessionId: null })
+    expect(mspRun.mock.calls[0][0].durableSeat).toBeUndefined()
+  })
+
+  it('asks TaskWraith per tool, carrying the run id the posture clamp needs', async () => {
+    process.env[MSP_ENV] = '1'
+    const asks: Record<string, unknown>[] = []
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-77',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        requestApproval: async (ask) => {
+          asks.push(ask as unknown as Record<string, unknown>)
+          return true
+        }
+      })
+    )
+    const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
+      request: unknown
+    ) => Promise<string>
+    expect(handler).toBeTypeOf('function')
+
+    const verdict = await handler({
+      approvalId: 'a1',
+      toolName: 'run_command',
+      rawArgs: '{"command":"rm -rf /"}',
+      subject: { kind: 'shell', command: 'rm -rf /' }
+    })
+    expect(verdict).toBe('allow')
+    // Without appRunId the orchestrator resolves no session, so
+    // effectivePermissions is undefined and the read-only/plan clamp is gone.
+    expect(asks[0]).toMatchObject({
+      appRunId: 'run-77',
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      rawToolCall: { command: 'rm -rf /' }
+    })
+  })
+
+  it('denies the tool without cancelling the turn when approval throws', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        requestApproval: async () => {
+          throw new Error('orchestrator unavailable')
+        }
+      })
+    )
+    const handler = mspRun.mock.calls[0][0].onApprovalRequest as (
+      request: unknown
+    ) => Promise<string>
+    // Fail closed on the TOOL, not on the turn: an orchestrator fault must not
+    // discard work the user is mid-way through.
+    await expect(
+      handler({ approvalId: 'a1', toolName: 't', rawArgs: '{}', subject: { kind: 'shell' } })
+    ).resolves.toBe('deny')
+  })
+
+  it('keeps sandbox-only parity when no approval plane is wired', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    // Absence is meaningful: the client denies by default, so selecting
+    // onRequest with no handler would deny every tool.
+    expect(mspRun.mock.calls[0][0].onApprovalRequest).toBeUndefined()
+  })
+
+  it('runs the turn on exec when the MSP host cannot start at all', async () => {
+    process.env[MSP_ENV] = '1'
+    const sendCompatLine = vi.fn()
+    const execRun = vi.fn(async () => successOutcome({ assistantText: 'done on exec' }))
+    // `muse serve` arrived in Muse Code 1.0.3; on an older CLI the subcommand
+    // is unknown and the host dies at once. Default-ON must not make every
+    // turn a hard failure for those users.
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ status: 'failed', sessionId: '', events: [] })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        sendCompatLine,
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never
+      })
+    )
+    expect(execRun).toHaveBeenCalledTimes(1)
+    const warning = sendCompatLine.mock.calls.find(
+      (call) => call[1].type === 'provider_warning'
+    )?.[1]
+    expect(warning?.message).toContain('muse exec')
+    const result = sendCompatLine.mock.calls.find((call) => call[1].type === 'result')?.[1]
+    expect(result?.status).toBe('success')
+  })
+
+  it('never silently re-runs a turn the provider actually took', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    // A session was established, so this failure is the task's, not the host's.
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({ status: 'failed', sessionId: 'sess-1', events: [] })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
+    )
+    expect(execRun).not.toHaveBeenCalled()
+  })
+
+  it('does not re-run a turn that streamed before failing', async () => {
+    process.env[MSP_ENV] = '1'
+    const execRun = vi.fn(async () => successOutcome())
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) =>
+      successOutcome({
+        status: 'failed',
+        sessionId: '',
+        events: [{ type: 'content', payloadType: 'msp.item.delta', text: 'partial', raw: {} }]
+      })
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({ runMuseProvider: execRun as never, runMuseMspProvider: mspRun as never })
+    )
+    // Re-running would duplicate work the user already saw.
+    expect(execRun).not.toHaveBeenCalled()
+  })
+
+  it('dispatches an explicit MCP opt-out MSP turn without injecting mcp_servers', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({ runMuseMspProvider: mspRun as never })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(mspRun.mock.calls[0][0].mcpSettings).toBeUndefined()
+  })
+
+  it('dispatches an advertised MSP turn once composed settings carry mcp_servers.taskwraith', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async (_input: Record<string, unknown>) => successOutcome())
+    const prepareTaskWraithMcp = vi.fn(async () => ({
+      command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+      args: ['--taskwraith-gemini-mcp-bridge'],
+      env: { TASKWRAITH_PARENT_PROVIDER: 'muse' }
+    }))
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: true
+      },
+      baseDeps({ runMuseMspProvider: mspRun as never, prepareTaskWraithMcp })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(mspRun.mock.calls[0][0].mcpSettings).toMatchObject({
+      mcp_servers: { taskwraith: expect.objectContaining({ mode: 'required' }) }
+    })
+  })
+
+  it('fails fast before MSP dispatch when the advertised TaskWraith MCP server is missing from composed settings', async () => {
+    process.env[MSP_ENV] = '1'
+    const mspRun = vi.fn(async () => successOutcome())
+    const execRun = vi.fn(async () => successOutcome())
+    const settleSetupFailure = vi.fn()
+    // Prompt composition treats a missing flag as advertised (`!== false`); the
+    // bridge used to require `=== true` before injecting mcp_servers. That
+    // desync ships a settings.json with no taskwraith server while the prompt
+    // still names the tools — `mode: required` then kills the turn.
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      { prompt: 'hi', workspace: '/ws', appRunId: 'run-1', appChatId: 'chat-1' },
+      baseDeps({
+        runMuseProvider: execRun as never,
+        runMuseMspProvider: mspRun as never,
+        settleSetupFailure
+      })
+    )
+    expect(mspRun).not.toHaveBeenCalled()
+    expect(execRun).not.toHaveBeenCalled()
+    expect(settleSetupFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: MUSE_MCP_PREFLIGHT_MISSING_TASKWRAITH_SERVER
+      })
+    )
+  })
+
+  it('publishes the session id the provider actually used on the result line', async () => {
+    process.env[MSP_ENV] = '1'
+    const sendCompatLine = vi.fn()
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        sendCompatLine,
+        runMuseMspProvider: (async () =>
+          successOutcome({ sessionId: 'sess-from-provider' })) as never
+      })
+    )
+    const init = sendCompatLine.mock.calls.find((call) => call[1].type === 'init')?.[1]
+    const result = sendCompatLine.mock.calls.find((call) => call[1].type === 'result')?.[1]
+    // The init line pinned a minted id; run_finished is applied last and is
+    // what makes the real one durable.
+    expect(init?.session_id).not.toBe('sess-from-provider')
+    expect(result?.providerThreadId).toBe('sess-from-provider')
+  })
+
+  it('forwards a Muse compaction signal from the MSP run to the chat-card sink', async () => {
+    process.env[MSP_ENV] = '1'
+    const signal = {
+      kind: 'completed' as const,
+      telemetry: {
+        provider: 'muse',
+        eventUuid: 'cmp-1',
+        trigger: 'auto' as const,
+        preTokens: 900_000,
+        postTokens: 12_000
+      }
+    }
+    const onContextCompaction = vi.fn()
+    const mspRun = vi.fn(
+      async (input: { onContextCompaction?: (value: typeof signal) => void }) => {
+        input.onContextCompaction?.(signal)
+        return successOutcome()
+      }
+    )
+    await runMuseProviderFromIpc(
+      ipcEvent() as never,
+      {
+        prompt: 'hi',
+        workspace: '/ws',
+        appRunId: 'run-1',
+        appChatId: 'chat-1',
+        ensembleRun: { participantId: 'worker' },
+        taskWraithMcpAdvertised: false
+      },
+      baseDeps({
+        runMuseMspProvider: mspRun as never,
+        onContextCompaction
+      })
+    )
+    expect(mspRun).toHaveBeenCalledTimes(1)
+    expect(onContextCompaction).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      signal,
+      appRunId: 'run-1',
+      participantId: 'worker'
+    })
   })
 })

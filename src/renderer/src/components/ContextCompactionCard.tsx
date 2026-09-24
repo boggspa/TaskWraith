@@ -7,6 +7,7 @@ import type {
 import { CONTEXT_COMPACTION_MESSAGE_KIND } from '../../../shared/contextCompaction'
 import { formatContextTokens } from '../../../shared/contextWindows'
 import { getProviderName } from './Sidebar'
+import { ContextCompactionDetails } from './ContextCompactionDetails'
 
 /**
  * Context-compaction transcript row — the durable record of a provider (or the
@@ -14,11 +15,10 @@ import { getProviderName } from './Sidebar'
  *
  * Rendered in the TOOL-CALL idiom (one flowing line: glyph · speaker meta ·
  * title · tabular detail), NOT as a bordered banner card, so compaction reads
- * as part of the transcript's activity language and participates in the
- * settled-row collapse system like every other one-liner. Presentation stays
- * FROZEN — participant labels are stamped on the message when the row is
- * written (`displayParticipantLabel`) and never re-derived from the live
- * roster.
+ * as part of the transcript's activity language at the same preserved
+ * hierarchy as seat and handoff changes. Presentation stays FROZEN —
+ * participant labels are stamped on the message when the row is written
+ * (`displayParticipantLabel`) and never re-derived from the live roster.
  *
  * Data contract: `message.metadata.kind === 'contextCompaction'` with
  * `metadata.contextCompaction = { kind, telemetry }` (src/shared/contextCompaction.ts).
@@ -142,7 +142,14 @@ export function ContextCompactionCard({
   }
 
   const title = failed ? 'Context compaction failed' : 'Compacted context'
-  const ariaLabel = [title, detailParts.join(' · ')].filter(Boolean).join(' — ')
+  const ariaLabel = [
+    metaLabel,
+    title,
+    detailParts.join(' · '),
+    failed ? telemetry.error : undefined
+  ]
+    .filter(Boolean)
+    .join(' — ')
 
   return (
     <div
@@ -165,6 +172,7 @@ export function ContextCompactionCard({
       {failed && telemetry.error && (
         <div className="context-compaction-row-error">{telemetry.error}</div>
       )}
+      <ContextCompactionDetails policy={telemetry.contextPolicy} />
     </div>
   )
 }

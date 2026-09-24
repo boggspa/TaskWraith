@@ -1,12 +1,13 @@
 import {
   CONTINUATION_HOPS_CHANGE_KIND,
-  type ContinuationHopsChangePayload
+  type ContinuationHopsAdvancePayload,
+  type ContinuationHopsLimitChangePayload
 } from '../../shared/continuationHopsChange'
 import type { ChatMessage, ChatRecord } from '../store/types'
 
 export interface AppendContinuationHopsChangeInput extends Omit<
-  ContinuationHopsChangePayload,
-  'changedAt'
+  ContinuationHopsLimitChangePayload,
+  'event' | 'changedAt'
 > {
   id: string
   changedAt: string
@@ -14,10 +15,59 @@ export interface AppendContinuationHopsChangeInput extends Omit<
   roundId?: string
 }
 
-function actorLabel(actor: ContinuationHopsChangePayload['actor']): string {
+export interface BuildContinuationHopsAdvanceInput extends Omit<
+  ContinuationHopsAdvancePayload,
+  'event'
+> {
+  statusMessage: string
+  roundId?: string
+}
+
+export interface BuiltContinuationHopsAdvanceTranscriptEvent {
+  content: string
+  metadata: NonNullable<ChatMessage['metadata']>
+}
+
+function actorLabel(actor: ContinuationHopsLimitChangePayload['actor']): string {
   if (actor === 'boss') return 'Boss'
   if (actor === 'captain') return 'Captain'
   return 'User'
+}
+
+function optionalLabel(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed || undefined
+}
+
+/**
+ * Builds the structured promotion and its plaintext fallback for a consumed
+ * Continuous handoff. The caller can pass both directly to appendRoundStatus,
+ * keeping persistence and checkpoint ownership in the orchestrator.
+ */
+export function buildContinuationHopsAdvanceTranscriptEvent(
+  input: BuildContinuationHopsAdvanceInput
+): BuiltContinuationHopsAdvanceTranscriptEvent {
+  const statusMessage = input.statusMessage.trim()
+  const targetLabel = optionalLabel(input.targetLabel)
+  const sourceLabel = optionalLabel(input.sourceLabel)
+  const payload: ContinuationHopsAdvancePayload = {
+    event: 'advance',
+    before: input.before,
+    after: input.after,
+    maxHops: input.maxHops,
+    changedAt: input.changedAt,
+    ...(targetLabel ? { targetLabel } : {}),
+    ...(sourceLabel ? { sourceLabel } : {})
+  }
+
+  return {
+    content: `${statusMessage ? `${statusMessage} ` : ''}Continuous handoff ${input.after}/${input.maxHops}.`,
+    metadata: {
+      kind: CONTINUATION_HOPS_CHANGE_KIND,
+      ...(input.roundId ? { ensembleRoundId: input.roundId } : {}),
+      continuationHopsChange: payload
+    }
+  }
 }
 
 /**
@@ -30,8 +80,18 @@ export function appendContinuationHopsChangeTranscriptEvent(
 ): ChatRecord {
   if (input.before === input.after) return chat
 
+  // Composer controls are available on a pristine Ensemble draft. Changing a
+  // setting there must persist the config without manufacturing the chat's
+  // first transcript row: summary projections count every message, including
+  // system rows, so one pre-prompt bookkeeping event makes the draft look
+  // started after the next projection. A live round carries roundId, while a
+  // genuinely historical idle chat has conversation/run evidence to retain
+  // the existing audit row.
+  if (!input.roundId && chat.messages.length === 0 && chat.runs.length === 0) return chat
+
   const reason = input.reason?.trim()
-  const payload: ContinuationHopsChangePayload = {
+  const payload: ContinuationHopsLimitChangePayload = {
+    event: 'limit',
     before: input.before,
     after: input.after,
     actor: input.actor,

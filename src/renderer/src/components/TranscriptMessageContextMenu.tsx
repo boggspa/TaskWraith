@@ -28,6 +28,7 @@ export interface TranscriptMessageContextMenuItem {
     | `thumbs-down:${string}`
     | 'side-chat'
     | 'delete'
+    | 'edit-and-resend-from-here'
   label: string
   intent?: 'danger'
   inset?: boolean
@@ -44,6 +45,7 @@ interface TranscriptMessageContextMenuProps {
   onTogglePinMessage?: (messageId: string) => void
   onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
+  onEditAndResendFromHere?: (messageId: string, content: string) => void
   onClose: () => void
 }
 
@@ -83,7 +85,8 @@ export function buildTranscriptMessageContextMenuItems({
   onDeleteMessage,
   onTogglePinMessage,
   onMessageFeedback,
-  onOpenSideChatFromMessage
+  onOpenSideChatFromMessage,
+  onEditAndResendFromHere
 }: Omit<TranscriptMessageContextMenuProps, 'onClose'> & {
   selection: TranscriptMessageContextMenuSelection
 }): TranscriptMessageContextMenuItem[] {
@@ -148,6 +151,13 @@ export function buildTranscriptMessageContextMenuItems({
       onSelect: () => onOpenSideChatFromMessage(message)
     })
   }
+  if (!selection.copyOnly && onEditAndResendFromHere && message.role === 'user') {
+    items.push({
+      id: 'edit-and-resend-from-here',
+      label: 'Edit & resend from here',
+      onSelect: () => onEditAndResendFromHere(message.id, copyContent)
+    })
+  }
   if (!selection.copyOnly && onDeleteMessage) {
     items.push({
       id: 'delete',
@@ -168,6 +178,7 @@ export function TranscriptMessageContextMenu({
   onTogglePinMessage,
   onMessageFeedback,
   onOpenSideChatFromMessage,
+  onEditAndResendFromHere,
   onClose
 }: TranscriptMessageContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -211,7 +222,8 @@ export function TranscriptMessageContextMenu({
     onDeleteMessage,
     onTogglePinMessage,
     onMessageFeedback,
-    onOpenSideChatFromMessage
+    onOpenSideChatFromMessage,
+    onEditAndResendFromHere
   })
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768

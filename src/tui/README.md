@@ -1,242 +1,498 @@
-# TaskWraith TUI + windowless Host
+# TaskWraith TUI + Independent Node Host
 
-The TaskWraith TUI is a local terminal client that can start and supervise the
-TaskWraith Host without opening the desktop window. It is a separate executable
-and presentation target; the windowless Electron main process remains the one
-authority for chats, providers, models, permissions, approvals, run dispatch,
-cancellation, persistence, and audit.
-
-The operational shape is deliberately GUI-independent, not Electron-free:
+The TUI is a first-class authenticated `HostProjectionClient`, not an Electron
+or App-dependent presentation. It connects to a production Node Host directly.
 
 ```text
-taskwraith / tw (raw ANSI Node client)
-  ├─ authenticate + attach to an existing Host, or
-  └─ directly launch the TaskWraith app executable in windowless Host mode
-       └─ same-user local control socket
+tw / taskwraith
+  ├─ reuse an authenticated production Host for the selected profile
+  └─ start `taskwraith-host serve --mode production --profile <profile>`
+       └─ profile lease → stable identity → private discovery/token/socket
 ```
 
-It does not scrape renderer state, read AppStore files, or load provider
-credentials. The host projects a small versioned contract and routes mutations
-through the same main-owned action executor used by TaskWraith's other remote
-surfaces. The lifecycle and authority closeout is pinned in
-[`WINDOWLESS_HOST.md`](./WINDOWLESS_HOST.md).
+The Host is lease-owned: disconnecting never cancels provider work; with no
+lease left the Host finishes live work and exits after grace. Each client holds
+one lease per connection; the TUI takes it on every welcome, renews it on its
+own timer, reconnects if a renewal fails, and releases it when it quits.
+`TASKWRAITH_HOST_PERSIST=1` disables the last-lease exit. Its profile authority
+lease prevents duplicate owners and its persisted
+`host-runtime/host-install-identity.json` prevents identity churn.
+Discovery, token, and local transport artifacts are owner-only. The TUI fences
+`node-host-v1` and negotiated production capabilities before treating a Host as
+live. Desktop writer handoff remains a separate cutover concern.
 
-## Try it
-
-From the repository:
-
-```sh
-npm run tui:demo
-```
-
-The self-contained demo is safe when TaskWraith is not running. To connect to
-the repository's normal `TaskWraith Dev` app:
+## Launch and reconnect
 
 ```sh
 npm run tui
+tw --user-data /absolute/profile
+tw --no-start-host --user-data /absolute/profile
 ```
 
-For a deterministic, non-interactive 80x24 frame:
+`--user-data` is the standalone Node Host profile. Normal startup reuses an
+existing Host or starts production Node Host; `--no-start-host` is connect-only
+and never launches one. Reconnect uses ordered deltas when valid, otherwise a
+coherent snapshot. History has its own bounded cursor.
+
+A reused Host must be running the build the TUI would launch. Every standalone
+Host publishes its payload identity in its discovery record; when that differs
+from the identity of `out/host` (the usual case right after `npm run tui`
+rebuilt it), the TUI stops the stale Host through verified termination, starts
+the current build, and says so in its first frame. Verified termination asks the
+Host to stop first and signals only a pid whose birth identity and command line
+still match the Host's records, so a reused pid is never signalled. A stale Host
+that cannot be proven gone keeps serving, nothing is launched, and the first
+frame says why. A Host that predates payload identity is kept as-is.
+
+## Cold setup, history, and receipts
+
+Production capability negotiation provides bounded provider/model/posture and
+manual-auth metadata, workspace/thread setup, history pages, and durable
+command receipts/result references. Credentials, permission bodies, and raw
+provider payloads are not projected. Provider runs use the authenticated client
+id only as a transport-neutral delivery target.
+
+Muse workspace-write posture requires an explicit, persisted consent bit before
+the Host accepts configuration. Muse currently emits no deferred
+approval/question continuation events, so the standalone Host does not
+advertise those capabilities _for Muse_. Other providers can and do: Codex,
+Kimi, Grok and Mistral advertise approvals, and Codex has advertised questions
+since `d54d757cd` (2026-08-27). The registry ORs each flag across the
+constructed factories. It must not manufacture approval cards for a
+provider that cannot resume them safely.
+
+An interactively started `taskwraith-host serve` can hand a provider CLI login
+to that same terminal with exact, shell-free argv when the catalog advertises a
+manual flow. Grok also accepts `XAI_API_KEY` / `GROK_API_KEY` on the Host
+environment. Pi has no terminal login: configure allowed upstream API keys on
+the Host env instead. A detached Host has no visible TTY and therefore does not
+advertise an invisible manual-auth flow; configure its approved credential
+environment or start it interactively.
+
+## Packages
+
+Desktop packages ship `tw`/`taskwraith` in `Resources/bin` and
+`taskwraith-host` in `Resources/host-bin` (`.cmd`/`.ps1` on Windows). These
+launchers use bundled `Resources/tui-runtime` Node, never Electron or
+`ELECTRON_RUN_AS_NODE`; production payload is `Resources/host` with the exact
+pure Muse closure. **Warning:** Do not confuse these desktop-bundled launchers with the standalone npm package launchers; they are distinct runtime environments.
 
 ```sh
+taskwraith-host --profile /absolute/profile
+taskwraith-host stop --profile /absolute/profile
+```
+
+The launcher fixes `serve --mode production`; callers provide a profile and
+optionally an absolute Muse executable. An existing Host is reused, while a
+held lease fails cleanly. `stop` is a dedicated authenticated lifecycle RPC:
+it awaits run/resource cleanup and removal of discovery, token, socket, and
+profile lease rather than killing a discovery PID.
+
+## Diagnostic rollback
+
+Diagnostic mode is explicit, not the default TUI authority:
+
+```sh
+npm run host:serve:diagnostic -- --profile /absolute/profile
+```
+
+It is limited to recovery/diagnostics and does not advertise production setup,
+provider, history, or command capabilities.
+
+`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`, and
+`--no-animation` change presentation only. `.twmission` replay is detached and
+cannot mutate a live Host.
+
+## User guide
+
+```sh
+npm run tui:demo
 npm run tui:snapshot
-```
-
-Machine-readable projection output uses the same authenticated Host snapshot:
-
-```sh
-tw --dev --json
-```
-
-Capture and replay a bounded, privacy-safe mission flight recorder:
-
-```sh
-tw --dev --export ./incident.twmission
+tw --json
+tw --export ./incident.twmission --force
 tw --replay ./incident.twmission --width 100 --height 30
-tw --replay ./incident.twmission --json
 ```
 
-Export refuses to replace an existing file unless `--force` is explicit.
-Replay validates the schema, protocol/projection versions, size ceiling and
-integrity digest before rendering. It is detached: replay cannot connect to or
-mutate live Host state.
+The demo is self-contained. Snapshot and JSON use the authenticated Host
+projection. Export writes a bounded integrity-checked `.twmission` recorder;
+replay is detached and cannot write a live Host. Export requires `--force` to
+replace a file.
 
-Build only the sidecar with `npm run tui:build`. The compiled entry point is
-`out/tui/tui/cli.js`, exposed as both `taskwraith` and `tw` when the package is
-linked or installed. `NO_COLOR=1` and `--no-animation` provide static
-fallbacks.
+Packaged TUI launchers are under `Resources/bin` and production Host launchers
+are under `Resources/host-bin` (`.cmd`/`.ps1` on Windows). The package's
+`tui-runtime` Node binary runs both; no system Node, Electron executable, or
+windowless parent process is required.
 
-The installed `taskwraith` / `tw` binary defaults to the release app. If its
-authenticated Host is offline, the TUI starts the app executable with no
-window, waits for an authenticated Host-v2 handshake, then connects. Use
-`--dev` to target a built `TaskWraith Dev`; it honours
-`TASKWRAITH_INSTANCE_ID` for parallel dev hosts. `--no-start-host` preserves a
-connect-only posture. If automatic discovery is not the desired one, pass
-`--user-data <path>` or set `TASKWRAITH_USER_DATA`; explicit profiles may be
-attached to, but are never auto-launched because the TUI cannot safely infer
-their private-profile launch authority.
+### Front page
 
-### Packaged Developer Preview
+The home frame (`renderHome`) is the solo-CLI landing: a hand-authored
+Monoline Ghost banner from [`ghostBanner.ts`](./ghostBanner.ts), the
+TaskWraith wordmark, and Host status lines. The mark follows
+`design-assets/ghost/ghost-guy-mark-monoline.svg` (rounded crown, two
+rectangular eyes, wavy/pleated base). `ghostBanner.ts` is a presentation
+module only: Unicode vs `--ascii` selection, the compact-width fallback
+glyph (`theme.ts` `ghost`: `ᜊ` / `*`), and any colour/tone come from
+[`theme.ts`](./theme.ts). Full banner when width allows; below the minimum
+width it falls back to that single glyph. The ASCII variant is sized to
+remain inside `tw --ascii --width 80`.
 
-Invoke the sidecar directly from the package; the desktop App does not need to
-be open first:
+### Controls and layout
 
-| Platform | Launcher                                                 |
-| -------- | -------------------------------------------------------- |
-| macOS    | `/Applications/TaskWraith.app/Contents/Resources/bin/tw` |
-| Linux    | `<TaskWraith install>/resources/bin/tw`                  |
-| Windows  | `<TaskWraith install>\resources\bin\tw.cmd` or `tw.ps1`  |
+`--ascii`, `TASKWRAITH_TUI_ASCII=1`, `NO_COLOR=1`, `--no-color`,
+`--no-animation`, and `--theme` change presentation only. Threads use compact
+HUD plus composer. There is no ensemble baton or mission-cast
+chrome.
+Opening a Host-projected ensemble thread is view-compatible, not
+controllable: HUD uses that thread's primary provider. Provider identity
+carries colour, while transcript prose stays neutral and detail remains in
+transient lenses.
 
-`taskwraith` aliases are alongside each `tw` launcher. The package ships its
-own Node runtime under `tui-runtime`; the launchers neither require system Node
-nor use `ELECTRON_RUN_AS_NODE`. The App executable remains the authoritative
-Host process, but it can remain windowless for the whole TUI session. This is
-not an installed daemon or login item.
+| Key                                              | Action                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `Enter`                                          | Send/open selected thread; confirm a picker row                                  |
+| `Ctrl+O`, `Ctrl+K`, `Ctrl+R`, `Ctrl+G`, `Ctrl+P` | Context, threads, missions, tune (model/reasoning), commands                     |
+| `Page Up` / `Page Down`                          | Scroll transcript/history                                                        |
+| `Esc`                                            | Close lens; cancel a mid-flow `/new`/`/provider` and restore the previous thread |
+| `Ctrl+U`, `Ctrl+C`                               | Clear composer; clear then quit                                                  |
 
-## Colour and ASCII fallbacks
+Slash commands (COMMAND SPEC v1). Inline args are optional; invalid args are
+non-fatal notices and never throw out of the keypress loop. `/model` and
+`/think` reuse the existing offers/tune plumbing (`getThreadOffers`,
+`TuiPendingSelection`, `applyTuneSelection`). `/new` and `/provider` reuse
+cold-start: provider picker → auth → offers → model/reasoning → solo thread.
+A unique `/new claude` or `/provider kimi` skips the picker. Esc cancels a
+mid-flow `/new` and restores the previous thread. Hosts without `setup` +
+`provider-catalog` keep the old immediate-create fallback (`/new` with no
+id). `/seats` opens a live seat lens on an ensemble thread (see Ensemble seat
+control below); it is no longer rejected.
 
-Presentation degrades TrueColor → `NO_COLOR` → ASCII. Details and the
-width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
+| Command                                         | Action                                                                                                                                     |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/model [id]`, `/m`                             | Choose a model or stage one for the next send.                                                                                             |
+| `/think [level]`, `/reasoning`                  | Choose or stage a reasoning effort for the next send.                                                                                      |
+| `/tune`                                         | Open the combined model and reasoning lens.                                                                                                |
+| `/new [provider]`, `/provider`                  | Start a fresh solo thread, optionally with a provider.                                                                                     |
+| `/login [provider]`                             | Open provider sign-in and setup status.                                                                                                    |
+| `/status`                                       | Show Host, connection and open-thread detail.                                                                                              |
+| `/host [status\|restart\|stop-all]`             | Show the Host, restart it, or stop Hosts machine-wide.                                                                                     |
+| `/context`                                      | Open the context lens for the current thread.                                                                                              |
+| `/goal`                                         | Show the current thread objective.                                                                                                         |
+| `/git [status\|diff\|log] [path]`               | Open the read-only workspace Git lens.                                                                                                     |
+| `/seats`                                        | Open the Ensemble seat lens.                                                                                                               |
+| `/threads`                                      | Open the thread picker.                                                                                                                    |
+| `/workspace [path]`, `/ws`                      | Choose where new threads land or register a workspace path.                                                                                |
+| `/missions`                                     | Open active mission control.                                                                                                               |
+| `/history`                                      | Show completed mission history.                                                                                                            |
+| `/theme [name]`                                 | Preview or apply a TUI colour theme.                                                                                                       |
+| `/clear`                                        | Reset this TUI session's local transcript scrollback.                                                                                      |
+| `/help`                                         | Show command and keyboard help.                                                                                                            |
+| `/archive`                                      | Archive the open thread.                                                                                                                   |
+| `/cancel`                                       | Stop the active run.                                                                                                                       |
+| `/dismiss`                                      | Dismiss the pending Host question.                                                                                                         |
+| `/quit`, `/q`                                   | Leave the TUI. The Host exits after grace once no client holds a lease.                                                                    |
 
-| Control                     | Effect                                                           |
-| --------------------------- | ---------------------------------------------------------------- |
-| `--ascii`                   | Force the ASCII glyph set for the process                        |
-| `TASKWRAITH_TUI_ASCII=1`    | Same force via environment                                       |
-| Auto-detect                 | `TERM=linux` / `TERM=dumb`, or a non-UTF-8 locale, selects ASCII |
-| `NO_COLOR=1` / `--no-color` | Colour off; glyphs and layout unchanged                          |
-| `--no-animation`            | Static working indicator (also off under `NO_COLOR` / non-TTY)   |
+Every setup, cancellation, and configuration action remains a bounded Host
+command with capability, actor, offer, and receipt validation.
+Approval/question actions are available only when the connected Host actually
+negotiates those capabilities. Muse standalone production currently does not
+advertise them (see Current boundary).
 
-## Interaction
+### Themes (`/theme`)
 
-| Key                       | Action                                               |
-| ------------------------- | ---------------------------------------------------- |
-| `Enter`                   | Send the composer prompt or open the selected thread |
-| `←` / `→`, `Home` / `End` | Move through the one-line composer                   |
-| `Ctrl+A` / `Ctrl+E`       | Jump to the start / end of the composer              |
-| `Ctrl+O`                  | Toggle the context lens                              |
-| `Ctrl+K`                  | Toggle the thread picker                             |
-| `Ctrl+R`                  | Toggle live/historical mission control               |
-| `Ctrl+G`                  | Toggle the tune lens (model/reasoning, or seats)     |
-| `Ctrl+P`                  | Toggle the command reference                         |
-| `Page Up` / `Page Down`   | Scroll the transcript                                |
-| `Esc`                     | Close the active lens                                |
-| `Ctrl+U`                  | Clear the composer                                   |
-| `Ctrl+C`                  | Clear a non-empty composer; press again to leave     |
+`/theme` opens a picker; moving the cursor repaints the whole frame in the
+hovered theme, `Enter` keeps it, `Esc` puts back what you had. `/theme <name>`
+sets one directly. A confirmed choice is saved to
+`$XDG_CONFIG_HOME/taskwraith/tui.json` (or `~/.config/...`), which stores per-profile startup memory (`workspaceId`, `providerId`, `modelId`, `reasoningId`) in addition to the theme, and applies to every
+later run.
 
-Slash commands are `/context`, `/threads`, `/missions`, `/history`, `/model`,
-`/seats`, `/help`, `/cancel`, `/dismiss`, and `/quit`. `/dismiss` rejects the
-open question for the selected thread. Mission control filters Active,
-History, or All and shows the selected mission's round, routing/fan-out,
-provider outcomes, and paged participant cast at the Host generation/cursor.
-Cancellation is always an explicit command and is still validated by Host.
+| Theme            |                                                      |
+| ---------------- | ---------------------------------------------------- |
+| `wraith-night`   | House dark. Neutral ground with the ensemble mauve   |
+| `wraith-day`     | House light, for bright terminal profiles            |
+| `tokyo-night`    | Dark, blue-tinted                                    |
+| `rose-pine-moon` | Muted dark with iris accents                         |
+| `terminal`       | Paints nothing; inherits your terminal's own colours |
+| `auto`           | Follows the terminal's own light or dark appearance  |
 
-The tune lens is a deliberately narrow preview surface. On a solo thread it
-stages a model/reasoning switch **within the thread's current provider**: the
-host projects the same curated rows the App picker falls back to, the staged
-choice is shown beside the HUD identity, and it rides the next send through the
-canonical composer action, where the host validates it against its own offers.
-On an ensemble thread the same lens lists the roster and `Enter` toggles a
-seat's enabled flag immediately through the same main-owned roster action the
-paired-device surfaces use; disabled seats stay listed so they can be
-re-enabled. Providers whose catalogues are machine- or key-dependent (Ollama
-installs, Pi upstreams) report themselves locked and hand back to the App. Bracketed paste is enabled: a multi-line code block stays one prompt,
-with preserved line breaks shown as `↵` inside the one-row composer viewport.
+Names and aliases are case-insensitive, and an unrecognised one falls back to
+the default rather than refusing to start.
 
-## Terminal layout
+Precedence: `--theme` > `TASKWRAITH_TUI_THEME` > the saved choice > the default.
+The environment deliberately outranks the saved choice — a variable is how a
+script or terminal profile states what it needs.
 
-The transcript is the canvas; there is no persistent masthead.
+`auto` asks the terminal before it asks the OS, because a light-mode desktop
+running a dark terminal profile is common and the OS answers wrongly for it. The
+order is `TASKWRAITH_APPEARANCE` / `LC_TASKWRAITH_APPEARANCE` (the `LC_` form
+survives SSH, since OpenSSH forwards `LC_*` by default) → `COLORFGBG` → an
+OSC 11 background query → OS appearance → dark. The OSC 11 query runs once at
+startup, is skipped inside tmux/screen/zellij, and is skipped when input is
+already queued rather than swallowing a keystroke.
 
-- Solo threads reserve two rows: compact HUD, then composer.
-- Ensemble threads reserve three rows: baton, compact HUD, then composer.
-- The baton preserves current seat, next seat, roster count, and continuation
-  budget. The full preset, stages, fan-out, and participant cast live in one
-  transient context lens.
-- At 100 columns and above, identity labels expand. From 72–99 columns the TUI
-  uses the normal compact form. Below 72 columns it becomes a short semantic
-  checksum rather than wrapping the composer vertically.
-- Empty/offline state may use a sparse static sky and monoline ghost. It
-  disappears as soon as a transcript exists.
+Themes whose depth needs 24-bit colour give up their ground on a 256-colour
+terminal — three near-black surfaces quantise to one flat block — and keep their
+state tones. `NO_COLOR` drops colour entirely, as before.
 
-The persistent rows retain the five details most useful during a run:
-workspace, provider/model/reasoning, wall time, cost, and composer text. Full
-primary/secondary workspace grants and ensemble roster distinctions remain one
-keystroke away instead of consuming most of an 80x24 terminal.
+Provider accents are never re-tinted by a theme. They are cross-surface identity
+shared with the desktop app and iOS, so a theme may shift an accent's luminance
+to keep it legible on its ground, but never its hue.
 
-## Presentation fidelity
+### Workspace git (`/git`)
 
-Provider identity carries the colour; transcript prose stays neutral. The ANSI
-palette is pinned to `src/renderer/src/styles/theme.css` by a drift test.
+`/git [status|diff|log] [path]` opens a read-only git lens over the thread's
+registered workspace. With no scope argument it reuses the last scope, falling
+back to `status`. Inside the overlay `s`/`d`/`l` switch scope, `r` re-reads, and
+Esc closes. Switching scope **clears the `path` filter**; pass `/git diff
+src/foo.ts` again to re-apply one.
 
-The runtime and display brands remain distinct:
+**On demand only.** There is no watcher and no live update — the overlay shows
+the result of the read you asked for, and nothing refreshes it until you press
+`r` or reopen. This is deliberate, not a missing feature.
 
-- Ollama models use the shared `ollamaBrandTable` so Qwen, Gemma, Nemotron, and
-  other curated models wear their upstream label and hue.
-- Pi models use the shared `piBrandTable` so DeepSeek, Mistral, Groq, Cerebras,
-  and the other upstreams remain visually legible.
+**Read-only, and narrow.** The Host runs only `status`, `diff`, `log`, `branch
+--show-current` and `rev-parse HEAD`. `show` and `blame` are deliberately
+excluded, mirroring the existing product decision that gates those two while
+auto-allowing status/diff/log. Nothing in this surface writes to a repository.
 
-During a live run, the provider-accented ghost and `Working…` label receive a
-small ANSI shimmer sweep. The provider/role/model/reasoning identity, elapsed
-time, and approximate tokens match the desktop working indicator's information
-hierarchy. Nothing animates while idle.
+**Truncation is explicit.** The Host caps a serialized git result at 128 KiB
+and marks a clipped payload as truncated; the overlay banners it at the top of
+the body. A truncated diff — or a truncated status file list — is never
+presented as complete.
 
-Mistral Vibe is the layout precedent: strong provider names, sparse rhythm,
-content-area selectors, and an anchored prompt. The Electron app is the final
-reference for TaskWraith semantics and branding.
+**A Host without git is a normal configuration, not an error.** The Host
+advertises the `workspace-git` capability only when a git binary actually
+resolves, so on a git-less Host `/git` reports that it is unavailable and says
+so calmly. That is distinct from a read that genuinely failed, which surfaces
+as an error; the two are kept apart deliberately.
 
-## Local-control boundary
+**Local only.** Paired/remote peers are explicitly refused `workspace.git.read`
+([`PairedHostProjectionGateway`](../main/remote/PairedHostProjectionGateway.ts)),
+and the capability is never negotiated for them, because diff and log output can
+carry secrets. Do not assume the remote surface has this.
 
-The host writes a discovery document and random session token with owner-only
-permissions inside Electron `userData`. POSIX uses an owner-only Unix socket in
-a short private temp directory; Windows uses a per-user-data named pipe. The
-token is read from its file, never passed in command-line arguments or logged.
-Messages are bounded newline-delimited JSON with a versioned handshake.
+**Scope containment.** Reads are pinned to the registered workspace path. A
+repository whose toplevel resolves outside that workspace is refused, including
+`.git`-file redirection (linked worktrees and submodules) — the read is not
+widened to an ancestor checkout.
 
-The client can currently:
+Known limit: ahead/behind counts are not carried on the wire, so the header
+shows the branch, a short head, and the staged/unstaged/untracked counts rather
+than a divergence figure.
 
-- list workspaces and threads;
-- select a thread and receive transcript/run updates;
-- send a prompt to an existing solo thread through the normal composer action;
-- request the host's model/reasoning offers for a solo thread and stage one
-  offered pair on the next send;
-- steer/start an existing ensemble through the ensemble action path;
-- enable/disable an existing ensemble seat through the main-owned roster
-  action;
-- cancel a solo run or an ensemble round through their respective main-owned
-  action paths.
-- accept or decline the oldest pending approval for the selected thread by its
-  exact projected identity;
-- answer the oldest open question for the selected thread through the composer,
-  or explicitly dismiss it;
-- resume ordered Host deltas and resnapshot on generation/cursor discontinuity;
-- browse live and historical missions, rounds, routing and participant state;
-- print the coherent Host projection as JSON;
-- export integrity-checked `.twmission` bundles and render them as detached,
-  command-free replays.
+### Ensemble seat control (`/seats`)
 
-The facade derives workspace, provider, model, reasoning, and live run identity
-from canonical AppStore records. Client input cannot nominate a different
-provider, permission posture, workspace, or run id. Model/reasoning selection
-is offer-bound: the wire format carries no provider field, the facade validates
-every selection against the offers it would project for that thread right now,
-and a seat toggle can only reference an existing participant id — the client
-can never compose roster entries.
+`/seats` opens a seat lens over an ensemble thread's persisted roster: each
+participant's id, provider, model, role, stage, order and enabled state, read
+from the Host snapshot rather than any local guess. ↑/↓ select, Enter/Space
+toggles the selected seat, `r` re-reads, Esc closes. A toggle is a real
+`ensemble.seat.toggle` mutation; the lens re-reads the authoritative snapshot
+afterwards rather than flipping optimistically, so what you see is what the Host
+stored.
 
-## Intentional v1 omissions
+**Round execution is desktop-only, and that is deliberate.** Toggling seats does
+not make the standalone Host able to run a round. `composer.send` into an
+ensemble thread is refused outright with `standalone_ensemble_round_unavailable`
+so a single-provider run can never masquerade as an ensemble round. Sub-threads,
+goals, the blackboard and workflows remain absent from the standalone Host. If
+you need a round to actually run, use the desktop app.
 
-The TUI does not imitate desktop glass, blur, refraction, floating shadows,
-hover previews, drag-and-drop, persistent animated backgrounds, stacked
-modals, canvas/media, or rich documents. It also does not switch providers,
-edit permissions or grants, compose or reorder rosters, manage roster presets,
-or create threads. The 2026-07-28 tune-lens amendment admitted exactly two
-mutations because they are pure projections of existing main-owned paths —
-staged model/reasoning within the current provider, and seat enable/disable —
-while everything renderer-owned (roster presets) or authority-expanding
-(workspace grants, permissions, provider switching) stays in the Electron UI
-until it has a purpose-built terminal interaction and an equally strong
-authority contract.
+**The Host owns the refusals; the TUI does not pre-empt them.** A toggle that
+would disable the last enabled seat, or that arrives while a round is running,
+is denied by the Host (`standalone_ensemble_last_seat_required`,
+`standalone_ensemble_round_active`) and the lens surfaces that denial in plain
+language. The client does not second-guess those rules locally, so the Host
+stays the single authority on what is allowed.
 
-This boundary leaves a clean future route: production composition can be
-extracted from Electron main into a pure-Node Host without rewriting the
-terminal renderer. That larger migration still requires AppStore, provider,
-approval, credential, and single-writer extraction; the current implementation
-does not claim it has happened.
+**A Host without seat control is a normal configuration, not an error.** The
+`ensemble` capability is advertised only when the Host can actually serve seat
+control, so a Host that cannot reports unavailable calmly — the same distinction
+`/git` draws between "not offered here" and "the read failed".
+
+### Host lifetime (`/host`)
+
+`/host` (or `/host status`) opens a lens with what the Host reports about
+itself: pid, uptime, lifetime phase, holders, live runs, persist, the payload,
+the connected clients, and whether this TUI holds a lease. `/status` adds the
+pid, uptime, holders and payload to its one-line summary. A Host from before
+leases is named as such; `/host restart` upgrades it.
+
+`/host restart` stops this profile's Host through verified termination and
+starts the current build. With live runs it first says how many would end and
+acts only on `y`. A TUI started with `--no-start-host`, or on an explicit
+`--user-data` profile, never launches a Host, so it says why instead of
+restarting. A stop that is refused launches nothing, and the Host keeps
+running.
+
+`/host stop-all` takes the same scopes as `taskwraith-host stop-all`: with none
+it only lists the Hosts on this machine; `--all`, `--profile <path>` or
+`--payload-root <dir>` choose what to stop and are mutually exclusive, and
+`--scan-argv` adds Hosts found by command line. The lens lists each Host it
+would stop (pid, holders, profile) and states the total; only an explicit `y`
+stops them. Any other key, a terminal resize, or losing the Host connection
+cancels. The registry is read again before anything stops, and any change
+refuses the whole run. Each Host goes through verified termination, which
+removes only that Host's own records. `--sweep` is not offered here, so nothing
+outside the confirmed list is touched; `taskwraith-host stop-all --sweep`
+clears what else is dead. If this TUI's own Host is stopped, the TUI stays
+offline until `/host restart`.
+
+### Current boundary
+
+The Node Host owns private discovery/token/socket artifacts and the versioned
+local protocol (`node-host-v1`). Standalone production composes the nine live
+providers — Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, Mistral, Muse —
+through [`HostNodeProductionFactory.ts`](../host-node/HostNodeProductionFactory.ts).
+That membership is exactly `LIVE_SELECTABLE_PROVIDER_IDS`; the registry rejects
+any other id. The operator-facing matrix lives in
+[`HostStandaloneProviderMatrix.ts`](../host-shared/HostStandaloneProviderMatrix.ts).
+
+The TUI is a **solo**, multi-provider client (Pi/OMP-shaped): `/new` and cold
+start create single-provider threads. It is not an ensemble authoring surface —
+it cannot create an ensemble or run a round. Existing desktop ensemble threads
+open for inspection **and for seat control** (see Ensemble seat control). The TUI
+supports cold workspace registration, thread creation/configuration/archive,
+provider offers/auth metadata, bounded history, and receipt replay through that
+Host. It deliberately omits arbitrary AppStore writes, permission bodies,
+credentials, raw provider payloads, desktop-only drag/drop/canvas/glass
+surfaces, and unbounded terminal control.
+
+**AntiGravity / AGY** is desktop-conditional only (`isAntigravityOptInEnabled`
+plus a configured key in Electron settings). The standalone Host does **not**
+compose or admit it and does not grow a parallel consent wall.
+
+**Cursor** is setup/auth-only on this Host. `cursor-agent login` can run when a
+TTY launcher is present; `run()` stays a typed hard-stop because a write-capable
+Cursor argv requires MCP deny-list containment attestation the Node Host cannot
+produce.
+
+**Auth alternatives**
+
+| Provider                                   | Manual TTY login                                                         | Env-key alternative                                           |
+| ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Codex, Claude, Kimi, Cursor, Mistral, Muse | Catalog `*:login` when a launcher is present                             | None advertised                                               |
+| Grok                                       | `grok:login` (`grok login`) when a launcher is present                   | `XAI_API_KEY` or `GROK_API_KEY`                               |
+| Pi                                         | None — `authFlows` stays empty; `beginAuth` refuses a fabricated handoff | Allowed upstream keys on the Host env (`PI_UPSTREAM_KEY_ENV`) |
+| Ollama                                     | None — daemon reachability is the auth evidence                          | None advertised                                               |
+| AntiGravity                                | Not a standalone provider                                                | Desktop consent only                                          |
+
+A detached Host still does not advertise an invisible manual-auth flow.
+
+## Desktop coexistence rollout
+
+The standalone TUI path does **not** require the desktop app. `tw` reuses or
+auto-starts the pure-Node Host (`taskwraith-host serve --mode production
+--profile <path>`); `tw --no-start-host` is connect-only.
+
+Desktop now **defaults onto** that Host: `prepareMainProcess`
+([`bootstrap.ts`](../main/bootstrap.ts)) connects to the external Host
+([`HostExternalSupervisor`](../main/host/HostExternalSupervisor.ts)) unless
+`TASKWRAITH_DESKTOP_EXTERNAL_HOST=0` opts back into composing its own
+in-process Host. Landed as `30b092586`. When the external Host is unavailable,
+or that opt-out is set, Desktop still composes its own in-process Host
+(`e8622883d`).
+
+Both profile families the two processes used to contend over are now written
+through the Host rather than directly. Chat records go through
+`thread.record.persist` / `thread.record.delete`, and workspace records through
+`workspace.record.upsert` / `workspace.record.remove` /
+`workspace.records.clear` (`379e2dd2e`); Desktop submits them as an outbound
+client instead of writing `<profile>/chats/<id>.json` and `workspaces.json`
+itself. All five are restricted to the exact authenticated Desktop actor — a
+local-control client cannot reach them. The cross-process single-writer fence
+([`HostProfileWriterFence`](../host-runtime/HostProfileWriterFence.ts)) is
+consumed on both sides of the process boundary, and `bootstrap.ts` handles
+`ProfileWriterLivePeerError` on fallback (`bbda6a371`, `f4081926b`). The
+standalone TUI path remains independent either way.
+
+## Sending into a chat from a script or a coding agent
+
+`tw` has two non-interactive verbs for anything outside the app that wants to
+talk to a running chat — a shell script, or a Claude Code / Codex session
+working in the same checkout. Both are one shot: they connect, do the thing,
+and disconnect.
+
+```
+tw threads                        # threads in this working tree
+tw threads --query host --json    # machine-readable, filtered
+tw send <thread|title> <text…>    # send one prompt
+echo "…" | tw send <thread>       # or pipe the body in
+tw read <thread|title>            # newest messages, to collect the reply
+```
+
+`send` resolves its first argument as an exact thread id, or as a title
+substring that must match exactly one thread — an ambiguous title is refused
+with the candidates listed rather than guessed at. Both verbs scope to the
+working tree by default (the cwd resolves to its registered workspace), so the
+same command in two checkouts talks to two different sets of threads. `--all`
+searches every workspace.
+
+What happens on arrival depends on the thread: a live Ensemble round absorbs
+the prompt as a steer, an idle Ensemble starts a round with it, and a busy solo
+chat queues it behind the active run and flushes it at the boundary.
+
+`read` is the other half of a send: an agent that steers a thread can collect
+what came back without opening the app. It prints the newest rows, oldest
+first, and takes `--limit`. The host caps how far back it will go and never
+serves older history than that, so this is a tail, not an export.
+
+**The row says who sent it.** The host stamps the sender it observed at the
+handshake onto the transcript row, which then reads "Sent from PID 84536 /
+Claude Code" in place of "You". Nothing in the message text has to attribute
+itself, and nothing in the message text can change the attribution. The label
+is detected for runtimes we have verified (Claude Code exports `CLAUDECODE`);
+anywhere else, pass `--from "<tool>"` or set `TW_CLIENT_LABEL`, and the pid
+alone is shown if neither is given. A tool whose own process outlives the
+`tw` call can name itself with `TW_CLIENT_PID` so the row points at the
+session a human can actually find.
+
+These verbs deliberately advertise only the `compose` capability, so a sender
+never puts the host on the per-tick projection poll that serving a snapshot
+costs.
+
+### As an MCP server
+
+`tw mcp` serves those same two verbs as MCP tools over stdio, so an agent can
+call them as tools instead of shelling out. Register it once per client:
+
+```json
+{ "mcpServers": { "taskwraith": { "command": "tw", "args": ["mcp"] } } }
+```
+
+It offers `list_threads`, `send_prompt` and `read_thread`, with the same
+behaviour as the commands above — same thread resolution, same working-tree scoping, same
+refusal on an ambiguous title — because the tools run the commands rather than
+reimplementing them. Each tool takes an optional `cwd` and `all`; without them
+a call is scoped to the directory the server was started in, which for an
+editor-launched MCP server is the project the agent has open.
+
+A failed call comes back as an MCP tool error carrying exactly what the CLI
+would have printed, and a dead socket fails the call rather than the server, so
+the client keeps its session and can retry once the app is back.
+
+## Outside clients on the legacy local-control socket (v1)
+
+The Electron app still serves the v1 local-control socket the first TUI used.
+It is the door for a shell client or another coding agent on the same Mac to
+send a prompt into a chat — including a steer into a live Ensemble round —
+until Host-owned execution retires it. The contract, all newline-delimited
+JSON over the owner-only socket:
+
+- Discovery: `<userData>/taskwraith-control-v1.json` names the socket and the
+  owner-only token file. Send
+  `{ "type": "hello", "protocolVersion": 1, "client": "taskwraith-tui",
+"clientVersion": "<yours>", "clientPid": <pid>, "clientLabel": "Claude Code",
+"token": "<token>", "capabilities": ["compose"] }` and wait for `welcome`.
+- Advertise only what you need. The host runs projection work — a
+  whole-profile snapshot every 450 ms — only for clients that asked for
+  `snapshot` or `transcript`; a compose-only client costs it nothing per tick.
+- Find the thread with `thread.find` (`query`, `workspacePath` = your cwd,
+  `status`, `limit`). It answers slim rows and never the snapshot, which the
+  transport cannot carry once a profile is large.
+- Send with `composer.send { threadId, text }`. A live Ensemble round absorbs
+  it as a steer; an idle Ensemble starts a round; a busy solo chat queues it
+  behind the active run.
+- The host stamps what it observed at hello onto the row, so the transcript
+  reads "Sent from PID 84536 / Claude Code" instead of "You". Nothing in the
+  text has to attribute itself, and nothing in the text can change who it is
+  attributed to.
+- Disconnect when you are done.

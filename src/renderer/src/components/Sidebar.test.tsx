@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ComponentProps } from 'react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { act, type ComponentProps } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ChatRecord,
   WorkflowDefinition,
@@ -20,6 +21,8 @@ import {
   sidebarCompactChatRowPropsAreEqual,
   type WorkspaceBoardCreateInput
 } from './Sidebar'
+import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
+import { CollapsedSidebarCornerPill } from './CollapsedSidebarCornerPill'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -33,7 +36,8 @@ import {
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
-const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'hierarchy-disclosures-v2'
+const EXPANDED_WORKSPACE_IDS_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspaces'
 const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 
 // Mirrors SIDEBAR_SECTION_IDS in Sidebar.tsx. The sidebar defaults every section
@@ -42,6 +46,8 @@ const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 // Persisting a non-empty collapsed list also bypasses the new-user default
 // migration, pinning exactly these sections open.
 const SIDEBAR_SECTION_IDS = [
+  'active-runs',
+  'local-servers',
   'workflows',
   'workspace-boards',
   'pinned',
@@ -179,50 +185,49 @@ function stubSidebarStorage(values: Record<string, string>) {
   })
 }
 
-function renderSidebar(
-  chats: ChatRecord[],
-  options: {
-    activeChatId?: string | null
-    ensembleModeEnabled?: boolean
-    workflows?: WorkflowDefinition[]
-    workspaceBoards?: WorkspaceBoardDefinition[]
-    activeWorkspaceBoardId?: string | null
-    workspaces?: WorkspaceRecord[]
-    currentWorkspace?: WorkspaceRecord | null
-    onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
-    onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
-    onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
-    onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
-    onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
-    onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
-    onArchiveWorkspaceBoard?: (boardId: string) => void
-    onRestoreWorkspaceBoard?: (boardId: string) => void
-    onDeleteWorkspaceBoard?: (boardId: string) => void
-    collaboratingChatIds?: Set<string>
-    initialExpandedSubThreadParentIds?: string[]
-    pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
-    pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
-    activeChatIdentityTicker?: string | null
-    activeChatIdentityBranch?: string | null
-    pendingAgentQuestionsByChatId?: ComponentProps<typeof Sidebar>['pendingAgentQuestionsByChatId']
-    hasConnectedCollaborator?: boolean
-    onRenameChat?: (chatId: string, nextTitle: string) => void
-    onTogglePinChat?: (chatId: string) => void
-    onToggleArchiveChat?: (chatId: string, nextArchived: boolean) => void
-    onDeleteChat?: (chatId: string) => void
-    onOpenInMultiview?: (chat: ChatRecord) => void
-    runningChatIds?: string[]
-    updateSnapshot?: UpdateStateSnapshot | null
-    onQuickUpdate?: () => void
-    activeChatIdentityGitIndicators?: string | null
-    onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
-    onClearChatGitWorkflow?: (chatId: string) => void
-  } = {}
-) {
+type RenderSidebarOptions = {
+  activeChatId?: string | null
+  ensembleModeEnabled?: boolean
+  workflows?: WorkflowDefinition[]
+  workspaceBoards?: WorkspaceBoardDefinition[]
+  activeWorkspaceBoardId?: string | null
+  workspaces?: WorkspaceRecord[]
+  currentWorkspace?: WorkspaceRecord | null
+  onCreateWorkflow?: (workspace?: WorkspaceRecord) => void
+  onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
+  onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onRenameWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onDuplicateWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onTogglePinWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onArchiveWorkspaceBoard?: (boardId: string) => void
+  onRestoreWorkspaceBoard?: (boardId: string) => void
+  onDeleteWorkspaceBoard?: (boardId: string) => void
+  collaboratingChatIds?: Set<string>
+  initialExpandedSubThreadParentIds?: string[]
+  pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  activeChatIdentityTicker?: string | null
+  activeChatIdentityBranch?: string | null
+  pendingAgentQuestionsByChatId?: ComponentProps<typeof Sidebar>['pendingAgentQuestionsByChatId']
+  hasConnectedCollaborator?: boolean
+  onRenameChat?: (chatId: string, nextTitle: string) => void
+  onTogglePinChat?: (chatId: string) => void
+  onToggleArchiveChat?: (chatId: string, nextArchived: boolean) => void
+  onDeleteChat?: (chatId: string) => void
+  onOpenInMultiview?: (chat: ChatRecord) => void
+  runningChatIds?: string[]
+  updateSnapshot?: UpdateStateSnapshot | null
+  onQuickUpdate?: () => void
+  activeChatIdentityGitIndicators?: string | null
+  onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
+  onClearChatGitWorkflow?: (chatId: string) => void
+}
+
+function createSidebarElement(chats: ChatRecord[], options: RenderSidebarOptions = {}) {
   const workspace = makeWorkspace()
   const workspaces = options.workspaces ?? [workspace]
   const currentWorkspace = options.currentWorkspace === undefined ? workspace : options.currentWorkspace
-  return renderToStaticMarkup(
+  return (
     <Sidebar
       workspaces={workspaces}
       currentWorkspace={currentWorkspace}
@@ -272,6 +277,10 @@ function renderSidebar(
       onClearChatGitWorkflow={options.onClearChatGitWorkflow}
     />
   )
+}
+
+function renderSidebar(chats: ChatRecord[], options: RenderSidebarOptions = {}) {
+  return renderToStaticMarkup(createSidebarElement(chats, options))
 }
 
 function makeApproval(overrides: Partial<AgentApprovalRequest> = {}): AgentApprovalRequest {
@@ -716,6 +725,29 @@ describe('Sidebar startup hygiene', () => {
     expect(recentsBlock).toContain('Recently active thread')
   })
 
+  it('restores the Active Runs disclosure from the shared section state', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar([])
+
+    expect(html).toContain('title="Expand Active Runs"')
+    expect(html).not.toContain('sidebar-active-runs-empty')
+  })
+
+  it('preserves a legacy all-expanded preference during the disclosure-state migration', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: '[]',
+      [COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY]: 'recents-open-v1'
+    })
+
+    const html = renderSidebar([])
+
+    expect(html).toContain('title="Collapse Active Runs"')
+    expect(html).toContain('title="Collapse Workspaces"')
+  })
+
   it('starts with only the active workspace tree expanded', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
@@ -758,6 +790,46 @@ describe('Sidebar startup hygiene', () => {
 
     expect(html).toContain('Active workspace chat')
     expect(html).not.toContain('Older workspace chat')
+  })
+
+  it('restores an explicitly collapsed workspace tree across sidebar remounts', () => {
+    const activeWorkspace = makeWorkspace({
+      id: 'ws-2',
+      path: '/repo-two',
+      displayName: 'Repo Two',
+      lastOpenedAt: 20
+    })
+    const activeChat = makeChat({
+      appChatId: 'active-workspace-chat',
+      title: 'Active workspace chat',
+      workspaceId: 'ws-2',
+      workspacePath: '/repo-two',
+      updatedAt: 5
+    })
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces'),
+      [EXPANDED_WORKSPACE_IDS_STORAGE_KEY]: '[]'
+    })
+
+    const collapsedHtml = renderSidebar([activeChat], {
+      workspaces: [activeWorkspace],
+      currentWorkspace: activeWorkspace
+    })
+
+    expect(collapsedHtml).toContain('aria-label="Expand chats"')
+    expect(collapsedHtml).not.toContain('Active workspace chat')
+
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces'),
+      [EXPANDED_WORKSPACE_IDS_STORAGE_KEY]: JSON.stringify(['ws-2'])
+    })
+    const expandedHtml = renderSidebar([activeChat], {
+      workspaces: [activeWorkspace],
+      currentWorkspace: activeWorkspace
+    })
+
+    expect(expandedHtml).toContain('aria-label="Collapse chats"')
+    expect(expandedHtml).toContain('Active workspace chat')
   })
 })
 
@@ -2674,19 +2746,20 @@ describe('Sidebar footer controls', () => {
     expect(html).not.toContain('aria-label="People"')
   })
 
-  it('glows the Approvals button red only while an approval is pending', () => {
-    // glow-red is unique to the Approvals button, so presence/absence of the
+  it('glows the Approvals button yellow only while an approval is pending', () => {
+    // glow-yellow is unique to the Approvals button, so presence/absence of the
     // class unambiguously reflects the pending-approval signal.
     const idle = renderSidebar([makeChat()])
-    expect(idle).not.toContain('glow-red')
+    expect(idle).not.toContain('glow-yellow')
 
     const pending = renderSidebar([makeChat()], {
       pendingAgentApprovalByChatId: { 'parent-1': makeApproval() }
     })
-    expect(pending).toContain('glow-red')
+    expect(pending).toContain('glow-yellow')
+    expect(pending).not.toContain('glow-red')
   })
 
-  it('glows the Approvals button red while an agent question is pending', () => {
+  it('glows the Approvals button yellow while an agent question is pending', () => {
     const pending = renderSidebar([makeChat()], {
       pendingAgentQuestionsByChatId: {
         'parent-1': [
@@ -2702,20 +2775,63 @@ describe('Sidebar footer controls', () => {
         ]
       }
     })
-    expect(pending).toContain('glow-red')
+    expect(pending).toContain('glow-yellow')
+    expect(pending).not.toContain('glow-red')
     // This test's subject is the Approvals BUTTON. It used to also assert the
     // row's "Needs input" chip; that chip is retired, and the row-ink path a
     // pending question now takes has its own coverage in "Sidebar
     // waiting-on-you accent".
   })
 
-  it('ignores cleared (null) approval entries for the red glow', () => {
+  it('ignores cleared (null) approval entries for the yellow glow', () => {
     // usePerChatState deletes keys on reset, but guard against a lingering null
     // still suppressing the glow.
     const html = renderSidebar([makeChat()], {
       pendingAgentApprovalByChatId: { 'parent-1': null }
     })
-    expect(html).not.toContain('glow-red')
+    expect(html).not.toContain('glow-yellow')
+  })
+
+  it('keeps the collapsed-sidebar Approvals control on the same yellow attention state', () => {
+    const renderCollapsed = (
+      attention: Pick<
+        ComponentProps<typeof CollapsedSidebarCornerPill>,
+        'pendingAgentApprovalByChatId' | 'pendingAgentQuestionsByChatId'
+      >
+    ) =>
+      renderToStaticMarkup(
+        <CollapsedSidebarCornerPill
+          chats={[makeChat()]}
+          onSelectChat={() => {}}
+          onOpenSettings={() => {}}
+          onOpenSettingsTab={() => {}}
+          {...attention}
+        />
+      )
+
+    const approval = renderCollapsed({
+      pendingAgentApprovalByChatId: { 'parent-1': makeApproval() }
+    })
+    const question = renderCollapsed({
+      pendingAgentQuestionsByChatId: {
+        'parent-1': [
+          {
+            questionId: 'q-collapsed',
+            appRunId: 'run-1',
+            messageId: 'agent-question-q-collapsed',
+            provider: 'codex',
+            question: 'Which option?',
+            options: ['A', 'B'],
+            askedAt: 1
+          }
+        ]
+      }
+    })
+
+    expect(approval).toContain('glow-yellow')
+    expect(question).toContain('glow-yellow')
+    expect(approval).not.toContain('glow-red')
+    expect(question).not.toContain('glow-red')
   })
 
 })
@@ -2853,7 +2969,7 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('sidebar-footer-approval-row is-clickable')
   })
 
-  it('renders inline approval actions when a response handler is provided', () => {
+  it('keeps broader approval scopes in the task where their exact review is visible', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
         pendingApprovals={[
@@ -2871,7 +2987,9 @@ describe('ApprovalsFooterPopover', () => {
       />
     )
     expect(html).toContain('Approve')
-    expect(html).toContain('Always Allow')
+    expect(html).not.toContain('Always Allow')
+    expect(html).toContain('Open the task to review broader approval options.')
+    expect(html).toContain('This grant ends when the run ends.')
     expect(html).toContain('Deny')
     expect(html).toContain('Actions for Approve shell command')
   })
@@ -3086,5 +3204,277 @@ describe('git workflow markers', () => {
 
     expect(html).toContain('sidebar-title-ticker')
     expect(html).not.toContain('sidebar-git-indicators')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Static masthead ghost SVG: DOM identity across unrelated Sidebar updates.
+// ---------------------------------------------------------------------------
+// The ghost SVG is static markup injected via `dangerouslySetInnerHTML`.
+// React compares that prop by object identity on updates, so a fresh
+// `{ __html }` literal per render re-assigns `innerHTML` — discarding and
+// re-parsing the SVG subtree on every Sidebar update (in the live app each
+// replacement dirties `:has()`-matched style). This repo installs no jsdom,
+// so these tests mount the real Sidebar into a minimal fake DOM following
+// the ChatAgeLabel.test.tsx pattern and prove the parsed SVG node survives
+// unrelated re-renders while dynamic sidebar content still updates.
+
+class TestNode extends EventTarget {
+  readonly nodeType: number
+  ownerDocument: TestDocument
+  parentNode: TestNode | null = null
+  childNodes: TestNode[] = []
+  nodeValue = ''
+
+  constructor(nodeType: number, ownerDocument: TestDocument) {
+    super()
+    this.nodeType = nodeType
+    this.ownerDocument = ownerDocument
+  }
+
+  get firstChild(): TestNode | null {
+    return this.childNodes[0] ?? null
+  }
+
+  appendChild<T extends TestNode>(node: T): T {
+    node.parentNode = this
+    this.childNodes.push(node)
+    return node
+  }
+
+  removeChild<T extends TestNode>(node: T): T {
+    this.childNodes = this.childNodes.filter((child) => child !== node)
+    node.parentNode = null
+    return node
+  }
+
+  insertBefore<T extends TestNode>(node: T, before: TestNode | null): T {
+    if (!before) return this.appendChild(node)
+    node.parentNode = this
+    this.childNodes.splice(this.childNodes.indexOf(before), 0, node)
+    return node
+  }
+
+  contains(node: TestNode | null): boolean {
+    let current: TestNode | null = node
+    while (current) {
+      if (current === this) return true
+      current = current.parentNode
+    }
+    return false
+  }
+
+  get textContent(): string {
+    return this.nodeType === 3
+      ? this.nodeValue
+      : this.childNodes.map((child) => child.textContent).join('')
+  }
+
+  set textContent(value: string) {
+    this.childNodes = value ? [this.ownerDocument.createTextNode(value)] : []
+  }
+}
+
+class TestStyle {
+  private values: Record<string, string> = {}
+
+  setProperty(name: string, value: string): void {
+    this.values[name] = value
+  }
+
+  removeProperty(name: string): void {
+    delete this.values[name]
+  }
+
+  getPropertyValue(name: string): string {
+    return this.values[name] ?? ''
+  }
+}
+
+class TestElement extends TestNode {
+  readonly nodeName: string
+  readonly tagName: string
+  readonly namespaceURI = 'http://www.w3.org/1999/xhtml'
+  readonly attributes = new Map<string, string>()
+  readonly style = new TestStyle()
+  private parsedMarkup = ''
+
+  constructor(tag: string, ownerDocument: TestDocument) {
+    super(1, ownerDocument)
+    this.nodeName = this.tagName = tag.toUpperCase()
+  }
+
+  get className(): string {
+    return this.attributes.get('class') ?? ''
+  }
+
+  set className(value: string) {
+    this.attributes.set('class', value)
+  }
+
+  get innerHTML(): string {
+    return this.parsedMarkup
+  }
+
+  set innerHTML(markup: string) {
+    // Browser-faithful identity semantics: every assignment discards the
+    // previous children and parses fresh nodes, even for identical markup.
+    // No real HTML parsing here — a single marker child is enough to
+    // observe replacement versus retention.
+    for (const child of this.childNodes) child.parentNode = null
+    this.childNodes = []
+    this.parsedMarkup = markup
+    this.appendChild(this.ownerDocument.createElement('svg'))
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value)
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+  }
+}
+
+class TestDocument extends EventTarget {
+  readonly nodeType = 9
+  readonly documentElement = new TestElement('html', this)
+  readonly body = new TestElement('body', this)
+  readonly hidden = false
+  activeElement: TestElement | null = null
+  defaultView: unknown = null
+
+  createElement(tag: string): TestElement {
+    return new TestElement(tag, this)
+  }
+
+  createElementNS(_namespace: string, tag: string): TestElement {
+    return this.createElement(tag)
+  }
+
+  createTextNode(value: string): TestNode {
+    const node = new TestNode(3, this)
+    node.nodeValue = value
+    return node
+  }
+}
+
+describe('Sidebar static masthead ghost', () => {
+  let testDocument: TestDocument
+  let container: TestElement
+  let root: Root | null
+
+  function findByClass(node: TestNode, token: string): TestElement | null {
+    if (node instanceof TestElement && node.className.split(/\s+/).includes(token)) {
+      return node
+    }
+    for (const child of node.childNodes) {
+      const found = findByClass(child, token)
+      if (found) return found
+    }
+    return null
+  }
+
+  function findGhost(): TestElement {
+    const ghost = findByClass(container, 'sidebar-product-ghost')
+    if (!ghost) throw new Error('masthead ghost span missing from client render')
+    return ghost
+  }
+
+  async function renderClientSidebar(
+    chats: ChatRecord[],
+    options: RenderSidebarOptions = {}
+  ): Promise<void> {
+    await act(async () => {
+      root ??= createRoot(container as unknown as Element)
+      root.render(createSidebarElement(chats, options))
+    })
+  }
+
+  beforeEach(() => {
+    stubSidebarStorage({})
+    testDocument = new TestDocument()
+    let nextRafHandle = 1
+    const rafHandles = new Map<number, ReturnType<typeof setTimeout>>()
+    const fakeWindow = Object.assign(new EventTarget(), {
+      document: testDocument,
+      HTMLElement: TestElement,
+      HTMLIFrameElement: TestElement,
+      // No preload bridge in tests: mount effects guard or catch its absence.
+      api: {},
+      innerWidth: 1280,
+      innerHeight: 800,
+      setInterval: globalThis.setInterval.bind(globalThis),
+      clearInterval: globalThis.clearInterval.bind(globalThis),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      requestAnimationFrame: (callback: () => void): number => {
+        const handle = nextRafHandle++
+        rafHandles.set(handle, globalThis.setTimeout(callback, 0))
+        return handle
+      },
+      cancelAnimationFrame: (handle: number): void => {
+        const timeout = rafHandles.get(handle)
+        if (timeout !== undefined) globalThis.clearTimeout(timeout)
+        rafHandles.delete(handle)
+      }
+    })
+    testDocument.defaultView = fakeWindow
+    vi.stubGlobal('window', fakeWindow)
+    vi.stubGlobal('document', testDocument)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    container = testDocument.createElement('div')
+    root = null
+  })
+
+  afterEach(() => {
+    act(() => root?.unmount())
+    root = null
+  })
+
+  it('retains the parsed ghost SVG node across unrelated Sidebar updates', async () => {
+    await renderClientSidebar([makeChat({ appChatId: 'chat-1', title: 'First thread' })])
+    const ghost = findGhost()
+    const parsedSvg = ghost.firstChild
+    expect(parsedSvg).not.toBeNull()
+    // Exact static markup, attributes and FX hooks are preserved.
+    expect(ghost.innerHTML).toBe(taskwraithGhostMonolineSvg)
+    expect(ghost.className).toBe('sidebar-product-ghost sidebar-product-ghost-monoline')
+    expect(ghost.getAttribute('aria-hidden')).toBe('true')
+
+    // Unrelated dynamic update: the chat list gains and renames threads.
+    await renderClientSidebar(
+      [
+        makeChat({ appChatId: 'chat-1', title: 'First thread (renamed)' }),
+        makeChat({ appChatId: 'chat-2', title: 'Second thread' })
+      ],
+      { activeChatId: 'chat-2' }
+    )
+
+    // Dynamic sidebar content followed the update ...
+    expect(container.textContent).toContain('First thread (renamed)')
+    expect(container.textContent).toContain('Second thread')
+    // ... while the ghost span and its parsed SVG child are the same nodes.
+    const ghostAfter = findGhost()
+    expect(ghostAfter).toBe(ghost)
+    expect(ghostAfter.firstChild).toBe(parsedSvg)
+    expect(ghostAfter.innerHTML).toBe(taskwraithGhostMonolineSvg)
+  })
+
+  it('keeps the same SVG node across repeated chat-list refreshes', async () => {
+    await renderClientSidebar([makeChat({ appChatId: 'chat-1', title: 'Thread' })])
+    const ghost = findGhost()
+    const parsedSvg = ghost.firstChild
+    expect(parsedSvg).not.toBeNull()
+    for (let tick = 0; tick < 5; tick++) {
+      await renderClientSidebar([makeChat({ appChatId: 'chat-1', title: `Thread rev ${tick}` })])
+    }
+    expect(findGhost()).toBe(ghost)
+    expect(findGhost().firstChild).toBe(parsedSvg)
+    expect(container.textContent).toContain('Thread rev 4')
   })
 })

@@ -1,0 +1,1959 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  HostThreadRecordPersistClient,
+  HostPersistenceDiagnostics,
+  copyHostPersistenceInput,
+  type HostPersistenceDiagnosticOptions,
+  type HostPersistenceObservation,
+  type HostThreadRecordPersistInput
+} from '../host/HostThreadRecordPersistCommand'
+import type { HostCommandReceipt } from '../../shared/hostProtocol'
+import {
+  HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES,
+  HostChatCompatibilityPersistence,
+  type HostChatCompatibilityPersistencePort
+} from './HostChatCompatibilityPersistence'
+import { HOST_MATERIALIZE_MIN_INTERVAL_MS } from './hostChatCompatibilityPolicy'
+import type { ChatRecord } from './types'
+
+function record(chatId: string, revision: number, content = `body-${revision}`): ChatRecord {
+  return {
+    appChatId: chatId,
+    scope: 'global',
+    chatKind: 'single',
+    provider: 'codex',
+    title: 'Compatibility checkpoint',
+    createdAt: 1,
+    updatedAt: revision,
+    persistenceRevision: revision,
+    archived: false,
+    workflowMode: 'normal',
+    messages: [
+      {
+        id: 'message-1',
+        role: 'assistant',
+        content,
+        timestamp: '2026-09-04T00:00:00.000Z'
+      }
+    ],
+    runs: []
+  }
+}
+
+function input(
+  chatId: string,
+  revision: number,
+  expectedRevision: number
+): HostThreadRecordPersistInput {
+  return { chatId, record: record(chatId, revision), expectedRevision }
+}
+
+function harness(overrides: Partial<HostChatCompatibilityPersistencePort> = {}) {
+  const enqueued: HostThreadRecordPersistInput[] = []
+  const port: HostChatCompatibilityPersistencePort = {
+    enqueue: vi.fn((entry) => {
+      enqueued.push(entry)
+    }),
+    drain: vi.fn(async () => {}),
+    drainAll: vi.fn(async () => {}),
+    ...overrides
+  }
+  return {
+    enqueued,
+    port,
+    persistence: new HostChatCompatibilityPersistence(port)
+  }
+}
+
+async function waitForLength(values: readonly unknown[], length: number): Promise<void> {
+  for (let attempt = 0; attempt < 20 && values.length < length; attempt += 1) {
+    await Promise.resolve()
+  }
+  expect(values).toHaveLength(length)
+}
+
+interface FakeTimer {
+  callback: () => void
+  delayMs: number
+  cleared: boolean
+  fired: boolean
+}
+
+/**
+ * The plain harness plus a fake interval clock and fake timers. `advance`
+ * moves the clock; `fire` runs the one armed wait; `armed` lists live waits.
+ */
+function timed(
+  options: { minIntervalMs?: number } & Partial<HostChatCompatibilityPersistencePort> = {}
+) {
+  const { minIntervalMs, ...overrides } = options
+  let now = 0
+  const timers: FakeTimer[] = []
+  const f = harness(overrides)
+  const persistence = new HostChatCompatibilityPersistence(f.port, {
+    ...(minIntervalMs !== undefined ? { minIntervalMs } : {}),
+    nowMs: () => now,
+    setTimer: (callback, delayMs) => {
+      const timer: FakeTimer = { callback, delayMs, cleared: false, fired: false }
+      timers.push(timer)
+      return timer as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimer: (timer) => {
+      ;(timer as unknown as FakeTimer).cleared = true
+    }
+  })
+  const armed = (): FakeTimer[] => timers.filter((timer) => !timer.cleared && !timer.fired)
+  return {
+    ...f,
+    persistence,
+    timers,
+    armed,
+    advance: (ms: number) => {
+      now += ms
+    },
+    fire: () => {
+      const [timer] = armed()
+      expect(timer).toBeDefined()
+      timer.fired = true
+      timer.callback()
+    }
+  }
+}
+
+/**
+ * White-box read of the pending entry's durability-fallback intent.
+ *
+ * Only for the limbs the interval cannot observe. `materializeSuccessor` reads
+ * the flag solely on a pending record that is waiting behind an in-flight
+ * submission, and a submission can only be created by materializing the
+ * pending record itself — so a lineage restored by a failed drain or rebased
+ * after a conflict is always next in line for a direct materialize, which
+ * spends the intent before the interval could ever consult it. The carry on
+ * those paths keeps the model consistent; this reads it so it cannot be
+ * dropped silently.
+ */
+function pendingIntent(
+  persistence: HostChatCompatibilityPersistence,
+  chatId: string
+): boolean | null {
+  const states = (
+    persistence as unknown as {
+      states: Map<string, { pending: { durabilityFallback: boolean } | null }>
+    }
+  ).states
+  return states.get(chatId)?.pending?.durabilityFallback ?? null
+}
+
+describe('HostChatCompatibilityPersistence', () => {
+  it('retains the latest full record by reference while preserving the first Host CAS base', () => {
+    const { enqueued, persistence } = harness()
+    const first = input('chat-1', 4, 3)
+    const latest = input('chat-1', 9, 8)
+
+    expect(persistence.stage(first)).toBe('staged')
+    expect(persistence.stage(latest)).toBe('replaced')
+    expect(persistence.snapshot().pendingChatIds).toEqual(['chat-1'])
+    expect(persistence.materialize('chat-1')).toBe(true)
+
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0]).toMatchObject({ chatId: 'chat-1', expectedRevision: 3 })
+    expect(enqueued[0].record).toBe(latest.record)
+    expect(enqueued[0].record.messages[0].content).toBe('body-9')
+  })
+
+  it('ignores duplicate and stale revisions without replacing the pending reference', () => {
+    const { enqueued, persistence } = harness()
+    const newest = input('chat-1', 7, 3)
+
+    expect(persistence.stage(newest)).toBe('staged')
+    expect(persistence.stage(input('chat-1', 7, 6))).toBe('duplicate')
+    expect(persistence.stage(input('chat-1', 6, 5))).toBe('stale')
+    persistence.materialize('chat-1')
+
+    expect(enqueued).toHaveLength(1)
+    expect(enqueued[0].record).toBe(newest.record)
+  })
+
+  it('materializes at most one unconfirmed checkpoint per chat', () => {
+    const { enqueued, persistence } = harness()
+    persistence.stage(input('chat-1', 4, 3))
+
+    expect(persistence.materialize('chat-1')).toBe(true)
+    expect(persistence.materialize('chat-1')).toBe(false)
+    expect(enqueued).toHaveLength(1)
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: ['chat-1']
+    })
+  })
+
+  it('shares equal-target barriers and performs one enqueue plus one drain', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { enqueued, port, persistence } = harness({ drain: vi.fn(() => held) })
+    persistence.stage(input('chat-1', 4, 3))
+
+    const first = persistence.barrier('chat-1')
+    const second = persistence.barrier('chat-1')
+    expect(second).toBe(first)
+    await Promise.resolve()
+    expect(enqueued).toHaveLength(1)
+
+    release()
+    await first
+    expect(port.drain).toHaveBeenCalledTimes(1)
+    expect(persistence.snapshot().submittedChatIds).toEqual([])
+    await expect(persistence.barrier('chat-1')).resolves.toBeUndefined()
+    expect(port.drain).toHaveBeenCalledTimes(1)
+  })
+
+  it('chains a newer barrier behind an in-flight checkpoint without losing the latest record', async () => {
+    const releases: Array<() => void> = []
+    const drain = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve)
+        })
+    )
+    const { enqueued, persistence } = harness({ drain })
+    persistence.stage(input('chat-1', 4, 3))
+    const first = persistence.barrier('chat-1')
+    await waitForLength(releases, 1)
+
+    const latest = input('chat-1', 8, 7)
+    persistence.stage(latest)
+    const second = persistence.barrier('chat-1')
+    expect(second).not.toBe(first)
+    expect(enqueued).toHaveLength(1)
+
+    releases.shift()!()
+    await first
+    await waitForLength(releases, 1)
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(latest.record)
+    expect(enqueued[1].expectedRevision).toBe(7)
+
+    releases.shift()!()
+    await second
+    expect(drain).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores a failed submitted lineage beneath a newer pending record', async () => {
+    let reject!: (error: Error) => void
+    const failed = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise
+    })
+    const { enqueued, port, persistence } = harness({ drain: vi.fn(() => failed) })
+    persistence.stage(input('chat-1', 4, 3))
+    const first = persistence.barrier('chat-1')
+    await Promise.resolve()
+    const latest = input('chat-1', 9, 8)
+    persistence.stage(latest)
+
+    reject(new Error('Host unavailable'))
+    await expect(first).rejects.toThrow('Host unavailable')
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-1'],
+      submittedChatIds: []
+    })
+
+    vi.mocked(port.drain).mockResolvedValue(undefined)
+    await persistence.barrier('chat-1')
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(latest.record)
+    expect(enqueued[1].expectedRevision).toBe(3)
+  })
+
+  it('restores a record when injected enqueue throws synchronously', () => {
+    const enqueue = vi.fn(() => {
+      throw new Error('enqueue failed')
+    })
+    const { persistence } = harness({ enqueue })
+    persistence.stage(input('chat-1', 4, 3))
+
+    expect(() => persistence.materialize('chat-1')).toThrow('enqueue failed')
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-1'],
+      submittedChatIds: []
+    })
+  })
+
+  it('rebases a submitted lineage in place and discards a newer stale pending slot', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { enqueued, persistence } = harness({ drain: vi.fn(() => held) })
+    persistence.stage(input('chat-1', 7, 3))
+    const barrier = persistence.barrier('chat-1')
+    await Promise.resolve()
+    persistence.stage(input('chat-1', 8, 7))
+    const recovered = input('chat-1', 5, 4)
+
+    expect(persistence.rebase(recovered)).toBe(true)
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: ['chat-1']
+    })
+    expect(enqueued[0].record.persistenceRevision).toBe(7)
+
+    release()
+    await barrier
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+    expect(persistence.stage(input('chat-1', 6, 5))).toBe('staged')
+  })
+
+  it('rebases a failed-drain pending lineage for the next barrier', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const { enqueued, persistence } = harness({ drain })
+    persistence.stage(input('chat-1', 9, 3))
+    await expect(persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+
+    const recovered = input('chat-1', 5, 4)
+    expect(persistence.rebase(recovered)).toBe(true)
+    await persistence.barrier('chat-1')
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1]).toBe(recovered)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('discards only a pending record and never claims an enqueued record was cancelled', () => {
+    const { persistence } = harness()
+    persistence.stage(input('chat-pending', 4, 3))
+    expect(persistence.hasUnconfirmed('chat-pending')).toBe(true)
+    expect(persistence.discard('chat-pending')).toBe(true)
+    expect(persistence.hasUnconfirmed('chat-pending')).toBe(false)
+    expect(persistence.discard('chat-pending')).toBe(false)
+
+    persistence.stage(input('chat-submitted', 4, 3))
+    persistence.materialize('chat-submitted')
+    expect(persistence.discard('chat-submitted')).toBe(false)
+    expect(persistence.hasUnconfirmed('chat-submitted')).toBe(true)
+  })
+
+  it('releases a submitted slot on an exact or newer Host revision acknowledgement', () => {
+    const { persistence } = harness()
+    persistence.stage(input('chat-1', 7, 3))
+    persistence.materialize('chat-1')
+
+    expect(persistence.acknowledgeRevision('chat-1', 6)).toBe(false)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(true)
+    expect(persistence.acknowledgeRevision('chat-1', 9)).toBe(true)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+    expect(persistence.stage(input('chat-1', 10, 9))).toBe('staged')
+  })
+
+  it('materializes a requested terminal successor once its predecessor is acknowledged and the minimum interval has elapsed', () => {
+    const { enqueued, persistence, advance, timers } = timed()
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+    const terminal = input('chat-1', 7, 4)
+    persistence.stage(terminal)
+
+    expect(persistence.materialize('chat-1')).toBe(false)
+    expect(enqueued).toHaveLength(1)
+    advance(HOST_MATERIALIZE_MIN_INTERVAL_MS)
+    expect(persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(terminal.record)
+    expect(enqueued[1].expectedRevision).toBe(4)
+    expect(timers).toEqual([])
+  })
+
+  it('fences delete, discards pending work, drains submitted work, and is idempotent', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { enqueued, port, persistence } = harness({ drain: vi.fn(() => held) })
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+    persistence.stage(input('chat-1', 5, 4))
+
+    const first = persistence.prepareDelete('chat-1')
+    const second = persistence.prepareDelete('chat-1')
+    expect(second).toBe(first)
+    expect(persistence.stage(input('chat-1', 6, 5))).toBe('blocked')
+    expect(persistence.snapshot().pendingChatIds).toEqual([])
+
+    release()
+    await first
+    await expect(persistence.prepareDelete('chat-1')).resolves.toBeUndefined()
+    expect(enqueued).toHaveLength(1)
+    expect(port.drain).toHaveBeenCalledTimes(1)
+    expect(persistence.snapshot().deletingChatIds).toEqual(['chat-1'])
+  })
+
+  it('allows a failed delete preparation to be retried without restoring discarded work', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('drain failed'))
+      .mockResolvedValue(undefined)
+    const { persistence } = harness({ drain })
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+
+    await expect(persistence.prepareDelete('chat-1')).rejects.toThrow('drain failed')
+    expect(persistence.snapshot().pendingChatIds).toEqual([])
+    await expect(persistence.prepareDelete('chat-1')).resolves.toBeUndefined()
+    expect(drain).toHaveBeenCalledTimes(2)
+  })
+
+  it('materializes every chat once at shutdown and shares the shutdown promise', async () => {
+    const { enqueued, port, persistence } = harness()
+    const firstRecord = input('chat-b', 3, 2)
+    const latestRecord = input('chat-a', 7, 4)
+    persistence.stage(input('chat-a', 5, 4))
+    persistence.stage(latestRecord)
+    persistence.stage(firstRecord)
+
+    const first = persistence.shutdown()
+    const second = persistence.shutdown()
+    expect(second).toBe(first)
+    expect(persistence.stage(input('chat-c', 1, 0))).toBe('blocked')
+    await first
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued.find((entry) => entry.chatId === 'chat-a')?.record).toBe(latestRecord.record)
+    expect(enqueued.find((entry) => entry.chatId === 'chat-b')?.record).toBe(firstRecord.record)
+    expect(port.drainAll).toHaveBeenCalledTimes(1)
+    expect(persistence.snapshot()).toEqual({
+      pendingChatIds: [],
+      submittedChatIds: [],
+      deletingChatIds: [],
+      closing: true,
+      closed: true
+    })
+  })
+
+  it('waits for delete preparation before starting the all-chat shutdown drain', async () => {
+    let releaseDelete!: () => void
+    const heldDelete = new Promise<void>((resolve) => {
+      releaseDelete = resolve
+    })
+    const drainAll = vi.fn(async () => {})
+    const { port, persistence } = harness({
+      drain: vi.fn(() => heldDelete),
+      drainAll
+    })
+    persistence.stage(input('chat-delete', 4, 3))
+    persistence.materialize('chat-delete')
+    const deleting = persistence.prepareDelete('chat-delete')
+
+    const shutdown = persistence.shutdown()
+    await Promise.resolve()
+    expect(drainAll).not.toHaveBeenCalled()
+
+    releaseDelete()
+    await deleting
+    await shutdown
+    expect(port.drain).toHaveBeenCalledTimes(1)
+    expect(drainAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('drains a successor staged behind an unacknowledged checkpoint before closing', async () => {
+    const { enqueued, port, persistence } = harness()
+    persistence.stage(input('chat-1', 4, 3))
+    persistence.materialize('chat-1')
+    const latest = input('chat-1', 8, 4)
+    persistence.stage(latest)
+
+    await persistence.shutdown()
+
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(latest.record)
+    expect(port.drainAll).toHaveBeenCalledTimes(2)
+    expect(persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('restores every unconfirmed reference when the shutdown drain fails', async () => {
+    const { persistence } = harness({
+      drainAll: vi.fn().mockRejectedValue(new Error('Host stopped'))
+    })
+    const latest = input('chat-1', 6, 3)
+    persistence.stage(latest)
+
+    await expect(persistence.shutdown()).rejects.toThrow('Host stopped')
+    expect(persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-1'],
+      submittedChatIds: [],
+      closing: true,
+      closed: false
+    })
+  })
+
+  it('exposes only bounded coordination metadata, never retained record bodies', () => {
+    const { persistence } = harness()
+    persistence.stage(input('chat-secret', 4, 3))
+
+    const serialized = JSON.stringify(persistence.snapshot())
+    expect(serialized).toContain('chat-secret')
+    expect(serialized).not.toContain('body-4')
+    expect(serialized).not.toContain('messages')
+  })
+
+  it('rejects malformed identity and revision inputs before retaining them', () => {
+    const { persistence } = harness()
+    expect(() => persistence.stage({ ...input('chat-1', 4, 3), chatId: '' })).toThrow(/chat id/)
+    expect(() => persistence.stage({ ...input('chat-1', 4, 3), chatId: 'chat-2' })).toThrow(
+      /identity/
+    )
+    expect(() => persistence.stage({ ...input('chat-1', 4, 3), expectedRevision: -1 })).toThrow(
+      /expected revision/
+    )
+    expect(persistence.snapshot().pendingChatIds).toEqual([])
+  })
+})
+
+/**
+ * Minimum interval between chained checkpoints. A successor requested while
+ * its predecessor was in flight used to be enqueued the instant the
+ * predecessor settled or was acknowledged — paced only by the Host round
+ * trip, that re-published a 23 MB record every ~0.4 s on a streaming thread.
+ * Only the chained successor waits: barriers, delete and shutdown never do.
+ */
+describe('minimum interval between chained checkpoints', () => {
+  it('defaults to the policy interval and waits it out before chaining an acknowledged successor', () => {
+    const f = timed()
+    f.persistence.stage(input('chat-1', 4, 3))
+    expect(f.persistence.materialize('chat-1')).toBe(true)
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(10_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    // Before the interval the successor was enqueued right here.
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(HOST_MATERIALIZE_MIN_INTERVAL_MS - 10_000)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-1'],
+      submittedChatIds: []
+    })
+
+    f.advance(HOST_MATERIALIZE_MIN_INTERVAL_MS - 10_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: ['chat-1']
+    })
+  })
+
+  it('waits out the interval before chaining a successor left behind by a settled drain', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    // The barrier's target is the in-flight checkpoint; the successor arrives
+    // afterwards, so the drain settles it and the chain must hold it back.
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    release()
+    await barrier
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+
+    f.advance(25_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+  })
+
+  it('a barrier inside the interval materializes the successor at once and cancels the wait', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.barrier('chat-1')
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.port.drain).toHaveBeenCalledTimes(1)
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('shutdown inside the interval drains the successor at once', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.shutdown()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.port.drainAll).toHaveBeenCalled()
+    // The drain's own enqueue consumed the pending slot and cleared its wait.
+    expect(f.timers[0].cleared).toBe(true)
+    f.timers[0].callback()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.persistence.snapshot()).toMatchObject({ pendingChatIds: [], closed: true })
+  })
+
+  it('a successor acknowledged during the shutdown drain enqueues at once instead of parking behind the interval', async () => {
+    let releaseDrainAll!: () => void
+    const held = new Promise<void>((resolve) => {
+      releaseDrainAll = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drainAll: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+
+    const shutdown = f.persistence.shutdown()
+    await Promise.resolve()
+    expect(f.port.drainAll).toHaveBeenCalledTimes(1)
+    // The Host lands the predecessor while drainAll is still in flight, well
+    // inside the interval. Once shutdown has begun the chain must publish
+    // immediately: this is the one shutdown guard, and without it the
+    // successor parks behind a wait and the drain needs a second pass.
+    f.advance(5_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.armed()).toHaveLength(0)
+
+    releaseDrainAll()
+    await shutdown
+    expect(f.port.drainAll).toHaveBeenCalledTimes(1)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: [],
+      closed: true
+    })
+  })
+
+  it('shutdown fails loudly instead of spinning when a pending checkpoint can never be materialized', async () => {
+    // The drain yields a macrotask per pass, as a real Host round trip does,
+    // so an unbounded loop shows up as this test timing out rather than as a
+    // starved event loop that never reaches the timeout at all.
+    const f = timed({
+      minIntervalMs: 30_000,
+      drainAll: vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+    })
+    f.persistence.stage(input('chat-stuck', 4, 3))
+    // A future path that declines to materialize a pending checkpoint must
+    // not turn the drain loop into a hang.
+    vi.spyOn(f.persistence, 'materialize').mockReturnValue(false)
+
+    await expect(f.persistence.shutdown()).rejects.toThrow(
+      `no progress after ${HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES} drain passes; unconfirmed chats: chat-stuck`
+    )
+    expect(f.port.drainAll).toHaveBeenCalledTimes(HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES)
+    expect(f.enqueued).toHaveLength(0)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-stuck'],
+      closed: false
+    })
+  })
+
+  it('a journal-failure fallback successor enqueues the instant its predecessor is acknowledged', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    // The journal append failed for this save: the checkpoint is its only
+    // durability. Its immediate materialize can only latch behind the
+    // in-flight predecessor.
+    const fallback = input('chat-1', 7, 4)
+    expect(f.persistence.stage(fallback, { durabilityFallback: true })).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(fallback.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.timers).toEqual([])
+  })
+
+  it('an ordinary successor in the same shape still waits out the interval', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const ordinary = input('chat-1', 7, 4)
+    expect(f.persistence.stage(ordinary, { durabilityFallback: false })).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+  })
+
+  it('the fallback intent survives replacement, an ordinary duplicate and a failed enqueue until it is published', () => {
+    const published: HostThreadRecordPersistInput[] = []
+    const enqueue = vi.fn((entry: HostThreadRecordPersistInput) => {
+      published.push(entry)
+    })
+    const f = timed({ minIntervalMs: 30_000, enqueue })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4), { durabilityFallback: true })
+    // Later ordinary saves replace the pending record, and an ordinary
+    // repeated revision is a duplicate that neither adds nor clears intent.
+    // The replacing record contains the failed save's state, so the intent
+    // stays with the slot.
+    expect(f.persistence.stage(input('chat-1', 9, 7))).toBe('replaced')
+    expect(f.persistence.stage(input('chat-1', 9, 8))).toBe('duplicate')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    // The first publish attempt fails at the port and restores the entry.
+    enqueue.mockImplementationOnce(() => {
+      throw new Error('lane closed')
+    })
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(published).toHaveLength(1)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.snapshot().pendingChatIds).toEqual(['chat-1'])
+
+    // The restored fallback lineage still skips the interval when chained
+    // again: settle a fresh predecessor and acknowledge it inside the window.
+    f.persistence.stage(input('chat-1', 10, 9))
+    f.advance(30_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(false)
+    expect(f.persistence.materialize('chat-1')).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(published[1].record.persistenceRevision).toBe(10)
+    expect(published[1].expectedRevision).toBe(4)
+    // Once published the intent is spent: the next successor waits again.
+    f.persistence.stage(input('chat-1', 12, 10))
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(1_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 10)).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(f.armed()).toHaveLength(1)
+  })
+
+  it('delete preparation inside the interval cancels the wait; a late fire enqueues nothing', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.prepareDelete('chat-1')
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    f.advance(60_000)
+    f.timers[0].callback()
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.persistence.snapshot().deletingChatIds).toEqual(['chat-1'])
+  })
+
+  it('discarding the pending successor cancels the wait', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+
+    expect(f.persistence.discard('chat-1')).toBe(true)
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('a materialize attempt that finds a submission in flight does not restart the clock', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.advance(20_000)
+    // Latched, not enqueued: had this stamped the clock, the successor below
+    // would wait until 50 s instead of publishing at 30 s.
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(10_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.armed()).toHaveLength(0)
+  })
+
+  it('a barrier enqueue restarts the clock for the next chained successor', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    f.advance(10_000)
+    f.persistence.stage(input('chat-1', 7, 4))
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    expect(f.enqueued).toHaveLength(2)
+    f.advance(2_000)
+    f.persistence.stage(input('chat-1', 9, 7))
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+
+    release()
+    await barrier
+    expect(f.enqueued).toHaveLength(2)
+    // Measured from the barrier's enqueue at 10 s, not the first one at 0 s.
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(28_000)
+  })
+
+  it('arms one wait per chat and re-reads the clock when it fires', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(false)
+    expect(f.armed()).toHaveLength(1)
+
+    // A wait that fires before the clock has moved re-arms for the remainder.
+    f.fire()
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+
+    f.advance(25_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.armed()).toHaveLength(0)
+  })
+
+  it('an interval of 0 restores the immediate chain', () => {
+    const f = timed({ minIntervalMs: 0 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.timers).toEqual([])
+  })
+
+  it('a duplicate-revision restage carrying the fallback intent makes the waiting successor publish at once', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const ordinary = input('chat-1', 7, 4)
+    expect(f.persistence.stage(ordinary)).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    // A retried save at the pending revision failed its journal append. Its
+    // state is exactly the pending record's, so that entry inherits the
+    // intent even though the reference is not replaced.
+    expect(f.persistence.stage(input('chat-1', 7, 6), { durabilityFallback: true })).toBe(
+      'duplicate'
+    )
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(ordinary.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.timers).toEqual([])
+  })
+
+  it('an ordinary duplicate-revision restage leaves the waiting successor on the interval', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    expect(f.persistence.stage(input('chat-1', 7, 4))).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    expect(f.persistence.stage(input('chat-1', 7, 6))).toBe('duplicate')
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+  })
+
+  it.each([
+    ['the failed submission', true, false],
+    ['the newer pending record', false, true]
+  ])(
+    'a failed drain merges the fallback intent from %s onto the restored pending lineage',
+    async (_side, onSubmitted, onPending) => {
+      let reject!: (error: Error) => void
+      const failed = new Promise<void>((_resolve, rejectPromise) => {
+        reject = rejectPromise
+      })
+      const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => failed) })
+      f.persistence.stage(input('chat-1', 4, 3), { durabilityFallback: onSubmitted })
+      const barrier = f.persistence.barrier('chat-1')
+      await Promise.resolve()
+      expect(f.enqueued).toHaveLength(1)
+      const newer = input('chat-1', 9, 8)
+      expect(f.persistence.stage(newer, { durabilityFallback: onPending })).toBe('staged')
+
+      reject(new Error('Host unavailable'))
+      await expect(barrier).rejects.toThrow('Host unavailable')
+      expect(f.persistence.snapshot()).toMatchObject({
+        pendingChatIds: ['chat-1'],
+        submittedChatIds: []
+      })
+      // The merged entry keeps whichever side carried the intent (see
+      // pendingIntent for why the interval cannot observe this), the newest
+      // body, and the failed entry's CAS base.
+      expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+      vi.mocked(f.port.drain).mockResolvedValue(undefined)
+      await f.persistence.barrier('chat-1')
+      expect(f.enqueued).toHaveLength(2)
+      expect(f.enqueued[1].record).toBe(newer.record)
+      expect(f.enqueued[1].expectedRevision).toBe(3)
+    }
+  )
+
+  it('a failed drain with no intent on either side restores an ordinary lineage', async () => {
+    let reject!: (error: Error) => void
+    const failed = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => failed) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    expect(f.persistence.stage(input('chat-1', 9, 8))).toBe('staged')
+
+    reject(new Error('Host unavailable'))
+    await expect(barrier).rejects.toThrow('Host unavailable')
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(false)
+  })
+
+  it('a pending-branch rebase carries the fallback intent to the recovered record', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const f = timed({ minIntervalMs: 30_000, drain })
+    f.persistence.stage(input('chat-1', 9, 3), { durabilityFallback: true })
+    await expect(f.persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+    // Host CAS recovery rebases the restored (not in-flight) lineage: the
+    // recovered record replaces the body and CAS base, the intent stays.
+    const recovered = input('chat-1', 5, 4)
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+    await f.persistence.barrier('chat-1')
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1]).toBe(recovered)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('a pending-branch rebase of an ordinary lineage stays ordinary', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const f = timed({ minIntervalMs: 30_000, drain })
+    f.persistence.stage(input('chat-1', 9, 3))
+    await expect(f.persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+    expect(f.persistence.rebase(input('chat-1', 5, 4))).toBe(true)
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(false)
+  })
+})
+
+/**
+ * Equivalence with the pre-interval coordinator. The walk below was run
+ * against the coordinator BEFORE the interval existed (HEAD e55a8c75d) and its
+ * event log recorded verbatim; the same walk must reproduce that log exactly
+ * whenever the interval cannot bite. The walk contains both chained-successor
+ * shapes, which is what makes the golden evidence rather than decoration.
+ */
+describe('pre-interval walk equivalence', () => {
+  const PRE_INTERVAL_WALK = [
+    'stage c1 4/3 -> "staged" P=c1 S=',
+    'enqueue c1 rev=4 expected=3',
+    'materialize c1 -> true P= S=c1',
+    'stage c1 7/4 -> "staged" P=c1 S=c1',
+    'materialize c1 (latched) -> false P=c1 S=c1',
+    'enqueue c1 rev=7 expected=4',
+    'ack c1 4 -> true P= S=c1',
+    'stage c1 7/6 duplicate -> "duplicate" P= S=c1',
+    'stage c1 6/5 stale -> "stale" P= S=c1',
+    'stage c1 9/7 -> "staged" P=c1 S=c1',
+    'barrier c1 #1 requested -> "pending" P=c1 S=c1',
+    'drain c1',
+    'release barrier1 drain 1 ok',
+    'enqueue c1 rev=9 expected=7',
+    'drain c1',
+    'release barrier1 drain 2 ok',
+    'barrier c1 #1 resolved -> false P= S=',
+    'stage c1 12/9 -> "staged" P=c1 S=',
+    'enqueue c1 rev=12 expected=9',
+    'materialize c1 -> true P= S=c1',
+    'barrier c1 #2 requested -> "pending" P= S=c1',
+    'drain c1',
+    'stage c1 14/12 while draining -> "staged" P=c1 S=c1',
+    'materialize c1 (latched) -> false P=c1 S=c1',
+    'release barrier2 drain ok',
+    'enqueue c1 rev=14 expected=12',
+    'barrier c1 #2 resolved -> true P= S=c1',
+    'ack c1 20 (nothing submitted) -> true P= S=',
+    'stage c1 21/20 -> "staged" P=c1 S=',
+    'rebase c1 pending 21/19 -> true P=c1 S=',
+    'enqueue c1 rev=21 expected=19',
+    'materialize c1 -> true P= S=c1',
+    'stage c1 23/21 -> "staged" P=c1 S=c1',
+    'rebase c1 submitted 22/20 -> true P= S=c1',
+    'ack c1 22 -> true P= S=',
+    'stage c2 4/3 -> "staged" P=c2 S=',
+    'discard c2 -> true P= S=',
+    'stage c2 5/4 -> "staged" P=c2 S=',
+    'enqueue c2 rev=5 expected=4',
+    'materialize c2 -> true P= S=c2',
+    'stage c2 6/5 -> "staged" P=c2 S=c2',
+    'materialize c2 (latched) -> false P=c2 S=c2',
+    'prepareDelete c2 requested -> "pending" P= S=c2',
+    'drain c2',
+    'release delete drain ok',
+    'prepareDelete c2 resolved -> ["c2"] P= S=',
+    'stage c2 7/6 blocked -> "blocked" P= S=',
+    'stage c3 4/3 -> "staged" P=c3 S=',
+    'enqueue c3 rev=4 expected=3',
+    'materialize c3 -> true P= S=c3',
+    'stage c3 8/4 -> "staged" P=c3 S=c3',
+    'materialize c3 (latched) -> false P=c3 S=c3',
+    'drainAll',
+    'enqueue c3 rev=8 expected=4',
+    'drainAll',
+    'shutdown resolved -> {"pendingChatIds":[],"submittedChatIds":[],"deletingChatIds":["c2"],"closing":true,"closed":true} P= S='
+  ]
+
+  async function tick(times = 6): Promise<void> {
+    for (let index = 0; index < times; index += 1) await Promise.resolve()
+  }
+
+  /** Verbatim copy of the walk the golden was captured with. Do not edit. */
+  async function compatibilityWalk(
+    create: (port: HostChatCompatibilityPersistencePort) => HostChatCompatibilityPersistence
+  ): Promise<string[]> {
+    const log: string[] = []
+    const releases: Array<() => void> = []
+    const port: HostChatCompatibilityPersistencePort = {
+      enqueue: (entry) => {
+        log.push(
+          `enqueue ${entry.chatId} rev=${entry.record.persistenceRevision} expected=${entry.expectedRevision}`
+        )
+      },
+      drain: (chatId) => {
+        log.push(`drain ${chatId}`)
+        return new Promise<void>((resolve) => {
+          releases.push(resolve)
+        })
+      },
+      drainAll: async () => {
+        log.push('drainAll')
+      }
+    }
+    const persistence = create(port)
+    const step = (label: string, result: unknown): void => {
+      const snap = persistence.snapshot()
+      log.push(
+        `${label} -> ${JSON.stringify(result)} P=${snap.pendingChatIds.join(',')} S=${snap.submittedChatIds.join(',')}`
+      )
+    }
+    const release = async (label: string): Promise<void> => {
+      const next = releases.shift()
+      log.push(`release ${label} ${next ? 'ok' : 'NONE'}`)
+      next?.()
+      await tick()
+    }
+
+    // Shape 1: acknowledge-driven successor.
+    step('stage c1 4/3', persistence.stage(input('c1', 4, 3)))
+    step('materialize c1', persistence.materialize('c1'))
+    step('stage c1 7/4', persistence.stage(input('c1', 7, 4)))
+    step('materialize c1 (latched)', persistence.materialize('c1'))
+    step('ack c1 4', persistence.acknowledgeRevision('c1', 4))
+    step('stage c1 7/6 duplicate', persistence.stage(input('c1', 7, 6)))
+    step('stage c1 6/5 stale', persistence.stage(input('c1', 6, 5)))
+
+    // Barrier over the in-flight successor plus a newer pending record.
+    step('stage c1 9/7', persistence.stage(input('c1', 9, 7)))
+    const barrier1 = persistence.barrier('c1')
+    step('barrier c1 #1 requested', 'pending')
+    await tick()
+    await release('barrier1 drain 1')
+    await release('barrier1 drain 2')
+    await barrier1
+    step('barrier c1 #1 resolved', persistence.hasUnconfirmed('c1'))
+
+    // Shape 2: settle-driven successor whose target the barrier already covers.
+    step('stage c1 12/9', persistence.stage(input('c1', 12, 9)))
+    step('materialize c1', persistence.materialize('c1'))
+    const barrier2 = persistence.barrier('c1')
+    step('barrier c1 #2 requested', 'pending')
+    await tick()
+    step('stage c1 14/12 while draining', persistence.stage(input('c1', 14, 12)))
+    step('materialize c1 (latched)', persistence.materialize('c1'))
+    await release('barrier2 drain')
+    await barrier2
+    step('barrier c1 #2 resolved', persistence.hasUnconfirmed('c1'))
+
+    // Acknowledge with nothing submitted, then rebase paths.
+    step('ack c1 20 (nothing submitted)', persistence.acknowledgeRevision('c1', 20))
+    step('stage c1 21/20', persistence.stage(input('c1', 21, 20)))
+    step('rebase c1 pending 21/19', persistence.rebase(input('c1', 21, 19)))
+    step('materialize c1', persistence.materialize('c1'))
+    step('stage c1 23/21', persistence.stage(input('c1', 23, 21)))
+    step('rebase c1 submitted 22/20', persistence.rebase(input('c1', 22, 20)))
+    step('ack c1 22', persistence.acknowledgeRevision('c1', 22))
+
+    // Discard and delete.
+    step('stage c2 4/3', persistence.stage(input('c2', 4, 3)))
+    step('discard c2', persistence.discard('c2'))
+    step('stage c2 5/4', persistence.stage(input('c2', 5, 4)))
+    step('materialize c2', persistence.materialize('c2'))
+    step('stage c2 6/5', persistence.stage(input('c2', 6, 5)))
+    step('materialize c2 (latched)', persistence.materialize('c2'))
+    const deleting = persistence.prepareDelete('c2')
+    step('prepareDelete c2 requested', 'pending')
+    await tick()
+    await release('delete drain')
+    await deleting
+    step('prepareDelete c2 resolved', persistence.snapshot().deletingChatIds)
+    step('stage c2 7/6 blocked', persistence.stage(input('c2', 7, 6)))
+
+    // Shutdown with a pending successor behind a submission.
+    step('stage c3 4/3', persistence.stage(input('c3', 4, 3)))
+    step('materialize c3', persistence.materialize('c3'))
+    step('stage c3 8/4', persistence.stage(input('c3', 8, 4)))
+    step('materialize c3 (latched)', persistence.materialize('c3'))
+    await persistence.shutdown()
+    step('shutdown resolved', persistence.snapshot())
+    return log
+  }
+
+  const inertTimers = {
+    setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+    clearTimer: () => {}
+  }
+
+  it('the walk exercises both chained-successor shapes (precondition for the golden)', () => {
+    const ackChain = PRE_INTERVAL_WALK.indexOf('enqueue c1 rev=7 expected=4')
+    const ack = PRE_INTERVAL_WALK.indexOf('ack c1 4 -> true P= S=c1')
+    const settleChain = PRE_INTERVAL_WALK.indexOf('enqueue c1 rev=14 expected=12')
+    const settled = PRE_INTERVAL_WALK.indexOf('barrier c1 #2 resolved -> true P= S=c1')
+    expect(ackChain).toBeGreaterThan(0)
+    expect(ackChain).toBe(ack - 1)
+    expect(settleChain).toBeGreaterThan(0)
+    expect(settleChain).toBe(settled - 1)
+  })
+
+  it('reproduces the pre-interval walk exactly when the interval is disabled', async () => {
+    const log = await compatibilityWalk(
+      (port) => new HostChatCompatibilityPersistence(port, { minIntervalMs: 0, ...inertTimers })
+    )
+    expect(log).toEqual(PRE_INTERVAL_WALK)
+  })
+
+  it('reproduces the pre-interval walk exactly when every chain finds the interval elapsed', async () => {
+    let now = 0
+    const log = await compatibilityWalk(
+      (port) =>
+        new HostChatCompatibilityPersistence(port, {
+          minIntervalMs: 30_000,
+          nowMs: () => (now += 31_000),
+          ...inertTimers
+        })
+    )
+    expect(log).toEqual(PRE_INTERVAL_WALK)
+  })
+
+  it('holds both chained successors back on a frozen clock with the default interval', async () => {
+    const log = await compatibilityWalk(
+      (port) => new HostChatCompatibilityPersistence(port, { nowMs: () => 0, ...inertTimers })
+    )
+    const ack = log.findIndex((line) => line.startsWith('ack c1 4 ->'))
+    expect(ack).toBeGreaterThan(0)
+    expect(log.slice(0, ack + 1)).not.toContain('enqueue c1 rev=7 expected=4')
+    expect(log[ack]).toBe('ack c1 4 -> true P=c1 S=')
+  })
+})
+
+describe('compatibility persistence observations', () => {
+  function observed(
+    options: HostPersistenceDiagnosticOptions = {},
+    overrides: Partial<HostChatCompatibilityPersistencePort> = {}
+  ) {
+    const events: HostPersistenceObservation[] = []
+    const f = harness(overrides)
+    let id = 0
+    let time = 0
+    const persistence = new HostChatCompatibilityPersistence(f.port, {
+      observer: (event) => {
+        events.push(event)
+      },
+      diagnosticNowMs: () => time,
+      diagnosticCreateId: () => `barrier-${++id}`,
+      ...options
+    })
+    return {
+      ...f,
+      persistence,
+      events,
+      advance: (n: number) => {
+        time += n
+      }
+    }
+  }
+
+  it.each(['working', 'throwing-clock', 'throwing-sink', 'rejecting-sink'] as const)(
+    'preserves exact shared promise identity and one shared operation with %s diagnostics',
+    async (mode) => {
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const options: HostPersistenceDiagnosticOptions =
+        mode === 'throwing-clock'
+          ? {
+              diagnosticNowMs: () => {
+                throw new Error('clock')
+              }
+            }
+          : mode === 'throwing-sink'
+            ? {
+                observer: () => {
+                  throw new Error('sink')
+                }
+              }
+            : mode === 'rejecting-sink'
+              ? {
+                  observer: () => Promise.reject(new Error('sink'))
+                }
+              : {}
+      const f = observed(options, { drain: vi.fn(() => held) })
+      f.persistence.stage(input('C', 4, 3))
+      const first = f.persistence.barrier('C')
+      const second = f.persistence.barrier('C')
+      expect(second).toBe(first)
+      await Promise.resolve()
+      expect(f.enqueued).toHaveLength(1)
+      f.advance(12)
+      release()
+      await first
+      expect(f.port.drain).toHaveBeenCalledTimes(1)
+      if (mode === 'working' || mode === 'throwing-clock') {
+        const starts = f.events.filter(
+          (event) => event.phase === 'barrier' && event.outcome === 'started'
+        )
+        const ends = f.events.filter(
+          (event) => event.phase === 'barrier' && event.outcome === 'succeeded'
+        )
+        expect(starts).toHaveLength(1)
+        expect(ends).toHaveLength(1)
+        expect(ends[0].durationMs).toBe(mode === 'working' ? 12 : null)
+        expect(f.events.find((event) => event.phase === 'barrier_join')).toMatchObject({
+          outcome: 'joined',
+          relatedOperationId: starts[0].operationId
+        })
+      }
+    }
+  )
+
+  it('preserves newer-target chaining and records predecessor links without another caller wrapper', async () => {
+    const releases: Array<() => void> = []
+    const f = observed(
+      {},
+      {
+        drain: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releases.push(resolve)
+            })
+        )
+      }
+    )
+    f.persistence.stage(input('C', 4, 3))
+    const first = f.persistence.barrier('C')
+    await waitForLength(releases, 1)
+    f.advance(3)
+    const latest = input('C', 8, 7)
+    f.persistence.stage(latest)
+    const second = f.persistence.barrier('C')
+    expect(second).not.toBe(first)
+    expect(f.persistence.barrier('C')).toBe(second)
+    const barriers = f.events.filter(
+      (event) => event.phase === 'barrier' && event.outcome === 'started'
+    )
+    expect(barriers[1].relatedOperationId).toBe(barriers[0].operationId)
+    f.advance(7)
+    releases.shift()!()
+    await first
+    await waitForLength(releases, 1)
+    expect(f.enqueued[1].record).toBe(latest.record)
+    expect(f.enqueued[1].expectedRevision).toBe(7)
+    f.advance(10)
+    releases.shift()!()
+    await second
+    expect(
+      f.events
+        .filter((event) => event.phase === 'barrier' && event.outcome === 'succeeded')
+        .map((event) => event.durationMs)
+    ).toEqual([10, 17])
+  })
+
+  it('keeps rejection identity/order and restores the newest context with the first CAS base', async () => {
+    let reject!: (error: unknown) => void
+    const held = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise
+    })
+    const f = observed({}, { drain: vi.fn(() => held) })
+    f.persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    const first = f.persistence.barrier('C')
+    const joined = f.persistence.barrier('C')
+    expect(joined).toBe(first)
+    await Promise.resolve()
+    const latest = { ...input('C', 9, 8), diagnosticContext: { requestId: 'latest' } }
+    f.persistence.stage(latest)
+    const original = new Error('private error')
+    const order: string[] = []
+    const observer = first.catch((error) => {
+      expect(error).toBe(original)
+      order.push('rejected')
+    })
+    reject(original)
+    await observer
+    expect(order).toEqual(['rejected'])
+    expect(
+      f.events.filter((event) => event.phase === 'barrier' && event.outcome === 'failed')
+    ).toHaveLength(1)
+    vi.mocked(f.port.drain).mockResolvedValue(undefined)
+    await f.persistence.barrier('C')
+    expect(f.enqueued[1].record).toBe(latest.record)
+    expect(f.enqueued[1]).toMatchObject({
+      expectedRevision: 3,
+      diagnosticContext: { requestId: 'latest' }
+    })
+    expect(JSON.stringify(f.events)).not.toContain('private error')
+  })
+
+  it('restores identical record lineage after synchronous materialization failure', () => {
+    const original = new Error('enqueue')
+    const f = observed(
+      {},
+      {
+        enqueue: vi.fn(() => {
+          throw original
+        })
+      }
+    )
+    const entry = { ...input('C', 4, 3), diagnosticContext: { runId: 'R' } }
+    f.persistence.stage(entry)
+    expect(() => f.persistence.materialize('C')).toThrow(original)
+    expect(f.persistence.latestSequence('C')).toBe(1)
+    const retried: HostThreadRecordPersistInput[] = []
+    vi.mocked(f.port.enqueue).mockImplementation((value) => {
+      retried.push(value)
+    })
+    expect(f.persistence.materialize('C')).toBe(true)
+    expect(retried[0].record).toBe(entry.record)
+    expect(retried[0].diagnosticContext?.runId).toBe('R')
+    expect(
+      f.events
+        .filter((event) => event.phase === 'materialize' && event.outcome !== 'started')
+        .map((event) => event.outcome)
+    ).toEqual(['failed', 'succeeded'])
+  })
+
+  it('keeps rebased submitted entry identity and the latest absorbed context', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = observed({}, { drain: vi.fn(() => held) })
+    f.persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    const barrier = f.persistence.barrier('C')
+    await waitForLength(f.enqueued, 1)
+    f.persistence.stage({ ...input('C', 8, 7), diagnosticContext: { requestId: 'latest' } })
+    const recovered = input('C', 6, 5)
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    expect(f.events.find((event) => event.phase === 'rebase')).toMatchObject({
+      sequence: 2,
+      relatedSequence: 1,
+      context: { requestId: 'latest' },
+      expectedRevision: 5
+    })
+    release()
+    await barrier
+    expect(f.persistence.hasUnconfirmed('C')).toBe(false)
+    expect(f.port.enqueue).toHaveBeenCalledTimes(1)
+  })
+
+  it('distinguishes quiet and deleting barriers without a fictitious physical write', async () => {
+    const f = observed()
+    await f.persistence.barrier('quiet')
+    await f.persistence.prepareDelete('deleting')
+    await expect(f.persistence.barrier('deleting')).rejects.toThrow('deleting')
+    expect(f.events.map((event) => [event.phase, event.outcome])).toEqual([
+      ['barrier_quiet', 'skipped'],
+      ['barrier_rejected', 'failed']
+    ])
+    expect(f.port.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('does no diagnostic clock or ID work without an observer and retains untouched input', async () => {
+    const clock = vi.fn(() => 1)
+    const id = vi.fn(() => 'not-used')
+    const f = observed({ observer: undefined, diagnosticNowMs: clock, diagnosticCreateId: id })
+    const entry = input('C', 4, 3)
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: () => {
+        throw new Error('context')
+      }
+    })
+    f.persistence.stage(entry)
+    await f.persistence.barrier('C')
+    expect(f.enqueued[0]).toBe(entry)
+    expect(clock).not.toHaveBeenCalled()
+    expect(id).not.toHaveBeenCalled()
+    expect(f.events).toEqual([])
+  })
+
+  it('joins wrapper materialization to real client commands with bounded body-free context', async () => {
+    const events: HostPersistenceObservation[] = []
+    let commandId = 0
+    let diagnosticId = 0
+    const options = {
+      observer: (event: HostPersistenceObservation) => {
+        events.push(event)
+      },
+      diagnosticCreateId: () => `diag-${++diagnosticId}`
+    }
+    const client = new HostThreadRecordPersistClient({
+      ...options,
+      profilePath: '/unused',
+      transfer: {
+        publish: ({ transferId }) => ({ transferId, sha256: 'a'.repeat(64), byteLength: 42 }),
+        remove: () => true
+      },
+      createId: () => `id-${++commandId}`,
+      broker: {
+        submitCommand: async (command) => ({
+          ok: true,
+          receipt: {
+            type: 'host.receipt',
+            protocolVersion: command.protocolVersion,
+            commandId: command.commandId,
+            idempotencyKey: command.idempotencyKey,
+            name: command.name,
+            actor: command.actor,
+            status: 'succeeded'
+          } as HostCommandReceipt
+        }),
+        lookupReceipt: async () => ({ ok: false, error: 'unexpected' })
+      }
+    })
+    const persistence = new HostChatCompatibilityPersistence(client, options)
+    const latest = {
+      ...input('C', 9, 8),
+      diagnosticContext: { requestId: 'latest', roundId: 'round' }
+    }
+    persistence.stage({ ...input('C', 4, 3), diagnosticContext: { requestId: 'first' } })
+    persistence.stage(latest)
+    const first = persistence.barrier('C')
+    expect(persistence.barrier('C')).toBe(first)
+    await first
+    const materialize = events.find((event) => event.phase === 'materialize')!
+    const enqueue = events.find((event) => event.phase === 'enqueue')!
+    const persist = events.find((event) => event.phase === 'persist')!
+    const receipt = events.find((event) => event.phase === 'client_receipt_wait')!
+    expect(materialize).toMatchObject({
+      sequence: 2,
+      expectedRevision: 3,
+      parentOperationId: events.find((event) => event.phase === 'barrier')!.operationId
+    })
+    expect(enqueue.context).toMatchObject({
+      requestId: 'latest',
+      lineageId: materialize.operationId
+    })
+    expect(persist.parentOperationId).toBe(enqueue.operationId)
+    expect(receipt).toMatchObject({ parentOperationId: persist.operationId, commandId: 'id-2' })
+    expect(events.filter((event) => event.phase === 'stage')[1]).toMatchObject({
+      sequence: 2,
+      relatedSequence: 1
+    })
+    expect(JSON.stringify(events)).not.toContain('body-9')
+    expect(JSON.stringify(events)).not.toContain('messages')
+    expect(
+      events.filter((event) => event.phase === 'persist' && event.outcome === 'succeeded')
+    ).toHaveLength(1)
+  })
+})
+
+describe('diagnostic metadata containment', () => {
+  const modes = [
+    { wrapper: false, client: false },
+    { wrapper: false, client: true },
+    { wrapper: true, client: false },
+    { wrapper: true, client: true }
+  ]
+
+  function realPair(mode: (typeof modes)[number]) {
+    const events: HostPersistenceObservation[] = []
+    const enqueued: HostThreadRecordPersistInput[] = []
+    const published: HostThreadRecordPersistInput['record'][] = []
+    const revisions: number[] = []
+    const calls: string[] = []
+    let ids = 0
+    const observer = (event: HostPersistenceObservation) => {
+      events.push(event)
+    }
+    const client = new HostThreadRecordPersistClient({
+      profilePath: '/not-used',
+      ...(mode.client ? { observer } : {}),
+      createId: () => {
+        calls.push('id')
+        return `id-${++ids}`
+      },
+      nowMs: () => {
+        calls.push('now')
+        return 1
+      },
+      transfer: {
+        publish: ({ record, transferId }) => {
+          calls.push('publish')
+          published.push(record as HostThreadRecordPersistInput['record'])
+          return { transferId, sha256: 'a'.repeat(64), byteLength: 42 }
+        },
+        remove: () => true
+      },
+      broker: {
+        submitCommand: async (command) => {
+          calls.push('submit')
+          revisions.push(command.arguments.expectedRevision as number)
+          return {
+            ok: true,
+            receipt: {
+              type: 'host.receipt',
+              protocolVersion: command.protocolVersion,
+              commandId: command.commandId,
+              idempotencyKey: command.idempotencyKey,
+              name: command.name,
+              actor: command.actor,
+              status: 'succeeded'
+            } as HostCommandReceipt
+          }
+        },
+        lookupReceipt: async () => {
+          throw new Error('unexpected lookup')
+        }
+      }
+    })
+    const persistence = new HostChatCompatibilityPersistence(
+      {
+        enqueue: (entry) => {
+          enqueued.push(entry)
+          client.enqueue(entry)
+        },
+        drain: (chatId) => client.drain(chatId),
+        drainAll: () => client.drainAll()
+      },
+      mode.wrapper ? { observer } : {}
+    )
+    return { persistence, client, events, enqueued, published, revisions, calls }
+  }
+
+  it.each(modes)(
+    'never acknowledges an unsent checkpoint after a one-shot outer getter failure (%j)',
+    async (mode) => {
+      const f = realPair(mode)
+      const entry = input('C', 4, 3)
+      let reads = 0
+      Object.defineProperty(entry, 'diagnosticContext', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          if (reads === 2) throw new Error('one-shot materialize metadata')
+          return { runId: 'R' }
+        }
+      })
+      f.persistence.stage(entry)
+      let materializeError: unknown
+      try {
+        f.persistence.materialize('C')
+      } catch (error) {
+        materializeError = error
+      }
+      const barrier = f.persistence.barrier('C')
+      expect(f.persistence.barrier('C')).toBe(barrier)
+      await barrier
+      expect(f.enqueued).toHaveLength(1)
+      expect(f.published).toEqual([entry.record])
+      expect(f.published[0]).toBe(entry.record)
+      expect(f.calls).toEqual(['id', 'publish', 'id', 'now', 'submit'])
+      expect(materializeError).toBeUndefined()
+      expect(f.persistence.hasUnconfirmed('C')).toBe(false)
+      expect(f.client.pending('C')).toBe(0)
+      if (!mode.wrapper && !mode.client) expect(reads).toBe(0)
+    }
+  )
+
+  it.each(modes)(
+    'preserves latest replacement and original CAS with throwing outer metadata (%j)',
+    async (mode) => {
+      const f = realPair(mode)
+      const latest = input('C', 9, 8)
+      let reads = 0
+      Object.defineProperty(latest, 'diagnosticContext', {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          throw new Error('metadata')
+        }
+      })
+      f.persistence.stage(input('C', 4, 3))
+      expect(f.persistence.stage(latest)).toBe('replaced')
+      await f.persistence.barrier('C')
+      expect(f.published[0]).toBe(latest.record)
+      expect(f.revisions).toEqual([3])
+      if (!mode.wrapper && !mode.client) expect(reads).toBe(0)
+    }
+  )
+
+  it.each([false, true])(
+    'restores newest reference and first CAS while preserving the original drain Error (observer=%s)',
+    async (enabled) => {
+      let reject!: (error: unknown) => void
+      const held = new Promise<void>((_resolve, fail) => {
+        reject = fail
+      })
+      const enqueued: HostThreadRecordPersistInput[] = []
+      const port = {
+        enqueue: vi.fn((entry: HostThreadRecordPersistInput) => {
+          enqueued.push(entry)
+        }),
+        drain: vi.fn(() => held),
+        drainAll: vi.fn(async () => {})
+      }
+      const persistence = new HostChatCompatibilityPersistence(
+        port,
+        enabled ? { observer: () => {} } : {}
+      )
+      const latest = input('C', 9, 8)
+      let reads = 0
+      Object.defineProperty(latest, 'diagnosticContext', {
+        get: () => {
+          reads += 1
+          throw new Error('metadata')
+        }
+      })
+      persistence.stage(input('C', 4, 3))
+      const first = persistence.barrier('C')
+      expect(persistence.barrier('C')).toBe(first)
+      await waitForLength(enqueued, 1)
+      persistence.stage(latest)
+      const original = new Error('real drain failure')
+      const rejection = expect(first).rejects.toBe(original)
+      reject(original)
+      await rejection
+      expect(persistence.hasUnconfirmed('C')).toBe(true)
+      vi.mocked(port.drain).mockResolvedValue(undefined)
+      await persistence.barrier('C')
+      expect(enqueued[1].record).toBe(latest.record)
+      expect(enqueued[1].expectedRevision).toBe(3)
+      if (!enabled) expect(reads).toBe(0)
+    }
+  )
+
+  it.each([false, true])(
+    'rebases a submitted lineage with throwing old and new context getters (observer=%s)',
+    async (enabled) => {
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const port = { enqueue: vi.fn(), drain: vi.fn(() => held), drainAll: vi.fn(async () => {}) }
+      const persistence = new HostChatCompatibilityPersistence(
+        port,
+        enabled ? { observer: () => {} } : {}
+      )
+      let reads = 0
+      const first = input('C', 4, 3)
+      const recovered = input('C', 6, 5)
+      for (const entry of [first, recovered])
+        Object.defineProperty(entry, 'diagnosticContext', {
+          get: () => {
+            reads += 1
+            throw new Error('metadata')
+          }
+        })
+      persistence.stage(first)
+      const barrier = persistence.barrier('C')
+      await Promise.resolve()
+      expect(persistence.rebase(recovered)).toBe(true)
+      release()
+      await barrier
+      expect(port.enqueue).toHaveBeenCalledTimes(1)
+      expect(persistence.hasUnconfirmed('C')).toBe(false)
+      if (!enabled) expect(reads).toBe(0)
+    }
+  )
+
+  it('preserves lazy receiver-sensitive metadata from an unobserved wrapper to an observed client', async () => {
+    const f = realPair({ wrapper: false, client: true })
+    let reads = 0
+    const entry = Object.assign(input('C', 9, 8), { origin: 'receiver-run' })
+    Object.defineProperty(entry, 'diagnosticContext', {
+      get: function (this: typeof entry) {
+        reads += 1
+        return { runId: this.origin }
+      }
+    })
+    f.persistence.stage(input('C', 4, 3))
+    f.persistence.stage(entry)
+    expect(reads).toBe(0)
+    await f.persistence.barrier('C')
+    expect(f.events.find((event) => event.phase === 'persist')?.context?.runId).toBe('receiver-run')
+    expect(f.published[0]).toBe(entry.record)
+    expect(f.revisions).toEqual([3])
+  })
+
+  it('forwards metadata through repeated unobserved reconstruction without accessor chains', () => {
+    const source = Object.assign(input('C', 4, 3), { origin: 'R' })
+    let reads = 0
+    Object.defineProperty(source, 'diagnosticContext', {
+      get: function (this: typeof source) {
+        reads += 1
+        return { runId: this.origin }
+      }
+    })
+    let copied = copyHostPersistenceInput(source, { expectedRevision: 2 })
+    const get = Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get
+    for (let i = 0; i < 2000; i += 1)
+      copied = copyHostPersistenceInput(copied, { expectedRevision: 2 })
+    expect(reads).toBe(0)
+    expect(Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get).toBe(get)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'R' })
+    expect(reads).toBe(1)
+    expect(copied.record).toBe(source.record)
+  })
+
+  it('inherits structurally missing context across an unobserved rebase for a later observed consumer', () => {
+    const source = input('C', 4, 3)
+    let reads = 0
+    Object.defineProperty(source, 'diagnosticContext', {
+      get: () => {
+        reads += 1
+        return { roundId: 'round-preserved' }
+      }
+    })
+    const recovered = input('C', 9, 8)
+    const copied = copyHostPersistenceInput(recovered, { fallback: source, preserveInput: true })
+    expect(reads).toBe(0)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ roundId: 'round-preserved' })
+    expect(copied.record).toBe(recovered.record)
+    expect(copied.expectedRevision).toBe(8)
+  })
+
+  it('contains descriptor traps without reading optional values when no observer is installed', async () => {
+    const f = realPair({ wrapper: false, client: false })
+    const latest = new Proxy(input('C', 9, 8), {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('optional descriptor')
+      },
+      get(target, property, receiver) {
+        if (property === 'diagnosticContext') throw new Error('must not read')
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    f.persistence.stage(input('C', 4, 3))
+    expect(f.persistence.stage(latest)).toBe('replaced')
+    await f.persistence.barrier('C')
+    expect(f.published[0]).toBe(latest.record)
+    expect(f.revisions).toEqual([3])
+  })
+
+  it('does not evaluate unrelated enumerable getters during observed materialization or rebase', async () => {
+    const f = realPair({ wrapper: true, client: true })
+    const entry = input('C', 4, 3)
+    Object.defineProperty(entry, 'unrelated', {
+      enumerable: true,
+      get: () => {
+        throw new Error('unrelated')
+      }
+    })
+    f.persistence.stage(entry)
+    await f.persistence.barrier('C')
+    expect(f.calls.filter((call) => call === 'submit')).toHaveLength(1)
+  })
+
+  it('never substitutes the fallback when descriptor inspection is unavailable', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = Object.assign(input('C', 9, 8), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(recovered)).toEqual({ runId: 'NEW-RUN' })
+    expect(copyHostPersistenceInput(recovered, { fallback: older, preserveInput: true })).toBe(
+      recovered
+    )
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    expect(copied.record).toBe(target.record)
+    expect(copied.expectedRevision).toBe(8)
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+  })
+
+  it('never substitutes the fallback when a prototype walk is unavailable', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const base = Object.assign(
+      Object.create({ diagnosticContext: { runId: 'NEW-RUN' } }),
+      input('C', 9, 8)
+    ) as HostThreadRecordPersistInput
+    const recovered = new Proxy(base, {
+      getPrototypeOf: () => {
+        throw new Error('prototype trap')
+      }
+    })
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(copied.record).toBe(base.record)
+  })
+
+  it('never substitutes the fallback when the bounded prototype walk is exhausted', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    let chain: object = { diagnosticContext: { runId: 'NEW-RUN' } }
+    for (let depth = 0; depth < 40; depth += 1) chain = Object.create(chain)
+    const recovered = Object.assign(chain, input('C', 9, 8)) as HostThreadRecordPersistInput
+    const copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(copied.record).toBe(recovered.record)
+  })
+
+  it('carries unknown inspection through repeated copies without resurrecting the stale fallback', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = Object.assign(input('C', 9, 8), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    let copied = copyHostPersistenceInput(recovered, { fallback: older, expectedRevision: 8 })
+    const get = Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      copied = copyHostPersistenceInput(copied, { fallback: older, expectedRevision: 8 })
+    expect(Object.getOwnPropertyDescriptor(copied, 'diagnosticContext')!.get).toBe(get)
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toEqual({ runId: 'NEW-RUN' })
+    expect(JSON.stringify(diagnostics.contextFrom(copied))).not.toContain('OLD-RUN')
+  })
+
+  it('keeps unreadable unknown metadata uncorrelated on later copies instead of inheriting the fallback', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const target = input('C', 9, 8)
+    const unreadable = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      },
+      get(object, property, receiver) {
+        if (property === 'diagnosticContext') throw new Error('unreadable metadata')
+        return Reflect.get(object, property, receiver)
+      }
+    })
+    let copied = copyHostPersistenceInput(unreadable, { fallback: older, expectedRevision: 8 })
+    copied = copyHostPersistenceInput(copied, { fallback: older, expectedRevision: 8 })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    expect(diagnostics.contextFrom(copied)).toBeUndefined()
+    expect(copied.record).toBe(target.record)
+  })
+
+  it('does not substitute the fallback when an observed copy cannot read the outer context', () => {
+    const older = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    const recovered = input('C', 9, 8)
+    Object.defineProperty(recovered, 'diagnosticContext', {
+      get: () => {
+        throw new Error('unreadable metadata')
+      }
+    })
+    const diagnostics = new HostPersistenceDiagnostics('persist-client', { observer: () => {} })
+    const copied = copyHostPersistenceInput(recovered, {
+      diagnostics,
+      fallback: older,
+      lineageId: 'lineage-1'
+    })
+    expect(copied.diagnosticContext).toEqual({ lineageId: 'lineage-1' })
+    const inherited = copyHostPersistenceInput(input('C', 9, 8), { diagnostics, fallback: older })
+    expect(inherited.diagnosticContext).toEqual({ runId: 'OLD-RUN' })
+  })
+
+  it('emits rebased metadata instead of the stale fallback from an unobserved wrapper to an observed client', async () => {
+    const f = realPair({ wrapper: false, client: true })
+    const old = Object.assign(input('C', 4, 3), { diagnosticContext: { runId: 'OLD-RUN' } })
+    expect(f.persistence.stage(old)).toBe('staged')
+    const target = Object.assign(input('C', 9, 5), { diagnosticContext: { runId: 'NEW-RUN' } })
+    const recovered = new Proxy(target, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('descriptor trap')
+      }
+    })
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    await f.persistence.barrier('C')
+    expect(f.calls.filter((call) => call === 'submit')).toHaveLength(1)
+    expect(f.published[0]).toBe(target.record)
+    expect(f.revisions).toEqual([5])
+    const persisted = f.events.filter((event) => event.phase === 'persist')
+    expect(persisted.length).toBeGreaterThan(0)
+    for (const event of persisted) expect(event.context?.runId).toBe('NEW-RUN')
+    expect(JSON.stringify(f.events)).not.toContain('OLD-RUN')
+  })
+})

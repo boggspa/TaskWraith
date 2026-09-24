@@ -376,7 +376,7 @@ function buildReport(apps, opts) {
   return {
     schemaVersion: 1,
     harness: 'scripts/appdrive-interference',
-    prototype: 'prototypes/appdrive-background',
+    prototype: '.local-only/prototypes/appdrive-background',
     generatedAtMs: Date.now(),
     defaultDryRun: true,
     results,

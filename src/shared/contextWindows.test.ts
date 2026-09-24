@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveContextWindow } from './contextWindows'
+import { knownModelContextWindow, resolveContextWindow } from './contextWindows'
 
 interface ParsedEntry {
   key: string
@@ -22,9 +22,7 @@ function extractBlock(source: string, pattern: RegExp, label: string): string {
 
 function parseTypeScriptEntries(block: string, label: string): ParsedEntry[] {
   const entries = [
-    ...block.matchAll(
-      /^\s*(?:'([^']+)'|([A-Za-z0-9_-]+)):\s*([0-9_]+),?\s*(?:\/\/.*)?$/gm
-    )
+    ...block.matchAll(/^\s*(?:'([^']+)'|([A-Za-z0-9_-]+)):\s*([0-9_]+),?\s*(?:\/\/.*)?$/gm)
   ].map((match) => ({
     key: match[1] ?? match[2],
     value: Number(match[3].replaceAll('_', ''))
@@ -96,6 +94,22 @@ describe('ContextWindows.swift drift guard', () => {
 })
 
 describe('resolveContextWindow provider-specific Grok windows', () => {
+  it('keeps every Muse Spark route on the explicit conservative window', () => {
+    expect(resolveContextWindow('muse', 'muse-spark-1.3')).toBe(200_000)
+    expect(resolveContextWindow('muse', 'muse-spark-1.3-contributor')).toBe(200_000)
+    expect(resolveContextWindow('muse', 'muse-spark-1.2')).toBe(200_000)
+    expect(resolveContextWindow('muse', 'muse-spark-1.2-contributor')).toBe(200_000)
+  })
+
+  it('falls the Devin ACP seat back to its 262K provider window', () => {
+    expect(resolveContextWindow('devin', 'devin-1')).toBe(262_144)
+  })
+
+  it('uses Kimi K3 long-context window for the K3 (1M) model', () => {
+    expect(resolveContextWindow('kimi', 'kimi-k3')).toBe(1_048_576)
+    expect(resolveContextWindow('kimi', 'kimi-k3-256k')).toBe(262_144)
+  })
+
   it('uses the direct Grok 4.6 500K window', () => {
     expect(resolveContextWindow('grok', 'grok-4.6')).toBe(500_000)
   })
@@ -118,7 +132,39 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('cursor', 'grok-4.6', 384_000)).toBe(384_000)
   })
 
+  it('uses Astra capacity only until the runtime reports its working window', () => {
+    expect(resolveContextWindow('codex', 'gpt-6-astra')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-6-astra', 258_400)).toBe(258_400)
+  })
+
+  it.each(['gpt-6-sol', 'gpt-6-luna'])(
+    'carries the documented 1.05M window for %s on the table itself',
+    (modelId) => {
+      // The codex provider fallback is also 1_050_000, so `resolve` alone cannot
+      // tell a dropped row from a present one — pin the table entry directly.
+      expect(knownModelContextWindow(modelId)).toBe(1_050_000)
+      expect(resolveContextWindow('codex', modelId)).toBe(1_050_000)
+      expect(resolveContextWindow('codex', modelId, 258_400)).toBe(258_400)
+    }
+  )
+
   it('keeps live Ollama limits ahead of the global model table', () => {
     expect(resolveContextWindow('ollama', 'grok-4.5', undefined, 192_000)).toBe(192_000)
+  })
+
+  it('carries the 1M default window for Claude Opus 5.5 on its base id', () => {
+    // Pinned on the table itself as well as `resolve`: the Claude provider
+    // fallback is 200_000, so a dropped row would resolve to a plausible 200K
+    // window instead of failing loudly.
+    expect(knownModelContextWindow('claude-opus-5-5')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-opus-5-5')).toBe(1_000_000)
+    expect(knownModelContextWindow('claude-opus-5-5-1m')).toBeUndefined()
+  })
+
+  it('carries the 1M window for Pi Space Bunny Alpha on the table itself', () => {
+    // The Pi provider fallback is also 1_000_000, so `resolve` alone cannot
+    // tell a dropped row from a present one — pin the table entry directly.
+    expect(knownModelContextWindow('openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
+    expect(resolveContextWindow('pi', 'openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
   })
 })

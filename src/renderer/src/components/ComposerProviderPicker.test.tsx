@@ -67,7 +67,15 @@ describe('ComposerProviderPicker trigger', () => {
 
   it('applies every Pi upstream hue + label override from the active model', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const activeModelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      // Every catalogued OpenRouter route is claimed by a per-vendor override —
+      // `openrouter/stealth` was the last one without, until Union Alpha took
+      // that namespace on 2026-09-16 — so a startsWith search returns a model
+      // belonging to a DIFFERENT brand. The bare `openrouter` brand is now
+      // reachable only through a namespace no override claims.
+      const activeModelId =
+        upstream === 'openrouter'
+          ? 'openrouter/unclaimed-lab/some-model'
+          : Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(activeModelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       const html = renderTrigger({ provider: 'pi', activeModelId })
 
@@ -88,8 +96,7 @@ describe('resolveProviderRows (additive visibility + option order)', () => {
     )
     expect(providerRunUnavailableReason('claude')).toBeNull()
     expect(providerRunUnavailableReason('cursor')).toBeNull()
-    expect(providerRunUnavailableReason('antigravity')).toContain('consent or Gemini API setup')
-    expect(providerRunUnavailableReason('antigravity', ['antigravity'])).toBeNull()
+    expect(providerRunUnavailableReason('antigravity')).toBeNull()
   })
 
   it('offers every statically live provider when legacy readiness flags are false', () => {
@@ -164,7 +171,8 @@ describe('resolveProviderRows (additive visibility + option order)', () => {
       'ollama',
       'pi',
       'mistral',
-      'muse'
+      'muse',
+      'devin'
     ])
 
     expect(
@@ -217,19 +225,19 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('data-provider-value="pi"')
     expect(html).toContain('data-provider-value="mistral"')
     expect(html).toContain('data-provider-value="muse"')
+    expect(html).toContain('data-provider-value="devin"')
     // ...each with the shared rich-popover row chrome + a provider icon.
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
+    // Every live provider now renders its sourced brand logo: Devin gained its
+    // official mark on 2026-09-01 and Muse the vendored Meta mark on
+    // 2026-09-19 (47d0da5fc), so no row falls back to the TaskWraith glyph.
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      if (provider === 'muse') {
-        expect(html).toContain('provider-glyph-muse')
-        expect(html).not.toContain('data-provider-logo="muse"')
-      } else {
-        expect(html).toContain(`data-provider-logo="${provider}"`)
-        expect(html).not.toContain(`provider-glyph-${provider}`)
-      }
+      expect(html).toContain(`data-provider-logo="${provider}"`)
+      expect(html).not.toContain(`provider-glyph-${provider}`)
     }
+    expect(html).toContain('provider-logo-meta.png')
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).toContain('Claude')
   })

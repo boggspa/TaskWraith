@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
 import { EnsembleOrchestrator } from './EnsembleOrchestrator'
+import { applyChatTranscriptOps } from '../../shared/chatUpdateTransport'
+import { TranscriptTailBroadcaster } from '../TranscriptTailBroadcaster'
+import { ChatTranscriptStore } from '../../renderer/src/lib/chatTranscriptStore'
+import { applyTranscriptTailFrame } from '../../renderer/src/lib/transcriptTailApplier'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
 import type { AppSettings, ChatRecord, EnsembleParticipant } from '../store/types'
 
 describe('EnsembleChatFlushScheduler', () => {
@@ -106,6 +111,338 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     }
   }
 
+  function terminalFlushHarness(options: {
+    id: string
+    timeline: Array<Record<string, unknown>>
+    toolActivities?: Array<Record<string, unknown>>
+    mediaRefs?: Array<Record<string, unknown>>
+  }) {
+    const seat = participant(`participant-${options.id}`, 'codex', 'Writer', 1)
+    const runId = `run-${options.id}`
+    let chat: ChatRecord = {
+      appChatId: `chat-${options.id}`,
+      provider: 'codex',
+      title: 'Terminal transcript flush',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId,
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
+    }
+    const broadcaster = new TranscriptTailBroadcaster()
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => runId,
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z'
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      flushRun: (run: any, final?: boolean, reason?: string) => void
+    }
+    const run = {
+      runId,
+      chatId: chat.appChatId,
+      roundId: `round-${options.id}`,
+      participant: seat,
+      timeline: options.timeline,
+      content: '',
+      status: 'running',
+      toolActivities: options.toolActivities || [],
+      mediaRefs: options.mediaRefs
+    }
+    internal.runsByRunId.set(runId, run)
+    return {
+      broadcaster,
+      internal,
+      run,
+      get chat() {
+        return chat
+      }
+    }
+  }
+
+  it('streams one growing row from a long turn without falling back to history pages', () => {
+    vi.useFakeTimers()
+    const seat = participant('p1', 'codex', 'Writer', 1)
+    let chat: ChatRecord = {
+      appChatId: 'streaming-chat',
+      provider: 'codex',
+      title: 'Long transcript',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: Array.from({ length: 9_000 }, (_, index) => ({
+        id: `history-${index}`,
+        role: 'assistant' as const,
+        content: `Earlier message ${index}`,
+        timestamp: '2026-09-20T12:00:00.000Z'
+      })),
+      runs: [
+        {
+          runId: 'streaming-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
+    }
+    const broadcaster = new TranscriptTailBroadcaster()
+    const store = new ChatTranscriptStore()
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => 'streaming-run',
+      now: () => Date.now(),
+      nowIso: () => new Date().toISOString()
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      scheduleFlush: (run: any) => void
+      flushRun: (run: any, final?: boolean, reason?: string) => void
+    }
+    const run = {
+      runId: 'streaming-run',
+      chatId: chat.appChatId,
+      roundId: 'round-1',
+      participant: seat,
+      timeline: Array.from({ length: 19 }, (_, index) => ({
+        kind: 'content',
+        text: `Speech ${index}`
+      })),
+      content: 'Speech 19',
+      status: 'running',
+      toolActivities: []
+    }
+    internal.runsByRunId.set(run.runId, run)
+    internal.flushRun(run)
+    broadcaster.observe(chat)
+    const initialRows = chat.messages
+    store.ingestPage({
+      chatId: chat.appChatId,
+      messages: initialRows.slice(-100),
+      runs: [],
+      totalMessageCount: initialRows.length,
+      windowStart: initialRows.length - 100,
+      windowEnd: initialRows.length,
+      estimatedBytes: 1,
+      hasOlder: true,
+      hasNewer: false,
+      oldestMessageId: initialRows.at(-100)!.id,
+      newestMessageId: initialRows.at(-1)!.id,
+      updatedAt: 1
+    })
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      run.timeline.at(-1)!.text += ` token-${tick}`
+      internal.scheduleFlush(run)
+      vi.advanceTimersByTime(250)
+      const frame = broadcaster.observe(chat)
+      expect(frame?.kind).toBe('tail-update')
+      if (!frame || frame.kind !== 'tail-update') throw new Error('Stream left the fast path')
+      expect(frame.rows).toHaveLength(1)
+      expect(applyTranscriptTailFrame(frame, store).status).toBe('applied')
+      expect(store.get(chat.appChatId)?.messages.at(-1)?.content).toBe(run.timeline.at(-1)!.text)
+    }
+    expect(chat.messages[9_000]).toBe(initialRows[9_000])
+    const visibleBeforeAppend = store.get(chat.appChatId)!
+    run.timeline.push({ kind: 'content', text: 'Next speech' })
+    internal.scheduleFlush(run)
+    vi.advanceTimersByTime(250)
+    const appended = broadcaster.observe(chat)
+    expect(appended?.kind).toBe('tail-append')
+    if (!appended) throw new Error('Missing appended speech')
+    expect(applyTranscriptTailFrame(appended, store).status).toBe('applied')
+    expect(store.get(chat.appChatId)?.messages[0]).toBe(visibleBeforeAppend.messages[0])
+    expect(store.get(chat.appChatId)?.messages.at(-1)?.content).toBe('Next speech')
+
+    const contentRowsBeforeFinalization = chat.messages.slice(9_000)
+    expect(contentRowsBeforeFinalization).toHaveLength(20)
+    run.status = 'yielded'
+    internal.flushRun(run, true, 'Ready for the next participant.')
+    const finalized = broadcaster.observe(chat)
+    expect(finalized?.kind).toBe('tail-append')
+    if (!finalized || finalized.kind !== 'tail-append') {
+      throw new Error('Finalization left the append-only fast path')
+    }
+    expect(finalized.messages).toHaveLength(1)
+    expect(finalized.messages[0].metadata?.kind).toBe('ensembleParticipantStatus')
+    expect(finalized.messages[0].metadata?.ensembleStatus).toBe('yielded')
+    expect(applyTranscriptTailFrame(finalized, store).status).toBe('applied')
+    for (let index = 0; index < contentRowsBeforeFinalization.length; index += 1) {
+      expect(chat.messages[9_000 + index]).toBe(contentRowsBeforeFinalization[index])
+      expect(chat.messages[9_000 + index].metadata?.ensembleStatus).toBe('running')
+    }
+    expect(chat.runs[0].ensembleParticipantStatus).toBe('yielded')
+    expect(store.get(chat.appChatId)?.messages.at(-1)?.metadata?.ensembleStatus).toBe('yielded')
+    expect(broadcaster.counterSnapshot()).toMatchObject({
+      updates: 20,
+      appends: 2,
+      appendedRows: 2,
+      resyncs: 0,
+      updatesDeclined: 0
+    })
+  })
+
+  it('finalizes an answered run with more than eight content rows as a transcript no-op', () => {
+    const harness = terminalFlushHarness({
+      id: 'answered',
+      timeline: Array.from({ length: 12 }, (_, index) => ({
+        kind: 'content',
+        text: `Speech ${index}`
+      }))
+    })
+    harness.internal.flushRun(harness.run)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    const contentRows = harness.chat.messages
+
+    harness.run.status = 'answered'
+    harness.internal.flushRun(harness.run, true)
+
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(harness.chat.messages).toHaveLength(12)
+    for (let index = 0; index < contentRows.length; index += 1) {
+      expect(harness.chat.messages[index]).toBe(contentRows[index])
+      expect(harness.chat.messages[index].metadata?.ensembleStatus).toBe('running')
+    }
+    expect(harness.chat.runs[0].ensembleParticipantStatus).toBe('answered')
+
+    harness.internal.flushRun(harness.run, true)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(harness.broadcaster.counterSnapshot()).toMatchObject({
+      appends: 0,
+      updates: 0,
+      resyncs: 0,
+      updatesDeclined: 0
+    })
+  })
+
+  it.each(['yielded', 'failed', 'sleeping', 'skipped'] as const)(
+    'appends one %s coda and keeps repeated finalization transcript-idempotent',
+    (terminalStatus) => {
+      const harness = terminalFlushHarness({
+        id: terminalStatus,
+        timeline: Array.from({ length: 12 }, (_, index) => ({
+          kind: 'content',
+          text: `Speech ${index}`
+        }))
+      })
+      harness.internal.flushRun(harness.run)
+      expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+      const contentRows = harness.chat.messages
+
+      harness.run.status = terminalStatus
+      harness.internal.flushRun(harness.run, true, `${terminalStatus} reason`)
+      const finalized = harness.broadcaster.observe(harness.chat)
+
+      expect(finalized?.kind).toBe('tail-append')
+      if (!finalized || finalized.kind !== 'tail-append') {
+        throw new Error(`${terminalStatus} finalization left the append-only fast path`)
+      }
+      expect(finalized.messages).toHaveLength(1)
+      expect(finalized.messages[0].metadata).toMatchObject({
+        kind: 'ensembleParticipantStatus',
+        ensembleStatus: terminalStatus
+      })
+      for (let index = 0; index < contentRows.length; index += 1) {
+        expect(harness.chat.messages[index]).toBe(contentRows[index])
+        expect(harness.chat.messages[index].metadata?.ensembleStatus).toBe('running')
+      }
+      expect(harness.chat.runs[0].ensembleParticipantStatus).toBe(terminalStatus)
+
+      harness.internal.flushRun(harness.run, true, `${terminalStatus} reason`)
+      expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.metadata?.kind === 'ensembleParticipantStatus'
+        )
+      ).toHaveLength(1)
+      expect(harness.broadcaster.counterSnapshot()).toMatchObject({
+        appends: 1,
+        appendedRows: 1,
+        resyncs: 0,
+        updatesDeclined: 0
+      })
+    }
+  )
+
+  it('preserves a tool-only media carrier status when terminal closeout appends its coda', () => {
+    const harness = terminalFlushHarness({
+      id: 'tool-only-carrier',
+      timeline: [{ kind: 'tool', toolId: 'tool-1' }],
+      toolActivities: [{ id: 'tool-1', toolName: 'transcode_video', status: 'completed' }],
+      mediaRefs: [
+        {
+          id: 'run-tool-only-carrier:produced-video:abc123',
+          kind: 'video',
+          format: 'container',
+          source: 'generated',
+          name: 'produced.mp4',
+          mimeType: 'video/mp4',
+          sha256: 'abc123',
+          status: 'available'
+        }
+      ]
+    })
+    harness.internal.flushRun(harness.run)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    const carrier = harness.chat.messages.find(
+      (message) => message.role === 'assistant' && message.metadata?.kind === 'ensembleParticipant'
+    )
+    expect(carrier?.content).toBe('')
+    expect(carrier?.metadata?.ensembleStatus).toBe('running')
+
+    harness.run.status = 'yielded'
+    harness.internal.flushRun(harness.run, true, 'Producer work complete')
+    const finalized = harness.broadcaster.observe(harness.chat)
+
+    expect(finalized?.kind).toBe('tail-append')
+    expect(
+      harness.chat.messages.find(
+        (message) =>
+          message.role === 'assistant' && message.metadata?.kind === 'ensembleParticipant'
+      )
+    ).toBe(carrier)
+    expect(carrier?.metadata?.ensembleStatus).toBe('running')
+    expect(finalized?.kind === 'tail-append' ? finalized.messages : []).toHaveLength(1)
+
+    harness.internal.flushRun(harness.run, true, 'Producer work complete')
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(
+      harness.chat.messages.filter(
+        (message) => message.metadata?.kind === 'ensembleParticipantStatus'
+      )
+    ).toHaveLength(1)
+  })
+
   it('batches N lane scheduleFlush calls into one saveChat after 250ms', () => {
     vi.useFakeTimers()
     const participants = [
@@ -152,9 +489,13 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
         }
       }
     }
-    const saveChat = vi.fn((next: ChatRecord) => {
-      chat = next
-    })
+    let savedTranscriptMutation: AuthoredChatTranscriptMutation | undefined
+    const saveChat = vi.fn(
+      (next: ChatRecord, options?: { authoredTranscript?: AuthoredChatTranscriptMutation }) => {
+        savedTranscriptMutation = options?.authoredTranscript
+        chat = next
+      }
+    )
     const orchestrator = new EnsembleOrchestrator({
       getChat: () => chat,
       saveChat,
@@ -178,13 +519,17 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     const internal = orchestrator as unknown as {
       runsByRunId: Map<string, any>
       scheduleFlush: (run: any) => void
+      flushRun: (run: any) => void
     }
+    const runs: any[] = []
     for (let i = 0; i < participants.length; i += 1) {
       const runId = `run-${i + 1}`
       const run = {
         runId,
         chatId: 'ensemble-chat',
         roundId: 'round-1',
+        laneId: `lane-${i + 1}`,
+        fanoutWaveId: 'wave-1',
         participant: participants[i],
         timeline: [{ kind: 'content', text: `lane-${i + 1}` }],
         content: `lane-${i + 1}`,
@@ -192,8 +537,11 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
         toolActivities: []
       }
       internal.runsByRunId.set(runId, run)
-      internal.scheduleFlush(run)
+      runs.push(run)
     }
+    // Higher-order lane arrives first. The later low-order lanes must slot in
+    // ahead of it without degrading the producer batch to a transcript diff.
+    for (const index of [2, 0, 1]) internal.scheduleFlush(runs[index])
 
     expect(saveChat).not.toHaveBeenCalled()
     vi.advanceTimersByTime(250)
@@ -201,5 +549,198 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     expect(chat.messages.some((m) => String(m.content).includes('lane-1'))).toBe(true)
     expect(chat.messages.some((m) => String(m.content).includes('lane-2'))).toBe(true)
     expect(chat.messages.some((m) => String(m.content).includes('lane-3'))).toBe(true)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'append',
+      'insertBefore',
+      'insertBefore'
+    ])
+    expect(applyChatTranscriptOps([], savedTranscriptMutation?.transcriptOps || [])).toEqual(
+      chat.messages
+    )
+    expect(chat.messages.map((message) => message.metadata?.ensembleParticipantId)).toEqual([
+      'p1',
+      'p2',
+      'p3'
+    ])
+
+    const firstFlushMessages = chat.messages
+    runs[0].timeline = [{ kind: 'content', text: 'lane-1 updated' }]
+    runs[0].content = 'lane-1 updated'
+    runs[2].timeline = []
+    runs[2].content = ''
+    internal.scheduleFlush(runs[0])
+    internal.scheduleFlush(runs[2])
+    vi.advanceTimersByTime(250)
+
+    expect(saveChat).toHaveBeenCalledTimes(2)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'update',
+      'delete'
+    ])
+    expect(
+      applyChatTranscriptOps(firstFlushMessages, savedTranscriptMutation?.transcriptOps || [])
+    ).toEqual(chat.messages)
+    expect(chat.messages.map((message) => message.metadata?.ensembleParticipantId)).toEqual([
+      'p1',
+      'p2'
+    ])
+
+    const beforeSingleFlush = chat.messages
+    runs[1].timeline = [{ kind: 'content', text: 'lane-2 updated alone' }]
+    runs[1].content = 'lane-2 updated alone'
+    internal.flushRun(runs[1])
+
+    expect(saveChat).toHaveBeenCalledTimes(3)
+    expect(savedTranscriptMutation?.transcriptOps?.map((operation) => operation.op)).toEqual([
+      'update'
+    ])
+    expect(
+      applyChatTranscriptOps(beforeSingleFlush, savedTranscriptMutation?.transcriptOps || [])
+    ).toEqual(chat.messages)
+  })
+
+  it('broadcasts streamed rows on the 40ms tail timer before the 250ms save flush', () => {
+    vi.useFakeTimers()
+    const seat = participant('p1', 'codex', 'Writer', 1)
+    const broadcastTranscriptTail = vi.fn()
+    let chat: ChatRecord = {
+      appChatId: 'fast-tail-chat',
+      provider: 'codex',
+      title: 'Fast tail lane',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'fast-tail-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [seat],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Stream',
+          startedAt: '2026-09-21T09:00:00.000Z',
+          endedAt: undefined,
+          participants: []
+        }
+      }
+    }
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => 'fast-tail-run',
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z',
+      broadcastTranscriptTail
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      scheduleFlush: (run: any) => void
+    }
+    const run = {
+      runId: 'fast-tail-run',
+      chatId: chat.appChatId,
+      roundId: 'round-1',
+      participant: seat,
+      timeline: [{ kind: 'content', text: 'hello stream' }],
+      content: 'hello stream',
+      status: 'running',
+      toolActivities: []
+    }
+    internal.runsByRunId.set('fast-tail-run', run)
+
+    internal.scheduleFlush(run)
+    vi.advanceTimersByTime(39)
+    expect(broadcastTranscriptTail).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(broadcastTranscriptTail).toHaveBeenCalledTimes(1)
+    const projected = broadcastTranscriptTail.mock.calls[0][0] as ChatRecord
+    expect(projected.messages.map((message) => message.content)).toContain('hello stream')
+
+    // The 250ms save flush persists exactly once; the fast lane does not
+    // broadcast again through the injected port (the save dep is the fake).
+    vi.advanceTimersByTime(210)
+    expect(broadcastTranscriptTail).toHaveBeenCalledTimes(1)
+    expect(chat.messages.map((message) => message.content)).toContain('hello stream')
+  })
+
+  it('keeps the fast tail lane silent while the round is not running', () => {
+    vi.useFakeTimers()
+    const seat = participant('p1', 'codex', 'Writer', 1)
+    const broadcastTranscriptTail = vi.fn()
+    let chat: ChatRecord = {
+      appChatId: 'idle-tail-chat',
+      provider: 'codex',
+      title: 'Idle round',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'idle-tail-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
+    }
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => 'idle-tail-run',
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z',
+      broadcastTranscriptTail
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      scheduleFlush: (run: any) => void
+    }
+    const run = {
+      runId: 'idle-tail-run',
+      chatId: chat.appChatId,
+      roundId: 'round-1',
+      participant: seat,
+      timeline: [{ kind: 'content', text: 'quiet' }],
+      content: 'quiet',
+      status: 'running',
+      toolActivities: []
+    }
+    internal.runsByRunId.set('idle-tail-run', run)
+
+    internal.scheduleFlush(run)
+    vi.advanceTimersByTime(40)
+    expect(broadcastTranscriptTail).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(210)
+    expect(chat.messages.map((message) => message.content)).toContain('quiet')
   })
 })

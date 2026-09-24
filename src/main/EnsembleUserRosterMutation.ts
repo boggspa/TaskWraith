@@ -1,11 +1,15 @@
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
-import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
+import {
+  MAX_ENSEMBLE_CAPTAINS,
+  normalizeEnsembleAuthority,
+  type EnsembleParticipantAuthority
+} from '../shared/ensembleAuthority'
 import type { ChatRecord, EnsembleParticipant, PermissionPresetId } from './store/types'
 
 type EnsembleConfig = NonNullable<ChatRecord['ensemble']>
 type BossmanAutoApprovals = EnsembleConfig['bossmanAutoApprovals']
 
-export type EnsembleParticipantAuthority = 'boss' | 'captain' | 'agent'
+export type { EnsembleParticipantAuthority } from '../shared/ensembleAuthority'
 
 export type EnsembleUserRosterMutationInput =
   | {

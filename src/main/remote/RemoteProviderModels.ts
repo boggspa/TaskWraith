@@ -1,4 +1,5 @@
 import type { ProviderModelOption, ProviderModelsMessage } from '../BridgeBroadcaster'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from '../../shared/providerModelCatalogLimits'
 
 type ProviderModelLoader<Provider extends string> = (
   provider: Provider
@@ -12,6 +13,7 @@ interface ProviderModelSourceRow {
   disabledReason?: unknown
   supportedReasoningEfforts?: unknown
   defaultReasoningEffort?: unknown
+  contextWindow?: unknown
 }
 
 function isProviderModelSourceRow(value: unknown): value is ProviderModelSourceRow {
@@ -59,7 +61,12 @@ function normalizeProviderModel(row: ProviderModelSourceRow): ProviderModelOptio
     ...(typeof row.disabledReason === 'string' ? { disabledReason: row.disabledReason } : {}),
     supportedReasoningEfforts: normalizeReasoningOptions(row.supportedReasoningEfforts),
     defaultReasoningEffort:
-      typeof row.defaultReasoningEffort === 'string' ? row.defaultReasoningEffort : null
+      typeof row.defaultReasoningEffort === 'string' ? row.defaultReasoningEffort : null,
+    ...(typeof row.contextWindow === 'number' &&
+    Number.isSafeInteger(row.contextWindow) &&
+    row.contextWindow > 0
+      ? { contextWindow: row.contextWindow }
+      : {})
   }
 }
 
@@ -82,7 +89,7 @@ export async function buildRemoteProviderModelsMessage<Provider extends string>(
       }
       const models = (Array.isArray(source) ? source : [])
         .filter(isProviderModelSourceRow)
-        .slice(0, 40)
+        .slice(0, PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER)
         .map(normalizeProviderModel)
       return { provider, models }
     })

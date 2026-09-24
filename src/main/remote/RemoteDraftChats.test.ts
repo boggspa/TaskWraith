@@ -55,6 +55,33 @@ describe('RemoteDraftChats', () => {
     })
   })
 
+  it('preserves an explicit reusable title when the phone sends only the default', () => {
+    const existing = chat({ title: 'My prepared task', threadTitle: { source: 'user' } })
+    const reused = buildRemoteDraftChat({
+      id: existing.appChatId,
+      existing,
+      now: NOW,
+      target: {
+        variant: 'workspace',
+        provider: 'codex',
+        title: 'New Chat',
+        workspaceId: 'ws-1',
+        workspacePath: '/repo'
+      }
+    })
+    expect(reused.title).toBe('My prepared task')
+    expect(reused.threadTitle).toEqual({ source: 'user' })
+  })
+
+  it('marks a new requested remote title as explicit', () => {
+    const draft = buildRemoteDraftChat({
+      id: 'ios-named',
+      now: NOW,
+      target: { variant: 'global', provider: 'codex', title: 'Phone-authored task' }
+    })
+    expect(draft.threadTitle).toEqual({ source: 'user' })
+  })
+
   it('treats old ios-prefixed empty New Chat shells as draft cleanup candidates', () => {
     expect(isUnstartedRemoteDraftChat(chat({ appChatId: 'ios-old' }))).toBe(true)
   })
@@ -188,8 +215,9 @@ describe('RemoteDraftChats', () => {
       }
     })
 
-    expect(remoteDraftIdsToDelete([keep, stale, chat({ appChatId: 'desktop-empty' })], 'ios-keep'))
-      .toEqual(['ios-stale'])
+    expect(
+      remoteDraftIdsToDelete([keep, stale, chat({ appChatId: 'desktop-empty' })], 'ios-keep')
+    ).toEqual(['ios-stale'])
   })
 })
 

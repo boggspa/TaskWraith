@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import type { DiffFileSummary } from '../../../main/store/types'
 import type { CloseoutFileChange } from '../lib/taskWraithCloseoutMessage'
-import { DIFF_HOVER_PREVIEW_TOOLTIP_ID } from './DiffHoverPreview'
+import { DIFF_HOVER_PREVIEW_TOOLTIP_ID, getDiffHoverPreviewStats } from './DiffHoverPreview'
 import { FileTypeIcon } from './FileTypeIcon'
 
 const FILE_CHANGE_PATH_LABEL_MAX = 44
@@ -45,6 +45,44 @@ function filePathTailSegments(path: string): string {
 }
 
 /**
+ * Keep omitted line-count sides absent instead of accidentally presenting
+ * unknown data as a zero. The spacer retains the existing two-column visual
+ * alignment for a deletion-only value without putting fake text in the
+ * accessibility tree.
+ */
+function CloseoutLineStats({
+  className,
+  stats
+}: {
+  className: string
+  stats: ReturnType<typeof getDiffHoverPreviewStats>
+}): ReactNode {
+  if (stats.length === 0) return null
+
+  const deletionOnly = stats.length === 1 && stats[0].kind === 'delete'
+  return (
+    <span
+      className={className}
+      role="group"
+      aria-label={stats.map((stat) => stat.ariaLabel).join(', ')}
+    >
+      {deletionOnly && <span aria-hidden="true" className="file-change-stat-spacer" />}
+      {stats.map((stat) => (
+        <span
+          aria-hidden="true"
+          className={`file-change-stat file-change-stat-${stat.kind} ${
+            stat.kind === 'add' ? 'composer-diff-add' : 'composer-diff-del'
+          }`}
+          key={stat.kind}
+        >
+          {stat.label}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/**
  * Compact File changes card for TaskWraith close-outs. The parent owns the
  * shared diff-preview overlay so persisted cards and the live footer use the
  * same sticky hover/focus behavior without mounting competing portals.
@@ -57,6 +95,7 @@ export function CloseoutFileChangesSection({
   onScheduleClosePreview,
   previewPath,
   resolveSummary,
+  totalCount,
   workspacePath
 }: {
   changes: CloseoutFileChange[]
@@ -70,6 +109,8 @@ export function CloseoutFileChangesSection({
   onScheduleClosePreview?: () => void
   previewPath?: string | null
   resolveSummary?: (change: CloseoutFileChange) => DiffFileSummary
+  /** Full valid-path count when the persisted list was capped. */
+  totalCount?: number
   workspacePath?: string
 }): ReactNode {
   // Declared above the empty-list bail so the hook order never depends on the
@@ -78,18 +119,37 @@ export function CloseoutFileChangesSection({
 
   if (!Array.isArray(changes) || changes.length === 0) return null
 
+  const capturedCount = changes.length
+  const totalChangeCount = Math.max(
+    capturedCount,
+    typeof totalCount === 'number' && Number.isFinite(totalCount)
+      ? Math.max(0, Math.floor(totalCount))
+      : 0
+  )
+  const omittedCount = Math.max(0, totalChangeCount - capturedCount)
+
   // Totals stay over the WHOLE list: the cap below is a view window, not a
   // filter, so the header keeps describing the entire close-out.
   let adds = 0
   let dels = 0
-  let showStats = false
+  let additionsComplete = true
+  let deletionsComplete = true
   for (const item of changes) {
-    if (item.additions !== undefined || item.deletions !== undefined) {
-      showStats = true
-      adds += item.additions || 0
-      dels += item.deletions || 0
-    }
+    if (item.additions === undefined) additionsComplete = false
+    else adds += item.additions
+    if (item.deletions === undefined) deletionsComplete = false
+    else dels += item.deletions
   }
+  // The header describes the whole close-out, so only surface a total when
+  // every listed file reported that side. A partial sum would be just as
+  // misleading as the old invented zero.
+  const headerStats =
+    omittedCount > 0
+      ? []
+      : getDiffHoverPreviewStats({
+          additions: additionsComplete ? adds : undefined,
+          deletions: deletionsComplete ? dels : undefined
+        })
 
   const { visible: visibleChanges, hiddenCount } = closeoutFileChangeWindow(changes, expanded)
 
@@ -99,18 +159,10 @@ export function CloseoutFileChangesSection({
         <strong>File changes</strong>
         <div className="file-change-summary-meta">
           <span>
-            {changes.length} file{changes.length === 1 ? '' : 's'}
+            {totalChangeCount} file{totalChangeCount === 1 ? '' : 's'}
+            {omittedCount > 0 ? ` · ${capturedCount} captured` : ''}
           </span>
-          {showStats && (
-            <span className="file-change-summary-stats">
-              <span className="file-change-stat file-change-stat-add composer-diff-add">
-                +{adds}
-              </span>
-              <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                -{dels}
-              </span>
-            </span>
-          )}
+          <CloseoutLineStats className="file-change-summary-stats" stats={headerStats} />
         </div>
       </div>
       <div className="file-change-summary-list">
@@ -119,6 +171,7 @@ export function CloseoutFileChangesSection({
             ...item,
             previewKind: 'none' as const
           }
+          const itemStats = getDiffHoverPreviewStats(item)
           const hasPreview = Boolean(onOpenPreview)
           const isInteractive = hasPreview || Boolean(onActivateChange)
           const rowContent = (
@@ -144,16 +197,7 @@ export function CloseoutFileChangesSection({
                   {filePathTailSegments(item.path)}
                 </span>
               </span>
-              {(item.additions !== undefined || item.deletions !== undefined) && (
-                <span className="file-change-summary-item-stats">
-                  <span className="file-change-stat file-change-stat-add composer-diff-add">
-                    +{item.additions || 0}
-                  </span>
-                  <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                    -{item.deletions || 0}
-                  </span>
-                </span>
-              )}
+              <CloseoutLineStats className="file-change-summary-item-stats" stats={itemStats} />
             </span>
           )
 
@@ -214,6 +258,12 @@ export function CloseoutFileChangesSection({
           >
             {expanded ? 'Show less' : `Show ${hiddenCount} more…`}
           </button>
+        )}
+        {omittedCount > 0 && (
+          <div className="file-change-summary-overflow" role="note">
+            Showing {capturedCount} of {totalChangeCount} changed files; {omittedCount} additional
+            path{omittedCount === 1 ? ' was' : 's were'} not captured in this close-out.
+          </div>
         )}
       </div>
     </section>

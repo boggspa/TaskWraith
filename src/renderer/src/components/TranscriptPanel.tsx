@@ -1,3 +1,4 @@
+import { DeferredTranscriptMessage } from './DeferredTranscriptMessage'
 import {
   Fragment,
   memo,
@@ -9,25 +10,31 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { ReactElement } from 'react'
+import type { ReactNode } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
   ChatRun,
   DiffFileSummary,
-  DiffFileSummaryOwner,
   FanoutLaneLayout,
   ProviderId,
-  ToolActivity
+  ToolActivity,
+  TranscriptView
 } from '../../../main/store/types'
 import {
-  activityStackHasLiveWork,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
+  shouldAutoCollapseActivityStackForView,
   summarizeCollapsedSuperGroup
 } from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
-import { isEnsembleSideMessage } from '../../../shared/ensembleSideMessage'
+import {
+  ensembleSideMessageBody,
+  ensembleSideMessageRoute,
+  isEnsembleSideMessage
+} from '../../../shared/ensembleSideMessage'
+import { isExecutionGraphInternalTranscriptMessage } from '../../../shared/executionGraphTranscriptVisibility'
 import {
   isEnsembleParticipantAuthoredMessage,
   isEnsembleYieldMessage
@@ -36,23 +43,33 @@ import {
   closeoutProviderFromMetadata,
   TASKWRAITH_CLOSEOUT_KIND
 } from '../../../shared/taskWraithCloseout'
+import { messageOriginBadges, messageOriginSpeaker } from '../../../shared/messageOrigin'
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
+import { retryEnsembleParticipant } from '../lib/ensembleRetryPrompt'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
-import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
+import { formatAssistantMessageLabel, mostRecentSoloRunModel } from '../lib/assistantMessageLabel'
+import { transcriptRunModelPresentation } from '../lib/transcriptRunModelPresentation'
 import { formatEnsembleYieldContentForDisplay } from '../lib/EnsembleYieldPresentation'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import type { ProjectReferenceCitationExtractResolution } from '../../../shared/projectReferenceCitation'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
+import { ExternalProviderThreadImportBanner } from './ExternalProviderThreadImportBanner'
+import {
+  externalProviderThreadImportMessageLabel,
+  isExternalProviderThreadImportMessage
+} from '../../../shared/externalProviderThreadImport'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
+import { shouldOpenUserMessageEditor } from '../lib/userMessageEditHitTest'
 import {
   buildRunCompleteBlockers,
   formatWorkDurationMs,
   resolveRunCompleteStatus,
-  runCompleteProducedWork
+  runCompleteProducedWork,
+  type RunCompleteStatus
 } from '../lib/runCompleteSummary'
 import type {
   CloseoutCommit,
@@ -63,6 +80,7 @@ import type {
 import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
+import { createTranscriptMeasureScheduler } from '../lib/transcriptMeasureScheduler'
 import {
   USER_SCROLL_GESTURE_WINDOW_MS,
   decidePhase1AnchorCorrection,
@@ -70,41 +88,45 @@ import {
 } from '../lib/TranscriptScroll'
 import {
   getChatTranscriptStore,
-  revealChatTranscriptMessage,
-  showLatestChatTranscriptPage,
-  showNewerChatTranscriptPage,
-  showOlderChatTranscriptPage,
-  useChatTranscript
+  revealChatTranscriptMessage
 } from '../lib/useChatTranscript'
+import { useVisibleChatTranscript } from '../lib/useVisibleChatTranscript'
 import {
-  TranscriptHistoryPageBoundary,
-  buildTranscriptHistoryPageBoundaryMessages,
-  readTranscriptHistoryPageBoundary
-} from './TranscriptHistoryPageBoundary'
+  useTranscriptEdgePrefetch,
+  type TranscriptPrefetchDirection
+} from '../lib/useTranscriptEdgePrefetch'
+import {
+  requestLatestTranscriptPage,
+  requestNewerTranscriptPage,
+  requestOlderTranscriptPage
+} from '../lib/chatTranscriptPager'
 import {
   deriveActiveEnsembleWorkingPresentation,
   deriveActiveEnsembleWorkingPresentations,
   type WorkingIndicatorPresentation
 } from '../lib/workingIndicatorPresentation'
-import { buildWorkingIndicatorTokenTargets } from '../lib/workingIndicatorTelemetry'
+import {
+  buildWorkingIndicatorTokenTargets,
+  workingIndicatorTokenTargetKey
+} from '../lib/workingIndicatorTelemetry'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
   buildHeightOffsets,
-  projectRow,
+  buildTranscriptRowKeys,
   projectRows,
-  selectWindow,
-  selectWindowBand,
+  projectRowsAfterSharedPrefix,
   virtualWindowBandChanged,
   computeTranscriptScrollSpy,
+  decideScrollerBoxRefresh,
   findScrollAnchor,
+  headExtensionScrollTop,
   sumHeights,
   sumHeightOffsets,
   totalHeightFromOffsets,
   geometryKey,
   getRowHeight,
   measurementKey,
-  isActiveLiveRowKey,
   measurementContentVersion,
   structuralRowSetKey,
   widthBucket,
@@ -113,6 +135,23 @@ import {
   type VirtualWindow,
   type VirtualWindowBand
 } from '../lib/TranscriptVirtualWindow'
+import {
+  DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+  transcriptLayoutEpochsEqual,
+  transcriptLayoutLaneTracks,
+  type TranscriptLayoutEpoch
+} from '../lib/transcriptLayoutEpoch'
+import {
+  transcriptFontScaleStyle,
+  transcriptTextScale,
+  type TranscriptTextSize
+} from '../lib/transcriptTextSize'
+import {
+  transcriptWidthAttribute,
+  transcriptWidthLayoutBucket,
+  type TranscriptWidth
+} from '../lib/transcriptWidth'
+import { selectTranscriptWindow } from '../lib/transcriptWindowGeometry'
 import {
   buildTranscriptUserGutterMarkers,
   findActiveGutterMarkerKey,
@@ -124,10 +163,16 @@ import {
 } from '../lib/transcriptParticipantFilter'
 import {
   transcriptChatRenderSignature,
+  transcriptSeatRenderSignature,
   transcriptMessageRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from '../lib/transcriptRowRenderCache'
+import {
+  blackboardStackItemStateKey,
+  projectBlackboardUpdateStacks,
+  type BlackboardUpdateStack
+} from '../lib/blackboardChangeStack'
 import {
   resolveLiveMeasurementMessageIds,
   resolveLiveRevealMessageId,
@@ -136,7 +181,11 @@ import {
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
-import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
+import {
+  closeoutMatchesRunCompleteNotice,
+  shouldSuppressRunCompleteSummary,
+  type RunCompleteNotice
+} from '../lib/runCompleteNotice'
 import { formatTranscriptClock } from '../lib/dateTimeFormat'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import {
@@ -157,6 +206,7 @@ import {
   setSessionRoundExpanded,
   subscribeSessionRoundExpansion
 } from '../lib/ensembleRoundCards'
+import { useTranscriptView } from '../hooks/useTranscriptView'
 import {
   coLocateUserFanoutLaneMessages,
   isEnsembleFanoutViewportHeaderMessage
@@ -171,11 +221,17 @@ import {
 } from '../lib/transcriptSmoothScroll'
 import {
   transcriptAuxiliaryChatsSignature,
+  transcriptOwnedExecutionViewsSignature,
   transcriptPanelPropsEqual,
   transcriptRunningChatIdsSignature
 } from '../lib/transcriptPanelMemoProps'
 import {
+  applyTranscriptSearchHighlights,
+  clearTranscriptSearchHighlights
+} from '../lib/transcriptSearchHighlight'
+import {
   ActivityStack,
+  activityStackHasVisibleContent,
   stabilizeThinkingTraceActions,
   type ActivityTimelineSegmentKind,
   type ThinkingTraceActionsConfig,
@@ -190,8 +246,17 @@ import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { ParallelResultViewportHeader } from './ParallelResultViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
-import { classifyFanoutLaneSlots, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
+import { EnsembleSideMessageMeta } from './EnsembleSideMessageMeta'
+import {
+  admitsMeasuredRowDelta,
+  classifyCompactFanoutLaneRows,
+  classifyFanoutLaneSlots,
+  resolveFanoutLaneLayout,
+  FANOUT_LANE_SLOT_DATASET_KEY,
+  type FanoutLaneSlot
+} from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
+import { hideRedundantEnsembleTranscriptNotices } from '../lib/transcriptRedundantNotices'
 import {
   isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage
@@ -208,7 +273,10 @@ import {
 import { agentQuestionSeatKey, composedSeatRole, seatFromChatRun } from '../lib/transcriptSeat'
 import { agentQuestionHeaderLineFor } from '../../../shared/agentQuestionTranscript'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
-import { isContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
+import { resolveContinuationHopsChangePayload } from '../../../shared/continuationHopsChange'
+import { resolveExecutionPlanChangePayload } from '../../../shared/executionPlanChange'
+import { isAutoApprovalsChangePayload } from '../../../shared/autoApprovalsChange'
+import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -219,36 +287,45 @@ import {
   approvalIdsForAllowAllSameScope,
   collectFleetWavePendingApprovals
 } from '../lib/fleetWavePendingApprovals'
+import { fleetWaveSeatFromWorker } from '../lib/fleetWaveSeat'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
+import { ExecutionResultCard } from './ExecutionResultCard'
+import { executionResultExecutionId, isExecutionResultMessage } from './ExecutionResultCardModel'
+import { ExecutionLiveCard } from './ExecutionLiveCard'
+import type { ExecutionGhostCardView } from '../../../shared/executionGraphGhost'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
 import { isThreadMessageTranscriptMessage } from './ThreadMessageTranscriptCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
-import {
-  ContextCompactionCard,
-  ContextCompactionGlyph,
-  contextCompactionMessageFailed,
-  contextCompactionMessageMetaLabel
-} from './ContextCompactionCard'
-import {
-  buildParticipantContextRows,
-  currentContextTokens
-} from '../lib/contextMeter'
+import { ContextCompactionCard } from './ContextCompactionCard'
+import { WorkingContextPressureHint } from './WorkingContextPressureHint'
+import { buildParticipantContextRows, currentContextTokens } from '../lib/contextMeter'
 import {
   contextPercent,
   isContextWindowProviderId,
   resolveContextWindow
 } from '../../../shared/contextWindows'
-import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
-import { ProviderRunFailureCard } from './ProviderRunFailureCard'
+import { RunExecutionErrorCard } from './RunExecutionErrorCard'
+import { SeatFailureCard } from './SeatFailureCard'
+import { isFailedParticipantStatusMessage } from './SeatFailureCardModel'
 import { SeatChangeRow } from './SeatChangeRow'
 import { ContinuationHopsChangeRow } from './ContinuationHopsChangeRow'
+import { ExecutionPlanChangeRow } from './ExecutionPlanChangeRow'
+import { AutoApprovalsChangeRow } from './AutoApprovalsChangeRow'
+import { BlackboardChangeRow, resolveBlackboardChangePresentation } from './BlackboardChangeRow'
+import { EnsembleFanoutDispatchRow } from './EnsembleFanoutDispatchRow'
 import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
 import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
+import { CopyEntireTurnButton } from './CopyEntireTurnButton'
+import { useTranscriptTurnCopy } from '../lib/useTranscriptTurnCopy'
+import {
+  adjacentSeatChangeStacks,
+  transcriptSpeakerContinuations
+} from '../lib/transcriptEventLayout'
 import { PillButton } from './PillButton'
 import {
   TranscriptMessageContextMenu,
@@ -258,9 +335,19 @@ import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } fro
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
-import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
+import { FileChangeOwnerCell, FileChangePathCell } from './FileChangeSummaryCells'
 import { ThinkingIndicator } from './AppChromeSymbols'
-import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
+import {
+  formatWorkingSeatLabel,
+  workingAccentStyle,
+  workingIndicatorKey,
+  workingIndicatorLabel,
+  WorkingIndicatorTelemetryReadout,
+  workingSeatNumber,
+  workingStatusLabel
+} from './TranscriptWorkingIndicator'
+import { EnsemblePollCard } from './EnsemblePollCard'
+import { UnifiedWorkingIndicator } from './UnifiedWorkingIndicator'
 import {
   humanCollaboratorMetadata,
   isDeliveredExternalContribution,
@@ -303,62 +390,6 @@ function ContextCompactionProgressRow({
   )
 }
 
-/** Token-growth stall window before a high-pressure working row is presumed
- * to be compacting (providers that auto-compact without emitting any frame —
- * the "participant goes quiet, then the record appears" report). */
-const WORKING_QUIET_COMPACTION_MS = 20_000
-
-/**
- * Context-pressure hint riding the working indicator: at ≥80% occupancy the
- * row discloses the percent ("context 87%"), and if token growth then stalls
- * for 20s at that pressure it escalates to "likely compacting" — a TENTATIVE
- * presumption for lanes whose native auto-compaction emits no start signal.
- * Confirmed compaction (a real `started` event) flips the whole indicator to
- * "Compacting context" upstream, which supersedes this hint.
- */
-function WorkingContextPressureHint({
-  percent,
-  estimatedTokens
-}: {
-  percent: number
-  estimatedTokens: number
-}): ReactElement | null {
-  const [quiet, setQuiet] = useState(false)
-  // Growth timestamps are recorded in an effect keyed on estimatedTokens
-  // (render-time ref writes + Date.now() violate react-hooks/purity); the
-  // one-commit lag is irrelevant against the 20s stall threshold. Null until
-  // the first commit, which the interval reads as "not quiet yet".
-  const lastGrowthAtMsRef = useRef<number | null>(null)
-  useEffect(() => {
-    lastGrowthAtMsRef.current = Date.now()
-  }, [estimatedTokens])
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const lastGrowthAtMs = lastGrowthAtMsRef.current
-      setQuiet(
-        lastGrowthAtMs !== null && Date.now() - lastGrowthAtMs >= WORKING_QUIET_COMPACTION_MS
-      )
-    }, 1000)
-    return () => window.clearInterval(timer)
-  }, [])
-  if (!(percent >= CONTEXT_PRESSURE_WARN_PERCENT)) return null
-  const rounded = Math.round(percent)
-  return (
-    <span
-      className={`working-context-pressure-hint${percent >= 90 ? ' is-critical' : ''}${
-        quiet ? ' is-quiet' : ''
-      }`}
-      title={
-        quiet
-          ? 'No token growth for 20s at high context pressure — the provider is likely auto-compacting its context.'
-          : 'Live context occupancy. Providers auto-compact near their window limit.'
-      }
-    >
-      {quiet ? `quiet at ${rounded}% context — likely compacting` : `context ${rounded}%`}
-    </span>
-  )
-}
-
 function providerIdFromUnknown(value: unknown): ProviderId | undefined {
   switch (value) {
     case 'gemini':
@@ -372,6 +403,7 @@ function providerIdFromUnknown(value: unknown): ProviderId | undefined {
     case 'pi':
     case 'mistral':
     case 'muse':
+    case 'devin':
       return value
     default:
       return undefined
@@ -387,7 +419,8 @@ function activitySpeakerMessage(
   chat: ChatRecord | null,
   run?: ChatRun | null
 ): ChatMessage {
-  const metadata: Record<string, unknown> = { ...(message.metadata || {}) }
+  const presented = transcriptRunModelPresentation(message, run, chat?.chatKind === 'ensemble')
+  const metadata: Record<string, unknown> = { ...(presented.metadata || {}) }
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityMetadata = firstActivityWithMetadata?.metadata
   const seatSnapshot = run?.ensembleSeatSnapshot
@@ -442,32 +475,61 @@ function activitySpeakerMessage(
   }
 }
 
-function activityStackSpeakerPresentation({
+/**
+ * `runs` is the panel's store-backed `resolvedRuns`, and passing it is what
+ * keeps this header branded after a run settles. `chat.runs` is one React
+ * render behind BY DESIGN: `shouldRetainReactChatOnFlush` lists `runs` in
+ * `TRANSCRIPT_STREAM_FIELDS`, so a flush carrying only transcript arrays keeps
+ * the previous chat object and leaves the fresh arrays to ChatTranscriptStore.
+ * A `role: 'tool'` row carries no model of its own, so the run array is its
+ * ONLY brand source — and Pi/Ollama are the only seats whose hue needs a model
+ * id, which is why only they revert to the plain seat colour. Defaulted to
+ * `chat?.runs` so a caller with no store scope (unit tests, a chat the store
+ * has never ingested) behaves exactly as before.
+ */
+export function activityStackSpeakerPresentation({
   message,
   chat,
   run,
+  runs,
   fallbackProvider,
   fallbackProviderLabel
 }: {
   message: ChatMessage
   chat: ChatRecord | null
   run?: ChatRun | null
+  runs?: readonly ChatRun[] | null
   fallbackProvider: ProviderId
   fallbackProviderLabel: string
 }) {
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
+  const brandingRuns = runs && runs.length > 0 ? runs : chat?.runs
   const messageRun =
     run ||
-    (message.runId ? chat?.runs?.find((candidate) => candidate.runId === message.runId) || null : null)
-  const labelProvider = providerIdFromUnknown(messageRun?.provider) || activityProvider || fallbackProvider
+    (message.runId
+      ? brandingRuns?.find((candidate) => candidate.runId === message.runId) || null
+      : null)
+  const labelProvider =
+    providerIdFromUnknown(messageRun?.provider) || activityProvider || fallbackProvider
   return formatAssistantMessageLabel(
     activitySpeakerMessage(message, chat, messageRun),
     labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
     labelProvider,
     {
       isEnsembleChat: chat?.chatKind === 'ensemble',
-      soloModelId: messageRun?.actualModel || messageRun?.requestedModel || null
+      // Mirrors the assistant-bubble fallback below: a row whose run lookup
+      // misses would otherwise resolve an empty model and drop the Pi/Ollama
+      // upstream override, leaving this header disagreeing with the bubble
+      // beside it. Ensemble rows carry their own per-seat model instead.
+      soloModelId:
+        messageRun?.actualModel ||
+        messageRun?.requestedModel ||
+        (chat?.chatKind === 'ensemble'
+          ? null
+          : mostRecentSoloRunModel(brandingRuns, labelProvider)),
+      soloModelLabel: messageRun?.modelLabel,
+      seatModelId: chat?.requestedModel
     }
   )
 }
@@ -476,28 +538,26 @@ function ActivityStackSpeakerHeader({
   message,
   chat,
   run,
+  runs,
   fallbackProvider,
   fallbackProviderLabel
 }: {
   message: ChatMessage
   chat: ChatRecord | null
   run?: ChatRun | null
+  runs?: readonly ChatRun[] | null
   fallbackProvider: ProviderId
   fallbackProviderLabel: string
 }): ReactElement {
-  const {
-    label,
-    provider,
-    providerClass,
-    modelBadge,
-    pooledAgentIdentity
-  } = activityStackSpeakerPresentation({
-    message,
-    chat,
-    run,
-    fallbackProvider,
-    fallbackProviderLabel
-  })
+  const { label, provider, providerClass, modelBadge, pooledAgentIdentity } =
+    activityStackSpeakerPresentation({
+      message,
+      chat,
+      run,
+      runs,
+      fallbackProvider,
+      fallbackProviderLabel
+    })
   const providerHook = providerClass || provider
 
   return (
@@ -576,6 +636,21 @@ export type TranscriptPanelProps = {
    * doesn't carry an ensembleProvider in its metadata.
    */
   currentProvider: ProviderId
+  /** Opens the Execution Map for a graph delivered into this thread. Optional:
+   * absent in surfaces that have no route to the map. */
+  onOpenExecutionMapForThread?: (executionId: string) => void
+  /** True while this thread owns a graph that has not settled. Suppresses the
+   * close-out card, which would otherwise claim the task is finished while the
+   * thread is still accountable for running work. */
+  hasLiveOwnedExecution?: boolean
+  /** Ghost-strip views for every execution this thread OWNS, terminal ones
+   * included. Live graphs get their own card; a settled one supplies the
+   * matching result card's strip. */
+  ownedExecutionViews?: readonly ExecutionGhostCardView[]
+  /** Cancels a whole owned execution from its live card. */
+  onCancelOwnedExecution?: (executionId: string) => void
+  /** Brings a paused owned execution back into flight. */
+  onResumeOwnedExecution?: (executionId: string) => void
   /**
    * Slice B (1.0.3) — ensemble-aware "Thinking…" label. When an
    * ensemble round is mid-flight, this resolves to the active
@@ -657,6 +732,48 @@ export type TranscriptPanelProps = {
    * to thread it must land on the same layout the rest of the app is using,
    * not silently on the other one. */
   fanoutLaneLayout?: FanoutLaneLayout
+  /** `settings.defaultTranscriptView` — the Appearance default this transcript
+   * falls back to for a chat carrying no per-chat override of its own.
+   * Optional, and undefined resolves to `DEFAULT_TRANSCRIPT_VIEW` for the same
+   * reason `fanoutLaneLayout` does: a caller that forgets to thread it must
+   * land on the view the rest of the app is using, not silently on another.
+   * It must also be listed in `TranscriptPanelMemoComparable` — this panel is
+   * memoized against a hand-written chain, so an unlisted prop is a setting
+   * change the transcript never re-renders for. */
+  defaultTranscriptView?: TranscriptView
+  /** `settings.transcriptTextSize` — how large this transcript's message text
+   * renders. Optional for the same reason the two props above are: a caller
+   * that forgets to thread it lands on the size the rest of the app is using.
+   *
+   * THIS PROP IS THE SIZE'S ONLY ENTRANCE, and deliberately carries the NAME,
+   * not the scale. The panel resolves it to a number exactly once, and that one
+   * `const` becomes BOTH the `--transcript-font-scale` stamped on
+   * `.transcript-inner` and the `fontScale` of the `TranscriptLayoutEpoch` every
+   * height estimate, the pre-paint measure pass and every height-cache key are
+   * built from. If those two were ever computed separately the transcript would
+   * be estimated for a size it is not rendering — see `lib/transcriptTextSize`.
+   *
+   * It must also be listed in `TranscriptPanelMemoComparable`, for the reason
+   * `defaultTranscriptView` documents above: unlisted, the size changes in
+   * Settings and this panel never re-renders. */
+  transcriptTextSize?: TranscriptTextSize
+  /** `settings.transcriptWidth` — how wide this transcript's reading column
+   * runs. Optional for the same reason the three props above are: a caller that
+   * forgets to thread it lands on the width the rest of the app is using.
+   *
+   * THIS PROP IS THE WIDTH'S ONLY ENTRANCE, and it carries the NAME — but note
+   * that unlike `transcriptTextSize` the name never becomes a number in here.
+   * It becomes a `data-transcript-width` attribute on `.transcript-inner`, CSS
+   * resolves it against whatever ceiling that pane has, and the number the
+   * virtualiser needs comes back from a ResizeObserver on the resulting box.
+   * That indirection is the point: `narrow` is 640px in the main pane and 348px
+   * in a phone-narrow side chat, so a width resolved in JS would be right in one
+   * scope and silently wrong in the other four (see `lib/transcriptWidth`).
+   *
+   * It must also be listed in `TranscriptPanelMemoComparable`, for the reason
+   * `defaultTranscriptView` documents above: unlisted, the width changes in
+   * Settings and this panel never re-renders. */
+  transcriptWidth?: TranscriptWidth
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -676,13 +793,36 @@ export type TranscriptPanelProps = {
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  /**
+   * Renders the composer's own provider/model/reasoning pill for a failed
+   * seat (usage-limit remedy on the SeatFailureCard). Optional: surfaces
+   * without a composer context (side chats, popouts) omit the slot.
+   */
+  renderSeatModelSwap?: (participantId: string) => ReactNode
+  onEditAndResendFromHere?: (messageId: string, content: string) => void
   /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
+  onMessageFeedback?: (
+    messageId: string,
+    vote: 'up' | 'down',
+    details?: MessageFeedbackDetails
+  ) => void
   onPromoteCollaboratorComment?: (messageId: string) => void
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
+  /**
+   * In-chat search (Cmd+F). The bar owns the query, the match list and the
+   * "N / M" cursor; the panel's only job is to PAINT them over the rows it has
+   * mounted. `undefined` means this pane has no search bar at all (the side
+   * pane) — the panel then never touches the shared highlight registry, so it
+   * cannot wipe the main pane's highlights.
+   */
+  threadSearchQuery?: string
+  /** `rowKey`s the matcher counted as hits, across the whole transcript. */
+  threadSearchMatchRowKeys?: ReadonlySet<string>
+  /** The `rowKey` the counter is currently pointing at. */
+  threadSearchActiveRowKey?: string | null
   /** Temporarily force-mount this transferred reading anchor so the host's
    * exact-offset restore can find it even when the destination virtual window
    * initially lands elsewhere after a width change. */
@@ -925,7 +1065,8 @@ function escapeDomSelectorValue(value: string): string {
  * Position-independent identity for a tool stack row's lifted UI state: the
  * first CONSTITUENT tool message id. A grouped tool row's merged id mutates
  * from `<id>` to `tool-group-<id>` the moment a second message joins the
- * group (remounting the row), and `rowKey` embeds the list index — both churn
+ * group (remounting the row), and `rowKey` counts repeats of the message id —
+ * both churn
  * while activity streams in. The first constituent id survives group growth,
  * remounts, and index shifts.
  */
@@ -951,11 +1092,6 @@ export function liveViewportKindKey(stackKey: string, kind: ActivityTimelineSegm
  * highlight target) is applied by each caller.
  */
 function plainSystemNoticeMessage(msg: ChatMessage): boolean {
-  // NOTE: `contextCompaction` records deliberately QUALIFY as plain notices —
-  // they fold into settled one-liners / super-groups like every other
-  // transcript row (their `content` is the pre-formatted summary line). The
-  // per-row render special-cases them back to `ContextCompactionCard` when
-  // un-collapsed or expanded.
   return (
     msg.role === 'system' &&
     msg.metadata?.kind !== 'transcriptHistoryPageBoundary' &&
@@ -978,6 +1114,12 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
     msg.metadata?.kind !== 'providerRunFailure' &&
+    // A FAILED seat coda gets the same standing as a providerRunFailure: it
+    // renders as the SeatFailureCard, so it must never fold into an anonymous
+    // "System · N notices" row where the failure would vanish.
+    !isFailedParticipantStatusMessage(msg) &&
+    // Context compaction has the same preserved hierarchy as seat changes.
+    msg.metadata?.kind !== 'contextCompaction' &&
     msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
     msg.metadata?.kind !== 'ensembleBossmanPoll' &&
     // An ANSWERED question keeps its full card (AgentQuestionTombstoneCard), so
@@ -994,7 +1136,19 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     // Hop-limit changes have the same transcript standing as seat changes.
     // Only valid structured payloads are promoted; malformed records keep the
     // carrier sentence as their plain fallback.
-    !isContinuationHopsChangePayload(msg.metadata?.continuationHopsChange) &&
+    !resolveContinuationHopsChangePayload(msg) &&
+    // Authoritative execution-plan changes are round-control state, not
+    // anonymous System chrome — same preserved standing as hop-limit changes.
+    !resolveExecutionPlanChangePayload(msg) &&
+    // Human-owned Auto Approvals changes use the same durable before/after
+    // standing as seat and hop-limit changes.
+    !isAutoApprovalsChangePayload(msg.metadata?.autoApprovalsChange) &&
+    // Run-authored Blackboard mutations are tool-call-style events, not
+    // anonymous system notices. Malformed legacy records keep the fallback.
+    !resolveBlackboardChangePresentation(msg) &&
+    // A fan-out dispatch is a tool-style orchestration receipt with attributed
+    // seats, not anonymous System chrome.
+    !isEnsembleFanoutDispatchPayload(msg.metadata?.ensembleFanoutDispatch) &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -1014,8 +1168,10 @@ function superGroupParticipantKey(msg: ChatMessage): string {
 /** One merged fold of adjacent collapsed one-liners (see the super-group memo
  * in TranscriptPanel). Every member id maps to the same info object. */
 interface CollapsedSuperGroupInfo {
-  leadId: string
-  memberIds: string[]
+  /** Occurrence-safe projected identity, never the raw message id. */
+  leadRowKey: string
+  /** Occurrence-safe row keys of every member in transcript order. */
+  memberRowKeys: string[]
   size: number
   activities: ToolActivity[]
   systemCount: number
@@ -1024,11 +1180,116 @@ interface CollapsedSuperGroupInfo {
   headerMessage: ChatMessage | null
 }
 
+interface BlackboardUpdateStackRowInfo {
+  stack: BlackboardUpdateStack
+  stateKey: string
+  leadRowKey: string
+  memberRowKeys: string[]
+}
+
+/**
+ * Resolve the lead that owns a projected row's collapsed super-group. Jumps
+ * resolve their row before scrolling, so disclosure must use that projected
+ * identity rather than assume the row is already visibly mounted.
+ */
+export function collapsedSuperGroupLeadForRow(
+  groups: ReadonlyMap<string, { leadRowKey: string }>,
+  row: Pick<VirtualRow, 'rowKey'> | null
+): string | null {
+  return row ? groups.get(row.rowKey)?.leadRowKey || null : null
+}
+
+/**
+ * File-change tombstones intentionally do not persist diff text. When a card
+ * asks for a fallback tool-edit snapshot, only inspect evidence from the
+ * close-out's durable run/round scope. A historical card must never turn a
+ * later edit to the same path into its own preview.
+ */
+export function closeoutScopedEvidenceMessages(
+  messages: ChatMessage[],
+  closeout: Pick<ChatMessage, 'runId' | 'timestamp' | 'metadata'>
+): ChatMessage[] | null {
+  // The close-out object normally comes from `messages`, so array order is a
+  // stronger boundary than wall time (same-millisecond rows are possible).
+  // Fall back to its durable timestamp for projected/legacy records that are
+  // not referentially identical to the visible transcript row.
+  const closeoutIndex = messages.indexOf(closeout as ChatMessage)
+  const completedAt = Date.parse(closeout.timestamp)
+  const evidenceBeforeCloseout =
+    closeoutIndex >= 0
+      ? messages.slice(0, closeoutIndex)
+      : Number.isFinite(completedAt)
+        ? messages.filter((message) => {
+            const timestamp = Date.parse(message.timestamp)
+            return Number.isFinite(timestamp) && timestamp <= completedAt
+          })
+        : null
+  if (!evidenceBeforeCloseout) return null
+  const roundId =
+    typeof closeout.metadata?.closeoutRoundId === 'string' ? closeout.metadata.closeoutRoundId : ''
+  if (roundId) {
+    return evidenceBeforeCloseout.filter((message) => message.metadata?.ensembleRoundId === roundId)
+  }
+  const runId =
+    typeof closeout.metadata?.sourceRunId === 'string'
+      ? closeout.metadata.sourceRunId
+      : closeout.runId || ''
+  if (!runId) return null
+  return evidenceBeforeCloseout.filter((message) => message.runId === runId)
+}
+
+function durableCloseoutCardStatus(
+  status: unknown,
+  options: { isGlobal: boolean; producedWork: boolean }
+): RunCompleteStatus | null {
+  if (status === 'cancelled') {
+    return resolveRunCompleteStatus({
+      exitCode: 130,
+      isGlobal: options.isGlobal,
+      producedWork: options.producedWork
+    })
+  }
+  if (status === 'failed') {
+    // Unlike a live notice, a historical close-out records a durable outcome
+    // but not necessarily its precise process exit code. Do not invent one.
+    const label = options.isGlobal ? "Couldn't finish" : 'Task failed'
+    return {
+      kind: 'exit-failure',
+      label,
+      srLabel: label,
+      tone: options.producedWork ? 'warning' : 'danger',
+      detail: ''
+    }
+  }
+  return null
+}
+
+/**
+ * How close the rendered range must come to an edge of the loaded transcript
+ * window before the adjacent window is pulled in. A few rows of lead time is
+ * enough for the fetch to land while the reader is still moving, and small
+ * enough that merely opening a thread does not drag in neighbouring pages.
+ */
+const TRANSCRIPT_EDGE_PREFETCH_ROWS = 8
+
+/**
+ * Row projection for the non-virtualised path. Must assign row keys exactly the
+ * way the virtualiser's `projectRow` does, or the two render paths would
+ * disagree about which measurement slot and DOM element a row owns.
+ */
+function projectNonVirtualizedRows(
+  messages: ChatMessage[]
+): Array<{ msg: ChatMessage; rowKey: string; index: number }> {
+  const rowKeys = buildTranscriptRowKeys(messages)
+  return messages.map((msg, index) => ({ msg, rowKey: rowKeys[index], index }))
+}
+
 function useProjectedTranscriptRows(
   messages: ChatMessage[],
   runBoundaryIds: ReadonlySet<string> | null | undefined,
   unboundedActivityBodies = false,
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  layoutEpoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow[] {
   const cacheRef = useRef<{
     messages: ChatMessage[]
@@ -1036,16 +1297,25 @@ function useProjectedTranscriptRows(
     rowByMessageIndex: Map<number, VirtualRow>
     unboundedActivityBodies: boolean
     pairFanoutLanes: boolean
+    layoutEpoch: TranscriptLayoutEpoch
   } | null>(null)
 
   return useMemo(() => {
-    // Both flags change every fan-out lane row's estimate, so a cache built
-    // under the other value must be discarded whole rather than reused as a
-    // prefix — otherwise flipping the setting leaves the transcript's existing
-    // lanes sized for the layout the user just left.
+    // GLOBAL estimate inputs need all THREE legs: threaded into both projection
+    // functions, named in this dep array, AND compared here before the cache is
+    // trusted. Anything that changes every row at once — the two flags below,
+    // and the layout epoch (column width bucket + text scale) — must be
+    // discarded WHOLE rather than reused as a prefix. Legs 1+2 alone are not a
+    // partial fix, they are a permanent one: a setting flip does not change the
+    // `messages` array identity, so the prefix walk runs to completion, the
+    // tail loop executes zero times, and every cached row object is returned by
+    // reference carrying its old estimate — for good, re-armed on every flush.
+    // The `hasRunBoundary` per-row break below cannot stand in for this: it
+    // works only because that input is PER ROW.
     const cached =
       cacheRef.current?.unboundedActivityBodies === unboundedActivityBodies &&
-      cacheRef.current?.pairFanoutLanes === pairFanoutLanes
+      cacheRef.current?.pairFanoutLanes === pairFanoutLanes &&
+      transcriptLayoutEpochsEqual(cacheRef.current?.layoutEpoch, layoutEpoch)
         ? cacheRef.current
         : null
     if (cached && Array.isArray(messages)) {
@@ -1065,17 +1335,15 @@ function useProjectedTranscriptRows(
       // tail. Reuse old row objects for the prefix so row lookup, windowing, and
       // render caching do not churn through stable transcript history.
       if (sharedPrefix > 0 && sharedPrefix >= minLength - 1) {
-        const rows = cached.rows.filter((row) => row.index < sharedPrefix)
-        for (let index = sharedPrefix; index < messages.length; index += 1) {
-          const row = projectRow(
-            messages[index],
-            index,
-            runBoundaryIds,
-            unboundedActivityBodies,
-            pairFanoutLanes
-          )
-          if (row) rows.push(row)
-        }
+        const rows = projectRowsAfterSharedPrefix(
+          cached.rows,
+          messages,
+          sharedPrefix,
+          runBoundaryIds,
+          unboundedActivityBodies,
+          pairFanoutLanes,
+          layoutEpoch
+        )
         const rowByMessageIndex = new Map<number, VirtualRow>()
         for (const row of rows) rowByMessageIndex.set(row.index, row)
         cacheRef.current = {
@@ -1083,13 +1351,20 @@ function useProjectedTranscriptRows(
           rows,
           rowByMessageIndex,
           unboundedActivityBodies,
-          pairFanoutLanes
+          pairFanoutLanes,
+          layoutEpoch
         }
         return rows
       }
     }
 
-    const rows = projectRows(messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
+    const rows = projectRows(
+      messages,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      layoutEpoch
+    )
     const rowByMessageIndex = new Map<number, VirtualRow>()
     for (const row of rows) rowByMessageIndex.set(row.index, row)
     cacheRef.current = {
@@ -1097,10 +1372,11 @@ function useProjectedTranscriptRows(
       rows,
       rowByMessageIndex,
       unboundedActivityBodies,
-      pairFanoutLanes
+      pairFanoutLanes,
+      layoutEpoch
     }
     return rows
-  }, [messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes])
+  }, [messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes, layoutEpoch])
 }
 
 function offsetGroupedRanges(
@@ -1184,10 +1460,7 @@ function useFanoutLaneMessageGrouping(messages: ChatMessage[]): ChatMessage[] {
   }, [messages])
 }
 
-const toolGroupingRegroupStart = (
-  messages: readonly ChatMessage[],
-  changedIndex: number
-): number =>
+const toolGroupingRegroupStart = (messages: readonly ChatMessage[], changedIndex: number): number =>
   regroupStartFromChangedIndex(messages, changedIndex, (previous, next) =>
     shouldGroupAdjacentToolMessages(previous, next)
   )
@@ -1267,141 +1540,14 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 
   return {
     dateTime: raw,
-    label: formatTranscriptClock(date) ?? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    label:
+      formatTranscriptClock(date) ??
+      date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     title: date.toLocaleString([], {
       dateStyle: 'medium',
       timeStyle: 'medium'
     })
   }
-}
-
-function workingStatusLabel(presentation: WorkingIndicatorPresentation): string {
-  if (presentation.statusLabel) return presentation.statusLabel
-  const activity =
-    presentation.activity === 'compacting' ? 'compacting context' : 'working'
-  return presentation.roleLabel
-    ? `${presentation.roleLabel} (${presentation.providerLabel || 'Agent'}) ${activity}`
-    : `${presentation.providerLabel || 'Agent'} ${activity}`
-}
-
-function workingIndicatorLabel(presentation: WorkingIndicatorPresentation): string {
-  if (presentation.statusLabel) return presentation.statusLabel
-  return presentation.activity === 'compacting' ? 'Compacting' : 'Working'
-}
-
-function workingIndicatorKey(
-  presentation: WorkingIndicatorPresentation,
-  index: number
-): string {
-  return [
-    presentation.participantId || '',
-    presentation.runId || '',
-    presentation.startedAt || '',
-    presentation.providerClass || presentation.provider || 'agent',
-    presentation.roleLabel || '',
-    presentation.modelBadge || '',
-    presentation.statusLabel || '',
-    index
-  ].join(':')
-}
-
-function workingAccentStyle(presentation: WorkingIndicatorPresentation): CSSProperties | undefined {
-  const providerClass = (presentation.providerClass || presentation.provider || '').replace(
-    /[^a-z0-9-]/gi,
-    ''
-  )
-  if (!providerClass) return undefined
-  return {
-    '--message-working-accent': `var(--provider-${providerClass}-color, var(--accent))`
-  } as CSSProperties
-}
-
-function fileChangeOwnerLabel(owner: DiffFileSummaryOwner): string {
-  if (owner.role) return owner.role
-  if (owner.provider) return getProviderLabel(owner.provider)
-  return 'Agent'
-}
-
-function fileChangeOwnerTitle(owner: DiffFileSummaryOwner, order?: number): string {
-  const provider = owner.provider ? getProviderLabel(owner.provider) : ''
-  const role = owner.role || ''
-  const label = provider && role ? `${provider} / ${role}` : role || provider || 'Agent'
-  return order ? `#${order} ${label}` : label
-}
-
-function normalizeFileChangeOwners(
-  owners: DiffFileSummary['owners'] | undefined
-): DiffFileSummaryOwner[] {
-  if (!Array.isArray(owners)) return []
-  return owners.filter((owner) => owner && (owner.provider || owner.participantId || owner.role))
-}
-
-function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] }): ReactElement {
-  const normalizedOwners = normalizeFileChangeOwners(owners)
-  if (normalizedOwners.length === 0) {
-    return <span className="file-change-summary-owner is-empty" aria-hidden="true" />
-  }
-  if (normalizedOwners.length === 1) {
-    const owner = normalizedOwners[0]
-    return (
-      <span className="file-change-summary-owner" title={fileChangeOwnerTitle(owner)}>
-        {owner.provider && (
-          <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
-            <ProviderBrandLogo provider={owner.provider} />
-          </span>
-        )}
-        <span className="file-change-summary-owner-label">{fileChangeOwnerLabel(owner)}</span>
-      </span>
-    )
-  }
-  return (
-    <span className="file-change-summary-owner is-multiple" aria-label="File editors">
-      {normalizedOwners.map((owner, index) => {
-        const order = owner.order ?? index + 1
-        return (
-          <span
-            className="file-change-summary-owner-chip"
-            key={`${owner.participantId || owner.provider || owner.role || 'owner'}-${index}`}
-            title={fileChangeOwnerTitle(owner, order)}
-          >
-            {owner.provider && (
-              <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
-                <ProviderBrandLogo provider={owner.provider} />
-              </span>
-            )}
-            <span className="file-change-summary-owner-index">#{order}</span>
-          </span>
-        )
-      })}
-    </span>
-  )
-}
-
-const FILE_CHANGE_PATH_LABEL_MAX = 44
-
-function truncateFilePathFromHead(path: string): string {
-  if (path.length <= FILE_CHANGE_PATH_LABEL_MAX) return path
-  return `...${path.slice(-(FILE_CHANGE_PATH_LABEL_MAX - 3))}`
-}
-
-function filePathTailSegments(path: string): string {
-  const raw = typeof path === 'string' ? path : ''
-  if (!raw) return ''
-  const normalized = raw.replace(/\\/g, '/')
-  const segments = normalized.split('/').filter(Boolean)
-  if (segments.length <= 2) return truncateFilePathFromHead(raw)
-  return truncateFilePathFromHead(`.../${segments.slice(-2).join('/')}`)
-}
-
-function FileChangePathCell({ path }: { path: string }): ReactElement {
-  return (
-    <span className="file-change-summary-path" title={path}>
-      <span className="file-change-summary-path-head" aria-hidden="true">
-        {path}
-      </span>
-      <span className="file-change-summary-path-tail">{filePathTailSegments(path)}</span>
-    </span>
-  )
 }
 
 function TranscriptMessageFooter({
@@ -1410,6 +1556,7 @@ function TranscriptMessageFooter({
   copyContent,
   align,
   onCopyMessage,
+  onCopyEntireTurn,
   onAddMessageToPrompt,
   onTogglePinMessage,
   onMessageFeedback,
@@ -1423,9 +1570,14 @@ function TranscriptMessageFooter({
   copyContent?: string
   align: 'start' | 'end'
   onCopyMessage: (messageId: string, content: string) => void
+  onCopyEntireTurn?: (message: ChatMessage) => Promise<void>
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
+  onMessageFeedback?: (
+    messageId: string,
+    vote: 'up' | 'down',
+    details?: MessageFeedbackDetails
+  ) => void
   onDeleteMessage?: (messageId: string) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   pinned: boolean
@@ -1450,6 +1602,7 @@ function TranscriptMessageFooter({
       {hasActionContent && (
         <MessageActionsChip
           onCopy={() => onCopyMessage(message.id, copyContent)}
+          onCopyEntireTurn={onCopyEntireTurn ? () => onCopyEntireTurn(message) : undefined}
           onAddToPrompt={
             onAddMessageToPrompt && copyContent.trim()
               ? () => onAddMessageToPrompt(message.id, copyContent)
@@ -1476,12 +1629,13 @@ function TranscriptMessageFooter({
           label={label}
         />
       )}
+      {!hasActionContent && onCopyEntireTurn && (
+        <div className="message-actions-chip">
+          <CopyEntireTurnButton onCopy={() => onCopyEntireTurn(message)} />
+        </div>
+      )}
       {timestamp && (
-        <time
-          className="message-footer-time"
-          dateTime={timestamp.dateTime}
-          title={timestamp.title}
-        >
+        <time className="message-footer-time" dateTime={timestamp.dateTime} title={timestamp.title}>
           {timestamp.label}
         </time>
       )}
@@ -1526,7 +1680,7 @@ function TranscriptMessageFooter({
  * the historical observer-feedback loop cannot return.
  */
 /* eslint-disable react-hooks/refs -- Virtualisation intentionally keeps scroll/measurement state in refs for synchronous window selection. */
-function useTranscriptVirtualization(params: {
+export function useTranscriptVirtualization(params: {
   enabled: boolean
   rows: VirtualRow[]
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -1543,6 +1697,41 @@ function useTranscriptVirtualization(params: {
   getUserScrollGestureLive?: () => boolean
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
+  /**
+   * How much of each turn the transcript renders. A view flip changes row
+   * heights as drastically as a density change does — a Minimal row is a
+   * one-liner where a Standard one was a full stack — so it invalidates the
+   * same caches. Optional and undefined-stable, so a caller that does not pass
+   * it never invalidates.
+   */
+  transcriptView?: TranscriptView
+  /**
+   * The layout the heights in this hook's caches were measured UNDER — column
+   * width bucket + text scale (see `lib/transcriptLayoutEpoch.ts`). Folded into
+   * `measurementKey` and `geometryKey`, so a layout change misses both maps and
+   * correctly falls through to the row's estimate, which the projection above
+   * produced at the SAME epoch. Optional and identity-stable: a caller that
+   * does not pass it gets byte-identical keys.
+   */
+  layoutEpoch?: TranscriptLayoutEpoch
+  /**
+   * The MEASURED column bucket — live at every width setting, including Medium.
+   *
+   * Deliberately NOT `layoutEpoch.widthBucket`. Those are two numbers with two
+   * jobs. The epoch's bucket is the ESTIMATE correction and is gated to 0 at
+   * Medium so the default setting keeps the shipped calibration. This one is
+   * cache INVALIDATION: it must track the real column at every setting, or a
+   * height measured at one column is served under another. Reading the gated
+   * value here silently deleted the width dimension from BOTH key spaces at the
+   * default setting and made `bucketChanged` unfireable — a regression against
+   * the build before this setting existed, where the key carried a live
+   * `widthBucket(el.clientWidth)`.
+   *
+   * Byte-identity at Medium still holds: the key is `…|bucket|…` plus the
+   * epoch's suffix, and a gated epoch's suffix is EMPTY, so a Medium key is
+   * exactly the pre-setting key.
+   */
+  measuredWidthBucket?: number
   forcedRowIndex?: number | null
   /**
    * RowKeys currently streaming (assistant / tool / fan-out). Measurement
@@ -1564,6 +1753,7 @@ function useTranscriptVirtualization(params: {
    * desync the spacers from real layout.
    */
   hiddenRowKeys?: ReadonlySet<string>
+  fanoutLaneSlots?: ReadonlyMap<string, FanoutLaneSlot>
   /**
    * Cut 1b — gutter-owned sink for per-frame spy updates. Invoked from the
    * scroll RAF even when `scrollTick` is held (band unchanged). Must NOT
@@ -1579,7 +1769,7 @@ function useTranscriptVirtualization(params: {
   /**
    * Scroll-spy: the virtual-row index the reading line (top-third of the
    * viewport) currently sits on, derived from the SAME `effectiveScrollTop` +
-   * held `windowHeights` that drive the window — a pure read, never a scroll
+   * current row heights that drive the window — a pure read, never a scroll
    * write. Null on the non-virtualised path. Consumers map it to a user-message
    * marker via `findActiveGutterMarkerKey`. Structural / band-commit path only;
    * mid-band frames reach the gutter via `spySinkRef`.
@@ -1604,10 +1794,14 @@ function useTranscriptVirtualization(params: {
     getUserScrollGestureLive,
     onProgrammaticScrollWrite,
     compactDensity,
+    transcriptView,
+    layoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+    measuredWidthBucket = 0,
     forcedRowIndex,
     activeLiveRowKeys,
     expandedRowIds,
     hiddenRowKeys,
+    fanoutLaneSlots,
     spySinkRef
   } = params
 
@@ -1617,7 +1811,36 @@ function useTranscriptVirtualization(params: {
   const geometryHeightsRef = useRef<Map<string, number>>(new Map())
   const scrollTopRef = useRef(0)
   const viewportRef = useRef(0)
-  const bucketRef = useRef(0)
+  /*
+   * THE COLUMN-WIDTH SEAM. There is exactly ONE width number in this file, and
+   * this hook does not produce it.
+   *
+   * Until Transcript Width, there were two. A MEASURED `widthBucket(el.clientWidth)`
+   * was sampled in the scroll handler into a ref and fed `measurementKey` /
+   * `geometryKey`; the epoch's `widthBucket` was minted in render and hardcoded
+   * to 0. They were ~10 and 0 in the shipped build, so the estimator sized every
+   * row for a 980px column the transcript never renders at while the cache keys
+   * recorded the real one — and the module comment claimed they were the same
+   * number. Carrying the width axis in the key SUFFIX as well as the argument is
+   * what kept that from being a silent lie.
+   *
+   * Now `TranscriptPanel` owns the only `widthBucket(` call in the file (a
+   * ResizeObserver on `.transcript-inner`, above the projection), commits it to
+   * state, and mints the epoch from it. This hook READS that one value off the
+   * epoch — for the estimate, for the measurement key and for the geometry key
+   * alike. A second source needs somebody to add a second `widthBucket(` call,
+   * which `transcriptWidthSetting.test.ts` counts and refuses.
+   *
+   * These two refs are NOT a second source. `layoutWidthBucketRef` is the
+   * committed epoch bucket mirrored in render, so the metrics reader (which
+   * lives in a `useEffect` closure that does not see a fresh `layoutEpoch`) can
+   * read the current one; `seenWidthBucketRef` is what that reader last
+   * observed, so `decideScrollerBoxRefresh` still learns that the box crossed a
+   * boundary. Neither is ever passed to a cache key.
+   */
+  const layoutWidthBucketRef = useRef(measuredWidthBucket)
+  layoutWidthBucketRef.current = measuredWidthBucket
+  const seenWidthBucketRef = useRef(layoutEpoch.widthBucket)
   const heightsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
   const heightOffsetsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
   const rowsRef = useRef<VirtualRow[]>(rows)
@@ -1640,6 +1863,10 @@ function useTranscriptVirtualization(params: {
   const observerRef = useRef<ResizeObserver | null>(null)
   const measureRafRef = useRef<number | null>(null)
   const scrollRafRef = useRef<number | null>(null)
+  // Coalesces scroller-box (pane-local) resize handling; deliberately separate
+  // from scrollRafRef so a resize can never be swallowed by a pending scroll
+  // frame's early-return (and vice versa) — both read fresh metrics anyway.
+  const scrollerBoxRafRef = useRef<number | null>(null)
   // 1.0.7 — convergence guard for the pre-paint measurement effect. Counts
   // consecutive passes that only REWROTE existing measurement keys (no new
   // keys). A row whose measured height oscillates between two values for the
@@ -1670,13 +1897,16 @@ function useTranscriptVirtualization(params: {
   // loads older rows.
   const hasScrolledRef = useRef(false)
   const skipNextAnchorCorrectionRef = useRef(false)
-  // Cut 1a — mounted-band identity + held-window geometry for the RAF bump gate.
-  // `committedBandRef` is the last published band; held heights/offsets mirror
-  // the hysteresis snapshot `selectWindow` uses (not live measure heights).
+  // Mounted-band identity + current geometry for the RAF bump gate.
   const committedBandRef = useRef<VirtualWindowBand | null>(null)
   const windowHeightsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
   const windowHeightOffsetsRef = useRef<readonly number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
   const forcedRowIndexRef = useRef<number | null>(forcedRowIndex ?? null)
+  const fanoutLaneSlotsRef = useRef(fanoutLaneSlots)
+  const committedSelectionRef = useRef<{
+    epoch: object
+    window: VirtualWindow
+  } | null>(null)
   // Cut 2a — Phase-1 deferred while a user gesture is live. Timer re-bumps
   // measure after the settle window so absolute restore can apply once quiet.
   // Keep `deferredPendingRef` true across the timer→bump path: a soft skip
@@ -1699,6 +1929,16 @@ function useTranscriptVirtualization(params: {
   const [measureTick, setMeasureTick] = useState(0)
   const bumpScroll = useCallback(() => setScrollTick((t) => (t + 1) % 0x7fffffff), [])
   const bumpMeasure = useCallback(() => setMeasureTick((t) => (t + 1) % 0x7fffffff), [])
+  const measureScheduler = useMemo(
+    () =>
+      createTranscriptMeasureScheduler({
+        bump: bumpMeasure,
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (frame) => window.cancelAnimationFrame(frame)
+      }),
+    [bumpMeasure]
+  )
+  useLayoutEffect(() => () => measureScheduler.reset(), [measureScheduler, chatId, enabled])
   const scheduleDeferredAnchorCorrection = useCallback(() => {
     deferredPendingRef.current = true
     if (deferredAnchorCorrectionTimerRef.current !== null) {
@@ -1733,9 +1973,12 @@ function useTranscriptVirtualization(params: {
       scrollTopRef.current = scrollTop
       if (scroller) {
         viewportRef.current = scroller.clientHeight
-        const widthEl = contentRef?.current ?? scroller
-        bucketRef.current = widthBucket(widthEl.clientWidth)
       }
+      // No width sample here any more. This was the SECOND of the two writes to
+      // the old measured-bucket ref, and the one most likely to be missed: it
+      // re-sampled on every PROGRAMMATIC scroll, so a jump-to-message could
+      // move the cache-key bucket without ever moving the estimate's. The width
+      // has one producer now, and it is above this hook.
       hasScrolledRef.current = true
       anchorRef.current = null
       skipNextAnchorCorrectionRef.current = true
@@ -1751,7 +1994,12 @@ function useTranscriptVirtualization(params: {
   const heights = useMemo(() => {
     if (!enabled) return EMPTY_TRANSCRIPT_HEIGHTS
     const m = measurementsRef.current
-    const bucket = bucketRef.current
+    // The epoch's bucket, not a sample of our own. This memo already lists
+    // `layoutEpoch` as a dependency, so reading the bucket from it also closes
+    // the staleness window the old ref had: the ref was written in a scroll
+    // handler and never appeared in this dependency array, so the heights array
+    // could be built at one bucket and keyed at another.
+    const bucket = measuredWidthBucket
     return rows.map((row) =>
       hiddenRowKeys?.has(row.rowKey)
         ? 0
@@ -1761,11 +2009,23 @@ function useTranscriptVirtualization(params: {
             bucket,
             expandedRowIds?.has(row.rowKey) ?? false,
             measurementContentVersion(row, activeLiveRowKeys),
-            geometryHeightsRef.current
+            geometryHeightsRef.current,
+            layoutEpoch
           )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKeys, hiddenRowKeys])
+  }, [
+    enabled,
+    rows,
+    measureTick,
+    expandedRowIds,
+    activeLiveRowKeys,
+    hiddenRowKeys,
+    layoutEpoch,
+    // The keys this memo READS are written under the measured bucket, so a
+    // column reflow must re-run it even when the epoch is gated (Medium).
+    measuredWidthBucket
+  ])
   heightsRef.current = heights
   const heightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -1791,65 +2051,71 @@ function useTranscriptVirtualization(params: {
   const effectiveScrollTop = forceBottomOnLoad
     ? Math.max(0, totalHeight - viewportRef.current)
     : scrollTopRef.current
-  // 1.0.7 — window selection from a STABLE heights snapshot. This is the core
-  // fix for the ensemble virtualization oscillation. Previously the window was
-  // selected from live `heights`, which recompute on every `measureTick` — so
-  // the instant a mounted row reported its real (large) height, the window
-  // re-selected a smaller span, dropped that very row, re-measured, and limit-
-  // cycled (the ~50ms flicker that settled on the short System rows). The
-  // mounted set must NOT be an input to the computation that re-picks it.
-  //
-  // `windowHeights` is refreshed on scroll/resize (`scrollTick`) and on
-  // *structural* row-set / expansion changes, but is HELD across pure
-  // measurement bumps AND across live-tail projection churn (a new `rows`
-  // array whose rowKeys are unchanged — streaming content rewrites). Live
-  // height values still flow through `heights` into spacers; only the
-  // mounted-window snapshot is held. Within a frame the window is fixed;
-  // Phase-2 measures exactly that window's rows and writes the cache. The
-  // next genuine scroll then re-selects ONCE from now-measured heights.
-  // Standard virtualiser hysteresis: select on scroll, measure within the
-  // selection, never let measurement or content-only rewrites re-trigger
-  // selection.
+  // Retain the committed BAND while measurements settle, not frozen heights.
+  // A frozen height model diverges from the DOM as live cards grow: scrolling
+  // can run past its total and evict every row, leaving only blank spacers.
+  // Current heights drive selection, spacers, anchors, and scroll-spy together.
+  // Measurement can extend coverage but only scroll/topology changes trim it.
   const rowsStructuralKey = structuralRowSetKey(rows)
-  const windowHeights = useMemo(
-    () => heights,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, rowsStructuralKey, expandedRowIds, scrollTick] // deliberately NOT measureTick / rows / activeLiveRowKeys
+  const disclosureKey = JSON.stringify([
+    [...(expandedRowIds ?? [])].sort(),
+    [...(hiddenRowKeys ?? [])].sort()
+  ])
+  const selectionEpoch = useMemo(
+    () => ({
+      enabled,
+      chatId,
+      rowsStructuralKey,
+      disclosureKey,
+      compactDensity,
+      scrollTick,
+      forcedRowIndex
+    }),
+    [enabled, chatId, rowsStructuralKey, disclosureKey, compactDensity, scrollTick, forcedRowIndex]
   )
-  const windowHeightOffsets = useMemo(
-    () => (enabled ? buildHeightOffsets(windowHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
-    [enabled, windowHeights]
-  )
+  const windowHeights = heights
+  const windowHeightOffsets = heightOffsets
   windowHeightsRef.current = windowHeights
   windowHeightOffsetsRef.current = windowHeightOffsets
   forcedRowIndexRef.current = forcedRowIndex ?? null
+  fanoutLaneSlotsRef.current = fanoutLaneSlots
   const virtualWindow: VirtualWindow = enabled
-    ? selectWindow({
+    ? selectTranscriptWindow({
         scrollTop: effectiveScrollTop,
         viewportHeight: viewportRef.current,
         heights: windowHeights,
         heightOffsets: windowHeightOffsets,
         overscanPx: DEFAULT_OVERSCAN_PX,
-        forceIndex: forcedRowIndex
+        forceIndex: forcedRowIndex,
+        rows,
+        fanoutLaneSlots,
+        previous:
+          committedSelectionRef.current?.epoch === selectionEpoch
+            ? committedSelectionRef.current.window
+            : null
       })
     : { startIndex: 0, endIndex: rows.length, topSpacerPx: 0, bottomSpacerPx: 0 }
   // Publish the band we just committed so the next scroll RAF can gate
   // bumpScroll against the mounted window (cut 1a).
-  committedBandRef.current = enabled
-    ? {
-        startIndex: virtualWindow.startIndex,
-        endIndex: virtualWindow.endIndex,
-        forceIndex:
-          typeof forcedRowIndex === 'number' && Number.isInteger(forcedRowIndex)
-            ? forcedRowIndex
-            : null
-      }
-    : null
+  useLayoutEffect(() => {
+    committedBandRef.current = enabled
+      ? {
+          startIndex: virtualWindow.startIndex,
+          endIndex: virtualWindow.endIndex,
+          forceIndex:
+            typeof forcedRowIndex === 'number' && Number.isInteger(forcedRowIndex)
+              ? forcedRowIndex
+              : null
+        }
+      : null
+    committedSelectionRef.current = enabled
+      ? { epoch: selectionEpoch, window: virtualWindow }
+      : null
+  })
 
   // Scroll-spy (structural / band-commit path). Mid-band frames update the
   // gutter through `spySinkRef` with the same pure helper so the rail never
-  // freezes while scrollTick is held. Progress uses LIVE total height;
-  // rowIndex uses HELD window heights + the top-third reading line.
+  // freezes while scrollTick is held. Both use the current measured geometry.
   const spySnap = computeTranscriptScrollSpy({
     enabled,
     scrollTop: effectiveScrollTop,
@@ -1872,15 +2138,21 @@ function useTranscriptVirtualization(params: {
     const readMetricsInto = (el: HTMLDivElement): boolean => {
       scrollTopRef.current = el.scrollTop
       viewportRef.current = el.clientHeight
-      // 1.0.7 — bucket width off the capped `.transcript-inner` (contentRef),
-      // not the scroll container: a scrollbar appear/disappear changes the
-      // scroller's clientWidth but not the inner's, so this can't flip the
-      // bucket and invalidate the whole measurement cache. Fall back to the
-      // scroller when contentRef hasn't mounted yet.
-      const widthEl = contentRef?.current ?? el
-      const nextBucket = widthBucket(widthEl.clientWidth)
-      const bucketChanged = nextBucket !== bucketRef.current
-      bucketRef.current = nextBucket
+      // 1.0.7 — the bucket is read off the capped `.transcript-inner`, not the
+      // scroll container: a scrollbar appear/disappear changes the scroller's
+      // clientWidth but not the inner's, so it must not be able to flip the
+      // bucket and invalidate the whole measurement cache.
+      //
+      // Transcript Width — that sample now happens ONCE, in the panel's own
+      // ResizeObserver above the projection, and arrives here as
+      // `layoutEpoch.widthBucket`. This function no longer measures width; it
+      // only reports whether the COMMITTED bucket has moved since it last
+      // looked, which is all `decideScrollerBoxRefresh` ever wanted it for. Any
+      // `widthBucket(` call reintroduced here is a second source of the one
+      // number the estimate and both cache keys are built from.
+      const nextBucket = layoutWidthBucketRef.current
+      const bucketChanged = nextBucket !== seenWidthBucketRef.current
+      seenWidthBucketRef.current = nextBucket
       return bucketChanged
     }
     readMetricsInto(scroller)
@@ -1953,17 +2225,19 @@ function useTranscriptVirtualization(params: {
         // mounted band (start/end/force) would change.
         if (
           !wasScrolled ||
-          virtualWindowBandChanged(
-            committedBandRef.current,
-            selectWindowBand({
+          virtualWindowBandChanged(committedBandRef.current, {
+            ...selectTranscriptWindow({
               scrollTop: scrollTopRef.current,
               viewportHeight: viewportRef.current,
               heights: windowHeightsRef.current,
               heightOffsets: windowHeightOffsetsRef.current,
               overscanPx: DEFAULT_OVERSCAN_PX,
-              forceIndex: forcedRowIndexRef.current
-            })
-          )
+              forceIndex: forcedRowIndexRef.current,
+              rows: rowsRef.current,
+              fanoutLaneSlots: fanoutLaneSlotsRef.current
+            }),
+            forceIndex: forcedRowIndexRef.current
+          })
         ) {
           bumpScroll()
         }
@@ -1971,12 +2245,89 @@ function useTranscriptVirtualization(params: {
     }
     scroller.addEventListener('scroll', refresh, { passive: true })
     window.addEventListener('resize', refresh)
+
+    // Pane-local geometry. A Multiview divider drag, a pane layout switch, or
+    // the pane composer's chrome collapsing at run end resizes THIS scroller
+    // with neither a window resize nor a scroll event, so viewportRef and the
+    // width bucket go stale, the mounted band under-covers the viewport, and
+    // the reader sees blank spacer until a manual scroll (the resting-pane
+    // "gap"). Observe the scroller box itself and run the same refresh the
+    // window-resize path runs — except this handler never flips hasScrolledRef:
+    // the observer's initial fire at observe time is not a scroll, and the
+    // forced-bottom-on-load window depends on that flag staying false until
+    // the snap-to-bottom lands. Policy in decideScrollerBoxRefresh.
+    let scrollerBoxObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      scrollerBoxObserver = new ResizeObserver(() => {
+        if (scrollerBoxRafRef.current !== null) return
+        scrollerBoxRafRef.current = requestAnimationFrame(() => {
+          scrollerBoxRafRef.current = null
+          const el = scrollRef.current
+          if (!el) return
+          const previousViewport = viewportRef.current
+          const bucketChanged = readMetricsInto(el)
+          const decision = decideScrollerBoxRefresh({
+            hasScrolled: hasScrolledRef.current,
+            bucketChanged,
+            viewportChanged: viewportRef.current !== previousViewport,
+            bandChanged:
+              hasScrolledRef.current &&
+              virtualWindowBandChanged(committedBandRef.current, {
+                ...selectTranscriptWindow({
+                  scrollTop: scrollTopRef.current,
+                  viewportHeight: viewportRef.current,
+                  heights: windowHeightsRef.current,
+                  heightOffsets: windowHeightOffsetsRef.current,
+                  overscanPx: DEFAULT_OVERSCAN_PX,
+                  forceIndex: forcedRowIndexRef.current,
+                  rows: rowsRef.current,
+                  fanoutLaneSlots: fanoutLaneSlotsRef.current
+                }),
+                forceIndex: forcedRowIndexRef.current
+              })
+          })
+          if (decision.remeasure) bumpMeasure()
+          if (decision.rebaselineAnchor) {
+            const a = findScrollAnchor(
+              scrollTopRef.current,
+              heightsRef.current,
+              heightOffsetsRef.current
+            )
+            const anchorRow = rowsRef.current[a.index]
+            anchorRef.current = anchorRow
+              ? {
+                  rowKey: anchorRow.rowKey,
+                  aboveHeight: sumHeightOffsets(heightOffsetsRef.current, 0, a.index),
+                  offsetWithin: a.offsetWithin
+                }
+              : null
+            spySinkRef?.current?.(
+              computeTranscriptScrollSpy({
+                enabled: true,
+                scrollTop: scrollTopRef.current,
+                viewportHeight: viewportRef.current,
+                liveHeightOffsets: heightOffsetsRef.current,
+                windowHeights: windowHeightsRef.current,
+                windowHeightOffsets: windowHeightOffsetsRef.current
+              })
+            )
+          }
+          if (decision.reselectWindow) bumpScroll()
+        })
+      })
+      scrollerBoxObserver.observe(scroller)
+    }
     return () => {
       scroller.removeEventListener('scroll', refresh)
       window.removeEventListener('resize', refresh)
+      scrollerBoxObserver?.disconnect()
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current)
         scrollRafRef.current = null
+      }
+      if (scrollerBoxRafRef.current !== null) {
+        cancelAnimationFrame(scrollerBoxRafRef.current)
+        scrollerBoxRafRef.current = null
       }
     }
   }, [enabled, scrollRef, bumpScroll, bumpMeasure, contentRef, spySinkRef])
@@ -2009,13 +2360,24 @@ function useTranscriptVirtualization(params: {
 
   // Density change alters --space-lg (the row gap baked into slot
   // heights), so every cached measurement is stale — clear + re-measure.
+  // A transcript-view flip is the same class of change and worse in degree:
+  // a Minimal row is a one-liner where a Standard one was a full activity
+  // stack, so every cached height is wrong by a large margin. Without this the
+  // spacers stay sized for the pre-flip rows and the reader gets a scroll jump
+  // with blank gaps where the tall rows used to be.
+  // `layoutEpoch` deliberately does NOT join this effect: it is folded into
+  // `measurementKey` and `geometryKey` instead, so a layout change MISSES both
+  // maps rather than emptying them — exactly how the width bucket has always
+  // worked. Density and view are here only because they are absent from those
+  // keys. Adding the epoch too would throw away every height the reader may
+  // scroll back to at the old layout for no invalidation benefit.
   useEffect(() => {
     if (!enabled) return
     measurementsRef.current.clear()
     geometryHeightsRef.current.clear()
     const frame = window.requestAnimationFrame(() => bumpMeasure())
     return () => window.cancelAnimationFrame(frame)
-  }, [enabled, compactDensity, bumpMeasure])
+  }, [enabled, compactDensity, transcriptView, bumpMeasure])
 
   // Pre-paint: anchor correction (Phase 1) + slot measurement (Phase 2).
   // This pass is deliberately invalidation-driven. Running it after every
@@ -2123,7 +2485,10 @@ function useTranscriptVirtualization(params: {
     // include the row gap), keyed by `measurementKey`. Request one more
     // pass when something moved; converges once stable.
     const measurements = measurementsRef.current
-    const bucket = bucketRef.current
+    // Same one number the estimate above was built from. This effect already
+    // depends on `layoutEpoch`, so a width change re-runs the pass that writes
+    // the keys as well as the memo that reads them.
+    const bucket = measuredWidthBucket
     const mountedRows = rowsRef.current.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     const spacerBottom = spacerBottomRef.current
     for (const [rowKey, el] of blockElsRef.current) {
@@ -2133,10 +2498,9 @@ function useTranscriptVirtualization(params: {
     }
     let sawNewKey = false
     let sawRewrite = false
-    let sawLiveGrowth = false
     for (let i = 0; i < mountedRows.length; i++) {
       const row = mountedRows[i]
-      // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${index}`),
+      // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${occurrence}`),
       // NOT the bare message id. Historical/imported data can carry duplicate
       // message ids; keying on id alone collapsed those rows to one element +
       // one measurement slot, scrambling heights + order (the load/unload,
@@ -2148,27 +2512,34 @@ function useTranscriptVirtualization(params: {
           ? blockElsRef.current.get(mountedRows[i + 1].rowKey)
           : spacerBottom
       const slot = nextEl && nextEl.isConnected ? nextEl.offsetTop - el.offsetTop : el.offsetHeight
-      // A paired fan-out lane's LEAD cell sits BESIDE its trail cell, so the two
-      // share an offsetTop and the delta is legitimately 0 — the pair's whole
-      // height lands on the trail row, and lead + trail still sum to exactly the
-      // space the pair occupies. For every other row type a non-positive slot
-      // means "this row has no layout box to measure" (a display:none block, an
-      // element mid-unmount) and must be skipped, so the zero is admitted only
-      // where the layout genuinely produces one. Admitting it everywhere would
-      // silently zero real rows; rejecting it here would leave the lead on its
-      // ESTIMATE while the trail already carries the pair — counting the band
-      // one-and-a-half times and inflating the bottom spacer.
-      const isPairLead = el.dataset.fanoutSlot === 'lead'
-      if (!(slot > 0) && !(isPairLead && slot === 0)) continue
-      const isActiveLiveRow = isActiveLiveRowKey(row.rowKey, activeLiveRowKeys)
+      // A lane cell that is not the last of its grid row sits BESIDE the next
+      // one, so the two share an offsetTop and the delta is legitimately 0 —
+      // the grid row's whole height lands on the cell that CLOSES it, and the
+      // row's cells still sum to exactly the space the row occupies. For every
+      // other row type a non-positive slot means "this row has no layout box to
+      // measure" (a display:none block, an element mid-unmount) and must be
+      // skipped. Admitting a zero everywhere would silently zero real rows;
+      // rejecting it for a cell would leave that cell on its ESTIMATE while the
+      // closing cell already carries the band — counting the band one-and-a-half
+      // times and inflating the bottom spacer.
+      //
+      // The rule lives in `admitsMeasuredRowDelta` rather than inline, and the
+      // reason is the shape of this file's testability: no renderer suite can
+      // reach this effect (`renderToStaticMarkup`, no jsdom, so nothing has an
+      // `offsetTop`), and the shipped inline form — `=== 'lead'` — therefore had
+      // no test of any kind while it was silently wrong at more than two
+      // tracks. The dataset property name is derived from the attribute the JSX
+      // stamps, so the two cannot drift.
+      if (!admitsMeasuredRowDelta(slot, el.dataset[FANOUT_LANE_SLOT_DATASET_KEY])) continue
       const key = measurementKey(
         row.rowKey,
         measurementContentVersion(row, activeLiveRowKeys),
         bucket,
-        expandedRowIds?.has(row.rowKey) ?? false
+        expandedRowIds?.has(row.rowKey) ?? false,
+        layoutEpoch
       )
       geometryHeightsRef.current.set(
-        geometryKey(row.rowKey, bucket, expandedRowIds?.has(row.rowKey) ?? false),
+        geometryKey(row.rowKey, bucket, expandedRowIds?.has(row.rowKey) ?? false, layoutEpoch),
         slot
       )
       const prev = measurements.get(key)
@@ -2176,23 +2547,18 @@ function useTranscriptVirtualization(params: {
         measurements.set(key, slot)
         sawNewKey = true
       } else if (Math.abs(prev - slot) > 0.5) {
-        const nextSlot = isActiveLiveRow ? Math.max(prev, slot) : slot
-        if (Math.abs(prev - nextSlot) > 0.5) {
-          measurements.set(key, nextSlot)
-          if (isActiveLiveRow && nextSlot > prev) {
-            sawLiveGrowth = true
-          } else {
-            sawRewrite = true
-          }
-        }
+        // Live cards can shrink when their content settles or a solo lane
+        // becomes a paired lead (whose slot is zero). Growth under the SAME
+        // key is also a rewrite: exempting it resets the guard on every other
+        // pass of a grow/shrink oscillation and permits an infinite loop.
+        measurements.set(key, slot)
+        sawRewrite = true
       }
     }
-    // 1.0.7 — gate the re-measure bump through the convergence guard. A new key
-    // (genuine content/growth) always converges and resets the budget; a run of
-    // rewrite-only passes (oscillation) is capped so it can't spin React's
-    // nested-update limit and crash the transcript surface.
+    // Cap repeated rewrites. New keys may still cascade through a long page,
+    // so the scheduler also bounds synchronous work independently of the key.
     const decision = decideMeasurePass({
-      sawNewKey: sawNewKey || sawLiveGrowth,
+      sawNewKey,
       sawRewrite,
       rewritePasses: measureRewritePassesRef.current,
       alreadyWarned: measureWarnedRef.current
@@ -2202,7 +2568,7 @@ function useTranscriptVirtualization(params: {
     // 1.0.7 — record whether THIS pass fully converged (nothing changed). The
     // next pre-paint pass's Phase-1 anchor restore reads this so it only fires
     // once heights have settled — never mid-measure.
-    measureConvergedRef.current = !sawNewKey && !sawLiveGrowth && !sawRewrite
+    measureConvergedRef.current = !sawNewKey && !sawRewrite
     if (decision.shouldWarn) {
       console.warn(
         '[transcript] measurement did not converge after ' +
@@ -2210,7 +2576,8 @@ function useTranscriptVirtualization(params: {
           'A mounted row height is likely oscillating (concurrent streams / scrollbar reflow).'
       )
     }
-    if (decision.bump) bumpMeasure()
+    if (decision.bump) measureScheduler.request()
+    else measureScheduler.reset()
   }, [
     activeLiveRowKeys,
     bumpMeasure,
@@ -2221,7 +2588,12 @@ function useTranscriptVirtualization(params: {
     forcedRowIndex,
     getUserScrollGestureLive,
     hiddenRowKeys,
+    layoutEpoch,
+    measureScheduler,
     measureTick,
+    // The pass WRITES both keys under the measured bucket, so a column reflow
+    // must re-run it even at Medium, where the epoch is gated to 0.
+    measuredWidthBucket,
     onProgrammaticScrollWrite,
     rowsStructuralKey,
     scheduleDeferredAnchorCorrection,
@@ -2233,7 +2605,7 @@ function useTranscriptVirtualization(params: {
 
   const blockRef = useCallback((el: HTMLDivElement | null) => {
     if (!el) return
-    // `data-vrow-id` carries the collision-proof `rowKey` (`${id}#${index}`),
+    // `data-vrow-id` carries the collision-proof `rowKey` (`${id}#${occurrence}`),
     // so `blockElsRef` is keyed by rowKey — duplicate message ids can't share
     // an element entry.
     const rowKey = el.dataset.vrowId
@@ -2257,2966 +2629,3741 @@ function useTranscriptVirtualization(params: {
 }
 /* eslint-enable react-hooks/refs */
 
-function EnsemblePollCard({
-  chat,
-  pollId,
-  onVote
-}: {
-  chat: ChatRecord | null
-  pollId: string
-  onVote?: (chatId: string, pollId: string, choice: string) => void
-}): ReactElement | null {
-  const poll = chat?.ensemble?.bossmanControlState?.polls?.find((entry) => entry.id === pollId)
-  if (!chat || !poll) return null
-  const userVote = poll.votes.find((vote) => vote.voterLabel === 'User')
-  const canVote = poll.includeUser === true && poll.status === 'open' && !userVote
-  const participantVotes = poll.votes.filter((vote) => vote.voterLabel !== 'User')
-  return (
-    <div className="plan-choice-card agent-question-card ensemble-poll-card">
-      <div className="plan-choice-question agent-question-card-question">{poll.question}</div>
-      {poll.timeoutAt && poll.status === 'open' && (
-        <div className="agent-question-card-context">Open until {poll.timeoutAt}</div>
-      )}
-      {canVote ? (
-        <div className="plan-choice-actions">
-          {poll.options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="plan-choice-action-btn"
-              onClick={() => onVote?.(chat.appChatId, poll.id, option)}
-              aria-label={`Vote: ${option}`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="agent-question-card-context">
-          {userVote ? `Your vote: ${userVote.choice}` : `Poll ${poll.status}`}
-        </div>
-      )}
-      {participantVotes.length > 0 && (
-        <div className="agent-question-card-context">
-          {participantVotes
-            .map((vote) => `${vote.voterLabel || 'Participant'}: ${vote.choice}`)
-            .join(' · ')}
-        </div>
-      )}
-    </div>
+export const TranscriptPanel = memo(function TranscriptPanel({
+  scrollRef,
+  contentRef,
+  endRef,
+  messages,
+  isWelcomeChat,
+  isThinking,
+  pendingPlanChoice,
+  pendingProposedPlan,
+  pendingAgentQuestions,
+  contextCompactionProgress = [],
+  onAgentQuestionSubmit,
+  onAgentQuestionDismiss,
+  onEnsemblePollVote,
+  runCompleteNotice,
+  runCompleteDurationText,
+  currentChat,
+  currentRun,
+  currentWorkspacePath,
+  currentProviderLabel,
+  onOpenExecutionMapForThread,
+  hasLiveOwnedExecution,
+  ownedExecutionViews,
+  onCancelOwnedExecution,
+  onResumeOwnedExecution,
+  currentProvider,
+  thinkingProviderLabel,
+  thinkingProvider,
+  thinkingProviderClass,
+  thinkingModelBadge,
+  displayFileChangeSummaries,
+  roundFileChangeSummaries,
+  fileChangeSummaryText,
+  fileChangeShouldShowStats,
+  fileChangeDisplayAdds,
+  fileChangeDisplayDels,
+  chats,
+  runningChatIds,
+  pendingAgentApprovalByChatId,
+  pendingApprovalQueueByChatId,
+  onRespondAgentApproval,
+  onPlanChoiceSubmit,
+  onProposedPlanApprove,
+  onProposedPlanDismiss,
+  onProposedPlanCustom,
+  onOpenSubThread,
+  onOpenSubThreadInSidePanel,
+  onOpenFileChangeInWorkbench,
+  onInspectRun,
+  onOpenSideChatFromRun,
+  compactDensity,
+  liveActivityViewport,
+  fanoutLaneLayout,
+  defaultTranscriptView,
+  transcriptTextSize,
+  transcriptWidth,
+  onCopyMessage,
+  onAddMessageToPrompt,
+  onDeleteMessage,
+  onTogglePinMessage,
+  renderSeatModelSwap,
+  onEditAndResendFromHere,
+  onMessageFeedback,
+  onPromoteCollaboratorComment,
+  onMessageSelectionCandidate,
+  onOpenSideChatFromMessage,
+  sideChatSeedMessageId,
+  jumpToMessageRequest,
+  threadSearchQuery,
+  threadSearchMatchRowKeys,
+  threadSearchActiveRowKey,
+  externalRestoreAnchorMessageId,
+  onManualTranscriptJump,
+  onJumpToLatest,
+  onPreviewImage,
+  onDetachToPane,
+  onOpenProjectReferenceCitation,
+  resolveProjectReferenceExtract,
+  copiedId,
+  copy,
+  virtualize,
+  autoFollowRef,
+  getUserScrollGestureLive,
+  onProgrammaticScrollWrite,
+  showRunCompleteSummary,
+  collapseOlderRounds,
+  userMessageGutterEnabled,
+  isGlobal
+}: TranscriptPanelProps) {
+  // Narrow stream subscription: App may retain React chat identity across
+  // coalesced flushes; the store is the live messages/runs source for this
+  // panel. Props remain the fallback for tests / side panes not yet ingested.
+  // Visible text stays urgent during live runs and approvals; virtualisation
+  // bounds mounted history while surrounding app chrome can remain deferred.
+  const chatId = currentChat?.appChatId ?? null
+  const storeTranscript = useVisibleChatTranscript(chatId)
+  const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
+  const resolvedMessages = storeReady ? storeTranscript.messages : messages
+  const onCopyEntireTurn = useTranscriptTurnCopy(currentChat, resolvedMessages)
+  const seatChangeStackPositions = useMemo(
+    () => adjacentSeatChangeStacks(resolvedMessages),
+    [resolvedMessages]
   )
-}
+  const liveOwnedExecutionIds = useMemo(
+    () =>
+      new Set(
+        (ownedExecutionViews || []).filter((view) => !view.settled).map((view) => view.executionId)
+      ),
+    [ownedExecutionViews]
+  )
+  const visibleMessages = useMemo(() => {
+    if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
+    // Queued-run cards were removed from the transcript; keep historical
+    // records equally quiet. Routine Ensemble receipts are NOT dropped here:
+    // a fan-out dispatch receipt is the anchor the wave fold replaces with
+    // its one-liner, so it must reach the fold and leaves the transcript at
+    // `displayMessages` instead.
+    return resolvedMessages.filter(
+      (message) =>
+        message?.metadata?.kind !== 'queuedRunRequest' &&
+        !isExecutionGraphInternalTranscriptMessage(message) &&
+        !(
+          isExecutionResultMessage(message) &&
+          liveOwnedExecutionIds.has(executionResultExecutionId(message) || '')
+        )
+    )
+  }, [isWelcomeChat, liveOwnedExecutionIds, resolvedMessages])
+  const hasLiveContextCompactionProgress = useMemo(
+    () => contextCompactionProgress.some((event) => event.status === 'started'),
+    [contextCompactionProgress]
+  )
+  const ensembleWorkingPresentation = useMemo(
+    () => deriveActiveEnsembleWorkingPresentation(currentChat, contextCompactionProgress),
+    [contextCompactionProgress, currentChat]
+  )
+  const ensembleWorkingPresentations = useMemo(
+    () => deriveActiveEnsembleWorkingPresentations(currentChat, contextCompactionProgress),
+    [contextCompactionProgress, currentChat]
+  )
+  const workingProviderLabel =
+    ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
+  const workingProvider = ensembleWorkingPresentation?.provider ?? thinkingProvider
+  const workingProviderClass = ensembleWorkingPresentation?.providerClass ?? thinkingProviderClass
+  const workingRoleLabel = ensembleWorkingPresentation?.roleLabel || null
+  const workingModelBadge = ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
+  const workingPresentations = useMemo<WorkingIndicatorPresentation[]>(
+    () =>
+      ensembleWorkingPresentations.length > 0
+        ? ensembleWorkingPresentations
+        : [
+            {
+              participantId: ensembleWorkingPresentation?.participantId ?? null,
+              runId: ensembleWorkingPresentation?.runId ?? currentRun?.runId ?? null,
+              startedAt: ensembleWorkingPresentation?.startedAt ?? currentRun?.startedAt ?? null,
+              modelId:
+                ensembleWorkingPresentation?.modelId ??
+                currentRun?.actualModel ??
+                currentRun?.requestedModel ??
+                null,
+              providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
+              provider: workingProvider ?? null,
+              providerClass:
+                workingProviderClass || (workingProvider ? String(workingProvider) : null),
+              roleLabel: workingRoleLabel,
+              modelBadge: workingModelBadge,
+              statusLabel: ensembleWorkingPresentation?.statusLabel,
+              activity:
+                ensembleWorkingPresentation?.activity ||
+                (contextCompactionProgress.some(
+                  (event) => event.status === 'started' && !event.participantId
+                )
+                  ? 'compacting'
+                  : 'working')
+            }
+          ],
+    [
+      contextCompactionProgress,
+      currentRun?.runId,
+      currentRun?.startedAt,
+      currentProviderLabel,
+      ensembleWorkingPresentation?.activity,
+      ensembleWorkingPresentation?.statusLabel,
+      ensembleWorkingPresentations,
+      workingModelBadge,
+      workingProvider,
+      workingProviderClass,
+      workingProviderLabel,
+      workingRoleLabel
+    ]
+  )
+  const hasUnifiedEnsembleWorkingSeats =
+    currentChat?.chatKind === 'ensemble' &&
+    workingPresentations.some((presentation) => Boolean(presentation.participantId))
+  const resolvedRuns = storeReady ? storeTranscript.runs : currentChat?.runs || []
+  const workingTokenTargets = useMemo(
+    () =>
+      buildWorkingIndicatorTokenTargets(
+        resolvedRuns,
+        resolvedMessages,
+        workingPresentations.map((presentation) => ({
+          runId: presentation.runId,
+          participantId: presentation.participantId,
+          provider: presentation.provider,
+          modelId: presentation.modelId
+        }))
+      ),
+    [resolvedMessages, resolvedRuns, workingPresentations]
+  )
+  // Seats whose entry in the unified Working grid is live right now, so each
+  // fan-out lane card can shimmer its rim while its own seat is busy — the
+  // point being that a straggler is findable at a glance when several lanes
+  // run at once.
+  //
+  // Gated on the SAME condition as the working row below
+  // (`isThinking || hasLiveContextCompactionProgress`) and read from the SAME
+  // presentations, so a card's shimmer starts and stops with that seat's grid
+  // entry rather than tracking a second, subtly different idea of "live". A
+  // presentation with no participantId is the non-Ensemble fallback row and
+  // belongs to no lane, so it lights nothing.
+  const workingLaneParticipantIds = useMemo<ReadonlySet<string>>(() => {
+    if (!isThinking && !hasLiveContextCompactionProgress) return EMPTY_WORKING_LANE_IDS
+    const ids = new Set<string>()
+    for (const presentation of workingPresentations) {
+      if (presentation.participantId) ids.add(presentation.participantId)
+    }
+    return ids
+  }, [hasLiveContextCompactionProgress, isThinking, workingPresentations])
+  // Working-row context pressure — self-derived from the chat record with
+  // the same meter lib the donut uses, so the indicator can disclose "before"
+  // (occupancy ≥ warn) and presume "whilst" (token-growth stall at pressure)
+  // without any new prop plumbing through the multiview panes.
+  const workingContextPressure = useMemo(() => {
+    const runs = resolvedRuns
+    const latestRun = [...runs].reverse().find((run) => run?.stats)
+    const soloWindow = resolveContextWindow(
+      isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
+      latestRun?.actualModel || latestRun?.requestedModel || ''
+    )
+    const soloUsed = currentContextTokens(runs, {
+      liveOutputTokens: 0,
+      isRunning: true,
+      messages: resolvedMessages
+    })
+    const byParticipant = new Map<string, number>()
+    const participants = currentChat?.ensemble?.participants || []
+    if (participants.length > 0) {
+      for (const row of buildParticipantContextRows(runs, participants, {
+        messages: resolvedMessages
+      })) {
+        byParticipant.set(row.id, row.percent)
+      }
+    }
+    return { solo: contextPercent(soloUsed, soloWindow), byParticipant }
+  }, [currentChat?.ensemble?.participants, currentProvider, resolvedMessages, resolvedRuns])
+  const [messageContextMenu, setMessageContextMenu] =
+    useState<TranscriptMessageContextMenuSelection | null>(null)
+  const {
+    closePreview: closeFileChangeDiffPreview,
+    keepPreviewOpen: keepFileChangeDiffPreviewOpen,
+    preview: fileChangeDiffPreview,
+    scheduleClosePreview: scheduleCloseFileChangeDiffPreview,
+    scheduleShowPreview: scheduleShowFileChangeDiffPreview,
+    showPreview: showFileChangeDiffPreview
+  } = useDiffHoverPreviewState(
+    FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS,
+    FILE_CHANGE_DIFF_PREVIEW_OPEN_DELAY_MS
+  )
+  const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
+    FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
+  )
+  const loadCloseoutCommitFiles = useCallback(
+    async (commit: CloseoutCommit) => {
+      const workspacePath = currentWorkspacePath || currentChat?.workspacePath
+      if (!workspacePath) return null
+      const result = await window.api.getCommitFilePreview({
+        workspacePath,
+        chatId: currentChat?.appChatId,
+        commitHash: commit.hash
+      })
+      return result.ok ? { files: result.files, totalFiles: result.totalFiles } : null
+    },
+    [currentChat?.appChatId, currentChat?.workspacePath, currentWorkspacePath]
+  )
+  const fileChangeSections = useMemo(
+    () => buildFileChangeSummarySections(displayFileChangeSummaries, roundFileChangeSummaries),
+    [displayFileChangeSummaries, roundFileChangeSummaries]
+  )
+  // Round rows lead when the sectioned layout is active; the show-more
+  // window slices the combined list so the round section is always the
+  // first thing revealed.
+  const fileChangeDisplayList = fileChangeSections?.combined ?? displayFileChangeSummaries
+  const fileChangeSummaryWindow = useMemo(
+    () => buildFileChangeSummaryWindow(fileChangeDisplayList, fileChangeSummaryVisibleCount),
+    [fileChangeDisplayList, fileChangeSummaryVisibleCount]
+  )
+  // Row-level render cache: stream updates replace one message object, so
+  // unchanged rows can reuse their previous element instead of rebuilding all
+  // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
+  const rowElementCacheRef = useRef<
+    Map<string, { signature: TranscriptRowRenderSignature; element: ReactElement }>
+  >(new Map())
+  const thinkingTraceActionsCacheRef = useRef<ThinkingTraceActionsStabilizeCache>(new Map())
+  const closeMessageContextMenu = useCallback(() => {
+    setMessageContextMenu(null)
+  }, [])
+  // Snapshot fallback for summaries with no captured git diff (non-git
+  // workspaces, tool-derived live summaries): synthesize hunks from the
+  // run's write-tool payloads. Computed lazily on hover and cached per
+  // (messages identity, path) — a stream update swaps the messages array,
+  // which invalidates the whole cache.
+  const toolEditSnapshotCacheRef = useRef<{
+    messages: ChatMessage[] | null
+    byPath: Map<string, string | null>
+  }>({ messages: null, byPath: new Map() })
+  const resolveFileChangeDiffText = useCallback(
+    (
+      summary: DiffFileSummary,
+      evidenceMessages: ChatMessage[] | null = visibleMessages
+    ): { diffText?: string; snapshot?: boolean } => {
+      if (summary.diffText?.trim()) return { diffText: summary.diffText }
+      // Tombstoned historical close-outs may not have a durable evidence
+      // scope (legacy records). With no provable scope, omit a synthetic
+      // preview rather than borrowing a later run's edit to the same path.
+      if (!evidenceMessages) return {}
+      const cache = toolEditSnapshotCacheRef.current
+      if (cache.messages !== evidenceMessages) {
+        cache.messages = evidenceMessages
+        cache.byPath.clear()
+      }
+      if (!cache.byPath.has(summary.path)) {
+        cache.byPath.set(
+          summary.path,
+          buildToolEditDiffSnapshotForPath(
+            evidenceMessages,
+            summary.path,
+            currentWorkspacePath || currentChat?.workspacePath
+          )
+        )
+      }
+      const diffText = cache.byPath.get(summary.path) || undefined
+      return diffText ? { diffText, snapshot: true } : {}
+    },
+    [currentChat?.workspacePath, currentWorkspacePath, visibleMessages]
+  )
+  const openFileChangeDiffPreview = useCallback(
+    (
+      event: { currentTarget: HTMLElement },
+      summary: DiffFileSummary,
+      options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean },
+      evidenceMessages?: ChatMessage[] | null
+    ) => {
+      const anchorElement = event.currentTarget
+      const produce = (): DiffHoverPreviewState | null => {
+        if (!anchorElement.isConnected) return null
+        const resolved = resolveFileChangeDiffText(summary, evidenceMessages)
+        if (!resolved.diffText && !onOpenFileChangeInWorkbench) return null
+        return {
+          anchor: anchorElement.getBoundingClientRect(),
+          boundary: diffHoverPreviewBoundaryForElement(anchorElement),
+          summary: {
+            actionLabel: onOpenFileChangeInWorkbench
+              ? 'Click row to open Diff Studio'
+              : 'Click row to preview',
+            path: summary.path,
+            status: summary.status,
+            additions: summary.additions,
+            deletions: summary.deletions,
+            diffText: resolved.diffText,
+            snapshot: resolved.snapshot,
+            source: 'run-summary'
+          },
+          focusTarget: options?.focusTarget,
+          action: onOpenFileChangeInWorkbench
+            ? {
+                label: 'Open Diff Studio',
+                onActivate: () => {
+                  closeFileChangeDiffPreview()
+                  onOpenFileChangeInWorkbench(summary)
+                }
+              }
+            : undefined
+        }
+      }
+      // Keyboard focus and clicks open instantly; only pointer hover waits
+      // out the open delay.
+      if (options?.immediate || options?.focusTarget) {
+        const nextPreview = produce()
+        if (nextPreview) showFileChangeDiffPreview(nextPreview)
+        return
+      }
+      scheduleShowFileChangeDiffPreview(produce)
+    },
+    [
+      closeFileChangeDiffPreview,
+      onOpenFileChangeInWorkbench,
+      resolveFileChangeDiffText,
+      scheduleShowFileChangeDiffPreview,
+      showFileChangeDiffPreview
+    ]
+  )
+  const activateFileChangeSummary = useCallback(
+    (
+      event: React.MouseEvent<HTMLElement>,
+      summary: DiffFileSummary,
+      evidenceMessages?: ChatMessage[] | null
+    ) => {
+      if (!onOpenFileChangeInWorkbench) {
+        openFileChangeDiffPreview(event, summary, { immediate: true }, evidenceMessages)
+        return
+      }
+      closeFileChangeDiffPreview()
+      onOpenFileChangeInWorkbench(summary)
+    },
+    [closeFileChangeDiffPreview, onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
+  )
+  useDiffHoverPreviewDismiss(fileChangeDiffPreview, closeFileChangeDiffPreview)
+  useEffect(() => {
+    closeFileChangeDiffPreview()
+    setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
+  }, [closeFileChangeDiffPreview, currentChat?.appChatId, currentRun?.runId, fileChangeDisplayList])
+  const showMoreFileChangeSummaries = useCallback(() => {
+    setFileChangeSummaryVisibleCount(
+      (current) => buildFileChangeSummaryWindow(fileChangeDisplayList, current).nextCount
+    )
+  }, [fileChangeDisplayList])
+  const showFewerFileChangeSummaries = useCallback(() => {
+    setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
+  }, [])
+  const openMessageContextMenu = useCallback(
+    (
+      event: React.MouseEvent,
+      message: ChatMessage,
+      copyContent: string,
+      label: string,
+      options: {
+        copySource?: TranscriptMessageContextMenuSelection['copySource']
+        copyOnly?: boolean
+      } = {}
+    ): void => {
+      const browserSelection = window.getSelection()
+      const selectedText =
+        browserSelection &&
+        !browserSelection.isCollapsed &&
+        browserSelection.anchorNode &&
+        browserSelection.focusNode &&
+        contentRef.current?.contains(browserSelection.anchorNode) &&
+        contentRef.current?.contains(browserSelection.focusNode)
+          ? browserSelection.toString()
+          : ''
+      event.preventDefault()
+      event.stopPropagation()
+      setMessageContextMenu({
+        anchor: { x: event.clientX, y: event.clientY },
+        message,
+        copyContent,
+        selectedText,
+        copySource: options.copySource || 'message-content',
+        label,
+        pinned: typeof message.metadata?.pinnedAt === 'number',
+        copyOnly: options.copyOnly
+      })
+    },
+    [contentRef]
+  )
+  const copyTranscriptSelection = useCallback((text: string): void => {
+    if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
+    void navigator.clipboard.writeText(text).catch(() => undefined)
+  }, [])
+  const activeMessageContextMenu = useMemo(() => {
+    if (!messageContextMenu) return null
+    const latestMessage =
+      visibleMessages.find((message) => message.id === messageContextMenu.message.id) ||
+      messageContextMenu.message
+    const copyContent =
+      messageContextMenu.copySource === 'subthread-return-body'
+        ? subThreadReturnBody(latestMessage.content)
+        : messageContextMenu.copySource === 'static'
+          ? messageContextMenu.copyContent
+          : latestMessage.content || ''
+    return {
+      ...messageContextMenu,
+      message: latestMessage,
+      copyContent,
+      pinned: typeof latestMessage.metadata?.pinnedAt === 'number'
+    }
+  }, [messageContextMenu, visibleMessages])
+  useEffect(() => {
+    if (!messageContextMenu) return
+    if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
+    setMessageContextMenu(null)
+  }, [messageContextMenu, visibleMessages])
+  // A thread that still owns an unsettled durable execution has NOT finished
+  // its task, whatever its provider run did. Announcing completion there is
+  // the exact failure this suppression exists to stop: an UltraTask can pause
+  // or fail minutes after the initiating turn ends, and a green "Task
+  // complete" over live work reads as an answer.
+  //
+  // Suppression is render-time on purpose. Gating the AUTHORING effects would
+  // lose the card permanently, because nothing re-triggers them once the
+  // graph settles; here the card reappears the moment the last owned
+  // execution reaches a terminal state.
+  const shouldShowRunCompleteNotice = Boolean(
+    runCompleteNotice &&
+    !isWelcomeChat &&
+    !hasLiveOwnedExecution &&
+    !shouldSuppressRunCompleteSummary(runCompleteNotice)
+  )
+  // Indexed for the settled result cards, which look their own execution up
+  // by id rather than being handed a shape that could disagree with it.
+  const executionViewsById = useMemo(
+    () => new Map((ownedExecutionViews || []).map((view) => [view.executionId, view])),
+    [ownedExecutionViews]
+  )
+  // The graphs still moving. `requires_action` is NOT settled, so a paused
+  // graph keeps its card — that card is the only place the blocker, the map
+  // and the killswitch are reachable while the thread waits.
+  const liveExecutionViews = useMemo(
+    () => (ownedExecutionViews || []).filter((view) => !view.settled),
+    [ownedExecutionViews]
+  )
+  // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
+  // changes. Those sections mount inside a persisted Task Complete card under
+  // that message; the ephemeral footer only remains when the latest close-out
+  // has no epic tables to host (legacy / empty harvest).
+  const runCompleteCloseoutTables = useMemo(() => {
+    for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
+      const message = resolvedMessages[index]
+      if (message.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND) continue
+      if (runCompleteNotice && !closeoutMatchesRunCompleteNotice(message, runCompleteNotice)) {
+        continue
+      }
+      return {
+        messageId: message.id,
+        participantTable: (message.metadata.closeoutParticipantTable ||
+          null) as CloseoutParticipantTable | null,
+        commits: (Array.isArray(message.metadata.closeoutCommits)
+          ? message.metadata.closeoutCommits
+          : null) as CloseoutCommit[] | null,
+        fileChanges: (Array.isArray(message.metadata.closeoutFileChanges)
+          ? message.metadata.closeoutFileChanges
+          : null) as CloseoutFileChange[] | null,
+        subagentDelegations: (Array.isArray(message.metadata.closeoutSubagentDelegations)
+          ? message.metadata.closeoutSubagentDelegations
+          : null) as CloseoutSubagentDelegation[] | null
+      }
+    }
+    return {
+      messageId: null as string | null,
+      participantTable: null,
+      commits: null,
+      fileChanges: null,
+      subagentDelegations: null
+    }
+  }, [resolvedMessages, runCompleteNotice])
+  const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
+  // Only the close-out matched to the currently visible completion may use
+  // live file evidence. Without this, the most recent *historical* close-out
+  // can absorb a later run's session-level file list after reload or while a
+  // new run is active.
+  const latestCloseoutMatchesVisibleRun = Boolean(runCompleteNotice && latestCloseoutMessageId)
+  const latestCloseoutHasParticipants = Boolean(
+    runCompleteCloseoutTables.participantTable?.rows?.length
+  )
+  const latestCloseoutHasCommits = Boolean(runCompleteCloseoutTables.commits?.length)
+  const latestCloseoutHasFileChanges = Boolean(runCompleteCloseoutTables.fileChanges?.length)
+  const latestCloseoutHasSubagents = Boolean(runCompleteCloseoutTables.subagentDelegations?.length)
+  // Any epic tombstone on the latest close-out means that message owns the
+  // Task Complete outer card (Participants / Sub-threads / File changes /
+  // Commits nested inside). Suppress the sibling footer card in that case.
+  const latestCloseoutHostsTaskComplete =
+    latestCloseoutHasParticipants ||
+    latestCloseoutHasCommits ||
+    latestCloseoutHasFileChanges ||
+    latestCloseoutHasSubagents
+  const footerParticipantTable = latestCloseoutHostsTaskComplete
+    ? null
+    : runCompleteCloseoutTables.participantTable
+  const footerCommits = latestCloseoutHostsTaskComplete ? null : runCompleteCloseoutTables.commits
+  const footerSubagentDelegations = latestCloseoutHostsTaskComplete
+    ? null
+    : runCompleteCloseoutTables.subagentDelegations
+  const footerShowsLiveFileChanges =
+    !latestCloseoutHostsTaskComplete &&
+    (!isGlobal || displayFileChangeSummaries.length > 0) &&
+    displayFileChangeSummaries.length > 0 &&
+    !latestCloseoutHasFileChanges
+  const showFooterRunCompleteEpicStack =
+    Boolean(footerParticipantTable?.rows?.length) ||
+    Boolean(footerCommits?.length) ||
+    Boolean(footerSubagentDelegations?.length) ||
+    footerShowsLiveFileChanges
+  // Live Workbench file rows fold into the latest close-out Task Complete
+  // card when that close-out has epic tables but no file tombstone.
+  const latestCloseoutShowsLiveFileChanges =
+    latestCloseoutHostsTaskComplete &&
+    latestCloseoutMatchesVisibleRun &&
+    !latestCloseoutHasFileChanges &&
+    (!isGlobal || displayFileChangeSummaries.length > 0) &&
+    displayFileChangeSummaries.length > 0
+  // The run-complete card's title is a dynamic status, not a fixed "Task
+  // complete": blockers the orchestrator flagged for the round REPLACE the
+  // title (and tint it) instead of contradicting it from an advisory banner
+  // underneath. Read-only — the orchestrator persists the signals; the
+  // resolver is a pure mapping over them.
+  const runCompleteBlockers = useMemo(
+    () => (isGlobal ? [] : buildRunCompleteBlockers(currentChat)),
+    [currentChat, isGlobal]
+  )
+  const runCompleteStatus = useMemo(() => {
+    if (!runCompleteNotice) return null
+    const noticeRunId = currentRun?.runId
+    return resolveRunCompleteStatus({
+      exitCode: runCompleteNotice.exitCode,
+      isGlobal,
+      blockers: runCompleteBlockers,
+      producedWork: runCompleteProducedWork({
+        chat: currentChat,
+        fileChangeCount: displayFileChangeSummaries.length,
+        // Solo runs have no round participants to read an outcome from, so
+        // a non-empty assistant reply for this run counts as work. Strictly
+        // scoped to the finished run: without a run id an older reply from
+        // earlier in the thread would launder a dead run into "work done".
+        hadAssistantOutput: Boolean(
+          noticeRunId &&
+          resolvedMessages.some(
+            (message) =>
+              message.role === 'assistant' &&
+              message.runId === noticeRunId &&
+              Boolean(message.content?.trim())
+          )
+        )
+      }),
+      // Non-ensemble pause: the run ended on a question the user hasn't
+      // answered yet. Both queues are per-chat and are cleared on answer or
+      // dismiss, so anything still in them is genuinely outstanding; prefer
+      // this run's own question when the run id is known.
+      awaitingAnswer:
+        pendingAgentQuestions.some(
+          (question) => !noticeRunId || question.appRunId === noticeRunId
+        ) || Boolean(pendingPlanChoice)
+    })
+  }, [
+    currentChat,
+    currentRun?.runId,
+    displayFileChangeSummaries.length,
+    isGlobal,
+    resolvedMessages,
+    pendingAgentQuestions,
+    pendingPlanChoice,
+    runCompleteBlockers,
+    runCompleteNotice
+  ])
+  const runBoundaryByMessageId = useMemo(() => {
+    // Store-backed, not `currentChat.runs` — see the note on
+    // `activityStackSpeakerPresentation`. A boundary resolved from the
+    // retained array loses the run that owns the newest rows, which is what
+    // drops the Pi/Ollama upstream hue as soon as a turn settles.
+    const runs = resolvedRuns
+    const runById = new Map<string, ChatRun>()
+    const promptRunByMessageId = new Map<string, ChatRun>()
+    for (const run of runs) {
+      if (run.runId) runById.set(run.runId, run)
+      if (run.promptMessageId) promptRunByMessageId.set(run.promptMessageId, run)
+    }
 
-export const TranscriptPanel = memo(
-  function TranscriptPanel({
+    const boundaries = new Map<string, ChatRun>()
+    let previousRunId: string | null = null
+    for (const message of visibleMessages) {
+      const run =
+        (message.runId ? runById.get(message.runId) : undefined) ||
+        promptRunByMessageId.get(message.id)
+      if (!run?.runId) continue
+      if (run.runId !== previousRunId) {
+        boundaries.set(message.id, run)
+      }
+      previousRunId = run.runId
+    }
+    return boundaries
+  }, [resolvedRuns, visibleMessages])
+  // Per-message expansion state for long user-message bubbles. Keyed by
+  // message.id so toggling one brief does not collapse others. Default for
+  // every long message is collapsed — see UserMessageCollapse for thresholds.
+  // Manual round expansion is session-local but keyed by chat. Switching
+  // away and back must not erase the round the reader opened; keeping the
+  // destination map available during render also lets scroll-anchor restore
+  // target a body row before its deferred positioning pass runs.
+  const roundExpansionChatId = currentChat?.appChatId ?? null
+  const manualRoundExpansionByChatId = useSyncExternalStore(
+    subscribeSessionRoundExpansion,
+    getSessionRoundExpansionSnapshot,
+    getSessionRoundExpansionSnapshot
+  )
+  const manualRoundExpansion = useMemo(
+    () => roundExpansionForChat(manualRoundExpansionByChatId, roundExpansionChatId),
+    [manualRoundExpansionByChatId, roundExpansionChatId]
+  )
+  // Per-chat transcript view. Shared with the cards that render their own
+  // activity stacks outside this prop flow — see `useTranscriptView`.
+  const transcriptView = useTranscriptView(chatId, defaultTranscriptView)
+  const setRoundExpanded = useCallback(
+    (roundId: string, expanded: boolean) => {
+      if (!roundExpansionChatId) return
+      setSessionRoundExpanded(roundExpansionChatId, roundId, expanded)
+    },
+    [roundExpansionChatId]
+  )
+  const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set())
+  const toggleUserMessageExpanded = useCallback((id: string) => {
+    setExpandedUserMessages((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+  // Inline edit state for the rewind feature
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [editingContent, setEditingContent] = useState<string>('')
+  const handleStartEditMessage = useCallback((messageId: string, content: string) => {
+    setEditingMessageId(messageId)
+    setEditingContent(content)
+  }, [])
+  const handleCancelEditMessage = useCallback(() => {
+    setEditingMessageId(null)
+    setEditingContent('')
+  }, [])
+  const handleSaveAndResend = useCallback(
+    (messageId: string, editedContent: string) => {
+      if (onEditAndResendFromHere) {
+        onEditAndResendFromHere(messageId, editedContent)
+      }
+      setEditingMessageId(null)
+      setEditingContent('')
+    },
+    [onEditAndResendFromHere]
+  )
+
+  // 1.0.6-TV2 — lifted ActivityStack expansion. Keyed by message id
+  // (the tool row's id), value is the stack's set of open activity
+  // ids. Held here (not inside ActivityStack) so a tool row scrolled
+  // out of the virtualised window and back keeps whatever the user had
+  // expanded — same survival pattern as `expandedUserMessages`.
+  const [activityExpansionByRow, setActivityExpansionByRow] = useState<Map<string, Set<string>>>(
+    new Map()
+  )
+  const setActivityExpansionForRow = useCallback((rowId: string, next: Set<string>) => {
+    setActivityExpansionByRow((prev) => {
+      const map = new Map(prev)
+      if (next.size === 0) map.delete(rowId)
+      else map.set(rowId, next)
+      return map
+    })
+  }, [])
+  const [expandedSubThreadResults, setExpandedSubThreadResults] = useState<Set<string>>(new Set())
+  const setSubThreadResultExpanded = useCallback((rowId: string, expanded: boolean) => {
+    setExpandedSubThreadResults((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(rowId)
+      else next.delete(rowId)
+      return next
+    })
+  }, [])
+  const [expandedFanoutResults, setExpandedFanoutResults] = useState<Set<string>>(new Set())
+  const setFanoutResultExpanded = useCallback((rowId: string, expanded: boolean) => {
+    setExpandedFanoutResults((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(rowId)
+      else next.delete(rowId)
+      return next
+    })
+  }, [])
+  // A settled fan-out wave folds once later round activity begins. Opening
+  // its durable summary re-inserts only that wave's lane-card rows while the
+  // rest of the visible round keeps its current disclosure state.
+  const [expandedFanoutViewports, setExpandedFanoutViewports] = useState<Set<string>>(new Set())
+  const setFanoutViewportExpanded = useCallback((viewportId: string, expanded: boolean) => {
+    setExpandedFanoutViewports((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(viewportId)
+      else next.delete(viewportId)
+      return next
+    })
+  }, [])
+  // Parallel sub-thread / side-chat return waves share the same disclosure
+  // shape as fan-out viewports, but their membership is join-wave based and
+  // must not share expansion state with ensemble fan-out headers.
+  const [expandedParallelResultViewports, setExpandedParallelResultViewports] = useState<
+    Set<string>
+  >(new Set())
+  const setParallelResultViewportExpanded = useCallback((viewportId: string, expanded: boolean) => {
+    setExpandedParallelResultViewports((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(viewportId)
+      else next.delete(viewportId)
+      return next
+    })
+  }, [])
+  // 1.0.7 — lifted live-viewport expansion (the collapsed tool/thinking
+  // viewport's Expand toggle). Held here — NOT inside ActivityStack — for
+  // the same survival reason as `activityExpansionByRow`, but keyed by
+  // `toolStackStateKey` (first constituent tool message id) instead of
+  // rowKey: the grouped row's id AND rowKey both churn while activity
+  // streams in (group growth 1→2 rewrites the merged id; new rows shift
+  // indexes), and each churn remounted the stack and snapped an expanded
+  // viewport shut mid-stream.
+  const [expandedLiveViewportStacks, setExpandedLiveViewportStacks] = useState<Set<string>>(
+    new Set()
+  )
+  const setLiveViewportExpandedForStack = useCallback((stackKey: string, expanded: boolean) => {
+    setExpandedLiveViewportStacks((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(stackKey)
+      else next.delete(stackKey)
+      return next
+    })
+  }, [])
+  // Settled-stack auto-collapse override: stacks the user re-opened after
+  // they folded into a one-line summary. Keyed by `toolStackStateKey` for
+  // the same churn-survival reason as `expandedLiveViewportStacks`.
+  const [expandedCollapsedStacks, setExpandedCollapsedStacks] = useState<Set<string>>(new Set())
+  const setCollapsedStackExpanded = useCallback((stackKey: string, expanded: boolean) => {
+    setExpandedCollapsedStacks((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(stackKey)
+      else next.delete(stackKey)
+      return next
+    })
+  }, [])
+  // Second-level fold: super-groups of adjacent collapsed one-liners the
+  // user re-opened. Keyed by the group's lead rowKey so imported duplicate
+  // message ids cannot share one disclosure state.
+  const [expandedSuperGroups, setExpandedSuperGroups] = useState<Set<string>>(new Set())
+  const setSuperGroupExpanded = useCallback((leadRowKey: string, expanded: boolean) => {
+    setExpandedSuperGroups((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(leadRowKey)
+      else next.delete(leadRowKey)
+      return next
+    })
+  }, [])
+  // Blackboard update stacks keep every durable source row projected, but
+  // one newest-position disclosure owns their presentation. Key by the
+  // first occurrence-safe member row so a new tail update cannot close a
+  // stack the user is already reading.
+  const [expandedBlackboardUpdateStacks, setExpandedBlackboardUpdateStacks] = useState<Set<string>>(
+    new Set()
+  )
+  const setBlackboardUpdateStackExpanded = useCallback((stackKey: string, expanded: boolean) => {
+    setExpandedBlackboardUpdateStacks((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.add(stackKey)
+      else next.delete(stackKey)
+      return next
+    })
+  }, [])
+  // Row ids whose tool stack has something open — the measurementKey
+  // geometry bit, so collapsed vs expanded rows cache distinct heights.
+  const expandedRowIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const [rowId, set] of activityExpansionByRow) {
+      if (set.size > 0) ids.add(rowId)
+    }
+    for (const rowId of expandedSubThreadResults) {
+      ids.add(rowId)
+    }
+    for (const rowId of expandedFanoutResults) {
+      ids.add(rowId)
+    }
+    return ids
+  }, [activityExpansionByRow, expandedSubThreadResults, expandedFanoutResults])
+  const [activeParticipantFilterKeys, setActiveParticipantFilterKeys] = useState<Set<string>>(
+    new Set()
+  )
+  const participantFilterItems = useMemo(
+    () => buildTranscriptParticipantFilterItems(currentChat),
+    [
+      currentChat?.chatKind,
+      currentChat?.ensemble?.participants,
+      currentChat?.ensemble?.bossmanParticipantId,
+      currentChat?.ensemble?.captainParticipantIds,
+      currentChat?.ensemble?.secondInCommandParticipantId
+    ]
+  )
+  const toggleParticipantFilter = useCallback((key: string) => {
+    setActiveParticipantFilterKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+  useEffect(() => {
+    if (activeParticipantFilterKeys.size === 0) return
+    const validKeys = new Set(participantFilterItems.map((item) => item.key))
+    setActiveParticipantFilterKeys((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const key of prev) {
+        if (validKeys.has(key)) next.add(key)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [activeParticipantFilterKeys.size, participantFilterItems])
+
+  // 1.0.6-TV1 — windowing. `virtualize` defaults to the global flag;
+  // tests pass it explicitly. When off, `useTranscriptVirtualization`
+  // is inert and the full-list branch below renders exactly as before.
+  //
+  // 1.0.7 — virtualization is ON for ALL chat kinds including ensembles. An
+  // earlier patch (e4feee5) disabled it for ensembles to dodge a flicker, but
+  // that abandoned the benefit for exactly the densest transcripts. The
+  // flicker's real root cause — a window↔measurement oscillation fed by (a)
+  // 4–5× under-estimated dense rows, (b) a scrollbar→width-bucket cache
+  // invalidation, and (c) the window being re-selected from the live heights
+  // its own mounted rows mutate — is now fixed at source: content-scaled
+  // estimates, `scrollbar-gutter: stable` + inner-width bucketing, a stable
+  // window-selection snapshot (select-on-scroll, not on every measure), and a
+  // one-shot anchor correction. So ensembles keep windowing and converge.
+  const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
+  const toolGroupedMessages = useIncrementalMessageGrouping(
+    visibleMessages,
+    groupAdjacentToolMessagesWithRanges,
+    toolGroupingRegroupStart
+  )
+  const groupedMessages = useFanoutLaneMessageGrouping(toolGroupedMessages)
+  const messageById = useMemo(() => {
+    const map = new Map<string, ChatMessage>()
+    for (const message of visibleMessages) {
+      map.set(message.id, message)
+    }
+    return map
+  }, [visibleMessages])
+  const toolActivityMessageIdByActivityId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const message of visibleMessages) {
+      if (message.role !== 'tool') continue
+      for (const activity of message.toolActivities || []) {
+        if (activity.id) map.set(activity.id, message.id)
+      }
+    }
+    return map
+  }, [visibleMessages])
+  const participantFilteredMessages = useMemo(
+    () => filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
+    [activeParticipantFilterKeys, groupedMessages]
+  )
+  const participantFilterActive = activeParticipantFilterKeys.size > 0
+  const roundCardChat = useMemo(
+    () => currentChat,
+    [
+      currentChat?.appChatId,
+      currentChat?.chatKind,
+      currentChat?.ensemble?.activeRound,
+      currentChat?.ensemble?.lastRoundSummary,
+      currentChat?.ensemble?.roundSummaries,
+      currentChat?.runs
+    ]
+  )
+  const roundCardCollapseEnabled = participantFilterActive ? false : collapseOlderRounds !== false
+  const manualRoundExpansionKey = useMemo(
+    () => booleanMapSignature(manualRoundExpansion),
+    [manualRoundExpansion]
+  )
+  const fanoutViewportExpansionKey = useMemo(
+    () => Array.from(expandedFanoutViewports).sort().join('\u0000'),
+    [expandedFanoutViewports]
+  )
+  const parallelResultViewportExpansionKey = useMemo(
+    () => Array.from(expandedParallelResultViewports).sort().join('\u0000'),
+    [expandedParallelResultViewports]
+  )
+  const activeRoundProjectionKey = useMemo(
+    () => ensembleActiveRoundProjectionKey(roundCardChat?.ensemble?.activeRound),
+    [roundCardChat?.ensemble?.activeRound]
+  )
+  const roundSummariesKey = useMemo(
+    () => ensembleRoundSummariesSignature(roundCardChat?.ensemble?.roundSummaries),
+    [roundCardChat?.ensemble?.roundSummaries]
+  )
+  const fanoutRunProjectionKey = useMemo(
+    () => ensembleFanoutRunProjectionKey(roundCardChat?.runs),
+    [roundCardChat?.runs]
+  )
+  const roundCardResetKey = useMemo(
+    () =>
+      [
+        roundCardChat?.appChatId || '',
+        roundCardChat?.chatKind || '',
+        roundCardCollapseEnabled ? 'collapse' : 'flat',
+        isThinking ? 'live' : 'idle',
+        activeRoundProjectionKey,
+        roundCardChat?.ensemble?.lastRoundSummary || '',
+        roundSummariesKey,
+        fanoutRunProjectionKey,
+        manualRoundExpansionKey,
+        fanoutViewportExpansionKey,
+        parallelResultViewportExpansionKey
+      ].join('\u0001'),
+    [
+      activeRoundProjectionKey,
+      fanoutRunProjectionKey,
+      fanoutViewportExpansionKey,
+      isThinking,
+      manualRoundExpansionKey,
+      parallelResultViewportExpansionKey,
+      roundCardChat?.appChatId,
+      roundCardChat?.chatKind,
+      roundCardChat?.ensemble?.lastRoundSummary,
+      roundCardCollapseEnabled,
+      roundSummariesKey
+    ]
+  )
+  const buildRoundCardRanges = useCallback(
+    (messages: readonly ChatMessage[]) => {
+      // Round cards (and ensemble fan-out viewports nested inside them) first;
+      // parallel-result waves compose on the already-folded display list so
+      // solo parents and ensemble rounds share one disclosure path.
+      const roundRanges = buildEnsembleRoundCardRowsWithRanges({
+        chat: roundCardChat,
+        displayMessages: messages as ChatMessage[],
+        collapseOlderRounds: roundCardCollapseEnabled,
+        manualRoundExpansion,
+        expandedFanoutViewportIds: expandedFanoutViewports,
+        hasLiveRunEvidence: isThinking
+      })
+      const composedMessages = roundRanges.map((range) => range.message)
+      const parallelRanges = buildParallelResultViewportRanges({
+        chatId: roundCardChat?.appChatId || '',
+        messages: composedMessages,
+        sourceOffset: 0,
+        expandedViewportIds: expandedParallelResultViewports
+      })
+      // Remap composed-list indexes back onto the original source spans so
+      // incremental regrouping still keys off participantFilteredMessages.
+      return parallelRanges.map((range) => {
+        const first = roundRanges[range.startIndex]
+        const last = roundRanges[Math.max(range.startIndex, range.endIndex - 1)]
+        return {
+          message: range.message,
+          startIndex: first?.startIndex ?? range.startIndex,
+          endIndex: last?.endIndex ?? range.endIndex
+        }
+      })
+    },
+    [
+      expandedFanoutViewports,
+      expandedParallelResultViewports,
+      isThinking,
+      manualRoundExpansion,
+      roundCardChat,
+      roundCardCollapseEnabled
+    ]
+  )
+  // Ensemble round cards: completed rounds collapse into expandable
+  // header rows (older collapsed by default). The range-based path keeps
+  // unchanged transcript prefixes cached while the live tail grows.
+  const roundDisplayMessages = useIncrementalMessageGrouping(
+    participantFilteredMessages,
+    buildRoundCardRanges,
+    roundCardGroupingRegroupStart,
+    roundCardResetKey
+  )
+  // Accumulated infinite scroll: the transcript no longer carries synthetic
+  // "Load previous / next page" boundary rows. The window grows as the reader
+  // approaches either edge, so everything in this list is real history and the
+  // row indices below never straddle a fake row.
+  // Routine Ensemble receipts leave the transcript HERE, after the folds. A
+  // fan-out dispatch receipt is the anchor `buildEnsembleFanoutViewportRanges`
+  // replaces with the wave's one-liner, so it has to reach the fold intact;
+  // by now a folded receipt is a viewport header and an unfolded (live) one
+  // is dropped. Filtering it out of `visibleMessages` instead (2026-09-01)
+  // left every wave anchorless: one legacy group per round, no fold while any
+  // lane was live, and later waves' cards vanishing into the first one-liner.
+  const displayMessages = useMemo(
+    () => hideRedundantEnsembleTranscriptNotices(roundDisplayMessages),
+    [roundDisplayMessages]
+  )
+  const blackboardUpdateStackProjection = useMemo(
+    () => projectBlackboardUpdateStacks(displayMessages),
+    [displayMessages]
+  )
+  /**
+   * "Retry run" anchors for run-error cards. Offered only for a FRESH failure
+   * — the error is the chat's last row — so the rewind-resend discards
+   * nothing but the failed attempt's own card. The anchor is the nearest
+   * preceding user message, whose content is what gets re-sent.
+   */
+  const runRetryAnchorByErrorId = useMemo(() => {
+    const map = new Map<string, { id: string; content: string }>()
+    if (!onEditAndResendFromHere) return map
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined
+    if (!lastMessage || lastMessage.role !== 'error') return map
+    for (let i = messages.length - 2; i >= 0; i--) {
+      const candidate = messages[i]
+      if (candidate.role === 'user' && candidate.content?.trim()) {
+        map.set(lastMessage.id, { id: candidate.id, content: candidate.content })
+        break
+      }
+    }
+    return map
+  }, [messages, onEditAndResendFromHere])
+  // Map every (pre-collapse) message id → its round id, so navigation
+  // (jump-to-message, pinned, side-chat seed) can auto-expand the round
+  // a target lives in before scrolling — otherwise a jump into a
+  // collapsed round would silently no-op. Built off the full
+  // `groupedMessages` list (not the collapsed `displayMessages`).
+  const roundIdByMessageId = useMemo(() => {
+    const map = new Map<string, string>()
+    if (currentChat?.chatKind !== 'ensemble') return map
+    for (const message of groupedMessages) {
+      const roundId =
+        typeof message.metadata?.ensembleRoundId === 'string'
+          ? message.metadata.ensembleRoundId
+          : null
+      if (!roundId) continue
+      map.set(message.id, roundId)
+      for (const gid of groupedTranscriptMessageIds(message)) {
+        map.set(gid, roundId)
+      }
+    }
+    return map
+  }, [groupedMessages, currentChat?.chatKind])
+  // User messages hidden inside COLLAPSED round cards, keyed by the round
+  // header message id whose row replaces them in `displayMessages`. Feeds
+  // the gutter builder so collapsing a round never drops its prompts from
+  // the jump rail — the marker anchors at the header and the click path
+  // auto-expands before focusing.
+  const collapsedRoundUserMessages = useMemo(() => {
+    const map = new Map<string, ChatMessage[]>()
+    if (currentChat?.chatKind !== 'ensemble') return map
+    let byRound: Map<string, ChatMessage[]> | null = null
+    for (const message of displayMessages) {
+      const header = readEnsembleRoundHeader(message)
+      if (!header || header.expanded) continue
+      if (!byRound) {
+        byRound = new Map()
+        for (const candidate of groupedMessages) {
+          if (candidate.role !== 'user') continue
+          const roundId =
+            typeof candidate.metadata?.ensembleRoundId === 'string'
+              ? candidate.metadata.ensembleRoundId
+              : null
+          if (!roundId) continue
+          const bucket = byRound.get(roundId)
+          if (bucket) bucket.push(candidate)
+          else byRound.set(roundId, [candidate])
+        }
+      }
+      const hidden = byRound.get(header.roundId)
+      if (hidden && hidden.length > 0) map.set(message.id, hidden)
+    }
+    return map
+  }, [currentChat?.chatKind, displayMessages, groupedMessages])
+  const ensureRoundExpandedForMessage = useCallback(
+    (messageId: string) => {
+      const roundId = roundIdByMessageId.get(messageId)
+      if (!roundId) return
+      if (manualRoundExpansion.get(roundId) === true) return
+      setRoundExpanded(roundId, true)
+    },
+    [manualRoundExpansion, roundIdByMessageId, setRoundExpanded]
+  )
+
+  // Phase 3 — type-out reveal (Variant B), default ON. The
+  // live last-assistant bubble of a running chat reveals progressively via
+  // RevealingMarkdownMessage. Its mounted subtree survives terminal settling
+  // (preserving focus/code state) and returns to the plain renderer only after
+  // virtualization naturally unmounts it; untouched history stays plain.
+  // Keep the old localStorage flag as an escape hatch for debugging:
+  // `taskwraith.experimentalReveal=false` restores the plain renderer.
+  const revealEnabled = useMemo(() => {
+    try {
+      return localStorage.getItem('taskwraith.experimentalReveal') !== 'false'
+    } catch {
+      return true
+    }
+  }, [])
+  useLayoutEffect(() => {
+    if (!externalRestoreAnchorMessageId) return
+    ensureRoundExpandedForMessage(externalRestoreAnchorMessageId)
+  }, [ensureRoundExpandedForMessage, externalRestoreAnchorMessageId])
+  const revealChatId = currentChat?.appChatId ?? null
+  const revealChatIsRunning =
+    revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
+  // Liveness for MEASUREMENT / live-row purposes only — deliberately NOT the
+  // reveal gate above, which owns the typewriter and must keep its existing
+  // (renderer-run) scope. Ensemble rounds frequently never enter
+  // `runningChatIds` because main owns the round, so without the round clause
+  // every live-row signal below was empty for a whole live round, leaving the
+  // settled-stack fold with list-tail position as its only guard.
+  const liveMeasurementChatIsRunning = resolveTranscriptChatIsRunning({
+    chatId: revealChatId,
+    runningChatIds,
+    activeRound: currentChat?.ensemble?.activeRound ?? null
+  })
+  const revealRunId = currentRun?.runId ?? currentChat?.runs?.find((run) => !run.endedAt)?.runId
+  const liveRevealMessageId = useMemo(
+    () =>
+      resolveLiveRevealMessageId(displayMessages, {
+        revealEnabled,
+        revealChatIsRunning,
+        revealRunId
+      }),
+    [displayMessages, revealEnabled, revealChatIsRunning, revealRunId]
+  )
+  const liveMeasurementMessageIds = useMemo(
+    () =>
+      resolveLiveMeasurementMessageIds(displayMessages, {
+        revealEnabled,
+        revealChatIsRunning: liveMeasurementChatIsRunning,
+        revealRunId,
+        workingFanoutParticipantIds: workingLaneParticipantIds
+      }),
+    [
+      displayMessages,
+      revealEnabled,
+      liveMeasurementChatIsRunning,
+      revealRunId,
+      workingLaneParticipantIds
+    ]
+  )
+  const displayRunBoundaryByMessageId = useMemo(() => {
+    const map = new Map(runBoundaryByMessageId)
+    for (const message of displayMessages) {
+      if (map.has(message.id)) continue
+      const boundaryId = groupedTranscriptMessageIds(message).find((id) => map.has(id))
+      if (boundaryId) map.set(message.id, map.get(boundaryId)!)
+    }
+    return map
+  }, [displayMessages, runBoundaryByMessageId])
+
+  // One derived boolean, read by the projection estimate, the slot map and
+  // the measurement pass — so all three can never disagree about whether the
+  // transcript is currently pairing lanes.
+  const pairFanoutLanes = resolveFanoutLaneLayout(fanoutLaneLayout) === 'paired'
+  // The slot map itself is minted below the layout epoch, because how many
+  // lane cells share a grid row is derived from the column the epoch carries.
+  // Independent of the pairing setting: a six-plus round is over-tall in the
+  // stacked layout too, so the compact band derives from the run alone.
+  const compactFanoutLaneRows = useMemo(
+    () => classifyCompactFanoutLaneRows(displayMessages),
+    [displayMessages]
+  )
+  // The same seat↔lane correspondence as `workingLaneParticipantIds`, read the
+  // other way: from a working seat back to the lane card it is filling, so its
+  // grid entry can carry the reader there. The current lane scope prevents a
+  // previous round's card becoming a false target before the new lane writes
+  // its first row.
+  const fanoutLaneJumpTargets = useMemo(
+    () =>
+      buildFanoutLaneJumpTargets(
+        displayMessages,
+        currentChat?.ensemble?.activeRound
+          ? Object.values(currentChat.ensemble.activeRound.lanes || {})
+          : undefined
+      ),
+    [currentChat?.ensemble?.activeRound?.lanes, displayMessages]
+  )
+  /*
+   * THE WIDTH SEAM — the ONE `widthBucket(` call in this file.
+   *
+   * The column the estimator has to size for is not the setting and cannot be
+   * derived from it: `narrow` is 640px in the main pane and 348px in a
+   * phone-narrow side chat, and `medium` is 850px, 760px in General Chat, or
+   * `calc(100% - 28px)` in a Multiview pane. The only honest source is the box
+   * CSS actually produced, so this observes `.transcript-inner` itself.
+   *
+   * Lifted ABOVE the projection on purpose. It used to live inside
+   * `useTranscriptVirtualization`, below everything that needed it, written to
+   * a ref that triggers no render — so the cache keys carried a measured ~10
+   * while the epoch carried a hardcoded 0, and the estimator sized every row
+   * for a 980px column the transcript never renders at. One state, read by the
+   * mint below and by both cache keys through the epoch, is what makes that
+   * shape unrepresentable rather than merely discouraged.
+   *
+   * BUCKETED, so a drag does not re-project on every pixel: `widthBucket`
+   * quantises to 80px and React bails out on an equal `useState` write, so a
+   * drag that stays inside one bucket costs zero re-projections. SETTLED as
+   * well, because at Wide the column is uncapped: dragging a window from 700px
+   * to 2400px of column sweeps 21 bucket boundaries, and each committed bucket
+   * discards the whole projection cache and re-walks every message. The first
+   * measurement commits on the leading edge (so first paint converges in one
+   * frame instead of waiting out a timer on a resting pane); every later one
+   * waits out the same 120ms gesture window the anchor correction uses.
+   *
+   * THE SETTLE MEANS THE COMMITTED BUCKET LAGS THE DOM, and that is accepted
+   * rather than overlooked. Mid-drag the column is already at its new width
+   * while the epoch still carries the old bucket, for the RAF plus the 120ms
+   * window. The deleted `bucketRef` lagged too — by one frame — so this is a
+   * longer lag of the same kind, not a new class of staleness, and the
+   * invariant that matters survives it untouched: there is ONE number, so the
+   * estimate, `measurementKey` and `geometryKey` are all stale together and
+   * still agree with each other. A row measured mid-drag is filed under the
+   * bucket it was estimated at, and the settle then misses those keys rather
+   * than serving one layout's heights under another's estimate. Shortening the
+   * window would not improve correctness, only cost re-projections; what would
+   * break it is a SECOND sample taken at a different moment, which is what the
+   * one-call-site guard refuses.
+   *
+   * Starting at 0 is load-bearing, not incidental. 0 is
+   * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.widthBucket`, which `transcriptLayoutScales`
+   * and `transcriptLayoutEpochKeySuffix` both treat as "not measured — apply
+   * no correction", so first paint is exactly identity. These suites are
+   * `renderToStaticMarkup` with no jsdom and therefore no ResizeObserver, so
+   * the bucket never leaves 0 in any of them — every property of this data
+   * flow has to be pinned by source string, and is, in
+   * `transcriptWidthSetting.test.ts`.
+   *
+   * This state is the MEASURED bucket, which is not the same thing as the
+   * bucket the epoch is minted from: `transcriptWidthLayoutBucket` gates it to
+   * 0 at Medium (see the mint below). Measuring runs at every width all the
+   * same — the observer has no width name in its closure, and a Medium user's
+   * drag simply commits a number the mint discards, leaving the epoch object
+   * identical and the projection cache intact.
+   */
+  const [transcriptMeasuredWidthBucket, setTranscriptMeasuredWidthBucket] = useState(0)
+  const transcriptWidthSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const transcriptWidthRafRef = useRef<number | null>(null)
+  const transcriptWidthMeasuredRef = useRef(false)
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    if (typeof ResizeObserver === 'undefined') return
+    /*
+     * A MEASURABLE BOX, not merely a mounted element — and `isConnected` does
+     * not answer that question.
+     *
+     * `.transcript-inner` keeps its whole subtree mounted while it loses its
+     * layout box, in three shipped states: the Settings takeover
+     * (`.app-transcript.transcript-hidden-for-settings { display: none }`),
+     * welcome mode, and a suspended Multiview pane. The ResizeObserver fires
+     * on that transition with a 0x0 box, `isConnected` is still true, and the
+     * commit below would quantise it to bucket 0 — which is not "a very narrow
+     * column", it is the sentinel for "never measured". The epoch would flip to
+     * identity, `transcriptLayoutEpochsEqual` would report a change, and the
+     * whole projection cache plus BOTH height-cache key spaces would be
+     * discarded — on opening Settings, at ~10,000 accumulated turns, for a
+     * transcript whose column never moved.
+     *
+     * Refusing the sample is the correct answer rather than clamping it to 1:
+     * the element has no width to report, so the last real measurement is
+     * still the truth about the layout the cached heights were taken under.
+     */
+    const hasLayoutBox = (): boolean => el.isConnected && el.clientWidth > 0
+    const commit = (): void => {
+      if (!hasLayoutBox()) return
+      const next = widthBucket(el.clientWidth)
+      setTranscriptMeasuredWidthBucket((current) => (current === next ? current : next))
+    }
+    const observer = new ResizeObserver(() => {
+      // Its own RAF ref, deliberately separate from the scroll and
+      // scroller-box ones: neither may swallow the other's frame.
+      if (transcriptWidthRafRef.current !== null) return
+      transcriptWidthRafRef.current = requestAnimationFrame(() => {
+        transcriptWidthRafRef.current = null
+        // Checked BEFORE the leading-edge flag is consumed: a panel whose
+        // first observation is a boxless one (mounted under the Settings
+        // takeover) must still get its leading-edge commit when it is shown.
+        if (!hasLayoutBox()) return
+        if (!transcriptWidthMeasuredRef.current) {
+          transcriptWidthMeasuredRef.current = true
+          commit()
+          return
+        }
+        if (transcriptWidthSettleRef.current !== null) {
+          clearTimeout(transcriptWidthSettleRef.current)
+        }
+        transcriptWidthSettleRef.current = setTimeout(() => {
+          transcriptWidthSettleRef.current = null
+          commit()
+        }, USER_SCROLL_GESTURE_WINDOW_MS)
+      })
+    })
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      if (transcriptWidthRafRef.current !== null) {
+        cancelAnimationFrame(transcriptWidthRafRef.current)
+        transcriptWidthRafRef.current = null
+      }
+      if (transcriptWidthSettleRef.current !== null) {
+        clearTimeout(transcriptWidthSettleRef.current)
+        transcriptWidthSettleRef.current = null
+      }
+    }
+  }, [contentRef])
+  /*
+   * THE WIDTH NAME, resolved once — for the DOM and for the estimator.
+   *
+   * `transcriptWidthAttributeValue` is `undefined` at Medium, which is what
+   * React needs to emit no attribute at all; `transcriptWidthLayoutBucket` is
+   * defined in terms of that same function, so "no attribute stamped" and "no
+   * width correction applied" are one decision rather than two that agree.
+   *
+   * MEDIUM IS BYTE-IDENTICAL, by decision. The measured bucket reaches the
+   * epoch only at Narrow and Wide; at Medium the epoch carries widthBucket 0
+   * and `transcriptLayoutEpochKeySuffix` returns '' (at Default text), so every
+   * estimate and every height-cache key is exactly the one the build before
+   * this setting produced — for the user who never opens the control and for
+   * the user who chooses Medium back again. Waking the axis at Medium moved the
+   * main pane's estimates by +11.4% and General Chat's by +22.5%; the decision
+   * is to keep today's numbers there and spend the correction only where the
+   * column genuinely leaves the ceiling it always had.
+   */
+  const transcriptWidthAttributeValue = transcriptWidthAttribute(transcriptWidth)
+  const transcriptLayoutWidthBucket = transcriptWidthLayoutBucket(
+    transcriptWidth,
+    transcriptMeasuredWidthBucket
+  )
+  /*
+   * THE TEXT-SIZE SEAM. This `const` is the only place the chosen size becomes
+   * a number, and it has exactly two consumers, both directly below:
+   * `transcriptFontScaleVariables` — the inline `--transcript-font-scale` that
+   * `.transcript-inner` renders at — and the layout epoch every height
+   * estimate, the pre-paint measure pass and every height-cache key use.
+   *
+   * One local, read twice, rather than two expressions that agree. A second
+   * resolution here (or a literal in either consumer) is the whole defect
+   * class: the estimator calibrated for one size while the DOM renders
+   * another, with nothing on screen to say so. `transcriptTextSizeSetting`'s
+   * guards refuse a numeric literal on either consumer line for that reason.
+   */
+  const transcriptLayoutFontScale = transcriptTextScale(transcriptTextSize)
+  /*
+   * `undefined` at Default, so React emits no `style` attribute at all and the
+   * transcript's markup stays byte-identical to the build before this setting
+   * existed — matching the identity short-circuits in `transcriptLayoutScales`
+   * and `transcriptLayoutEpochKeySuffix`, which is what keeps the estimates and
+   * the cache keys byte-identical alongside it.
+   */
+  const transcriptFontScaleVariables = useMemo(
+    () => transcriptFontScaleStyle(transcriptLayoutFontScale),
+    [transcriptLayoutFontScale]
+  )
+  /**
+   * The one place the transcript's layout epoch is minted.
+   *
+   * BOTH axes are live now. TEXT SIZE arrives as a name and is resolved by the
+   * `const` above; WIDTH arrives as the measured column bucket the
+   * ResizeObserver above commits, GATED by the width name — the identity
+   * bucket at Medium, the measurement at Narrow and Wide. The width number reaches the estimate, the
+   * measurement key and the geometry key through THIS object and nowhere else
+   * — `useTranscriptVirtualization` no longer samples a width of its own, and
+   * this file contains exactly one `widthBucket(` call.
+   *
+   * Both axes read the panel local directly and untouched. Arithmetic here is
+   * the desync in its most plausible disguise: the DOM renders at one number
+   * and the estimator is calibrated for another, with nothing on screen to say
+   * so. `transcriptWidthSetting.test.ts` and `transcriptTextSizeSetting.test.ts`
+   * both match these two value expressions EXACTLY, because every arithmetic
+   * form has the bare identifier as a strict prefix.
+   *
+   * MEMOISED, and that is not ceremony. The epoch sits raw in two
+   * `Object.is`-compared dependency arrays (the heights memo and the pre-paint
+   * measure effect), so a fresh object each render would re-run the measure
+   * pass every render — the pass whose own comment calls it deliberately
+   * invalidation-driven. Now that both axes carry real values, an inline
+   * object literal here is a NEW object every render; the `useMemo` over the
+   * two primitive axes is what keeps it stable.
+   *
+   * Keep this mint the LAST declaration before `const projectedRows =`:
+   * `TranscriptLayoutEpochPlumbing.test.ts` derives the mint's dependency
+   * array from exactly that slice, so a memo inserted between the two is read
+   * as the mint's own deps.
+   */
+  const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>(
+    () => ({ widthBucket: transcriptLayoutWidthBucket, fontScale: transcriptLayoutFontScale }),
+    [transcriptLayoutWidthBucket, transcriptLayoutFontScale]
+  )
+  const projectedRows = useProjectedTranscriptRows(
+    displayMessages,
+    null,
+    liveActivityViewport === false,
+    pairFanoutLanes,
+    transcriptLayoutEpoch
+  )
+  /*
+   * HOW MANY LANE CARDS SHARE A GRID ROW — derived from the epoch, never
+   * chosen, and read from the SAME object the estimator divides by.
+   *
+   * There is no setting for this and there must not be: the grid is
+   * `auto-fit` against a 360px track floor, so the browser already decides
+   * the count from the column, and a number the user could set would be a
+   * second opinion about a layout the DOM has already committed to.
+   *
+   * Reading it off the epoch rather than measuring again is what keeps it ONE
+   * number. The epoch is the transcript's only width, it is already compared
+   * by value before the projection cache is trusted, and it is already this
+   * component's single `widthBucket(` sample — so the slot map, the height
+   * estimate and both cache keys move together or not at all. A second
+   * measurement here would also make the grouping and the estimate two
+   * numbers that merely agree, which is the defect the width seam exists to
+   * make unrepresentable.
+   *
+   * At Medium this is always 2: `transcriptWidthLayoutBucket` gates the
+   * measured bucket to 0 there, bucket 0 resolves to the 980px calibration
+   * width, and `floor((980 + 12) / (360 + 12))` is 2 — the same count the
+   * two-across model hard-coded. `fanoutLaneTracks.test.ts` pins that at the
+   * assumed column and at every real Medium column.
+   */
+  const fanoutLaneTracks = transcriptLayoutLaneTracks(transcriptLayoutEpoch)
+  const fanoutLaneSlots = useMemo(
+    () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes, fanoutLaneTracks),
+    [displayMessages, pairFanoutLanes, fanoutLaneTracks]
+  )
+  const projectedRowLookup = useMemo(() => {
+    const byRowKey = new Map<string, VirtualRow>()
+    const byMessageId = new Map<string, VirtualRow>()
+    const byConstituentId = new Map<string, VirtualRow>()
+    const indexByRowKey = new Map<string, number>()
+    for (let index = 0; index < projectedRows.length; index += 1) {
+      const row = projectedRows[index]
+      byRowKey.set(row.rowKey, row)
+      indexByRowKey.set(row.rowKey, index)
+      if (!byMessageId.has(row.id)) byMessageId.set(row.id, row)
+      const message = displayMessages[row.index]
+      if (!message) continue
+      for (const id of groupedTranscriptMessageIds(message)) {
+        if (!byConstituentId.has(id)) byConstituentId.set(id, row)
+      }
+    }
+    return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
+  }, [displayMessages, projectedRows])
+  const rowKeyByDisplayMessageIndex = useMemo(() => {
+    const rowKeys = new Map<number, string>()
+    for (const row of projectedRows) rowKeys.set(row.index, row.rowKey)
+    return rowKeys
+  }, [projectedRows])
+  const blackboardUpdateStackByRowKey = useMemo(() => {
+    const map = new Map<string, BlackboardUpdateStackRowInfo>()
+    for (const stack of blackboardUpdateStackProjection.stacks) {
+      const memberRowKeys = stack.memberIndexes
+        .map((index) => rowKeyByDisplayMessageIndex.get(index))
+        .filter((rowKey): rowKey is string => Boolean(rowKey))
+      const leadRowKey = rowKeyByDisplayMessageIndex.get(stack.leadIndex)
+      if (!leadRowKey || memberRowKeys.length !== stack.memberIndexes.length) continue
+      const info: BlackboardUpdateStackRowInfo = {
+        stack,
+        // The first projected row is occurrence-safe (`id#index`) and does
+        // not move when another update joins at the live tail.
+        stateKey: memberRowKeys[0],
+        leadRowKey,
+        memberRowKeys
+      }
+      for (const memberRowKey of memberRowKeys) map.set(memberRowKey, info)
+    }
+    return map
+  }, [blackboardUpdateStackProjection.stacks, rowKeyByDisplayMessageIndex])
+  // Shared by the row-level live check (via `activeLiveRowKeys`) and the
+  // super-group membership pass, so the two can never disagree about which
+  // rows are still live.
+  const liveMeasurementMessageIdSet = useMemo(
+    () => new Set(liveMeasurementMessageIds),
+    [liveMeasurementMessageIds]
+  )
+  const activeLiveRowKeys = useMemo(() => {
+    if (liveMeasurementMessageIdSet.size === 0) return EMPTY_LIVE_ROW_KEYS
+    const keys = new Set<string>()
+    for (const row of projectedRows) {
+      if (liveMeasurementMessageIdSet.has(row.id)) keys.add(row.rowKey)
+    }
+    return keys.size > 0 ? keys : EMPTY_LIVE_ROW_KEYS
+  }, [liveMeasurementMessageIdSet, projectedRows])
+  const liveRevealRowKey = useMemo(() => {
+    if (!liveRevealMessageId) return null
+    return (
+      projectedRows.find(
+        (row) => row.id === liveRevealMessageId && row.index === displayMessages.length - 1
+      )?.rowKey ?? null
+    )
+  }, [displayMessages.length, liveRevealMessageId, projectedRows])
+  const liveRevealLifecycleKey = liveRevealRowKey
+    ? `${revealChatId || 'chat'}:${liveRevealRowKey}`
+    : null
+  const [revealLifecycleRowKeys, setRevealLifecycleRowKeys] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    setRevealLifecycleRowKeys(new Set())
+  }, [revealChatId])
+  useEffect(() => {
+    if (!liveRevealLifecycleKey) return
+    setRevealLifecycleRowKeys((current) => {
+      if (current.has(liveRevealLifecycleKey)) return current
+      const next = new Set(current)
+      next.add(liveRevealLifecycleKey)
+      return next
+    })
+  }, [liveRevealLifecycleKey])
+  const finishRevealLifecycle = useCallback((lifecycleKey: string) => {
+    setRevealLifecycleRowKeys((current) => {
+      if (!current.has(lifecycleKey)) return current
+      const next = new Set(current)
+      next.delete(lifecycleKey)
+      return next
+    })
+  }, [])
+  // Geometry companion to `expandedLiveViewportStacks`: the virtualizer's
+  // measurement cache keys on rowKey + an expanded bit, so rows with an
+  // expanded live viewport must resolve their CURRENT rowKey each render
+  // (stack keys are position-independent; rowKeys are not).
+  // Settled-stack collapse boundary: the trailing message never collapses
+  // (a freshly-settled stack stays open until the next assistant/panel
+  // message actually arrives below it).
+  const lastDisplayRowKey = rowKeyByDisplayMessageIndex.get(displayMessages.length - 1) || null
+
+  // All chats protect only the trailing message (the freshly-settled tail
+  // stays open, and the live row stays open via isLiveRow).
+  const protectedFromCollapseRowKeys = useMemo(() => {
+    const rowKeys = new Set<string>()
+    if (lastDisplayRowKey) rowKeys.add(lastDisplayRowKey)
+    return rowKeys
+  }, [lastDisplayRowKey])
+
+  // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
+  // same-participant settled stacks plus interleaved plain system notices —
+  // condense into ONE merged summary line. The lead (first member) renders
+  // the merged line; other members render empty (their ROWS stay in place,
+  // so gutter/scroll-spy ordinals and virtualization are untouched).
+  // Membership must mirror the per-row collapse conditions exactly, or a
+  // row could be hidden as a member while rendering as a special card.
+  const superGroupByRowKey = useMemo(() => {
+    const map = new Map<string, CollapsedSuperGroupInfo>()
+    const pendingQuestionIds = new Set(pendingAgentQuestions.map((question) => question.messageId))
+    const membershipOf = (msg: ChatMessage, rowKey: string): 'stack' | 'system' | null => {
+      if (protectedFromCollapseRowKeys.has(rowKey)) return null
+      if (typeof msg.metadata?.pinnedAt === 'number') return null
+      if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
+        // This deliberately calls the STRICT predicate, not the row
+        // renderer's view-aware one. In particular, a stack made only of
+        // hidden infrastructure has no visible one-liner to merge; admitting
+        // it here created an empty super-group member and an "Activity · N
+        // system notices" summary that hid real notices.
+        //
+        // The row renderer folds live stacks under Minimal and this does not,
+        // which makes membership STRICTER than the renderer, not looser — a
+        // live Minimal row is simply not a super-group member and renders its
+        // own one-liner. That direction is safe; the named regression needed
+        // membership looser. Do not "align" these by passing the view here.
+        return shouldAutoCollapseActivityStack({
+          activities: msg.toolActivities || [],
+          isLiveRow: activeLiveRowKeys.has(rowKey),
+          isLastRow: protectedFromCollapseRowKeys.has(rowKey)
+        })
+          ? 'stack'
+          : null
+      }
+      if (
+        plainSystemNoticeMessage(msg) &&
+        !pendingQuestionIds.has(msg.id) &&
+        pendingPlanChoice?.messageId !== msg.id
+      ) {
+        return 'system'
+      }
+      return null
+    }
+    let run: {
+      members: Array<{ msg: ChatMessage; rowKey: string }>
+      kinds: ('stack' | 'system')[]
+      key: string | null
+    } | null = null
+    const flush = (): void => {
+      if (!run || run.members.length < 2) {
+        run = null
+        return
+      }
+      const activities: ToolActivity[] = []
+      let systemCount = 0
+      let firstSystemPreview = ''
+      let headerMessage: ChatMessage | null = null
+      run.members.forEach(({ msg: member }, index) => {
+        if (run!.kinds[index] === 'stack') {
+          activities.push(...(member.toolActivities || []))
+          if (!headerMessage) headerMessage = member
+        } else {
+          systemCount += 1
+          if (!firstSystemPreview) firstSystemPreview = collapsedSystemNoticeLabel(member.content)
+        }
+      })
+      const info: CollapsedSuperGroupInfo = {
+        leadRowKey: run.members[0].rowKey,
+        memberRowKeys: run.members.map((member) => member.rowKey),
+        size: run.members.length,
+        activities,
+        systemCount,
+        firstSystemPreview,
+        headerMessage
+      }
+      for (const member of run.members) map.set(member.rowKey, info)
+      run = null
+    }
+    for (let index = 0; index < displayMessages.length; index += 1) {
+      const msg = displayMessages[index]
+      const rowKey = rowKeyByDisplayMessageIndex.get(index)
+      if (!rowKey) {
+        flush()
+        continue
+      }
+      const kind = membershipOf(msg, rowKey)
+      if (!kind) {
+        flush()
+        continue
+      }
+      const key = kind === 'stack' ? superGroupParticipantKey(msg) : null
+      if (!run) {
+        run = { members: [{ msg, rowKey }], kinds: [kind], key }
+        continue
+      }
+      if (kind === 'stack') {
+        if (run.key !== null && key !== run.key) {
+          flush()
+          run = { members: [{ msg, rowKey }], kinds: [kind], key }
+          continue
+        }
+        // A system-led run adopts the first stack's participant identity.
+        if (run.key === null) run.key = key
+      }
+      run.members.push({ msg, rowKey })
+      run.kinds.push(kind)
+    }
+    flush()
+    return map
+  }, [
+    displayMessages,
+    rowKeyByDisplayMessageIndex,
+    activeLiveRowKeys,
+    pendingAgentQuestions,
+    pendingPlanChoice,
+    protectedFromCollapseRowKeys
+  ])
+
+  const expandedRowIdsWithLiveViewports = useMemo(() => {
+    if (
+      expandedLiveViewportStacks.size === 0 &&
+      expandedCollapsedStacks.size === 0 &&
+      expandedSuperGroups.size === 0 &&
+      expandedBlackboardUpdateStacks.size === 0
+    ) {
+      return expandedRowIds
+    }
+    const ids = new Set(expandedRowIds)
+    for (const stackKey of expandedLiveViewportStacks) {
+      const row =
+        projectedRowLookup.byMessageId.get(stackKey) ||
+        projectedRowLookup.byConstituentId.get(stackKey)
+      if (row) ids.add(row.rowKey)
+    }
+    // Re-opened collapsed stacks occupy the tall geometry bucket so the
+    // virtualizer caches distinct heights for the two visual states.
+    for (const stackKey of expandedCollapsedStacks) {
+      const row =
+        projectedRowLookup.byMessageId.get(stackKey) ||
+        projectedRowLookup.byConstituentId.get(stackKey)
+      if (row) ids.add(row.rowKey)
+    }
+    // A re-opened super group changes EVERY member row's height (hidden ↔
+    // one-liner), so all members join the tall bucket together.
+    for (const leadRowKey of expandedSuperGroups) {
+      const group = superGroupByRowKey.get(leadRowKey)
+      if (!group) continue
+      for (const memberRowKey of group.memberRowKeys) ids.add(memberRowKey)
+    }
+    const seenBlackboardLeads = new Set<string>()
+    for (const info of blackboardUpdateStackByRowKey.values()) {
+      if (seenBlackboardLeads.has(info.leadRowKey)) continue
+      seenBlackboardLeads.add(info.leadRowKey)
+      if (expandedBlackboardUpdateStacks.has(info.stateKey)) ids.add(info.leadRowKey)
+    }
+    return ids
+  }, [
+    expandedLiveViewportStacks,
+    expandedCollapsedStacks,
+    expandedSuperGroups,
+    expandedBlackboardUpdateStacks,
+    blackboardUpdateStackByRowKey,
+    superGroupByRowKey,
+    expandedRowIds,
+    projectedRowLookup
+  ])
+  // Fold-out phase for freshly settled super groups: for SUPER_FOLD_COMMIT_MS
+  // the member rows stay mounted with `.is-super-folding`, whose CSS
+  // transitions their height to 0, so a long tail folds up smoothly instead
+  // of teleporting into the one-liner. Derived during render (first-seen
+  // stamps live in a ref, mirroring rowElementCacheRef) because the class
+  // must land in the SAME render pass that first collapses the group — an
+  // intermediate hidden render would unmount the member DOM nodes and the
+  // height transition could never fire. Groups already collapsed when the
+  // chat mounts are baseline (no fold animation on open); reduced motion
+  // commits instantly.
+  const [foldTick, setFoldTick] = useState(0)
+  const superFoldStateRef = useRef<{
+    /** `undefined` = no derive yet — the first pass is ALWAYS baseline,
+     * even when the resolved chat id is null (single-pass test renders,
+     * no-chat states), so first-render groups hide instantly. */
+    chatId: string | null | undefined
+    seen: Set<string>
+    committed: Set<string>
+  }>({ chatId: undefined, seen: new Set(), committed: new Set() })
+  const foldingSuperGroups = useMemo(() => {
+    void foldTick // re-derives after the commit timer moves leads to committed
+    if (superGroupByRowKey.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
+    const foldState = superFoldStateRef.current
+    const foldChatId = currentChat?.appChatId ?? null
+    const isBaselinePass = foldState.chatId !== foldChatId
+    if (isBaselinePass) {
+      foldState.chatId = foldChatId
+      foldState.seen.clear()
+      foldState.committed.clear()
+    }
+    const reducedMotion = prefersReducedMotionNow()
+    const liveLeads = new Set<string>()
+    const folding = new Set<string>()
+    for (const group of superGroupByRowKey.values()) {
+      if (liveLeads.has(group.leadRowKey)) continue
+      liveLeads.add(group.leadRowKey)
+      if (!foldState.seen.has(group.leadRowKey)) {
+        foldState.seen.add(group.leadRowKey)
+        // Baseline (chat open) and reduced motion commit instantly; only
+        // groups that settle while the chat is on screen animate.
+        if (isBaselinePass || reducedMotion) foldState.committed.add(group.leadRowKey)
+      }
+      if (
+        !foldState.committed.has(group.leadRowKey) &&
+        !expandedSuperGroups.has(group.leadRowKey)
+      ) {
+        folding.add(group.leadRowKey)
+      }
+    }
+    for (const leadRowKey of foldState.seen) {
+      if (!liveLeads.has(leadRowKey)) {
+        foldState.seen.delete(leadRowKey)
+        foldState.committed.delete(leadRowKey)
+      }
+    }
+    return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
+  }, [superGroupByRowKey, expandedSuperGroups, currentChat?.appChatId, foldTick])
+  // Arm-once commit timers. A deps-cleanup timer would re-arm on every
+  // streaming render (memo identities churn each frame) and starve the
+  // commit; an armed timer instead runs to completion, and any late
+  // arrivals get the next arming after the tick re-render.
+  const superFoldCommitTimerRef = useRef<number | null>(null)
+  const stackCollapseStateRef = useRef<{
+    chatId: string | null | undefined
+    lastCollapsed: Map<string, boolean>
+    entering: Map<string, number>
+  }>({ chatId: undefined, lastCollapsed: new Map(), entering: new Map() })
+  const stackCollapseCommitTimerRef = useRef<number | null>(null)
+  const [, setStackCollapseTick] = useState(0)
+  useEffect(() => {
+    if (foldingSuperGroups.size === 0 || superFoldCommitTimerRef.current !== null) return
+    const observed = [...foldingSuperGroups]
+    superFoldCommitTimerRef.current = window.setTimeout(() => {
+      superFoldCommitTimerRef.current = null
+      for (const leadRowKey of observed) superFoldStateRef.current.committed.add(leadRowKey)
+      setFoldTick((tick) => tick + 1)
+    }, SUPER_FOLD_COMMIT_MS)
+  }, [foldingSuperGroups])
+  useEffect(() => {
+    if (
+      stackCollapseStateRef.current.entering.size === 0 ||
+      stackCollapseCommitTimerRef.current !== null
+    ) {
+      return
+    }
+    const observed = [...stackCollapseStateRef.current.entering.keys()]
+    stackCollapseCommitTimerRef.current = window.setTimeout(() => {
+      stackCollapseCommitTimerRef.current = null
+      for (const key of observed) stackCollapseStateRef.current.entering.delete(key)
+      setStackCollapseTick((tick) => tick + 1)
+    }, STACK_COLLAPSE_COMMIT_MS)
+  })
+  useEffect(
+    () => () => {
+      if (superFoldCommitTimerRef.current !== null) {
+        window.clearTimeout(superFoldCommitTimerRef.current)
+      }
+      if (stackCollapseCommitTimerRef.current !== null) {
+        window.clearTimeout(stackCollapseCommitTimerRef.current)
+      }
+    },
+    []
+  )
+  // Rows hidden inside a COLLAPSED super group render an empty block whose
+  // CSS zeroes all spacing, so their real slot height is 0 — but a 0px slot
+  // can never record a measurement (the measure pass skips non-positive
+  // deltas), which would leave the virtualizer on per-type ESTIMATES for
+  // every hidden row (phantom spacer height, scroll-position drift across
+  // groups). Resolve their rowKeys so the height table can pin them to 0.
+  /**
+   * Settled `ask_user_question` cards, keyed by their marker row.
+   *
+   * Everything needed already sits in `chat.messages` — the question text,
+   * options and context on the marker; the answer on the reply row — so this
+   * only reads it back. A question that is still PENDING is excluded: the live
+   * card owns that state, and a frozen copy beside it would show a question
+   * the user can still answer.
+   */
+  const agentQuestionTombstones = useMemo(() => {
+    const pendingMarkerIds = new Set(pendingAgentQuestions.map((q) => q.messageId))
+    const map = new Map<string, AgentQuestionTombstone>()
+    const replies = indexAgentQuestionReplies(displayMessages)
+    for (const msg of displayMessages) {
+      if (!isAgentQuestionMarker(msg) || pendingMarkerIds.has(msg.id)) continue
+      const tombstone = buildAgentQuestionTombstone(msg, replies)
+      if (tombstone) map.set(msg.id, tombstone)
+    }
+    return map
+  }, [displayMessages, pendingAgentQuestions])
+
+  /**
+   * The seat behind each RUN, so a card can name the participant that acted
+   * instead of its provider. Read by the question surfaces and by the fleet
+   * wave card, which names the seat that called the wave.
+   *
+   * Keyed by run rather than by marker because the surfaces reach it from
+   * different directions: an anchored card has the marker row (and its
+   * `runId`), while the tail fallback has only the pending question's
+   * `appRunId`. The run is the thing they share.
+   *
+   * Derived, never persisted. The marker carries no seat of its own and never
+   * has — MEASURED across the real chat store, 0 of 15 — so stamping one at
+   * write time would leave every question already in the transcript still
+   * saying "Claude asked". See `seatFromChatRun`.
+   */
+  const seatsByRunId = useMemo(() => {
+    const byRunId = new Map<string, SeatChangeSeatState>()
+    for (const run of currentChat?.runs || []) {
+      const seat = seatFromChatRun(run)
+      if (seat) byRunId.set(run.runId, seat)
+    }
+    return byRunId
+  }, [currentChat?.runs])
+
+  /** Reply rows the tombstone now speaks for — rendering both would print the
+   *  answer twice, back to back. */
+  const suppressedReplyMessageIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const tombstone of agentQuestionTombstones.values()) {
+      if (tombstone.replyMessageId) ids.add(tombstone.replyMessageId)
+    }
+    return ids
+  }, [agentQuestionTombstones])
+
+  const superHiddenRowKeys = useMemo(() => {
+    if (superGroupByRowKey.size === 0) return EMPTY_HIDDEN_ROW_KEYS
+    const keys = new Set<string>()
+    const seenLeads = new Set<string>()
+    for (const group of superGroupByRowKey.values()) {
+      if (seenLeads.has(group.leadRowKey)) continue
+      seenLeads.add(group.leadRowKey)
+      if (expandedSuperGroups.has(group.leadRowKey)) continue
+      // Folding members are mid-animation at nonzero heights — pinning them
+      // to 0 now would desync the height table; they join once committed.
+      if (foldingSuperGroups.has(group.leadRowKey)) continue
+      for (const memberRowKey of group.memberRowKeys) {
+        if (memberRowKey !== group.leadRowKey) keys.add(memberRowKey)
+      }
+    }
+    return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+  }, [superGroupByRowKey, expandedSuperGroups, foldingSuperGroups])
+
+  const blackboardStackHiddenRowKeys = useMemo(() => {
+    if (blackboardUpdateStackByRowKey.size === 0) return EMPTY_HIDDEN_ROW_KEYS
+    const keys = new Set<string>()
+    const seenLeads = new Set<string>()
+    for (const info of blackboardUpdateStackByRowKey.values()) {
+      if (seenLeads.has(info.leadRowKey)) continue
+      seenLeads.add(info.leadRowKey)
+      for (const memberRowKey of info.memberRowKeys) {
+        if (memberRowKey !== info.leadRowKey) keys.add(memberRowKey)
+      }
+    }
+    return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+  }, [blackboardUpdateStackByRowKey])
+
+  /**
+   * Every row that renders to zero height, for the virtualizer's height table.
+   *
+   * Suppressed question replies join the super-group's hidden members here
+   * rather than being dropped from the row list: same rowKey, same row count,
+   * so gutter ordinals and scroll-spy are untouched. The measure pass skips
+   * non-positive slots, so a 0px row can never record its own height — pinning
+   * it here is REQUIRED or it sits on a phantom type estimate forever.
+   */
+  const hiddenRowKeys = useMemo(() => {
+    if (suppressedReplyMessageIds.size === 0 && blackboardStackHiddenRowKeys.size === 0) {
+      return superHiddenRowKeys
+    }
+    const keys = new Set(superHiddenRowKeys)
+    for (const rowKey of blackboardStackHiddenRowKeys) keys.add(rowKey)
+    for (const messageId of suppressedReplyMessageIds) {
+      const row =
+        projectedRowLookup.byMessageId.get(messageId) ||
+        projectedRowLookup.byConstituentId.get(messageId)
+      if (row) keys.add(row.rowKey)
+    }
+    return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+  }, [
+    blackboardStackHiddenRowKeys,
+    superHiddenRowKeys,
+    suppressedReplyMessageIds,
+    projectedRowLookup
+  ])
+  const speakerContinuationRowKeys = useMemo(() => {
+    const headerMessages = new Map<string, ChatMessage>()
+    for (const group of superGroupByRowKey.values()) {
+      if (group.headerMessage && !expandedSuperGroups.has(group.leadRowKey)) {
+        headerMessages.set(group.leadRowKey, group.headerMessage)
+      }
+    }
+    return transcriptSpeakerContinuations(
+      projectedRows.map((row) => ({ rowKey: row.rowKey, msg: displayMessages[row.index] })),
+      currentChat?.runs || [],
+      hiddenRowKeys,
+      headerMessages
+    )
+  }, [
+    projectedRows,
+    displayMessages,
+    currentChat?.runs,
+    hiddenRowKeys,
+    superGroupByRowKey,
+    expandedSuperGroups
+  ])
+  const [pendingFocusTarget, setPendingFocusTarget] = useState<{
+    messageId: string
+    rowKey?: string
+    attempt: number
+  } | null>(null)
+  const findRawProjectedRowForMessage = useCallback(
+    (messageId: string, rowKey?: string) => {
+      if (rowKey) {
+        const byRowKey = projectedRowLookup.byRowKey.get(rowKey)
+        if (byRowKey) return byRowKey
+      }
+      return (
+        projectedRowLookup.byMessageId.get(messageId) ||
+        projectedRowLookup.byConstituentId.get(messageId)
+      )
+    },
+    [projectedRowLookup]
+  )
+  const findProjectedRowForMessage = useCallback(
+    (messageId: string, rowKey?: string) => {
+      const row = findRawProjectedRowForMessage(messageId, rowKey)
+      if (!row) return null
+      const stack = blackboardUpdateStackByRowKey.get(row.rowKey)
+      if (!stack || stack.leadRowKey === row.rowKey) return row
+      return projectedRowLookup.byRowKey.get(stack.leadRowKey) || row
+    },
+    [blackboardUpdateStackByRowKey, findRawProjectedRowForMessage, projectedRowLookup.byRowKey]
+  )
+  const ensureBlackboardStackExpandedForMessage = useCallback(
+    (messageId: string, rowKey?: string): boolean => {
+      const row = findRawProjectedRowForMessage(messageId, rowKey)
+      if (!row) return false
+      const stack = blackboardUpdateStackByRowKey.get(row.rowKey)
+      if (!stack || expandedBlackboardUpdateStacks.has(stack.stateKey)) return false
+      setBlackboardUpdateStackExpanded(stack.stateKey, true)
+      return true
+    },
+    [
+      blackboardUpdateStackByRowKey,
+      expandedBlackboardUpdateStacks,
+      findRawProjectedRowForMessage,
+      setBlackboardUpdateStackExpanded
+    ]
+  )
+  /**
+   * A jump target can be a hidden non-lead member of a collapsed super-group.
+   * Open its owner before any DOM lookup: the hidden wrapper deliberately has
+   * zero height and no content, so focusing it first would pulse an empty
+   * gap instead of the requested transcript row.
+   */
+  const ensureSuperGroupExpandedForMessage = useCallback(
+    (messageId: string, rowKey?: string): boolean => {
+      const row = findProjectedRowForMessage(messageId, rowKey)
+      const leadRowKey = collapsedSuperGroupLeadForRow(superGroupByRowKey, row ?? null)
+      if (!leadRowKey || expandedSuperGroups.has(leadRowKey)) return false
+      setSuperGroupExpanded(leadRowKey, true)
+      return true
+    },
+    [expandedSuperGroups, findProjectedRowForMessage, setSuperGroupExpanded, superGroupByRowKey]
+  )
+  const pendingFocusRowIndex = useMemo(() => {
+    if (!pendingFocusTarget) return null
+    const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+    if (!row) return null
+    const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
+    return rowPosition >= 0 ? rowPosition : null
+  }, [findProjectedRowForMessage, pendingFocusTarget, projectedRowLookup])
+  const externalRestoreAnchorRowIndex = useMemo(() => {
+    if (!externalRestoreAnchorMessageId) return null
+    const row = findProjectedRowForMessage(externalRestoreAnchorMessageId)
+    if (!row) return null
+    const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
+    return rowPosition >= 0 ? rowPosition : null
+  }, [externalRestoreAnchorMessageId, findProjectedRowForMessage, projectedRowLookup])
+  const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
+  // Cut 1b — gutter registers its setState sink here; virtualizer publishes
+  // per-frame spy without bumping scrollTick / re-rendering this panel.
+  const gutterSpySinkRef = useRef<((snap: TranscriptScrollSpy) => void) | null>(null)
+  const {
+    window: virtualWindow,
+    blockRef: virtualBlockRef,
+    spacerBottomRef,
+    heights: virtualHeights,
+    syncScrollPosition: syncVirtualizerScrollPosition,
+    spyRowIndex,
+    spyProgress,
+    spyViewportFraction
+  } = useTranscriptVirtualization({
+    transcriptView,
+    enabled: virtualizeEnabled,
+    rows: virtualRows,
     scrollRef,
     contentRef,
-    endRef,
-    messages,
-    isWelcomeChat,
-    isThinking,
-    pendingPlanChoice,
-    pendingProposedPlan,
-    pendingAgentQuestions,
-    contextCompactionProgress = [],
-    onAgentQuestionSubmit,
-    onAgentQuestionDismiss,
-    onEnsemblePollVote,
-    runCompleteNotice,
-    runCompleteDurationText,
-    currentChat,
-    currentRun,
-    currentWorkspacePath,
-    currentProviderLabel,
-    currentProvider,
-    thinkingProviderLabel,
-    thinkingProvider,
-    thinkingProviderClass,
-    thinkingModelBadge,
-    displayFileChangeSummaries,
-    roundFileChangeSummaries,
-    fileChangeSummaryText,
-    fileChangeShouldShowStats,
-    fileChangeDisplayAdds,
-    fileChangeDisplayDels,
-    chats,
-    runningChatIds,
-    pendingAgentApprovalByChatId,
-    pendingApprovalQueueByChatId,
-    onRespondAgentApproval,
-    onPlanChoiceSubmit,
-    onProposedPlanApprove,
-    onProposedPlanDismiss,
-    onProposedPlanCustom,
-    onOpenSubThread,
-    onOpenSubThreadInSidePanel,
-    onOpenFileChangeInWorkbench,
-    onInspectRun,
-    onOpenSideChatFromRun,
-    compactDensity,
-    liveActivityViewport,
-    fanoutLaneLayout,
-    onCopyMessage,
-    onAddMessageToPrompt,
-    onDeleteMessage,
-    onTogglePinMessage,
-    onMessageFeedback,
-    onPromoteCollaboratorComment,
-    onMessageSelectionCandidate,
-    onOpenSideChatFromMessage,
-    sideChatSeedMessageId,
-    jumpToMessageRequest,
-    externalRestoreAnchorMessageId,
-    onManualTranscriptJump,
-    onJumpToLatest,
-    onPreviewImage,
-    onDetachToPane,
-    onOpenProjectReferenceCitation,
-    resolveProjectReferenceExtract,
-    copiedId,
-    copy,
-    virtualize,
+    chatId: currentChat?.appChatId ?? null,
     autoFollowRef,
     getUserScrollGestureLive,
     onProgrammaticScrollWrite,
-    showRunCompleteSummary,
-    collapseOlderRounds,
-    userMessageGutterEnabled,
-    isGlobal
-  }: TranscriptPanelProps) {
-    // Narrow stream subscription: App may retain React chat identity across
-    // coalesced flushes; the store is the live messages/runs source for this
-    // panel. Props remain the fallback for tests / side panes not yet ingested.
-    const chatId = currentChat?.appChatId ?? null
-    const storeTranscript = useChatTranscript(chatId)
-    const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
-    const resolvedMessages = storeReady ? storeTranscript.messages : messages
-    const visibleMessages = useMemo(() => {
-      if (isWelcomeChat) return EMPTY_CHAT_MESSAGES
-      // Queued-run cards were removed from the transcript; drop any historical
-      // `queuedRunRequest` system messages so they no longer surface.
-      return resolvedMessages.filter((message) => message?.metadata?.kind !== 'queuedRunRequest')
-    }, [isWelcomeChat, resolvedMessages])
-    const hasLiveContextCompactionProgress = useMemo(
-      () => contextCompactionProgress.some((event) => event.status === 'started'),
-      [contextCompactionProgress]
-    )
-    const ensembleWorkingPresentation = useMemo(
-      () => deriveActiveEnsembleWorkingPresentation(currentChat, contextCompactionProgress),
-      [contextCompactionProgress, currentChat]
-    )
-    const ensembleWorkingPresentations = useMemo(
-      () => deriveActiveEnsembleWorkingPresentations(currentChat, contextCompactionProgress),
-      [contextCompactionProgress, currentChat]
-    )
-    const workingProviderLabel =
-      ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
-    const workingProvider = ensembleWorkingPresentation?.provider ?? thinkingProvider
-    const workingProviderClass =
-      ensembleWorkingPresentation?.providerClass ?? thinkingProviderClass
-    const workingRoleLabel = ensembleWorkingPresentation?.roleLabel || null
-    const workingModelBadge =
-      ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
-    const workingPresentations = useMemo<WorkingIndicatorPresentation[]>(
-      () =>
-        ensembleWorkingPresentations.length > 0
-          ? ensembleWorkingPresentations
-          : [
-              {
-                participantId: ensembleWorkingPresentation?.participantId ?? null,
-                runId: ensembleWorkingPresentation?.runId ?? currentRun?.runId ?? null,
-                startedAt: ensembleWorkingPresentation?.startedAt ?? currentRun?.startedAt ?? null,
-                modelId:
-                  ensembleWorkingPresentation?.modelId ??
-                  currentRun?.actualModel ??
-                  currentRun?.requestedModel ??
-                  null,
-                providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
-                provider: workingProvider ?? null,
-                providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
-                roleLabel: workingRoleLabel,
-                modelBadge: workingModelBadge,
-                statusLabel: ensembleWorkingPresentation?.statusLabel,
-                activity:
-                  ensembleWorkingPresentation?.activity ||
-                  (contextCompactionProgress.some(
-                    (event) => event.status === 'started' && !event.participantId
-                  )
-                    ? 'compacting'
-                    : 'working')
-              }
-            ],
-      [
-        contextCompactionProgress,
-        currentRun?.runId,
-        currentRun?.startedAt,
-        currentProviderLabel,
-        ensembleWorkingPresentation?.activity,
-        ensembleWorkingPresentation?.statusLabel,
-        ensembleWorkingPresentations,
-        workingModelBadge,
-        workingProvider,
-        workingProviderClass,
-        workingProviderLabel,
-        workingRoleLabel
-      ]
-    )
-    const resolvedRuns = storeReady ? storeTranscript.runs : currentChat?.runs || []
-    const workingTokenTargets = useMemo(
-      () =>
-        buildWorkingIndicatorTokenTargets(
-          resolvedRuns,
-          resolvedMessages,
-          workingPresentations.map((presentation) => ({
-            runId: presentation.runId,
-            participantId: presentation.participantId,
-            provider: presentation.provider,
-            modelId: presentation.modelId
-          }))
-        ),
-      [resolvedMessages, resolvedRuns, workingPresentations]
-    )
-    // Seats whose "working…" row is live right now, so each fan-out lane card
-    // can shimmer its rim while its own seat is busy — the point being that a
-    // straggler is findable at a glance when several lanes run at once.
-    //
-    // Gated on the SAME condition as the working row below
-    // (`isThinking || hasLiveContextCompactionProgress`) and read from the SAME
-    // presentations, so a card's shimmer starts and stops with that seat's row
-    // rather than tracking a second, subtly different idea of "live". A
-    // presentation with no participantId is the non-Ensemble fallback row and
-    // belongs to no lane, so it lights nothing.
-    const workingLaneParticipantIds = useMemo<ReadonlySet<string>>(() => {
-      if (!isThinking && !hasLiveContextCompactionProgress) return EMPTY_WORKING_LANE_IDS
-      const ids = new Set<string>()
-      for (const presentation of workingPresentations) {
-        if (presentation.participantId) ids.add(presentation.participantId)
-      }
-      return ids
-    }, [hasLiveContextCompactionProgress, isThinking, workingPresentations])
-    // Working-row context pressure — self-derived from the chat record with
-    // the same meter lib the donut uses, so the indicator can disclose "before"
-    // (occupancy ≥ warn) and presume "whilst" (token-growth stall at pressure)
-    // without any new prop plumbing through the multiview panes.
-    const workingContextPressure = useMemo(() => {
-      const runs = resolvedRuns
-      const latestRun = [...runs].reverse().find((run) => run?.stats)
-      const soloWindow = resolveContextWindow(
-        isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
-        latestRun?.actualModel || latestRun?.requestedModel || ''
-      )
-      const soloUsed = currentContextTokens(runs, {
-        liveOutputTokens: 0,
-        isRunning: true,
-        messages: resolvedMessages
-      })
-      const byParticipant = new Map<string, number>()
-      const participants = currentChat?.ensemble?.participants || []
-      if (participants.length > 0) {
-        for (const row of buildParticipantContextRows(runs, participants, {
-          messages: resolvedMessages
-        })) {
-          byParticipant.set(row.id, row.percent)
-        }
-      }
-      return { solo: contextPercent(soloUsed, soloWindow), byParticipant }
-    }, [currentChat?.ensemble?.participants, currentProvider, resolvedMessages, resolvedRuns])
-    const [messageContextMenu, setMessageContextMenu] =
-      useState<TranscriptMessageContextMenuSelection | null>(null)
-    const {
-      closePreview: closeFileChangeDiffPreview,
-      keepPreviewOpen: keepFileChangeDiffPreviewOpen,
-      preview: fileChangeDiffPreview,
-      scheduleClosePreview: scheduleCloseFileChangeDiffPreview,
-      scheduleShowPreview: scheduleShowFileChangeDiffPreview,
-      showPreview: showFileChangeDiffPreview
-    } = useDiffHoverPreviewState(
-      FILE_CHANGE_DIFF_PREVIEW_CLOSE_DELAY_MS,
-      FILE_CHANGE_DIFF_PREVIEW_OPEN_DELAY_MS
-    )
-    const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
-      FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
-    )
-    const loadCloseoutCommitFiles = useCallback(
-      async (commit: CloseoutCommit) => {
-        const workspacePath = currentWorkspacePath || currentChat?.workspacePath
-        if (!workspacePath) return null
-        const result = await window.api.getCommitFilePreview({
-          workspacePath,
-          chatId: currentChat?.appChatId,
-          commitHash: commit.hash
-        })
-        return result.ok ? { files: result.files, totalFiles: result.totalFiles } : null
-      },
-      [currentChat?.appChatId, currentChat?.workspacePath, currentWorkspacePath]
-    )
-    const fileChangeSections = useMemo(
-      () => buildFileChangeSummarySections(displayFileChangeSummaries, roundFileChangeSummaries),
-      [displayFileChangeSummaries, roundFileChangeSummaries]
-    )
-    // Round rows lead when the sectioned layout is active; the show-more
-    // window slices the combined list so the round section is always the
-    // first thing revealed.
-    const fileChangeDisplayList = fileChangeSections?.combined ?? displayFileChangeSummaries
-    const fileChangeSummaryWindow = useMemo(
-      () => buildFileChangeSummaryWindow(fileChangeDisplayList, fileChangeSummaryVisibleCount),
-      [fileChangeDisplayList, fileChangeSummaryVisibleCount]
-    )
-    // Row-level render cache: stream updates replace one message object, so
-    // unchanged rows can reuse their previous element instead of rebuilding all
-    // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
-    const rowElementCacheRef = useRef<
-      Map<string, { signature: TranscriptRowRenderSignature; element: ReactElement }>
-    >(new Map())
-    const thinkingTraceActionsCacheRef = useRef<ThinkingTraceActionsStabilizeCache>(new Map())
-    const closeMessageContextMenu = useCallback(() => {
-      setMessageContextMenu(null)
-    }, [])
-    // Snapshot fallback for summaries with no captured git diff (non-git
-    // workspaces, tool-derived live summaries): synthesize hunks from the
-    // run's write-tool payloads. Computed lazily on hover and cached per
-    // (messages identity, path) — a stream update swaps the messages array,
-    // which invalidates the whole cache.
-    const toolEditSnapshotCacheRef = useRef<{
-      messages: ChatMessage[] | null
-      byPath: Map<string, string | null>
-    }>({ messages: null, byPath: new Map() })
-    const resolveFileChangeDiffText = useCallback(
-      (summary: DiffFileSummary): { diffText?: string; snapshot?: boolean } => {
-        if (summary.diffText?.trim()) return { diffText: summary.diffText }
-        const cache = toolEditSnapshotCacheRef.current
-        if (cache.messages !== visibleMessages) {
-          cache.messages = visibleMessages
-          cache.byPath.clear()
-        }
-        if (!cache.byPath.has(summary.path)) {
-          cache.byPath.set(
-            summary.path,
-            buildToolEditDiffSnapshotForPath(
-              visibleMessages,
-              summary.path,
-              currentWorkspacePath || currentChat?.workspacePath
-            )
-          )
-        }
-        const diffText = cache.byPath.get(summary.path) || undefined
-        return diffText ? { diffText, snapshot: true } : {}
-      },
-      [currentChat?.workspacePath, currentWorkspacePath, visibleMessages]
-    )
-    const openFileChangeDiffPreview = useCallback(
-      (
-        event: { currentTarget: HTMLElement },
-        summary: DiffFileSummary,
-        options?: { focusTarget?: DiffHoverPreviewState['focusTarget']; immediate?: boolean }
-      ) => {
-        const anchorElement = event.currentTarget
-        const produce = (): DiffHoverPreviewState | null => {
-          if (!anchorElement.isConnected) return null
-          const resolved = resolveFileChangeDiffText(summary)
-          if (!resolved.diffText && !onOpenFileChangeInWorkbench) return null
-          return {
-            anchor: anchorElement.getBoundingClientRect(),
-            boundary: diffHoverPreviewBoundaryForElement(anchorElement),
-            summary: {
-              actionLabel: onOpenFileChangeInWorkbench
-                ? 'Click row to open Diff Studio'
-                : 'Click row to preview',
-              path: summary.path,
-              status: summary.status,
-              additions: summary.additions,
-              deletions: summary.deletions,
-              diffText: resolved.diffText,
-              snapshot: resolved.snapshot,
-              source: 'run-summary'
-            },
-            focusTarget: options?.focusTarget,
-            action: onOpenFileChangeInWorkbench
-              ? {
-                  label: 'Open Diff Studio',
-                  onActivate: () => {
-                    closeFileChangeDiffPreview()
-                    onOpenFileChangeInWorkbench(summary)
-                  }
-                }
-              : undefined
-          }
-        }
-        // Keyboard focus and clicks open instantly; only pointer hover waits
-        // out the open delay.
-        if (options?.immediate || options?.focusTarget) {
-          const nextPreview = produce()
-          if (nextPreview) showFileChangeDiffPreview(nextPreview)
-          return
-        }
-        scheduleShowFileChangeDiffPreview(produce)
-      },
-      [
-        closeFileChangeDiffPreview,
-        onOpenFileChangeInWorkbench,
-        resolveFileChangeDiffText,
-        scheduleShowFileChangeDiffPreview,
-        showFileChangeDiffPreview
-      ]
-    )
-    const activateFileChangeSummary = useCallback(
-      (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
-        if (!onOpenFileChangeInWorkbench) {
-          openFileChangeDiffPreview(event, summary, { immediate: true })
-          return
-        }
-        closeFileChangeDiffPreview()
-        onOpenFileChangeInWorkbench(summary)
-      },
-      [closeFileChangeDiffPreview, onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
-    )
-    useDiffHoverPreviewDismiss(fileChangeDiffPreview, closeFileChangeDiffPreview)
-    useEffect(() => {
-      closeFileChangeDiffPreview()
-      setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
-    }, [
-      closeFileChangeDiffPreview,
-      currentChat?.appChatId,
-      currentRun?.runId,
-      fileChangeDisplayList
-    ])
-    const showMoreFileChangeSummaries = useCallback(() => {
-      setFileChangeSummaryVisibleCount((current) =>
-        buildFileChangeSummaryWindow(fileChangeDisplayList, current).nextCount
-      )
-    }, [fileChangeDisplayList])
-    const showFewerFileChangeSummaries = useCallback(() => {
-      setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
-    }, [])
-    const openMessageContextMenu = useCallback(
-      (
-        event: React.MouseEvent,
-        message: ChatMessage,
-        copyContent: string,
-        label: string,
-        options: {
-          copySource?: TranscriptMessageContextMenuSelection['copySource']
-          copyOnly?: boolean
-        } = {}
-      ): void => {
-        const browserSelection = window.getSelection()
-        const selectedText =
-          browserSelection &&
-          !browserSelection.isCollapsed &&
-          browserSelection.anchorNode &&
-          browserSelection.focusNode &&
-          contentRef.current?.contains(browserSelection.anchorNode) &&
-          contentRef.current?.contains(browserSelection.focusNode)
-            ? browserSelection.toString()
-            : ''
-        event.preventDefault()
-        event.stopPropagation()
-        setMessageContextMenu({
-          anchor: { x: event.clientX, y: event.clientY },
-          message,
-          copyContent,
-          selectedText,
-          copySource: options.copySource || 'message-content',
-          label,
-          pinned: typeof message.metadata?.pinnedAt === 'number',
-          copyOnly: options.copyOnly
-        })
-      },
-      [contentRef]
-    )
-    const copyTranscriptSelection = useCallback((text: string): void => {
-      if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
-      void navigator.clipboard.writeText(text).catch(() => undefined)
-    }, [])
-    const activeMessageContextMenu = useMemo(() => {
-      if (!messageContextMenu) return null
-      const latestMessage =
-        visibleMessages.find((message) => message.id === messageContextMenu.message.id) ||
-        messageContextMenu.message
-      const copyContent =
-        messageContextMenu.copySource === 'subthread-return-body'
-          ? subThreadReturnBody(latestMessage.content)
-          : messageContextMenu.copySource === 'static'
-            ? messageContextMenu.copyContent
-            : latestMessage.content || ''
-      return {
-        ...messageContextMenu,
-        message: latestMessage,
-        copyContent,
-        pinned: typeof latestMessage.metadata?.pinnedAt === 'number'
-      }
-    }, [messageContextMenu, visibleMessages])
-    useEffect(() => {
-      if (!messageContextMenu) return
-      if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
-      setMessageContextMenu(null)
-    }, [messageContextMenu, visibleMessages])
-    const shouldShowRunCompleteNotice =
-      Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
-    // Latest TaskWraith close-out carries tombstoned Participants/Commits/File
-    // changes. Those sections mount inside a persisted Task Complete card under
-    // that message; the ephemeral footer only remains when the latest close-out
-    // has no epic tables to host (legacy / empty harvest).
-    const runCompleteCloseoutTables = useMemo(() => {
-      for (let index = resolvedMessages.length - 1; index >= 0; index -= 1) {
-        const message = resolvedMessages[index]
-        if (message.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND) continue
-        return {
-          messageId: message.id,
-          participantTable: (message.metadata.closeoutParticipantTable ||
-            null) as CloseoutParticipantTable | null,
-          commits: (Array.isArray(message.metadata.closeoutCommits)
-            ? message.metadata.closeoutCommits
-            : null) as CloseoutCommit[] | null,
-          fileChanges: (Array.isArray(message.metadata.closeoutFileChanges)
-            ? message.metadata.closeoutFileChanges
-            : null) as CloseoutFileChange[] | null,
-          subagentDelegations: (Array.isArray(message.metadata.closeoutSubagentDelegations)
-            ? message.metadata.closeoutSubagentDelegations
-            : null) as CloseoutSubagentDelegation[] | null
-        }
-      }
-      return {
-        messageId: null as string | null,
-        participantTable: null,
-        commits: null,
-        fileChanges: null,
-        subagentDelegations: null
-      }
-    }, [resolvedMessages])
-    const latestCloseoutMessageId = runCompleteCloseoutTables.messageId
-    const latestCloseoutHasParticipants = Boolean(
-      runCompleteCloseoutTables.participantTable?.rows?.length
-    )
-    const latestCloseoutHasCommits = Boolean(runCompleteCloseoutTables.commits?.length)
-    const latestCloseoutHasFileChanges = Boolean(runCompleteCloseoutTables.fileChanges?.length)
-    const latestCloseoutHasSubagents = Boolean(
-      runCompleteCloseoutTables.subagentDelegations?.length
-    )
-    // Any epic tombstone on the latest close-out means that message owns the
-    // Task Complete outer card (Participants / Sub-threads / File changes /
-    // Commits nested inside). Suppress the sibling footer card in that case.
-    const latestCloseoutHostsTaskComplete =
-      latestCloseoutHasParticipants ||
-      latestCloseoutHasCommits ||
-      latestCloseoutHasFileChanges ||
-      latestCloseoutHasSubagents
-    const footerParticipantTable = latestCloseoutHostsTaskComplete
-      ? null
-      : runCompleteCloseoutTables.participantTable
-    const footerCommits = latestCloseoutHostsTaskComplete
-      ? null
-      : runCompleteCloseoutTables.commits
-    const footerSubagentDelegations = latestCloseoutHostsTaskComplete
-      ? null
-      : runCompleteCloseoutTables.subagentDelegations
-    const footerShowsLiveFileChanges =
-      !latestCloseoutHostsTaskComplete &&
-      (!isGlobal || displayFileChangeSummaries.length > 0) &&
-      displayFileChangeSummaries.length > 0 &&
-      !latestCloseoutHasFileChanges
-    const showFooterRunCompleteEpicStack =
-      Boolean(footerParticipantTable?.rows?.length) ||
-      Boolean(footerCommits?.length) ||
-      Boolean(footerSubagentDelegations?.length) ||
-      footerShowsLiveFileChanges
-    // Live Workbench file rows fold into the latest close-out Task Complete
-    // card when that close-out has epic tables but no file tombstone.
-    const latestCloseoutShowsLiveFileChanges =
-      latestCloseoutHostsTaskComplete &&
-      !latestCloseoutHasFileChanges &&
-      (!isGlobal || displayFileChangeSummaries.length > 0) &&
-      displayFileChangeSummaries.length > 0
-    // The run-complete card's title is a dynamic status, not a fixed "Task
-    // complete": blockers the orchestrator flagged for the round REPLACE the
-    // title (and tint it) instead of contradicting it from an advisory banner
-    // underneath. Read-only — the orchestrator persists the signals; the
-    // resolver is a pure mapping over them.
-    const runCompleteBlockers = useMemo(
-      () => (isGlobal ? [] : buildRunCompleteBlockers(currentChat)),
-      [currentChat, isGlobal]
-    )
-    const runCompleteStatus = useMemo(() => {
-      if (!runCompleteNotice) return null
-      const noticeRunId = currentRun?.runId
-      return resolveRunCompleteStatus({
-        exitCode: runCompleteNotice.exitCode,
-        isGlobal,
-        blockers: runCompleteBlockers,
-        producedWork: runCompleteProducedWork({
-          chat: currentChat,
-          fileChangeCount: displayFileChangeSummaries.length,
-          // Solo runs have no round participants to read an outcome from, so
-          // a non-empty assistant reply for this run counts as work. Strictly
-          // scoped to the finished run: without a run id an older reply from
-          // earlier in the thread would launder a dead run into "work done".
-          hadAssistantOutput: Boolean(
-            noticeRunId &&
-            resolvedMessages.some(
-              (message) =>
-                message.role === 'assistant' &&
-                message.runId === noticeRunId &&
-                Boolean(message.content?.trim())
-            )
-          )
-        }),
-        // Non-ensemble pause: the run ended on a question the user hasn't
-        // answered yet. Both queues are per-chat and are cleared on answer or
-        // dismiss, so anything still in them is genuinely outstanding; prefer
-        // this run's own question when the run id is known.
-        awaitingAnswer:
-          pendingAgentQuestions.some(
-            (question) => !noticeRunId || question.appRunId === noticeRunId
-          ) || Boolean(pendingPlanChoice)
-      })
-    }, [
-      currentChat,
-      currentRun?.runId,
-      displayFileChangeSummaries.length,
-      isGlobal,
-      resolvedMessages,
-      pendingAgentQuestions,
-      pendingPlanChoice,
-      runCompleteBlockers,
-      runCompleteNotice
-    ])
-    const runBoundaryByMessageId = useMemo(() => {
-      const runs = currentChat?.runs || []
-      const runById = new Map<string, ChatRun>()
-      const promptRunByMessageId = new Map<string, ChatRun>()
-      for (const run of runs) {
-        if (run.runId) runById.set(run.runId, run)
-        if (run.promptMessageId) promptRunByMessageId.set(run.promptMessageId, run)
-      }
-
-      const boundaries = new Map<string, ChatRun>()
-      let previousRunId: string | null = null
-      for (const message of visibleMessages) {
-        const run =
-          (message.runId ? runById.get(message.runId) : undefined) ||
-          promptRunByMessageId.get(message.id)
-        if (!run?.runId) continue
-        if (run.runId !== previousRunId) {
-          boundaries.set(message.id, run)
-        }
-        previousRunId = run.runId
-      }
-      return boundaries
-    }, [currentChat?.runs, visibleMessages])
-    // Per-message expansion state for long user-message bubbles. Keyed by
-    // message.id so toggling one brief does not collapse others. Default for
-    // every long message is collapsed — see UserMessageCollapse for thresholds.
-    // Manual round expansion is session-local but keyed by chat. Switching
-    // away and back must not erase the round the reader opened; keeping the
-    // destination map available during render also lets scroll-anchor restore
-    // target a body row before its deferred positioning pass runs.
-    const roundExpansionChatId = currentChat?.appChatId ?? null
-    const manualRoundExpansionByChatId = useSyncExternalStore(
-      subscribeSessionRoundExpansion,
-      getSessionRoundExpansionSnapshot,
-      getSessionRoundExpansionSnapshot
-    )
-    const manualRoundExpansion = useMemo(
-      () => roundExpansionForChat(manualRoundExpansionByChatId, roundExpansionChatId),
-      [manualRoundExpansionByChatId, roundExpansionChatId]
-    )
-    const setRoundExpanded = useCallback(
-      (roundId: string, expanded: boolean) => {
-        if (!roundExpansionChatId) return
-        setSessionRoundExpanded(roundExpansionChatId, roundId, expanded)
-      },
-      [roundExpansionChatId]
-    )
-    const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set())
-    const toggleUserMessageExpanded = useCallback((id: string) => {
-      setExpandedUserMessages((prev) => {
-        const next = new Set(prev)
-        if (next.has(id)) {
-          next.delete(id)
-        } else {
-          next.add(id)
-        }
-        return next
-      })
-    }, [])
-
-    // 1.0.6-TV2 — lifted ActivityStack expansion. Keyed by message id
-    // (the tool row's id), value is the stack's set of open activity
-    // ids. Held here (not inside ActivityStack) so a tool row scrolled
-    // out of the virtualised window and back keeps whatever the user had
-    // expanded — same survival pattern as `expandedUserMessages`.
-    const [activityExpansionByRow, setActivityExpansionByRow] = useState<Map<string, Set<string>>>(
-      new Map()
-    )
-    const setActivityExpansionForRow = useCallback((rowId: string, next: Set<string>) => {
-      setActivityExpansionByRow((prev) => {
-        const map = new Map(prev)
-        if (next.size === 0) map.delete(rowId)
-        else map.set(rowId, next)
-        return map
-      })
-    }, [])
-    const [expandedSubThreadResults, setExpandedSubThreadResults] = useState<Set<string>>(
-      new Set()
-    )
-    const setSubThreadResultExpanded = useCallback((rowId: string, expanded: boolean) => {
-      setExpandedSubThreadResults((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(rowId)
-        else next.delete(rowId)
-        return next
-      })
-    }, [])
-    const [expandedFanoutResults, setExpandedFanoutResults] = useState<Set<string>>(new Set())
-    const setFanoutResultExpanded = useCallback((rowId: string, expanded: boolean) => {
-      setExpandedFanoutResults((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(rowId)
-        else next.delete(rowId)
-        return next
-      })
-    }, [])
-    // A settled fan-out wave folds once later round activity begins. Opening
-    // its durable summary re-inserts only that wave's lane-card rows while the
-    // rest of the visible round keeps its current disclosure state.
-    const [expandedFanoutViewports, setExpandedFanoutViewports] = useState<Set<string>>(
-      new Set()
-    )
-    const setFanoutViewportExpanded = useCallback((viewportId: string, expanded: boolean) => {
-      setExpandedFanoutViewports((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(viewportId)
-        else next.delete(viewportId)
-        return next
-      })
-    }, [])
-    // Parallel sub-thread / side-chat return waves share the same disclosure
-    // shape as fan-out viewports, but their membership is join-wave based and
-    // must not share expansion state with ensemble fan-out headers.
-    const [expandedParallelResultViewports, setExpandedParallelResultViewports] = useState<
-      Set<string>
-    >(new Set())
-    const setParallelResultViewportExpanded = useCallback(
-      (viewportId: string, expanded: boolean) => {
-        setExpandedParallelResultViewports((prev) => {
-          const next = new Set(prev)
-          if (expanded) next.add(viewportId)
-          else next.delete(viewportId)
-          return next
-        })
-      },
-      []
-    )
-    // 1.0.7 — lifted live-viewport expansion (the collapsed tool/thinking
-    // viewport's Expand toggle). Held here — NOT inside ActivityStack — for
-    // the same survival reason as `activityExpansionByRow`, but keyed by
-    // `toolStackStateKey` (first constituent tool message id) instead of
-    // rowKey: the grouped row's id AND rowKey both churn while activity
-    // streams in (group growth 1→2 rewrites the merged id; new rows shift
-    // indexes), and each churn remounted the stack and snapped an expanded
-    // viewport shut mid-stream.
-    const [expandedLiveViewportStacks, setExpandedLiveViewportStacks] = useState<Set<string>>(
-      new Set()
-    )
-    const setLiveViewportExpandedForStack = useCallback((stackKey: string, expanded: boolean) => {
-      setExpandedLiveViewportStacks((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(stackKey)
-        else next.delete(stackKey)
-        return next
-      })
-    }, [])
-    // Settled-stack auto-collapse override: stacks the user re-opened after
-    // they folded into a one-line summary. Keyed by `toolStackStateKey` for
-    // the same churn-survival reason as `expandedLiveViewportStacks`.
-    const [expandedCollapsedStacks, setExpandedCollapsedStacks] = useState<Set<string>>(new Set())
-    const setCollapsedStackExpanded = useCallback((stackKey: string, expanded: boolean) => {
-      setExpandedCollapsedStacks((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(stackKey)
-        else next.delete(stackKey)
-        return next
-      })
-    }, [])
-    // Second-level fold: super-groups of adjacent collapsed one-liners the
-    // user re-opened. Keyed by the group's lead (first member) message id.
-    const [expandedSuperGroups, setExpandedSuperGroups] = useState<Set<string>>(new Set())
-    const setSuperGroupExpanded = useCallback((leadId: string, expanded: boolean) => {
-      setExpandedSuperGroups((prev) => {
-        const next = new Set(prev)
-        if (expanded) next.add(leadId)
-        else next.delete(leadId)
-        return next
-      })
-    }, [])
-    // Row ids whose tool stack has something open — the measurementKey
-    // geometry bit, so collapsed vs expanded rows cache distinct heights.
-    const expandedRowIds = useMemo(() => {
-      const ids = new Set<string>()
-      for (const [rowId, set] of activityExpansionByRow) {
-        if (set.size > 0) ids.add(rowId)
-      }
-      for (const rowId of expandedSubThreadResults) {
-        ids.add(rowId)
-      }
-      for (const rowId of expandedFanoutResults) {
-        ids.add(rowId)
-      }
-      return ids
-    }, [activityExpansionByRow, expandedSubThreadResults, expandedFanoutResults])
-    const [activeParticipantFilterKeys, setActiveParticipantFilterKeys] = useState<Set<string>>(
-      new Set()
-    )
-    const participantFilterItems = useMemo(
-      () => buildTranscriptParticipantFilterItems(currentChat),
-      [
-        currentChat?.chatKind,
-        currentChat?.ensemble?.participants,
-        currentChat?.ensemble?.bossmanParticipantId,
-        currentChat?.ensemble?.captainParticipantIds,
-        currentChat?.ensemble?.secondInCommandParticipantId
-      ]
-    )
-    const toggleParticipantFilter = useCallback((key: string) => {
-      setActiveParticipantFilterKeys((prev) => {
-        const next = new Set(prev)
-        if (next.has(key)) next.delete(key)
-        else next.add(key)
-        return next
-      })
-    }, [])
-    useEffect(() => {
-      if (activeParticipantFilterKeys.size === 0) return
-      const validKeys = new Set(participantFilterItems.map((item) => item.key))
-      setActiveParticipantFilterKeys((prev) => {
-        let changed = false
-        const next = new Set<string>()
-        for (const key of prev) {
-          if (validKeys.has(key)) next.add(key)
-          else changed = true
-        }
-        return changed ? next : prev
-      })
-    }, [activeParticipantFilterKeys.size, participantFilterItems])
-
-    // 1.0.6-TV1 — windowing. `virtualize` defaults to the global flag;
-    // tests pass it explicitly. When off, `useTranscriptVirtualization`
-    // is inert and the full-list branch below renders exactly as before.
-    //
-    // 1.0.7 — virtualization is ON for ALL chat kinds including ensembles. An
-    // earlier patch (e4feee5) disabled it for ensembles to dodge a flicker, but
-    // that abandoned the benefit for exactly the densest transcripts. The
-    // flicker's real root cause — a window↔measurement oscillation fed by (a)
-    // 4–5× under-estimated dense rows, (b) a scrollbar→width-bucket cache
-    // invalidation, and (c) the window being re-selected from the live heights
-    // its own mounted rows mutate — is now fixed at source: content-scaled
-    // estimates, `scrollbar-gutter: stable` + inner-width bucketing, a stable
-    // window-selection snapshot (select-on-scroll, not on every measure), and a
-    // one-shot anchor correction. So ensembles keep windowing and converge.
-    const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
-    const toolGroupedMessages = useIncrementalMessageGrouping(
-      visibleMessages,
-      groupAdjacentToolMessagesWithRanges,
-      toolGroupingRegroupStart
-    )
-    const groupedMessages = useFanoutLaneMessageGrouping(toolGroupedMessages)
-    const messageById = useMemo(() => {
-      const map = new Map<string, ChatMessage>()
-      for (const message of visibleMessages) {
-        map.set(message.id, message)
-      }
-      return map
-    }, [visibleMessages])
-    const toolActivityMessageIdByActivityId = useMemo(() => {
-      const map = new Map<string, string>()
-      for (const message of visibleMessages) {
-        if (message.role !== 'tool') continue
-        for (const activity of message.toolActivities || []) {
-          if (activity.id) map.set(activity.id, message.id)
-        }
-      }
-      return map
-    }, [visibleMessages])
-    const participantFilteredMessages = useMemo(
-      () =>
-        filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
-      [activeParticipantFilterKeys, groupedMessages]
-    )
-    const participantFilterActive = activeParticipantFilterKeys.size > 0
-    const roundCardChat = useMemo(
-      () => currentChat,
-      [
-        currentChat?.appChatId,
-        currentChat?.chatKind,
-        currentChat?.ensemble?.activeRound,
-        currentChat?.ensemble?.lastRoundSummary,
-        currentChat?.ensemble?.roundSummaries,
-        currentChat?.runs
-      ]
-    )
-    const roundCardCollapseEnabled = participantFilterActive ? false : collapseOlderRounds !== false
-    const manualRoundExpansionKey = useMemo(
-      () => booleanMapSignature(manualRoundExpansion),
-      [manualRoundExpansion]
-    )
-    const fanoutViewportExpansionKey = useMemo(
-      () => Array.from(expandedFanoutViewports).sort().join('\u0000'),
-      [expandedFanoutViewports]
-    )
-    const parallelResultViewportExpansionKey = useMemo(
-      () => Array.from(expandedParallelResultViewports).sort().join('\u0000'),
-      [expandedParallelResultViewports]
-    )
-    const activeRoundProjectionKey = useMemo(
-      () => ensembleActiveRoundProjectionKey(roundCardChat?.ensemble?.activeRound),
-      [roundCardChat?.ensemble?.activeRound]
-    )
-    const roundSummariesKey = useMemo(
-      () => ensembleRoundSummariesSignature(roundCardChat?.ensemble?.roundSummaries),
-      [roundCardChat?.ensemble?.roundSummaries]
-    )
-    const fanoutRunProjectionKey = useMemo(
-      () => ensembleFanoutRunProjectionKey(roundCardChat?.runs),
-      [roundCardChat?.runs]
-    )
-    const roundCardResetKey = useMemo(
-      () =>
-        [
-          roundCardChat?.appChatId || '',
-          roundCardChat?.chatKind || '',
-          roundCardCollapseEnabled ? 'collapse' : 'flat',
-          isThinking ? 'live' : 'idle',
-          activeRoundProjectionKey,
-          roundCardChat?.ensemble?.lastRoundSummary || '',
-          roundSummariesKey,
-          fanoutRunProjectionKey,
-          manualRoundExpansionKey,
-          fanoutViewportExpansionKey,
-          parallelResultViewportExpansionKey
-        ].join('\u0001'),
-      [
-        activeRoundProjectionKey,
-        fanoutRunProjectionKey,
-        fanoutViewportExpansionKey,
-        isThinking,
-        manualRoundExpansionKey,
-        parallelResultViewportExpansionKey,
-        roundCardChat?.appChatId,
-        roundCardChat?.chatKind,
-        roundCardChat?.ensemble?.lastRoundSummary,
-        roundCardCollapseEnabled,
-        roundSummariesKey
-      ]
-    )
-    const buildRoundCardRanges = useCallback(
-      (messages: readonly ChatMessage[]) => {
-        // Round cards (and ensemble fan-out viewports nested inside them) first;
-        // parallel-result waves compose on the already-folded display list so
-        // solo parents and ensemble rounds share one disclosure path.
-        const roundRanges = buildEnsembleRoundCardRowsWithRanges({
-          chat: roundCardChat,
-          displayMessages: messages as ChatMessage[],
-          collapseOlderRounds: roundCardCollapseEnabled,
-          manualRoundExpansion,
-          expandedFanoutViewportIds: expandedFanoutViewports,
-          hasLiveRunEvidence: isThinking
-        })
-        const composedMessages = roundRanges.map((range) => range.message)
-        const parallelRanges = buildParallelResultViewportRanges({
-          chatId: roundCardChat?.appChatId || '',
-          messages: composedMessages,
-          sourceOffset: 0,
-          expandedViewportIds: expandedParallelResultViewports
-        })
-        // Remap composed-list indexes back onto the original source spans so
-        // incremental regrouping still keys off participantFilteredMessages.
-        return parallelRanges.map((range) => {
-          const first = roundRanges[range.startIndex]
-          const last = roundRanges[Math.max(range.startIndex, range.endIndex - 1)]
-          return {
-            message: range.message,
-            startIndex: first?.startIndex ?? range.startIndex,
-            endIndex: last?.endIndex ?? range.endIndex
-          }
-        })
-      },
-      [
-        expandedFanoutViewports,
-        expandedParallelResultViewports,
-        isThinking,
-        manualRoundExpansion,
-        roundCardChat,
-        roundCardCollapseEnabled
-      ]
-    )
-    // Ensemble round cards: completed rounds collapse into expandable
-    // header rows (older collapsed by default). The range-based path keeps
-    // unchanged transcript prefixes cached while the live tail grows.
-    const roundDisplayMessages = useIncrementalMessageGrouping(
-      participantFilteredMessages,
-      buildRoundCardRanges,
-      roundCardGroupingRegroupStart,
-      roundCardResetKey
-    )
-    const historyPageBoundaries = useMemo(
-      () => buildTranscriptHistoryPageBoundaryMessages(storeTranscript),
-      [
-        storeTranscript.hasNewer,
-        storeTranscript.hasOlder,
-        storeTranscript.totalMessageCount,
-        storeTranscript.windowEnd,
-        storeTranscript.windowStart
-      ]
-    )
-    const displayMessages = useMemo(() => {
-      if (!storeReady || isWelcomeChat) return roundDisplayMessages
-      const next = [...roundDisplayMessages]
-      if (historyPageBoundaries.older) next.unshift(historyPageBoundaries.older)
-      if (historyPageBoundaries.newer) next.push(historyPageBoundaries.newer)
-      return next
-    }, [historyPageBoundaries, isWelcomeChat, roundDisplayMessages, storeReady])
-    // Map every (pre-collapse) message id → its round id, so navigation
-    // (jump-to-message, pinned, side-chat seed) can auto-expand the round
-    // a target lives in before scrolling — otherwise a jump into a
-    // collapsed round would silently no-op. Built off the full
-    // `groupedMessages` list (not the collapsed `displayMessages`).
-    const roundIdByMessageId = useMemo(() => {
-      const map = new Map<string, string>()
-      if (currentChat?.chatKind !== 'ensemble') return map
-      for (const message of groupedMessages) {
-        const roundId =
-          typeof message.metadata?.ensembleRoundId === 'string'
-            ? message.metadata.ensembleRoundId
-            : null
-        if (!roundId) continue
-        map.set(message.id, roundId)
-        for (const gid of groupedTranscriptMessageIds(message)) {
-          map.set(gid, roundId)
-        }
-      }
-      return map
-    }, [groupedMessages, currentChat?.chatKind])
-    // User messages hidden inside COLLAPSED round cards, keyed by the round
-    // header message id whose row replaces them in `displayMessages`. Feeds
-    // the gutter builder so collapsing a round never drops its prompts from
-    // the jump rail — the marker anchors at the header and the click path
-    // auto-expands before focusing.
-    const collapsedRoundUserMessages = useMemo(() => {
-      const map = new Map<string, ChatMessage[]>()
-      if (currentChat?.chatKind !== 'ensemble') return map
-      let byRound: Map<string, ChatMessage[]> | null = null
-      for (const message of displayMessages) {
-        const header = readEnsembleRoundHeader(message)
-        if (!header || header.expanded) continue
-        if (!byRound) {
-          byRound = new Map()
-          for (const candidate of groupedMessages) {
-            if (candidate.role !== 'user') continue
-            const roundId =
-              typeof candidate.metadata?.ensembleRoundId === 'string'
-                ? candidate.metadata.ensembleRoundId
-                : null
-            if (!roundId) continue
-            const bucket = byRound.get(roundId)
-            if (bucket) bucket.push(candidate)
-            else byRound.set(roundId, [candidate])
-          }
-        }
-        const hidden = byRound.get(header.roundId)
-        if (hidden && hidden.length > 0) map.set(message.id, hidden)
-      }
-      return map
-    }, [currentChat?.chatKind, displayMessages, groupedMessages])
-    const ensureRoundExpandedForMessage = useCallback(
-      (messageId: string) => {
-        const roundId = roundIdByMessageId.get(messageId)
-        if (!roundId) return
-        if (manualRoundExpansion.get(roundId) === true) return
-        setRoundExpanded(roundId, true)
-      },
-      [manualRoundExpansion, roundIdByMessageId, setRoundExpanded]
-    )
-
-    // Phase 3 — type-out reveal (Variant B), default ON. The
-    // live last-assistant bubble of a running chat reveals progressively via
-    // RevealingMarkdownMessage. Its mounted subtree survives terminal settling
-    // (preserving focus/code state) and returns to the plain renderer only after
-    // virtualization naturally unmounts it; untouched history stays plain.
-    // Keep the old localStorage flag as an escape hatch for debugging:
-    // `taskwraith.experimentalReveal=false` restores the plain renderer.
-    const revealEnabled = useMemo(() => {
-      try {
-        return localStorage.getItem('taskwraith.experimentalReveal') !== 'false'
-      } catch {
-        return true
-      }
-    }, [])
-    useLayoutEffect(() => {
-      if (!externalRestoreAnchorMessageId) return
-      ensureRoundExpandedForMessage(externalRestoreAnchorMessageId)
-    }, [ensureRoundExpandedForMessage, externalRestoreAnchorMessageId])
-    const revealChatId = currentChat?.appChatId ?? null
-    const revealChatIsRunning =
-      revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
-    // Liveness for MEASUREMENT / live-row purposes only — deliberately NOT the
-    // reveal gate above, which owns the typewriter and must keep its existing
-    // (renderer-run) scope. Ensemble rounds frequently never enter
-    // `runningChatIds` because main owns the round, so without the round clause
-    // every live-row signal below was empty for a whole live round, leaving the
-    // settled-stack fold with list-tail position as its only guard.
-    const liveMeasurementChatIsRunning = resolveTranscriptChatIsRunning({
-      chatId: revealChatId,
-      runningChatIds,
-      activeRound: currentChat?.ensemble?.activeRound ?? null
-    })
-    const revealRunId = currentRun?.runId ?? currentChat?.runs?.find((run) => !run.endedAt)?.runId
-    const liveRevealMessageId = useMemo(
-      () =>
-        resolveLiveRevealMessageId(displayMessages, {
-          revealEnabled,
-          revealChatIsRunning,
-          revealRunId
-        }),
-      [displayMessages, revealEnabled, revealChatIsRunning, revealRunId]
-    )
-    const liveMeasurementMessageIds = useMemo(
-      () =>
-        resolveLiveMeasurementMessageIds(displayMessages, {
-          revealEnabled,
-          revealChatIsRunning: liveMeasurementChatIsRunning,
-          revealRunId,
-          workingFanoutParticipantIds: workingLaneParticipantIds
-        }),
-      [
-        displayMessages,
-        revealEnabled,
-        liveMeasurementChatIsRunning,
-        revealRunId,
-        workingLaneParticipantIds
-      ]
-    )
-    const displayRunBoundaryByMessageId = useMemo(() => {
-      const map = new Map(runBoundaryByMessageId)
-      for (const message of displayMessages) {
-        if (map.has(message.id)) continue
-        const boundaryId = groupedTranscriptMessageIds(message).find((id) => map.has(id))
-        if (boundaryId) map.set(message.id, map.get(boundaryId)!)
-      }
-      return map
-    }, [displayMessages, runBoundaryByMessageId])
-
-    // One derived boolean, read by the projection estimate, the slot map and
-    // the measurement pass — so all three can never disagree about whether the
-    // transcript is currently pairing lanes.
-    const pairFanoutLanes = resolveFanoutLaneLayout(fanoutLaneLayout) === 'paired'
-    const fanoutLaneSlots = useMemo(
-      () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
-      [displayMessages, pairFanoutLanes]
-    )
-    // The same seat↔lane correspondence as `workingLaneParticipantIds`, read the
-    // other way: from a working seat back to the lane card it is filling, so its
-    // "working…" row can carry the reader there. Derived from the message list
-    // rather than from the presentations, because the target has to exist as a
-    // ROW — a seat that is busy but has not written a card yet simply has no
-    // entry, and offers no affordance.
-    const fanoutLaneJumpTargets = useMemo(
-      () => buildFanoutLaneJumpTargets(displayMessages),
-      [displayMessages]
-    )
-    const projectedRows = useProjectedTranscriptRows(
-      displayMessages,
-      null,
-      liveActivityViewport === false,
-      pairFanoutLanes
-    )
-    const projectedRowLookup = useMemo(() => {
-      const byRowKey = new Map<string, VirtualRow>()
-      const byMessageId = new Map<string, VirtualRow>()
-      const byConstituentId = new Map<string, VirtualRow>()
-      const indexByRowKey = new Map<string, number>()
-      for (let index = 0; index < projectedRows.length; index += 1) {
-        const row = projectedRows[index]
-        byRowKey.set(row.rowKey, row)
-        indexByRowKey.set(row.rowKey, index)
-        if (!byMessageId.has(row.id)) byMessageId.set(row.id, row)
-        const message = displayMessages[row.index]
-        if (!message) continue
-        for (const id of groupedTranscriptMessageIds(message)) {
-          if (!byConstituentId.has(id)) byConstituentId.set(id, row)
-        }
-      }
-      return { byRowKey, byMessageId, byConstituentId, indexByRowKey }
-    }, [displayMessages, projectedRows])
-    // Shared by the row-level live check (via `activeLiveRowKeys`) and the
-    // super-group membership pass, so the two can never disagree about which
-    // rows are still live.
-    const liveMeasurementMessageIdSet = useMemo(
-      () => new Set(liveMeasurementMessageIds),
-      [liveMeasurementMessageIds]
-    )
-    const activeLiveRowKeys = useMemo(() => {
-      if (liveMeasurementMessageIdSet.size === 0) return EMPTY_LIVE_ROW_KEYS
-      const keys = new Set<string>()
-      for (const row of projectedRows) {
-        if (liveMeasurementMessageIdSet.has(row.id)) keys.add(row.rowKey)
-      }
-      return keys.size > 0 ? keys : EMPTY_LIVE_ROW_KEYS
-    }, [liveMeasurementMessageIdSet, projectedRows])
-    const liveRevealRowKey = useMemo(() => {
-      if (!liveRevealMessageId) return null
-      return (
-        projectedRows.find(
-          (row) => row.id === liveRevealMessageId && row.index === displayMessages.length - 1
-        )?.rowKey ?? null
-      )
-    }, [displayMessages.length, liveRevealMessageId, projectedRows])
-    const liveRevealLifecycleKey = liveRevealRowKey
-      ? `${revealChatId || 'chat'}:${liveRevealRowKey}`
-      : null
-    const [revealLifecycleRowKeys, setRevealLifecycleRowKeys] = useState<Set<string>>(
-      () => new Set()
-    )
-    useEffect(() => {
-      setRevealLifecycleRowKeys(new Set())
-    }, [revealChatId])
-    useEffect(() => {
-      if (!liveRevealLifecycleKey) return
-      setRevealLifecycleRowKeys((current) => {
-        if (current.has(liveRevealLifecycleKey)) return current
-        const next = new Set(current)
-        next.add(liveRevealLifecycleKey)
-        return next
-      })
-    }, [liveRevealLifecycleKey])
-    const finishRevealLifecycle = useCallback((lifecycleKey: string) => {
-      setRevealLifecycleRowKeys((current) => {
-        if (!current.has(lifecycleKey)) return current
-        const next = new Set(current)
-        next.delete(lifecycleKey)
-        return next
-      })
-    }, [])
-    // Geometry companion to `expandedLiveViewportStacks`: the virtualizer's
-    // measurement cache keys on rowKey + an expanded bit, so rows with an
-    // expanded live viewport must resolve their CURRENT rowKey each render
-    // (stack keys are position-independent; rowKeys are not).
-    // Settled-stack collapse boundary: the trailing message never collapses
-    // (a freshly-settled stack stays open until the next assistant/panel
-    // message actually arrives below it).
-    const lastDisplayMessageId =
-      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
-
-    // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
-    // same-participant settled stacks plus interleaved plain system notices —
-    // condense into ONE merged summary line. The lead (first member) renders
-    // the merged line; other members render empty (their ROWS stay in place,
-    // so gutter/scroll-spy ordinals and virtualization are untouched).
-    // Membership must mirror the per-row collapse conditions exactly, or a
-    // row could be hidden as a member while rendering as a special card.
-    const superGroupByMessageId = useMemo(() => {
-      const map = new Map<string, CollapsedSuperGroupInfo>()
-      const pendingQuestionIds = new Set(
-        pendingAgentQuestions.map((question) => question.messageId)
-      )
-      const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
-        if (msg.id === lastDisplayMessageId) return null
-        if (typeof msg.metadata?.pinnedAt === 'number') return null
-        // Mirrors `shouldAutoCollapseActivityStack`'s `isLiveRow`. A stack that
-        // is live but whose own activities have momentarily all settled must
-        // not be hidden here — the per-row branch keeps it rendering, so
-        // without this the two disagree and the row is hidden as a member
-        // while it believes it is still open.
-        if (liveMeasurementMessageIdSet.has(msg.id)) return null
-        if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
-          return activityStackHasLiveWork(msg.toolActivities || []) ? null : 'stack'
-        }
-        if (
-          plainSystemNoticeMessage(msg) &&
-          !pendingQuestionIds.has(msg.id) &&
-          pendingPlanChoice?.messageId !== msg.id
-        ) {
-          return 'system'
-        }
-        return null
-      }
-      let run: {
-        msgs: ChatMessage[]
-        kinds: ('stack' | 'system')[]
-        key: string | null
-      } | null = null
-      const flush = (): void => {
-        if (!run || run.msgs.length < 2) {
-          run = null
-          return
-        }
-        const activities: ToolActivity[] = []
-        let systemCount = 0
-        let firstSystemPreview = ''
-        let headerMessage: ChatMessage | null = null
-        run.msgs.forEach((member, index) => {
-          if (run!.kinds[index] === 'stack') {
-            activities.push(...(member.toolActivities || []))
-            if (!headerMessage) headerMessage = member
-          } else {
-            systemCount += 1
-            if (!firstSystemPreview) firstSystemPreview = collapsedSystemNoticeLabel(member.content)
-          }
-        })
-        const info: CollapsedSuperGroupInfo = {
-          leadId: run.msgs[0].id,
-          memberIds: run.msgs.map((member) => member.id),
-          size: run.msgs.length,
-          activities,
-          systemCount,
-          firstSystemPreview,
-          headerMessage
-        }
-        for (const member of run.msgs) map.set(member.id, info)
-        run = null
-      }
-      for (const msg of displayMessages) {
-        const kind = membershipOf(msg)
-        if (!kind) {
-          flush()
-          continue
-        }
-        const key = kind === 'stack' ? superGroupParticipantKey(msg) : null
-        if (!run) {
-          run = { msgs: [msg], kinds: [kind], key }
-          continue
-        }
-        if (kind === 'stack') {
-          if (run.key !== null && key !== run.key) {
-            flush()
-            run = { msgs: [msg], kinds: [kind], key }
-            continue
-          }
-          // A system-led run adopts the first stack's participant identity.
-          if (run.key === null) run.key = key
-        }
-        run.msgs.push(msg)
-        run.kinds.push(kind)
-      }
-      flush()
-      return map
-    }, [
-      displayMessages,
-      lastDisplayMessageId,
-      liveMeasurementMessageIdSet,
-      pendingAgentQuestions,
-      pendingPlanChoice
-    ])
-
-    const expandedRowIdsWithLiveViewports = useMemo(() => {
-      if (
-        expandedLiveViewportStacks.size === 0 &&
-        expandedCollapsedStacks.size === 0 &&
-        expandedSuperGroups.size === 0
-      ) {
-        return expandedRowIds
-      }
-      const ids = new Set(expandedRowIds)
-      for (const stackKey of expandedLiveViewportStacks) {
-        const row =
-          projectedRowLookup.byMessageId.get(stackKey) ||
-          projectedRowLookup.byConstituentId.get(stackKey)
-        if (row) ids.add(row.rowKey)
-      }
-      // Re-opened collapsed stacks occupy the tall geometry bucket so the
-      // virtualizer caches distinct heights for the two visual states.
-      for (const stackKey of expandedCollapsedStacks) {
-        const row =
-          projectedRowLookup.byMessageId.get(stackKey) ||
-          projectedRowLookup.byConstituentId.get(stackKey)
-        if (row) ids.add(row.rowKey)
-      }
-      // A re-opened super group changes EVERY member row's height (hidden ↔
-      // one-liner), so all members join the tall bucket together.
-      for (const leadId of expandedSuperGroups) {
-        const group = superGroupByMessageId.get(leadId)
-        if (!group) continue
-        for (const memberId of group.memberIds) {
-          const row =
-            projectedRowLookup.byMessageId.get(memberId) ||
-            projectedRowLookup.byConstituentId.get(memberId)
-          if (row) ids.add(row.rowKey)
-        }
-      }
-      return ids
-    }, [
-      expandedLiveViewportStacks,
-      expandedCollapsedStacks,
-      expandedSuperGroups,
-      superGroupByMessageId,
-      expandedRowIds,
-      projectedRowLookup
-    ])
-    // Fold-out phase for freshly settled super groups: for SUPER_FOLD_COMMIT_MS
-    // the member rows stay mounted with `.is-super-folding`, whose CSS
-    // transitions their height to 0, so a long tail folds up smoothly instead
-    // of teleporting into the one-liner. Derived during render (first-seen
-    // stamps live in a ref, mirroring rowElementCacheRef) because the class
-    // must land in the SAME render pass that first collapses the group — an
-    // intermediate hidden render would unmount the member DOM nodes and the
-    // height transition could never fire. Groups already collapsed when the
-    // chat mounts are baseline (no fold animation on open); reduced motion
-    // commits instantly.
-    const [foldTick, setFoldTick] = useState(0)
-    const superFoldStateRef = useRef<{
-      /** `undefined` = no derive yet — the first pass is ALWAYS baseline,
-       * even when the resolved chat id is null (single-pass test renders,
-       * no-chat states), so first-render groups hide instantly. */
-      chatId: string | null | undefined
-      seen: Set<string>
-      committed: Set<string>
-    }>({ chatId: undefined, seen: new Set(), committed: new Set() })
-    const foldingSuperGroups = useMemo(() => {
-      void foldTick // re-derives after the commit timer moves leads to committed
-      if (superGroupByMessageId.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
-      const foldState = superFoldStateRef.current
-      const foldChatId = currentChat?.appChatId ?? null
-      const isBaselinePass = foldState.chatId !== foldChatId
-      if (isBaselinePass) {
-        foldState.chatId = foldChatId
-        foldState.seen.clear()
-        foldState.committed.clear()
-      }
-      const reducedMotion = prefersReducedMotionNow()
-      const liveLeads = new Set<string>()
-      const folding = new Set<string>()
-      for (const group of superGroupByMessageId.values()) {
-        if (liveLeads.has(group.leadId)) continue
-        liveLeads.add(group.leadId)
-        if (!foldState.seen.has(group.leadId)) {
-          foldState.seen.add(group.leadId)
-          // Baseline (chat open) and reduced motion commit instantly; only
-          // groups that settle while the chat is on screen animate.
-          if (isBaselinePass || reducedMotion) foldState.committed.add(group.leadId)
-        }
-        if (!foldState.committed.has(group.leadId) && !expandedSuperGroups.has(group.leadId)) {
-          folding.add(group.leadId)
-        }
-      }
-      for (const leadId of foldState.seen) {
-        if (!liveLeads.has(leadId)) {
-          foldState.seen.delete(leadId)
-          foldState.committed.delete(leadId)
-        }
-      }
-      return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
-    }, [superGroupByMessageId, expandedSuperGroups, currentChat?.appChatId, foldTick])
-    // Arm-once commit timers. A deps-cleanup timer would re-arm on every
-    // streaming render (memo identities churn each frame) and starve the
-    // commit; an armed timer instead runs to completion, and any late
-    // arrivals get the next arming after the tick re-render.
-    const superFoldCommitTimerRef = useRef<number | null>(null)
-    const stackCollapseStateRef = useRef<{
-      chatId: string | null | undefined
-      lastCollapsed: Map<string, boolean>
-      entering: Map<string, number>
-    }>({ chatId: undefined, lastCollapsed: new Map(), entering: new Map() })
-    const stackCollapseCommitTimerRef = useRef<number | null>(null)
-    const [, setStackCollapseTick] = useState(0)
-    useEffect(() => {
-      if (foldingSuperGroups.size === 0 || superFoldCommitTimerRef.current !== null) return
-      const observed = [...foldingSuperGroups]
-      superFoldCommitTimerRef.current = window.setTimeout(() => {
-        superFoldCommitTimerRef.current = null
-        for (const leadId of observed) superFoldStateRef.current.committed.add(leadId)
-        setFoldTick((tick) => tick + 1)
-      }, SUPER_FOLD_COMMIT_MS)
-    }, [foldingSuperGroups])
-    useEffect(() => {
-      if (
-        stackCollapseStateRef.current.entering.size === 0 ||
-        stackCollapseCommitTimerRef.current !== null
-      ) {
-        return
-      }
-      const observed = [...stackCollapseStateRef.current.entering.keys()]
-      stackCollapseCommitTimerRef.current = window.setTimeout(() => {
-        stackCollapseCommitTimerRef.current = null
-        for (const key of observed) stackCollapseStateRef.current.entering.delete(key)
-        setStackCollapseTick((tick) => tick + 1)
-      }, STACK_COLLAPSE_COMMIT_MS)
-    })
-    useEffect(
-      () => () => {
-        if (superFoldCommitTimerRef.current !== null) {
-          window.clearTimeout(superFoldCommitTimerRef.current)
-        }
-        if (stackCollapseCommitTimerRef.current !== null) {
-          window.clearTimeout(stackCollapseCommitTimerRef.current)
-        }
-      },
-      []
-    )
-    // Rows hidden inside a COLLAPSED super group render an empty block whose
-    // CSS zeroes all spacing, so their real slot height is 0 — but a 0px slot
-    // can never record a measurement (the measure pass skips non-positive
-    // deltas), which would leave the virtualizer on per-type ESTIMATES for
-    // every hidden row (phantom spacer height, scroll-position drift across
-    // groups). Resolve their rowKeys so the height table can pin them to 0.
-    /**
-     * Settled `ask_user_question` cards, keyed by their marker row.
-     *
-     * Everything needed already sits in `chat.messages` — the question text,
-     * options and context on the marker; the answer on the reply row — so this
-     * only reads it back. A question that is still PENDING is excluded: the live
-     * card owns that state, and a frozen copy beside it would show a question
-     * the user can still answer.
-     */
-    const agentQuestionTombstones = useMemo(() => {
-      const pendingMarkerIds = new Set(pendingAgentQuestions.map((q) => q.messageId))
-      const map = new Map<string, AgentQuestionTombstone>()
-      const replies = indexAgentQuestionReplies(displayMessages)
-      for (const msg of displayMessages) {
-        if (!isAgentQuestionMarker(msg) || pendingMarkerIds.has(msg.id)) continue
-        const tombstone = buildAgentQuestionTombstone(msg, replies)
-        if (tombstone) map.set(msg.id, tombstone)
-      }
-      return map
-    }, [displayMessages, pendingAgentQuestions])
-
-    /**
-     * The seat behind each RUN, so a card can name the participant that acted
-     * instead of its provider. Read by the question surfaces and by the fleet
-     * wave card, which names the seat that called the wave.
-     *
-     * Keyed by run rather than by marker because the surfaces reach it from
-     * different directions: an anchored card has the marker row (and its
-     * `runId`), while the tail fallback has only the pending question's
-     * `appRunId`. The run is the thing they share.
-     *
-     * Derived, never persisted. The marker carries no seat of its own and never
-     * has — MEASURED across the real chat store, 0 of 15 — so stamping one at
-     * write time would leave every question already in the transcript still
-     * saying "Claude asked". See `seatFromChatRun`.
-     */
-    const seatsByRunId = useMemo(() => {
-      const byRunId = new Map<string, SeatChangeSeatState>()
-      for (const run of currentChat?.runs || []) {
-        const seat = seatFromChatRun(run)
-        if (seat) byRunId.set(run.runId, seat)
-      }
-      return byRunId
-    }, [currentChat?.runs])
-
-    /** Reply rows the tombstone now speaks for — rendering both would print the
-     *  answer twice, back to back. */
-    const suppressedReplyMessageIds = useMemo(() => {
-      const ids = new Set<string>()
-      for (const tombstone of agentQuestionTombstones.values()) {
-        if (tombstone.replyMessageId) ids.add(tombstone.replyMessageId)
-      }
-      return ids
-    }, [agentQuestionTombstones])
-
-    const superHiddenRowKeys = useMemo(() => {
-      if (superGroupByMessageId.size === 0) return EMPTY_HIDDEN_ROW_KEYS
-      const keys = new Set<string>()
-      const seenLeads = new Set<string>()
-      for (const group of superGroupByMessageId.values()) {
-        if (seenLeads.has(group.leadId)) continue
-        seenLeads.add(group.leadId)
-        if (expandedSuperGroups.has(group.leadId)) continue
-        // Folding members are mid-animation at nonzero heights — pinning them
-        // to 0 now would desync the height table; they join once committed.
-        if (foldingSuperGroups.has(group.leadId)) continue
-        for (const memberId of group.memberIds) {
-          if (memberId === group.leadId) continue
-          const row =
-            projectedRowLookup.byMessageId.get(memberId) ||
-            projectedRowLookup.byConstituentId.get(memberId)
-          if (row) keys.add(row.rowKey)
-        }
-      }
-      return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
-    }, [superGroupByMessageId, expandedSuperGroups, foldingSuperGroups, projectedRowLookup])
-
-    /**
-     * Every row that renders to zero height, for the virtualizer's height table.
-     *
-     * Suppressed question replies join the super-group's hidden members here
-     * rather than being dropped from the row list: same rowKey, same row count,
-     * so gutter ordinals and scroll-spy are untouched. The measure pass skips
-     * non-positive slots, so a 0px row can never record its own height — pinning
-     * it here is REQUIRED or it sits on a phantom type estimate forever.
-     */
-    const hiddenRowKeys = useMemo(() => {
-      if (suppressedReplyMessageIds.size === 0) return superHiddenRowKeys
-      const keys = new Set(superHiddenRowKeys)
-      for (const messageId of suppressedReplyMessageIds) {
-        const row =
-          projectedRowLookup.byMessageId.get(messageId) ||
-          projectedRowLookup.byConstituentId.get(messageId)
-        if (row) keys.add(row.rowKey)
-      }
-      return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
-    }, [superHiddenRowKeys, suppressedReplyMessageIds, projectedRowLookup])
-    const [pendingFocusTarget, setPendingFocusTarget] = useState<{
-      messageId: string
-      rowKey?: string
-      attempt: number
-    } | null>(null)
-    const findProjectedRowForMessage = useCallback(
-      (messageId: string, rowKey?: string) => {
-        if (rowKey) {
-          const byRowKey = projectedRowLookup.byRowKey.get(rowKey)
-          if (byRowKey) return byRowKey
-        }
-        return (
-          projectedRowLookup.byMessageId.get(messageId) ||
-          projectedRowLookup.byConstituentId.get(messageId)
-        )
-      },
-      [projectedRowLookup]
-    )
-    const pendingFocusRowIndex = useMemo(() => {
-      if (!pendingFocusTarget) return null
-      const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
-      if (!row) return null
-      const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
-      return rowPosition >= 0 ? rowPosition : null
-    }, [findProjectedRowForMessage, pendingFocusTarget, projectedRowLookup])
-    const externalRestoreAnchorRowIndex = useMemo(() => {
-      if (!externalRestoreAnchorMessageId) return null
-      const row = findProjectedRowForMessage(externalRestoreAnchorMessageId)
-      if (!row) return null
-      const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
-      return rowPosition >= 0 ? rowPosition : null
-    }, [externalRestoreAnchorMessageId, findProjectedRowForMessage, projectedRowLookup])
-    const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
-    // Cut 1b — gutter registers its setState sink here; virtualizer publishes
-    // per-frame spy without bumping scrollTick / re-rendering this panel.
-    const gutterSpySinkRef = useRef<((snap: TranscriptScrollSpy) => void) | null>(null)
-    const {
-      window: virtualWindow,
-      blockRef: virtualBlockRef,
-      spacerBottomRef,
-      heights: virtualHeights,
-      syncScrollPosition: syncVirtualizerScrollPosition,
-      spyRowIndex,
-      spyProgress,
-      spyViewportFraction
-    } = useTranscriptVirtualization({
-      enabled: virtualizeEnabled,
-      rows: virtualRows,
-      scrollRef,
-      contentRef,
-      chatId: currentChat?.appChatId ?? null,
-      autoFollowRef,
-      getUserScrollGestureLive,
-      onProgrammaticScrollWrite,
-      compactDensity,
-      forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
-      activeLiveRowKeys,
-      expandedRowIds: expandedRowIdsWithLiveViewports,
-      hiddenRowKeys,
-      spySinkRef: gutterSpySinkRef
-    })
-    const virtualHeightOffsets = useMemo(
-      () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
-      [virtualHeights, virtualizeEnabled]
-    )
-    const userGutterMarkers = useMemo(
-      () =>
-        buildTranscriptUserGutterMarkers(
-          displayMessages,
-          projectedRows,
-          virtualizeEnabled ? virtualHeights : undefined,
-          collapsedRoundUserMessages
-        ),
-      [
-        collapsedRoundUserMessages,
+    compactDensity,
+    layoutEpoch: transcriptLayoutEpoch,
+    measuredWidthBucket: transcriptMeasuredWidthBucket,
+    forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
+    activeLiveRowKeys,
+    expandedRowIds: expandedRowIdsWithLiveViewports,
+    hiddenRowKeys,
+    fanoutLaneSlots,
+    spySinkRef: gutterSpySinkRef
+  })
+  const virtualHeightOffsets = useMemo(
+    () =>
+      virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS,
+    [virtualHeights, virtualizeEnabled]
+  )
+  const userGutterMarkers = useMemo(
+    () =>
+      buildTranscriptUserGutterMarkers(
         displayMessages,
         projectedRows,
-        virtualHeights,
-        virtualizeEnabled
-      ]
-    )
-    // Scroll-spy: resolve the virtualiser's current anchor-row index to the
-    // nearest user-message marker at or above it. Recomputes each scroll frame,
-    // but the resolved key changes only when the reader crosses into a new turn.
-    const activeScrollRowKey = useMemo(
-      () =>
-        spyRowIndex === null ? null : findActiveGutterMarkerKey(userGutterMarkers, spyRowIndex),
-      [userGutterMarkers, spyRowIndex]
-    )
-    const [highlightedMessageTarget, setHighlightedMessageTarget] = useState<{
-      messageId: string
-      rowKey?: string
-    } | null>(null)
-    const highlightTimerRef = useRef<number | null>(null)
-    // Shared glide animator for every rail-initiated jump (marker / ↑ / ↓).
-    // Lazily created; cancelled on chat switch + unmount. User input on the
-    // scroller interrupts it, so it can never fight a live reader.
-    const scrollAnimatorRef = useRef<TranscriptScrollAnimator | null>(null)
-    const getScrollAnimator = useCallback((): TranscriptScrollAnimator => {
-      if (!scrollAnimatorRef.current) {
-        scrollAnimatorRef.current = createTranscriptScrollAnimator()
-      }
-      return scrollAnimatorRef.current
-    }, [])
-    useEffect(() => {
-      return () => scrollAnimatorRef.current?.cancel()
-    }, [])
-    const currentChatRenderSignature = useMemo(
-      () => transcriptChatRenderSignature(currentChat),
-      [currentChat]
-    )
-    const auxiliaryChatsSignature = useMemo(() => transcriptAuxiliaryChatsSignature(chats), [chats])
-    const runningChatIdsSignature = useMemo(
-      () => transcriptRunningChatIdsSignature(runningChatIds),
-      [runningChatIds]
-    )
-    const previousChatIdRef = useRef<string | null>(chatId)
-    useLayoutEffect(() => {
-      if (previousChatIdRef.current === chatId) return
-      previousChatIdRef.current = chatId
-      setMessageContextMenu(null)
-      setExpandedUserMessages(new Set())
-      setActivityExpansionByRow(new Map())
-      setExpandedSubThreadResults(new Set())
-      setActiveParticipantFilterKeys(new Set())
-      rowElementCacheRef.current.clear()
-      thinkingTraceActionsCacheRef.current.clear()
-      stackCollapseStateRef.current.lastCollapsed.clear()
-      stackCollapseStateRef.current.entering.clear()
-      setHighlightedMessageTarget(null)
-      setPendingFocusTarget(null)
-      scrollAnimatorRef.current?.cancel()
-      if (highlightTimerRef.current !== null) {
-        window.clearTimeout(highlightTimerRef.current)
-        highlightTimerRef.current = null
-      }
-    }, [chatId])
-    const prepareManualTranscriptJump = useCallback(() => {
-      if (autoFollowRef) autoFollowRef.current = false
-      onManualTranscriptJump?.()
-    }, [autoFollowRef, onManualTranscriptJump])
-    const focusMessageBlock = useCallback(
-      (messageId: string, rowKey?: string): boolean => {
-        const scroller = scrollRef.current
-        if (!scroller) return false
-        const row = findProjectedRowForMessage(messageId, rowKey)
-        const target = row
+        virtualizeEnabled ? virtualHeights : undefined,
+        collapsedRoundUserMessages
+      ),
+    [collapsedRoundUserMessages, displayMessages, projectedRows, virtualHeights, virtualizeEnabled]
+  )
+  // Scroll-spy: resolve the virtualiser's current anchor-row index to the
+  // nearest user-message marker at or above it. Recomputes each scroll frame,
+  // but the resolved key changes only when the reader crosses into a new turn.
+  const activeScrollRowKey = useMemo(
+    () => (spyRowIndex === null ? null : findActiveGutterMarkerKey(userGutterMarkers, spyRowIndex)),
+    [userGutterMarkers, spyRowIndex]
+  )
+  const [highlightedMessageTarget, setHighlightedMessageTarget] = useState<{
+    messageId: string
+    rowKey?: string
+  } | null>(null)
+  const highlightTimerRef = useRef<number | null>(null)
+  // Shared glide animator for every rail-initiated jump (marker / ↑ / ↓).
+  // Lazily created; cancelled on chat switch + unmount. User input on the
+  // scroller interrupts it, so it can never fight a live reader.
+  const scrollAnimatorRef = useRef<TranscriptScrollAnimator | null>(null)
+  const getScrollAnimator = useCallback((): TranscriptScrollAnimator => {
+    if (!scrollAnimatorRef.current) {
+      scrollAnimatorRef.current = createTranscriptScrollAnimator()
+    }
+    return scrollAnimatorRef.current
+  }, [])
+  useEffect(() => {
+    return () => scrollAnimatorRef.current?.cancel()
+  }, [])
+  const currentChatRenderSignature = useMemo(
+    () => transcriptChatRenderSignature(currentChat),
+    [currentChat]
+  )
+  // One entry per seat, so a row keys on its own speaker instead of on the
+  // whole roster. Built here rather than per row: the row loop runs for every
+  // message, and resolving a seat by scan inside it would trade a repaint for
+  // a quadratic walk.
+  const seatRenderSignatureById = useMemo(() => {
+    const signatures = new Map<string, string>()
+    for (const seat of currentChat?.ensemble?.participants || []) {
+      signatures.set(seat.id, transcriptSeatRenderSignature(currentChat, seat.id))
+    }
+    return signatures
+  }, [currentChat])
+  const auxiliaryChatsSignature = useMemo(() => transcriptAuxiliaryChatsSignature(chats), [chats])
+  const runningChatIdsSignature = useMemo(
+    () => transcriptRunningChatIdsSignature(runningChatIds),
+    [runningChatIds]
+  )
+  const previousChatIdRef = useRef<string | null>(chatId)
+  useLayoutEffect(() => {
+    if (previousChatIdRef.current === chatId) return
+    previousChatIdRef.current = chatId
+    setMessageContextMenu(null)
+    setExpandedUserMessages(new Set())
+    setActivityExpansionByRow(new Map())
+    setExpandedCollapsedStacks(new Set())
+    setExpandedSuperGroups(new Set())
+    setExpandedBlackboardUpdateStacks(new Set())
+    setExpandedSubThreadResults(new Set())
+    setActiveParticipantFilterKeys(new Set())
+    rowElementCacheRef.current.clear()
+    thinkingTraceActionsCacheRef.current.clear()
+    stackCollapseStateRef.current.lastCollapsed.clear()
+    stackCollapseStateRef.current.entering.clear()
+    setHighlightedMessageTarget(null)
+    setPendingFocusTarget(null)
+    scrollAnimatorRef.current?.cancel()
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current)
+      highlightTimerRef.current = null
+    }
+  }, [chatId])
+  const prepareManualTranscriptJump = useCallback(() => {
+    if (autoFollowRef) autoFollowRef.current = false
+    onManualTranscriptJump?.()
+  }, [autoFollowRef, onManualTranscriptJump])
+  const focusMessageBlock = useCallback(
+    (messageId: string, rowKey?: string): boolean => {
+      const scroller = scrollRef.current
+      if (!scroller) return false
+      const row = findProjectedRowForMessage(messageId, rowKey)
+      const target = row
+        ? scroller.querySelector<HTMLElement>(
+            `[data-vrow-id="${escapeDomSelectorValue(row.rowKey)}"]`
+          )
+        : scroller.querySelector<HTMLElement>(
+            `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
+          )
+      if (!target) return false
+      const targetRowKey = row?.rowKey || rowKey
+      prepareManualTranscriptJump()
+      const targetRect = target.getBoundingClientRect()
+      const scrollerRect = scroller.getBoundingClientRect()
+      const targetTop = scroller.scrollTop + targetRect.top - scrollerRect.top
+      const topOffset = Math.max(56, Math.round(scroller.clientHeight * 0.22))
+      const nextScrollTop = Math.max(0, targetTop - topOffset)
+      // Runs when the glide lands (or immediately under reduced motion):
+      // settle any residual drift from mid-glide re-measures with one small
+      // instant correction, then pulse the arrival highlight — the pulse
+      // reads best when it fires as the message comes to rest, not 1.5s
+      // before arrival.
+      const settleAndHighlight = (): void => {
+        const settled = row
           ? scroller.querySelector<HTMLElement>(
               `[data-vrow-id="${escapeDomSelectorValue(row.rowKey)}"]`
             )
           : scroller.querySelector<HTMLElement>(
               `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
             )
-        if (!target) return false
-        const targetRowKey = row?.rowKey || rowKey
-        prepareManualTranscriptJump()
-        const targetRect = target.getBoundingClientRect()
-        const scrollerRect = scroller.getBoundingClientRect()
-        const targetTop = scroller.scrollTop + targetRect.top - scrollerRect.top
-        const topOffset = Math.max(56, Math.round(scroller.clientHeight * 0.22))
-        const nextScrollTop = Math.max(0, targetTop - topOffset)
-        // Runs when the glide lands (or immediately under reduced motion):
-        // settle any residual drift from mid-glide re-measures with one small
-        // instant correction, then pulse the arrival highlight — the pulse
-        // reads best when it fires as the message comes to rest, not 1.5s
-        // before arrival.
-        const settleAndHighlight = (): void => {
-          const settled = row
-            ? scroller.querySelector<HTMLElement>(
-                `[data-vrow-id="${escapeDomSelectorValue(row.rowKey)}"]`
-              )
-            : scroller.querySelector<HTMLElement>(
-                `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
-              )
-          if (settled) {
-            const settledRect = settled.getBoundingClientRect()
-            const liveScrollerRect = scroller.getBoundingClientRect()
-            const desired = Math.max(
-              0,
-              scroller.scrollTop + settledRect.top - liveScrollerRect.top - topOffset
-            )
-            if (Math.abs(desired - scroller.scrollTop) > 1) {
-              scroller.scrollTop = desired
-              syncVirtualizerScrollPosition(desired)
-            }
-          }
-          setHighlightedMessageTarget({ messageId, rowKey: targetRowKey })
-          if (highlightTimerRef.current !== null) {
-            window.clearTimeout(highlightTimerRef.current)
-          }
-          highlightTimerRef.current = window.setTimeout(() => {
-            highlightTimerRef.current = null
-            setHighlightedMessageTarget((current) =>
-              current?.messageId === messageId && current?.rowKey === targetRowKey ? null : current
-            )
-          }, 1800)
-        }
-        getScrollAnimator().animateTo(scroller, nextScrollTop, {
-          onFrame: syncVirtualizerScrollPosition,
-          onDone: settleAndHighlight
-        })
-        setPendingFocusTarget((current) =>
-          current?.messageId === messageId &&
-          (!current.rowKey || !targetRowKey || current.rowKey === targetRowKey)
-            ? null
-            : current
-        )
-        return true
-      },
-      [
-        findProjectedRowForMessage,
-        getScrollAnimator,
-        prepareManualTranscriptJump,
-        scrollRef,
-        syncVirtualizerScrollPosition
-      ]
-    )
-
-    const estimateScrollToMessage = useCallback(
-      (messageId: string, rowKey?: string, options?: { animate?: boolean }): void => {
-        const scroller = scrollRef.current
-        if (!scroller) return
-        const row = findProjectedRowForMessage(messageId, rowKey)
-        if (!row) return
-        prepareManualTranscriptJump()
-        const rowHeights =
-          virtualizeEnabled && virtualHeights.length === projectedRows.length
-            ? virtualHeights
-            : projectedRows.map((candidate) => candidate.estimatedHeight)
-        const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
-        if (rowPosition < 0) return
-        const estimatedTop =
-          virtualizeEnabled && virtualHeights.length === projectedRows.length
-            ? sumHeightOffsets(virtualHeightOffsets, 0, rowPosition)
-            : sumHeights(rowHeights, 0, rowPosition)
-        const nextScrollTop = Math.max(
-          0,
-          estimatedTop - Math.round(scroller.clientHeight * 0.35)
-        )
-        if (options?.animate) {
-          // First hop of a rail jump: glide toward the estimated position. If
-          // the user grabs the scroll mid-glide, abandon the pending focus —
-          // their input owns the viewport from that moment.
-          getScrollAnimator().animateTo(scroller, nextScrollTop, {
-            onFrame: syncVirtualizerScrollPosition,
-            onInterrupted: () => setPendingFocusTarget(null)
-          })
-          return
-        }
-        scroller.scrollTop = nextScrollTop
-        syncVirtualizerScrollPosition(nextScrollTop)
-      },
-      [
-        findProjectedRowForMessage,
-        getScrollAnimator,
-        prepareManualTranscriptJump,
-        projectedRowLookup,
-        projectedRows,
-        scrollRef,
-        syncVirtualizerScrollPosition,
-        virtualHeightOffsets,
-        virtualHeights,
-        virtualizeEnabled
-      ]
-    )
-
-    const scrollToMessage = useCallback(
-      (messageId: string, rowKey?: string): void => {
-        // Markers for user messages hidden in a collapsed round carry a
-        // SYNTHETIC rowKey that never matches a projected row (by design —
-        // see hiddenRoundMarkerRowKey). Strip it here so every downstream
-        // lookup (focus, estimate, pending-target clearing) runs id-only;
-        // carrying it forward would seed a pending focus target whose rowKey
-        // can never be satisfied, which pins the retry loop open forever.
-        const effectiveRowKey = isHiddenRoundMarkerRowKey(rowKey) ? undefined : rowKey
-        if (
-          chatId &&
-          storeReady &&
-          !storeTranscript.messages.some((message) => message.id === messageId)
-        ) {
-          const revealed = revealChatTranscriptMessage(chatId, messageId)
-          if (revealed && revealed !== storeTranscript) {
-            prepareManualTranscriptJump()
-            setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
-            return
+        if (settled) {
+          const settledRect = settled.getBoundingClientRect()
+          const liveScrollerRect = scroller.getBoundingClientRect()
+          const desired = Math.max(
+            0,
+            scroller.scrollTop + settledRect.top - liveScrollerRect.top - topOffset
+          )
+          if (Math.abs(desired - scroller.scrollTop) > 1) {
+            scroller.scrollTop = desired
+            syncVirtualizerScrollPosition(desired)
           }
         }
-        // If the target lives in a collapsed ensemble round, expand it
-        // first; the pending-focus retry loop below then finds the row
-        // once it re-renders into the window.
-        ensureRoundExpandedForMessage(messageId)
-        if (focusMessageBlock(messageId, effectiveRowKey)) return
-
-        setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
-        estimateScrollToMessage(messageId, effectiveRowKey, { animate: true })
-      },
-      [
-        chatId,
-        ensureRoundExpandedForMessage,
-        estimateScrollToMessage,
-        focusMessageBlock,
-        prepareManualTranscriptJump,
-        storeReady,
-        storeTranscript
-      ]
-    )
-
-    const jumpToTranscriptStart = useCallback(() => {
-      const scroller = scrollRef.current
-      if (!scroller) return
-      prepareManualTranscriptJump()
-      getScrollAnimator().animateTo(scroller, 0, { onFrame: syncVirtualizerScrollPosition })
-    }, [getScrollAnimator, prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
-
-    const jumpToTranscriptEnd = useCallback(() => {
-      if (onJumpToLatest) {
-        onJumpToLatest()
-        const scroller = scrollRef.current
-        if (scroller) syncVirtualizerScrollPosition(scroller.scrollHeight)
-        return
-      }
-      const scroller = scrollRef.current
-      if (!scroller) return
-      getScrollAnimator().animateTo(scroller, scroller.scrollHeight, {
-        onFrame: syncVirtualizerScrollPosition,
-        // Re-arm auto-follow only on ARRIVAL — arming it at glide start would
-        // let the streaming re-pin writes fight the animation frames.
-        onDone: () => {
-          if (autoFollowRef) autoFollowRef.current = true
-        }
-      })
-    }, [autoFollowRef, getScrollAnimator, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
-
-    const positionAfterTranscriptPageChange = useCallback(
-      (edge: 'start' | 'end'): void => {
-        window.requestAnimationFrame(() => {
-          const scroller = scrollRef.current
-          if (!scroller) return
-          const nextScrollTop = edge === 'end' ? scroller.scrollHeight : 0
-          scroller.scrollTop = nextScrollTop
-          syncVirtualizerScrollPosition(nextScrollTop)
-        })
-      },
-      [scrollRef, syncVirtualizerScrollPosition]
-    )
-    const loadOlderTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      prepareManualTranscriptJump()
-      showOlderChatTranscriptPage(chatId)
-      positionAfterTranscriptPageChange('end')
-    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
-    const loadNewerTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      prepareManualTranscriptJump()
-      showNewerChatTranscriptPage(chatId)
-      positionAfterTranscriptPageChange('start')
-    }, [chatId, positionAfterTranscriptPageChange, prepareManualTranscriptJump])
-    const returnToLatestTranscriptPage = useCallback(() => {
-      if (!chatId) return
-      showLatestChatTranscriptPage(chatId)
-      if (autoFollowRef) autoFollowRef.current = true
-      onJumpToLatest?.()
-      positionAfterTranscriptPageChange('end')
-    }, [autoFollowRef, chatId, onJumpToLatest, positionAfterTranscriptPageChange])
-
-    useEffect(() => {
-      const request = jumpToMessageRequest
-      if (!request?.messageId) return
-      scrollToMessage(request.messageId, request.rowKey)
-    }, [
-      jumpToMessageRequest?.requestId,
-      jumpToMessageRequest?.messageId,
-      jumpToMessageRequest?.rowKey,
-      scrollToMessage
-    ])
-
-    useEffect(() => {
-      return () => {
+        setHighlightedMessageTarget({ messageId, rowKey: targetRowKey })
         if (highlightTimerRef.current !== null) {
           window.clearTimeout(highlightTimerRef.current)
-          highlightTimerRef.current = null
         }
+        highlightTimerRef.current = window.setTimeout(() => {
+          highlightTimerRef.current = null
+          setHighlightedMessageTarget((current) =>
+            current?.messageId === messageId && current?.rowKey === targetRowKey ? null : current
+          )
+        }, 1800)
       }
-    }, [])
+      getScrollAnimator().animateTo(scroller, nextScrollTop, {
+        onFrame: syncVirtualizerScrollPosition,
+        onDone: settleAndHighlight
+      })
+      setPendingFocusTarget((current) =>
+        current?.messageId === messageId &&
+        (!current.rowKey || !targetRowKey || current.rowKey === targetRowKey)
+          ? null
+          : current
+      )
+      return true
+    },
+    [
+      findProjectedRowForMessage,
+      getScrollAnimator,
+      prepareManualTranscriptJump,
+      scrollRef,
+      syncVirtualizerScrollPosition
+    ]
+  )
 
-    // Messages mounted this frame, each paired with its collision-proof
-    // `rowKey` (`${id}#${index}`). The window slice when virtualised, else the
-    // full list. Keying React + the element map on `rowKey` (not `msg.id`)
-    // means duplicate message ids — which exist in historical/imported data —
-    // can never make two rows share a DOM node / measurement slot.
-    const renderedRows: Array<{ msg: ChatMessage; rowKey: string }> = virtualizeEnabled
-      ? virtualRows
-          .slice(virtualWindow.startIndex, virtualWindow.endIndex)
-          .map((r) => {
-            const msg = displayMessages[r.index]
-            return msg ? { msg, rowKey: r.rowKey } : null
-          })
-          .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
-      : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
-
-
-    useEffect(() => {
-      const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
-      for (const rowKey of rowElementCacheRef.current.keys()) {
-        if (!mountedRowKeys.has(rowKey)) rowElementCacheRef.current.delete(rowKey)
-      }
-    }, [renderedRows])
-
-    useLayoutEffect(() => {
-      if (!pendingFocusTarget) return
-      ensureRoundExpandedForMessage(pendingFocusTarget.messageId)
-      // While a glide toward this target is in flight, hold the retry loop:
-      // don't burn attempts or issue competing scroll writes. The effect
-      // re-runs naturally each glide frame (renderedRows changes as the
-      // window follows), so the first post-landing pass resumes the search.
-      if (scrollAnimatorRef.current?.isAnimating()) return
-      if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) {
-        // Termination guarantee: a successful focus means the target is on
-        // screen, so this pending target is DONE regardless of whether
-        // focusMessageBlock's rowKey-matched clear fired (an id-fallback
-        // resolution reports a different rowKey; without this force-clear
-        // the effect would re-focus every render — the "maximum update
-        // depth" loop). Identity compare so a newer jump is never clobbered.
-        setPendingFocusTarget((current) => (current === pendingFocusTarget ? null : current))
+  const estimateScrollToMessage = useCallback(
+    (messageId: string, rowKey?: string, options?: { animate?: boolean }): void => {
+      const scroller = scrollRef.current
+      if (!scroller) return
+      const row = findProjectedRowForMessage(messageId, rowKey)
+      if (!row) return
+      prepareManualTranscriptJump()
+      const rowHeights =
+        virtualizeEnabled && virtualHeights.length === projectedRows.length
+          ? virtualHeights
+          : projectedRows.map((candidate) => candidate.estimatedHeight)
+      const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
+      if (rowPosition < 0) return
+      const estimatedTop =
+        virtualizeEnabled && virtualHeights.length === projectedRows.length
+          ? sumHeightOffsets(virtualHeightOffsets, 0, rowPosition)
+          : sumHeights(rowHeights, 0, rowPosition)
+      const nextScrollTop = Math.max(0, estimatedTop - Math.round(scroller.clientHeight * 0.35))
+      if (options?.animate) {
+        // First hop of a rail jump: glide toward the estimated position. If
+        // the user grabs the scroll mid-glide, abandon the pending focus —
+        // their input owns the viewport from that moment.
+        getScrollAnimator().animateTo(scroller, nextScrollTop, {
+          onFrame: syncVirtualizerScrollPosition,
+          onInterrupted: () => setPendingFocusTarget(null)
+        })
         return
       }
-      if (pendingFocusTarget.attempt >= 10) return
+      scroller.scrollTop = nextScrollTop
+      syncVirtualizerScrollPosition(nextScrollTop)
+    },
+    [
+      findProjectedRowForMessage,
+      getScrollAnimator,
+      prepareManualTranscriptJump,
+      projectedRowLookup,
+      projectedRows,
+      scrollRef,
+      syncVirtualizerScrollPosition,
+      virtualHeightOffsets,
+      virtualHeights,
+      virtualizeEnabled
+    ]
+  )
 
-      estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey, {
-        animate: pendingFocusTarget.attempt === 0
-      })
-      const frame = window.requestAnimationFrame(() => {
-        setPendingFocusTarget((current) =>
-          current?.messageId === pendingFocusTarget.messageId &&
-          current?.rowKey === pendingFocusTarget.rowKey &&
-          current?.attempt === pendingFocusTarget.attempt
-            ? { ...current, attempt: current.attempt + 1 }
-            : current
-        )
-      })
-      return () => window.cancelAnimationFrame(frame)
-    }, [
+  const scrollToMessage = useCallback(
+    (messageId: string, rowKey?: string): void => {
+      // Markers for user messages hidden in a collapsed round carry a
+      // SYNTHETIC rowKey that never matches a projected row (by design —
+      // see hiddenRoundMarkerRowKey). Strip it here so every downstream
+      // lookup (focus, estimate, pending-target clearing) runs id-only;
+      // carrying it forward would seed a pending focus target whose rowKey
+      // can never be satisfied, which pins the retry loop open forever.
+      const effectiveRowKey = isHiddenRoundMarkerRowKey(rowKey) ? undefined : rowKey
+      if (
+        chatId &&
+        storeReady &&
+        !storeTranscript.messages.some((message) => message.id === messageId)
+      ) {
+        const revealed = revealChatTranscriptMessage(chatId, messageId)
+        if (revealed && revealed !== storeTranscript) {
+          prepareManualTranscriptJump()
+          setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+          return
+        }
+      }
+      // If the target lives in a collapsed ensemble round, expand it
+      // first; the pending-focus retry loop below then finds the row
+      // once it re-renders into the window.
+      ensureRoundExpandedForMessage(messageId)
+      if (ensureBlackboardStackExpandedForMessage(messageId, effectiveRowKey)) {
+        setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+        return
+      }
+      // Super-folds preserve hidden member wrappers for scroll geometry, but
+      // the wrapper has no visible content. Open the owning fold before
+      // focusing so the jump lands on the actual requested row.
+      if (ensureSuperGroupExpandedForMessage(messageId, effectiveRowKey)) {
+        setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+        return
+      }
+      if (focusMessageBlock(messageId, effectiveRowKey)) return
+
+      setPendingFocusTarget({ messageId, rowKey: effectiveRowKey, attempt: 0 })
+      estimateScrollToMessage(messageId, effectiveRowKey, { animate: true })
+    },
+    [
+      chatId,
+      ensureBlackboardStackExpandedForMessage,
       ensureRoundExpandedForMessage,
+      ensureSuperGroupExpandedForMessage,
       estimateScrollToMessage,
       focusMessageBlock,
-      pendingFocusTarget,
-      renderedRows
-    ])
+      prepareManualTranscriptJump,
+      storeReady,
+      storeTranscript
+    ]
+  )
 
-    return (
-      <div
-        className={`transcript-scroll${isGlobal ? ' is-global' : ''}`}
-        data-scope={isGlobal ? 'global' : 'workspace'}
-        ref={scrollRef}
-      >
-        {userMessageGutterEnabled !== false && (
-          <TranscriptUserMessageGutter
-            key={currentChat?.appChatId || 'transcript-user-gutter'}
-            markers={userGutterMarkers}
-            activeScrollRowKey={activeScrollRowKey}
-            scrollProgress={spyProgress}
-            scrollViewportFraction={spyViewportFraction}
-            spySinkRef={gutterSpySinkRef}
-            scrollRef={scrollRef}
-            contentRef={contentRef}
-            currentChat={currentChat}
-            onJumpToMessage={scrollToMessage}
-            onJumpToStart={jumpToTranscriptStart}
-            onJumpToEnd={jumpToTranscriptEnd}
-          />
-        )}
-        <TranscriptParticipantFilterRail
-          currentChat={currentChat}
-          items={participantFilterItems}
-          activeFilterKeys={activeParticipantFilterKeys}
+  const jumpToTranscriptStart = useCallback(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    prepareManualTranscriptJump()
+    getScrollAnimator().animateTo(scroller, 0, { onFrame: syncVirtualizerScrollPosition })
+  }, [getScrollAnimator, prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
+
+  const jumpToTranscriptEnd = useCallback(() => {
+    // Returning to the live tail is a WINDOW move, not merely a scroll: once
+    // the reader has accumulated far enough back, the newest messages are no
+    // longer loaded, so gliding to scrollHeight would land on the bottom of
+    // stale history. Reset the window first and let auto-follow pin the tail
+    // as it arrives.
+    if (chatId && storeTranscript.hasNewer) {
+      const store = getChatTranscriptStore()
+      if (store.isPaged(chatId)) requestLatestTranscriptPage(chatId, store)
+      else store.showLatestPage(chatId)
+      if (autoFollowRef) autoFollowRef.current = true
+    }
+    if (onJumpToLatest) {
+      onJumpToLatest()
+      const scroller = scrollRef.current
+      if (scroller) syncVirtualizerScrollPosition(scroller.scrollHeight)
+      return
+    }
+    const scroller = scrollRef.current
+    if (!scroller) return
+    getScrollAnimator().animateTo(scroller, scroller.scrollHeight, {
+      onFrame: syncVirtualizerScrollPosition,
+      // Re-arm auto-follow only on ARRIVAL — arming it at glide start would
+      // let the streaming re-pin writes fight the animation frames.
+      onDone: () => {
+        if (autoFollowRef) autoFollowRef.current = true
+      }
+    })
+  }, [
+    autoFollowRef,
+    chatId,
+    getScrollAnimator,
+    onJumpToLatest,
+    scrollRef,
+    storeTranscript.hasNewer,
+    syncVirtualizerScrollPosition
+  ])
+
+  useEffect(() => {
+    const request = jumpToMessageRequest
+    if (!request?.messageId) return
+    scrollToMessage(request.messageId, request.rowKey)
+  }, [
+    jumpToMessageRequest?.requestId,
+    jumpToMessageRequest?.messageId,
+    jumpToMessageRequest?.rowKey,
+    scrollToMessage
+  ])
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+        highlightTimerRef.current = null
+      }
+    }
+  }, [])
+
+  // Accumulated infinite scroll — scroll anchoring across a prepend.
+  const loadedWindowStart = storeTranscript.windowStart
+  const previousWindowStartRef = useRef<number>(loadedWindowStart)
+  const previousScrollHeightRef = useRef<number>(0)
+
+  // Older messages land ABOVE the viewport, so the content the reader was
+  // looking at is pushed down by the full height of everything just inserted.
+  // Absorb that growth into scrollTop before paint and the window extension is
+  // invisible. Keyed on the window bounds and driven by the measured
+  // scrollHeight delta, so it stays correct however the fetch was triggered.
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const previousWindowStart = previousWindowStartRef.current
+    if (loadedWindowStart === previousWindowStart) {
+      // Streaming appends tick `storeTranscript.updatedAt` on every frame, and
+      // reading scrollHeight here would force a synchronous layout per update
+      // for a head-extension correction that cannot apply. Track the settled
+      // height after paint instead, so a later head extension still measures
+      // its delta against the right base.
+      if (typeof window.requestAnimationFrame === 'function') {
+        const frame = window.requestAnimationFrame(() => {
+          if (scrollRef.current === scroller) {
+            previousScrollHeightRef.current = scroller.scrollHeight
+          }
+        })
+        return () => window.cancelAnimationFrame(frame)
+      }
+      previousScrollHeightRef.current = scroller.scrollHeight
+      return undefined
+    }
+    const previousScrollHeight = previousScrollHeightRef.current
+    previousWindowStartRef.current = loadedWindowStart
+    previousScrollHeightRef.current = scroller.scrollHeight
+    // Only a head extension needs correcting: appends grow the list below the
+    // viewport, and a wholesale replace (jump / return-to-latest) is meant to
+    // move the reader. The arithmetic lives in `headExtensionScrollTop` so it
+    // is unit-provable; this effect only wires it to the scroller.
+    const nextScrollTop = headExtensionScrollTop({
+      previousWindowStart,
+      windowStart: loadedWindowStart,
+      previousScrollHeight,
+      scrollHeight: scroller.scrollHeight,
+      scrollTop: scroller.scrollTop
+    })
+    if (nextScrollTop === null) return
+    scroller.scrollTop = nextScrollTop
+    syncVirtualizerScrollPosition(nextScrollTop)
+    return undefined
+  }, [
+    loadedWindowStart,
+    storeTranscript.windowEnd,
+    storeTranscript.updatedAt,
+    scrollRef,
+    syncVirtualizerScrollPosition
+  ])
+
+  // Overscan may contain both ends after thousands of raw rows fold into a
+  // few cards. Loading both edges makes the bounded store repeatedly evict
+  // and reload the opposite page. Select one edge from settled DOM geometry.
+  const loadAdjacentTranscriptPage = useCallback(
+    (direction: TranscriptPrefetchDirection) => {
+      if (!chatId) return
+      const store = getChatTranscriptStore()
+      const paged = store.isPaged(chatId)
+      if (direction === 'older') {
+        if (paged) requestOlderTranscriptPage(chatId, store)
+        else store.extendOlderPage(chatId)
+      } else {
+        if (paged) requestNewerTranscriptPage(chatId, store)
+        else store.extendNewerPage(chatId)
+      }
+    },
+    [chatId]
+  )
+  useTranscriptEdgePrefetch({
+    enabled: Boolean(chatId && storeReady && virtualizeEnabled && displayMessages.length > 0),
+    scrollRef,
+    autoFollowRef,
+    hasOlder: storeTranscript.hasOlder,
+    hasNewer: storeTranscript.hasNewer,
+    nearOlder: virtualWindow.startIndex <= TRANSCRIPT_EDGE_PREFETCH_ROWS,
+    nearNewer: virtualWindow.endIndex >= displayMessages.length - TRANSCRIPT_EDGE_PREFETCH_ROWS,
+    windowStart: storeTranscript.windowStart,
+    windowEnd: storeTranscript.windowEnd,
+    load: loadAdjacentTranscriptPage
+  })
+
+  // Messages mounted this frame, each paired with its collision-proof
+  // `rowKey` (`${id}#${occurrence}`). The window slice when virtualised, else
+  // the full list. Keying React + the element map on `rowKey` (not `msg.id`)
+  // means duplicate message ids — which exist in historical/imported data —
+  // can never make two rows share a DOM node / measurement slot, while the
+  // occurrence counter (rather than the list index it replaced) keeps that key
+  // stable when infinite scroll prepends older history above these rows. The
+  // list index travels alongside, since windowing and geometry still need it.
+  const renderedRows: Array<{ msg: ChatMessage; rowKey: string; index: number }> = virtualizeEnabled
+    ? virtualRows
+        .slice(virtualWindow.startIndex, virtualWindow.endIndex)
+        .map((r) => {
+          const msg = displayMessages[r.index]
+          return msg ? { msg, rowKey: r.rowKey, index: r.index } : null
+        })
+        .filter((r): r is { msg: ChatMessage; rowKey: string; index: number } => Boolean(r))
+    : projectNonVirtualizedRows(displayMessages)
+
+  useEffect(() => {
+    const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
+    for (const rowKey of rowElementCacheRef.current.keys()) {
+      if (!mountedRowKeys.has(rowKey)) rowElementCacheRef.current.delete(rowKey)
+    }
+  }, [renderedRows])
+
+  // In-chat search painting. Sibling of the cache sweep above and keyed on
+  // the same `renderedRows`, so the pass re-runs whenever the virtual window
+  // moves, a row remounts, or a streaming delta rewrites a row's text — which
+  // is also what keeps every registered `Range` pointing at a live node.
+  // Scoped to matched rows that are mounted right now, so the cost is a text
+  // walk over a handful of rows rather than the transcript.
+  useEffect(() => {
+    // `undefined` query = this pane has no search bar; never touch the
+    // registry, or the side pane would clear the main pane's highlights.
+    if (threadSearchQuery === undefined) return
+    const matchedRowKeys = threadSearchMatchRowKeys
+    const mountedMatches =
+      matchedRowKeys && matchedRowKeys.size > 0
+        ? renderedRows.filter((row) => matchedRowKeys.has(row.rowKey)).map((row) => row.rowKey)
+        : []
+    applyTranscriptSearchHighlights({
+      scroller: scrollRef.current,
+      query: threadSearchQuery,
+      rowKeys: mountedMatches,
+      activeRowKey: threadSearchActiveRowKey
+    })
+    // NO cleanup here on purpose. This effect is keyed on `renderedRows`,
+    // which changes on every scroll frame and every streaming delta, and a
+    // cleanup runs BEFORE each re-run — so returning one would unpaint and
+    // repaint the highlight on every one of those frames, which is exactly
+    // the flashing this used to produce. Teardown is handled once, below.
+  }, [
+    renderedRows,
+    scrollRef,
+    threadSearchActiveRowKey,
+    threadSearchMatchRowKeys,
+    threadSearchQuery
+  ])
+
+  // Teardown for the painting effect above, deliberately split out so it is
+  // keyed on whether this pane HAS a search bar at all rather than on
+  // `renderedRows`. It therefore fires once — when the pane stops carrying a
+  // search bar, or unmounts — instead of on every scroll and stream frame.
+  const hasThreadSearchBar = threadSearchQuery !== undefined
+  useEffect(() => {
+    if (!hasThreadSearchBar) return
+    return () => clearTranscriptSearchHighlights()
+  }, [hasThreadSearchBar])
+
+  useLayoutEffect(() => {
+    if (!pendingFocusTarget) return
+    ensureRoundExpandedForMessage(pendingFocusTarget.messageId)
+    if (
+      ensureBlackboardStackExpandedForMessage(
+        pendingFocusTarget.messageId,
+        pendingFocusTarget.rowKey
+      )
+    ) {
+      return
+    }
+    if (
+      ensureSuperGroupExpandedForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+    ) {
+      return
+    }
+    // While a glide toward this target is in flight, hold the retry loop:
+    // don't burn attempts or issue competing scroll writes. The effect
+    // re-runs naturally each glide frame (renderedRows changes as the
+    // window follows), so the first post-landing pass resumes the search.
+    if (scrollAnimatorRef.current?.isAnimating()) return
+    if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) {
+      // Termination guarantee: a successful focus means the target is on
+      // screen, so this pending target is DONE regardless of whether
+      // focusMessageBlock's rowKey-matched clear fired (an id-fallback
+      // resolution reports a different rowKey; without this force-clear
+      // the effect would re-focus every render — the "maximum update
+      // depth" loop). Identity compare so a newer jump is never clobbered.
+      setPendingFocusTarget((current) => (current === pendingFocusTarget ? null : current))
+      return
+    }
+    if (pendingFocusTarget.attempt >= 10) return
+
+    estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey, {
+      animate: pendingFocusTarget.attempt === 0
+    })
+    const frame = window.requestAnimationFrame(() => {
+      setPendingFocusTarget((current) =>
+        current?.messageId === pendingFocusTarget.messageId &&
+        current?.rowKey === pendingFocusTarget.rowKey &&
+        current?.attempt === pendingFocusTarget.attempt
+          ? { ...current, attempt: current.attempt + 1 }
+          : current
+      )
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [
+    ensureBlackboardStackExpandedForMessage,
+    ensureRoundExpandedForMessage,
+    ensureSuperGroupExpandedForMessage,
+    estimateScrollToMessage,
+    focusMessageBlock,
+    pendingFocusTarget,
+    renderedRows
+  ])
+
+  return (
+    <div
+      className={`transcript-scroll${isGlobal ? ' is-global' : ''}`}
+      data-scope={isGlobal ? 'global' : 'workspace'}
+      ref={scrollRef}
+    >
+      {currentChat?.externalProviderThreadImport && (
+        <ExternalProviderThreadImportBanner metadata={currentChat.externalProviderThreadImport} />
+      )}
+      {userMessageGutterEnabled !== false && (
+        <TranscriptUserMessageGutter
+          key={currentChat?.appChatId || 'transcript-user-gutter'}
+          markers={userGutterMarkers}
+          activeScrollRowKey={activeScrollRowKey}
+          scrollProgress={spyProgress}
+          scrollViewportFraction={spyViewportFraction}
+          spySinkRef={gutterSpySinkRef}
           scrollRef={scrollRef}
           contentRef={contentRef}
-          onToggleFilter={toggleParticipantFilter}
+          currentChat={currentChat}
+          onJumpToMessage={scrollToMessage}
+          onJumpToStart={jumpToTranscriptStart}
+          onJumpToEnd={jumpToTranscriptEnd}
         />
-        <div
-          className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
-          ref={contentRef}
-        >
-          {virtualizeEnabled && (
-            <div
-              className="vlist-spacer-top"
-              style={{ height: virtualWindow.topSpacerPx }}
-              aria-hidden
-            />
-          )}
-          {renderedRows.map(({ msg, rowKey }) => {
-            const historyBoundary = readTranscriptHistoryPageBoundary(msg)
-            if (historyBoundary) {
-              return (
-                <div
-                  key={`message-block-${rowKey}`}
-                  className="transcript-message-block transcript-history-page-boundary"
-                  data-vrow-id={rowKey}
-                  data-message-id={msg.id}
-                  ref={virtualizeEnabled ? virtualBlockRef : undefined}
-                >
-                  <TranscriptHistoryPageBoundary
-                    data={historyBoundary}
-                    onOlder={loadOlderTranscriptPage}
-                    onNewer={loadNewerTranscriptPage}
-                    onLatest={returnToLatestTranscriptPage}
-                  />
-                </div>
+      )}
+      <TranscriptParticipantFilterRail
+        currentChat={currentChat}
+        items={participantFilterItems}
+        activeFilterKeys={activeParticipantFilterKeys}
+        scrollRef={scrollRef}
+        contentRef={contentRef}
+        onToggleFilter={toggleParticipantFilter}
+      />
+      <div
+        className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
+        ref={contentRef}
+        data-transcript-width={transcriptWidthAttributeValue}
+        style={transcriptFontScaleVariables}
+      >
+        {virtualizeEnabled && (
+          <div
+            className="vlist-spacer-top"
+            style={{ height: virtualWindow.topSpacerPx }}
+            aria-hidden
+          />
+        )}
+        {renderedRows.map(({ msg, rowKey, index }) => {
+          const speakerContinuation = speakerContinuationRowKeys.has(rowKey)
+          const seatChangeStackPosition = seatChangeStackPositions.get(msg.id)
+          const isDelegationCard = isSubThreadDelegationMessage(msg)
+          const isFleetWaveCard = isFleetWaveMessage(msg)
+          const isReturnCard = isSubThreadReturnMessage(msg)
+          const isExecutionResultCard = isExecutionResultMessage(msg)
+          const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
+          const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
+          // Undefined unless the paired layout is on AND this row is a lane —
+          // React omits the attribute entirely, so the stacked layout renders
+          // byte-identical markup to before this existed.
+          const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
+          const fanoutLaneCompact = compactFanoutLaneRows.has(rowKey)
+          const isGuestReply = isGuestParticipantReplyMessage(msg)
+          const isInterSeatMessage = isEnsembleSideMessage(msg)
+          const isYieldMessage = isEnsembleYieldMessage(msg)
+          const isAssistantLevelMessage =
+            msg.role === 'assistant' || isGuestReply || isInterSeatMessage || isYieldMessage
+          const isCollaboratorComment = isHumanCollaboratorComment(msg)
+          // Deliberately a SEPARATE const rather than widening the one above:
+          // `isCollaboratorComment` also gates the "Insert as draft" promote
+          // action, and offering that on a contribution that has ALREADY been
+          // delivered invites the host to re-inject it as their own prompt.
+          const isDeliveredExternal = isDeliveredExternalContribution(msg)
+          const isImportedProviderMessage = isExternalProviderThreadImportMessage(msg)
+          const deliveredExternalName =
+            (isDeliveredExternal &&
+              typeof msg.metadata?.collaboratorDisplayName === 'string' &&
+              msg.metadata.collaboratorDisplayName) ||
+            'Collaborator'
+          const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
+          const hasToolActivitiesForActions = (msg.toolActivities?.length || 0) > 0
+          const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
+          const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
+          const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
+          const isContinuationHopsChange = Boolean(resolveContinuationHopsChangePayload(msg))
+          const isExecutionPlanChange = Boolean(resolveExecutionPlanChangePayload(msg))
+          const isAutoApprovalsChange = isAutoApprovalsChangePayload(
+            msg.metadata?.autoApprovalsChange
+          )
+          const isBlackboardChange = Boolean(resolveBlackboardChangePresentation(msg))
+          const blackboardUpdateStackInfo = blackboardUpdateStackByRowKey.get(rowKey) || null
+          const isBlackboardUpdateStackLead = Boolean(
+            blackboardUpdateStackInfo?.leadRowKey === rowKey
+          )
+          const blackboardUpdateStackHidden = Boolean(
+            blackboardUpdateStackInfo && !isBlackboardUpdateStackLead
+          )
+          const blackboardUpdateStackExpanded = Boolean(
+            blackboardUpdateStackInfo &&
+            expandedBlackboardUpdateStacks.has(blackboardUpdateStackInfo.stateKey)
+          )
+          const blackboardStackKey = blackboardUpdateStackInfo
+            ? [
+                blackboardUpdateStackInfo.stateKey,
+                blackboardUpdateStackInfo.stack.messages.length,
+                blackboardUpdateStackExpanded ? 'open' : 'closed',
+                isBlackboardUpdateStackLead ? 'lead' : 'member',
+                isBlackboardUpdateStackLead
+                  ? blackboardUpdateStackInfo.stack.messages
+                      .map((message, itemIndex) =>
+                        [
+                          transcriptMessageRenderSignature(message),
+                          copiedId === message.id ? 'copied' : '',
+                          expandedBlackboardUpdateStacks.has(
+                            blackboardStackItemStateKey(
+                              blackboardUpdateStackInfo.stateKey,
+                              message.id,
+                              itemIndex
+                            )
+                          )
+                            ? 'open'
+                            : 'closed'
+                        ].join(':')
+                      )
+                      .join('|')
+                  : ''
+              ].join(':')
+            : ''
+          const isFanoutDispatch = isEnsembleFanoutDispatchPayload(
+            msg.metadata?.ensembleFanoutDispatch
+          )
+          const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
+          const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
+          const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
+          const isParallelResultViewportHeader = isParallelResultViewportHeaderMessage(msg)
+          const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
+          const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
+          const isSideChatSeedMessage = Boolean(
+            sideChatSeedMessageId && msg.id === sideChatSeedMessageId
+          )
+          const isPinned = typeof msg.metadata?.pinnedAt === 'number'
+          const groupedToolMessageIds = hasToolActivitiesForActions
+            ? groupedTranscriptMessageIds(msg).filter(
+                (messageId) => messageById.get(messageId)?.role === 'tool'
               )
-            }
-            const isDelegationCard = isSubThreadDelegationMessage(msg)
-            const isFleetWaveCard = isFleetWaveMessage(msg)
-            const isReturnCard = isSubThreadReturnMessage(msg)
-            const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
-            const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
-            // Undefined unless the paired layout is on AND this row is a lane —
-            // React omits the attribute entirely, so the stacked layout renders
-            // byte-identical markup to before this existed.
-            const fanoutLaneSlot = fanoutLaneSlots.get(rowKey)
-            const isGuestReply = isGuestParticipantReplyMessage(msg)
-            const isInterSeatMessage = isEnsembleSideMessage(msg)
-            const isYieldMessage = isEnsembleYieldMessage(msg)
-            const isAssistantLevelMessage =
-              msg.role === 'assistant' ||
-              isGuestReply ||
-              isInterSeatMessage ||
-              isYieldMessage
-            const isCollaboratorComment = isHumanCollaboratorComment(msg)
-            // Deliberately a SEPARATE const rather than widening the one above:
-            // `isCollaboratorComment` also gates the "Insert as draft" promote
-            // action, and offering that on a contribution that has ALREADY been
-            // delivered invites the host to re-inject it as their own prompt.
-            const isDeliveredExternal = isDeliveredExternalContribution(msg)
-            const deliveredExternalName =
-              (isDeliveredExternal &&
-                typeof msg.metadata?.collaboratorDisplayName === 'string' &&
-                msg.metadata.collaboratorDisplayName) ||
-              'Collaborator'
-            const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
-            const hasToolActivitiesForActions = (msg.toolActivities?.length || 0) > 0
-            const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
-            const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
-            const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
-            const isContinuationHopsChange = isContinuationHopsChangePayload(
-              msg.metadata?.continuationHopsChange
-            )
-            const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
-            const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
-            const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
-            const isParallelResultViewportHeader = isParallelResultViewportHeaderMessage(msg)
-            const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
-            const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
-            const isSideChatSeedMessage = Boolean(
-              sideChatSeedMessageId && msg.id === sideChatSeedMessageId
-            )
-            const isPinned = typeof msg.metadata?.pinnedAt === 'number'
-            const groupedToolMessageIds = hasToolActivitiesForActions
-              ? groupedTranscriptMessageIds(msg).filter(
-                  (messageId) => messageById.get(messageId)?.role === 'tool'
-                )
-              : []
-            const toolActivityActionMessageIds = hasToolActivitiesForActions
-              ? groupedToolMessageIds.length > 0
-                ? groupedToolMessageIds
-                : [msg.id]
-              : []
-            const toolActivityActionStateKey = hasToolActivitiesForActions
-              ? `${toolActivityActionMessageIds
-                  .map((messageId) => {
-                    const sourceMessage = messageById.get(messageId) || (messageId === msg.id ? msg : undefined)
-                    return [
-                      messageId,
-                      sourceMessage?.metadata?.pinnedAt || '',
-                      sourceMessage ? readMessageFeedbackVote(sourceMessage) || '' : ''
-                    ].join(':')
-                  })
-                  .join('\u0000')}|copy:${copiedId?.includes(':thinking') ? copiedId : ''}`
-              : ''
-            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined =
-              hasToolActivitiesForActions
-                ? stabilizeThinkingTraceActions(
-                    thinkingTraceActionsCacheRef.current,
-                    {
-                      messageId: toolActivityActionMessageIds[0] || msg.id,
-                      label: 'thinking trace',
-                      copiedId,
-                      pinned: isPinned,
-                      thumbsVote: readMessageFeedbackVote(msg),
-                      messageIdForActivity: (activity) =>
-                        toolActivityMessageIdByActivityId.get(activity.id) ||
-                        toolActivityActionMessageIds[0] ||
-                        msg.id,
-                      stateForMessage: (messageId) => {
-                        const sourceMessage = messageById.get(messageId) || msg
-                        return {
-                          pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
-                          thumbsVote: readMessageFeedbackVote(sourceMessage)
-                        }
-                      },
-                      copy,
-                      onAddToPrompt: onAddMessageToPrompt,
-                      onTogglePin: onTogglePinMessage,
-                      onThumbsUp: onMessageFeedback
-                        ? (messageId) => onMessageFeedback(messageId, 'up')
-                        : undefined,
-                      onThumbsDown: onMessageFeedback
-                        ? (messageId) => onMessageFeedback(messageId, 'down')
-                        : undefined,
-                      onDelete: onDeleteMessage,
-                      onOpenSideChat: onOpenSideChatFromMessage
-                        ? (messageId, content) => {
-                            const sourceMessage = messageById.get(messageId) || msg
-                            onOpenSideChatFromMessage({ ...sourceMessage, content })
-                          }
-                        : undefined
+            : []
+          const toolActivityActionMessageIds = hasToolActivitiesForActions
+            ? groupedToolMessageIds.length > 0
+              ? groupedToolMessageIds
+              : [msg.id]
+            : []
+          const toolActivityActionStateKey = hasToolActivitiesForActions
+            ? `${toolActivityActionMessageIds
+                .map((messageId) => {
+                  const sourceMessage =
+                    messageById.get(messageId) || (messageId === msg.id ? msg : undefined)
+                  return [
+                    messageId,
+                    sourceMessage?.metadata?.pinnedAt || '',
+                    sourceMessage ? readMessageFeedbackVote(sourceMessage) || '' : ''
+                  ].join(':')
+                })
+                .join('\u0000')}|copy:${copiedId?.includes(':thinking') ? copiedId : ''}`
+            : ''
+          const thinkingTraceActions: ThinkingTraceActionsConfig | undefined =
+            hasToolActivitiesForActions
+              ? stabilizeThinkingTraceActions(
+                  thinkingTraceActionsCacheRef.current,
+                  {
+                    messageId: toolActivityActionMessageIds[0] || msg.id,
+                    label: 'thinking trace',
+                    copiedId,
+                    pinned: isPinned,
+                    thumbsVote: readMessageFeedbackVote(msg),
+                    messageIdForActivity: (activity) =>
+                      toolActivityMessageIdByActivityId.get(activity.id) ||
+                      toolActivityActionMessageIds[0] ||
+                      msg.id,
+                    stateForMessage: (messageId) => {
+                      const sourceMessage = messageById.get(messageId) || msg
+                      return {
+                        pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
+                        thumbsVote: readMessageFeedbackVote(sourceMessage)
+                      }
                     },
-                    toolActivityActionStateKey
-                  )
-                : undefined
-            const roundHeaderData = isRoundHeader ? readEnsembleRoundHeader(msg) : null
-            const footerCopyContent = isRoundHeader
-              ? buildRoundTranscriptCopyText(
-                  groupedMessages,
-                  roundHeaderData?.roundId ||
-                    (typeof msg.metadata?.ensembleRoundId === 'string'
-                      ? msg.metadata.ensembleRoundId
-                      : '')
+                    copy,
+                    onAddToPrompt: onAddMessageToPrompt,
+                    onTogglePin: onTogglePinMessage,
+                    onThumbsUp: onMessageFeedback
+                      ? (messageId) => onMessageFeedback(messageId, 'up')
+                      : undefined,
+                    onThumbsDown: onMessageFeedback
+                      ? (messageId) => onMessageFeedback(messageId, 'down')
+                      : undefined,
+                    onDelete: onDeleteMessage,
+                    onOpenSideChat: onOpenSideChatFromMessage
+                      ? (messageId, content) => {
+                          const sourceMessage = messageById.get(messageId) || msg
+                          onOpenSideChatFromMessage({ ...sourceMessage, content })
+                        }
+                      : undefined
+                  },
+                  toolActivityActionStateKey
                 )
-              : !isDelegationCard &&
-                  !isReturnCard &&
-                  !isFanoutViewportHeader &&
-                  !isParallelResultViewportHeader &&
-                  !isToolActivityStack &&
-                  !isParticipantHealth &&
-                  !isProviderRunFailure &&
-                  !isContextCompaction &&
-                  typeof msg.content === 'string'
-                ? msg.content
-                : undefined
-            const footerLabel = isRoundHeader
-              ? 'round transcript'
-              : isFanoutViewportHeader
-                ? 'fan-out'
+              : undefined
+          const roundHeaderData = isRoundHeader ? readEnsembleRoundHeader(msg) : null
+          const footerCopyContent = isRoundHeader
+            ? buildRoundTranscriptCopyText(
+                groupedMessages,
+                roundHeaderData?.roundId ||
+                  (typeof msg.metadata?.ensembleRoundId === 'string'
+                    ? msg.metadata.ensembleRoundId
+                    : '')
+              )
+            : !isDelegationCard &&
+                !isReturnCard &&
+                !isFanoutViewportHeader &&
+                !isParallelResultViewportHeader &&
+                !isToolActivityStack &&
+                !isParticipantHealth &&
+                !isProviderRunFailure &&
+                !isContextCompaction &&
+                typeof msg.content === 'string'
+              ? msg.content
+              : undefined
+          const footerLabel = isRoundHeader
+            ? 'round transcript'
+            : isFanoutViewportHeader
+              ? 'fan-out'
               : isParallelResultViewportHeader
                 ? 'parallel result'
-              : msg.role === 'user'
-                ? 'user message'
-                : isThreadMessageCard
-                  ? 'peer thread message'
-                : isFanoutResultCard
-                  ? 'fan-out result'
-                : isGuestReply
-                  ? 'guest participant message'
-                  : isInterSeatMessage
-                    ? 'inter-seat message'
-                    : isYieldMessage
-                      ? 'participant yield message'
-                    : isCollaboratorComment || isDeliveredExternal
-                    ? 'collaborator message'
-                    : msg.role === 'tool'
-                      ? 'tool message'
-                      : `${msg.role} message`
-            const isPinnedMessageTarget = highlightedMessageTarget
-              ? highlightedMessageTarget.rowKey
-                ? highlightedMessageTarget.rowKey === rowKey
-                : highlightedMessageTarget.messageId === msg.id
+                : msg.role === 'user'
+                  ? 'user message'
+                  : isThreadMessageCard
+                    ? 'peer thread message'
+                    : isFanoutResultCard
+                      ? 'fan-out result'
+                      : isGuestReply
+                        ? 'guest participant message'
+                        : isInterSeatMessage
+                          ? 'inter-seat message'
+                          : isYieldMessage
+                            ? 'participant yield message'
+                            : isCollaboratorComment || isDeliveredExternal
+                              ? 'collaborator message'
+                              : msg.role === 'tool'
+                                ? 'tool message'
+                                : `${msg.role} message`
+          const isPinnedMessageTarget = highlightedMessageTarget
+            ? highlightedMessageTarget.rowKey
+              ? highlightedMessageTarget.rowKey === rowKey
+              : highlightedMessageTarget.messageId === msg.id
+            : false
+          const activityExpansionIds = activityExpansionByRow.get(rowKey)
+          const liveViewportStackKey = isToolActivityStack ? toolStackStateKey(msg) : ''
+          // Per-segment-kind viewport expansion (thinking/tools/agent split —
+          // each toggle owns only the kind its label names). Stored in the
+          // same lifted Set, keyed stack+kind.
+          const liveViewportExpandedByKind = {
+            thinking: liveViewportStackKey
+              ? expandedLiveViewportStacks.has(
+                  liveViewportKindKey(liveViewportStackKey, 'thinking')
+                )
+              : false,
+            tools: liveViewportStackKey
+              ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'tools'))
+              : false,
+            agent: liveViewportStackKey
+              ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'agent'))
               : false
-            const activityExpansionIds = activityExpansionByRow.get(rowKey)
-            const liveViewportStackKey = isToolActivityStack ? toolStackStateKey(msg) : ''
-            // Per-segment-kind viewport expansion (thinking/tools/agent split —
-            // each toggle owns only the kind its label names). Stored in the
-            // same lifted Set, keyed stack+kind.
-            const liveViewportExpandedByKind = {
-              thinking: liveViewportStackKey
-                ? expandedLiveViewportStacks.has(
-                    liveViewportKindKey(liveViewportStackKey, 'thinking')
-                  )
-                : false,
-              tools: liveViewportStackKey
-                ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'tools'))
-                : false,
-              agent: liveViewportStackKey
-                ? expandedLiveViewportStacks.has(liveViewportKindKey(liveViewportStackKey, 'agent'))
-                : false
+          }
+          const liveViewportExpandedKey = liveViewportStackKey
+            ? `${liveViewportExpandedByKind.thinking ? '1' : '0'}${
+                liveViewportExpandedByKind.tools ? '1' : '0'
+              }${liveViewportExpandedByKind.agent ? '1' : '0'}`
+            : ''
+          const liveViewportActive = isToolActivityStack && activeLiveRowKeys.has(rowKey)
+          // Settled-stack auto-collapse: fold the whole stack into a
+          // one-line summary once the conversation has moved past it.
+          // Under Minimal this also folds a stack whose work is still
+          // running — the one-liner IS the live surface in that view.
+          // One answer, two uses: whether opening this stack would show
+          // anything decides BOTH whether the one-liner can be opened and
+          // whether a live stack must fold rather than render blank.
+          const stackHasVisibleContent = activityStackHasVisibleContent(
+            msg.toolActivities || [],
+            transcriptView,
+            {
+              provider: getChatProvider(currentChat),
+              chatId: currentChat?.appChatId,
+              runId: msg.runId || boundaryRun?.runId
             }
-            const liveViewportExpandedKey = liveViewportStackKey
-              ? `${liveViewportExpandedByKind.thinking ? '1' : '0'}${
-                  liveViewportExpandedByKind.tools ? '1' : '0'
-                }${liveViewportExpandedByKind.agent ? '1' : '0'}`
-              : ''
-            const liveViewportActive = isToolActivityStack && activeLiveRowKeys.has(rowKey)
-            // Settled-stack auto-collapse: fold the whole stack into a
-            // one-line summary once the conversation has moved past it.
-            const stackAutoCollapsible =
-              isToolActivityStack &&
-              shouldAutoCollapseActivityStack({
+          )
+          const stackAutoCollapsible =
+            isToolActivityStack &&
+            shouldAutoCollapseActivityStackForView(
+              {
                 activities: msg.toolActivities || [],
                 isLiveRow: liveViewportActive,
-                isLastRow: msg.id === lastDisplayMessageId
-              })
-            const collapsedStackExpanded =
-              stackAutoCollapsible && liveViewportStackKey
-                ? expandedCollapsedStacks.has(liveViewportStackKey)
-                : false
-            const pendingQuestionsForRow = pendingAgentQuestions.filter(
-              (question) => question.messageId === msg.id
+                isLastRow: protectedFromCollapseRowKeys.has(rowKey)
+              },
+              transcriptView,
+              !stackHasVisibleContent
             )
-            // Plain system notices fold the same way: one line ("System ·
-            // @-mention: extra turn appended…") once the conversation moved
-            // past them. Special system cards (round headers, health /
-            // compaction / failure / closeout, collaborator comments) and
-            // rows carrying interactive attachments keep their full
-            // rendering; pinned notices stay open (the user marked them).
-            const isPlainSystemNotice =
-              plainSystemNoticeMessage(msg) &&
-              pendingQuestionsForRow.length === 0 &&
-              !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id)
-            const systemAutoCollapsible =
-              isPlainSystemNotice &&
-              msg.id !== lastDisplayMessageId &&
-              !isPinned &&
-              !isPinnedMessageTarget
-            const collapsedSystemExpanded =
-              systemAutoCollapsible && expandedCollapsedStacks.has(msg.id)
-            let collapsedStackKey = stackAutoCollapsible
-              ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
-              : systemAutoCollapsible
-                ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
-                : ''
-            // Second-level fold: adjacent one-liners condensed into one line.
-            const superGroup = superGroupByMessageId.get(msg.id) || null
-            const isSuperLead = Boolean(superGroup && superGroup.leadId === msg.id)
-            const superGroupExpanded = Boolean(
-              superGroup && expandedSuperGroups.has(superGroup.leadId)
-            )
-            const superGroupFoldPhase = Boolean(
-              superGroup && !superGroupExpanded && foldingSuperGroups.has(superGroup.leadId)
-            )
-            const superGroupFolding = superGroupFoldPhase && !isSuperLead
-            // The lead swaps to the merged one-liner while its members fold —
-            // it fades the new line in rather than height-folding.
-            const superLeadEntering = superGroupFoldPhase && isSuperLead
-            const superGroupHidden = Boolean(
-              superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
-            )
-            // The settled question card reports this answer already, so the
-            // user-reply row it was appended as renders to zero height rather
-            // than printing the same text again directly beneath the card.
-            const questionReplyHidden = suppressedReplyMessageIds.has(msg.id)
-            const questionTombstone = agentQuestionTombstones.get(msg.id) ?? null
-            const superGroupKey = superGroup
-              ? `${superGroup.leadId}:${superGroup.size}:${
-                  superGroupExpanded ? 'open' : superGroupFoldPhase ? 'folding' : 'closed'
-                }:${isSuperLead ? 'lead' : 'member'}`
-              : ''
-            const superSummary =
-              isSuperLead && superGroup
-                ? summarizeCollapsedSuperGroup({
-                    activities: superGroup.activities,
-                    systemCount: superGroup.systemCount,
-                    firstSystemPreview: superGroup.firstSystemPreview
-                  })
-                : null
-            // A system notice may be the DOM lead for a merged run, but it
-            // must not replace the activity speaker as the branding owner.
-            // Resolve from the first stack member so interleaved notices stay
-            // muted while the actual activity verbs keep their provider hue.
-            const superGroupProviderHueClass =
-              isSuperLead && superGroup?.headerMessage
-                ? activityStackSpeakerPresentation({
-                    message: superGroup.headerMessage,
-                    chat: currentChat,
-                    fallbackProvider: currentProvider,
-                    fallbackProviderLabel: currentProviderLabel
-                  }).providerClass || undefined
-                : undefined
-            // Level-1 roll-up: when a settled stack first swaps to its
-            // one-liner, animate the row height down from the slot's last
-            // measured height instead of teleporting. Super-group members are
-            // excluded — the fold-out phase owns their height; first sighting
-            // of a row (chat open, fresh mount) never animates.
-            let stackCollapseEntering = false
-            let stackCollapseFromPx = 0
-            if (isToolActivityStack && liveViewportStackKey && virtualizeEnabled) {
-              const collapseState = stackCollapseStateRef.current
-              const renderedCollapsed =
-                stackAutoCollapsible &&
-                !collapsedStackExpanded &&
-                !superGroupHidden &&
-                !superGroupFolding &&
-                !(isSuperLead && superSummary)
-              const prevCollapsed = collapseState.lastCollapsed.get(liveViewportStackKey)
-              collapseState.lastCollapsed.set(liveViewportStackKey, renderedCollapsed)
-              if (!renderedCollapsed) {
-                collapseState.entering.delete(liveViewportStackKey)
-              } else if (
-                prevCollapsed === false &&
-                !collapseState.entering.has(liveViewportStackKey) &&
-                !prefersReducedMotionNow()
-              ) {
-                const projIndex = Number(rowKey.slice(rowKey.lastIndexOf('#') + 1))
-                const measured = Number.isFinite(projIndex) ? virtualHeights[projIndex] : undefined
-                if (typeof measured === 'number' && measured > 72) {
-                  collapseState.entering.set(liveViewportStackKey, Math.round(measured))
-                }
-              }
-              const fromPx = collapseState.entering.get(liveViewportStackKey)
-              if (fromPx) {
-                stackCollapseEntering = true
-                stackCollapseFromPx = fromPx
-                collapsedStackKey = `${collapsedStackKey}:entering`
-              }
-            }
-            const pendingPlanChoiceKey =
-              pendingPlanChoice && pendingPlanChoice.messageId === msg.id
-                ? [
-                    pendingPlanChoice.messageId,
-                    pendingPlanChoice.question,
-                    pendingPlanChoice.options.join('\u0000')
-                  ].join(':')
-                : ''
-            const shouldSurfacePlanCard = msg.metadata?.proposedPlan
-              ? shouldSurfaceProposedPlanCard({
-                  chatKind: currentChat?.chatKind,
-                  bossmanParticipantId: currentChat?.ensemble?.bossmanParticipantId,
-                  fallbackOwnerParticipantId: undefined,
-                  messageParticipantId:
-                    typeof msg.metadata?.ensembleParticipantId === 'string'
-                      ? msg.metadata?.ensembleParticipantId
-                      : undefined,
-                  isPlanMode: currentChat?.workflowMode === 'plan',
-                  hasExplicitProposedPlanBlock: Boolean(msg.metadata?.proposedPlan)
-                })
+          const collapsedStackExpanded =
+            stackAutoCollapsible && liveViewportStackKey
+              ? expandedCollapsedStacks.has(liveViewportStackKey)
               : false
-            const isModalOwnedPendingPlan =
-              pendingProposedPlan?.messageId === msg.id &&
-              msg.metadata?.proposedPlan?.status === 'pending'
-            const pendingAgentQuestionsKey = pendingQuestionsForRow
-              .map((question) => `${question.questionId}:${question.askedAt}`)
-              .join('\u0000')
-            // The seat that acted, for whichever seat-naming surface this row
-            // carries — a question card, or the fleet wave card's caller.
-            // Resolved only for those rows: this loop runs per message, and
-            // every other row would pay the lookup for nothing.
-            const agentQuestionSeat =
-              (questionTombstone || pendingQuestionsForRow.length > 0 || isFleetWaveCard) &&
-              msg.runId
-                ? (seatsByRunId.get(msg.runId) ?? null)
-                : null
-            // The stored line names the provider, because the writer knows
-            // nothing else. Where a seat resolves the transcript does know, and
-            // a line reading "Claude asked…" directly above a card headed
-            // "#1 SolBoss" is not merely redundant, it contradicts it.
-            //
-            // Display only — the stored string stays as written. It is the
-            // plain-text rendering every non-renderer surface reads (iOS, TUI,
-            // copy-paste, notifications), the same split the close-out row makes
-            // between its link text and the strip the renderer swaps in.
-            const agentQuestionHeaderOverride = (() => {
-              if (!agentQuestionSeat || msg.metadata?.kind !== 'agentQuestion') return null
-              const asker = composedSeatRole(agentQuestionSeat)
-              if (!asker) return null
-              const options = msg.metadata?.agentQuestionOptions
-              return agentQuestionHeaderLineFor(asker, Array.isArray(options) && options.length > 0)
-            })()
-            const auxiliaryKey =
-              isDelegationCard || isReturnCard || isFleetWaveCard
-                ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
-                : ''
-            const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
-              ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
+          const pendingQuestionsForRow = pendingAgentQuestions.filter(
+            (question) => question.messageId === msg.id
+          )
+          // Plain system notices fold the same way: one line ("System ·
+          // @-mention: extra turn appended…") once the conversation moved
+          // past them. Special system cards (round headers, health,
+          // compaction, failure, closeout, collaborator comments) and
+          // rows carrying interactive attachments keep their full
+          // rendering; pinned notices stay open (the user marked them).
+          const isPlainSystemNotice =
+            plainSystemNoticeMessage(msg) &&
+            pendingQuestionsForRow.length === 0 &&
+            !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id)
+          const systemAutoCollapsible =
+            isPlainSystemNotice &&
+            !protectedFromCollapseRowKeys.has(rowKey) &&
+            !isPinned &&
+            !isPinnedMessageTarget
+          const collapsedSystemExpanded =
+            systemAutoCollapsible && expandedCollapsedStacks.has(rowKey)
+          let collapsedStackKey = stackAutoCollapsible
+            ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
+            : systemAutoCollapsible
+              ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
               : ''
-            const auxiliaryKeyWithPendingPlan = auxiliaryKey
-              ? `${auxiliaryKey}|${pendingProposedPlanKey}`
-              : pendingProposedPlanKey
-            const auxiliaryKeyWithToolActions = [
-              auxiliaryKeyWithPendingPlan,
-              toolActivityActionStateKey
-            ]
-              .filter(Boolean)
-              .join('|')
-            const isLiveRevealRow = rowKey === liveRevealRowKey
-            const revealLifecycleKey = `${revealChatId || 'chat'}:${rowKey}`
-            const usesRevealLifecycle =
-              revealEnabled &&
-              (msg.role === 'assistant' || isGuestReply) &&
-              (isLiveRevealRow || revealLifecycleRowKeys.has(revealLifecycleKey))
-            const revealKey = usesRevealLifecycle
-              ? `reveal:${revealRunId || msg.runId || msg.id}:${isLiveRevealRow ? 'live' : 'drain'}`
-              : 'plain'
-            const assistantRun =
-              msg.runId && currentChat?.runs
-                ? currentChat.runs.find((run) => run.runId === msg.runId) ||
-                  (currentRun?.runId === msg.runId ? currentRun : null)
-                : currentRun?.runId === msg.runId
-                  ? currentRun
-                  : null
-            const assistantRunProvider =
-              providerIdFromUnknown(assistantRun?.provider) || currentProvider
-            const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
-            const assistantRevealProvider =
-              providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
-              providerIdFromUnknown(msg.metadata?.guestProvider) ||
-              providerIdFromUnknown(assistantRun?.provider) ||
-              currentProvider
-            const assistantRevealModel =
-              stringFromUnknown(msg.metadata?.ensembleModel) ||
-              stringFromUnknown(msg.metadata?.guestModel) ||
-              stringFromUnknown(msg.metadata?.providerModel) ||
-              assistantRunModel
-            const activityStackProviderHueClass = isToolActivityStack
+          // Second-level fold: adjacent one-liners condensed into one line.
+          const superGroup = superGroupByRowKey.get(rowKey) || null
+          const isSuperLead = Boolean(superGroup && superGroup.leadRowKey === rowKey)
+          const superGroupExpanded = Boolean(
+            superGroup && expandedSuperGroups.has(superGroup.leadRowKey)
+          )
+          const superGroupFoldPhase = Boolean(
+            superGroup && !superGroupExpanded && foldingSuperGroups.has(superGroup.leadRowKey)
+          )
+          const superGroupFolding = superGroupFoldPhase && !isSuperLead
+          // The lead swaps to the merged one-liner while its members fold —
+          // it fades the new line in rather than height-folding.
+          const superLeadEntering = superGroupFoldPhase && isSuperLead
+          const superGroupHidden = Boolean(
+            superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
+          )
+          // The settled question card reports this answer already, so the
+          // user-reply row it was appended as renders to zero height rather
+          // than printing the same text again directly beneath the card.
+          const questionReplyHidden = suppressedReplyMessageIds.has(msg.id)
+          const questionTombstone = agentQuestionTombstones.get(msg.id) ?? null
+          const superGroupKey = superGroup
+            ? `${superGroup.leadRowKey}:${superGroup.size}:${
+                superGroupExpanded ? 'open' : superGroupFoldPhase ? 'folding' : 'closed'
+              }:${isSuperLead ? 'lead' : 'member'}`
+            : ''
+          const superSummary =
+            isSuperLead && superGroup
+              ? summarizeCollapsedSuperGroup({
+                  activities: superGroup.activities,
+                  systemCount: superGroup.systemCount,
+                  firstSystemPreview: superGroup.firstSystemPreview
+                })
+              : null
+          // A system notice may be the DOM lead for a merged run, but it
+          // must not replace the activity speaker as the branding owner.
+          // Resolve from the first stack member so interleaved notices stay
+          // muted while the actual activity verbs keep their provider hue.
+          const superGroupProviderHueClass =
+            isSuperLead && superGroup?.headerMessage
               ? activityStackSpeakerPresentation({
-                  message: msg,
+                  message: superGroup.headerMessage,
                   chat: currentChat,
-                  run: boundaryRun || assistantRun,
+                  runs: resolvedRuns,
                   fallbackProvider: currentProvider,
                   fallbackProviderLabel: currentProviderLabel
                 }).providerClass || undefined
               : undefined
-            const activityStackHeader = isToolActivityStack ? (
-              <ActivityStackSpeakerHeader
-                message={msg}
-                chat={currentChat}
-                run={boundaryRun || assistantRun}
-                fallbackProvider={currentProvider}
-                fallbackProviderLabel={currentProviderLabel}
-              />
-            ) : null
-            const assistantRunModelKey =
-              isAssistantLevelMessage
-                ? `${assistantRun?.runId || ''}:${assistantRunProvider}:${assistantRunModel || ''}`
-                : ''
-            const renameContinuity =
-              msg.role === 'assistant'
-                ? deriveParticipantRenameContinuity(
-                    msg,
-                    currentChat?.ensemble?.participants,
-                    currentChat?.ensemble?.sessionActivityLedger
-                  )
-                : null
-            const renameContinuityKey = renameContinuity
-              ? `${renameContinuity.fromRole}\u0000${renameContinuity.currentRole}`
+          // Level-1 roll-up: when a settled stack first swaps to its
+          // one-liner, animate the row height down from the slot's last
+          // measured height instead of teleporting. Super-group members are
+          // excluded — the fold-out phase owns their height; first sighting
+          // of a row (chat open, fresh mount) never animates.
+          let stackCollapseEntering = false
+          let stackCollapseFromPx = 0
+          if (isToolActivityStack && liveViewportStackKey && virtualizeEnabled) {
+            const collapseState = stackCollapseStateRef.current
+            const renderedCollapsed =
+              stackAutoCollapsible &&
+              !collapsedStackExpanded &&
+              !superGroupHidden &&
+              !superGroupFolding &&
+              !(isSuperLead && superSummary)
+            const prevCollapsed = collapseState.lastCollapsed.get(liveViewportStackKey)
+            collapseState.lastCollapsed.set(liveViewportStackKey, renderedCollapsed)
+            if (!renderedCollapsed) {
+              collapseState.entering.delete(liveViewportStackKey)
+            } else if (
+              prevCollapsed === false &&
+              !collapseState.entering.has(liveViewportStackKey) &&
+              !prefersReducedMotionNow()
+            ) {
+              const projIndex = index
+              const measured = Number.isFinite(projIndex) ? virtualHeights[projIndex] : undefined
+              if (typeof measured === 'number' && measured > 72) {
+                collapseState.entering.set(liveViewportStackKey, Math.round(measured))
+              }
+            }
+            const fromPx = collapseState.entering.get(liveViewportStackKey)
+            if (fromPx) {
+              stackCollapseEntering = true
+              stackCollapseFromPx = fromPx
+              collapsedStackKey = `${collapsedStackKey}:entering`
+            }
+          }
+          const pendingPlanChoiceKey =
+            pendingPlanChoice && pendingPlanChoice.messageId === msg.id
+              ? [
+                  pendingPlanChoice.messageId,
+                  pendingPlanChoice.question,
+                  pendingPlanChoice.options.join('\u0000')
+                ].join(':')
               : ''
-            const rowSignature: TranscriptRowRenderSignature = {
-              rowKey,
-              message: msg,
-              messageSignature: transcriptMessageRenderSignature(msg),
-              ...(boundaryRun ? { boundaryRun } : {}),
-              chatSignature: currentChatRenderSignature,
-              providerLabel: currentProviderLabel,
-              provider: currentProvider,
-              ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),
-              compactDensity,
-              liveActivityViewport,
-              liveActivityViewportActive: liveViewportActive,
-              virtualized: virtualizeEnabled,
-              ...(fanoutLaneSlot ? { fanoutLaneSlot } : {}),
-              isGlobal,
-              sideChatSeed: isSideChatSeedMessage,
-              highlighted: isPinnedMessageTarget,
-              copied: copiedId === msg.id,
-              pinned: isPinned,
-              feedbackVote: readMessageFeedbackVote(msg),
-              expandedUser: expandedUserMessages.has(msg.id),
-              activityExpansionKey: activityExpansionIds
-                ? Array.from(activityExpansionIds).sort().join('\u0000')
-                : '',
-              subThreadExpanded: expandedSubThreadResults.has(rowKey),
-              fanoutExpanded: isFanoutViewportHeader
-                ? expandedFanoutViewports.has(msg.id)
-                : isParallelResultViewportHeader
-                  ? expandedParallelResultViewports.has(msg.id)
-                  : expandedFanoutResults.has(rowKey),
-              liveViewportExpandedKey,
-              collapsedStackKey,
-              superGroupKey,
-              pendingPlanChoiceKey,
-              pendingAgentQuestionsKey,
-              agentQuestionTombstoneKey: agentQuestionTombstoneKey(
-                questionTombstone,
-                questionReplyHidden
-              ),
-              // A seat resolves from the RUN, not from this row, so it can
-              // appear after the row was first cached (the snapshot lands with
-              // the run record). Without it here the card keeps the cached
-              // element and never picks the seat up.
-              agentQuestionSeatKey: agentQuestionSeatKey(agentQuestionSeat),
-              assistantRunModelKey,
-              renameContinuityKey,
-              auxiliaryKey: auxiliaryKeyWithToolActions,
-              revealKey,
-              callbackRefs: [
-                onMessageSelectionCandidate,
-                onOpenSubThread,
-                onOpenSubThreadInSidePanel,
-                onInspectRun,
-                onOpenSideChatFromRun,
-                onCopyMessage,
-                onAddMessageToPrompt,
-                onTogglePinMessage,
-                onMessageFeedback,
-                onDeleteMessage,
-                onOpenSideChatFromMessage,
-                onPromoteCollaboratorComment,
-                onOpenFileChangeInWorkbench,
-                onPlanChoiceSubmit,
-                onProposedPlanApprove,
-                onProposedPlanDismiss,
-                onProposedPlanCustom,
-                onAgentQuestionSubmit,
-                onAgentQuestionDismiss,
-                onPreviewImage,
-                onDetachToPane,
-                setActivityExpansionForRow,
-                setSubThreadResultExpanded,
-                setFanoutResultExpanded,
-                setFanoutViewportExpanded,
-                setLiveViewportExpandedForStack,
-                setCollapsedStackExpanded,
-                setSuperGroupExpanded,
-                toggleUserMessageExpanded,
-                setRoundExpanded
-              ]
-            }
-            const cachedRow = rowElementCacheRef.current.get(rowKey)
-            if (cachedRow && transcriptRowRenderSignatureEqual(cachedRow.signature, rowSignature)) {
-              return cachedRow.element
-            }
-            const element = (
-              <div
-                key={`message-block-${rowKey}`}
-                className={`transcript-message-block${
-                  isSideChatSeedMessage ? ' is-side-chat-seed' : ''
-                }${isPinnedMessageTarget ? ' is-pinned-message-target' : ''}${
-                  // Hidden super-group members keep their block mounted (row
-                  // ordinals + measurement stability) but must contribute ZERO
-                  // layout space — without this class each empty block donated
-                  // one --space-lg of flex-gap/margin, stacking into the
-                  // "random gap below the merged one-liner" that scaled with
-                  // member count. CSS zeroes it per rendering mode.
-                  superGroupHidden ? ' is-super-hidden' : ''
-                }${questionReplyHidden ? ' is-row-hidden' : ''}${
-                  // Fold-out phase: member stays mounted while CSS transitions
-                  // its height to 0; the hidden state commits ~300ms later on
-                  // an already-invisible row.
-                  superGroupFolding ? ' is-super-folding' : ''
-                }${superLeadEntering ? ' is-super-lead-entering' : ''}${
-                  stackCollapseEntering ? ' is-stack-collapsing' : ''
-                }`}
-                style={
-                  stackCollapseEntering
-                    ? ({ '--collapse-from': `${stackCollapseFromPx}px` } as React.CSSProperties)
-                    : undefined
-                }
-                data-vrow-id={rowKey}
-                data-message-id={msg.id}
-                // Placement (which grid column) AND measurement (whether a zero
-                // offsetTop delta is real) both key off this one attribute, so
-                // the two can never disagree about where a lane sits.
-                data-fanout-slot={fanoutLaneSlot}
-                // Selecting the side-chat seed on pointer hover made this full-row
-                // highlight chase the cursor through the transcript. Keep the
-                // keyboard path, while pointer users choose a seed explicitly.
-                onFocus={() => onMessageSelectionCandidate?.(msg)}
-                ref={virtualizeEnabled ? virtualBlockRef : undefined}
-              >
-                {superGroupHidden || questionReplyHidden ? null : (
-                  <>
-                    {isSuperLead && superGroup && superSummary ? (
-                      <CollapsedTranscriptRow
-                        header={
-                          superGroup.headerMessage ? (
-                            <ActivityStackSpeakerHeader
-                              message={superGroup.headerMessage}
-                              chat={currentChat}
-                              fallbackProvider={currentProvider}
-                              fallbackProviderLabel={currentProviderLabel}
-                            />
-                          ) : null
-                        }
-                        metaLabel={superGroup.headerMessage ? undefined : 'System'}
-                        label={superSummary.label}
-                        labelParts={superSummary.parts}
-                        icons={<CollapsedStackIconStrip families={superSummary.families} />}
-                        diffStats={superSummary.diff}
-                        compact={!superGroup.headerMessage}
-                        errored={superSummary.errorCount > 0}
-                        providerHueClass={superGroupProviderHueClass}
-                        expanded={superGroupExpanded}
-                        onToggle={(expanded) => setSuperGroupExpanded(superGroup.leadId, expanded)}
-                        ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
-                      />
-                    ) : null}
-                    {isSuperLead && !superGroupExpanded ? null : isRoundHeader ? (
-                  <EnsembleRoundCardHeader
-                    key={msg.id}
-                    message={msg}
-                    onSetExpanded={setRoundExpanded}
-                  />
-                ) : isFanoutViewportHeader ? (
-                  <EnsembleFanoutViewportHeader
-                    key={msg.id}
-                    message={msg}
-                    onSetExpanded={setFanoutViewportExpanded}
-                  />
-                ) : isParallelResultViewportHeader ? (
-                  <ParallelResultViewportHeader
-                    key={msg.id}
-                    message={msg}
-                    onSetExpanded={setParallelResultViewportExpanded}
-                  />
-                ) : isFleetWaveCard ? (() => {
-                  const workers = Array.isArray(msg.metadata?.workers) ? msg.metadata.workers : []
-                  const workerChatIds = workers.map((worker: any, index: number) =>
-                    typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
-                  )
-                  const approvalByChatId = pendingAgentApprovalByChatId || {}
-                  const approvalQueueByChatId = pendingApprovalQueueByChatId || {}
-                  const pendingApprovals = collectFleetWavePendingApprovals(
-                    workerChatIds,
-                    approvalByChatId,
-                    approvalQueueByChatId
-                  )
-                  const pendingApprovalIds = new Set(
-                    pendingApprovals.map((row) => row.approvalId)
-                  )
-                  const metaStatus =
-                    msg.metadata?.status === 'pending' ||
-                    msg.metadata?.status === 'running' ||
-                    msg.metadata?.status === 'needs_approval' ||
-                    msg.metadata?.status === 'completed' ||
-                    msg.metadata?.status === 'failed'
-                      ? msg.metadata.status
-                      : 'running'
-                  return (
-                  <div key={msg.id} className="message-group fleet-wave-message">
-                    <FleetWaveCard
-                      provider={
-                        typeof msg.metadata?.parentProvider === 'string'
-                          ? (msg.metadata.parentProvider as ProviderId)
-                          : undefined
+          const shouldSurfacePlanCard = msg.metadata?.proposedPlan
+            ? shouldSurfaceProposedPlanCard({
+                chatKind: currentChat?.chatKind,
+                bossmanParticipantId: currentChat?.ensemble?.bossmanParticipantId,
+                fallbackOwnerParticipantId: undefined,
+                messageParticipantId:
+                  typeof msg.metadata?.ensembleParticipantId === 'string'
+                    ? msg.metadata?.ensembleParticipantId
+                    : undefined,
+                isPlanMode: currentChat?.workflowMode === 'plan',
+                hasExplicitProposedPlanBlock: Boolean(msg.metadata?.proposedPlan)
+              })
+            : false
+          const isModalOwnedPendingPlan =
+            pendingProposedPlan?.messageId === msg.id &&
+            msg.metadata?.proposedPlan?.status === 'pending'
+          const pendingAgentQuestionsKey = pendingQuestionsForRow
+            .map((question) => `${question.questionId}:${question.askedAt}`)
+            .join('\u0000')
+          // The seat that acted, for whichever seat-naming surface this row
+          // carries — a question card, or the fleet wave card's caller.
+          // Resolved only for those rows: this loop runs per message, and
+          // every other row would pay the lookup for nothing.
+          const agentQuestionSeat =
+            (questionTombstone || pendingQuestionsForRow.length > 0 || isFleetWaveCard) && msg.runId
+              ? (seatsByRunId.get(msg.runId) ?? null)
+              : null
+          // The stored line names the provider, because the writer knows
+          // nothing else. Where a seat resolves the transcript does know, and
+          // a line reading "Claude asked…" directly above a card headed
+          // "#1 SolBoss" is not merely redundant, it contradicts it.
+          //
+          // Display only — the stored string stays as written. It is the
+          // plain-text rendering every non-renderer surface reads (iOS, TUI,
+          // copy-paste, notifications), the same split the close-out row makes
+          // between its link text and the strip the renderer swaps in.
+          const agentQuestionHeaderOverride = (() => {
+            if (!agentQuestionSeat || msg.metadata?.kind !== 'agentQuestion') return null
+            const asker = composedSeatRole(agentQuestionSeat)
+            if (!asker) return null
+            const options = msg.metadata?.agentQuestionOptions
+            return agentQuestionHeaderLineFor(asker, Array.isArray(options) && options.length > 0)
+          })()
+          const auxiliaryKey =
+            isDelegationCard || isReturnCard || isFleetWaveCard
+              ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
+              : ''
+          const pendingProposedPlanKey =
+            pendingProposedPlan?.messageId === msg.id
+              ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
+              : ''
+          const auxiliaryKeyWithPendingPlan = auxiliaryKey
+            ? `${auxiliaryKey}|${pendingProposedPlanKey}`
+            : pendingProposedPlanKey
+          const auxiliaryKeyWithToolActions = [
+            auxiliaryKeyWithPendingPlan,
+            toolActivityActionStateKey
+          ]
+            .filter(Boolean)
+            .join('|')
+          const isLiveRevealRow = rowKey === liveRevealRowKey
+          const revealLifecycleKey = `${revealChatId || 'chat'}:${rowKey}`
+          const usesRevealLifecycle =
+            revealEnabled &&
+            (msg.role === 'assistant' || isGuestReply) &&
+            (isLiveRevealRow || revealLifecycleRowKeys.has(revealLifecycleKey))
+          const revealKey = usesRevealLifecycle
+            ? `reveal:${revealRunId || msg.runId || msg.id}:${isLiveRevealRow ? 'live' : 'drain'}`
+            : 'plain'
+          const assistantRun =
+            msg.runId && resolvedRuns.length > 0
+              ? resolvedRuns.find((run) => run.runId === msg.runId) ||
+                (currentRun?.runId === msg.runId ? currentRun : null)
+              : currentRun?.runId === msg.runId
+                ? currentRun
+                : null
+          const assistantRunProvider =
+            providerIdFromUnknown(assistantRun?.provider) || currentProvider
+          // Branding fallback: a follow-up row whose run lookup misses (or
+          // whose run record never carried a model) would otherwise resolve
+          // `resolveProviderHueClass(provider, '')` and drop the Pi/Ollama
+          // upstream override. Fall back to the chat's most recent
+          // model-bearing run so later turns keep the picked brand — read
+          // from the store, because `currentChat.runs` is deliberately one
+          // render behind (see `activityStackSpeakerPresentation`).
+          const assistantRunModel =
+            assistantRun?.actualModel ||
+            assistantRun?.requestedModel ||
+            (currentChat?.chatKind === 'ensemble'
+              ? null
+              : mostRecentSoloRunModel(resolvedRuns, assistantRunProvider))
+          const assistantRevealProvider =
+            providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
+            providerIdFromUnknown(msg.metadata?.guestProvider) ||
+            providerIdFromUnknown(assistantRun?.provider) ||
+            currentProvider
+          const assistantRevealModel =
+            stringFromUnknown(msg.metadata?.ensembleModel) ||
+            stringFromUnknown(msg.metadata?.guestModel) ||
+            stringFromUnknown(msg.metadata?.providerModel) ||
+            assistantRunModel
+          const activityStackProviderHueClass = isToolActivityStack
+            ? activityStackSpeakerPresentation({
+                message: msg,
+                chat: currentChat,
+                run: boundaryRun || assistantRun,
+                fallbackProvider: currentProvider,
+                fallbackProviderLabel: currentProviderLabel
+              }).providerClass || undefined
+            : undefined
+          const activityStackHeader = isToolActivityStack ? (
+            <ActivityStackSpeakerHeader
+              message={msg}
+              chat={currentChat}
+              run={boundaryRun || assistantRun}
+              fallbackProvider={currentProvider}
+              fallbackProviderLabel={currentProviderLabel}
+            />
+          ) : null
+          const assistantRunModelKey = isAssistantLevelMessage
+            ? `${assistantRun?.runId || ''}:${assistantRunProvider}:${assistantRunModel || ''}`
+            : ''
+          const renameContinuity =
+            msg.role === 'assistant'
+              ? deriveParticipantRenameContinuity(
+                  msg,
+                  currentChat?.ensemble?.participants,
+                  currentChat?.ensemble?.sessionActivityLedger
+                )
+              : null
+          const renameContinuityKey = renameContinuity
+            ? `${renameContinuity.fromRole}\u0000${renameContinuity.currentRole}`
+            : ''
+          const executionView = isExecutionResultCard
+            ? executionViewsById.get(executionResultExecutionId(msg) || '')
+            : undefined
+          const rowSignature: TranscriptRowRenderSignature = {
+            rowKey,
+            message: msg,
+            messageSignature: transcriptMessageRenderSignature(msg),
+            ...(boundaryRun ? { boundaryRun } : {}),
+            chatSignature: currentChatRenderSignature,
+            seatSignature:
+              (typeof msg.metadata?.ensembleParticipantId === 'string'
+                ? seatRenderSignatureById.get(msg.metadata.ensembleParticipantId)
+                : undefined) ?? '',
+            providerLabel: currentProviderLabel,
+            provider: currentProvider,
+            ...(currentWorkspacePath ? { workspacePath: currentWorkspacePath } : {}),
+            compactDensity,
+            liveActivityViewport,
+            liveActivityViewportActive: liveViewportActive,
+            transcriptView,
+            virtualized: virtualizeEnabled,
+            speakerContinuation,
+            seatChangeStackPosition,
+            ...(fanoutLaneSlot ? { fanoutLaneSlot } : {}),
+            ...(fanoutLaneCompact ? { fanoutLaneCompact } : {}),
+            isGlobal,
+            sideChatSeed: isSideChatSeedMessage,
+            highlighted: isPinnedMessageTarget,
+            copied: copiedId === msg.id,
+            pinned: isPinned,
+            feedbackVote: readMessageFeedbackVote(msg),
+            expandedUser: expandedUserMessages.has(msg.id),
+            activityExpansionKey: activityExpansionIds
+              ? Array.from(activityExpansionIds).sort().join('\u0000')
+              : '',
+            subThreadExpanded: expandedSubThreadResults.has(rowKey),
+            fanoutExpanded: isFanoutViewportHeader
+              ? expandedFanoutViewports.has(msg.id)
+              : isParallelResultViewportHeader
+                ? expandedParallelResultViewports.has(msg.id)
+                : expandedFanoutResults.has(rowKey),
+            liveViewportExpandedKey,
+            collapsedStackKey,
+            superGroupKey,
+            blackboardStackKey,
+            pendingPlanChoiceKey,
+            pendingAgentQuestionsKey,
+            agentQuestionTombstoneKey: agentQuestionTombstoneKey(
+              questionTombstone,
+              questionReplyHidden
+            ),
+            // A seat resolves from the RUN, not from this row, so it can
+            // appear after the row was first cached (the snapshot lands with
+            // the run record). Without it here the card keeps the cached
+            // element and never picks the seat up.
+            agentQuestionSeatKey: agentQuestionSeatKey(agentQuestionSeat),
+            assistantRunModelKey,
+            renameContinuityKey,
+            auxiliaryKey: auxiliaryKeyWithToolActions,
+            revealKey,
+            executionViewKey: transcriptOwnedExecutionViewsSignature(
+              executionView ? [executionView] : []
+            ),
+            callbackRefs: [
+              onMessageSelectionCandidate,
+              onOpenSubThread,
+              onOpenSubThreadInSidePanel,
+              onInspectRun,
+              onOpenExecutionMapForThread,
+              onOpenSideChatFromRun,
+              onCopyMessage,
+              onCopyEntireTurn,
+              onAddMessageToPrompt,
+              onTogglePinMessage,
+              onMessageFeedback,
+              onDeleteMessage,
+              onOpenSideChatFromMessage,
+              onPromoteCollaboratorComment,
+              onOpenFileChangeInWorkbench,
+              onPlanChoiceSubmit,
+              onProposedPlanApprove,
+              onProposedPlanDismiss,
+              onProposedPlanCustom,
+              onAgentQuestionSubmit,
+              onAgentQuestionDismiss,
+              onPreviewImage,
+              onDetachToPane,
+              setActivityExpansionForRow,
+              setSubThreadResultExpanded,
+              setFanoutResultExpanded,
+              setFanoutViewportExpanded,
+              setLiveViewportExpandedForStack,
+              setCollapsedStackExpanded,
+              setSuperGroupExpanded,
+              setBlackboardUpdateStackExpanded,
+              toggleUserMessageExpanded,
+              setRoundExpanded
+            ]
+          }
+          const cachedRow = rowElementCacheRef.current.get(rowKey)
+          if (cachedRow && transcriptRowRenderSignatureEqual(cachedRow.signature, rowSignature)) {
+            return cachedRow.element
+          }
+          const element = (
+            <div
+              key={`message-block-${rowKey}`}
+              className={`transcript-message-block${
+                isSideChatSeedMessage ? ' is-side-chat-seed' : ''
+              }${speakerContinuation ? ' is-speaker-continuation' : ''}${
+                isPinnedMessageTarget ? ' is-pinned-message-target' : ''
+              }${
+                // Hidden super-group members keep their block mounted (row
+                // ordinals + measurement stability) but must contribute ZERO
+                // layout space — without this class each empty block donated
+                // one --space-lg of flex-gap/margin, stacking into the
+                // "random gap below the merged one-liner" that scaled with
+                // member count. CSS zeroes it per rendering mode.
+                superGroupHidden ? ' is-super-hidden' : ''
+              }${questionReplyHidden ? ' is-row-hidden' : ''}${
+                blackboardUpdateStackHidden ? ' is-row-hidden' : ''
+              }${
+                // Fold-out phase: member stays mounted while CSS transitions
+                // its height to 0; the hidden state commits ~300ms later on
+                // an already-invisible row.
+                superGroupFolding ? ' is-super-folding' : ''
+              }${superLeadEntering ? ' is-super-lead-entering' : ''}${
+                stackCollapseEntering ? ' is-stack-collapsing' : ''
+              }`}
+              style={
+                stackCollapseEntering
+                  ? ({ '--collapse-from': `${stackCollapseFromPx}px` } as React.CSSProperties)
+                  : undefined
+              }
+              data-vrow-id={rowKey}
+              data-message-id={msg.id}
+              data-seat-change-stack={seatChangeStackPosition}
+              // Placement (which grid column) AND measurement (whether a zero
+              // offsetTop delta is real) both key off this one attribute, so
+              // the two can never disagree about where a lane sits.
+              data-fanout-slot={fanoutLaneSlot}
+              // Selecting the side-chat seed on pointer hover made this full-row
+              // highlight chase the cursor through the transcript. Keep the
+              // keyboard path, while pointer users choose a seed explicitly.
+              onFocus={() => onMessageSelectionCandidate?.(msg)}
+              ref={virtualizeEnabled ? virtualBlockRef : undefined}
+            >
+              {superGroupHidden || questionReplyHidden || blackboardUpdateStackHidden ? null : (
+                <>
+                  {isSuperLead && superGroup && superSummary ? (
+                    <CollapsedTranscriptRow
+                      header={
+                        superGroup.headerMessage ? (
+                          <ActivityStackSpeakerHeader
+                            message={superGroup.headerMessage}
+                            chat={currentChat}
+                            runs={resolvedRuns}
+                            fallbackProvider={currentProvider}
+                            fallbackProviderLabel={currentProviderLabel}
+                          />
+                        ) : null
                       }
-                      // Named from the RUN that called the wave, not from this
-                      // row — the projector writes the card, so it never holds
-                      // the participant a seat snapshot is derived from.
-                      callerSeat={msg.runId ? (seatsByRunId.get(msg.runId) ?? null) : null}
-                      onOpenSubThread={onOpenSubThread}
-                      onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
-                      onAllowOnce={
-                        onRespondAgentApproval
-                          ? (id) => {
-                              void onRespondAgentApproval(id, 'accept')
-                            }
-                          : undefined
+                      metaLabel={superGroup.headerMessage ? undefined : 'System'}
+                      label={superSummary.label}
+                      labelParts={superSummary.parts}
+                      icons={<CollapsedStackIconStrip families={superSummary.families} />}
+                      diffStats={superSummary.diff}
+                      compact={!superGroup.headerMessage}
+                      errored={superSummary.errorCount > 0}
+                      providerHueClass={superGroupProviderHueClass}
+                      expanded={superGroupExpanded}
+                      onToggle={(expanded) =>
+                        setSuperGroupExpanded(superGroup.leadRowKey, expanded)
                       }
-                      onDeny={
-                        onRespondAgentApproval
-                          ? (id) => {
-                              void onRespondAgentApproval(id, 'decline')
-                            }
-                          : undefined
-                      }
-                      onAllowAllSameScope={
-                        onRespondAgentApproval
-                          ? async (scopeKey) => {
-                              for (const id of approvalIdsForAllowAllSameScope(
-                                pendingApprovals,
-                                scopeKey
-                              )) {
-                                const accepted = await onRespondAgentApproval(id, 'accept')
-                                // Stop the bulk when an accept is rejected — do not
-                                // keep accepting the rest of the scope group.
-                                if (accepted === false) break
-                                // Yield so App can commit head/queue promotion before
-                                // the next id is located (same-chat sequential Allow-all).
-                                await new Promise<void>((resolve) => setTimeout(resolve, 0))
-                              }
-                            }
-                          : undefined
-                      }
-                      telemetry={{
-                        waveId:
-                          typeof msg.metadata?.waveId === 'string' ? msg.metadata.waveId : undefined,
-                        status:
-                          pendingApprovals.length > 0 ? 'needs_approval' : metaStatus,
-                        parentProvider:
-                          typeof msg.metadata?.parentProvider === 'string'
-                            ? msg.metadata.parentProvider
-                            : undefined,
-                        allowMultiProvider: Boolean(msg.metadata?.allowMultiProvider),
-                        pendingApprovals,
-                        agents: workers.map((worker: any, index: number) => {
-                              const subThreadId = workerChatIds[index]
-                              const child = chats.find((c) => c.appChatId === subThreadId)
-                              const running = runningChatIds.includes(subThreadId)
-                              const failed =
-                                Boolean(child?.delegationContext?.dispatchError) ||
-                                (typeof child?.delegationContext?.resultReturnedAt === 'number' &&
-                                  Array.isArray(child?.runs) &&
-                                  child.runs.some(
-                                    (run: { status?: string }) =>
-                                      run.status === 'failed' || run.status === 'cancelled'
-                                  ))
-                              const returned = Boolean(child?.delegationContext?.resultReturnedAt)
-                              const archived = Boolean(child?.archived)
-                              const head = approvalByChatId[subThreadId]
-                              const queue = approvalQueueByChatId[subThreadId]
-                              const hasPendingApproval =
-                                (head != null && pendingApprovalIds.has(head.id)) ||
-                                (Array.isArray(queue) &&
-                                  queue.some((row) => pendingApprovalIds.has(row.id)))
-                              const status = failed
-                                ? 'failed'
-                                : hasPendingApproval
-                                  ? 'needs_approval'
-                                  : returned || archived
-                                    ? 'completed'
-                                    : running
-                                      ? 'working'
-                                      : 'pending'
-                              return {
-                                id: subThreadId,
-                                label:
-                                  (typeof worker?.label === 'string' && worker.label) ||
-                                  (typeof worker?.role === 'string' && worker.role) ||
-                                  (typeof worker?.title === 'string' && worker.title) ||
-                                  `agent-${index + 1}`,
-                                role: worker?.role || 'worker',
-                                status,
-                                provider:
-                                  typeof worker?.provider === 'string'
-                                    ? worker.provider
-                                    : undefined,
-                                // Read off the live child, not the card: it is
-                                // what resolves an Ollama/Pi seat to the
-                                // upstream brand hue the user actually picked.
-                                model:
-                                  typeof child?.requestedModel === 'string'
-                                    ? child.requestedModel
-                                    : undefined
-                              }
-                            })
-                      }}
+                      ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
                     />
-                  </div>
-                  )
-                })() : isDelegationCard || isReturnCard ? (
-                  <div
-                    key={msg.id}
-                    className={`message-group ${
-                      isReturnCard ? 'subthread-return-message' : ''
-                    } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
-                      isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''
-                    }`}
-                    onContextMenu={
-                      isReturnCard
-                        ? (event) =>
-                            openMessageContextMenu(
-                              event,
-                              msg,
-                              subThreadReturnBody(msg.content),
-                              'sub-thread result',
-                              { copySource: 'subthread-return-body' }
-                            )
-                        : undefined
-                    }
-                  >
-                    {isDelegationCard ? (
-                      <SubThreadDelegationCard
+                  ) : null}
+                  {isSuperLead && !superGroupExpanded ? null : msg.metadata?.kind ===
+                    'catalogueDeferredMessage' ? (
+                    <DeferredTranscriptMessage
+                      message={msg}
+                      chatId={currentChat?.appChatId ?? ''}
+                    />
+                  ) : isRoundHeader ? (
+                    <EnsembleRoundCardHeader
+                      key={msg.id}
+                      message={msg}
+                      onSetExpanded={setRoundExpanded}
+                    />
+                  ) : isFanoutViewportHeader ? (
+                    <EnsembleFanoutViewportHeader
+                      key={msg.id}
+                      message={msg}
+                      onSetExpanded={setFanoutViewportExpanded}
+                    />
+                  ) : isParallelResultViewportHeader ? (
+                    <ParallelResultViewportHeader
+                      key={msg.id}
+                      message={msg}
+                      onSetExpanded={setParallelResultViewportExpanded}
+                    />
+                  ) : isExecutionResultCard ? (
+                    <ExecutionResultCard
+                      key={msg.id}
+                      message={msg}
+                      provider={currentProvider}
+                      view={executionView}
+                      onOpenExecutionMap={onOpenExecutionMapForThread}
+                    />
+                  ) : isFleetWaveCard ? (
+                    (() => {
+                      const workers = Array.isArray(msg.metadata?.workers)
+                        ? msg.metadata.workers
+                        : []
+                      const workerChatIds = workers.map((worker: any, index: number) =>
+                        typeof worker?.subThreadId === 'string' ? worker.subThreadId : `w${index}`
+                      )
+                      const approvalByChatId = pendingAgentApprovalByChatId || {}
+                      const approvalQueueByChatId = pendingApprovalQueueByChatId || {}
+                      const pendingApprovals = collectFleetWavePendingApprovals(
+                        workerChatIds,
+                        approvalByChatId,
+                        approvalQueueByChatId
+                      )
+                      const pendingApprovalIds = new Set(
+                        pendingApprovals.map((row) => row.approvalId)
+                      )
+                      const metaStatus =
+                        msg.metadata?.status === 'pending' ||
+                        msg.metadata?.status === 'running' ||
+                        msg.metadata?.status === 'needs_approval' ||
+                        msg.metadata?.status === 'completed' ||
+                        msg.metadata?.status === 'failed'
+                          ? msg.metadata.status
+                          : 'running'
+                      return (
+                        <div key={msg.id} className="message-group fleet-wave-message">
+                          <FleetWaveCard
+                            provider={
+                              typeof msg.metadata?.parentProvider === 'string'
+                                ? (msg.metadata.parentProvider as ProviderId)
+                                : undefined
+                            }
+                            // Named from the RUN that called the wave, not from this
+                            // row — the projector writes the card, so it never holds
+                            // the participant a seat snapshot is derived from.
+                            callerSeat={msg.runId ? (seatsByRunId.get(msg.runId) ?? null) : null}
+                            onOpenSubThread={onOpenSubThread}
+                            onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                            onAllowOnce={
+                              onRespondAgentApproval
+                                ? (id) => {
+                                    void onRespondAgentApproval(id, 'accept')
+                                  }
+                                : undefined
+                            }
+                            onDeny={
+                              onRespondAgentApproval
+                                ? (id) => {
+                                    void onRespondAgentApproval(id, 'decline')
+                                  }
+                                : undefined
+                            }
+                            onAllowAllSameScope={
+                              onRespondAgentApproval
+                                ? async (scopeKey) => {
+                                    for (const id of approvalIdsForAllowAllSameScope(
+                                      pendingApprovals,
+                                      scopeKey
+                                    )) {
+                                      const accepted = await onRespondAgentApproval(id, 'accept')
+                                      // Stop the bulk when an accept is rejected — do not
+                                      // keep accepting the rest of the scope group.
+                                      if (accepted === false) break
+                                      // Yield so App can commit head/queue promotion before
+                                      // the next id is located (same-chat sequential Allow-all).
+                                      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+                                    }
+                                  }
+                                : undefined
+                            }
+                            telemetry={{
+                              waveId:
+                                typeof msg.metadata?.waveId === 'string'
+                                  ? msg.metadata.waveId
+                                  : undefined,
+                              status: pendingApprovals.length > 0 ? 'needs_approval' : metaStatus,
+                              parentProvider:
+                                typeof msg.metadata?.parentProvider === 'string'
+                                  ? msg.metadata.parentProvider
+                                  : undefined,
+                              allowMultiProvider: Boolean(msg.metadata?.allowMultiProvider),
+                              pendingApprovals,
+                              agents: workers.map((worker: any, index: number) => {
+                                const subThreadId = workerChatIds[index]
+                                const child = chats.find((c) => c.appChatId === subThreadId)
+                                const seat = fleetWaveSeatFromWorker({ worker, index, child })
+                                const running = runningChatIds.includes(subThreadId)
+                                const failed =
+                                  Boolean(child?.delegationContext?.dispatchError) ||
+                                  (typeof child?.delegationContext?.resultReturnedAt === 'number' &&
+                                    Array.isArray(child?.runs) &&
+                                    child.runs.some(
+                                      (run: { status?: string }) =>
+                                        run.status === 'failed' || run.status === 'cancelled'
+                                    ))
+                                const returned = Boolean(child?.delegationContext?.resultReturnedAt)
+                                const archived = Boolean(child?.archived)
+                                const head = approvalByChatId[subThreadId]
+                                const queue = approvalQueueByChatId[subThreadId]
+                                const hasPendingApproval =
+                                  (head != null && pendingApprovalIds.has(head.id)) ||
+                                  (Array.isArray(queue) &&
+                                    queue.some((row) => pendingApprovalIds.has(row.id)))
+                                const status = failed
+                                  ? 'failed'
+                                  : hasPendingApproval
+                                    ? 'needs_approval'
+                                    : returned || archived
+                                      ? 'completed'
+                                      : running
+                                        ? 'working'
+                                        : 'pending'
+                                return {
+                                  id: subThreadId,
+                                  label:
+                                    (typeof worker?.label === 'string' && worker.label) ||
+                                    (typeof worker?.role === 'string' && worker.role) ||
+                                    (typeof worker?.title === 'string' && worker.title) ||
+                                    `agent-${index + 1}`,
+                                  role: worker?.role || 'worker',
+                                  status,
+                                  provider:
+                                    typeof worker?.provider === 'string'
+                                      ? worker.provider
+                                      : undefined,
+                                  // Read off the live child, not the card: it is
+                                  // what resolves an Ollama/Pi seat to the
+                                  // upstream brand hue the user actually picked.
+                                  model:
+                                    seat?.model ||
+                                    (typeof child?.requestedModel === 'string'
+                                      ? child.requestedModel
+                                      : undefined),
+                                  ...(seat ? { seat } : {})
+                                }
+                              })
+                            }}
+                          />
+                        </div>
+                      )
+                    })()
+                  ) : isDelegationCard || isReturnCard ? (
+                    <div
+                      key={msg.id}
+                      className={`message-group ${
+                        isReturnCard ? 'subthread-return-message' : ''
+                      } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
+                        isGuestReply ? ' guest-participant-reply-message' : ''
+                      }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}`}
+                      onContextMenu={
+                        isReturnCard
+                          ? (event) =>
+                              openMessageContextMenu(
+                                event,
+                                msg,
+                                subThreadReturnBody(msg.content),
+                                'sub-thread result',
+                                { copySource: 'subthread-return-body' }
+                              )
+                          : undefined
+                      }
+                    >
+                      {isDelegationCard ? (
+                        <SubThreadDelegationCard
+                          message={msg}
+                          chats={chats}
+                          runningChatIds={runningChatIds}
+                          onOpenSubThread={onOpenSubThread}
+                          onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                        />
+                      ) : (
+                        <SubThreadReturnCard
+                          transcriptView={transcriptView}
+                          message={msg}
+                          chat={currentChat || undefined}
+                          onOpenSubThread={onOpenSubThread}
+                          onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                          onCopyMessage={onCopyMessage}
+                          onAddMessageToPrompt={onAddMessageToPrompt}
+                          onTogglePinMessage={onTogglePinMessage}
+                          onDeleteMessage={onDeleteMessage}
+                          onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                          pinned={isPinned}
+                          copied={copiedId === msg.id}
+                          resultExpanded={expandedSubThreadResults.has(rowKey)}
+                          onResultExpandedChange={(expanded) =>
+                            setSubThreadResultExpanded(rowKey, expanded)
+                          }
+                        />
+                      )}
+                    </div>
+                  ) : isThreadMessageCard ? (
+                    <div
+                      key={msg.id}
+                      className="message-group thread-message-transcript-message"
+                      onContextMenu={(event) =>
+                        openMessageContextMenu(
+                          event,
+                          msg,
+                          msg.content || '',
+                          'peer thread message',
+                          { copySource: 'static' }
+                        )
+                      }
+                    >
+                      <ThreadMessageTranscriptCard
                         message={msg}
-                        chats={chats}
-                        runningChatIds={runningChatIds}
-                        onOpenSubThread={onOpenSubThread}
-                        onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                        onOpenSenderThread={onOpenSubThread}
                       />
-                    ) : (
-                      <SubThreadReturnCard
+                    </div>
+                  ) : isFanoutResultCard ? (
+                    <div
+                      key={msg.id}
+                      className="message-group ensemble-fanout-result-message"
+                      onContextMenu={(event) =>
+                        openMessageContextMenu(event, msg, msg.content || '', 'fan-out result', {
+                          copySource: 'static'
+                        })
+                      }
+                    >
+                      <EnsembleFanoutResultCard
+                        transcriptView={transcriptView}
                         message={msg}
                         chat={currentChat || undefined}
-                        onOpenSubThread={onOpenSubThread}
-                        onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
-                        onCopyMessage={onCopyMessage}
-                        onAddMessageToPrompt={onAddMessageToPrompt}
-                        onTogglePinMessage={onTogglePinMessage}
-                        onDeleteMessage={onDeleteMessage}
-                        onOpenSideChatFromMessage={onOpenSideChatFromMessage}
-                        pinned={isPinned}
-                        copied={copiedId === msg.id}
-                        resultExpanded={expandedSubThreadResults.has(rowKey)}
-                        onResultExpandedChange={(expanded) =>
-                          setSubThreadResultExpanded(rowKey, expanded)
+                        workspacePath={currentWorkspacePath}
+                        streamRunId={
+                          typeof msg.runId === 'string' && msg.runId
+                            ? msg.runId
+                            : boundaryRun?.runId
                         }
+                        working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
+                        compactLaneBand={fanoutLaneCompact}
+                        expanded={expandedFanoutResults.has(rowKey)}
+                        onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
+                        compactDensity={compactDensity}
+                        expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                        onExpandedActivityIdsChange={(next) =>
+                          setActivityExpansionForRow(rowKey, next)
+                        }
+                        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                        onPreviewImage={onPreviewImage}
+                        onDetachToPane={onDetachToPane}
+                        thinkingTraceActions={thinkingTraceActions}
                       />
-                    )}
-                  </div>
-                ) : isThreadMessageCard ? (
-                  <div
-                    key={msg.id}
-                    className="message-group thread-message-transcript-message"
-                    onContextMenu={(event) =>
-                      openMessageContextMenu(
-                        event,
-                        msg,
-                        msg.content || '',
-                        'peer thread message',
-                        { copySource: 'static' }
-                      )
-                    }
-                  >
-                    <ThreadMessageTranscriptCard
-                      message={msg}
-                      onOpenSenderThread={onOpenSubThread}
-                    />
-                  </div>
-                ) : isFanoutResultCard ? (
-                  <div
-                    key={msg.id}
-                    className="message-group ensemble-fanout-result-message"
-                    onContextMenu={(event) =>
-                      openMessageContextMenu(event, msg, msg.content || '', 'fan-out result', {
-                        copySource: 'static'
-                      })
-                    }
-                  >
-                    <EnsembleFanoutResultCard
-                      message={msg}
-                      chat={currentChat || undefined}
-                      workspacePath={currentWorkspacePath}
-                      streamRunId={
-                        typeof msg.runId === 'string' && msg.runId
-                          ? msg.runId
-                          : boundaryRun?.runId
-                      }
-                      working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
-                      expanded={expandedFanoutResults.has(rowKey)}
-                      onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
-                      compactDensity={compactDensity}
-                      expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                      onExpandedActivityIdsChange={(next) =>
-                        setActivityExpansionForRow(rowKey, next)
-                      }
-                      onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                      onPreviewImage={onPreviewImage}
-                      onDetachToPane={onDetachToPane}
-                      thinkingTraceActions={thinkingTraceActions}
-                    />
-                  </div>
-                ) : isToolActivityStack && stackAutoCollapsible ? (
-                  <CollapsedActivityStackRow
-                    key={msg.id}
-                    header={activityStackHeader}
-                    activities={msg.toolActivities || []}
-                    showDiffStats
-                    providerHueClass={activityStackProviderHueClass}
-                    expanded={collapsedStackExpanded}
-                    onToggle={(expanded) =>
-                      setCollapsedStackExpanded(liveViewportStackKey, expanded)
-                    }
-                  >
-                    <ActivityStack
+                    </div>
+                  ) : isToolActivityStack && stackAutoCollapsible ? (
+                    <CollapsedActivityStackRow
+                      key={msg.id}
+                      header={activityStackHeader}
                       activities={msg.toolActivities || []}
-                      header={null}
+                      showDiffStats
+                      providerHueClass={activityStackProviderHueClass}
+                      canExpand={stackHasVisibleContent}
+                      expanded={collapsedStackExpanded}
+                      onToggle={(expanded) =>
+                        setCollapsedStackExpanded(liveViewportStackKey, expanded)
+                      }
+                    >
+                      <ActivityStack
+                        activities={msg.toolActivities || []}
+                        header={null}
+                        workspacePath={currentWorkspacePath}
+                        provider={getChatProvider(currentChat)}
+                        providerHueClass={activityStackProviderHueClass}
+                        chatId={currentChat?.appChatId}
+                        runId={msg.runId || boundaryRun?.runId}
+                        chat={currentChat || undefined}
+                        compactDensity={compactDensity}
+                        liveActivityViewport={liveActivityViewport}
+                        liveActivityViewportActive={false}
+                        liveActivityViewportRevealGrowth
+                        liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
+                        onLiveActivityViewportExpandedChange={(kind, expanded) =>
+                          setLiveViewportExpandedForStack(
+                            liveViewportKindKey(liveViewportStackKey, kind),
+                            expanded
+                          )
+                        }
+                        expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                        onExpandedActivityIdsChange={(next) =>
+                          setActivityExpansionForRow(rowKey, next)
+                        }
+                        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                        showDiffStats
+                        transcriptView={transcriptView}
+                        thinkingTraceActions={thinkingTraceActions}
+                      />
+                    </CollapsedActivityStackRow>
+                  ) : isToolActivityStack ? (
+                    <ActivityStack
+                      key={msg.id}
+                      activities={msg.toolActivities || []}
+                      header={activityStackHeader}
                       workspacePath={currentWorkspacePath}
                       provider={getChatProvider(currentChat)}
                       providerHueClass={activityStackProviderHueClass}
@@ -5225,7 +6372,7 @@ export const TranscriptPanel = memo(
                       chat={currentChat || undefined}
                       compactDensity={compactDensity}
                       liveActivityViewport={liveActivityViewport}
-                      liveActivityViewportActive={false}
+                      liveActivityViewportActive={liveViewportActive}
                       liveActivityViewportRevealGrowth
                       liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
                       onLiveActivityViewportExpandedChange={(kind, expanded) =>
@@ -5240,55 +6387,27 @@ export const TranscriptPanel = memo(
                       }
                       onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                       showDiffStats
+                      transcriptView={transcriptView}
                       thinkingTraceActions={thinkingTraceActions}
                     />
-                  </CollapsedActivityStackRow>
-                ) : isToolActivityStack ? (
-                  <ActivityStack
-                    key={msg.id}
-                    activities={msg.toolActivities || []}
-                    header={activityStackHeader}
-                    workspacePath={currentWorkspacePath}
-                    provider={getChatProvider(currentChat)}
-                    providerHueClass={activityStackProviderHueClass}
-                    chatId={currentChat?.appChatId}
-                    runId={msg.runId || boundaryRun?.runId}
-                    chat={currentChat || undefined}
-                    compactDensity={compactDensity}
-                    liveActivityViewport={liveActivityViewport}
-                    liveActivityViewportActive={liveViewportActive}
-                    liveActivityViewportRevealGrowth
-                    liveActivityViewportExpandedByKind={liveViewportExpandedByKind}
-                    onLiveActivityViewportExpandedChange={(kind, expanded) =>
-                      setLiveViewportExpandedForStack(
-                        liveViewportKindKey(liveViewportStackKey, kind),
-                        expanded
-                      )
-                    }
-                    expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                    onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
-                    onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                    showDiffStats
-                    thinkingTraceActions={thinkingTraceActions}
-                  />
-                ) : msg.role === 'tool' ? (
-                  <div key={msg.id} className="message-group tool-message-fallback">
-                    <div className="message-meta">Tool</div>
-                    <div
-                      className="message-bubble system tool-message-fallback-bubble"
-                      onContextMenu={(event) =>
-                        openMessageContextMenu(event, msg, msg.content || '', 'tool message')
-                      }
-                    >
-                      {msg.content ? (
-                        <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
-                      ) : (
-                        <span>Tool event recorded without displayable details.</span>
-                      )}
+                  ) : msg.role === 'tool' ? (
+                    <div key={msg.id} className="message-group tool-message-fallback">
+                      <div className="message-meta">Tool</div>
+                      <div
+                        className="message-bubble system tool-message-fallback-bubble"
+                        onContextMenu={(event) =>
+                          openMessageContextMenu(event, msg, msg.content || '', 'tool message')
+                        }
+                      >
+                        {msg.content ? (
+                          <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                        ) : (
+                          <span>Tool event recorded without displayable details.</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ) : isParticipantHealth ? (
-                  /*
+                  ) : isParticipantHealth ? (
+                    /*
                     1.0.5-EW29 — Structured participant-health pre-flight
                     summary. Rendered as a chip-strip card instead of a
                     plain system-message bubble. The card component
@@ -5297,799 +6416,1146 @@ export const TranscriptPanel = memo(
                     text variant on `msg.content` is the fallback for
                     older transcripts / exports.
                   */
-                  <ParticipantHealthCard key={msg.id} message={msg} />
-                ) : isContextCompaction && !systemAutoCollapsible ? (
-                  /*
+                    <ParticipantHealthCard key={msg.id} message={msg} />
+                  ) : isContextCompaction ? (
+                    /*
                     Provider context compaction (auto or manual), rendered in
-                    the tool-call row idiom. Reached only while the record is
-                    NOT fold-eligible (tail row, pinned, jump target) — once
-                    the conversation moves past it, the systemAutoCollapsible
-                    lane below folds it into a one-liner exactly like other
-                    settled rows, with this row as the expanded body.
+                    the same preserved transcript hierarchy as seat changes.
                     `msg.content` carries the plain-text summary as the
                     fallback for older transcripts, exports, and the iOS
                     system-row projection.
                   */
-                  <ContextCompactionCard key={msg.id} message={msg} />
-                ) : isProviderRunFailure ? (
-                  <ProviderRunFailureCard
-                    key={msg.id}
-                    message={msg}
-                    onCopy={onCopyMessage}
-                    onAddToPrompt={onAddMessageToPrompt}
-                    onContextMenu={(event, copyText) =>
-                      openMessageContextMenu(event, msg, copyText, 'provider failure', {
-                        copyOnly: true,
-                        copySource: 'static'
-                      })
-                    }
-                    copied={copiedId === msg.id}
-                  />
-                ) : msg.metadata?.seatChange ? (
-                  <SeatChangeRow key={msg.id} message={msg} />
-                ) : isContinuationHopsChange ? (
-                  <ContinuationHopsChangeRow key={msg.id} message={msg} />
-                ) : systemAutoCollapsible ? (
-                  <CollapsedTranscriptRow
-                    key={msg.id}
-                    header={null}
-                    metaLabel={
-                      isContextCompaction ? contextCompactionMessageMetaLabel(msg) : 'System'
-                    }
-                    label={collapsedSystemNoticeLabel(msg.content)}
-                    icons={
-                      isContextCompaction ? (
-                        <span
-                          className={`collapsed-context-compaction-glyph ${
-                            contextCompactionMessageFailed(msg) ? 'is-failed' : 'is-completed'
-                          }`}
-                          aria-hidden
-                        >
-                          <ContextCompactionGlyph failed={contextCompactionMessageFailed(msg)} />
-                        </span>
-                      ) : undefined
-                    }
-                    errored={isContextCompaction && contextCompactionMessageFailed(msg)}
-                    compact
-                    expanded={collapsedSystemExpanded}
-                    onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
-                    ariaTargetLabel={
-                      isContextCompaction ? 'context compaction record' : 'system notice'
-                    }
-                  >
-                    {collapsedSystemExpanded ? (
-                      isContextCompaction ? (
-                        <ContextCompactionCard message={msg} />
-                      ) : (
+                    <ContextCompactionCard key={msg.id} message={msg} />
+                  ) : isProviderRunFailure ? (
+                    /* One error presentation, whatever caught the failure:
+                     * the structured providerRunFailure metadata describes
+                     * into the same calm card as free-text run errors and
+                     * seat codas — remedies (login, swap, restart, retry)
+                     * classify eagerly off the captured stderr lines. */
+                    <RunExecutionErrorCard
+                      key={msg.id}
+                      message={msg}
+                      onCopy={onCopyMessage}
+                      onRetryParticipant={(participantId) =>
+                        retryEnsembleParticipant(currentChat, participantId)
+                      }
+                      copied={copiedId === msg.id}
+                      {...(runRetryAnchorByErrorId.has(msg.id) && onEditAndResendFromHere
+                        ? {
+                            onRetryRun: () => {
+                              const anchor = runRetryAnchorByErrorId.get(msg.id)
+                              if (anchor) {
+                                void onEditAndResendFromHere(anchor.id, anchor.content)
+                              }
+                            }
+                          }
+                        : {})}
+                    />
+                  ) : msg.metadata?.seatChange ? (
+                    <SeatChangeRow key={msg.id} message={msg} />
+                  ) : isContinuationHopsChange ? (
+                    <ContinuationHopsChangeRow key={msg.id} message={msg} />
+                  ) : isExecutionPlanChange ? (
+                    <ExecutionPlanChangeRow key={msg.id} message={msg} />
+                  ) : isAutoApprovalsChange ? (
+                    <AutoApprovalsChangeRow key={msg.id} message={msg} />
+                  ) : isBlackboardChange ? (
+                    <BlackboardChangeRow
+                      key={msg.id}
+                      message={msg}
+                      stackItemExpanded={
+                        blackboardUpdateStackInfo
+                          ? (messageId, itemIndex) =>
+                              expandedBlackboardUpdateStacks.has(
+                                blackboardStackItemStateKey(
+                                  blackboardUpdateStackInfo.stateKey,
+                                  messageId,
+                                  itemIndex
+                                )
+                              )
+                          : undefined
+                      }
+                      onStackItemExpandedChange={
+                        blackboardUpdateStackInfo
+                          ? (messageId, itemIndex, expanded) =>
+                              setBlackboardUpdateStackExpanded(
+                                blackboardStackItemStateKey(
+                                  blackboardUpdateStackInfo.stateKey,
+                                  messageId,
+                                  itemIndex
+                                ),
+                                expanded
+                              )
+                          : undefined
+                      }
+                      renderStackItemFooter={
+                        isBlackboardUpdateStackLead
+                          ? (message) => (
+                              <TranscriptMessageFooter
+                                message={message}
+                                label="system message"
+                                copyContent={message.content}
+                                align="start"
+                                onCopyMessage={onCopyMessage}
+                                onCopyEntireTurn={onCopyEntireTurn}
+                                onAddMessageToPrompt={onAddMessageToPrompt}
+                                onTogglePinMessage={onTogglePinMessage}
+                                onMessageFeedback={onMessageFeedback}
+                                onDeleteMessage={onDeleteMessage}
+                                onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                                pinned={typeof message.metadata?.pinnedAt === 'number'}
+                                copied={copiedId === message.id}
+                              />
+                            )
+                          : undefined
+                      }
+                      stackMessages={
+                        isBlackboardUpdateStackLead
+                          ? blackboardUpdateStackInfo?.stack.messages
+                          : undefined
+                      }
+                      expanded={
+                        isBlackboardUpdateStackLead ? blackboardUpdateStackExpanded : undefined
+                      }
+                      onExpandedChange={
+                        isBlackboardUpdateStackLead && blackboardUpdateStackInfo
+                          ? (expanded) =>
+                              setBlackboardUpdateStackExpanded(
+                                blackboardUpdateStackInfo.stateKey,
+                                expanded
+                              )
+                          : undefined
+                      }
+                    />
+                  ) : isFanoutDispatch ? (
+                    <EnsembleFanoutDispatchRow key={msg.id} message={msg} />
+                  ) : systemAutoCollapsible ? (
+                    <CollapsedTranscriptRow
+                      key={msg.id}
+                      header={null}
+                      metaLabel="System"
+                      label={collapsedSystemNoticeLabel(msg.content)}
+                      compact
+                      expanded={collapsedSystemExpanded}
+                      onToggle={(expanded) => setCollapsedStackExpanded(rowKey, expanded)}
+                      ariaTargetLabel="system notice"
+                    >
+                      {collapsedSystemExpanded ? (
                         <div className="message-group">
                           <div
                             className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
                             onContextMenu={(event) =>
-                              openMessageContextMenu(event, msg, msg.content || '', 'system message')
+                              openMessageContextMenu(
+                                event,
+                                msg,
+                                msg.content || '',
+                                'system message'
+                              )
                             }
                           >
-                            <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                            <MarkdownMessage
+                              content={msg.content}
+                              chat={currentChat || undefined}
+                            />
                           </div>
                         </div>
-                      )
-                    ) : null}
-                  </CollapsedTranscriptRow>
-                ) : (
-                  <div
-                    key={msg.id}
-                    className={`message-group ${
-                      isReturnCard ? 'subthread-return-message' : ''
-                    } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
-                      isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isInterSeatMessage ? ' ensemble-side-message' : ''}${
-                      isYieldMessage ? ' ensemble-yield-message' : ''
-                    }${
-                      isCollaboratorComment || isDeliveredExternal
-                        ? ' human-collaborator-comment-message'
-                        : ''
-                    }${
-                      isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''
-                    }`}
-                  >
-                    {(() => {
-                      // Provider-aware label rendering. Solo chats: the
-                      // chat-level provider colours the whole label.
-                      // Ensemble chats: each message carries its own
-                      // `ensembleProvider` metadata so each assistant
-                      // message gets coloured by *who actually spoke*
-                      // even when the chat-level provider differs.
-                      // CSS in `main.css` keys off `.provider-{name}`
-                      // on `.message-meta` to tint with
-                      // `--provider-{name}-color`.
-                      if (msg.role === 'user') {
-                        // `user-meta` class is the seam the per-user
-                        // `userBubbleColor` appearance setting hooks
-                        // into to tint the "You" label with the same
-                        // hue as the bubble. See `[data-user-bubble-
-                        // color]` rules in `main.css`.
-                        return <div className="message-meta user-meta">You</div>
-                      }
-                      if (msg.role === 'error') {
-                        return <div className="message-meta">Error</div>
-                      }
-                      if (isDeliveredExternal) {
-                        // `humanCollaboratorMetadata` returns null for this kind,
-                        // so the name is read off the message directly. Label +
-                        // badge as separate elements, not the flat
-                        // "Alex / External" string `displayParticipantLabel`
-                        // carries: the caution tint lives on the badge, and
-                        // flattening it loses exactly the signal it exists for.
-                        return (
-                          <div className="message-meta human-collaborator-meta">
-                            <span className="message-meta-label">{deliveredExternalName}</span>
-                            <span
-                              className="message-meta-model-badge human-collaborator-badge"
-                              title="External, untrusted collaborator contribution — you approved it, and it was delivered at this seat's turn"
-                            >
-                              External
-                            </span>
-                            {msg.metadata?.outOfPosition === true && (
-                              /* The round ended before this seat's position, so
-                               * the end-of-round sweep delivered it. Say so,
-                               * rather than implying the panel reached them. */
+                      ) : null}
+                    </CollapsedTranscriptRow>
+                  ) : (
+                    <div
+                      key={msg.id}
+                      className={`message-group ${
+                        isReturnCard ? 'subthread-return-message' : ''
+                      } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
+                        isGuestReply ? ' guest-participant-reply-message' : ''
+                      }${isInterSeatMessage ? ' ensemble-side-message' : ''}${
+                        isYieldMessage ? ' ensemble-yield-message' : ''
+                      }${
+                        isCollaboratorComment || isDeliveredExternal
+                          ? ' human-collaborator-comment-message'
+                          : ''
+                      }${isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''}`}
+                    >
+                      {(() => {
+                        // Provider-aware label rendering. Solo chats: the
+                        // chat-level provider colours the whole label.
+                        // Ensemble chats: each message carries its own
+                        // `ensembleProvider` metadata so each assistant
+                        // message gets coloured by *who actually spoke*
+                        // even when the chat-level provider differs.
+                        // CSS in `main.css` keys off `.provider-{name}`
+                        // on `.message-meta` to tint with
+                        // `--provider-{name}-color`.
+                        if (
+                          isImportedProviderMessage &&
+                          currentChat?.externalProviderThreadImport
+                        ) {
+                          return (
+                            <div className="message-meta external-provider-import-meta">
+                              {externalProviderThreadImportMessageLabel(
+                                currentChat.externalProviderThreadImport.provider,
+                                msg.role === 'user'
+                                  ? 'user'
+                                  : msg.role === 'assistant'
+                                    ? 'assistant'
+                                    : 'system'
+                              )}
+                            </div>
+                          )
+                        }
+                        if (msg.role === 'user') {
+                          // `user-meta` class is the seam the per-user
+                          // `userBubbleColor` appearance setting hooks
+                          // into to tint the "You" label with the same
+                          // hue as the bubble. See `[data-user-bubble-
+                          // color]` rules in `main.css`.
+                          // A row that arrived through a machine channel keeps the
+                          // user bubble but names its sender instead of "You", with
+                          // the tool and pid as chips beside it. Label + badges as
+                          // separate elements, the same shape an external human
+                          // collaborator gets: flattening them into one string makes
+                          // the speaker compete with its own provenance.
+                          const originSpeaker = messageOriginSpeaker(msg.metadata?.origin)
+                          return (
+                            <div className="message-meta user-meta">
+                              <span className="message-meta-label">{originSpeaker ?? 'You'}</span>
+                              {messageOriginBadges(msg.metadata?.origin).map((badge) => (
+                                <span key={badge} className="message-meta-model-badge">
+                                  {badge}
+                                </span>
+                              ))}
+                            </div>
+                          )
+                        }
+                        if (msg.role === 'error') {
+                          // The run-error card below carries its own "Run error"
+                          // kicker, so the bare meta label would just read as a
+                          // second, colder alarm above it.
+                          return null
+                        }
+                        if (isDeliveredExternal) {
+                          // `humanCollaboratorMetadata` returns null for this kind,
+                          // so the name is read off the message directly. Label +
+                          // badge as separate elements, not the flat
+                          // "Alex / External" string `displayParticipantLabel`
+                          // carries: the caution tint lives on the badge, and
+                          // flattening it loses exactly the signal it exists for.
+                          return (
+                            <div className="message-meta human-collaborator-meta">
+                              <span className="message-meta-label">{deliveredExternalName}</span>
                               <span
                                 className="message-meta-model-badge human-collaborator-badge"
-                                title="The round ended before this seat's turn; delivered by the end-of-round sweep."
+                                title="External, untrusted collaborator contribution — you approved it, and it was delivered at this seat's turn"
                               >
-                                Out of position
+                                External
                               </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (isCollaboratorComment) {
-                        return (
-                          <div className="message-meta human-collaborator-meta">
-                            <span className="message-meta-label">
-                              {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
-                            </span>
-                            <span
-                              className="message-meta-model-badge human-collaborator-badge"
-                              title="External, untrusted collaborator comment"
-                            >
-                              External
-                            </span>
-                            {collaboratorMeta?.contributionKind === 'requestHostAction' && (
-                              /* P2b: a structured request for the HOST to act —
-                               * it went to you for review, never to the AI. */
+                              {msg.metadata?.outOfPosition === true && (
+                                /* The round ended before this seat's position, so
+                                 * the end-of-round sweep delivered it. Say so,
+                                 * rather than implying the panel reached them. */
+                                <span
+                                  className="message-meta-model-badge human-collaborator-badge"
+                                  title="The round ended before this seat's turn; delivered by the end-of-round sweep."
+                                >
+                                  Out of position
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                        if (isCollaboratorComment) {
+                          return (
+                            <div className="message-meta human-collaborator-meta">
+                              <span className="message-meta-label">
+                                {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
+                              </span>
                               <span
-                                className="message-meta-model-badge human-collaborator-badge human-collaborator-action-request"
-                                title="The collaborator asked you to take an action. Review it; nothing reaches the AI unless you insert and send it."
+                                className="message-meta-model-badge human-collaborator-badge"
+                                title="External, untrusted collaborator comment"
                               >
-                                Action request
+                                External
                               </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (isTaskWraithCloseout) {
-                        const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
-                        const source = msg.metadata?.closeoutSource
-                        // Deterministic-fallback close-outs render "TaskWraith"
-                        // with no source badge — the "deterministic" chip read as
-                        // noise. Provider-generated close-outs still note their
-                        // source ("via Claude" / "via Foundation Models").
-                        const closeoutModel =
-                          typeof msg.metadata?.closeoutModel === 'string'
-                            ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
-                            : ''
-                        const closeoutProviderClass = closeoutProvider
-                          ? resolveProviderHueClass(closeoutProvider, closeoutModel)
-                          : null
-                        const badge =
-                          source === 'deterministicFallback'
-                            ? null
-                            : closeoutProvider
-                              ? `via ${getProviderLabel(closeoutProvider)}`
-                              : closeoutModel
-                                ? `via ${closeoutModel}`
-                                : 'generated'
-                        return (
-                          <div className="message-meta taskwraith-closeout-meta">
-                            <span className="message-meta-label">TaskWraith</span>
-                            {badge && (
-                              <span
-                                className={`message-meta-model-badge taskwraith-closeout-badge${
-                                  closeoutProviderClass
-                                    ? ` provider-${closeoutProviderClass}`
-                                    : ''
-                                }`}
-                                title={
-                                  closeoutProvider
-                                    ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
-                                    : closeoutModel
-                                      ? `Close-out summarized on-device by ${msg.metadata?.closeoutModel}`
-                                      : 'TaskWraith close-out'
+                              {collaboratorMeta?.contributionKind === 'requestHostAction' && (
+                                /* P2b: a structured request for the HOST to act —
+                                 * it went to you for review, never to the AI. */
+                                <span
+                                  className="message-meta-model-badge human-collaborator-badge human-collaborator-action-request"
+                                  title="The collaborator asked you to take an action. Review it; nothing reaches the AI unless you insert and send it."
+                                >
+                                  Action request
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                        if (isTaskWraithCloseout) {
+                          const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
+                          const source = msg.metadata?.closeoutSource
+                          // Deterministic-fallback close-outs render "TaskWraith"
+                          // with no source badge — the "deterministic" chip read as
+                          // noise. Provider-generated close-outs still note their
+                          // source ("via Claude" / "via Foundation Models").
+                          const closeoutModel =
+                            typeof msg.metadata?.closeoutModel === 'string'
+                              ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
+                              : ''
+                          const closeoutProviderClass = closeoutProvider
+                            ? resolveProviderHueClass(closeoutProvider, closeoutModel)
+                            : null
+                          const badge =
+                            source === 'deterministicFallback'
+                              ? null
+                              : closeoutProvider
+                                ? `via ${getProviderLabel(closeoutProvider)}`
+                                : closeoutModel
+                                  ? `via ${closeoutModel}`
+                                  : 'generated'
+                          return (
+                            <div className="message-meta taskwraith-closeout-meta">
+                              <span className="message-meta-label">TaskWraith</span>
+                              {badge && (
+                                <span
+                                  className={`message-meta-model-badge taskwraith-closeout-badge${
+                                    closeoutProviderClass
+                                      ? ` provider-${closeoutProviderClass}`
+                                      : ''
+                                  }`}
+                                  title={
+                                    closeoutProvider
+                                      ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
+                                      : closeoutModel
+                                        ? `Close-out summarized by ${msg.metadata?.closeoutModel} on this Mac`
+                                        : 'TaskWraith close-out'
+                                  }
+                                >
+                                  {badge}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                        if (
+                          isInterSeatMessage &&
+                          // Decoded here as well as inside the element so the
+                          // fallthrough stays honest: a row with no recoverable
+                          // route keeps the provider label it has always shown,
+                          // rather than an empty meta line. Both decodes are pure
+                          // string work over one small metadata object.
+                          ensembleSideMessageRoute(msg, currentChat?.ensemble)
+                        ) {
+                          // The one assistant-level row whose speaker is half the
+                          // answer: it was ADDRESSED to someone. Naming both ends
+                          // here is what lets the body below stop carrying the
+                          // route as prose.
+                          return (
+                            <EnsembleSideMessageMeta message={msg} roster={currentChat?.ensemble} />
+                          )
+                        }
+                        if (isAssistantLevelMessage) {
+                          const rawChatPooledIdentity =
+                            currentChat?.providerMetadata?.pooledAgentIdentity
+                          const chatPooledIdentity =
+                            rawChatPooledIdentity && typeof rawChatPooledIdentity === 'object'
+                              ? (rawChatPooledIdentity as NonNullable<
+                                  ChatMessage['metadata']
+                                >['pooledAgentIdentity'])
+                              : undefined
+                          const runSeatSnapshot = assistantRun?.ensembleSeatSnapshot
+                          const shouldAddRunSeatSnapshot = Boolean(
+                            runSeatSnapshot && !msg.metadata?.ensembleSeatSnapshot
+                          )
+                          const shouldAddPooledIdentity = Boolean(
+                            chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
+                          )
+                          const assistantLabelMessage =
+                            shouldAddPooledIdentity || shouldAddRunSeatSnapshot
+                              ? {
+                                  ...msg,
+                                  metadata: {
+                                    ...(msg.metadata || {}),
+                                    ...(shouldAddRunSeatSnapshot
+                                      ? { ensembleSeatSnapshot: runSeatSnapshot }
+                                      : {}),
+                                    ...(shouldAddPooledIdentity
+                                      ? {
+                                          ...(typeof currentChat?.providerMetadata
+                                            ?.pooledAgentId === 'string'
+                                            ? {
+                                                pooledAgentId:
+                                                  currentChat.providerMetadata.pooledAgentId
+                                              }
+                                            : {}),
+                                          pooledAgentIdentity: chatPooledIdentity
+                                        }
+                                      : {})
+                                  }
                                 }
-                              >
-                                {badge}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (isAssistantLevelMessage) {
-                        const rawChatPooledIdentity =
-                          currentChat?.providerMetadata?.pooledAgentIdentity
-                        const chatPooledIdentity =
-                          rawChatPooledIdentity && typeof rawChatPooledIdentity === 'object'
-                            ? (rawChatPooledIdentity as NonNullable<
-                                ChatMessage['metadata']
-                              >['pooledAgentIdentity'])
-                            : undefined
-                        const runSeatSnapshot = assistantRun?.ensembleSeatSnapshot
-                        const shouldAddRunSeatSnapshot = Boolean(
-                          runSeatSnapshot && !msg.metadata?.ensembleSeatSnapshot
-                        )
-                        const shouldAddPooledIdentity = Boolean(
-                          chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
-                        )
-                        const assistantLabelMessage =
-                          shouldAddPooledIdentity || shouldAddRunSeatSnapshot
-                            ? {
-                                ...msg,
-                                metadata: {
-                                  ...(msg.metadata || {}),
-                                  ...(shouldAddRunSeatSnapshot
-                                    ? { ensembleSeatSnapshot: runSeatSnapshot }
-                                    : {}),
-                                  ...(shouldAddPooledIdentity
-                                    ? {
-                                        ...(typeof currentChat?.providerMetadata?.pooledAgentId ===
-                                        'string'
-                                          ? {
-                                              pooledAgentId:
-                                                currentChat.providerMetadata.pooledAgentId
-                                            }
-                                          : {}),
-                                        pooledAgentIdentity: chatPooledIdentity
-                                      }
-                                    : {})
-                                }
-                              }
-                            : msg
-                        const {
-                          label,
-                          provider,
-                          providerClass,
-                          modelBadge,
-                          pooledAgentIdentity
-                        } =
-                          formatAssistantMessageLabel(
-                            assistantLabelMessage,
+                              : msg
+                          const {
+                            label,
+                            provider,
+                            providerClass,
+                            modelBadge,
+                            pooledAgentIdentity
+                          } = formatAssistantMessageLabel(
+                            transcriptRunModelPresentation(
+                              assistantLabelMessage,
+                              assistantRun,
+                              currentChat?.chatKind === 'ensemble'
+                            ),
                             getProviderLabel(assistantRunProvider),
                             assistantRunProvider,
                             {
                               isEnsembleChat: currentChat?.chatKind === 'ensemble',
-                              soloModelId: assistantRunModel
+                              soloModelId: assistantRunModel,
+                              soloModelLabel: assistantRun?.modelLabel,
+                              seatModelId: currentChat?.requestedModel
                             }
                           )
-                        // 1.0.7 — participant-rename continuity. The
-                        // header keeps the FROZEN role label; this quiet
-                        // badge tells the reader the seat has since been
-                        // renamed (e.g. "Planner" here is the seat now
-                        // called "Architect") so they can follow one
-                        // participant across a mid-session rename. Ledger-
-                        // preferred, with a frozen-vs-current fallback —
-                        // see deriveParticipantRenameContinuity.
-                        return (
-                          <div
-                            className={`message-meta${
-                              providerClass || provider
-                                ? ` provider-${providerClass || provider}`
-                                : ''
-                            }`}
-                          >
-                            <span className="message-meta-label">
-                              {pooledAgentIdentity && (
-                                <PooledAgentIcon
-                                  identity={pooledAgentIdentity}
-                                  size={14}
-                                  className="message-meta-agent-icon"
-                                />
-                              )}
-                              {label}
-                            </span>
-                            {modelBadge && (
-                              <span
-                                className="message-meta-model-badge"
-                                title={`Model: ${modelBadge}`}
-                                aria-label={`Model ${modelBadge}`}
-                              >
-                                {modelBadge}
+                          // 1.0.7 — participant-rename continuity. The
+                          // header keeps the FROZEN role label; this quiet
+                          // badge tells the reader the seat has since been
+                          // renamed (e.g. "Planner" here is the seat now
+                          // called "Architect") so they can follow one
+                          // participant across a mid-session rename. Ledger-
+                          // preferred, with a frozen-vs-current fallback —
+                          // see deriveParticipantRenameContinuity.
+                          return (
+                            <div
+                              className={`message-meta${
+                                providerClass || provider
+                                  ? ` provider-${providerClass || provider}`
+                                  : ''
+                              }`}
+                            >
+                              <span className="message-meta-label">
+                                {pooledAgentIdentity && (
+                                  <PooledAgentIcon
+                                    identity={pooledAgentIdentity}
+                                    size={14}
+                                    className="message-meta-agent-icon"
+                                  />
+                                )}
+                                {label}
                               </span>
-                            )}
-                            {renameContinuity && (
-                              <span
-                                className="message-meta-renamed-from"
-                                title={`Now: ${renameContinuity.currentRole}`}
-                                aria-label={`Renamed from ${renameContinuity.fromRole}; now ${renameContinuity.currentRole}`}
-                              >
-                                renamed from {renameContinuity.fromRole}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      // Ensemble status messages (`yielded` / `failed` /
-                      // `skipped`) currently arrive with `role: 'system'`
-                      // because the orchestrator emits them as system-
-                      // origin chrome. They carry the participant's
-                      // identity in metadata though — so render them as
-                      // the participant (with provider tint) rather than
-                      // a generic "System" label. Reads more naturally
-                      // for users (e.g. the reason text on a yield is
-                      // really the participant's voice, not the app's).
-                      const statusProvider =
-                        msg.metadata?.kind === 'ensembleParticipantStatus'
-                          ? (msg.metadata?.ensembleProvider as ProviderId | undefined)
-                          : undefined
-                      if (statusProvider) {
-                        const statusPresentation = formatAssistantMessageLabel(
-                          msg,
-                          getProviderLabel(statusProvider),
-                          statusProvider,
-                          { isEnsembleChat: true }
-                        )
-                        const statusProviderClass =
-                          statusPresentation.providerClass || statusProvider
-                        const statusModelBadge = statusPresentation.modelBadge || ''
-                        return (
-                          <div className={`message-meta provider-${statusProviderClass}`}>
-                            <span className="message-meta-label">{statusPresentation.label}</span>
-                            {statusModelBadge && (
-                              <span
-                                className="message-meta-model-badge"
-                                title={`Model: ${statusModelBadge}`}
-                                aria-label={`Model ${statusModelBadge}`}
-                              >
-                                {statusModelBadge}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      return <div className="message-meta">System</div>
-                    })()}
-                    {msg.role === 'user' ? (
-                      (() => {
-                        // Long pasted briefs would otherwise dominate the scroll
-                        // viewport. Collapse them by default and let the user
-                        // expand inline with "Show more". Toggle state lives in
-                        // `expandedUserMessages` so each bubble is independent.
-                        const collapsible = shouldCollapseUserMessage(msg.content)
-                        const isExpanded = expandedUserMessages.has(msg.id)
-                        const showCollapsed = collapsible && !isExpanded
-                        const preview = showCollapsed
-                          ? truncateUserMessagePreview(msg.content)
-                          : msg.content
-                        const mediaRefs = collectMessageMediaRefs(msg)
-                        // Drop from the attachment strip any image already shown
-                        // inline in the (possibly truncated) rendered body.
-                        const inlineImageIds = collectInlineImageRefIds(
-                          preview,
-                          mediaRefs,
-                          currentChat?.workspacePath
-                        )
-                        const stripRefs = inlineImageIds.size
-                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
-                          : mediaRefs
-                        return (
-                          <div
-                            className={`message-bubble user${
-                              collapsible ? ' is-collapsible' : ''
-                            }${showCollapsed ? ' is-collapsed' : ''}`}
-                            onContextMenu={(event) =>
-                              openMessageContextMenu(event, msg, msg.content, 'user message')
-                            }
-                          >
-                            <div className="user-message-content">
-                              <MarkdownMessage
-                                content={preview}
-                                chat={currentChat || undefined}
-                                mediaRefs={mediaRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                              />
-                            </div>
-                            {stripRefs.length > 0 && (
-                              <ChatMessageMediaStrip
-                                refs={stripRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                                onDetachToPane={onDetachToPane}
-                              />
-                            )}
-                            {collapsible && (
-                              <button
-                                type="button"
-                                className="user-message-toggle"
-                                onClick={() => toggleUserMessageExpanded(msg.id)}
-                                aria-expanded={isExpanded}
-                                title={isExpanded ? 'Collapse message' : 'Show full message'}
-                              >
-                                {isExpanded ? 'Show less' : 'Show more'}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })()
-                    ) : (
-                      (() => {
-                        const mediaRefs = collectMessageMediaRefs(msg)
-                        const displayContent =
-                          agentQuestionHeaderOverride ??
-                          (isYieldMessage
-                            ? formatEnsembleYieldContentForDisplay(msg.content)
-                            : msg.content)
-                        const messageStreamRunId =
-                          typeof msg.runId === 'string' && msg.runId
-                            ? msg.runId
-                            : boundaryRun?.runId
-                        // Drop from the attachment strip any image already shown
-                        // inline in the rendered body (deduped by resolved ref id).
-                        const inlineImageIds = collectInlineImageRefIds(
-                          msg.content,
-                          mediaRefs,
-                          currentChat?.workspacePath
-                        )
-                        const stripRefs = inlineImageIds.size
-                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
-                          : mediaRefs
-                        return (
-                          <div
-                            className={`message-bubble ${
-                              isCollaboratorComment || isDeliveredExternal
-                                ? 'system human-collaborator-comment'
-                                : isGuestReply
-                                  ? 'assistant guest-participant-reply'
-                                  : isInterSeatMessage
-                                    ? 'assistant ensemble-side-message'
-                                    : isYieldMessage
-                                      ? 'assistant ensemble-yield-message'
-                                  : msg.role
-                            }${ensembleRoundStatusClass(msg)}`}
-                            onContextMenu={
-                              (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
-                              msg.content
-                                ? (event) =>
-                                    openMessageContextMenu(
-                                      event,
-                                      msg,
-                                      msg.content || '',
-                                      `${
-                                        isGuestReply
-                                          ? 'guest participant'
-                                          : isInterSeatMessage
-                                            ? 'inter-seat'
-                                            : isYieldMessage
-                                              ? 'participant yield'
-                                          : isDeliveredExternal
-                                            ? 'collaborator'
-                                            : msg.role
-                                      } message`
-                                    )
-                                : undefined
-                            }
-                          >
-                            {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                              usesRevealLifecycle ? (
-                                <RevealingMarkdownMessage
-                                  content={displayContent}
-                                  chat={currentChat || undefined}
-                                  isLive={isLiveRevealRow}
-                                  messageId={rowKey}
-                                  messageTimestamp={msg.timestamp}
-                                  provider={assistantRevealProvider}
-                                  model={assistantRevealModel}
-                                  mediaRefs={mediaRefs}
-                                  workspacePath={currentChat?.workspacePath}
-                                  onPreviewImage={onPreviewImage}
-                                  streamRunId={messageStreamRunId}
-                                  onRevealUnmounted={() =>
-                                    finishRevealLifecycle(revealLifecycleKey)
-                                  }
-                                  resolveProjectReferenceExtract={resolveProjectReferenceExtract}
-                                  onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
-                                />
-                              ) : (
-                                <MarkdownMessage
-                                  content={displayContent}
-                                  chat={currentChat || undefined}
-                                  mediaRefs={mediaRefs}
-                                  workspacePath={currentChat?.workspacePath}
-                                  onPreviewImage={onPreviewImage}
-                                  streamRunId={messageStreamRunId}
-                                  resolveProjectReferenceExtract={resolveProjectReferenceExtract}
-                                  onOpenProjectReferenceCitation={onOpenProjectReferenceCitation}
-                                />
-                              )
-                            ) : (
-                              msg.content
-                            )}
-                            {stripRefs.length > 0 && (
-                              <ChatMessageMediaStrip
-                                refs={stripRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                                onDetachToPane={onDetachToPane}
-                              />
-                            )}
-                            {isCollaboratorComment && onPromoteCollaboratorComment && (
-                              <div className="human-collaborator-actions">
-                                {/* P2a copy: promotion only creates a host-owned
-                                  * DRAFT — the host still reviews and sends. Never
-                                  * label this "Run" or "Prompt" (spec §6). */}
-                                <button
-                                  type="button"
-                                  className="human-collaborator-promote-btn"
-                                  onClick={() => onPromoteCollaboratorComment(msg.id)}
-                                  title="Insert this collaborator request into the composer as a draft you review before sending"
+                              {modelBadge && (
+                                <span
+                                  className="message-meta-model-badge"
+                                  title={`Model: ${modelBadge}`}
+                                  aria-label={`Model ${modelBadge}`}
                                 >
-                                  Insert as draft
-                                </button>
-                                {collaboratorMeta?.promotedAt && (
-                                  <span className="human-collaborator-status">
-                                    Inserted as draft
-                                  </span>
+                                  {modelBadge}
+                                </span>
+                              )}
+                              {renameContinuity && (
+                                <span
+                                  className="message-meta-renamed-from"
+                                  title={`Now: ${renameContinuity.currentRole}`}
+                                  aria-label={`Renamed from ${renameContinuity.fromRole}; now ${renameContinuity.currentRole}`}
+                                >
+                                  renamed from {renameContinuity.fromRole}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                        // Ensemble status messages (`yielded` / `failed` /
+                        // `skipped`) currently arrive with `role: 'system'`
+                        // because the orchestrator emits them as system-
+                        // origin chrome. They carry the participant's
+                        // identity in metadata though — so render them as
+                        // the participant (with provider tint) rather than
+                        // a generic "System" label. Reads more naturally
+                        // for users (e.g. the reason text on a yield is
+                        // really the participant's voice, not the app's).
+                        const statusProvider =
+                          msg.metadata?.kind === 'ensembleParticipantStatus'
+                            ? (msg.metadata?.ensembleProvider as ProviderId | undefined)
+                            : undefined
+                        // A failed seat renders as the SeatFailureCard, which
+                        // already names the seat in its title — a tinted meta
+                        // label above it would only double the alarm.
+                        if (isFailedParticipantStatusMessage(msg)) {
+                          return null
+                        }
+                        if (statusProvider) {
+                          const statusPresentation = formatAssistantMessageLabel(
+                            msg,
+                            getProviderLabel(statusProvider),
+                            statusProvider,
+                            { isEnsembleChat: true }
+                          )
+                          const statusProviderClass =
+                            statusPresentation.providerClass || statusProvider
+                          const statusModelBadge = statusPresentation.modelBadge || ''
+                          return (
+                            <div className={`message-meta provider-${statusProviderClass}`}>
+                              <span className="message-meta-label">{statusPresentation.label}</span>
+                              {statusModelBadge && (
+                                <span
+                                  className="message-meta-model-badge"
+                                  title={`Model: ${statusModelBadge}`}
+                                  aria-label={`Model ${statusModelBadge}`}
+                                >
+                                  {statusModelBadge}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        }
+                        return <div className="message-meta">System</div>
+                      })()}
+                      {msg.role === 'user'
+                        ? (() => {
+                            // Long pasted briefs would otherwise dominate the scroll
+                            // viewport. Collapse them by default and let the user
+                            // expand inline with "Show more". Toggle state lives in
+                            // `expandedUserMessages` so each bubble is independent.
+                            const collapsible = shouldCollapseUserMessage(msg.content)
+                            const isExpanded = expandedUserMessages.has(msg.id)
+                            const showCollapsed = collapsible && !isExpanded
+                            const preview = showCollapsed
+                              ? truncateUserMessagePreview(msg.content)
+                              : msg.content
+                            const mediaRefs = collectMessageMediaRefs(msg)
+                            // Drop from the attachment strip any image already shown
+                            // inline in the (possibly truncated) rendered body.
+                            const inlineImageIds = collectInlineImageRefIds(
+                              preview,
+                              mediaRefs,
+                              currentChat?.workspacePath
+                            )
+                            const stripRefs = inlineImageIds.size
+                              ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                              : mediaRefs
+                            return (
+                              <div
+                                className={`message-bubble user${
+                                  collapsible ? ' is-collapsible' : ''
+                                }${showCollapsed ? ' is-collapsed' : ''}${editingMessageId === msg.id ? ' is-editing' : ''}`}
+                                onContextMenu={(event) =>
+                                  openMessageContextMenu(event, msg, msg.content, 'user message')
+                                }
+                                onClick={(event) => {
+                                  // Open the inline editor from a click anywhere in
+                                  // the bubble, including the text body — the old
+                                  // `target === currentTarget` guard never fired
+                                  // there because the text renders inside a child
+                                  // `.user-message-content` wrapper. Interactive
+                                  // descendants (links, the collapse toggle, media
+                                  // controls) and an active drag-selection stay
+                                  // excluded via the pure hit-test above.
+                                  if (msg.role !== 'user') return
+                                  const target = event.target as HTMLElement | null
+                                  const selection =
+                                    typeof window !== 'undefined' ? window.getSelection() : null
+                                  if (
+                                    !shouldOpenUserMessageEditor({
+                                      alreadyEditing: editingMessageId !== null,
+                                      interactiveTarget: Boolean(
+                                        target?.closest?.(
+                                          'a, button, input, textarea, select, [role="button"]'
+                                        )
+                                      ),
+                                      hasTextSelection: Boolean(
+                                        selection && selection.toString().length > 0
+                                      )
+                                    })
+                                  ) {
+                                    return
+                                  }
+                                  handleStartEditMessage(msg.id, msg.content || '')
+                                }}
+                              >
+                                {editingMessageId === msg.id ? (
+                                  <>
+                                    <textarea
+                                      className="user-message-edit-textarea"
+                                      value={editingContent}
+                                      onChange={(e) => setEditingContent(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Escape') {
+                                          handleCancelEditMessage()
+                                        } else if (e.key === 'Enter' && !e.shiftKey) {
+                                          e.preventDefault()
+                                          handleSaveAndResend(msg.id, editingContent)
+                                        }
+                                      }}
+                                      autoFocus
+                                    />
+                                    <div className="user-message-edit-actions">
+                                      <button
+                                        type="button"
+                                        className="user-message-edit-button cancel"
+                                        onClick={handleCancelEditMessage}
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="user-message-edit-button save"
+                                        onClick={() => handleSaveAndResend(msg.id, editingContent)}
+                                      >
+                                        Save & Resend
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="user-message-content">
+                                    <MarkdownMessage
+                                      content={preview}
+                                      chat={currentChat || undefined}
+                                      mediaRefs={mediaRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                    />
+                                  </div>
+                                )}
+                                {stripRefs.length > 0 && (
+                                  <ChatMessageMediaStrip
+                                    refs={stripRefs}
+                                    workspacePath={currentChat?.workspacePath}
+                                    onPreviewImage={onPreviewImage}
+                                    onDetachToPane={onDetachToPane}
+                                  />
+                                )}
+                                {collapsible && editingMessageId !== msg.id && (
+                                  <button
+                                    type="button"
+                                    className="user-message-toggle"
+                                    onClick={() => toggleUserMessageExpanded(msg.id)}
+                                    aria-expanded={isExpanded}
+                                    title={isExpanded ? 'Collapse message' : 'Show full message'}
+                                  >
+                                    {isExpanded ? 'Show less' : 'Show more'}
+                                  </button>
                                 )}
                               </div>
-                            )}
-                          </div>
-                        )
-                      })()
-                    )}
-                    {isTaskWraithCloseout &&
-                      showRunCompleteSummary !== false &&
-                      (() => {
-                        const participantTable = (msg.metadata?.closeoutParticipantTable ||
-                          null) as CloseoutParticipantTable | null
-                        const commits = (Array.isArray(msg.metadata?.closeoutCommits)
-                          ? msg.metadata.closeoutCommits
-                          : null) as CloseoutCommit[] | null
-                        const fileChanges = (Array.isArray(msg.metadata?.closeoutFileChanges)
-                          ? msg.metadata.closeoutFileChanges
-                          : null) as CloseoutFileChange[] | null
-                        const subagentDelegations = (Array.isArray(
-                          msg.metadata?.closeoutSubagentDelegations
-                        )
-                          ? msg.metadata.closeoutSubagentDelegations
-                          : null) as CloseoutSubagentDelegation[] | null
-                        const hasEpic =
-                          Boolean(participantTable?.rows?.length) ||
-                          Boolean(commits?.length) ||
-                          Boolean(fileChanges?.length) ||
-                          Boolean(subagentDelegations?.length)
-                        if (!hasEpic) return null
-                        const isLatestCloseout = msg.id === latestCloseoutMessageId
-                        const closeoutDurationMs =
-                          typeof msg.metadata?.closeoutDurationMs === 'number'
-                            ? msg.metadata.closeoutDurationMs
-                            : null
-                        const durationText =
-                          isLatestCloseout && runCompleteDurationText
-                            ? runCompleteDurationText
-                            : closeoutDurationMs != null
-                              ? formatWorkDurationMs(closeoutDurationMs)
+                            )
+                          })()
+                        : (() => {
+                            const mediaRefs = collectMessageMediaRefs(msg)
+                            // The route now leads the row's meta line and the
+                            // reason has its own footnote below, so neither is left
+                            // duplicated inside the note's own words.
+                            const sideMessageParts = isInterSeatMessage
+                              ? ensembleSideMessageBody(msg)
                               : null
-                        const timeLabel = new Date(msg.timestamp).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit'
-                        })
-                        // Latest close-out inherits the footer's dynamic status
-                        // title + Copy/Side chat so we can suppress the sibling
-                        // footer card entirely when this card hosts the epic.
-                        const showLatestActions =
-                          isLatestCloseout && shouldShowRunCompleteNotice && !isGlobal
-                        const titleLabel =
-                          showLatestActions && runCompleteStatus?.label
-                            ? runCompleteStatus.label
-                            : 'Task complete'
-                        const titleTone =
-                          showLatestActions &&
-                          runCompleteStatus &&
-                          runCompleteStatus.tone !== 'neutral'
-                            ? `tone-${runCompleteStatus.tone}`
-                            : undefined
-                        const liveFallbackFileChanges =
-                          isLatestCloseout &&
-                          latestCloseoutShowsLiveFileChanges &&
-                          !(fileChanges && fileChanges.length > 0)
-                            ? displayFileChangeSummaries.map((item) => ({
-                                path: item.path,
-                                status: item.status,
-                                additions: item.additions,
-                                deletions: item.deletions
-                              }))
-                            : null
-                        const closeoutFileChanges =
-                          fileChanges && fileChanges.length > 0
-                            ? fileChanges
-                            : liveFallbackFileChanges
-                        const liveSummaryByPath = isLatestCloseout
-                          ? new Map(displayFileChangeSummaries.map((item) => [item.path, item]))
-                          : null
-                        const resolveCloseoutFileChangeSummary = (
-                          change: CloseoutFileChange
-                        ): DiffFileSummary => {
-                          const liveSummary = liveSummaryByPath?.get(change.path)
-                          return {
-                            ...liveSummary,
-                            ...change,
-                            previewKind: liveSummary?.previewKind || 'none',
-                            owners: change.owners ?? liveSummary?.owners
-                          }
-                        }
-                        const fileChangesNode =
-                          closeoutFileChanges && closeoutFileChanges.length > 0 ? (
-                            <CloseoutFileChangesSection
-                              changes={closeoutFileChanges}
-                              getMainActionLabel={(summary) =>
-                                onOpenFileChangeInWorkbench
-                                  ? `Open Workbench diff for ${summary.path}`
-                                  : `Preview diff for ${summary.path}`
-                              }
-                              onActivateChange={activateFileChangeSummary}
-                              onOpenPreview={openFileChangeDiffPreview}
-                              onScheduleClosePreview={scheduleCloseFileChangeDiffPreview}
-                              previewPath={fileChangeDiffPreview?.summary.path}
-                              resolveSummary={resolveCloseoutFileChangeSummary}
-                              workspacePath={currentWorkspacePath}
-                            />
-                          ) : undefined
-                        const latestAssistantMessage = showLatestActions
-                          ? [...resolvedMessages].reverse().find((m) => m.role === 'assistant')
-                          : null
-                        const latestCopyId = latestAssistantMessage
-                          ? `run-complete-copy-${latestAssistantMessage.id}`
-                          : null
-                        const isCopied = latestCopyId !== null && copiedId === latestCopyId
-                        return (
-                          <div
-                            className="run-complete-card"
-                            role="status"
-                            aria-label={titleLabel}
-                          >
-                            <div className="run-complete-main">
-                              <div className="run-complete-metadata">
-                                <strong
-                                  className={titleTone}
-                                  title={
-                                    showLatestActions
-                                      ? runCompleteStatus?.detail || undefined
-                                      : undefined
-                                  }
-                                >
-                                  {titleLabel}
-                                </strong>
-                                <span className="run-complete-time-row">
-                                  <span>{timeLabel}</span>
-                                  {durationText && <span>{durationText}</span>}
-                                </span>
-                              </div>
-                              {showLatestActions && (
-                                <div className="run-complete-actions">
-                                  <PillButton
-                                    size="compact"
-                                    className={`run-copy-btn${isCopied ? ' is-copied' : ''}`}
-                                    onClick={() => {
-                                      if (latestAssistantMessage?.content && latestCopyId) {
-                                        copy(latestCopyId, latestAssistantMessage.content)
+                            const displayContent =
+                              agentQuestionHeaderOverride ??
+                              (isYieldMessage
+                                ? formatEnsembleYieldContentForDisplay(msg.content)
+                                : sideMessageParts
+                                  ? sideMessageParts.body
+                                  : msg.content)
+                            const messageStreamRunId =
+                              typeof msg.runId === 'string' && msg.runId
+                                ? msg.runId
+                                : boundaryRun?.runId
+                            // Drop from the attachment strip any image already shown
+                            // inline in the rendered body (deduped by resolved ref id).
+                            const inlineImageIds = collectInlineImageRefIds(
+                              msg.content,
+                              mediaRefs,
+                              currentChat?.workspacePath
+                            )
+                            const stripRefs = inlineImageIds.size
+                              ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                              : mediaRefs
+                            return (
+                              <div
+                                className={`message-bubble ${
+                                  isCollaboratorComment || isDeliveredExternal
+                                    ? 'system human-collaborator-comment'
+                                    : isGuestReply
+                                      ? 'assistant guest-participant-reply'
+                                      : isInterSeatMessage
+                                        ? 'assistant ensemble-side-message'
+                                        : isYieldMessage
+                                          ? 'assistant ensemble-yield-message'
+                                          : msg.role
+                                }${ensembleRoundStatusClass(msg)}${
+                                  // The error/seat-failure cards provide their own
+                                  // surface; the pill shell would only double the
+                                  // alarm.
+                                  msg.role === 'error' || isFailedParticipantStatusMessage(msg)
+                                    ? ' has-error-card'
+                                    : ''
+                                }`}
+                                onContextMenu={
+                                  (msg.role === 'assistant' ||
+                                    msg.role === 'system' ||
+                                    isGuestReply) &&
+                                  msg.content
+                                    ? (event) =>
+                                        openMessageContextMenu(
+                                          event,
+                                          msg,
+                                          msg.content || '',
+                                          `${
+                                            isGuestReply
+                                              ? 'guest participant'
+                                              : isInterSeatMessage
+                                                ? 'inter-seat'
+                                                : isYieldMessage
+                                                  ? 'participant yield'
+                                                  : isDeliveredExternal
+                                                    ? 'collaborator'
+                                                    : msg.role
+                                          } message`
+                                        )
+                                    : undefined
+                                }
+                              >
+                                {isFailedParticipantStatusMessage(msg) ? (
+                                  /* The failed-seat coda ("Review 1 failed.")
+                                   * becomes the same calm card as run errors:
+                                   * friendly title up top, the seat's captured
+                                   * stderr (already in the run events) behind the
+                                   * disclosure. */
+                                  <SeatFailureCard
+                                    message={msg}
+                                    onCopy={onCopyMessage}
+                                    copied={copiedId === msg.id}
+                                    onRetryParticipant={(participantId) =>
+                                      retryEnsembleParticipant(currentChat, participantId)
+                                    }
+                                    {...(renderSeatModelSwap
+                                      ? { renderModelSwap: renderSeatModelSwap }
+                                      : {})}
+                                  />
+                                ) : msg.role === 'assistant' ||
+                                  msg.role === 'system' ||
+                                  isGuestReply ? (
+                                  usesRevealLifecycle ? (
+                                    <RevealingMarkdownMessage
+                                      content={displayContent}
+                                      chat={currentChat || undefined}
+                                      isLive={isLiveRevealRow}
+                                      messageId={rowKey}
+                                      messageTimestamp={msg.timestamp}
+                                      provider={assistantRevealProvider}
+                                      model={assistantRevealModel}
+                                      mediaRefs={mediaRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                      streamRunId={messageStreamRunId}
+                                      onRevealUnmounted={() =>
+                                        finishRevealLifecycle(revealLifecycleKey)
                                       }
-                                    }}
-                                    disabled={!latestAssistantMessage?.content}
-                                    title={
-                                      isCopied ? 'Copied' : 'Copy latest assistant response'
-                                    }
-                                    aria-label={
-                                      isCopied
-                                        ? 'Latest response copied'
-                                        : 'Copy latest assistant response'
-                                    }
+                                      resolveProjectReferenceExtract={
+                                        resolveProjectReferenceExtract
+                                      }
+                                      onOpenProjectReferenceCitation={
+                                        onOpenProjectReferenceCitation
+                                      }
+                                    />
+                                  ) : (
+                                    <MarkdownMessage
+                                      content={displayContent}
+                                      chat={currentChat || undefined}
+                                      mediaRefs={mediaRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                      streamRunId={messageStreamRunId}
+                                      resolveProjectReferenceExtract={
+                                        resolveProjectReferenceExtract
+                                      }
+                                      onOpenProjectReferenceCitation={
+                                        onOpenProjectReferenceCitation
+                                      }
+                                    />
+                                  )
+                                ) : msg.role === 'error' ? (
+                                  /* The calm run-error card replaces the raw red
+                                   * pill. The full thrown string stays available
+                                   * behind the card's "Technical details"
+                                   * disclosure and Copy details button; Host
+                                   * outages additionally offer the lifecycle
+                                   * restart control as a second call site. */
+                                  <RunExecutionErrorCard
+                                    message={msg}
+                                    onCopy={onCopyMessage}
+                                    copied={copiedId === msg.id}
+                                    {...(runRetryAnchorByErrorId.has(msg.id) &&
+                                    onEditAndResendFromHere
+                                      ? {
+                                          onRetryRun: () => {
+                                            const anchor = runRetryAnchorByErrorId.get(msg.id)
+                                            if (anchor) {
+                                              void onEditAndResendFromHere(
+                                                anchor.id,
+                                                anchor.content
+                                              )
+                                            }
+                                          }
+                                        }
+                                      : {})}
+                                  />
+                                ) : (
+                                  msg.content
+                                )}
+                                {sideMessageParts?.reason && (
+                                  /* Why the note was sent, as its own muted line
+                                 rather than a closing paragraph of the note.
+                                 The sender wrote it into a separate tool field,
+                                 and a body paragraph is not what they said. */
+                                  <div className="ensemble-side-message-reason">
+                                    <span className="ensemble-side-message-reason-label">
+                                      reason
+                                    </span>
+                                    <span>{sideMessageParts.reason}</span>
+                                  </div>
+                                )}
+                                {stripRefs.length > 0 && (
+                                  <ChatMessageMediaStrip
+                                    refs={stripRefs}
+                                    workspacePath={currentChat?.workspacePath}
+                                    onPreviewImage={onPreviewImage}
+                                    onDetachToPane={onDetachToPane}
+                                  />
+                                )}
+                                {isCollaboratorComment && onPromoteCollaboratorComment && (
+                                  <div className="human-collaborator-actions">
+                                    {/* P2a copy: promotion only creates a host-owned
+                                     * DRAFT — the host still reviews and sends. Never
+                                     * label this "Run" or "Prompt" (spec §6). */}
+                                    <button
+                                      type="button"
+                                      className="human-collaborator-promote-btn"
+                                      onClick={() => onPromoteCollaboratorComment(msg.id)}
+                                      title="Insert this collaborator request into the composer as a draft you review before sending"
+                                    >
+                                      Insert as draft
+                                    </button>
+                                    {collaboratorMeta?.promotedAt && (
+                                      <span className="human-collaborator-status">
+                                        Inserted as draft
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+                      {isTaskWraithCloseout &&
+                        showRunCompleteSummary !== false &&
+                        (() => {
+                          const matchesVisibleRun = Boolean(
+                            runCompleteNotice &&
+                            closeoutMatchesRunCompleteNotice(msg, runCompleteNotice)
+                          )
+                          const closeoutRunId =
+                            typeof msg.metadata?.sourceRunId === 'string'
+                              ? msg.metadata.sourceRunId
+                              : msg.runId
+                          const persistedRunSummarySuppressed = Boolean(
+                            closeoutRunId &&
+                            currentChat?.runs?.some(
+                              (run) =>
+                                run.runId === closeoutRunId && run.suppressRunSummary === true
+                            )
+                          )
+                          // A Steer handoff deliberately suppresses the run
+                          // summary. Honor it for an already-persisted card as
+                          // well as the ephemeral footer, including after a
+                          // reload when the flag is re-derived from the run.
+                          if (
+                            (shouldSuppressRunCompleteSummary(runCompleteNotice) &&
+                              matchesVisibleRun) ||
+                            persistedRunSummarySuppressed
+                          ) {
+                            return null
+                          }
+                          const participantTable = (msg.metadata?.closeoutParticipantTable ||
+                            null) as CloseoutParticipantTable | null
+                          const commits = (
+                            Array.isArray(msg.metadata?.closeoutCommits)
+                              ? msg.metadata.closeoutCommits
+                              : null
+                          ) as CloseoutCommit[] | null
+                          const fileChanges = (
+                            Array.isArray(msg.metadata?.closeoutFileChanges)
+                              ? msg.metadata.closeoutFileChanges
+                              : null
+                          ) as CloseoutFileChange[] | null
+                          const closeoutFileChangesTotal =
+                            typeof msg.metadata?.closeoutFileChangesTotal === 'number' &&
+                            Number.isFinite(msg.metadata.closeoutFileChangesTotal)
+                              ? Math.max(0, Math.floor(msg.metadata.closeoutFileChangesTotal))
+                              : undefined
+                          const subagentDelegations = (
+                            Array.isArray(msg.metadata?.closeoutSubagentDelegations)
+                              ? msg.metadata.closeoutSubagentDelegations
+                              : null
+                          ) as CloseoutSubagentDelegation[] | null
+                          const hasEpic =
+                            Boolean(participantTable?.rows?.length) ||
+                            Boolean(commits?.length) ||
+                            Boolean(fileChanges?.length) ||
+                            Boolean(subagentDelegations?.length)
+                          if (!hasEpic) return null
+                          const isLatestCloseout = msg.id === latestCloseoutMessageId
+                          const closeoutDurationMs =
+                            typeof msg.metadata?.closeoutDurationMs === 'number'
+                              ? msg.metadata.closeoutDurationMs
+                              : null
+                          const durationText =
+                            isLatestCloseout && runCompleteDurationText
+                              ? runCompleteDurationText
+                              : closeoutDurationMs != null
+                                ? formatWorkDurationMs(closeoutDurationMs)
+                                : null
+                          const timeLabel = new Date(msg.timestamp).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                          })
+                          // Latest close-out inherits the footer's dynamic status
+                          // title + Copy/Side chat so we can suppress the sibling
+                          // footer card entirely when this card hosts the epic.
+                          const showLatestActions =
+                            isLatestCloseout && shouldShowRunCompleteNotice && !isGlobal
+                          const closeoutProducedWork =
+                            Boolean(fileChanges?.length) ||
+                            Boolean(
+                              participantTable?.rows?.some(
+                                (row) => row.status === 'answered' || row.status === 'yielded'
+                              )
+                            )
+                          // A historical close-out no longer has a live notice
+                          // to resolve. Its persisted status is the durable
+                          // truth, so never call a failed/cancelled run "Task
+                          // complete" merely because the reader opened it later.
+                          const durableCloseoutStatus = durableCloseoutCardStatus(
+                            msg.metadata?.closeoutStatus,
+                            { isGlobal: isGlobal ?? false, producedWork: closeoutProducedWork }
+                          )
+                          const cardStatus =
+                            showLatestActions && runCompleteStatus
+                              ? runCompleteStatus
+                              : durableCloseoutStatus
+                          const titleLabel = cardStatus?.label || 'Task complete'
+                          const titleTone =
+                            cardStatus && cardStatus.tone !== 'neutral'
+                              ? `tone-${cardStatus.tone}`
+                              : undefined
+                          // Live file evidence belongs ONLY to the close-out
+                          // matched to the visible completion. Historical cards
+                          // retain their tombstone list but never merge later
+                          // session summaries or their diff text.
+                          const canUseLiveFileEvidence = isLatestCloseout && matchesVisibleRun
+                          const liveFallbackFileChanges =
+                            canUseLiveFileEvidence &&
+                            latestCloseoutShowsLiveFileChanges &&
+                            !(fileChanges && fileChanges.length > 0)
+                              ? displayFileChangeSummaries.map((item) => ({
+                                  path: item.path,
+                                  status: item.status,
+                                  additions: item.additions,
+                                  deletions: item.deletions
+                                }))
+                              : null
+                          const closeoutFileChanges =
+                            fileChanges && fileChanges.length > 0
+                              ? fileChanges
+                              : liveFallbackFileChanges
+                          const liveSummaryByPath = canUseLiveFileEvidence
+                            ? new Map(displayFileChangeSummaries.map((item) => [item.path, item]))
+                            : null
+                          const closeoutEvidenceMessages = closeoutScopedEvidenceMessages(
+                            visibleMessages,
+                            msg
+                          )
+                          const resolveCloseoutFileChangeSummary = (
+                            change: CloseoutFileChange
+                          ): DiffFileSummary => {
+                            const liveSummary = liveSummaryByPath?.get(change.path)
+                            return {
+                              ...liveSummary,
+                              ...change,
+                              previewKind: liveSummary?.previewKind || 'none',
+                              owners: change.owners ?? liveSummary?.owners
+                            }
+                          }
+                          const fileChangesNode =
+                            closeoutFileChanges && closeoutFileChanges.length > 0 ? (
+                              <CloseoutFileChangesSection
+                                changes={closeoutFileChanges}
+                                totalCount={closeoutFileChangesTotal}
+                                getMainActionLabel={(summary) =>
+                                  onOpenFileChangeInWorkbench
+                                    ? `Open Workbench diff for ${summary.path}`
+                                    : `Preview diff for ${summary.path}`
+                                }
+                                onActivateChange={(event, summary) =>
+                                  activateFileChangeSummary(
+                                    event,
+                                    summary,
+                                    closeoutEvidenceMessages
+                                  )
+                                }
+                                onOpenPreview={(event, summary, options) =>
+                                  openFileChangeDiffPreview(
+                                    event,
+                                    summary,
+                                    options,
+                                    closeoutEvidenceMessages
+                                  )
+                                }
+                                onScheduleClosePreview={scheduleCloseFileChangeDiffPreview}
+                                previewPath={fileChangeDiffPreview?.summary.path}
+                                resolveSummary={resolveCloseoutFileChangeSummary}
+                                workspacePath={currentWorkspacePath}
+                              />
+                            ) : undefined
+                          const latestAssistantMessage = showLatestActions
+                            ? [...resolvedMessages].reverse().find((m) => m.role === 'assistant')
+                            : null
+                          const latestCopyId = latestAssistantMessage
+                            ? `run-complete-copy-${latestAssistantMessage.id}`
+                            : null
+                          const isCopied = latestCopyId !== null && copiedId === latestCopyId
+                          return (
+                            <div
+                              className="run-complete-card"
+                              role="status"
+                              aria-label={titleLabel}
+                            >
+                              <div className="run-complete-main">
+                                <div className="run-complete-metadata">
+                                  <strong
+                                    className={titleTone}
+                                    title={cardStatus?.detail || undefined}
                                   >
-                                    {isCopied ? 'Copied' : 'Copy'}
-                                  </PillButton>
-                                  {currentRun?.runId && onOpenSideChatFromRun && (
+                                    {titleLabel}
+                                  </strong>
+                                  <span className="run-complete-time-row">
+                                    <span>{timeLabel}</span>
+                                    {durationText && <span>{durationText}</span>}
+                                  </span>
+                                </div>
+                                {showLatestActions && (
+                                  <div className="run-complete-actions">
                                     <PillButton
                                       size="compact"
-                                      onClick={() => onOpenSideChatFromRun(currentRun.runId)}
-                                      title="Open side chat seeded from this run result"
-                                      aria-label="Open side chat from run result"
+                                      className={`run-copy-btn${isCopied ? ' is-copied' : ''}`}
+                                      onClick={() => {
+                                        if (latestAssistantMessage?.content && latestCopyId) {
+                                          copy(latestCopyId, latestAssistantMessage.content)
+                                        }
+                                      }}
+                                      disabled={!latestAssistantMessage?.content}
+                                      title={isCopied ? 'Copied' : 'Copy latest assistant response'}
+                                      aria-label={
+                                        isCopied
+                                          ? 'Latest response copied'
+                                          : 'Copy latest assistant response'
+                                      }
                                     >
-                                      Side chat
+                                      {isCopied ? 'Copied' : 'Copy'}
                                     </PillButton>
-                                  )}
-                                </div>
-                              )}
+                                    {currentRun?.runId && onOpenSideChatFromRun && (
+                                      <PillButton
+                                        size="compact"
+                                        onClick={() => onOpenSideChatFromRun(currentRun.runId)}
+                                        title="Open side chat seeded from this run result"
+                                        aria-label="Open side chat from run result"
+                                      >
+                                        Side chat
+                                      </PillButton>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <RunCompleteEpicStack
+                                participantTable={participantTable}
+                                subagentDelegations={subagentDelegations}
+                                commits={commits}
+                                fileChanges={fileChangesNode}
+                                loadCommitFiles={loadCloseoutCommitFiles}
+                              />
                             </div>
-                            <RunCompleteEpicStack
-                              participantTable={participantTable}
-                              subagentDelegations={subagentDelegations}
-                              commits={commits}
-                              fileChanges={fileChangesNode}
-                              loadCommitFiles={loadCloseoutCommitFiles}
-                            />
+                          )
+                        })()}
+                      {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
+                        <div className="plan-choice-card">
+                          <div className="plan-choice-question">{pendingPlanChoice.question}</div>
+                          <div className="plan-choice-actions">
+                            {pendingPlanChoice.options.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                className="plan-choice-action-btn"
+                                onClick={() => onPlanChoiceSubmit(msg.id, option)}
+                                title={`Continue with "${option}"`}
+                              >
+                                {option}
+                              </button>
+                            ))}
                           </div>
-                        )
-                      })()}
-                    {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
-                      <div className="plan-choice-card">
-                        <div className="plan-choice-question">{pendingPlanChoice.question}</div>
-                        <div className="plan-choice-actions">
-                          {pendingPlanChoice.options.map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              className="plan-choice-action-btn"
-                              onClick={() => onPlanChoiceSubmit(msg.id, option)}
-                              title={`Continue with "${option}"`}
-                            >
-                              {option}
-                            </button>
-                          ))}
                         </div>
-                      </div>
-                    )}
-                    {shouldSurfacePlanCard &&
-                      msg.metadata?.proposedPlan &&
-                      !isModalOwnedPendingPlan && (
-                      <ProposedPlanCard
-                        title={msg.metadata.proposedPlan.title}
-                        body={msg.metadata.proposedPlan.body}
-                        status={msg.metadata.proposedPlan.status}
-                        artifactPath={msg.metadata.proposedPlan.artifactPath}
-                        chat={currentChat || undefined}
-                        onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
-                        onDismiss={() => onProposedPlanDismiss(msg.id)}
-                        onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
-                      />
-                    )}
-                    {questionTombstone && (
-                      <AgentQuestionTombstoneCard
-                        tombstone={questionTombstone}
-                        provider={
-                          (msg.metadata?.ensembleProvider as ProviderId | undefined) ??
-                          currentProvider ??
-                          null
-                        }
-                        providerLabel={currentProviderLabel}
-                        seat={agentQuestionSeat}
-                      />
-                    )}
-                    {pendingQuestionsForRow.map((question) => (
-                      <AgentQuestionCard
-                        key={question.questionId}
-                        state={question}
-                        onAnswer={(answer, isCustom) =>
-                          onAgentQuestionSubmit(question.questionId, answer, isCustom)
-                        }
-                        onDismiss={() => onAgentQuestionDismiss(question.questionId)}
-                        seat={agentQuestionSeat}
-                      />
-                    ))}
-                    {msg.metadata?.kind === 'ensembleBossmanPoll' &&
-                      typeof msg.metadata.pollId === 'string' && (
-                        <EnsemblePollCard
-                          chat={currentChat}
-                          pollId={msg.metadata.pollId}
-                          onVote={onEnsemblePollVote}
+                      )}
+                      {shouldSurfacePlanCard &&
+                        msg.metadata?.proposedPlan &&
+                        !isModalOwnedPendingPlan && (
+                          <ProposedPlanCard
+                            title={msg.metadata.proposedPlan.title}
+                            body={msg.metadata.proposedPlan.body}
+                            status={msg.metadata.proposedPlan.status}
+                            artifactPath={msg.metadata.proposedPlan.artifactPath}
+                            chat={currentChat || undefined}
+                            onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
+                            onDismiss={() => onProposedPlanDismiss(msg.id)}
+                            onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
+                          />
+                        )}
+                      {questionTombstone && (
+                        <AgentQuestionTombstoneCard
+                          tombstone={questionTombstone}
+                          provider={
+                            (msg.metadata?.ensembleProvider as ProviderId | undefined) ??
+                            currentProvider ??
+                            null
+                          }
+                          providerLabel={currentProviderLabel}
+                          seat={agentQuestionSeat}
                         />
                       )}
-                  </div>
-                )}
-                  </>
-                )}
-                {superGroupHidden || questionReplyHidden ? null : (
+                      {pendingQuestionsForRow.map((question) => (
+                        <AgentQuestionCard
+                          key={question.questionId}
+                          state={question}
+                          onAnswer={(answer, isCustom) =>
+                            onAgentQuestionSubmit(question.questionId, answer, isCustom)
+                          }
+                          onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                          seat={agentQuestionSeat}
+                        />
+                      ))}
+                      {msg.metadata?.kind === 'ensembleBossmanPoll' &&
+                        typeof msg.metadata.pollId === 'string' && (
+                          <EnsemblePollCard
+                            chat={currentChat}
+                            pollId={msg.metadata.pollId}
+                            onVote={onEnsemblePollVote}
+                          />
+                        )}
+                    </div>
+                  )}
+                </>
+              )}
+              {superGroupHidden || questionReplyHidden || blackboardUpdateStackHidden ? null : (
                 <TranscriptMessageFooter
                   message={msg}
                   label={footerLabel}
                   copyContent={footerCopyContent}
+                  onCopyEntireTurn={
+                    messageById.has(msg.id) ||
+                    groupedTranscriptMessageIds(msg).some((id) => messageById.has(id))
+                      ? onCopyEntireTurn
+                      : undefined
+                  }
                   align={msg.role === 'user' ? 'end' : 'start'}
                   onCopyMessage={onCopyMessage}
                   onAddMessageToPrompt={onAddMessageToPrompt}
@@ -6100,21 +7566,21 @@ export const TranscriptPanel = memo(
                   pinned={isPinned}
                   copied={copiedId === msg.id}
                 />
-                )}
-              </div>
-            )
-            rowElementCacheRef.current.set(rowKey, { signature: rowSignature, element })
-            return element
-          })}
-          {virtualizeEnabled && (
-            <div
-              className="vlist-spacer-bottom"
-              ref={spacerBottomRef}
-              style={{ height: virtualWindow.bottomSpacerPx }}
-              aria-hidden
-            />
-          )}
-          {/*
+              )}
+            </div>
+          )
+          rowElementCacheRef.current.set(rowKey, { signature: rowSignature, element })
+          return element
+        })}
+        {virtualizeEnabled && (
+          <div
+            className="vlist-spacer-bottom"
+            ref={spacerBottomRef}
+            style={{ height: virtualWindow.bottomSpacerPx }}
+            aria-hidden
+          />
+        )}
+        {/*
             1.0.5-EW36 — Belt-and-braces fallback for the
             `ask_user_question` modal. The primary render path is
             inline next to the synthetic `agentQuestion` system
@@ -6129,47 +7595,116 @@ export const TranscriptPanel = memo(
             the agent times out after 24 minutes with no
             user-recoverable surface.
           */}
-          {pendingAgentQuestions
-            .filter((question) => !visibleMessages.some((m) => m.id === question.messageId))
-            .map((question) => (
-              <div
-                key={`pending-agent-question-fallback-${question.questionId}`}
-                className="message-group agent-question-fallback"
-              >
-                <AgentQuestionCard
-                  key={question.questionId}
-                  state={question}
-                  onAnswer={(answer, isCustom) =>
-                    onAgentQuestionSubmit(question.questionId, answer, isCustom)
-                  }
-                  onDismiss={() => onAgentQuestionDismiss(question.questionId)}
-                  // No marker row to read the run off here — that is the whole
-                  // reason this fallback exists — so the pending question's own
-                  // `appRunId` is the way in.
-                  seat={seatsByRunId.get(question.appRunId) ?? null}
-                />
-              </div>
-            ))}
-          {contextCompactionProgress.map((event) => (
-            <ContextCompactionProgressRow
-              key={`${event.chatId}:${event.participantId || event.provider || 'chat'}`}
-              event={event}
-            />
-          ))}
-          {(isThinking || hasLiveContextCompactionProgress) && (
+        {pendingAgentQuestions
+          .filter((question) => !visibleMessages.some((m) => m.id === question.messageId))
+          .map((question) => (
             <div
-              key="thinking-indicator"
-              className={`message-group${workingPresentations.length > 1 ? ' message-working-stack' : ''}`}
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
+              key={`pending-agent-question-fallback-${question.questionId}`}
+              className="message-group agent-question-fallback"
             >
-              <span className="sr-only">
-                {workingPresentations.map(workingStatusLabel).join('; ')}
-              </span>
-              {workingPresentations.map((presentation, index) => {
+              <AgentQuestionCard
+                key={question.questionId}
+                state={question}
+                onAnswer={(answer, isCustom) =>
+                  onAgentQuestionSubmit(question.questionId, answer, isCustom)
+                }
+                onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                // No marker row to read the run off here — that is the whole
+                // reason this fallback exists — so the pending question's own
+                // `appRunId` is the way in.
+                seat={seatsByRunId.get(question.appRunId) ?? null}
+              />
+            </div>
+          ))}
+        {contextCompactionProgress.map((event) => (
+          <ContextCompactionProgressRow
+            key={`${event.chatId}:${event.participantId || event.provider || 'chat'}`}
+            event={event}
+          />
+        ))}
+        {(isThinking || hasLiveContextCompactionProgress) && (
+          <div
+            key="thinking-indicator"
+            className={`message-group${
+              hasUnifiedEnsembleWorkingSeats
+                ? ' message-working-unified-group'
+                : workingPresentations.length > 1
+                  ? ' message-working-stack'
+                  : ''
+            }`}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <span className="sr-only">
+              {workingPresentations.map(workingStatusLabel).join('; ')}
+            </span>
+            {hasUnifiedEnsembleWorkingSeats ? (
+              <UnifiedWorkingIndicator
+                label={
+                  workingPresentations.every(
+                    (presentation) => presentation.activity === 'compacting'
+                  )
+                    ? 'Compacting'
+                    : 'Working'
+                }
+                ariaLabel={workingPresentations.map(workingStatusLabel).join('; ')}
+                seats={workingPresentations.map((presentation, index) => {
+                  const tokenTarget = workingTokenTargets.get(
+                    workingIndicatorTokenTargetKey(presentation)
+                  )
+                  const laneJump = presentation.participantId
+                    ? fanoutLaneJumpTargets.get(presentation.participantId)
+                    : undefined
+                  const accentStyle = workingAccentStyle(presentation)
+                  const label = formatWorkingSeatLabel({
+                    seatNumber: workingSeatNumber(currentChat, presentation.participantId),
+                    roleLabel: presentation.roleLabel,
+                    providerLabel: presentation.providerLabel || currentProviderLabel
+                  })
+                  return {
+                    // Participant identity keeps healthy seat telemetry
+                    // mounted when a lower-order peer starts or stops. The
+                    // telemetry leaf's own run key still resets a new turn.
+                    id: presentation.participantId || workingIndicatorKey(presentation, index),
+                    label,
+                    statusLabel: workingStatusLabel(presentation),
+                    ...(accentStyle ? { accentStyle } : {}),
+                    telemetry: (
+                      <WorkingIndicatorTelemetryReadout
+                        presentation={presentation}
+                        tokenTarget={tokenTarget}
+                        index={index}
+                      />
+                    ),
+                    contextHint:
+                      presentation.activity === 'working' ? (
+                        <WorkingContextPressureHint
+                          percent={
+                            presentation.participantId
+                              ? (workingContextPressure.byParticipant.get(
+                                  presentation.participantId
+                                ) ?? 0)
+                              : workingContextPressure.solo
+                          }
+                          estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
+                        />
+                      ) : null,
+                    ...(laneJump
+                      ? {
+                          onJump: () => scrollToMessage(laneJump.messageId, laneJump.rowKey),
+                          jumpTitle: `Go to ${label}'s fan-out lane`
+                        }
+                      : {})
+                  }
+                })}
+              />
+            ) : (
+              workingPresentations.map((presentation, index) => {
                 const providerClass = presentation.providerClass || presentation.provider
-                const tokenTarget = workingTokenTargets.get(presentation.runId)
+                const tokenTarget = workingTokenTargets.get(
+                  workingIndicatorTokenTargetKey(presentation)
+                )
                 // Only a seat that owns a lane card gets the jump. A solo turn,
                 // or a lane still before its first byte, has no destination and
                 // stays an ordinary status bubble.
@@ -6183,9 +7718,7 @@ export const TranscriptPanel = memo(
                     style={workingAccentStyle(presentation)}
                   >
                     <div
-                      className={`message-meta${
-                        providerClass ? ` provider-${providerClass}` : ''
-                      }`}
+                      className={`message-meta${providerClass ? ` provider-${providerClass}` : ''}`}
                     >
                       <span className="message-meta-label">
                         {presentation.providerLabel || currentProviderLabel}
@@ -6223,44 +7756,11 @@ export const TranscriptPanel = memo(
                           : undefined
                       }
                       telemetry={
-                        presentation.activity === 'transitioning' ? undefined : (
-                          <MemoizedParticipantWorkingTelemetry
-                            key={
-                              presentation.runId ||
-                              presentation.startedAt ||
-                              presentation.participantId ||
-                              `working-${index}`
-                            }
-                            runId={presentation.runId}
-                            startedAt={presentation.startedAt}
-                            provider={presentation.provider}
-                            tokenEpochKey={
-                              tokenTarget?.tokenEpochKey ||
-                              JSON.stringify([
-                                presentation.participantId || 'solo',
-                                presentation.provider || 'unknown-provider',
-                                presentation.modelId || 'unknown-model'
-                              ])
-                            }
-                            tokenEpochObservedAt={
-                              tokenTarget?.tokenEpochObservedAt ?? null
-                            }
-                            contextBaselineTokens={tokenTarget?.contextBaselineTokens ?? 0}
-                            contextBaselineAvailable={
-                              tokenTarget?.contextBaselineAvailable ?? false
-                            }
-                            contextState={tokenTarget?.contextState ?? 'unavailable'}
-                            fallbackTargetTokens={
-                              tokenTarget?.targetTokens ?? 0
-                            }
-                            estimatedCurrentTurnTokens={
-                              tokenTarget?.estimatedCurrentTurnTokens ?? 0
-                            }
-                            estimatedToolResultTokens={
-                              tokenTarget?.estimatedToolResultTokens ?? 0
-                            }
-                          />
-                        )
+                        <WorkingIndicatorTelemetryReadout
+                          presentation={presentation}
+                          tokenTarget={tokenTarget}
+                          index={index}
+                        />
                       }
                     />
                     {presentation.activity === 'working' && (
@@ -6268,9 +7768,9 @@ export const TranscriptPanel = memo(
                         key={`pressure-${presentation.participantId || presentation.runId || index}`}
                         percent={
                           presentation.participantId
-                            ? workingContextPressure.byParticipant.get(
+                            ? (workingContextPressure.byParticipant.get(
                                 presentation.participantId
-                              ) ?? 0
+                              ) ?? 0)
                             : workingContextPressure.solo
                         }
                         estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
@@ -6278,15 +7778,33 @@ export const TranscriptPanel = memo(
                     )}
                   </div>
                 )
-              })}
-            </div>
-          )}
-          {/* When the latest close-out already hosts a Task Complete card with
+              })
+            )}
+          </div>
+        )}
+        {/* Graphs this thread owns that have not settled. These sit where the
+              close-out would be, because they are the reason it is suppressed:
+              the turn is over, the task is not. */}
+        {liveExecutionViews.length > 0 && (
+          <div className="execution-live-card-stack">
+            {liveExecutionViews.map((view) => (
+              <ExecutionLiveCard
+                key={view.executionId}
+                view={view}
+                provider={currentProvider}
+                onOpenExecutionMap={onOpenExecutionMapForThread}
+                onCancelExecution={onCancelOwnedExecution}
+                onResumeExecution={onResumeOwnedExecution}
+              />
+            ))}
+          </div>
+        )}
+        {/* When the latest close-out already hosts a Task Complete card with
               the epic stack nested inside, skip this ephemeral footer sibling. */}
-          {showRunCompleteSummary !== false &&
-            shouldShowRunCompleteNotice &&
-            runCompleteNotice &&
-            !latestCloseoutHostsTaskComplete && (
+        {showRunCompleteSummary !== false &&
+          shouldShowRunCompleteNotice &&
+          runCompleteNotice &&
+          !latestCloseoutHostsTaskComplete && (
             <div
               className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}
               role="status"
@@ -6372,252 +7890,278 @@ export const TranscriptPanel = memo(
               {/* Omit epic sections already mounted under the latest close-out;
                   keep live File changes here when that close-out has none. */}
               {showFooterRunCompleteEpicStack && (
-              <RunCompleteEpicStack
-                participantTable={footerParticipantTable}
-                subagentDelegations={footerSubagentDelegations}
-                commits={footerCommits}
-                loadCommitFiles={loadCloseoutCommitFiles}
-                fileChanges={
-                  footerShowsLiveFileChanges ? (
-              <div className="file-change-summary-card">
-                <div className="file-change-summary-header">
-                  <strong>File changes</strong>
-                  <div className="file-change-summary-meta">
-                    <span>{fileChangeSummaryText}</span>
-                    {fileChangeShouldShowStats && (
-                      <span className="file-change-summary-stats">
-                        <span className="file-change-stat file-change-stat-add composer-diff-add">
-                          +{fileChangeDisplayAdds}
-                        </span>
-                        <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                          -{fileChangeDisplayDels}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="file-change-summary-list">
-                  {displayFileChangeSummaries.length > 0 ? (
-                    <>
-                      {fileChangeSummaryWindow.items.map((item, index) => {
-                        const inRoundSection =
-                          fileChangeSections !== null && index < fileChangeSections.boundary
-                        // Round rows can repeat a session path (normalisation
-                        // drift between the live and exact lanes) — prefix
-                        // keeps keys unique either way.
-                        const rowKey = inRoundSection
-                          ? `round-${item.path}-${item.status}`
-                          : `${item.path}-${item.status}`
-                        const sectionLead =
-                          fileChangeSections === null ? null : index === 0 ? (
-                            <div className="file-change-summary-section-row is-round-section">
-                              <span className="file-change-summary-section-label">This round</span>
-                              <span className="file-change-summary-section-count">
-                                {fileChangeSections.roundCount}{' '}
-                                {fileChangeSections.roundCount === 1 ? 'file' : 'files'}
-                              </span>
-                              {fileChangeSections.roundHasLineStats && (
-                                <span className="file-change-summary-section-stats">
-                                  <span className="file-change-stat file-change-stat-add composer-diff-add">
-                                    +{fileChangeSections.roundAdds}
-                                  </span>
-                                  <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                                    -{fileChangeSections.roundDels}
-                                  </span>
-                                </span>
-                              )}
-                            </div>
-                          ) : index === fileChangeSections.boundary ? (
-                            <>
-                              <div
-                                className="file-change-summary-section-divider"
-                                aria-hidden="true"
-                              />
-                              <div className="file-change-summary-section-row is-session-section">
-                                <span className="file-change-summary-section-label">
-                                  Earlier in session
-                                </span>
-                                <span className="file-change-summary-section-count">
-                                  {fileChangeSections.remainingCount}{' '}
-                                  {fileChangeSections.remainingCount === 1 ? 'file' : 'files'}
-                                </span>
-                              </div>
-                            </>
-                          ) : null
-                        const rowContent = (
-                          <span className="file-change-summary-row-content">
-                            <span className={`file-change-summary-status status-${item.status}`}>
-                              {item.status === 'modified' ? 'edited' : item.status}
-                            </span>
-                            <FileTypeIcon
-                              path={item.path}
-                              size={14}
-                              className="file-change-summary-type-icon"
-                              workspacePath={currentWorkspacePath}
-                            />
-                            <FileChangePathCell path={item.path} />
-                            <FileChangeOwnerCell owners={item.owners} />
-                            {(item.additions !== undefined || item.deletions !== undefined) && (
-                              <span className="file-change-summary-item-stats">
+                <RunCompleteEpicStack
+                  participantTable={footerParticipantTable}
+                  subagentDelegations={footerSubagentDelegations}
+                  commits={footerCommits}
+                  loadCommitFiles={loadCloseoutCommitFiles}
+                  fileChanges={
+                    footerShowsLiveFileChanges ? (
+                      <div className="file-change-summary-card">
+                        <div className="file-change-summary-header">
+                          <strong>File changes</strong>
+                          <div className="file-change-summary-meta">
+                            <span>{fileChangeSummaryText}</span>
+                            {fileChangeShouldShowStats && (
+                              <span className="file-change-summary-stats">
                                 <span className="file-change-stat file-change-stat-add composer-diff-add">
-                                  +{item.additions || 0}
+                                  +{fileChangeDisplayAdds}
                                 </span>
                                 <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                                  -{item.deletions || 0}
+                                  -{fileChangeDisplayDels}
                                 </span>
                               </span>
                             )}
-                          </span>
-                        )
-                        const hasDiffPreview = true
-                        const canShowHoverPreview = true
-                        const fileChangeActionLabel = onOpenFileChangeInWorkbench
-                          ? `Open Workbench diff for ${item.path}`
-                          : `Preview diff for ${item.path}`
-                        return (
-                          <Fragment key={rowKey}>
-                            {sectionLead}
-                            <div
-                              className={`file-change-summary-item file-change-summary-item-interactive ${
-                                hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
-                              }`}
-                              onMouseEnter={
-                                canShowHoverPreview
-                                  ? (event) => openFileChangeDiffPreview(event, item)
-                                  : undefined
-                              }
-                              onMouseLeave={
-                                canShowHoverPreview
-                                  ? scheduleCloseFileChangeDiffPreview
-                                  : undefined
-                              }
-                            >
-                              <button
-                                className="file-change-summary-main-action"
-                                type="button"
-                                aria-describedby={
-                                  canShowHoverPreview &&
-                                  fileChangeDiffPreview?.summary.path === item.path
-                                    ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                                    : undefined
-                                }
-                                aria-label={fileChangeActionLabel}
-                                onFocus={
-                                  canShowHoverPreview
-                                    ? (event) =>
-                                        openFileChangeDiffPreview(event, item, {
-                                          focusTarget: 'preview'
-                                        })
-                                    : undefined
-                                }
-                                onBlur={
-                                  canShowHoverPreview
-                                    ? scheduleCloseFileChangeDiffPreview
-                                    : undefined
-                                }
-                                onClick={(event) => activateFileChangeSummary(event, item)}
-                              >
-                                {rowContent}
-                              </button>
-                              {hasDiffPreview && (
-                                <button
-                                  type="button"
-                                  className="file-change-summary-diff-bubble"
-                                  aria-describedby={
-                                    fileChangeDiffPreview?.summary.path === item.path
-                                      ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                                      : undefined
-                                  }
-                                  aria-label={`Preview diff for ${item.path}`}
-                                  onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
-                                  onMouseLeave={scheduleCloseFileChangeDiffPreview}
-                                  onFocus={(event) =>
-                                    openFileChangeDiffPreview(event, item, {
-                                      focusTarget: 'preview'
-                                    })
-                                  }
-                                  onBlur={scheduleCloseFileChangeDiffPreview}
-                                  onClick={(event) => {
-                                    event.preventDefault()
-                                    event.stopPropagation()
-                                    openFileChangeDiffPreview(event, item, { immediate: true })
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                      openFileChangeDiffPreview(event, item, { focusTarget: 'action' })
-                                    }
-                                  }}
-                                >
-                                  Diff
-                                </button>
-                              )}
-                            </div>
-                          </Fragment>
-                        )
-                      })}
-                      {fileChangeSummaryWindow.canShowMore ? (
-                        <button
-                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
-                          type="button"
-                          aria-label={`Show ${fileChangeSummaryWindow.nextShowCount} more changed files`}
-                          onClick={showMoreFileChangeSummaries}
-                        >
-                          Show {fileChangeSummaryWindow.nextShowCount} more files
-                        </button>
-                      ) : fileChangeSummaryWindow.canShowFewer ? (
-                        <button
-                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
-                          type="button"
-                          aria-label="Show fewer changed files"
-                          onClick={showFewerFileChangeSummaries}
-                        >
-                          Show fewer files
-                        </button>
-                      ) : null}
-                      {!fileChangeSummaryWindow.canShowMore &&
-                        fileChangeSummaryWindow.hiddenCount > 0 && (
-                          <div className="file-change-summary-item file-change-summary-overflow">
-                            +{fileChangeSummaryWindow.hiddenCount} more files omitted from summary
                           </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="file-change-summary-item file-change-summary-empty">
-                      No file changes detected for this run.
-                    </div>
-                  )}
-                </div>
-              </div>
-                  ) : null
-                }
-              />
+                        </div>
+                        <div className="file-change-summary-list">
+                          {displayFileChangeSummaries.length > 0 ? (
+                            <>
+                              {fileChangeSummaryWindow.items.map((item, index) => {
+                                const inRoundSection =
+                                  fileChangeSections !== null && index < fileChangeSections.boundary
+                                // Round rows can repeat a session path (normalisation
+                                // drift between the live and exact lanes) — prefix
+                                // keeps keys unique either way.
+                                const rowKey = inRoundSection
+                                  ? `round-${item.path}-${item.status}`
+                                  : `${item.path}-${item.status}`
+                                const sectionLead =
+                                  fileChangeSections === null ? null : index === 0 ? (
+                                    <div className="file-change-summary-section-row is-round-section">
+                                      <span className="file-change-summary-section-label">
+                                        This round
+                                      </span>
+                                      <span className="file-change-summary-section-count">
+                                        {fileChangeSections.roundCount}{' '}
+                                        {fileChangeSections.roundCount === 1 ? 'file' : 'files'}
+                                      </span>
+                                      {fileChangeSections.roundHasLineStats && (
+                                        <span className="file-change-summary-section-stats">
+                                          <span className="file-change-stat file-change-stat-add composer-diff-add">
+                                            +{fileChangeSections.roundAdds}
+                                          </span>
+                                          <span className="file-change-stat file-change-stat-delete composer-diff-del">
+                                            -{fileChangeSections.roundDels}
+                                          </span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : index === fileChangeSections.boundary ? (
+                                    <>
+                                      <div
+                                        className="file-change-summary-section-divider"
+                                        aria-hidden="true"
+                                      />
+                                      <div className="file-change-summary-section-row is-session-section">
+                                        <span className="file-change-summary-section-label">
+                                          Earlier in session
+                                        </span>
+                                        <span className="file-change-summary-section-count">
+                                          {fileChangeSections.remainingCount}{' '}
+                                          {fileChangeSections.remainingCount === 1
+                                            ? 'file'
+                                            : 'files'}
+                                        </span>
+                                      </div>
+                                    </>
+                                  ) : null
+                                const rowContent = (
+                                  <span className="file-change-summary-row-content">
+                                    <span
+                                      className={`file-change-summary-status status-${item.status}`}
+                                    >
+                                      {item.status === 'modified' ? 'edited' : item.status}
+                                    </span>
+                                    <FileTypeIcon
+                                      path={item.path}
+                                      size={14}
+                                      className="file-change-summary-type-icon"
+                                      workspacePath={currentWorkspacePath}
+                                    />
+                                    <FileChangePathCell path={item.path} />
+                                    <FileChangeOwnerCell owners={item.owners} />
+                                    {(item.additions !== undefined ||
+                                      item.deletions !== undefined) && (
+                                      <span className="file-change-summary-item-stats">
+                                        <span className="file-change-stat file-change-stat-add composer-diff-add">
+                                          +{item.additions || 0}
+                                        </span>
+                                        <span className="file-change-stat file-change-stat-delete composer-diff-del">
+                                          -{item.deletions || 0}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </span>
+                                )
+                                const hasDiffPreview = true
+                                const canShowHoverPreview = true
+                                const fileChangeActionLabel = onOpenFileChangeInWorkbench
+                                  ? `Open Workbench diff for ${item.path}`
+                                  : `Preview diff for ${item.path}`
+                                return (
+                                  <Fragment key={rowKey}>
+                                    {sectionLead}
+                                    <div
+                                      className={`file-change-summary-item file-change-summary-item-interactive ${
+                                        hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
+                                      }`}
+                                      onMouseEnter={
+                                        canShowHoverPreview
+                                          ? (event) => openFileChangeDiffPreview(event, item)
+                                          : undefined
+                                      }
+                                      onMouseLeave={
+                                        canShowHoverPreview
+                                          ? scheduleCloseFileChangeDiffPreview
+                                          : undefined
+                                      }
+                                    >
+                                      <button
+                                        className="file-change-summary-main-action"
+                                        type="button"
+                                        aria-describedby={
+                                          canShowHoverPreview &&
+                                          fileChangeDiffPreview?.summary.path === item.path
+                                            ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                            : undefined
+                                        }
+                                        aria-label={fileChangeActionLabel}
+                                        onFocus={
+                                          canShowHoverPreview
+                                            ? (event) =>
+                                                openFileChangeDiffPreview(event, item, {
+                                                  focusTarget: 'preview'
+                                                })
+                                            : undefined
+                                        }
+                                        onBlur={
+                                          canShowHoverPreview
+                                            ? scheduleCloseFileChangeDiffPreview
+                                            : undefined
+                                        }
+                                        onClick={(event) => activateFileChangeSummary(event, item)}
+                                      >
+                                        {rowContent}
+                                      </button>
+                                      {hasDiffPreview && (
+                                        <button
+                                          type="button"
+                                          className="file-change-summary-diff-bubble"
+                                          aria-describedby={
+                                            fileChangeDiffPreview?.summary.path === item.path
+                                              ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                              : undefined
+                                          }
+                                          aria-label={`Preview diff for ${item.path}`}
+                                          onMouseEnter={(event) =>
+                                            openFileChangeDiffPreview(event, item)
+                                          }
+                                          onMouseLeave={scheduleCloseFileChangeDiffPreview}
+                                          onFocus={(event) =>
+                                            openFileChangeDiffPreview(event, item, {
+                                              focusTarget: 'preview'
+                                            })
+                                          }
+                                          onBlur={scheduleCloseFileChangeDiffPreview}
+                                          onClick={(event) => {
+                                            event.preventDefault()
+                                            event.stopPropagation()
+                                            openFileChangeDiffPreview(event, item, {
+                                              immediate: true
+                                            })
+                                          }}
+                                          onKeyDown={(event) => {
+                                            if (event.key === 'Enter' || event.key === ' ') {
+                                              event.preventDefault()
+                                              event.stopPropagation()
+                                              openFileChangeDiffPreview(event, item, {
+                                                focusTarget: 'action'
+                                              })
+                                            }
+                                          }}
+                                        >
+                                          Diff
+                                        </button>
+                                      )}
+                                    </div>
+                                  </Fragment>
+                                )
+                              })}
+                              {fileChangeSummaryWindow.canShowMore ? (
+                                <button
+                                  className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                                  type="button"
+                                  aria-label={`Show ${fileChangeSummaryWindow.nextShowCount} more changed files`}
+                                  onClick={showMoreFileChangeSummaries}
+                                >
+                                  Show {fileChangeSummaryWindow.nextShowCount} more files
+                                </button>
+                              ) : fileChangeSummaryWindow.canShowFewer ? (
+                                <button
+                                  className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                                  type="button"
+                                  aria-label="Show fewer changed files"
+                                  onClick={showFewerFileChangeSummaries}
+                                >
+                                  Show fewer files
+                                </button>
+                              ) : null}
+                              {!fileChangeSummaryWindow.canShowMore &&
+                                fileChangeSummaryWindow.hiddenCount > 0 && (
+                                  <div className="file-change-summary-item file-change-summary-overflow">
+                                    +{fileChangeSummaryWindow.hiddenCount} more files omitted from
+                                    summary
+                                  </div>
+                                )}
+                            </>
+                          ) : (
+                            <div className="file-change-summary-item file-change-summary-empty">
+                              No file changes detected for this run.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null
+                  }
+                />
               )}
             </div>
           )}
-          <div ref={endRef} />
-        </div>
-        <TranscriptMessageContextMenu
-          selection={activeMessageContextMenu}
-          onCopyMessage={onCopyMessage}
-          onCopySelection={copyTranscriptSelection}
-          onAddMessageToPrompt={onAddMessageToPrompt}
-          onTogglePinMessage={onTogglePinMessage}
-          onMessageFeedback={onMessageFeedback}
-          onOpenSideChatFromMessage={onOpenSideChatFromMessage}
-          onDeleteMessage={onDeleteMessage}
-          onClose={closeMessageContextMenu}
-        />
-        <DiffHoverPreviewOverlay
-          preview={fileChangeDiffPreview}
-          onFocus={keepFileChangeDiffPreviewOpen}
-          onBlur={scheduleCloseFileChangeDiffPreview}
-          onMouseEnter={keepFileChangeDiffPreviewOpen}
-          onMouseLeave={scheduleCloseFileChangeDiffPreview}
-        />
+        <div ref={endRef} />
       </div>
-    )
-  },
-  transcriptPanelPropsEqual
-)
+      <TranscriptMessageContextMenu
+        selection={activeMessageContextMenu}
+        onCopyMessage={onCopyMessage}
+        onCopySelection={copyTranscriptSelection}
+        onAddMessageToPrompt={onAddMessageToPrompt}
+        onTogglePinMessage={onTogglePinMessage}
+        onMessageFeedback={onMessageFeedback}
+        onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+        onDeleteMessage={onDeleteMessage}
+        // The menu item says "Edit & resend from here", so it must OPEN the
+        // inline editor — not fire the App orchestration handler directly.
+        // Forwarding `onEditAndResendFromHere` itself cancelled the run,
+        // truncated the transcript tail, and re-dispatched the ORIGINAL
+        // unedited text: irreversible transcript loss from a mislabelled
+        // control. The actual resend only happens through the editor's
+        // Save & Resend (handleSaveAndResend → editedContent). Panels whose
+        // App never wired the handler (multiview/side-chat) keep the item
+        // hidden, exactly as before.
+        onEditAndResendFromHere={
+          onEditAndResendFromHere
+            ? (messageId, content) => handleStartEditMessage(messageId, content)
+            : undefined
+        }
+        onClose={closeMessageContextMenu}
+      />
+      <DiffHoverPreviewOverlay
+        preview={fileChangeDiffPreview}
+        onFocus={keepFileChangeDiffPreviewOpen}
+        onBlur={scheduleCloseFileChangeDiffPreview}
+        onMouseEnter={keepFileChangeDiffPreviewOpen}
+        onMouseLeave={scheduleCloseFileChangeDiffPreview}
+      />
+    </div>
+  )
+}, transcriptPanelPropsEqual)

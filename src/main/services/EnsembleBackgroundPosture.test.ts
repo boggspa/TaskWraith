@@ -4,24 +4,22 @@ import { resolveBackgroundDispatchPosture } from './EnsembleBackgroundDispatch'
 
 /*
  * User-directed background lanes honor the seat's own posture
- * (docs/bg-user-mention-posture-design.md). The pure resolver carries the
+ * (the background-seat posture design). The pure resolver carries the
  * decision + status wording; the source invariants pin the orchestrator
  * wiring — exactly one user-origin call site sets honorSeatPosture, and the
  * peer paths keep the silent read-only clamp.
  */
 describe('resolveBackgroundDispatchPosture', () => {
-  it('preserves user-directed seat permissions while naming the reader-intent boundary', () => {
+  it('preserves user-directed seat permissions while disclosing derived writer intent', () => {
     const posture = resolveBackgroundDispatchPosture({
       honorSeatPosture: true,
       writeLanesEnabled: true,
       laneCount: 2
     })
     expect(posture.mode).toBe('own_permissions')
-    expect(posture.statusLine).toContain(
-      'launching 2 reader-intent lane(s) under their own permission posture'
-    )
-    expect(posture.statusLine).toContain('mode="locked_writers"')
-    expect(posture.statusLine).toContain('explicit writeScopes')
+    expect(posture.statusLine).toContain('launching 2 lane(s) under their own permission posture')
+    expect(posture.statusLine).toContain('Write-capable seats receive writer intent')
+    expect(posture.statusLine).toContain('no permission tier is inferred or widened')
   })
 
   it('clamps user-directed lanes read-only, loudly, when the write-lane kill-switch is off', () => {
@@ -68,7 +66,7 @@ describe('honorSeatPosture orchestrator wiring', () => {
     const body = source.slice(start, start + 8000)
     expect(body).toContain('resolveBackgroundDispatchPosture')
     expect(body).toContain("posture.mode === 'own_permissions'")
-    expect(body).toContain("? { mode: 'read_only' as const }")
+    expect(body).toContain('deriveLaneIntentFromPermissions: true')
     expect(body).toContain('forceReadOnlyDispatch: true')
   })
 })

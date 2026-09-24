@@ -34,10 +34,16 @@ import { SEAT_CHANGE_LINK_PREFIX, decodeSeatChangeLink } from '../../../shared/s
 import { FaviconLink } from './FaviconLink'
 import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { MarkdownCommitReference } from './MarkdownCommitReference'
+import { MarkdownColorToken } from './MarkdownColorToken'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
 import { tokeniseMentions } from '../lib/mentionHighlight'
 import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import { rehypeInlineMarkdownDiffStats } from '../lib/inlineMarkdownDiffStats'
+import { rehypeInlineMarkdownCheckOutcomes } from '../lib/inlineMarkdownCheckOutcomes'
+import {
+  normalizeInlineMarkdownColor,
+  rehypeInlineMarkdownColorTokens
+} from '../lib/inlineMarkdownColorTokens'
 import {
   isInlineMarkdownCommitHash,
   rehypeInlineMarkdownCommitReferences
@@ -87,11 +93,36 @@ function MarkdownCodeBlock({ content, language }: { content: string; language?: 
   const { copiedId, copy } = useCopyFeedback()
   const displayLanguage = language?.trim() || 'text'
 
+  const isShellLanguage = (lang?: string): boolean => {
+    const normalized = (lang || '').trim().toLowerCase().replace(/^[.`]+|[.`]+$/g, '')
+    return ['sh', 'bash', 'zsh', 'shell', 'terminal'].includes(normalized)
+  }
+
+  const handleRunCommand = () => {
+    if (!isShellLanguage(language)) return
+    const command = content.trim()
+    if (!command) return
+    const event = new CustomEvent('runCodeBlockCommand', {
+      detail: { command: command + '\n' }
+    })
+    window.dispatchEvent(event)
+  }
+
   return (
     <div className={`message-code-shell ${wrap ? 'wrap' : ''}`}>
       <div className="message-code-header">
         <span className="message-code-language">{displayLanguage}</span>
         <div className="message-code-actions">
+          {isShellLanguage(language) && (
+            <button
+              type="button"
+              className="message-code-action message-code-action-run"
+              onClick={handleRunCommand}
+              title="Run this command in the workspace terminal"
+            >
+              Run
+            </button>
+          )}
           <button
             type="button"
             className="message-code-action"
@@ -561,6 +592,10 @@ const MARKDOWN_COMPONENTS: Components = {
     )
   },
   span({ node, children, ...props }) {
+    const color = node?.properties?.dataColorToken
+    if (typeof color === 'string') {
+      return <MarkdownColorToken color={color}>{children}</MarkdownColorToken>
+    }
     const hash = node?.properties?.dataCommitReference
     if (typeof hash === 'string') {
       return <MarkdownCommitReference hash={hash}>{children}</MarkdownCommitReference>
@@ -587,6 +622,14 @@ const MARKDOWN_COMPONENTS: Components = {
     const languageMatch = /language-([\w-]+)/.exec(className || '')
     const isBlock = Boolean(languageMatch) || rawContent.includes('\n')
     if (!isBlock) {
+      const color = normalizeInlineMarkdownColor(rawContent)
+      if (color) {
+        return (
+          <MarkdownColorToken color={color}>
+            <code className={className}>{children}</code>
+          </MarkdownColorToken>
+        )
+      }
       if (isInlineMarkdownCommitHash(rawContent)) {
         return (
           <MarkdownCommitReference hash={rawContent}>
@@ -659,7 +702,9 @@ const MARKDOWN_COMPONENTS: Components = {
 
 const REMARK_PLUGINS = [remarkGfm]
 const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
+  rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCheckOutcomes,
   rehypeInlineMarkdownCommitReferences
 ]
 // Raw HTML is opt-in for bounded, non-streaming surfaces such as the
@@ -683,7 +728,9 @@ const SAFE_HTML_SCHEMA = {
 const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
   rehypeRaw,
   [rehypeSanitize, SAFE_HTML_SCHEMA],
+  rehypeInlineMarkdownColorTokens,
   rehypeInlineMarkdownDiffStats,
+  rehypeInlineMarkdownCheckOutcomes,
   rehypeInlineMarkdownCommitReferences
 ]
 

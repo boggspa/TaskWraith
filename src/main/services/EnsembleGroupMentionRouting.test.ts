@@ -5,7 +5,9 @@ import {
   resolveBackgroundMentionRouting,
   resolveAssistantMentionRoutingPlan,
   resolveEnsembleCommunicationAudience,
-  resolveEnsembleCommunicationTargets
+  resolveEnsembleCommunicationTargets,
+  formatAssistantParticipantMentionRoutingNotice,
+  selectUnreportedDisabledTargetNotices
 } from './EnsembleGroupMentionRouting'
 
 function participant(
@@ -50,6 +52,7 @@ describe('resolveAssistantMentionRoutingPlan', () => {
     expect(plan.groupNotices).toEqual([
       { group: 'workers', token: '@Workers', reason: 'authority_required' }
     ])
+    expect(plan.hasAuthorityGroupRoute).toBe(false)
   })
 
   it('expands an authorised group in roster order while excluding speaker and authority seats', () => {
@@ -70,6 +73,7 @@ describe('resolveAssistantMentionRoutingPlan', () => {
       'grok-bg'
     ])
     expect(plan.groupNotices).toEqual([])
+    expect(plan.hasAuthorityGroupRoute).toBe(false)
   })
 
   it('never widens a user-targeted DM, even for an authorised caller', () => {
@@ -98,6 +102,41 @@ describe('resolveAssistantMentionRoutingPlan', () => {
     expect(plan.groupNotices).toEqual([
       { group: 'reviewers', token: '@Reviewers', reason: 'no_eligible_targets' }
     ])
+  })
+
+  it('keeps permitted authority groups collective and excludes only the caller', () => {
+    const captain2 = participant('captain-2', 9, 'worker')
+    const authority = {
+      bossmanParticipantId: 'boss',
+      captainParticipantIds: ['captain', captain2.id]
+    }
+    const captains = resolveAssistantMentionRoutingPlan({
+      text: '@Captains decide together.',
+      participants: [...ROSTER, captain2],
+      callerParticipantId: 'boss',
+      canRouteGroups: true,
+      excludedGroupParticipantIds: new Set(['boss', 'captain', captain2.id]),
+      authority
+    })
+    expect(captains.participantMatches.map((match) => match.participant.id)).toEqual([
+      'captain',
+      captain2.id
+    ])
+    expect(captains.hasAuthorityGroupRoute).toBe(true)
+
+    const management = resolveAssistantMentionRoutingPlan({
+      text: '@Management review this.',
+      participants: [...ROSTER, captain2],
+      callerParticipantId: 'captain',
+      canRouteGroups: true,
+      excludedGroupParticipantIds: new Set(['boss', 'captain', captain2.id]),
+      authority
+    })
+    expect(management.participantMatches.map((match) => match.participant.id)).toEqual([
+      'boss',
+      captain2.id
+    ])
+    expect(management.hasAuthorityGroupRoute).toBe(true)
   })
 })
 
@@ -151,6 +190,17 @@ describe('resolveEnsembleCommunicationTargets', () => {
         senderParticipantId: 'boss'
       })
     ).toEqual([])
+  })
+
+  it('expands configured authority selectors without trusting role labels', () => {
+    expect(
+      resolveEnsembleCommunicationTargets({
+        selectors: ['@Captains', '@Management'],
+        participants: ROSTER,
+        senderParticipantId: 'worker-1',
+        authority: { bossmanParticipantId: 'boss', captainParticipantIds: ['captain'] }
+      }).map((participant) => participant.id)
+    ).toEqual(['captain', 'boss'])
   })
 })
 
@@ -227,12 +277,42 @@ describe('resolveBackgroundMentionRouting', () => {
 
   it('ignores foreground-only groups and preserves direct background aliases', () => {
     const plan = resolveBackgroundMentionRouting({
-      text: '@Workers implement this while @grok-bg collects traces.',
+      text: '@Workers and @Management decide while @grok-bg collects traces.',
       participants: backgroundRoster
     })
 
     expect([...plan.participantIds]).toEqual(['grok-bg'])
     expect(plan.ambiguities).toEqual([])
+  })
+
+  it('reports a direct background alias that names a switched-off seat', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@disabled-bg collect the traces.',
+      participants: backgroundRoster
+    })
+
+    expect(plan.participantIds.size).toBe(0)
+    expect(plan.ambiguities).toEqual([])
+    expect(plan.disabledTargets.map((match) => match.participant.id)).toEqual(['disabled-bg'])
+  })
+
+  it('reports one switched-off background seat however often it is named', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@disabled-bg start, and @disabled-bg report when done.',
+      participants: backgroundRoster
+    })
+
+    expect(plan.disabledTargets).toHaveLength(1)
+  })
+
+  it('stays silent about switched-off seats when a group token expands normally', () => {
+    const plan = resolveBackgroundMentionRouting({
+      text: '@BG collect traces.',
+      participants: backgroundRoster
+    })
+
+    expect([...plan.participantIds]).toEqual(['grok-bg', 'grok-bg-2'])
+    expect(plan.disabledTargets).toEqual([])
   })
 
   it('keeps ambiguous direct provider aliases unresolved', () => {
@@ -247,5 +327,168 @@ describe('resolveBackgroundMentionRouting', () => {
       plan.ambiguities[0].participant.id,
       ...(plan.ambiguities[0].ambiguousAmong || []).map((candidate) => candidate.id)
     ]).toEqual(['grok-bg', 'grok-bg-2'])
+  })
+})
+
+describe('disabled-seat direct mentions', () => {
+  it('reports a direct mention that names a switched-off seat instead of dropping it', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@claude-disabled please pick up the migration and report back.',
+      participants: ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantMatches).toEqual([])
+    expect(plan.groupNotices).toEqual([])
+    expect(plan.participantNotices).toEqual([
+      {
+        token: '@claude-disabled',
+        participantId: 'claude-disabled',
+        role: 'claude-disabled',
+        reason: 'disabled_target'
+      }
+    ])
+  })
+
+  it('reports one notice per switched-off seat however often it is tagged', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@claude-disabled ping. Still there @claude-disabled?',
+      participants: ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantNotices).toHaveLength(1)
+  })
+
+  it('stays silent when the alias still resolves to an enabled seat', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@worker-2 take this one.',
+      participants: ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantMatches.map((match) => match.participant.id)).toEqual(['worker-2'])
+    expect(plan.participantNotices).toEqual([])
+  })
+
+  it('invents no notice for an alias that matches no seat at all', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@Nobody are you there?',
+      participants: ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantMatches).toEqual([])
+    expect(plan.participantNotices).toEqual([])
+  })
+
+  it('never reports the speaking seat itself', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: 'I, @claude-disabled, will keep going.',
+      participants: ROSTER,
+      callerParticipantId: 'claude-disabled',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantNotices).toEqual([])
+  })
+
+  it('formats a disabled-target notice that names the seat and the required next step', () => {
+    const text = formatAssistantParticipantMentionRoutingNotice({
+      token: '@Luna',
+      participantId: 'codex-luna',
+      role: 'Luna',
+      reason: 'disabled_target'
+    })
+
+    expect(text).toContain('@Luna')
+    expect(text).toContain('Luna')
+    expect(text).toContain('switched off')
+    expect(text).toContain('no turn appended')
+  })
+})
+
+describe('disabled-seat mentions that shadow an enabled alias', () => {
+  const SHADOW_ROSTER = [
+    participant('codex-a', 1, 'worker', { role: 'Codex' }),
+    participant('codex-reviewer', 2, 'reviewer', {
+      role: 'Codex Reviewer',
+      enabled: false
+    })
+  ]
+
+  it('reports the switched-off seat even when a shorter alias routed someone else', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@Codex Reviewer, can you take the migration?',
+      participants: SHADOW_ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantNotices.map((notice) => notice.participantId)).toEqual([
+      'codex-reviewer'
+    ])
+  })
+
+  it('stays silent when both passes consume the very same alias', () => {
+    const plan = resolveAssistantMentionRoutingPlan({
+      text: '@Codex take the migration.',
+      participants: SHADOW_ROSTER,
+      callerParticipantId: 'boss',
+      canRouteGroups: true
+    })
+
+    expect(plan.participantMatches.map((match) => match.participant.id)).toEqual(['codex-a'])
+    expect(plan.participantNotices).toEqual([])
+  })
+})
+
+describe('selectUnreportedDisabledTargetNotices', () => {
+  const notice = (participantId: string) =>
+    ({
+      token: `@${participantId}`,
+      participantId,
+      role: participantId,
+      reason: 'disabled_target'
+    }) as const
+
+  it('tells one speaker about one switched-off peer exactly once per round', () => {
+    const reported = new Set<string>()
+
+    expect(
+      selectUnreportedDisabledTargetNotices([notice('luna')], 'boss', reported).map(
+        (entry) => entry.participantId
+      )
+    ).toEqual(['luna'])
+    expect(selectUnreportedDisabledTargetNotices([notice('luna')], 'boss', reported)).toEqual([])
+    expect(selectUnreportedDisabledTargetNotices([notice('luna')], 'boss', reported)).toEqual([])
+  })
+
+  it('still tells a different speaker, which has not seen the notice', () => {
+    const reported = new Set<string>()
+    selectUnreportedDisabledTargetNotices([notice('luna')], 'boss', reported)
+
+    expect(
+      selectUnreportedDisabledTargetNotices([notice('luna')], 'reviewer', reported).map(
+        (entry) => entry.participantId
+      )
+    ).toEqual(['luna'])
+  })
+
+  it('reports each switched-off peer separately for the same speaker', () => {
+    const reported = new Set<string>()
+
+    expect(
+      selectUnreportedDisabledTargetNotices([notice('luna'), notice('nova')], 'boss', reported).map(
+        (entry) => entry.participantId
+      )
+    ).toEqual(['luna', 'nova'])
+    expect(
+      selectUnreportedDisabledTargetNotices([notice('luna'), notice('nova')], 'boss', reported)
+    ).toEqual([])
   })
 })

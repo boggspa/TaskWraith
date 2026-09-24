@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRun } from '../../../main/store/types'
+import { isEnsembleFanoutDispatchPayload } from '../../../shared/ensembleFanoutDispatch'
 import {
   groupedTranscriptMessageIds,
   isEnsembleFanoutResultMessage
@@ -50,6 +51,7 @@ interface MutableViewportGroup {
   dispatchLabel: string | null
   category: EnsembleFanoutViewportCategory
   waveId: string
+  hasDurableWaveId: boolean
   expectedLaneCount: number | null
   stage: EnsembleFanoutViewportStage
   /** One stable representative row per lane, used for count and attribution. */
@@ -78,6 +80,38 @@ const FANOUT_DISPATCH_STATUS =
 function metadataString(message: ChatMessage, key: string): string | null {
   const value = message.metadata?.[key]
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function readFanoutDispatchStatus(message: ChatMessage): {
+  dispatchLabel: string
+  category: EnsembleFanoutViewportCategory
+  expectedLaneCount: number
+} | null {
+  if (message.role !== 'system' || message.metadata?.kind !== 'ensembleRoundStatus') return null
+  // The receipt now describes host admission as "requested; preparing".
+  // Use its structured dispatch plan so copy changes cannot orphan the
+  // receipt beside a second, lane-inferred disclosure for the same wave.
+  const payload = message.metadata.ensembleFanoutDispatch
+  if (isEnsembleFanoutDispatchPayload(payload)) {
+    return {
+      dispatchLabel: payload.label.trim(),
+      category: payload.category,
+      expectedLaneCount: payload.participants.length
+    }
+  }
+
+  const statusMatch = FANOUT_DISPATCH_STATUS.exec(message.content || '')
+  if (!statusMatch) return null
+  const dispatchLabel = statusMatch[1].trim()
+  return {
+    dispatchLabel,
+    category:
+      metadataString(message, 'ensembleFanoutCategory') === 'user' ||
+      dispatchLabel.toLowerCase() === 'user fan-out'
+        ? 'user'
+        : 'orchestrated',
+    expectedLaneCount: Number(statusMatch[2])
+  }
 }
 
 function isEnsembleFanoutLaneMessage(message: ChatMessage): boolean {
@@ -218,8 +252,9 @@ function viewportId(chatId: string, roundId: string, anchorId: string): string {
  * The orchestrator persists a labelled `ensembleRoundStatus` row immediately
  * before it seeds a parallel pass. The renderer can therefore associate the
  * next N lane cards with that wave without consulting `activeRound`, which is
- * exactly the state that disappears after completion/reload. Older transcripts
- * without the status receipt fall into one conservative, stage-inferred group.
+ * exactly the state that disappears after completion/reload. Paged history may
+ * omit the receipt; explicit wave ids still keep those lanes together. Only
+ * legacy lanes without wave ids use a conservative, stage-inferred group.
  */
 export function collectEnsembleFanoutViewportGroups(
   chatId: string,
@@ -239,25 +274,17 @@ export function collectEnsembleFanoutViewportGroups(
   // even when transcript order is not.
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]
-    const statusMatch =
-      message.role === 'system' && message.metadata?.kind === 'ensembleRoundStatus'
-        ? FANOUT_DISPATCH_STATUS.exec(message.content || '')
-        : null
-    if (statusMatch) {
-      const dispatchLabel = statusMatch[1].trim()
-      const durableWaveId = metadataString(message, 'ensembleFanoutWaveId') || message.id
-      const durableCategory = metadataString(message, 'ensembleFanoutCategory')
+    const dispatch = readFanoutDispatchStatus(message)
+    if (dispatch) {
+      const explicitWaveId = metadataString(message, 'ensembleFanoutWaveId')
+      const durableWaveId = explicitWaveId || message.id
       const group: MutableViewportGroup = {
         anchorId: message.id,
         anchorIndex: index,
-        dispatchLabel,
-        category:
-          durableCategory === 'user' || dispatchLabel.toLowerCase() === 'user fan-out'
-            ? 'user'
-            : 'orchestrated',
+        ...dispatch,
         waveId: durableWaveId,
-        expectedLaneCount: Number(statusMatch[2]),
-        stage: stageFromDispatchLabel(dispatchLabel),
+        hasDurableWaveId: Boolean(explicitWaveId),
+        stage: stageFromDispatchLabel(dispatch.dispatchLabel),
         lanes: [],
         laneRows: []
       }
@@ -301,24 +328,31 @@ export function collectEnsembleFanoutViewportGroups(
     // after a later dispatch receipt. Keep every incomplete wave available and
     // prefer the oldest compatible stage match. All/Specified passes are stage
     // wildcards, so a late lane cannot be stolen by a newer narrow receipt.
-    let targetGroup =
-      explicitWaveGroup || matchingOpenGroups[0] || openGroups[openGroups.length - 1] || null
+    // A wave id whose receipt is outside the loaded page is still authoritative.
+    // Never let an incomplete visible receipt absorb a different explicit wave.
+    let targetGroup = explicitWaveId
+      ? explicitWaveGroup || null
+      : matchingOpenGroups[0] || openGroups[openGroups.length - 1] || legacyGroup
     if (!targetGroup) {
-      if (!legacyGroup) {
-        legacyGroup = {
-          anchorId: message.id,
-          anchorIndex: index,
-          dispatchLabel: null,
-          category: 'orchestrated',
-          waveId: explicitWaveId || message.id,
-          expectedLaneCount: null,
-          stage: 'specified',
-          lanes: [],
-          laneRows: []
-        }
-        groups.push(legacyGroup)
+      const dispatchLabel = explicitWaveId ? metadataString(message, 'ensembleFanoutLabel') : null
+      targetGroup = {
+        anchorId: message.id,
+        anchorIndex: index,
+        dispatchLabel,
+        category:
+          explicitWaveId && metadataString(message, 'ensembleFanoutCategory') === 'user'
+            ? 'user'
+            : 'orchestrated',
+        waveId: explicitWaveId || message.id,
+        hasDurableWaveId: Boolean(explicitWaveId),
+        expectedLaneCount: null,
+        stage: dispatchLabel ? stageFromDispatchLabel(dispatchLabel) : 'specified',
+        lanes: [],
+        laneRows: []
       }
-      targetGroup = legacyGroup
+      groups.push(targetGroup)
+      if (explicitWaveId) groupByWaveId.set(explicitWaveId, targetGroup)
+      else legacyGroup = targetGroup
     }
     targetGroup.lanes.push(indexed)
     targetGroup.laneRows.push(indexed)
@@ -335,27 +369,24 @@ export function collectEnsembleFanoutViewportGroups(
   }
 
   const populated = groups.filter((group) => group.lanes.length > 0)
-  if (legacyGroup) {
-    legacyGroup.stage = stageFromLaneMessages(legacyGroup.lanes)
-  }
-
   return populated
     .sort((a, b) => a.anchorIndex - b.anchorIndex)
     .map((group) => ({
-      // Pre-1.0.7 status rows could share ids within one round. Pair the
-      // receipt anchor with the first canonical lane-card id so two historical
-      // dispatch waves can never collide in disclosure state.
+      // A durable wave id survives page growth and receipt hydration. Only
+      // legacy receipts need a lane suffix: pre-1.0.7 status ids could repeat.
       viewportId: viewportId(
         chatId,
         roundId,
-        `${group.waveId}-${group.lanes[0]?.message.id || 'empty'}`
+        group.hasDurableWaveId
+          ? group.waveId
+          : `${group.waveId}-${group.lanes[0]?.message.id || 'empty'}`
       ),
       waveId: group.waveId,
       chatId,
       roundId,
       anchorIndex: group.anchorIndex,
       expectedLaneCount: group.expectedLaneCount,
-      stage: group.stage,
+      stage: group.dispatchLabel ? group.stage : stageFromLaneMessages(group.lanes),
       category: group.category,
       dispatchLabel: group.dispatchLabel,
       lanes: group.lanes,
@@ -475,16 +506,8 @@ function laneIsTerminal(message: ChatMessage, terminalRunIds: ReadonlySet<string
   return TERMINAL_PARTICIPANT_STATUSES.has(metadataString(message, 'ensembleStatus') || '')
 }
 
-function isFanoutDispatchStatus(message: ChatMessage): boolean {
-  return Boolean(
-    message.role === 'system' &&
-    message.metadata?.kind === 'ensembleRoundStatus' &&
-    FANOUT_DISPATCH_STATUS.test(message.content || '')
-  )
-}
-
 function startsLaterTranscriptTurn(message: ChatMessage): boolean {
-  if (isFanoutDispatchStatus(message)) return true
+  if (readFanoutDispatchStatus(message)) return true
   if (metadataString(message, 'ensembleLaneId')) return false
   if (!metadataString(message, 'ensembleParticipantId')) return false
   return (

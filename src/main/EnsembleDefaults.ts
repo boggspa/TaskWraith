@@ -5,6 +5,8 @@ import type {
   ProviderId
 } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { DEVIN_DEFAULT_MODEL_ID } from '../shared/devinModelCatalog'
+import { KIMI_K28_MODEL_ID } from '../shared/kimiModels'
 
 /*
  * F2 (1.0.3) — the per-provider MODEL defaults below MUST stay in
@@ -238,7 +240,7 @@ export function createDefaultEnsembleConfig(
     // of at most 5, so even a fully-loaded participant panel
     // stays navigable in balanced rows. Hard min on the remove path is 2.
     maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
-    orchestrationMode: 'turn_bound',
+    orchestrationMode: 'continuous',
     maxContinuationHops: 6,
     participants,
     bossmanParticipantId: participants[0]?.id,
@@ -251,12 +253,13 @@ export function createDefaultEnsembleConfig(
 function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
   if (provider === 'claude') return 'claude-sonnet-5'
-  if (provider === 'kimi') return 'kimi-k2.7-code'
-  if (provider === 'grok') return 'grok-4.6'
+  if (provider === 'kimi') return KIMI_K28_MODEL_ID
+  if (provider === 'grok') return 'grok-4.7'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3.5:9b'
-  if (provider === 'mistral') return 'devstral-small'
+  if (provider === 'mistral') return 'mistral-medium-3.5'
   if (provider === 'muse') return 'muse-spark-1.2'
+  if (provider === 'devin') return DEVIN_DEFAULT_MODEL_ID
   return 'flash-lite'
 }
 

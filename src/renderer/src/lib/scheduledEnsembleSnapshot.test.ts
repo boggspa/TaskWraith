@@ -77,7 +77,7 @@ describe('buildScheduledEnsembleSnapshot', () => {
       }),
       { now: () => FIXED_NOW }
     )!
-    expect(snap.orchestrationMode).toBe('turn_bound')
+    expect(snap.orchestrationMode).toBe('continuous')
     expect(snap.fanoutPolicy).toBe('all')
     expect(snap.concurrentModeEnabled).toBe(true)
     expect(snap.participants.map((p) => p.id)).toEqual(['claude', 'codex'])
@@ -109,15 +109,15 @@ describe('buildScheduledEnsembleSnapshot', () => {
     expect(snap.participants[0].role).toBe('Explorer')
   })
 
-  it('normalises orchestrationMode to turn_bound when continuous is not explicitly set', () => {
+  it('normalises orchestrationMode to continuous even when the chat record omits it', () => {
     const snap = buildScheduledEnsembleSnapshot(
       chat({ ensemble: ensemble({ orchestrationMode: undefined as any }) }),
       { now: () => FIXED_NOW }
     )!
-    expect(snap.orchestrationMode).toBe('turn_bound')
+    expect(snap.orchestrationMode).toBe('continuous')
   })
 
-  it('maps legacy concurrent snapshots to read-only fan-out', () => {
+  it('maps legacy concurrent snapshots to fan-out On (all)', () => {
     const snap = buildScheduledEnsembleSnapshot(
       chat({
         ensemble: ensemble({
@@ -126,7 +126,7 @@ describe('buildScheduledEnsembleSnapshot', () => {
       }),
       { now: () => FIXED_NOW }
     )!
-    expect(snap.fanoutPolicy).toBe('read_only')
+    expect(snap.fanoutPolicy).toBe('all')
     expect(snap.concurrentModeEnabled).toBe(true)
   })
 })
@@ -150,7 +150,8 @@ describe('applyScheduledEnsembleSnapshot', () => {
     }
     const next = applyScheduledEnsembleSnapshot(sourceChat, snapshot)
     expect(next.ensemble!.orchestrationMode).toBe('turn_bound')
-    expect(next.ensemble!.fanoutPolicy).toBe('read_only')
+    // Apply-side normalization collapses the retired read_only level to 'all'.
+    expect(next.ensemble!.fanoutPolicy).toBe('all')
     expect(next.ensemble!.concurrentModeEnabled).toBe(true)
     expect(next.ensemble!.participants.map((p) => p.id)).toEqual(['claude'])
     expect(next.ensemble!.maxParticipants).toBe(4)

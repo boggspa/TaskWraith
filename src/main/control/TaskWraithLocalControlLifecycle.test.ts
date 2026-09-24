@@ -119,6 +119,9 @@ describe('TaskWraith local-control bootstrap lifecycle', () => {
           threadOffers: () => {
             throw new Error('Unauthenticated regression client must not request offers.')
           },
+          findThreads: () => {
+            throw new Error('Unauthenticated regression client must not find threads.')
+          },
           toggleEnsembleSeat: async () => {
             throw new Error('Unauthenticated regression client must not configure a seat.')
           }

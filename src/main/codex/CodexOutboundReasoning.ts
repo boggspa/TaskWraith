@@ -76,6 +76,7 @@ export function resolveCodexOutboundReasoning(
 ): CodexOutboundReasoning {
   const effort = codexWireReasoningEffort(requestedEffort, model)
   const summary = codexReasoningSummaryModeForEffort(effort)
+  const contextConfig = codexModelContextConfig(model) || {}
   return {
     effort,
     summary,
@@ -84,10 +85,14 @@ export function resolveCodexOutboundReasoning(
       ...(summary ? { summary } : {})
     },
     threadConfig: {
-      ...(codexModelContextConfig(model) || {}),
+      ...contextConfig,
       model_reasoning_effort: effort
     },
-    execConfigArgs: ['-c', `model_reasoning_effort="${effort}"`]
+    execConfigArgs: [
+      '-c',
+      `model_reasoning_effort="${effort}"`,
+      ...Object.entries(contextConfig).flatMap(([key, value]) => ['-c', `${key}=${value}`])
+    ]
   }
 }
 

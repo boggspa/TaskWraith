@@ -19,7 +19,6 @@ function session(id: string, over: Partial<CanvasSessionRecord> = {}): CanvasSes
     url: 'http://localhost:3000',
     title: 'title',
     viewport: { width: 1280, height: 800 },
-    originAllowlist: [],
     status: 'active',
     createdAt: '2026-06-21T00:00:00.000Z',
     updatedAt: '2026-06-21T00:00:00.000Z',
@@ -80,9 +79,16 @@ describe('CanvasStore', () => {
     store.upsertSession(session('html', { driver: 'html' }))
     store.upsertSession(session('image', { driver: 'image' }))
     store.upsertSession(session('sketch', { driver: 'sketch' }))
+    store.upsertSession(
+      session('emulator', { driver: 'emulator', url: 'emulator://homebrew-demo' })
+    )
     expect(store.getSession('html')?.driver).toBe('html')
     expect(store.getSession('image')?.driver).toBe('image')
     expect(store.getSession('sketch')?.driver).toBe('sketch')
+    expect(store.getSession('emulator')).toMatchObject({
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo'
+    })
   })
 
   it('rejects records without an id', () => {

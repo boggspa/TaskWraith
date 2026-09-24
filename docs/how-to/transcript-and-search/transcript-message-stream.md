@@ -3,23 +3,23 @@
 **Platform:** Electron
 
 ## What it is
-The transcript message stream is the main scrolling conversation view in the center stage — every user message, assistant reply, tool-activity block, and inline card (ensemble rounds, plan proposals, agent questions, run-failure notices) for the current chat, in order.
+The main scrolling chat view showing all messages, assistant replies, tool activity, and inline cards in order.
 
 ## Where to find it
-It fills the center stage whenever a chat is open. Long-running chats render efficiently because rows outside the visible band are windowed (virtualized) rather than all mounted at once.
+In the center stage whenever a chat is open.
 
 ![Main chat transcript showing a multi-message conversation thread](../images/transcript-and-search__transcript-message-stream.png)
 
 ## How to use it
-1. Scroll up to read history; the view auto-follows new messages at the bottom while you stay scrolled to the bottom, and stops auto-following the moment you scroll away so it doesn't yank you back mid-read.
-2. When new messages arrive while you've scrolled away, a **"↓ N new messages"** pill appears — click it, or press **End**, to jump back to the latest message and re-engage auto-follow.
-3. Right-click any message bubble to copy, pin/unpin, delete, or spin it off into a new side chat (see [Message context menu](message-context-menu.md)).
-4. Hover a message's footer for its timestamp and the same quick actions (copy/pin/delete/side-chat) via the actions chip.
-5. Long pasted user messages collapse automatically — click **Show more** / **Show less** to expand or re-collapse them.
-6. Tool activity (file reads, edits, shell commands, searches) appears inline beneath an agent's turn, grouped into expandable stacks — see [Activity stack](activity-stack.md).
+1. Scroll to read history. The view auto-follows new messages at the bottom.
+2. When new messages arrive while you are scrolled up, a **"↓ N new messages"** pill appears — click it or press **End** to jump to the latest message.
+3. Right-click a message to copy, pin, unpin, delete, or open it in a side chat.
+4. Hover a message footer for its timestamp and quick actions.
+5. Long pasted messages collapse automatically — click **Show more** / **Show less** to expand or collapse them.
+6. Tool activity appears inline beneath an agent's turn, grouped into expandable stacks.
 
 ## Tips & related
-- [Message context menu](message-context-menu.md) — the right-click menu on any message bubble.
-- [Copy transcript button](copy-transcript-button.md) — copy the whole visible transcript instead of one message.
-- [Activity stack](activity-stack.md) — the collapsible tool-call list rendered inline in the stream.
-- [Pinned messages](../chats-and-threads/pinned-messages.md) — review everything you've pinned from this stream.
+- [Message context menu](message-context-menu.md) — right-click options for any message
+- [Copy transcript button](copy-transcript-button.md) — copy the entire transcript
+- [Activity stack](activity-stack.md) — collapsible tool-call list in the stream
+- [Pinned messages](../chats-and-threads/pinned-messages.md) — review pinned messages from this stream

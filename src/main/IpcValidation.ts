@@ -36,6 +36,7 @@ type ArgSpec =
   | 'bugReportPayload'
   | 'optionalCanvasOpenArgs'
   | 'optionalCanvasSketchArgs'
+  | 'canvasEmulatorOpenArgs'
   | 'canvasAdoptArgs'
   | 'canvasBounds'
   | 'stickyAppWatchStash'
@@ -47,9 +48,13 @@ const PI_UPSTREAMS = new Set([
   'zai',
   'qwen-token-plan',
   'minimax',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-sgp',
+  'xiaomi-token-plan-ams',
   'mistral',
   'groq',
-  'cerebras'
+  'cerebras',
+  'openrouter'
 ])
 // Optional host CLIs TaskWraith can install/upgrade on the user's behalf. Must
 // mirror HOST_CLI_TOOL_IDS in src/shared/hostCliToolCatalog.ts (this module
@@ -69,7 +74,8 @@ const PROVIDERS = new Set([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 const APPROVAL_ACTIONS = new Set([
   'accept',
@@ -126,14 +132,28 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'projects:studio-save': ['object'],
   'projects:studio-discard': ['object'],
   'projects:studio-list': ['object'],
+  // Authorized site sessions. Payloads are validated in webLoginHandlers.
+  'web-login:list': [],
+  'web-login:add': ['object'],
+  'web-login:update': ['object'],
+  'web-login:remove': ['object'],
+  'web-login:sign-in': ['object'],
+  'web-login:sign-out': ['object'],
+  'web-login:migration-candidates': [],
+  'web-login:migration-dismiss': ['object'],
+  'web-login:clear-shared-jar': [],
   'projects:extract-reference': ['object'],
   'projects:get-reference-extract': ['object'],
   'projects:revoke-reference-extract': ['object'],
   'projects:read-reference-extract-text': ['object'],
   'get-chats': ['optionalString'],
+  'get-workspace-commit-attributions': ['string'],
   'get-chat-list': ['optionalString'],
   'get-pinned-messages': ['optionalString'],
   'get-chat': ['chatId'],
+  'get-chat-transcript-page': ['object'],
+  'thread-catalogue:read': ['object'],
+  'thread-catalogue:status': [],
   'create-chat': ['string', 'workspacePath'],
   'create-global-chat': [],
   'create-ensemble-chat': ['optionalObject'],
@@ -163,10 +183,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'set-chat-kind': ['object'],
   'rebind-chat-workspace': ['object'],
   'save-chat': ['chatRecord'],
+  'patch-chat-composer-selection': ['object'],
+  'mutate-chat-transcript': ['object'],
   'set-chat-git-workflow': ['object'],
   'delete-chat': ['chatId'],
   'unarchive-chat': ['nonEmptyString'],
   'export-archived-chat': ['object'],
+  'import-external-provider-thread': ['object'],
   // Human collaboration (shared chat: host + up to 2 human collaborators). These
   // MUST be registered — installIpcValidation throws "No IPC schema registered"
   // for any unregistered ipcMain.handle channel, so their absence bricks the whole
@@ -284,6 +307,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'execution-runs:events': ['nonEmptyString'],
   'execution-runs:append-stack-step': ['object'],
   'execution-runs:cancel': ['nonEmptyString', 'optionalString'],
+  'execution-runs:resume': ['nonEmptyString', 'optionalString'],
+  'execution-runs:archive': ['nonEmptyString', 'optionalString'],
+  'execution-graphs:retry-recovery': ['optionalObject'],
   'execution-runs:cancel-step': ['object'],
   'execution-runs:formalize': ['object'],
   'get-evidence-packs': ['optionalString'],
@@ -315,6 +341,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-run-event-replay': ['runId'],
   'run-analyst:analyze': ['object'],
   'closeout:summarize': ['object'],
+  'continuation:apply-title': ['object'],
   'continuation:propose': ['object'],
   'get-approval-ledger': ['optionalObject'],
   'record-approval-elevation-ack': ['object'],
@@ -348,7 +375,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // action validation and main-window authorization live in its handler.
   'host-lifecycle:status': [],
   'host-lifecycle:set': ['object'],
+  'host-lifecycle:inspect': [],
   'set-appearance-mode': ['any'],
+  'appearance:get-system-accent-color': [],
   'get-host-weather': [],
   'native-capabilities:snapshot': [],
   'fx-rates:get': [],
@@ -416,8 +445,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'check-for-updates': [],
   'download-update': [],
   'download-update-and-restart': [],
-  'install-update-on-quit': [],
-  'install-update-now': [],
+  'install-update-now': ['optionalObject'],
   // Local Servers — dev servers detected under the user's workspaces.
   'local-servers-snapshot': [],
   'local-servers-refresh': [],
@@ -433,8 +461,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // primary app surface.
   'canvas:open-window': ['optionalCanvasOpenArgs'],
   'canvas:open-embedded': ['optionalCanvasOpenArgs'],
+  'canvas:open-emulator-embedded': ['canvasEmulatorOpenArgs'],
   'canvas:open-sketch-window': ['optionalCanvasSketchArgs'],
   'canvas:open-sketch-embedded': ['optionalCanvasSketchArgs'],
+  'canvas:open-popout': ['object'],
+  'canvas:dock-popout': ['object'],
   'canvas:adopt-embedded': ['canvasAdoptArgs'],
   'canvas:set-bounds': ['nonEmptyString', 'canvasBounds'],
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
@@ -513,12 +544,34 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'import-ollama-web-session': [],
   'set-ollama-web-session': ['nonEmptyString'],
   'clear-ollama-web-session': [],
+  'get-kimi-web-session-status': [],
+  'import-kimi-web-session': [],
+  'set-kimi-web-session': ['nonEmptyString'],
+  'clear-kimi-web-session': [],
+  // Terminal session channels (src/main/ipc/terminalHandlers.ts). The
+  // sessionId argument is the renderer-supplied session key.
+  'terminal:create': ['workspacePath', 'nonEmptyString', 'optionalString'],
+  'terminal:write': ['nonEmptyString', 'string'],
+  'terminal:resize': ['nonEmptyString', 'number', 'number'],
+  'terminal:detach': ['nonEmptyString'],
+  'terminal:kill': ['nonEmptyString'],
+  'terminal:list': [],
+  'terminal:getScrollback': ['nonEmptyString'],
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
   'git:unpushed-commits': ['optionalObject'],
   'git:workspace-stats': ['optionalObject'],
   'git:work-provenance': ['optionalObject'],
+  // Workspace Stats -> Contributions. All three resolve their repository through
+  // the same gitPayloadPath/assertSenderScope gate as the rest of this block, so
+  // the structural spec matches its siblings: one optional payload object, and
+  // nothing else. The handlers already treat a missing payload as "unavailable"
+  // rather than crashing, so 'optionalObject' keeps that behaviour while still
+  // rejecting a string/array/number payload before it reaches the handler.
+  'git:shared-workspace': ['optionalObject'],
+  'git:contribution-preview': ['optionalObject'],
+  'git:contribution-action': ['optionalObject'],
   'git:subscribe-snapshot': ['optionalObject'],
   'git:unsubscribe-snapshot': ['optionalObject'],
   'git:invalidate-snapshot': ['optionalObject'],
@@ -526,6 +579,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'work-locks:subscribe': ['object'],
   'work-locks:unsubscribe': ['optionalObject'],
   'work-locks:force-release-recovery': ['object'],
+  // Both are argument-free: the state is main-owned, and the retry deliberately
+  // takes no renderer-supplied parameters so it cannot be steered.
+  'startup-authority:get': [],
+  'startup-authority:retry': [],
   'git:stage': ['optionalObject'],
   'git:unstage': ['optionalObject'],
   'git:commit': ['optionalObject'],
@@ -654,6 +711,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-external-usage': ['optionalObject'],
   'get-daily-usage-rollup': [],
   'quota-snapshot-hook:get': [],
+  'usage-web-session:get-status': ['nonEmptyString'],
+  'usage-web-session:import': ['nonEmptyString'],
+  'usage-web-session:clear': ['nonEmptyString'],
   'get-workspace-activity': ['workspacePath', 'optionalNumber'],
   'grok-usage:probe': [],
   'mistral-quota:get': [],
@@ -703,7 +763,15 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // constructed AgentRunPayload + composer metadata back.
   'compose-run': ['object'],
   'cancel-agent-run': ['optionalProvider', 'optionalString'],
-  'respond-agent-approval': ['nonEmptyString', 'approvalAction'],
+  'get-pending-agent-approvals': [],
+  'respond-agent-approval': [
+    'nonEmptyString',
+    'approvalAction',
+    'optionalString',
+    'optionalString'
+  ],
+  'command-rules:list': [],
+  'command-rules:remove': ['nonEmptyString'],
   'run-gemini': [
     'workspacePath',
     'string',
@@ -918,6 +986,7 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   if (spec === 'bugReportPayload') validateBugReportPayload(channel, value)
   if (spec === 'optionalCanvasOpenArgs') validateCanvasOpenArgs(channel, value)
   if (spec === 'optionalCanvasSketchArgs') validateCanvasSketchArgs(channel, value)
+  if (spec === 'canvasEmulatorOpenArgs') validateCanvasEmulatorOpenArgs(channel, value)
   if (spec === 'canvasAdoptArgs') validateCanvasAdoptArgs(channel, value)
   if (spec === 'canvasBounds') validateCanvasBounds(channel, value)
   if (spec === 'stickyAppWatchStash') validateStickyAppWatchStash(channel, value)
@@ -945,21 +1014,11 @@ function validateCanvasOpenArgs(channel: string, value: unknown): void {
   validateKnownKeys(
     channel,
     value,
-    new Set(['url', 'originAllowlist', 'chatId', ...(embedded ? ['presentation'] : [])])
+    new Set(['url', 'chatId', ...(embedded ? ['presentation'] : [])])
   )
   if (value.url !== undefined) {
     if (typeof value.url !== 'string' || !value.url.trim() || value.url.length > 8_192) {
       throw new Error(`${channel} url must be a non-empty string of at most 8192 characters.`)
-    }
-  }
-  if (value.originAllowlist !== undefined) {
-    if (!Array.isArray(value.originAllowlist) || value.originAllowlist.length > 64) {
-      throw new Error(`${channel} originAllowlist must be an array of at most 64 strings.`)
-    }
-    for (const origin of value.originAllowlist) {
-      if (typeof origin !== 'string' || !origin.trim() || origin.length > 2_048) {
-        throw new Error(`${channel} originAllowlist entries must be non-empty bounded strings.`)
-      }
     }
   }
   if (value.presentation !== undefined && value.presentation !== 'dock') {
@@ -977,6 +1036,15 @@ function validateCanvasSketchArgs(channel: string, value: unknown): void {
     throw new Error(`${channel} presentation must be dock.`)
   }
   validateOptionalCanvasChatId(channel, value.chatId)
+}
+
+function validateCanvasEmulatorOpenArgs(channel: string, value: unknown): void {
+  if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
+  validateKnownKeys(channel, value, new Set(['chatId', 'presentation']))
+  assertSafeChatId(value.chatId, `${channel} chat id`)
+  if (value.presentation !== undefined && value.presentation !== 'dock') {
+    throw new Error(`${channel} presentation must be dock.`)
+  }
 }
 
 function validateCanvasAdoptArgs(channel: string, value: unknown): void {
@@ -1111,6 +1179,8 @@ function validateSettingsPatch(channel: string, value: unknown): void {
     throw new Error(`${channel} auditOrchestration must be an object.`)
   if (value.agenticWorkspaceGrants !== undefined)
     throw new Error(`${channel} cannot update workspace grants directly.`)
+  if (value.commandRules !== undefined)
+    throw new Error(`${channel} cannot update command rules directly.`)
 }
 
 /** Bug-report payload guard. Keeps the IPC honest: only the four

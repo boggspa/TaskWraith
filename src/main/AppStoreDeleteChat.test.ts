@@ -19,6 +19,9 @@ const chatListIndexPath = (): string => join(userDataPath, 'chat-list-index.json
 const runQueuePath = (): string => join(userDataPath, 'run-queue.json')
 const runRecoveryPath = (): string => join(userDataPath, 'run-recovery.json')
 const approvalLedgerPath = (): string => join(userDataPath, 'approval-ledger.json')
+const approvalLedgerSnapshotPath = (): string =>
+  join(userDataPath, 'approval-ledger-v2.snapshot.json')
+const approvalLedgerEventsPath = (): string => join(userDataPath, 'approval-ledger-v2.events.jsonl')
 
 function makeRun(runId: string): ChatRun {
   return { runId, startedAt: '2026-05-08T00:00:00.000Z' }
@@ -269,11 +272,21 @@ describe('AppStore.clearChats all-history cleanup', () => {
       JSON.stringify([{ runId: 'recovered-run', promptPreview: 'private recovered prompt' }]),
       'utf8'
     )
-    fs.writeFileSync(
-      approvalLedgerPath(),
-      JSON.stringify([{ approvalId: 'legacy-eval', preview: { script: 'private script' } }]),
-      'utf8'
-    )
+    AppStore.recordApprovalRequest({
+      approvalId: 'legacy-eval',
+      provider: 'codex',
+      service: 'canvasEval',
+      method: 'codex-mcp/canvas_eval',
+      title: 'Private approval',
+      preview: { script: 'private script' },
+      actions: ['accept', 'decline'],
+      chatId: parent.appChatId,
+      workspaceId: parent.workspaceId,
+      workspacePath: parent.workspacePath,
+      runId: 'run-parent'
+    })
+    AppStore.compactApprovalLedgerEventStoreForTests()
+    fs.writeFileSync(`${approvalLedgerPath()}.corrupt-1`, 'private recovery bytes', 'utf8')
     seedRunFiles('run-parent')
     seedRunFiles('run-ensemble')
     seedRunFiles('orphan-run')
@@ -285,6 +298,8 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(runQueuePath())).toBe(true)
     expect(fs.existsSync(runRecoveryPath())).toBe(true)
     expect(fs.existsSync(approvalLedgerPath())).toBe(true)
+    expect(fs.existsSync(approvalLedgerSnapshotPath())).toBe(true)
+    expect(fs.existsSync(approvalLedgerEventsPath())).toBe(true)
 
     AppStore.clearChats()
 
@@ -310,6 +325,9 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(runQueuePath())).toBe(false)
     expect(fs.existsSync(runRecoveryPath())).toBe(false)
     expect(fs.existsSync(approvalLedgerPath())).toBe(false)
+    expect(fs.existsSync(approvalLedgerSnapshotPath())).toBe(false)
+    expect(fs.existsSync(approvalLedgerEventsPath())).toBe(false)
+    expect(fs.existsSync(`${approvalLedgerPath()}.corrupt-1`)).toBe(false)
     expect(fs.existsSync(kimiAcpSeatStateRoot(userDataPath))).toBe(false)
     expect(AppStore.getChats()).toEqual([])
   })
@@ -320,15 +338,48 @@ describe('AppStore.clearChats all-history cleanup', () => {
     AppStore.saveChat({ ...workspaceB, workspaceId: 'workspace-2', workspacePath: '/repo-2' })
     seedRunFiles('run-a')
     seedRunFiles('run-b')
-    fs.writeFileSync(approvalLedgerPath(), '[{"approvalId":"global-ledger"}]', 'utf8')
+    AppStore.recordApprovalRequest({
+      approvalId: 'global-ledger',
+      provider: 'codex',
+      method: 'approval/global',
+      title: 'Global approval',
+      actions: ['accept', 'decline']
+    })
+    AppStore.recordApprovalRequest({
+      approvalId: 'workspace-a-ledger',
+      provider: 'codex',
+      method: 'approval/workspace-a',
+      title: 'Workspace A approval',
+      actions: ['accept', 'decline'],
+      chatId: workspaceA.appChatId,
+      workspaceId: workspaceA.workspaceId,
+      workspacePath: workspaceA.workspacePath,
+      runId: 'run-a'
+    })
+    AppStore.recordApprovalRequest({
+      approvalId: 'workspace-b-ledger',
+      provider: 'codex',
+      method: 'approval/workspace-b',
+      title: 'Workspace B approval',
+      actions: ['accept', 'decline'],
+      chatId: workspaceB.appChatId,
+      workspaceId: 'workspace-2',
+      workspacePath: '/repo-2',
+      runId: 'run-b'
+    })
+    AppStore.compactApprovalLedgerEventStoreForTests()
 
     AppStore.clearChats(workspaceA.workspaceId)
+    AppStore.resetApprovalLedgerEventStoreForTests()
 
     expect(fs.existsSync(chatFile('workspace-a-chat'))).toBe(false)
     expect(fs.existsSync(runEventPath('run-a'))).toBe(false)
     expect(fs.existsSync(chatFile('workspace-b-chat'))).toBe(true)
     expect(fs.existsSync(runEventPath('run-b'))).toBe(true)
     expect(fs.existsSync(approvalLedgerPath())).toBe(true)
+    expect(AppStore.getApprovalLedger({ approvalId: 'global-ledger' })).toHaveLength(1)
+    expect(AppStore.getApprovalLedger({ approvalId: 'workspace-a-ledger' })).toHaveLength(0)
+    expect(AppStore.getApprovalLedger({ approvalId: 'workspace-b-ledger' })).toHaveLength(1)
     expect(AppStore.getChats().map((chat) => chat.appChatId)).toEqual(['workspace-b-chat'])
   })
 

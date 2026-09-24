@@ -1,0 +1,987 @@
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, delimiter, join } from 'node:path'
+import { afterAll, beforeAll, afterEach, expect, it, vi } from 'vitest'
+import { spawnSync } from 'node:child_process'
+
+import { HostProjectionClient } from '../host-client/HostProjectionClient'
+import {
+  hostStandaloneAntigravityStatus,
+  hostStandaloneComposedProviderIds
+} from '../host-shared/HostStandaloneProviderMatrix'
+import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from '../host-runtime/HostProfileAuthorityLease'
+import { HOST_PERSIST_ENV, type HostLeaseRegistryPorts } from '../host-runtime/HostLeaseRegistry'
+import {
+  HOST_REGISTRY_REFRESH_MS,
+  HOST_REGISTRY_ROOT_ENV,
+  HostRegistryPublisher,
+  hostRegistryEntryPath,
+  readHostRegistryEntry
+} from '../host-runtime/HostRegistry'
+import { currentProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
+import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
+import {
+  taskWraithHostDiscoveryPath,
+  taskWraithHostSocketPath,
+  taskWraithHostTokenPath
+} from '../shared/taskWraithHostPaths.node'
+
+import { createHostNodeProductionServer } from './HostNodeProductionFactory'
+import { resolveHostNodeProviderBinary } from './HostNodeProviderResources'
+
+/**
+ * Every server below composes the real provider factories, which resolve
+ * provider CLIs through this process's PATH (then common directories under
+ * HOME) and run them with this process's environment. Unguarded, every run
+ * executes the installed `claude auth status` and `cursor-agent status`,
+ * which write ~/.claude.json, ~/.claude/, ~/.cursor/cli-config.json and
+ * ~/Library/Caches. So the whole file is hermetic: a failing stub for every
+ * provider CLI comes first on PATH, so no installed CLI runs at all, and
+ * HOME with the XDG and tool config roots points into a temporary directory,
+ * so nothing else a spawned process writes under HOME reaches the
+ * developer's real home. Registered before any other hook, restored after
+ * all of them.
+ */
+const PROVIDER_CLI_STUBS = [
+  'agy',
+  'claude',
+  'codex',
+  'cursor-agent',
+  'devin',
+  'grok',
+  'kimi',
+  'muse',
+  'ollama',
+  'pi',
+  'vibe-acp'
+] as const
+const HERMETIC_VARIABLES = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME'
+] as const
+const realEnvironment = new Map<string, string | undefined>()
+let hermeticHome = ''
+let providerStubs = ''
+beforeAll(() => {
+  hermeticHome = realpathSync(mkdtempSync(join(tmpdir(), 'host-factory-home-')))
+  providerStubs = join(hermeticHome, 'provider-stubs')
+  mkdirSync(providerStubs)
+  for (const name of PROVIDER_CLI_STUBS) {
+    // @portability-ok: a POSIX stub that only has to be found; on win32 it
+    // cannot run, which fails the probe the same way.
+    writeFileSync(join(providerStubs, name), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  }
+  const values: Record<(typeof HERMETIC_VARIABLES)[number], string> = {
+    PATH: [providerStubs, process.env.PATH].filter(Boolean).join(delimiter),
+    HOME: hermeticHome,
+    USERPROFILE: hermeticHome,
+    XDG_CONFIG_HOME: join(hermeticHome, '.config'),
+    XDG_CACHE_HOME: join(hermeticHome, '.cache'),
+    XDG_DATA_HOME: join(hermeticHome, '.local', 'share'),
+    XDG_STATE_HOME: join(hermeticHome, '.local', 'state'),
+    CLAUDE_CONFIG_DIR: join(hermeticHome, '.claude'),
+    CODEX_HOME: join(hermeticHome, '.codex')
+  }
+  for (const name of HERMETIC_VARIABLES) {
+    realEnvironment.set(name, process.env[name])
+    process.env[name] = values[name]
+  }
+})
+afterAll(() => {
+  for (const [name, value] of realEnvironment) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  rmSync(hermeticHome, { recursive: true, force: true })
+})
+
+it('resolves no installed provider CLI: each one this Host composes finds its stub or nothing', () => {
+  for (const providerId of hostStandaloneComposedProviderIds()) {
+    const resolved = resolveHostNodeProviderBinary(providerId)
+    if (resolved.binaryPath !== null) {
+      expect(resolved.binaryPath, providerId).toBe(
+        join(providerStubs, basename(resolved.binaryPath))
+      )
+    }
+  }
+})
+
+const historyWorkers = vi.hoisted(() => ({ directory: '' }))
+vi.mock('./ThreadCatalogueHostClient', async () => {
+  const { Worker } = await import('node:worker_threads')
+  const { join } = await import('node:path')
+  const { ThreadCatalogueClient } =
+    await import('../host-shared/thread-catalogue/ThreadCatalogueClient')
+  return {
+    createHostThreadCatalogue: (profilePath: string, writerId: string) => {
+      const createPort = () =>
+        new Worker(join(historyWorkers.directory, 'ThreadCatalogueWorkerEntry.js'))
+      return new ThreadCatalogueClient(createPort(), {
+        restart: createPort,
+        reader: { profilePath, runtimeInstanceId: writerId, segmented: false },
+        decoderPath: join(historyWorkers.directory, 'ThreadCatalogueDecoderEntry.js'),
+        owner: { writer: 'host', writerId }
+      })
+    }
+  }
+})
+beforeAll(() => {
+  historyWorkers.directory = mkdtempSync(join(tmpdir(), 'host-factory-workers-'))
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(process.cwd(), 'scripts/build-history-workers.cjs'),
+      '--outdir',
+      historyWorkers.directory
+    ],
+    { encoding: 'utf8' }
+  )
+  expect(result.status, result.stderr).toBe(0)
+})
+afterAll(() => rmSync(historyWorkers.directory, { recursive: true, force: true }))
+
+/**
+ * The factory publishes a registry entry only through an injected `registry`
+ * (the production CLI builds one); none of the servers below is given one.
+ * Each hand-built env still names this file's own registry root, so a
+ * publisher ever built from it could never reach ~/.taskwraith/hosts.
+ */
+let registryRoot = ''
+beforeAll(() => {
+  registryRoot = realpathSync(mkdtempSync(join(tmpdir(), 'host-factory-registry-')))
+})
+afterAll(() => rmSync(registryRoot, { recursive: true, force: true }))
+const isolated = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+  ...env,
+  [HOST_REGISTRY_ROOT_ENV]: registryRoot
+})
+
+const paths: string[] = []
+afterEach(() => {
+  while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
+})
+
+it('creates a production server for a cold profile without touching Desktop state', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'host-node-factory-'))
+  paths.push(parent)
+  const profile = join(parent, 'cold-profile')
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: isolated({ PATH: '' }),
+    temporaryParent: parent
+  })
+  expect(server.phase).toBe('idle')
+})
+
+it('keeps Full Access capability off without an exact copied bootstrap secret', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'host-node-factory-consent-'))
+  paths.push(parent)
+  expect(() =>
+    createHostNodeProductionServer({
+      profilePath: join(parent, 'invalid-profile'),
+      fullAccessBootstrapSecret: Buffer.alloc(31)
+    })
+  ).toThrow(/32-byte key/)
+
+  const source = Buffer.alloc(32, 7)
+  const server = createHostNodeProductionServer({
+    profilePath: join(parent, 'valid-profile'),
+    fullAccessBootstrapSecret: source
+  })
+  source.fill(0)
+  expect(server.phase).toBe('idle')
+
+  const defaultOff = createHostNodeProductionServer({
+    profilePath: join(parent, 'default-off-profile')
+  })
+  expect(defaultOff.phase).toBe('idle')
+})
+
+it('composes all static live providers plus guarded AntiGravity on a cold profile', async () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-nine-')))
+  paths.push(parent)
+  const profile = join(parent, 'cold-profile')
+  // Pre-create the profile (the shape that passes on win32): when the Host
+  // itself creates the directory, win32 runners report a discovery-path
+  // mismatch at connect time.
+  mkdirSync(profile)
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: isolated({ PATH: '' }),
+    temporaryParent: parent
+  })
+  await server.start()
+  // No injected registry: a running server published nothing, even with a
+  // root named in its env.
+  expect(readdirSync(registryRoot)).toEqual([])
+  const client = new HostProjectionClient({
+    userDataPath: profile,
+    client: { clientId: 'nine-client', clientClass: 'test', clientVersion: '1.0' },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'workspace-git',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ]
+  })
+  await client.connect()
+  expect(client.welcome?.capabilities).not.toContain('workspace-git')
+  const statuses = await client.getProviderStatuses()
+  const ids = statuses.map((status) => status.providerId).sort()
+  expect(ids).toEqual([...hostStandaloneComposedProviderIds()].sort())
+  expect(ids).toEqual(expect.arrayContaining([...LIVE_SELECTABLE_PROVIDER_IDS]))
+  expect(ids).toContain('antigravity')
+  expect(hostStandaloneAntigravityStatus()).toMatchObject({
+    providerId: 'antigravity',
+    kind: 'conditional',
+    standaloneHost: 'composed',
+    run: 'conditional'
+  })
+  // Missing binaries are unavailable, never omitted.
+  for (const status of statuses) {
+    expect(['ready', 'auth_required', 'unavailable', 'degraded']).toContain(status.status)
+  }
+  client.close()
+  await server.stop()
+})
+
+it('admits AntiGravity only from existing consent plus a live nonempty agy models proof', async () => {
+  if (process.platform === 'win32') return
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-agy-')))
+  paths.push(parent)
+  const profile = join(parent, 'profile')
+  const bin = join(parent, 'bin')
+  const workspace = join(parent, 'workspace')
+  const runArgs = join(parent, 'agy-run-args')
+  mkdirSync(profile)
+  mkdirSync(bin)
+  mkdirSync(workspace)
+  writeFileSync(
+    join(profile, 'settings.json'),
+    JSON.stringify({
+      antigravityEnabled: true,
+      antigravityOptInAcceptedAt: 1_700_000_000_000
+    }),
+    { mode: 0o600 }
+  )
+  const agy = join(bin, 'agy')
+  // @portability-ok: the test returns before creating or executing this POSIX agy fixture on Windows.
+  writeFileSync(
+    agy,
+    [
+      '#!/bin/sh',
+      'if [ "$1" = "models" ]; then',
+      '  printf \'%s\\n\' \'[{"id":"gemini-3.7-flash-high"},{"id":"gemini-3.7-flash-medium"},{"id":"gemini-3.7-flash-low"}]\'',
+      '  exit 0',
+      'fi',
+      `printf '%s\\n' "$@" > "${runArgs}"`,
+      "printf '%s\\n' 'standalone agy response'"
+    ].join('\n')
+  )
+  chmodSync(agy, 0o700)
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: isolated({ PATH: bin }),
+    temporaryParent: parent
+  })
+  await server.start()
+  const client = new HostProjectionClient({
+    userDataPath: profile,
+    client: { clientId: 'agy-client', clientClass: 'test', clientVersion: '1.0' },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ]
+  })
+  await client.connect()
+
+  await expect(client.getProviderStatuses()).resolves.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ providerId: 'antigravity', status: 'ready' })
+    ])
+  )
+  await expect(client.getProviderAuthStatus('antigravity')).resolves.toMatchObject({
+    providerId: 'antigravity',
+    state: 'authenticated'
+  })
+  const offers = await client.getProviderOffers('antigravity')
+  expect(offers.models).toEqual([
+    expect.objectContaining({
+      label: 'Gemini 3.7 Flash',
+      default: true,
+      reasoning: expect.arrayContaining([expect.objectContaining({ reasoningId: 'low' })])
+    })
+  ])
+
+  const make = (
+    name: HostCommand['name'],
+    target: Record<string, string>,
+    arguments_: Record<string, unknown>,
+    id: string
+  ): HostCommand => ({
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: id,
+    idempotencyKey: `key-${id}`,
+    actor: { actorId: 'agy-client', clientId: 'agy-client', clientClass: 'test' },
+    name,
+    target,
+    arguments: arguments_,
+    issuedAt: '2026-08-30T00:00:00.000Z'
+  })
+  const workspaceReceipt = await client.submitCommand(
+    make('workspace.register', {}, { path: workspace }, 'agy-workspace')
+  )
+  const workspaceId =
+    workspaceReceipt.resultRef?.kind === 'workspace' ? workspaceReceipt.resultRef.workspaceId : ''
+  const threadReceipt = await client.submitCommand(
+    make(
+      'thread.create',
+      {},
+      { scope: 'workspace', workspaceId, title: 'AntiGravity integration' },
+      'agy-thread'
+    )
+  )
+  const threadId =
+    threadReceipt.resultRef?.kind === 'thread' ? threadReceipt.resultRef.threadId : ''
+  await expect(
+    client.submitCommand(
+      make(
+        'thread.configure',
+        { threadId },
+        {
+          providerId: 'antigravity',
+          modelId: offers.models[0].modelId,
+          reasoningId: 'low',
+          postureId: 'plan',
+          offerRevision: offers.offerRevision
+        },
+        'agy-configure'
+      )
+    )
+  ).resolves.toMatchObject({ status: 'succeeded' })
+  await expect(
+    client.submitCommand(
+      make('composer.send', { threadId }, { text: 'Inspect this workspace.' }, 'agy-run')
+    )
+  ).resolves.toMatchObject({ status: 'succeeded', resultSummary: 'run_started' })
+  await vi.waitFor(
+    async () => {
+      const snapshot = await client.getSnapshot()
+      expect(snapshot.snapshot.runs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'agy-run', providerOutcome: 'completed' })
+        ])
+      )
+    },
+    { timeout: 5_000 }
+  )
+  expect(readFileSync(runArgs, 'utf8').split(/\r?\n/)).toEqual(
+    expect.arrayContaining([
+      '--sandbox',
+      '--mode',
+      'plan',
+      '--model',
+      'gemini-3.7-flash-low',
+      '-p',
+      'Inspect this workspace.'
+    ])
+  )
+  await expect(client.getThreadHistory({ threadId, limit: 20 })).resolves.toMatchObject({
+    entries: expect.arrayContaining([
+      expect.objectContaining({ role: 'assistant', text: 'standalone agy response' })
+    ])
+  })
+
+  client.close()
+  await server.stop()
+})
+
+it.skipIf(process.platform === 'win32')(
+  'probes Git once, advertises only when available, and serves a hardened workspace read',
+  async () => {
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-git-')))
+    paths.push(parent)
+    const profile = join(parent, 'profile')
+    const workspace = join(parent, 'workspace')
+    const binary = join(parent, 'git-test')
+    const counter = join(parent, 'git-calls')
+    mkdirSync(workspace)
+    mkdirSync(join(workspace, '.git'))
+    // @portability-ok: gated by it.skipIf(process.platform === 'win32') above
+    writeFileSync(
+      binary,
+      [
+        '#!/bin/sh',
+        `printf x >> "${counter}"`,
+        'test -z "$GITHUB_TOKEN" || exit 9',
+        'case "$*" in',
+        '  *--version*) printf "git version test\\n" ;;',
+        `  *--show-toplevel*) printf "%s\\n" "${workspace}" ;;`,
+        '  *--show-current*) printf "main\\n" ;;',
+        '  *"rev-parse HEAD"*) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n" ;;',
+        '  *status*) printf "M  file.ts\\0" ;;',
+        '  *) exit 1 ;;',
+        'esac'
+      ].join('\n')
+    )
+    chmodSync(binary, 0o700)
+
+    const server = createHostNodeProductionServer({
+      profilePath: profile,
+      gitExecutable: binary,
+      env: isolated({ PATH: '', GITHUB_TOKEN: 'must-not-reach-git' }),
+      temporaryParent: parent
+    })
+    await server.start()
+    expect(readFileSync(counter, 'utf8')).toBe('x')
+
+    const client = new HostProjectionClient({
+      userDataPath: profile,
+      client: { clientId: 'git-client', clientClass: 'test', clientVersion: '1.0' },
+      capabilities: [
+        'bootstrap',
+        'snapshot',
+        'deltas',
+        'workspace-git',
+        'setup',
+        'commands',
+        'receipts',
+        'health'
+      ]
+    })
+    await client.connect()
+    expect(client.welcome?.capabilities).toContain('workspace-git')
+    const register: HostCommand = {
+      type: 'host.command',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId: 'git-workspace-register',
+      idempotencyKey: 'git-workspace-register-key',
+      actor: { actorId: 'git-client', clientId: 'git-client', clientClass: 'test' },
+      name: 'workspace.register',
+      target: {},
+      arguments: { path: workspace },
+      issuedAt: '2026-08-28T00:00:00.000Z'
+    }
+    const receipt = await client.submitCommand(register)
+    const workspaceId = receipt.resultRef?.kind === 'workspace' ? receipt.resultRef.workspaceId : ''
+    const result = await (
+      client as unknown as {
+        request(
+          kind: 'workspace.git.read',
+          params: { workspaceId: string; scope: 'status' }
+        ): Promise<{ kind: string; result: unknown }>
+      }
+    ).request('workspace.git.read', { workspaceId, scope: 'status' })
+    expect(result).toMatchObject({
+      kind: 'workspace.git.read',
+      result: {
+        scope: 'status',
+        branch: 'main',
+        head: 'a'.repeat(40),
+        files: [{ path: 'file.ts', kind: 'modified' }],
+        truncated: false
+      }
+    })
+    expect(readFileSync(counter, 'utf8')).toBe('xxxxx')
+
+    client.close()
+    await server.stop()
+  }
+)
+
+it('serves an authenticated cold-profile setup/history workflow and cleans owned resources', async () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-live-')))
+  paths.push(parent)
+  const profile = join(parent, 'cold-profile')
+  const workspace = join(parent, 'workspace')
+  const binary = join(parent, 'muse')
+  // Pre-create the profile (the shape that passes on win32): when the Host
+  // itself creates the directory, win32 runners report a discovery-path
+  // mismatch at connect time.
+  mkdirSync(profile)
+  mkdirSync(workspace)
+  // @portability-ok: resolved via realpath only — never executed (API-key auth path)
+  writeFileSync(binary, '#!/bin/sh\n')
+  chmodSync(binary, 0o700)
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    museBinary: binary,
+    env: isolated({ PATH: '', META_API_KEY: 'bounded-test-key' }),
+    temporaryParent: parent
+  })
+  await server.start()
+  const client = new HostProjectionClient({
+    userDataPath: profile,
+    client: { clientId: 'integration-client', clientClass: 'test', clientVersion: '1.0' },
+    capabilities: [
+      'bootstrap',
+      'snapshot',
+      'deltas',
+      'provider-catalog',
+      'provider-auth',
+      'history',
+      'setup',
+      'commands',
+      'receipts',
+      'health'
+    ]
+  })
+  await client.connect()
+  const make = (
+    name: HostCommand['name'],
+    target: Record<string, string>,
+    arguments_: Record<string, unknown>,
+    id: string
+  ): HostCommand => ({
+    type: 'host.command',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: id,
+    idempotencyKey: `key-${id}`,
+    actor: { actorId: 'integration-client', clientId: 'integration-client', clientClass: 'test' },
+    name,
+    target,
+    arguments: arguments_,
+    issuedAt: '2026-08-24T00:00:00.000Z'
+  })
+  const ws = await client.submitCommand(
+    make('workspace.register', {}, { path: workspace }, 'cmd-ws')
+  )
+  const workspaceId =
+    ws.resultRef && ws.resultRef.kind === 'workspace' ? ws.resultRef.workspaceId : ''
+  const threadReceipt = await client.submitCommand(
+    make(
+      'thread.create',
+      {},
+      { scope: 'workspace', workspaceId, title: 'Integration' },
+      'cmd-thread'
+    )
+  )
+  const threadId =
+    threadReceipt.resultRef && threadReceipt.resultRef.kind === 'thread'
+      ? threadReceipt.resultRef.threadId
+      : ''
+  const statuses = await client.getProviderStatuses()
+  expect(statuses[0]?.providerId).toBe('muse')
+  const offers = await client.getProviderOffers('muse')
+  const configured = await client.submitCommand(
+    make(
+      'thread.configure',
+      { threadId },
+      {
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'default',
+        offerRevision: offers.offerRevision
+      },
+      'cmd-config'
+    )
+  )
+  expect(configured.status).toBe('succeeded')
+  expect((await client.getSnapshot()).snapshot.threads).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: threadId })])
+  )
+  expect(await client.getThreadHistory({ threadId, limit: 10 })).toMatchObject({ threadId })
+  expect(await client.lookupReceipt({ commandId: 'cmd-config' })).toMatchObject({
+    commandId: 'cmd-config'
+  })
+  await expect(
+    client.submitCommand(
+      make(
+        'thread.configure',
+        { threadId },
+        {
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'default',
+          offerRevision: offers.offerRevision
+        },
+        'cmd-config'
+      )
+    )
+  ).resolves.toMatchObject({ commandId: 'cmd-config' })
+  client.close()
+  await server.stop()
+  expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
+  expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)
+  expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+  expect(existsSync(join(profile, 'host-runtime', 'host-install-identity.json'))).toBe(true)
+  expect(readdirSync(parent).filter((name) => name.startsWith('taskwraith-muse-'))).toEqual([])
+})
+
+// @portability-ok The fake provider binaries are `#!/bin/sh` scripts found through PATH,
+// which win32 resolves through PATHEXT and cannot execute for the auth probe, so the
+// statuses come back `degraded` rather than `auth_required` there.
+it.skipIf(process.platform === 'win32')(
+  'wires a real optional provider terminal launcher into production auth flows',
+  async () => {
+    const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-auth-launcher-')))
+    paths.push(parent)
+    const binDir = join(parent, 'bin')
+    mkdirSync(binDir)
+    for (const name of ['codex', 'kimi', 'vibe', 'grok']) {
+      const binary = join(binDir, name)
+      // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
+      writeFileSync(binary, '#!/bin/sh\n')
+      chmodSync(binary, 0o700)
+    }
+    for (const name of ['claude', 'cursor-agent']) {
+      const binary = join(binDir, name)
+      // @portability-ok: resolved via realpath only — terminal launches are mocked, never executed
+      writeFileSync(binary, '#!/bin/sh\nexit 1\n')
+      chmodSync(binary, 0o700)
+    }
+
+    const previousPath = process.env.PATH
+    const previousHome = process.env.HOME
+    const previousCodexHome = process.env.CODEX_HOME
+    const previousOpenAiKey = process.env.OPENAI_API_KEY
+    const previousXaiKey = process.env.XAI_API_KEY
+    const previousGrokKey = process.env.GROK_API_KEY
+    process.env.PATH = binDir
+    process.env.HOME = join(parent, 'empty-home')
+    process.env.CODEX_HOME = join(parent, 'empty-codex-home')
+    delete process.env.OPENAI_API_KEY
+    delete process.env.XAI_API_KEY
+    delete process.env.GROK_API_KEY
+
+    const domainFor = (server: unknown) =>
+      (
+        server as {
+          domain: {
+            registry: {
+              getInstance(providerId: string): {
+                getStatus(): Promise<{ status: string }>
+                getAuthFlows(): Promise<readonly { flowId: string }[]>
+                beginAuth(operationId: string): Promise<void>
+              }
+            }
+          }
+        }
+      ).domain
+
+    try {
+      const detached = createHostNodeProductionServer({
+        profilePath: join(parent, 'detached-profile'),
+        env: isolated({ PATH: binDir }),
+        temporaryParent: parent
+      })
+      await detached.start()
+      const detachedDomain = domainFor(detached)
+      const detachedCodex = detachedDomain.registry.getInstance('codex')
+      const detachedClaude = detachedDomain.registry.getInstance('claude')
+      const detachedCursor = detachedDomain.registry.getInstance('cursor')
+      const detachedGrok = detachedDomain.registry.getInstance('grok')
+      await expect(detachedCodex.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedClaude.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedCursor.getStatus()).resolves.toMatchObject({ status: 'auth_required' })
+      await expect(detachedCodex.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedClaude.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedCursor.getAuthFlows()).resolves.toEqual([])
+      await expect(detachedGrok.getAuthFlows()).resolves.toEqual([])
+      await detached.stop()
+
+      const terminalLauncher = {
+        launch: vi.fn(async () => undefined),
+        launchForProvider: vi.fn(async () => undefined)
+      }
+      const interactive = createHostNodeProductionServer({
+        profilePath: join(parent, 'interactive-profile'),
+        env: isolated({ PATH: binDir }),
+        temporaryParent: parent,
+        terminalLauncher
+      })
+      await interactive.start()
+      const interactiveDomain = domainFor(interactive)
+      const interactiveCodex = interactiveDomain.registry.getInstance('codex')
+      const interactiveClaude = interactiveDomain.registry.getInstance('claude')
+      const interactiveCursor = interactiveDomain.registry.getInstance('cursor')
+      const interactiveGrok = interactiveDomain.registry.getInstance('grok')
+      await expect(interactiveCodex.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'codex:login' })
+      ])
+      await expect(interactiveClaude.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'claude:login' })
+      ])
+      await expect(interactiveCursor.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({ flowId: 'cursor:login' })
+      ])
+      await expect(interactiveGrok.getAuthFlows()).resolves.toEqual([
+        expect.objectContaining({
+          flowId: 'grok:login',
+          kind: 'manual',
+          available: true
+        })
+      ])
+      await interactiveCodex.beginAuth('factory-auth-1')
+      await interactiveClaude.beginAuth('factory-auth-2')
+      await interactiveCursor.beginAuth('factory-auth-3')
+      await interactiveGrok.beginAuth('factory-auth-4')
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({ argv: [join(binDir, 'codex'), 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'claude',
+        expect.objectContaining({ argv: [join(binDir, 'claude'), 'auth', 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'cursor',
+        expect.objectContaining({ argv: [join(binDir, 'cursor-agent'), 'login'] })
+      )
+      expect(terminalLauncher.launchForProvider).toHaveBeenCalledWith(
+        'grok',
+        expect.objectContaining({ argv: [join(binDir, 'grok'), 'login'] })
+      )
+      await interactive.stop()
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = previousOpenAiKey
+      if (previousXaiKey === undefined) delete process.env.XAI_API_KEY
+      else process.env.XAI_API_KEY = previousXaiKey
+      if (previousGrokKey === undefined) delete process.env.GROK_API_KEY
+      else process.env.GROK_API_KEY = previousGrokKey
+    }
+  }
+)
+
+it('disposes lease-late Muse resources when terminal handoff construction is invalid', async () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'host-node-factory-invalid-launcher-')))
+  paths.push(parent)
+  const profile = join(parent, 'cold-profile')
+  const binary = join(parent, 'muse')
+  // @portability-ok: resolved via realpath only — start() rejects on the invalid launcher before any run
+  writeFileSync(binary, '#!/bin/sh\n')
+  chmodSync(binary, 0o700)
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    museBinary: binary,
+    env: isolated({ PATH: '' }),
+    temporaryParent: parent,
+    terminalLauncher: {} as never
+  })
+  await expect(server.start()).rejects.toThrow('handoff')
+  expect(readdirSync(parent).filter((name) => name.startsWith('taskwraith-muse-'))).toEqual([])
+})
+
+/**
+ * The lease registry's scheduler, stepped by hand: `advance(ms)` moves the
+ * monotonic and wall clocks together one tick at a time, so every tick is an
+ * awake tick and the registry's 60 s cadence costs no real time.
+ */
+function steppedLeaseClock(): {
+  readonly ports: HostLeaseRegistryPorts
+  advance(ms: number): void
+} {
+  let monoNs = 0n
+  let tick: (() => void) | null = null
+  let tickMs = 0
+  return {
+    ports: {
+      monotonicNowNs: () => monoNs,
+      wallNowMs: () => Number(monoNs / 1_000_000n),
+      schedule: (callback, intervalMs) => {
+        tick = callback
+        tickMs = intervalMs
+        return () => {
+          tick = null
+        }
+      }
+    },
+    advance(ms) {
+      for (let elapsed = 0; elapsed < ms; elapsed += tickMs) {
+        if (!tick) throw new Error('the lease registry is not ticking')
+        monoNs += BigInt(tickMs) * 1_000_000n
+        tick()
+      }
+    }
+  }
+}
+
+/**
+ * A production server on the real registry publisher (under a temporary root)
+ * and the stepped lease clock. With persist on there is no last-lease grace:
+ * the registry self-check is the only way this Host can stop.
+ */
+function registryHost(prefix: string) {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+  paths.push(parent)
+  const profile = join(parent, 'profile')
+  mkdirSync(profile)
+  const root = join(parent, 'registry')
+  vi.stubEnv(HOST_PERSIST_ENV, '1')
+  const clock = steppedLeaseClock()
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: isolated({ PATH: '' }),
+    temporaryParent: parent,
+    registry: new HostRegistryPublisher({
+      root,
+      profilePath: profile,
+      cliPath: '/payload/host-runtime/cli.js',
+      nodeExecutable: process.execPath
+    }),
+    leasePorts: clock.ports
+  })
+  return { server, clock, profile, root, entryPath: hostRegistryEntryPath(root, profile) }
+}
+
+it('publishes through the real registry publisher, keeps serving while its entry is unreadable or cannot be rewritten, and stops after two missing checks', async () => {
+  const { server, clock, profile, root, entryPath } = registryHost('host-node-factory-registry-')
+  try {
+    await server.start()
+    const self = currentProcessBirthIdentity()
+    expect(self.state).toBe('live')
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      path: entryPath,
+      entry: {
+        profilePath: profile,
+        pid: process.pid,
+        birthIdentity: self.state === 'live' ? self.birthIdentity : null,
+        socketPath: taskWraithHostSocketPath(profile),
+        discoveryPath: taskWraithHostDiscoveryPath(profile),
+        cliPath: '/payload/host-runtime/cli.js',
+        nodeExecutable: process.execPath,
+        persist: true,
+        leaseMode: 'lease',
+        beatSeq: 0,
+        lifetimePhase: 'held'
+      }
+    })
+
+    // A path that can be neither read nor rewritten (the entry set aside
+    // behind a directory): three unreadable checks in a row, and the Host
+    // keeps serving. With the entry back, the next refresh rewrites it.
+    const aside = `${entryPath}.aside`
+    renameSync(entryPath, aside)
+    mkdirSync(entryPath)
+    clock.advance(3 * HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    rmSync(entryPath, { recursive: true })
+    renameSync(aside, entryPath)
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: process.pid }
+    })
+
+    // Two ticks whose writes fail (a root that takes no new file): the entry
+    // written before is still this Host's, and the Host keeps serving.
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      const written = readFileSync(entryPath, 'utf8')
+      chmodSync(root, 0o500)
+      try {
+        clock.advance(2 * HOST_REGISTRY_REFRESH_MS)
+      } finally {
+        chmodSync(root, 0o700)
+      }
+      expect(server.phase).toBe('running')
+      expect(readFileSync(entryPath, 'utf8')).toBe(written)
+    }
+
+    // Missing once is a strike, not a stop, and the refresh never recreates
+    // it, even straight after writes that failed.
+    unlinkSync(entryPath)
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    expect(existsSync(entryPath)).toBe(false)
+    // Missing twice stops the Host through its own cleanup.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    await server.waitForShutdown()
+    expect(server.phase).toBe('stopped')
+    expect(existsSync(entryPath)).toBe(false)
+    expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+  } finally {
+    vi.unstubAllEnvs()
+    await server.stop().catch(() => undefined)
+  }
+}, 30_000)
+
+it('stops after two checks find another Host in its entry, and leaves that entry as found', async () => {
+  const { server, clock, profile, root, entryPath } = registryHost(
+    'host-node-factory-registry-foreign-'
+  )
+  try {
+    await server.start()
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: process.pid }
+    })
+    // Another Host (pid 99999) rewrites this profile's entry.
+    new HostRegistryPublisher({
+      root,
+      profilePath: profile,
+      pid: 99_999,
+      observeSelf: () => ({ state: 'live', birthIdentity: 'b'.repeat(64), startedAtMs: null })
+    }).publish({
+      profilePath: profile,
+      pid: 99_999,
+      startedAt: '2026-09-23T00:00:00.000Z',
+      hostId: 'host-foreign',
+      persist: false,
+      leaseMode: 'lease',
+      holders: 1,
+      implicitHolders: 0,
+      lifetimePhase: 'held'
+    })
+    const foreign = readFileSync(entryPath, 'utf8')
+    expect(JSON.parse(foreign)).toMatchObject({ pid: 99_999, birthIdentity: 'b'.repeat(64) })
+    // Foreign once is a strike, and the refresh never overwrites it.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    expect(readFileSync(entryPath, 'utf8')).toBe(foreign)
+    // Foreign twice stops this Host; its cleanup leaves the other Host's entry.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    await server.waitForShutdown()
+    expect(server.phase).toBe('stopped')
+    expect(readFileSync(entryPath, 'utf8')).toBe(foreign)
+    expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+  } finally {
+    vi.unstubAllEnvs()
+    await server.stop().catch(() => undefined)
+  }
+}, 30_000)

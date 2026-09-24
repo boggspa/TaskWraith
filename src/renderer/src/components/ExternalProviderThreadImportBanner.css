@@ -1,0 +1,39 @@
+.external-provider-thread-import-banner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning, #f5b942) 46%, var(--panel-border));
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--warning, #f5b942) 10%, var(--panel-bg));
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.external-provider-thread-import-banner strong {
+  color: var(--text-primary);
+  font-weight: 620;
+}
+
+.external-provider-thread-import-banner span {
+  text-align: right;
+}
+
+.message-meta.external-provider-import-meta {
+  color: color-mix(in srgb, var(--warning, #f5b942) 78%, var(--text-secondary));
+}
+
+@media (max-width: 720px) {
+  .external-provider-thread-import-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .external-provider-thread-import-banner span {
+    text-align: left;
+  }
+}

@@ -94,6 +94,29 @@ function makeHarness() {
 }
 
 describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
+  it('records the exact whole-round duration when main closes a round', () => {
+    const harness = makeHarness()
+    harness.internals.roundsByChatId.clear()
+
+    const finishRound = (
+      harness.orchestrator as unknown as {
+        finishRound(
+          chatId: string,
+          roundId: string,
+          status: 'completed' | 'cancelled' | 'failed'
+        ): void
+      }
+    ).finishRound.bind(harness.orchestrator)
+    finishRound('ensemble-chat', 'round-1', 'cancelled')
+
+    expect(harness.chat.ensemble?.activeRound).toMatchObject({
+      roundId: 'round-1',
+      status: 'cancelled',
+      endedAt: '2026-07-29T00:00:42.000Z'
+    })
+    expect(harness.chat.ensemble?.roundWallMsById).toEqual({ 'round-1': 42_000 })
+  })
+
   it('queues an explicit user roster on the live round boundary', () => {
     const harness = makeHarness()
     const participant = {
@@ -146,6 +169,8 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     const harness = makeHarness()
     const input: EnsembleLiveRoundConfigUpdateInput = {
       chatId: 'ensemble-chat',
+      // Continuous-only: a legacy caller may still send 'turn_bound'; it is
+      // accepted on the wire and normalized to 'continuous' everywhere.
       orchestrationMode: 'turn_bound',
       fanoutPolicy: 'off',
       maxContinuationHops: 1
@@ -153,13 +178,13 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
 
     expect(harness.orchestrator.updateLiveRoundConfig(input)).toEqual({
       ok: true,
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       maxContinuationHops: 1,
       activeRoundUpdated: true
     })
     expect(harness.runtime).toMatchObject({
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentMode: undefined,
       maxContinuationHops: 1,
@@ -167,14 +192,14 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
       continuationLimitPending: false
     })
     expect(harness.chat.ensemble).toMatchObject({
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentModeEnabled: false,
       maxContinuationHops: 1
     })
     expect(harness.chat.ensemble?.activeRound).toMatchObject({
       roundId: 'round-1',
-      orchestrationMode: 'turn_bound',
+      orchestrationMode: 'continuous',
       fanoutPolicy: 'off',
       concurrentMode: undefined,
       maxContinuationHops: 1
@@ -190,6 +215,9 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
             before: 12,
             after: 1,
             actor: 'user',
+            // 073cc60d2 added the event discriminator to the producer; this
+            // expectation had gone stale (red at HEAD) without it.
+            event: 'limit',
             changedAt: '2026-07-29T00:00:42.000Z'
           }
         }
@@ -230,11 +258,12 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     expect(
       harness.orchestrator.updateLiveRoundConfig({
         chatId: 'ensemble-chat',
+        // Legacy graded value on the wire — collapses to On ('all').
         fanoutPolicy: 'read_only'
       })
-    ).toMatchObject({ ok: true, fanoutPolicy: 'read_only', activeRoundUpdated: true })
+    ).toMatchObject({ ok: true, fanoutPolicy: 'all', activeRoundUpdated: true })
     expect(harness.chat.ensemble?.activeRound).toMatchObject({
-      fanoutPolicy: 'read_only',
+      fanoutPolicy: 'all',
       concurrentMode: true
     })
   })
@@ -262,7 +291,7 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
     })
   })
 
-  it('persists an idle user change without assigning it to a completed round', () => {
+  it('persists a pre-prompt setting without creating the first transcript row', () => {
     const harness = makeHarness()
     delete harness.chat.ensemble!.activeRound
     harness.internals.roundsByChatId.clear()
@@ -278,16 +307,34 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
       maxContinuationHops: 76,
       activeRoundUpdated: false
     })
+    expect(harness.chat.ensemble?.maxContinuationHops).toBe(76)
+    expect(harness.chat.messages).toEqual([])
+    expect(harness.saveChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains an idle audit event once the transcript has started', () => {
+    const harness = makeHarness()
+    delete harness.chat.ensemble!.activeRound
+    harness.internals.roundsByChatId.clear()
+    harness.chat.messages.push({
+      id: 'prompt-1',
+      role: 'user',
+      content: 'Review the fixture.',
+      timestamp: '2026-07-29T00:00:00.000Z'
+    })
+
+    expect(
+      harness.orchestrator.updateLiveRoundConfig({
+        chatId: 'ensemble-chat',
+        maxContinuationHops: 76,
+        previousMaxContinuationHops: 12
+      })
+    ).toMatchObject({ ok: true, activeRoundUpdated: false })
     expect(harness.chat.messages.at(-1)?.metadata).toMatchObject({
       kind: 'ensembleContinuationHopsChange',
-      continuationHopsChange: {
-        before: 12,
-        after: 76,
-        actor: 'user'
-      }
+      continuationHopsChange: { before: 12, after: 76, actor: 'user' }
     })
     expect(harness.chat.messages.at(-1)?.metadata).not.toHaveProperty('ensembleRoundId')
-    expect(harness.saveChat).toHaveBeenCalledTimes(1)
   })
 
   it('rejects malformed values without changing the chat or runtime', () => {

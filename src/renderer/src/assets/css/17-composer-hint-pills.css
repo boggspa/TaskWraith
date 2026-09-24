@@ -159,7 +159,7 @@
     .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
     .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
   ),
-.composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+.composer-above-bar-stack.composer-above-bar-stack--has-primary-row
   > :not(.composer-workspace-above-row--primary),
 :is(.composer-surface, .composer-textarea-wrap)
   > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
@@ -187,7 +187,7 @@
 [data-composer-style]
   .app-transcript
   .composer-area--above-rows-minimized
-  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  .composer-above-bar-stack.composer-above-bar-stack--has-primary-row
   > :not(.composer-workspace-above-row--primary),
 .composer-area--above-rows-minimized
   :is(.composer-surface, .composer-textarea-wrap)
@@ -239,7 +239,7 @@
       .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
       .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
     ),
-  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  .composer-above-bar-stack.composer-above-bar-stack--has-primary-row
     > :not(.composer-workspace-above-row--primary),
   :is(.composer-surface, .composer-textarea-wrap)
     > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
@@ -259,7 +259,7 @@
     .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
   ),
 [data-reduce-motion='true']
-  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  .composer-above-bar-stack.composer-above-bar-stack--has-primary-row
   > :not(.composer-workspace-above-row--primary),
 [data-reduce-motion='true']
   :is(.composer-surface, .composer-textarea-wrap)

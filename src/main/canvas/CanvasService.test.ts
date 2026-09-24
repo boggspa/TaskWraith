@@ -7,6 +7,12 @@ import {
   type CanvasConsequentialConfirmRequest,
   type CanvasServiceDeps
 } from './CanvasService'
+import {
+  CanvasEmulatorInputEpochStaleError,
+  CanvasEmulatorObservationStaleError,
+  CanvasEmulatorUserActiveError,
+  type CanvasEmulatorAtomicObservation
+} from './CanvasEmulatorDriver'
 import { CanvasStore } from './CanvasStore'
 import { createCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import type {
@@ -30,8 +36,79 @@ import type {
   CanvasTargetDescription,
   CanvasViewport
 } from './canvasTypes'
+import { AppDriveLeaseRegistry } from '../appDrive/AppDriveLease'
+import type { EmulatorButton, EmulatorObservationState } from '../../shared/emulatorCanvas'
 
 const IMAGE_SHA = 'a'.repeat(43)
+const EMULATOR_HASH = 'e'.repeat(64)
+const EMULATOR_TIMESTAMP = '2026-08-31T21:00:00.000Z'
+
+function atomicEmulatorObservation(
+  overrides: Partial<CanvasEmulatorAtomicObservation> = {}
+): CanvasEmulatorAtomicObservation {
+  const mappedState: EmulatorObservationState = {
+    kind: 'mapped',
+    adapterId: 'twgb-fixture',
+    adapterRevision: 'v2',
+    schemaSha256: 'f'.repeat(64),
+    fields: [
+      { key: 'player-x', kind: 'integer', value: 77 },
+      { key: 'frame-counter', kind: 'integer', value: 1 }
+    ],
+    truncated: false
+  }
+  const base: CanvasEmulatorAtomicObservation = {
+    schemaVersion: 1,
+    observationId: 'emulator-observation-1',
+    emulationGeneration: 1,
+    frameId: 1,
+    inputEpoch: 0,
+    capturedAt: EMULATOR_TIMESTAMP,
+    humanActive: false,
+    frame: {
+      mimeType: 'image/png',
+      data: 'EMULATOR_PNG_BYTES',
+      width: 160,
+      height: 144,
+      byteLength: 18,
+      hash: EMULATOR_HASH,
+      capturedAt: EMULATOR_TIMESTAMP
+    },
+    mappedState
+  }
+  return {
+    ...base,
+    ...overrides,
+    frame: { ...base.frame, ...overrides.frame },
+    mappedState: overrides.mappedState ?? base.mappedState
+  }
+}
+
+function advanceAtomicEmulatorObservation(
+  previous: CanvasEmulatorAtomicObservation,
+  overrides: Partial<CanvasEmulatorAtomicObservation> = {}
+): CanvasEmulatorAtomicObservation {
+  const mappedState =
+    previous.mappedState.kind === 'mapped'
+      ? {
+          ...previous.mappedState,
+          fields: previous.mappedState.fields.map((field) =>
+            field.key === 'frame-counter' && field.kind === 'integer'
+              ? { ...field, value: field.value + 1 }
+              : field
+          )
+        }
+      : previous.mappedState
+  return atomicEmulatorObservation({
+    observationId: `emulator-observation-${previous.frameId + 1}`,
+    emulationGeneration: previous.emulationGeneration,
+    frameId: previous.frameId + 1,
+    inputEpoch: previous.inputEpoch,
+    humanActive: previous.humanActive,
+    mappedState,
+    ...overrides
+  })
+}
 
 function deferred<T>(): {
   promise: Promise<T>
@@ -48,21 +125,40 @@ function deferred<T>(): {
 }
 
 class FakeDriver implements CanvasDriver {
-  readonly kind = 'web' as const
+  readonly kind: CanvasDriver['kind']
   opened = false
+  openCalls = 0
   closed = false
   failOpen = false
   closeCalls = 0
   closeFailuresRemaining = 0
   lastOpenInput?: CanvasOpenInput
 
+  emulatorObservation = atomicEmulatorObservation()
+  emulatorStepCalls: Array<{ buttons: readonly EmulatorButton[]; expectedObservationId?: string }> =
+    []
+  emulatorStepImplementation?: (
+    buttons: readonly EmulatorButton[],
+    expectedObservationId?: string
+  ) => Promise<CanvasEmulatorAtomicObservation>
+
+  constructor(kind: CanvasDriver['kind'] = 'web') {
+    this.kind = kind
+  }
+
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
+    this.openCalls += 1
     if (this.failOpen) throw new Error('boom')
     this.opened = true
     this.lastOpenInput = input
     if (input.initialSketchDocument) this.sketchDoc = input.initialSketchDocument
     return {
-      url: input.url || 'http://localhost:3000',
+      url:
+        input.driver === 'sketch'
+          ? 'sketch://fake'
+          : input.driver === 'emulator'
+            ? 'twemu://app/homebrew-demo/index.html'
+            : input.url || 'about:blank',
       title: 'Fake',
       viewport: input.viewport || { width: 1280, height: 800 }
     }
@@ -88,6 +184,45 @@ class FakeDriver implements CanvasDriver {
       hash: 'deadbeef',
       capturedAt: 'x'
     }
+  }
+  async observeEmulator(): Promise<CanvasEmulatorAtomicObservation> {
+    return this.emulatorObservation
+  }
+  async stepEmulator(
+    buttons: readonly EmulatorButton[],
+    expectedObservationId?: string
+  ): Promise<CanvasEmulatorAtomicObservation> {
+    this.emulatorStepCalls.push({ buttons: [...buttons], expectedObservationId })
+    if (this.emulatorStepImplementation) {
+      const result = await this.emulatorStepImplementation(buttons, expectedObservationId)
+      this.emulatorObservation = result
+      return result
+    }
+    if (expectedObservationId !== this.emulatorObservation.observationId) {
+      throw new CanvasEmulatorObservationStaleError(this.emulatorObservation)
+    }
+    const previous = this.emulatorObservation
+    const nextCounter =
+      previous.mappedState.kind === 'mapped'
+        ? previous.mappedState.fields.map((field) =>
+            field.key === 'frame-counter' && field.kind === 'integer'
+              ? { ...field, value: field.value + 1 }
+              : field
+          )
+        : previous.mappedState
+    const next = atomicEmulatorObservation({
+      observationId: `emulator-observation-${previous.frameId + 1}`,
+      frameId: previous.frameId + 1,
+      mappedState: Array.isArray(nextCounter)
+        ? ({
+            ...previous.mappedState,
+            kind: 'mapped',
+            fields: nextCounter
+          } as EmulatorObservationState)
+        : nextCounter
+    })
+    this.emulatorObservation = next
+    return next
   }
   async inspect(args: { ref?: string; selector?: string }): Promise<CanvasElementDetail> {
     return { found: true, tag: 'div', role: 'generic', ref: args.ref, selector: args.selector }
@@ -247,6 +382,195 @@ describe('CanvasService', () => {
     expect(events.map((e) => e.kind)).toContain('session.opened')
   })
 
+  it('admits only a fixed embedded emulator dock, persists its synthetic URL, and preserves chat ownership', async () => {
+    const input: CanvasOpenInput = {
+      driver: 'emulator',
+      gameId: 'homebrew-demo',
+      embed: true,
+      presentation: 'dock'
+    }
+    const owner = { chatId: 'chat-a', runId: 'run-a', surfaceHostId: 42 }
+    const opened = await service.open(input, owner)
+
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42,
+      gameId: 'homebrew-demo'
+    })
+    expect(fake.lastOpenInput).toMatchObject(input)
+    expect(opened.url).toBe('emulator://homebrew-demo')
+    expect(service.status(opened.canvasId, owner)).toMatchObject({
+      canvasId: opened.canvasId,
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo',
+      presentation: 'dock'
+    })
+    expect(service.status(opened.canvasId, { chatId: 'chat-b' })).toBeNull()
+    expect(service.status(opened.canvasId, { chatId: 'chat-a', runId: 'run-b' })).toBeNull()
+    expect(service.status(opened.canvasId, { chatId: 'chat-a', surfaceHostId: 42 })).toMatchObject({
+      canvasId: opened.canvasId
+    })
+    expect(service.status(opened.canvasId, { chatId: 'chat-b', surfaceHostId: 42 })).toBeNull()
+    expect(service.list({ chatId: 'chat-b' })).toEqual([])
+    expect(JSON.stringify(store.listEvents(opened.canvasId))).not.toContain('twemu://')
+
+    await service.close(opened.canvasId, { chatId: 'chat-b' })
+    expect(fake.closeCalls).toBe(0)
+    await service.close(opened.canvasId, owner)
+    await service.close(opened.canvasId, owner)
+    expect(fake.closeCalls).toBe(1)
+  })
+
+  it('opens a fixed human renderer emulator in Thread Home or the inspector dock without run authority', async () => {
+    const human = { chatId: 'chat-a', surfaceHostId: 42 }
+    const threadHome = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true },
+      human
+    )
+    expect(service.status(threadHome.canvasId, human)).toMatchObject({ driver: 'emulator' })
+    expect(service.status(threadHome.canvasId, human)).not.toHaveProperty('presentation')
+    expect(
+      service.resolveEmulatorSurface(threadHome.canvasId, { chatId: 'chat-a', runId: 'run-a' })
+    ).toBe('missing')
+    expect(store.getSession(threadHome.canvasId)?.runId).toBeUndefined()
+
+    const dock = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      human
+    )
+    expect(service.status(dock.canvasId, human)).toMatchObject({
+      driver: 'emulator',
+      presentation: 'dock'
+    })
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42,
+      gameId: 'homebrew-demo'
+    })
+  })
+
+  it('refuses emulator URL, floating, and unpinned-game opens before creating a driver', async () => {
+    await expect(
+      service.open(
+        { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+        { chatId: 'chat-a' }
+      )
+    ).rejects.toThrow(/authority/i)
+    await expect(
+      service.open(
+        { driver: 'emulator', gameId: 'homebrew-demo' },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/embedded Canvas dock/i)
+    await expect(
+      service.open(
+        {
+          driver: 'emulator',
+          gameId: 'homebrew-demo',
+          embed: true,
+          presentation: 'dock',
+          url: 'https://example.test'
+        },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/never accepts a URL/i)
+    await expect(
+      service.open(
+        { driver: 'emulator', embed: true, presentation: 'dock' },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/canonical packaged game id/i)
+    expect(fake.openCalls).toBe(0)
+    expect(lastDriverOpts).toBeUndefined()
+  })
+
+  it('opens an empty browser as about:blank and keeps its dock presentation', async () => {
+    const opened = await service.open(
+      { driver: 'web', embed: true, presentation: 'dock' },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+
+    expect(opened.url).toBe('about:blank')
+    expect(fake.lastOpenInput).toMatchObject({ driver: 'web', embed: true, presentation: 'dock' })
+    expect(service.status(opened.canvasId, { chatId: 'chat-a' })).toMatchObject({
+      url: 'about:blank',
+      presentation: 'dock'
+    })
+  })
+
+  it('threads the exact renderer host into embedded driver construction', async () => {
+    await service.open(
+      { driver: 'web', embed: true, presentation: 'dock' },
+      { chatId: 'chat-a', surfaceHostId: 42 }
+    )
+
+    expect(lastDriverOpts).toMatchObject({
+      embedded: true,
+      appChatId: 'chat-a',
+      surfaceHostId: 42
+    })
+  })
+
+  it('opens another floating Browser tab through the host chrome callback', async () => {
+    const first = await service.open({ driver: 'sketch' }, { chatId: 'chat-a' })
+    const requestNewTab = lastDriverOpts?.onNewTabRequest
+    expect(requestNewTab).toBeTypeOf('function')
+
+    await requestNewTab?.()
+
+    const live = service.list({ chatId: 'chat-a' })
+    expect(live).toHaveLength(2)
+    expect(live.map((entry) => entry.driver)).toEqual(['sketch', 'web'])
+    expect(live.some((entry) => entry.canvasId === first.canvasId)).toBe(true)
+  })
+
+  it('retires a session when its native host tab closes itself', async () => {
+    const opened = await service.open({ driver: 'web' }, { chatId: 'chat-a' })
+    const surfaceClosed = lastDriverOpts?.onSurfaceClosed
+    expect(surfaceClosed).toBeTypeOf('function')
+
+    surfaceClosed?.()
+    await vi.waitFor(() => {
+      expect(service.status(opened.canvasId, { chatId: 'chat-a' })?.status).toBe('closed')
+    })
+    expect(events.some((event) => event.kind === 'session.closed')).toBe(true)
+  })
+
+  it('moves a floating browser into the dock through its main-owned callback', async () => {
+    const opened = await service.open(
+      { driver: 'web', url: 'https://example.com/start' },
+      { chatId: 'chat-a' }
+    )
+    const requestDock = lastDriverOpts?.onDockRequest
+    expect(requestDock).toBeTypeOf('function')
+
+    await requestDock?.()
+
+    const live = service.list({ chatId: 'chat-a' })
+    expect(live).toHaveLength(1)
+    expect(live[0]).toMatchObject({ driver: 'web', presentation: 'dock' })
+    expect(live[0].canvasId).not.toBe(opened.canvasId)
+    expect(fake.lastOpenInput).toMatchObject({
+      driver: 'web',
+      embed: true,
+      presentation: 'dock',
+      url: 'http://localhost:3000/?token=secret'
+    })
+  })
+
+  it('marks a transferred live surface as dock-presented without reopening it', async () => {
+    const opened = await service.open({ driver: 'web' }, { chatId: 'chat-a' })
+    const openCallsBefore = fake.openCalls
+
+    const summary = service.presentInDock(opened.canvasId, { chatId: 'chat-a' })
+
+    expect(summary).toMatchObject({ canvasId: opened.canvasId, presentation: 'dock' })
+    expect(service.list({ chatId: 'chat-a' })[0]).toMatchObject({ presentation: 'dock' })
+    expect(fake.openCalls).toBe(openCallsBefore)
+  })
+
   it('rejects an unsupported driver', async () => {
     await expect(service.open({ driver: 'future-driver' as never }, {})).rejects.toThrow(
       /not available/
@@ -322,7 +646,7 @@ describe('CanvasService', () => {
     expect(store.getSession(opened.canvasId)?.chatId).toBe('chat-a')
   })
 
-  it('embeds only the surface-hosting drivers (web + sketch), never surface-less ones', async () => {
+  it('embeds only the surface-hosting drivers (web + sketch + emulator), never surface-less ones', async () => {
     const rendererWeb = await service.open(
       { url: 'http://localhost:3000', embed: true },
       { chatId: 'chat-a' }
@@ -346,6 +670,17 @@ describe('CanvasService', () => {
     ).toMatchObject({ detail: { presentation: 'dock' } })
 
     await service.open({ driver: 'sketch', embed: true }, { chatId: 'chat-a' })
+    expect(lastDriverOpts?.embedded).toBe(true)
+
+    await service.open(
+      {
+        driver: 'emulator',
+        gameId: 'homebrew-demo',
+        embed: true,
+        presentation: 'dock'
+      },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
     expect(lastDriverOpts?.embedded).toBe(true)
 
     // html renders offscreen (no live surface) — the embed flag must not leak in.
@@ -529,6 +864,11 @@ describe('CanvasService', () => {
     const firstWeb = await service.open({ driver: 'web', url: 'https://example.com' }, {})
     const sketch = await service.open({ driver: 'sketch' }, {})
     const secondWeb = await service.open({ driver: 'web', url: 'https://example.org' }, {})
+    const emulatorOwner = { chatId: 'emulator-chat', runId: 'emulator-run' }
+    const emulator = await service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      emulatorOwner
+    )
 
     await expect(service.clearBrowserProfile()).resolves.toEqual({
       closedCanvasIds: [firstWeb.canvasId, secondWeb.canvasId],
@@ -539,10 +879,17 @@ describe('CanvasService', () => {
       true
     )
     expect(drivers.find(({ kind }) => kind === 'sketch')?.driver.closed).toBe(false)
+    expect(drivers.find(({ kind }) => kind === 'emulator')?.driver.closed).toBe(false)
     expect(service.list({}).map((entry) => entry.canvasId)).toEqual([sketch.canvasId])
+    expect(service.status(emulator.canvasId, emulatorOwner)?.status).toBe('active')
     expect(store.getSession(firstWeb.canvasId)?.status).toBe('closed')
     expect(store.getSession(secondWeb.canvasId)?.status).toBe('closed')
     expect(store.getSession(sketch.canvasId)?.status).toBe('active')
+    expect(store.getSession(emulator.canvasId)).toMatchObject({
+      status: 'active',
+      driver: 'emulator',
+      url: 'emulator://homebrew-demo'
+    })
   })
 
   it('shares concurrent Browser-profile resets and fences only new web opens', async () => {
@@ -566,7 +913,7 @@ describe('CanvasService', () => {
       /data is being cleared/
     )
     await expect(service.open({ driver: 'sketch' }, {})).resolves.toMatchObject({
-      url: 'http://localhost:3000'
+      url: 'sketch://fake'
     })
 
     clearGate.resolve(undefined)
@@ -1295,6 +1642,882 @@ describe('CanvasService', () => {
     expect(store.getSession(b.canvasId)?.chatId).toBe('B')
     expect(store.listEvents(a.canvasId)).toEqual([])
     expect(store.listEvents(b.canvasId).map((entry) => entry.kind)).toContain('session.opened')
+  })
+})
+
+describe('CanvasService AppDrive web lease', () => {
+  const ctx = {
+    provider: 'codex',
+    chatId: 'chat-lease',
+    runId: 'run-lease',
+    participantId: 'seat-lease'
+  }
+
+  function leaseHarness() {
+    const dir = mkdtempSync(join(tmpdir(), 'canvas-appdrive-'))
+    const driver = new FakeDriver()
+    const leases = new AppDriveLeaseRegistry({
+      now: () => 1_000,
+      createLeaseId: () => 'lease-web'
+    })
+    const invalidated = vi.fn(
+      (input: { canvasId: string; reason: 'navigation' | 'surface-closed' | 'human-takeover' }) => {
+        leases.revokeSurface(input.canvasId, input.reason)
+      }
+    )
+    const service = new CanvasService({
+      createDriver: () => driver,
+      store: new CanvasStore(dir),
+      uuid: () => 'canvas-lease',
+      now: () => '2026-08-20T00:00:00.000Z',
+      appDriveLeases: leases,
+      onSurfaceAuthorityInvalidated: invalidated
+    })
+    return { dir, driver, leases, invalidated, service }
+  }
+
+  function authorize(leases: AppDriveLeaseRegistry, stepBudget = 2): void {
+    leases.authorizeUserLease({
+      surfaceId: 'canvas-lease',
+      surfaceKind: 'web',
+      chatId: ctx.chatId,
+      runId: ctx.runId,
+      provider: ctx.provider,
+      participantId: ctx.participantId,
+      approvedBy: 'user',
+      allowedVerbs: ['click', 'fill', 'key', 'scroll', 'hover', 'select'],
+      target: { canvasId: 'canvas-lease', origin: 'http://localhost:3000' },
+      stepBudget,
+      expiresAt: 10_000
+    })
+  }
+
+  it('refuses dispatch without a user-minted exact surface lease', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      const result = await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)
+      expect(result).toMatchObject({
+        ok: false,
+        executed: false,
+        refusalReason: 'appdrive_lease_required'
+      })
+      expect(h.driver.lastAction).toBeUndefined()
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('consumes the approved step budget and refuses the next action', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases, 1)
+      expect((await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)).ok).toBe(
+        true
+      )
+      expect(
+        await h.service.fill('canvas-lease', { kind: 'fill', ref: 'e2', value: 'value' }, ctx)
+      ).toMatchObject({
+        ok: false,
+        refusalReason: 'appdrive_step_budget_exhausted'
+      })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes web authority on navigation and close', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      await h.service.navigate('canvas-lease', { url: 'https://example.test' }, ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'navigation' })
+      )
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ status: 'revoked' })
+
+      authorize(h.leases)
+      await h.service.close('canvas-lease', ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'surface-closed' })
+      )
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes the lease when the web driver reports human takeover', async () => {
+    const h = leaseHarness()
+    h.driver.act = vi.fn(async () => ({
+      ok: false,
+      action: 'click' as const,
+      found: true,
+      executed: false,
+      verified: 'unknown' as const,
+      refusalReason: 'user_active' as const
+    }))
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      await h.service.click('canvas-lease', { kind: 'click', ref: 'e1' }, ctx)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: 'canvas-lease', reason: 'human-takeover' })
+      )
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ status: 'revoked' })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('routes richer control verbs through the same lease while wait_for stays read-only', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      const waited = await h.service.act(
+        'canvas-lease',
+        { kind: 'wait_for', selector: '[data-ready]', timeoutMs: 100 },
+        ctx
+      )
+      expect(waited.action).toBe('wait_for')
+      expect(h.leases.peek('canvas-lease')).toBeNull()
+
+      authorize(h.leases)
+      const hovered = await h.service.act('canvas-lease', { kind: 'hover', selector: '#menu' }, ctx)
+      expect(hovered).toMatchObject({ ok: true, action: 'hover' })
+      expect(h.leases.peek('canvas-lease')).toMatchObject({ stepsUsed: 1 })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an Ensemble action pending until a different participant verifies it', async () => {
+    const h = leaseHarness()
+    try {
+      await h.service.open({ url: 'http://localhost:3000' }, ctx)
+      authorize(h.leases)
+      const action = await h.service.click(
+        'canvas-lease',
+        { kind: 'click', ref: 'e1', requireIndependentVerifier: true },
+        ctx
+      )
+      expect(action).toMatchObject({
+        ok: true,
+        independentVerificationRequired: true,
+        driveReportId: expect.any(String),
+        driveActionId: expect.any(String)
+      })
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        counts: { total: 1, awaitingVerification: 1 },
+        actions: [
+          expect.objectContaining({
+            actor: expect.objectContaining({ participantId: 'seat-lease' }),
+            status: 'awaiting-verification'
+          })
+        ]
+      })
+
+      const actorObservation = await h.service.snapshot('canvas-lease', ctx)
+      expect(actorObservation.driveObservation).toMatchObject({
+        reportId: action.driveReportId,
+        actionId: action.driveActionId,
+        surfaceId: 'canvas-lease'
+      })
+
+      expect(() =>
+        h.service.verifyDriveAction(
+          {
+            reportId: action.driveReportId!,
+            actionId: action.driveActionId!,
+            surfaceId: 'canvas-lease',
+            observationId: actorObservation.driveObservation!.observationId,
+            verdict: 'confirmed'
+          },
+          ctx
+        )
+      ).toThrow(/different Ensemble participant/i)
+
+      const reviewerContext = {
+        ...ctx,
+        runId: 'run-review',
+        provider: 'claude',
+        participantId: 'seat-review'
+      }
+      const reviewerObservation = await h.service.snapshot('canvas-lease', reviewerContext)
+      expect(
+        h.service.verifyDriveAction(
+          {
+            reportId: action.driveReportId!,
+            actionId: action.driveActionId!,
+            surfaceId: 'canvas-lease',
+            observationId: reviewerObservation.driveObservation!.observationId,
+            verdict: 'confirmed'
+          },
+          reviewerContext
+        )
+      ).toMatchObject({
+        status: 'verified',
+        participantVerifier: { participantId: 'seat-review', verdict: 'confirmed' }
+      })
+    } finally {
+      rmSync(h.dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('CanvasService emulator observation and macro', () => {
+  const ctx = {
+    provider: 'codex',
+    chatId: 'chat-emulator',
+    runId: 'run-emulator',
+    participantId: 'seat-emulator'
+  }
+
+  function harness(options: { maxInteractions?: number; driver?: FakeDriver } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'canvas-emulator-service-'))
+    const driver = options.driver ?? new FakeDriver('emulator')
+    const leases = new AppDriveLeaseRegistry({
+      now: () => 1_000,
+      createLeaseId: () => 'lease-emulator'
+    })
+    const events: CanvasEventRecord[] = []
+    const invalidated = vi.fn(
+      (input: { canvasId: string; reason: 'navigation' | 'surface-closed' | 'human-takeover' }) => {
+        leases.revokeSurface(input.canvasId, input.reason)
+      }
+    )
+    let sequence = 0
+    const service = new CanvasService({
+      createDriver: () => driver,
+      store: new CanvasStore(dir),
+      uuid: () => `canvas-emulator-${++sequence}`,
+      now: () => EMULATOR_TIMESTAMP,
+      appDriveLeases: leases,
+      onSurfaceAuthorityInvalidated: invalidated,
+      broadcast: (event) => events.push(event),
+      maxInteractionsPerSession: options.maxInteractions ?? 8
+    })
+    return { dir, driver, leases, events, invalidated, service }
+  }
+
+  async function open(h: ReturnType<typeof harness>) {
+    return h.service.open(
+      { driver: 'emulator', gameId: 'homebrew-demo', embed: true, presentation: 'dock' },
+      ctx
+    )
+  }
+
+  function authorize(leases: AppDriveLeaseRegistry, canvasId: string, stepBudget = 3): void {
+    leases.authorizeUserLease({
+      surfaceId: canvasId,
+      surfaceKind: 'emulator',
+      chatId: ctx.chatId,
+      runId: ctx.runId,
+      provider: ctx.provider,
+      participantId: ctx.participantId,
+      approvedBy: 'user',
+      allowedVerbs: ['emulator_step'],
+      target: { canvasId },
+      stepBudget,
+      expiresAt: 10_000
+    })
+  }
+
+  function cleanup(h: ReturnType<typeof harness>) {
+    rmSync(h.dir, { recursive: true, force: true })
+  }
+
+  it('projects a frozen mapped observation without raw ABI state and audits only metadata', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+
+      expect(observed).toMatchObject({
+        observation: {
+          token: {
+            observationId: h.driver.emulatorObservation.observationId,
+            emulationGeneration: 1,
+            frameId: 1,
+            inputEpoch: 0
+          },
+          humanActive: false,
+          state: {
+            kind: 'mapped',
+            fields: expect.arrayContaining([
+              expect.objectContaining({ key: 'player-x', value: 77 })
+            ])
+          }
+        },
+        frame: { data: 'EMULATOR_PNG_BYTES', hash: EMULATOR_HASH }
+      })
+      expect(Object.isFrozen(observed)).toBe(true)
+      expect(Object.isFrozen(observed.observation)).toBe(true)
+      expect(Object.isFrozen(observed.observation.state)).toBe(true)
+      expect(h.service.presentInDock(opened.canvasId, ctx)).toMatchObject({
+        canvasId: opened.canvasId,
+        presentation: 'dock'
+      })
+      const audit = h.events.find((event) => event.kind === 'screenshot')?.detail
+      expect(audit).toMatchObject({
+        frameHash: EMULATOR_HASH,
+        width: 160,
+        height: 144,
+        byteLength: 18,
+        mappedState: { fieldCount: 2 }
+      })
+      const serialized = JSON.stringify(audit)
+      expect(serialized).not.toContain('EMULATOR_PNG_BYTES')
+      expect(serialized).not.toContain('"value"')
+      expect(serialized).not.toContain('"input"')
+
+      await expect(
+        h.service.observeEmulator(opened.canvasId, { ...ctx, runId: 'run-other' })
+      ).rejects.toThrow(/No open canvas/i)
+      expect(
+        h.service.resolveEmulatorSurface(opened.canvasId, { ...ctx, runId: 'run-other' })
+      ).toBe('missing')
+      expect(
+        h.service.resolveEmulatorSurface(opened.canvasId, { ...ctx, chatId: 'chat-other' })
+      ).toBe('missing')
+      const web = await h.service.open({ driver: 'web', url: 'https://example.test' }, ctx)
+      expect(h.service.resolveEmulatorSurface(web.canvasId, ctx)).toBe('other')
+      await expect(h.service.observeEmulator(web.canvasId, ctx)).rejects.toThrow(
+        /emulator surface/i
+      )
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('refuses invalid, missing, or stale observations before dispatching frames', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          { expectedObservationId: 'missing', segments: [{ buttons: ['a'], frames: 1 }] },
+          ctx
+        )
+      ).rejects.toThrow(/Observe the emulator/i)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId)
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: observed.observation.token.observationId,
+            segments: [{ buttons: ['a', 'a'], frames: 1 }]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/duplicate/i)
+      const stale = await h.service.stepEmulator(
+        opened.canvasId,
+        { expectedObservationId: 'other-observation', segments: [{ buttons: ['a'], frames: 1 }] },
+        ctx
+      )
+      expect(stale).toMatchObject({
+        outcome: 'refused',
+        refusalReason: 'stale_observation',
+        framesCompleted: 0,
+        executed: false,
+        driveActionId: expect.any(String)
+      })
+      expect(h.driver.emulatorStepCalls).toHaveLength(0)
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({ stepsUsed: 1 })
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        actions: [expect.objectContaining({ executed: false, refusalCode: 'stale_observation' })]
+      })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('allows only a trusted same-chat renderer host to close an emulator without run authority', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      await h.service.close(opened.canvasId, { chatId: ctx.chatId })
+      await h.service.close(opened.canvasId, { chatId: 'chat-other', surfaceHostId: 41 })
+      expect(h.driver.closeCalls).toBe(0)
+
+      await h.service.close(opened.canvasId, { chatId: ctx.chatId, surfaceHostId: 41 })
+      expect(h.driver.closeCalls).toBe(1)
+      expect(h.invalidated).toHaveBeenCalledWith(
+        expect.objectContaining({ canvasId: opened.canvasId, reason: 'surface-closed' })
+      )
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('runs a bounded multi-segment macro one frame at a time with one AppDrive action', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId, 2)
+      const result = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [
+            { buttons: ['right'], frames: 2 },
+            { buttons: ['a'], frames: 3 }
+          ],
+          requireIndependentVerifier: true
+        },
+        ctx
+      )
+
+      expect(result).toMatchObject({
+        outcome: 'completed',
+        framesRequested: 5,
+        framesCompleted: 5,
+        executed: true,
+        partial: false,
+        driveReportId: expect.any(String),
+        driveActionId: expect.any(String),
+        driveObservation: expect.objectContaining({ surfaceId: opened.canvasId })
+      })
+      expect(h.driver.emulatorStepCalls).toHaveLength(5)
+      expect(h.driver.emulatorStepCalls.map((call) => call.expectedObservationId)).toEqual([
+        'emulator-observation-1',
+        'emulator-observation-2',
+        'emulator-observation-3',
+        'emulator-observation-4',
+        'emulator-observation-5'
+      ])
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({ stepsUsed: 1, stepsRemaining: 1 })
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        surfaceKind: 'emulator',
+        actions: [
+          expect.objectContaining({
+            verb: 'emulator_step',
+            executed: true,
+            status: 'awaiting-verification'
+          })
+        ]
+      })
+      const audit = JSON.stringify(
+        h.events.filter((event) => event.kind === 'interaction').map((event) => event.detail)
+      )
+      expect(h.events.filter((event) => event.kind === 'interaction').at(-1)?.detail).toMatchObject(
+        { startFrameId: 1, endFrameId: 6 }
+      )
+      expect(audit).toContain('buttonCount')
+      expect(audit).not.toContain('"right"')
+      expect(audit).not.toContain('"player-x"')
+      expect(audit).not.toContain('"value"')
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('charges one Canvas interaction for an entire multi-frame macro', async () => {
+    const h = harness({ maxInteractions: 1 })
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId, 4)
+      const completed = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: ['a'], frames: 3 }]
+        },
+        ctx
+      )
+      expect(completed.framesCompleted).toBe(3)
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: completed.observation.token.observationId,
+            segments: [{ buttons: [], frames: 1 }]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/interaction budget exhausted/i)
+      expect(h.driver.emulatorStepCalls).toHaveLength(3)
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({ stepsUsed: 1 })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('returns a reviewer-attributed AppDrive observation after a completed emulator action', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId)
+      const completed = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: [], frames: 1 }],
+          requireIndependentVerifier: true
+        },
+        ctx
+      )
+      const reviewer = { ...ctx, provider: 'claude', participantId: 'seat-review' }
+      const review = await h.service.observeEmulator(opened.canvasId, reviewer)
+      expect(review.driveObservation).toMatchObject({
+        reportId: completed.driveReportId,
+        actionId: completed.driveActionId,
+        observer: { participantId: 'seat-review' }
+      })
+      expect(
+        h.service.verifyDriveAction(
+          {
+            reportId: completed.driveReportId!,
+            actionId: completed.driveActionId!,
+            surfaceId: opened.canvasId,
+            observationId: review.driveObservation!.observationId,
+            verdict: 'confirmed'
+          },
+          reviewer
+        )
+      ).toMatchObject({ status: 'verified' })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('accounts typed stale and human refusals without hiding partial execution', async () => {
+    const cases: Array<{
+      name: string
+      error: (observation: CanvasEmulatorAtomicObservation) => Error
+      expected: 'stale_observation' | 'stale_input_epoch' | 'user_active'
+      invalidates: boolean
+      frames: 0 | 1
+    }> = [
+      {
+        name: 'stale observation',
+        error: (observation) => new CanvasEmulatorObservationStaleError(observation),
+        expected: 'stale_observation',
+        invalidates: false,
+        frames: 0
+      },
+      {
+        name: 'stale input',
+        error: (observation) => new CanvasEmulatorInputEpochStaleError(observation, 0),
+        expected: 'stale_input_epoch',
+        invalidates: false,
+        frames: 0
+      },
+      {
+        name: 'user active',
+        error: (observation) => new CanvasEmulatorUserActiveError(observation, 0),
+        expected: 'user_active',
+        invalidates: false,
+        frames: 0
+      }
+    ]
+    for (const testCase of cases) {
+      const h = harness()
+      try {
+        const opened = await open(h)
+        const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+        authorize(h.leases, opened.canvasId)
+        h.driver.emulatorStepImplementation = async () => {
+          const refreshed = advanceAtomicEmulatorObservation(h.driver.emulatorObservation, {
+            inputEpoch: testCase.expected === 'stale_input_epoch' ? 1 : 0,
+            humanActive: testCase.expected === 'user_active'
+          })
+          throw testCase.error(refreshed)
+        }
+        const result = await h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: observed.observation.token.observationId,
+            segments: [{ buttons: ['a'], frames: 1 }]
+          },
+          ctx
+        )
+        expect(result).toMatchObject({
+          outcome: 'refused',
+          refusalReason: testCase.expected,
+          framesCompleted: testCase.frames,
+          executed: false
+        })
+        expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+          actions: [expect.objectContaining({ executed: false, refusalCode: testCase.expected })]
+        })
+        expect(h.invalidated).toHaveBeenCalledTimes(testCase.invalidates ? 1 : 0)
+        expect(h.leases.peek(opened.canvasId)?.status).toBe(
+          testCase.invalidates ? 'revoked' : 'active'
+        )
+        expect(h.leases.peek(opened.canvasId)?.stepsUsed).toBe(
+          testCase.expected === 'stale_observation' ? 1 : 0
+        )
+      } finally {
+        cleanup(h)
+      }
+    }
+
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId)
+      let calls = 0
+      h.driver.emulatorStepImplementation = async () => {
+        calls += 1
+        const next = advanceAtomicEmulatorObservation(h.driver.emulatorObservation, {
+          humanActive: calls > 1,
+          inputEpoch: calls > 1 ? 1 : 0
+        })
+        if (calls === 1) return next
+        throw new CanvasEmulatorUserActiveError(next, 1)
+      }
+      const result = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: ['right'], frames: 3 }]
+        },
+        ctx
+      )
+      expect(result).toMatchObject({
+        outcome: 'interrupted',
+        refusalReason: 'user_active',
+        framesRequested: 3,
+        framesCompleted: 2,
+        executed: true,
+        partial: true
+      })
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        actions: [expect.objectContaining({ executed: null, refusalCode: 'user_active' })]
+      })
+      expect(h.invalidated).not.toHaveBeenCalled()
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({ stepsUsed: 1, status: 'active' })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('does not consume a step budget when a step is refused due to human play', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId, 1)
+      h.driver.emulatorStepImplementation = async () => {
+        const refreshed = advanceAtomicEmulatorObservation(h.driver.emulatorObservation, {
+          humanActive: true
+        })
+        throw new CanvasEmulatorUserActiveError(refreshed, 0)
+      }
+
+      const refused = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: ['a'], frames: 1 }]
+        },
+        ctx
+      )
+      expect(refused).toMatchObject({
+        outcome: 'refused',
+        refusalReason: 'user_active'
+      })
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({
+        status: 'active',
+        stepsUsed: 0,
+        stepsRemaining: 1
+      })
+
+      h.driver.emulatorStepImplementation = undefined
+      h.driver.emulatorObservation = atomicEmulatorObservation({
+        ...h.driver.emulatorObservation,
+        humanActive: false
+      })
+      const replay = await h.service.observeEmulator(opened.canvasId, ctx)
+      const completed = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: replay.observation.token.observationId,
+          segments: [{ buttons: ['a'], frames: 1 }]
+        },
+        ctx
+      )
+      expect(completed).toMatchObject({ outcome: 'completed', framesCompleted: 1 })
+      expect(h.leases.peek(opened.canvasId)).toMatchObject({
+        status: 'active',
+        stepsUsed: 1,
+        stepsRemaining: 0
+      })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('contains invalid frame transitions and serializes concurrent observations after a macro', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId, 2)
+      const gate = deferred<CanvasEmulatorAtomicObservation>()
+      h.driver.emulatorStepImplementation = async () => gate.promise
+      const macro = h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: [], frames: 1 }]
+        },
+        ctx
+      )
+      await vi.waitFor(() => expect(h.driver.emulatorStepCalls).toHaveLength(1))
+      const concurrentObserve = h.service.observeEmulator(opened.canvasId, ctx)
+      expect(h.driver.emulatorStepCalls).toHaveLength(1)
+      gate.resolve(advanceAtomicEmulatorObservation(h.driver.emulatorObservation))
+      await expect(macro).resolves.toMatchObject({ outcome: 'completed', framesCompleted: 1 })
+      await expect(concurrentObserve).resolves.toMatchObject({
+        observation: { token: { frameId: 2 } }
+      })
+
+      const nextObserved = await h.service.observeEmulator(opened.canvasId, ctx)
+      h.driver.emulatorStepImplementation = async () =>
+        atomicEmulatorObservation({
+          observationId: 'bad-transition',
+          frameId: nextObserved.observation.token.frameId + 2,
+          emulationGeneration: 1
+        })
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: nextObserved.observation.token.observationId,
+            segments: [{ buttons: [], frames: 1 }]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/exactly one frame/i)
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        actions: expect.arrayContaining([
+          expect.objectContaining({ executed: null, refusalCode: 'driver_error' })
+        ])
+      })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('contains a cross-generation typed refresh as a driver error instead of caching it', async () => {
+    const h = harness()
+    try {
+      const opened = await open(h)
+      const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+      authorize(h.leases, opened.canvasId, 4)
+      h.driver.emulatorStepImplementation = async () => {
+        throw new CanvasEmulatorObservationStaleError(
+          atomicEmulatorObservation({
+            observationId: 'foreign-generation',
+            emulationGeneration: 2,
+            frameId: 1
+          })
+        )
+      }
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: observed.observation.token.observationId,
+            segments: [{ buttons: [], frames: 1 }]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/typed interruption/i)
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        actions: [expect.objectContaining({ executed: null, refusalCode: 'driver_error' })]
+      })
+      h.driver.emulatorStepImplementation = undefined
+      const recovered = await h.service.stepEmulator(
+        opened.canvasId,
+        {
+          expectedObservationId: observed.observation.token.observationId,
+          segments: [{ buttons: [], frames: 1 }]
+        },
+        ctx
+      )
+      expect(recovered).toMatchObject({ outcome: 'completed', framesCompleted: 1 })
+
+      h.driver.emulatorStepImplementation = async () => {
+        throw new CanvasEmulatorInputEpochStaleError(undefined, 0)
+      }
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: recovered.observation.token.observationId,
+            segments: [{ buttons: [], frames: 1 }]
+          },
+          ctx
+        )
+      ).rejects.toThrow(/current observation/i)
+      expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+        actions: expect.arrayContaining([
+          expect.objectContaining({ executed: null, refusalCode: 'driver_error' })
+        ])
+      })
+      h.driver.emulatorStepImplementation = undefined
+      await expect(
+        h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: recovered.observation.token.observationId,
+            segments: [{ buttons: [], frames: 1 }]
+          },
+          ctx
+        )
+      ).resolves.toMatchObject({ outcome: 'completed', framesCompleted: 1 })
+    } finally {
+      cleanup(h)
+    }
+  })
+
+  it('stops a yielded macro after close or scoped history clear and records driver_error', async () => {
+    for (const cancel of [
+      async (h: ReturnType<typeof harness>, canvasId: string) => h.service.close(canvasId, ctx),
+      async (h: ReturnType<typeof harness>) => {
+        const authority = { chatIds: [ctx.chatId] }
+        await h.service.beginAuthorityHistoryClear(authority)
+        h.service.endAuthorityHistoryClear(authority)
+      }
+    ]) {
+      const h = harness()
+      try {
+        const opened = await open(h)
+        const observed = await h.service.observeEmulator(opened.canvasId, ctx)
+        authorize(h.leases, opened.canvasId)
+        const gate = deferred<CanvasEmulatorAtomicObservation>()
+        h.driver.emulatorStepImplementation = async () => gate.promise
+        const macro = h.service.stepEmulator(
+          opened.canvasId,
+          {
+            expectedObservationId: observed.observation.token.observationId,
+            segments: [{ buttons: [], frames: 2 }]
+          },
+          ctx
+        )
+        await vi.waitFor(() => expect(h.driver.emulatorStepCalls).toHaveLength(1))
+        await cancel(h, opened.canvasId)
+        gate.resolve(advanceAtomicEmulatorObservation(h.driver.emulatorObservation))
+        await expect(macro).rejects.toThrow(/history was cleared/i)
+        expect(h.driver.emulatorStepCalls).toHaveLength(1)
+        expect(h.service.driveReports({}, ctx)[0]).toMatchObject({
+          actions: [expect.objectContaining({ executed: null, refusalCode: 'driver_error' })]
+        })
+      } finally {
+        cleanup(h)
+      }
+    }
   })
 })
 

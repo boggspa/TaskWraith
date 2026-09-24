@@ -403,7 +403,10 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
   })
 
   it('passes a signed read-only (plan) single-run posture through unchanged', () => {
-    const perms = readOnlyPerms()
+    const perms = {
+      ...readOnlyPerms(),
+      subThreadDelegationAutoAllowSource: 'ultratask' as const
+    }
     const signature = signRunPermissionPosture(SECRET, 'plan', perms)
     const result = clampUntrustedRunPosture(
       { scope: 'workspace', approvalMode: 'plan', effectivePermissions: perms, signature },
@@ -411,7 +414,32 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     )
     expect(result.downgraded).toBe(false)
     expect(result.approvalMode).toBe('plan')
-    expect(result.effectivePermissions).toEqual(readOnlyPerms())
+    expect(result.effectivePermissions).toEqual(perms)
+  })
+
+  it('binds the UltraTask delegation source into the posture signature', () => {
+    const perms = {
+      ...readOnlyPerms(),
+      subThreadDelegationAutoAllowSource: 'ultratask' as const
+    }
+    const signature = signRunPermissionPosture(SECRET, 'plan', perms)
+    expect(verifyRunPermissionPosture(SECRET, 'plan', perms, signature)).toBe(true)
+    expect(
+      verifyRunPermissionPosture(SECRET, 'plan', readOnlyPerms(), signature)
+    ).toBe(false)
+  })
+
+  it('projects the signed UltraTask delegation source into posture audit snapshots', () => {
+    const perms = {
+      ...readOnlyPerms(),
+      subThreadDelegationAutoAllowSource: 'ultratask' as const
+    }
+    const snapshot = buildRunPermissionPostureSnapshot({
+      approvalMode: 'plan',
+      effectivePermissions: perms,
+      signature: signRunPermissionPosture(SECRET, 'plan', perms)
+    })
+    expect(snapshot.subThreadDelegationAutoAllowSource).toBe('ultratask')
   })
 
   it('caps a signed global permissive posture to a default-derived permission object', () => {
@@ -491,6 +519,21 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     expect(result.downgraded).toBe(true)
     expect(result.reason).toBe('invalid-effective-permissions-shape')
     expect(result.approvalMode).toBe('plan')
+    expect(result.effectivePermissions).toEqual(readOnlyPerms())
+  })
+
+  it('rejects a signed posture with a forged UltraTask delegation source', () => {
+    const malformed = {
+      ...readOnlyPerms(),
+      subThreadDelegationAutoAllowSource: 'prompt-text'
+    } as unknown as EffectiveRunPermissions
+    const signature = signRunPermissionPosture(SECRET, 'plan', malformed)
+    const result = clampUntrustedRunPosture(
+      { scope: 'workspace', approvalMode: 'plan', effectivePermissions: malformed, signature },
+      deps()
+    )
+    expect(result.downgraded).toBe(true)
+    expect(result.reason).toBe('invalid-effective-permissions-shape')
     expect(result.effectivePermissions).toEqual(readOnlyPerms())
   })
 

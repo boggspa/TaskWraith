@@ -38,6 +38,7 @@ import type {
   BridgeGithubPrStatusAction,
   BridgeGithubPrReadinessAction,
   BridgeGithubCreatePrAction,
+  BridgeGithubMergePrAction,
   BridgeGoalUpdateAction,
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
@@ -46,6 +47,7 @@ import type {
   BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
+  BridgeCreateSubThreadAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
   BridgeSetChatArchivedAction,
@@ -251,6 +253,14 @@ const sample = {
     canvasId: 'cv1',
     action: 'close'
   } satisfies BridgeCanvasActionAction,
+  createSubThread: {
+    kind: 'createSubThread',
+    workspaceId: 'ws-1',
+    threadId: 'parent-1',
+    provider: 'codex',
+    prompt: 'Review the failing test.',
+    returnResult: true
+  } satisfies BridgeCreateSubThreadAction,
   togglePinChat: {
     kind: 'togglePinChat',
     workspaceId: 'ws-1',
@@ -346,6 +356,11 @@ const sample = {
     workspaceId: 'ws-1',
     title: 'Phone PR'
   } satisfies BridgeGithubCreatePrAction,
+  githubMergePr: {
+    kind: 'githubMergePr',
+    workspaceId: 'ws-1',
+    elevationAcknowledged: true
+  } satisfies BridgeGithubMergePrAction,
   discoverTailnetHosts: {
     kind: 'discoverTailnetHosts'
   } satisfies BridgeDiscoverTailnetHostsAction,
@@ -726,7 +741,9 @@ describe('MainProcessActionExecutor git workflow actions', () => {
       cancelRunFn: vi.fn(),
       githubPrStatusFn: vi.fn().mockResolvedValue({ ok: true, pr }),
       githubPrReadinessFn: vi.fn().mockResolvedValue({ ok: true, readiness }),
-      githubCreatePrFn: vi.fn().mockResolvedValue({ ok: true, pr })
+      githubCreatePrFn: vi.fn().mockResolvedValue({ ok: true, pr }),
+      githubMergePrFn: vi.fn().mockResolvedValue({ ok: true, pr }),
+      requestGithubMergePrApprovalFn: vi.fn().mockResolvedValue(true)
     })
 
     await expect(executor.executeGithubPrStatus(sample.githubPrStatus)).resolves.toMatchObject({
@@ -743,6 +760,10 @@ describe('MainProcessActionExecutor git workflow actions', () => {
       executed: true,
       data: { pr: { url: 'https://github.com/o/r/pull/7' } }
     })
+    await expect(executor.executeGithubMergePr(sample.githubMergePr)).resolves.toMatchObject({
+      executed: true,
+      data: { pr: { url: 'https://github.com/o/r/pull/7' } }
+    })
   })
 
   it('surfaces git callback declines with their legible reasons', async () => {
@@ -754,7 +775,9 @@ describe('MainProcessActionExecutor git workflow actions', () => {
         .mockResolvedValue({ ok: false, reason: 'No git remote is configured. Add a remote before pushing.' }),
       githubCreatePrFn: vi
         .fn()
-        .mockResolvedValue({ ok: false, reason: 'This branch already has a pull request.' })
+        .mockResolvedValue({ ok: false, reason: 'This branch already has a pull request.' }),
+      githubMergePrFn: vi.fn().mockResolvedValue({ ok: false, reason: 'Pull request is not mergeable.' }),
+      requestGithubMergePrApprovalFn: vi.fn().mockResolvedValue(true)
     })
 
     await expect(executor.executeGitCommit(sample.gitCommit)).resolves.toMatchObject({
@@ -768,6 +791,10 @@ describe('MainProcessActionExecutor git workflow actions', () => {
     await expect(executor.executeGithubCreatePr(sample.githubCreatePr)).resolves.toMatchObject({
       executed: false,
       message: 'This branch already has a pull request.'
+    })
+    await expect(executor.executeGithubMergePr(sample.githubMergePr)).resolves.toMatchObject({
+      executed: false,
+      message: 'Pull request is not mergeable.'
     })
   })
 
@@ -792,7 +819,8 @@ describe('MainProcessActionExecutor git workflow actions', () => {
       executor.executeGitPush(sample.gitPush),
       executor.executeGithubPrStatus(sample.githubPrStatus),
       executor.executeGithubPrReadiness(sample.githubPrReadiness),
-      executor.executeGithubCreatePr(sample.githubCreatePr)
+      executor.executeGithubCreatePr(sample.githubCreatePr),
+      executor.executeGithubMergePr(sample.githubMergePr)
     ]) {
       const result = await probe
       expect(result.executed).toBe(false)
@@ -1225,6 +1253,130 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeEnsembleSettingsUpdate(sample.ensembleSettingsUpdate)
     expect(result.executed).toBe(false)
     expect(result.message).toContain('Thread is not an Ensemble chat')
+  })
+
+  it('spawns a sub-thread through createSubThreadFn', async () => {
+    const createSubThreadFn = vi.fn().mockResolvedValue({ ok: true, threadId: 'child-1' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, createSubThreadFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(createSubThreadFn).toHaveBeenCalledWith(sample.createSubThread)
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        actionKind: 'createSubThread',
+        result: { ok: true, threadId: 'child-1' }
+      }
+    })
+  })
+
+  it('surfaces createSubThreadFn errors', async () => {
+    const createSubThreadFn = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Cannot create sub-thread: parent is itself a sub-thread (max depth 1 in v1)'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, createSubThreadFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('max depth 1')
+  })
+
+  it('reports createSubThread not wired when no createSubThreadFn is supplied', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeCreateSubThread(sample.createSubThread)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('reports githubMergePr not wired when no githubMergePrFn is supplied', async () => {
+    const requestGithubMergePrApprovalFn = vi.fn().mockResolvedValue(true)
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      requestGithubMergePrApprovalFn
+    })
+    const result = await executor.executeGithubMergePr(sample.githubMergePr)
+    expect(requestGithubMergePrApprovalFn).not.toHaveBeenCalled()
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('refuses githubMergePr without the elevation receipt even when a callback is wired', async () => {
+    const githubMergePrFn = vi.fn().mockResolvedValue({ ok: true, pr: { number: 7 } })
+    const requestGithubMergePrApprovalFn = vi.fn().mockResolvedValue(true)
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      githubMergePrFn,
+      requestGithubMergePrApprovalFn
+    })
+    const result = await executor.executeGithubMergePr({
+      ...sample.githubMergePr,
+      elevationAcknowledged: false
+    })
+    expect(requestGithubMergePrApprovalFn).not.toHaveBeenCalled()
+    expect(githubMergePrFn).not.toHaveBeenCalled()
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/elevation/i)
+  })
+
+  it('refuses githubMergePr when the merge callback is wired but host approval is not', async () => {
+    const githubMergePrFn = vi.fn().mockResolvedValue({ ok: true, pr: { number: 7 } })
+    const executor = new MainProcessActionExecutor({ cancelRunFn: vi.fn(), githubMergePrFn })
+    const result = await executor.executeGithubMergePr(sample.githubMergePr)
+    expect(githubMergePrFn).not.toHaveBeenCalled()
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/host-verified approval/i)
+  })
+
+  it('refuses githubMergePr when host approval denies, and never calls the merge callback', async () => {
+    const githubMergePrFn = vi.fn().mockResolvedValue({ ok: true, pr: { number: 7 } })
+    const requestGithubMergePrApprovalFn = vi.fn().mockResolvedValue(false)
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      githubMergePrFn,
+      requestGithubMergePrApprovalFn
+    })
+    const result = await executor.executeGithubMergePr(sample.githubMergePr)
+    expect(requestGithubMergePrApprovalFn).toHaveBeenCalledTimes(1)
+    expect(requestGithubMergePrApprovalFn).toHaveBeenCalledWith(sample.githubMergePr)
+    expect(githubMergePrFn).not.toHaveBeenCalled()
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not approved/i)
+  })
+
+  it('refuses githubMergePr when host approval throws, and never calls the merge callback', async () => {
+    const githubMergePrFn = vi.fn().mockResolvedValue({ ok: true, pr: { number: 7 } })
+    const requestGithubMergePrApprovalFn = vi
+      .fn()
+      .mockRejectedValue(new Error('approval orchestration down'))
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      githubMergePrFn,
+      requestGithubMergePrApprovalFn
+    })
+    const result = await executor.executeGithubMergePr(sample.githubMergePr)
+    expect(githubMergePrFn).not.toHaveBeenCalled()
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/approval orchestration down/)
+  })
+
+  it('invokes githubMergePrFn only after host approval allows', async () => {
+    const pr = { number: 7, url: 'https://github.com/o/r/pull/7' }
+    const githubMergePrFn = vi.fn().mockResolvedValue({ ok: true, pr })
+    const requestGithubMergePrApprovalFn = vi.fn().mockResolvedValue(true)
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      githubMergePrFn,
+      requestGithubMergePrApprovalFn
+    })
+    const result = await executor.executeGithubMergePr(sample.githubMergePr)
+    expect(requestGithubMergePrApprovalFn).toHaveBeenCalledTimes(1)
+    expect(requestGithubMergePrApprovalFn.mock.invocationCallOrder[0]).toBeLessThan(
+      githubMergePrFn.mock.invocationCallOrder[0]
+    )
+    expect(githubMergePrFn).toHaveBeenCalledWith(sample.githubMergePr)
+    expect(result).toMatchObject({
+      executed: true,
+      data: { pr: { url: 'https://github.com/o/r/pull/7' } }
+    })
   })
 
   it('reports canvasAction not wired when no canvasActionFn is supplied', async () => {

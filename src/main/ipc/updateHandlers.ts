@@ -1,16 +1,20 @@
 import { ipcMain } from 'electron'
 import type { ProductChangelogSnapshot } from '../store/types'
-import type { UpdateRestartCoordinator } from '../UpdateRestartCoordinator'
+import type { UpdateRestartCoordinator, UpdateRestartRequest } from '../UpdateRestartCoordinator'
 import type { UpdateService } from '../UpdateService'
 
 export interface UpdateHandlerDeps {
-  updateService: Pick<
-    UpdateService,
-    'snapshot' | 'checkForUpdates' | 'downloadUpdate' | 'installOnQuit'
-  >
+  updateService: Pick<UpdateService, 'snapshot' | 'checkForUpdates' | 'downloadUpdate'>
   updateRestartCoordinator: Pick<UpdateRestartCoordinator, 'requestRestartWhenIdle'>
   changelogSnapshot: () => ProductChangelogSnapshot
   updateLastSeenChangelogVersion: (version: string) => void
+}
+
+/** Only an explicit boolean `force` is honoured; anything else is a plain request. */
+export function parseUpdateRestartRequest(value: unknown): UpdateRestartRequest {
+  const force =
+    typeof value === 'object' && value !== null && (value as { force?: unknown }).force === true
+  return { force }
 }
 
 export function registerUpdateHandlers(deps: UpdateHandlerDeps): void {
@@ -28,12 +32,8 @@ export function registerUpdateHandlers(deps: UpdateHandlerDeps): void {
     deps.updateRestartCoordinator.requestRestartWhenIdle()
     return deps.updateService.snapshot()
   })
-  ipcMain.handle('install-update-on-quit', () => {
-    deps.updateService.installOnQuit()
-    return deps.updateService.snapshot()
-  })
-  ipcMain.handle('install-update-now', () => {
-    deps.updateRestartCoordinator.requestRestartWhenIdle()
+  ipcMain.handle('install-update-now', (_event, options: unknown) => {
+    deps.updateRestartCoordinator.requestRestartWhenIdle(parseUpdateRestartRequest(options))
     return deps.updateService.snapshot()
   })
   ipcMain.handle('changelog-snapshot', () => deps.changelogSnapshot())

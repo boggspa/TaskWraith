@@ -26,6 +26,16 @@
 // resolve to an allow — mirrors the Grok default-deny contract exactly.
 
 import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  type BigIntStats
+} from 'node:fs'
+import { extname, isAbsolute } from 'node:path'
+import {
   encodeAcpFrame,
   parseAcpStreamChunk,
   acpMessageToRunEvents,
@@ -40,6 +50,9 @@ import {
 } from './AcpProtocol'
 import { isTransientAcpPromptFailure } from './AcpTransientPromptFailure'
 import { appendSteeringMessage } from '../steering/SteeringMessageBatch'
+import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
+import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
+import { twMediaMimeForExt } from '../../shared/twMedia'
 
 /** Minimal child-process surface this client needs (subset of ChildProcess). */
 export interface AcpChildProcess {
@@ -69,9 +82,7 @@ export interface AcpInboundReply {
   respondError: (code: number, message: string) => void
 }
 
-export type AcpToolRecoveryReason =
-  | 'denied-permission-cancellation'
-  | 'failed-tool-terminal'
+export type AcpToolRecoveryReason = 'denied-permission-cancellation' | 'failed-tool-terminal'
 
 export interface AcpToolRecoveryContext {
   readonly reason: AcpToolRecoveryReason
@@ -80,6 +91,8 @@ export interface AcpToolRecoveryContext {
   readonly assistantTextSeen: boolean
   readonly toolFailureSeen: boolean
   readonly lastFailedToolName: string | null
+  /** Exact correlation for provider-owned refusal provenance; names alone can repeat. */
+  readonly lastFailedToolId?: string | null
   readonly lastFailedToolOutput: string | null
 }
 
@@ -96,8 +109,61 @@ export interface AcpDeniedToolRecovery {
   warning?: string | ((context: AcpToolRecoveryContext) => string)
 }
 
+export interface AcpSessionConfigSelection {
+  configId: string
+  /** Preferred value for the current provider version. */
+  value: string
+  /** Older/newer provider spellings with equivalent semantics, in priority order. */
+  fallbackValues?: readonly string[]
+}
+
+export interface AcpSessionPromptContext {
+  sessionId: string
+  resumed: boolean
+  fallbackFromResume: boolean
+  prompt: string
+}
+
+export interface AcpMcpServerSelection {
+  servers: readonly unknown[]
+  /** Provider-visible replacement applied before the first session prompt. */
+  prompt?: string
+  /** Reapply a transport-aware repair when resume falls back to a fresh prompt. */
+  transformPrompt?: (prompt: string) => string
+  /** Visible transport diagnosis emitted before session creation. */
+  warning?: string
+}
+
+export type AcpMcpServerSelectionResult = readonly unknown[] | AcpMcpServerSelection
+
+function isStructuredAcpMcpServerSelection(
+  selection: AcpMcpServerSelectionResult
+): selection is AcpMcpServerSelection {
+  return !Array.isArray(selection)
+}
+
+export type AcpSessionPromptPreparation =
+  | { status: 'ready'; prompt?: string }
+  | { status: 'recover' | 'blocked'; message: string }
+
 export interface AcpTurnOptions {
   prompt: string
+  /**
+   * Main-process-authorized image files for the initial user prompt. This
+   * neutral transport performs format/size/capability validation and encoding,
+   * but it is deliberately not an attachment authority: renderer-nominated
+   * paths must be resolved to chat-owned paths before reaching this field.
+   */
+  imagePaths?: readonly string[]
+  /** Injected only for tests or an equivalent main-owned file reader. */
+  readImageFile?: (imagePath: string) => Buffer
+  /**
+   * Allow a provider adapter with independently verified image behavior to
+   * send inline image blocks when the provider's ACP capability flag is stale.
+   * This is intentionally opt-in: ordinary ACP lanes remain fail-closed when
+   * the runtime does not advertise promptCapabilities.image=true.
+   */
+  allowUnadvertisedPromptImages?: boolean
   /**
    * Existing provider-native ACP session to rehydrate. The neutral client only
    * sends `session/resume` when the initialize response advertises that
@@ -118,17 +184,28 @@ export interface AcpTurnOptions {
    * `session/prompt` this turn writes — the initial prompt, the
    * resume-fallback recovery prompt when a resume rejects (selected INSIDE
    * this client, invisible to the call site), and mid-turn steer injections.
+   * `steer` also covers recovery follow-ups that retain this session's context.
    * Evidence only: never awaited, and a throwing hook must not affect the
    * turn (calls are wrapped).
    */
-  onWirePrompt?: (text: string) => void
+  onWirePrompt?: (
+    text: string,
+    selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }
+  ) => void
+  /**
+   * Optional provider adapter for live-steer continuity. Some ACP servers roll
+   * a cancelled prompt's partial assistant output out of native history. The
+   * core supplies a bounded tail so that adapter can frame it as already-shown
+   * context alongside the authoritative user steer.
+   */
+  formatSteerPrompt?: (context: AcpSteerPromptContext) => string
   /**
    * Provider-supported ACP config selections to re-assert after a successful
    * session/resume and before the prompt. Kimi persists model/thinking in its
    * native session, so process-level defaults alone cannot change them on a
    * resumed turn.
    */
-  resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  resumeConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   /**
    * Config selections to apply to a FRESHLY opened session, after session/new
    * and before the prompt.
@@ -139,9 +216,16 @@ export interface AcpTurnOptions {
    * at all (`[-h] [-v] [--setup]`), so its model AND its permission mode can
    * only be selected here. Without it a Vibe seat silently inherits whatever
    * `active_model` sits in the user's global ~/.vibe/config.toml, and a
-   * read-only seat never leaves the write-capable `default` mode.
+   * read-only seat never leaves Vibe's write-capable `ask` mode (called
+   * `default` by older versions).
    */
-  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
+  /**
+   * Lifetime of `cwd` as a provider-visible workspace identity. A native
+   * session may be resumed only when the path remains valid for that session's
+   * whole lifetime; disposable run scratch must never be used for resume.
+   */
+  cwdLifetime: 'run' | 'session'
   cwd: string
   /** Spawns the provider's ACP stdio process (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -151,6 +235,16 @@ export interface AcpTurnOptions {
   /** MCP servers advertised to session/new (per-run TaskWraith bridge). */
   mcpServers?: unknown[]
   /**
+   * Select the MCP transport after the agent's real initialize response. Absent
+   * keeps `mcpServers` byte-compatible. A selector failure fails closed to no
+   * servers instead of guessing a transport the runtime may not support.
+   */
+  selectMcpServers?: (
+    initializeResult: unknown,
+    configuredMcpServers: readonly unknown[],
+    prompt: string
+  ) => AcpMcpServerSelectionResult | Promise<AcpMcpServerSelectionResult>
+  /**
    * Called after session/resume succeeds and before config/prompt. Resolve
    * true to keep the resumed session; false to abandon it and mint a fresh
    * session/new instead (the resume-fallback prompt rides it, exactly as when
@@ -159,8 +253,20 @@ export interface AcpTurnOptions {
    * resumed sessions are always kept.
    */
   confirmResumedSession?: () => Promise<boolean>
+  /** Runs after session configuration, before readiness is published or work is sent.
+   * Recovery is bounded to one fresh session and requires full recovery context
+   * when replacing a resumed session. Probe errors never imply readiness. */
+  prepareSessionPrompt?: (session: AcpSessionPromptContext) => Promise<AcpSessionPromptPreparation>
   /** Normalized run events: content / thinking / init / result / tool / warning. */
   onEvent: (event: AcpRunEvent) => void
+  /**
+   * Called after the terminal `tool_result` that drains the complete tracked
+   * tool batch has been forwarded through `onEvent`. Parallel calls are
+   * tracked by their ACP ids; a call without an id makes that prompt's batch
+   * boundary unknowable and suppresses this notification rather than guessing.
+   * Notification only: the caller owns any cancel/requeue action.
+   */
+  onToolBatchBoundary?: () => void
   onProcess?: (child: AcpChildProcess) => void
   /**
    * Async spawn admission that must finish before the first initialize frame.
@@ -175,6 +281,9 @@ export interface AcpTurnOptions {
   onPermissionRequest?: (
     request: AcpPermissionRequest
   ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  /** Audit notification after a current permission reply is written successfully
+   * to the child transport. Stale decisions and failed writes never notify. */
+  onPermissionResponse?: (request: AcpPermissionRequest, decision: AcpPermissionDecision) => void
   /**
    * Handle an inbound agent→client request the core does not (fs/*, terminal/*,
    * provider extensions). Return true when a reply was sent via `reply`; return
@@ -264,7 +373,8 @@ export interface AcpTurnHandle {
    *
    * Calls received before the first interrupt lands are batched in arrival
    * order; the provider still receives exactly one follow-up prompt per closed
-   * turn, and every included delivery hook fires after that prompt is sent.
+   * turn. Delivery hooks fire only after provider output or a prompt result
+   * proves that follow-up was admitted.
    */
   steer: (text: string, hooks?: AcpSteerDeliveryHooks) => boolean
   /**
@@ -274,6 +384,10 @@ export interface AcpTurnHandle {
    * RunManager teardown paths that must not silently deliver a stale steer.
    */
   cancelSteer: () => void
+  /** Host-owned blocked-lane settlement. Refuses while a tool batch or queued
+   * steer is unresolved; cleanup remains joined by closed. */
+  finishBlocked?: (message: string) => boolean
+  wasBlockedByHost?: () => boolean
   /**
    * Resolves only after the exact child emits `close` and the provider-owned
    * `onClose` callback has settled. A kill request is not close evidence, and
@@ -283,17 +397,208 @@ export interface AcpTurnHandle {
 }
 
 export interface AcpSteerDeliveryHooks {
-  /** Fired after the follow-up session/prompt frame is written to the live ACP session. */
+  /** Main-resolved, chat-owned paths; never renderer-nominated here. */
+  imagePaths?: readonly string[]
+  /** Fired only after provider output/result proves the follow-up prompt was admitted. */
   onDelivered: () => void
+  onRejected?: (reason: string) => void
+  onAmbiguous?: (reason: string) => void
+}
+
+interface PendingAcpSteer {
+  text: string
+  hooks: AcpSteerDeliveryHooks[]
+  images: AcpPromptImageContent[]
+}
+
+export interface AcpSteerPromptContext {
+  /** User-authored steering text accepted by the live transport. */
+  readonly steerText: string
+  /** Bounded tail of assistant text already streamed for the interrupted prompt. */
+  readonly interruptedAssistantText: string
+  readonly interruptedAssistantTextWasTruncated: boolean
+  /** Exact prompt whose response was interrupted. */
+  readonly interruptedPromptText: string
 }
 
 // Keep prompt=3 for compatibility with existing protocol traces. Resume uses a
 // separate lifecycle id and completes before the prompt is dispatched.
 const ACP_ID = { initialize: 1, sessionNew: 2, prompt: 3, sessionResume: 4 } as const
 const ACP_CONFIG_RPC_START = 1_000
+const MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS = 16 * 1024
+
+export interface AcpPromptImageContent {
+  type: 'image'
+  data: string
+  mimeType: string
+}
+
+/** Shared composer/durable count ceiling and TaskWraith's main-owned full-image
+ * resource ceiling. ACP itself advertises image support as a boolean and does
+ * not define a smaller provider byte cap. */
+export const ACP_PROMPT_IMAGE_MAX_COUNT = MAX_DURABLE_ATTACHMENT_REFS
+export const ACP_PROMPT_IMAGE_MAX_BYTES = TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES
+
+export class AcpImagePromptError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AcpImagePromptError'
+  }
+}
+
+export interface AcpDescriptorImageReadHooks {
+  /** Test-only synchronization point after descriptor identity validation. */
+  afterOpen?: (fd: number) => void
+}
+
+function sameFileIdentity(
+  left: { dev: bigint; ino: bigint },
+  right: { dev: bigint; ino: bigint }
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+/**
+ * Read one already-authorized path through a single owned descriptor. The
+ * normal path uses O_NOFOLLOW, so a terminal symlink never opens. Platforms
+ * without that flag use lstat only as an expected identity, then prove the
+ * opened fd is the same non-symlink regular file before reading from the fd.
+ * At no point are bytes read by reopening the pathname.
+ */
+export function readMainAuthorizedAcpImageFile(
+  imagePath: string,
+  hooks: AcpDescriptorImageReadHooks = {}
+): Buffer {
+  const noFollowFlag =
+    typeof fsConstants.O_NOFOLLOW === 'number' && fsConstants.O_NOFOLLOW > 0
+      ? fsConstants.O_NOFOLLOW
+      : 0
+  let expectedIdentity: BigIntStats | null = null
+  const captureFallbackIdentity = (): void => {
+    expectedIdentity = lstatSync(imagePath, { bigint: true })
+    if (expectedIdentity.isSymbolicLink()) {
+      throw new AcpImagePromptError(`The attached ACP image cannot be a symlink (${imagePath}).`)
+    }
+  }
+  let fd: number
+  if (noFollowFlag === 0) {
+    captureFallbackIdentity()
+    fd = openSync(imagePath, fsConstants.O_RDONLY)
+  } else {
+    try {
+      fd = openSync(imagePath, fsConstants.O_RDONLY | noFollowFlag)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code !== 'EINVAL' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw error
+      captureFallbackIdentity()
+      fd = openSync(imagePath, fsConstants.O_RDONLY)
+    }
+  }
+  try {
+    const before = fstatSync(fd, { bigint: true })
+    if (!before.isFile()) {
+      throw new AcpImagePromptError(`The attached ACP image is not a regular file (${imagePath}).`)
+    }
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, before)) {
+      throw new AcpImagePromptError(
+        `The attached ACP image changed identity while it was being opened (${imagePath}).`
+      )
+    }
+    if (before.size <= 0n || before.size > BigInt(ACP_PROMPT_IMAGE_MAX_BYTES)) {
+      throw new AcpImagePromptError(
+        `The attached ACP image must be between 1 byte and ${ACP_PROMPT_IMAGE_MAX_BYTES} bytes (${imagePath}).`
+      )
+    }
+
+    hooks.afterOpen?.(fd)
+    const buffer = readFileSync(fd)
+    const after = fstatSync(fd, { bigint: true })
+    if (
+      !sameFileIdentity(before, after) ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      BigInt(buffer.byteLength) !== before.size
+    ) {
+      throw new AcpImagePromptError(
+        `The attached ACP image changed while it was being read (${imagePath}).`
+      )
+    }
+    return buffer
+  } finally {
+    try {
+      closeSync(fd)
+    } catch {
+      // The descriptor read has already settled; close failure cannot make a
+      // different pathname authoritative or justify reopening it.
+    }
+  }
+}
+
+/**
+ * Encode already-authorized main-process paths into ACP ImageContent blocks.
+ * This function never establishes path authority; callers must do that before
+ * invocation. It validates the complete array before any session/prompt frame
+ * can be written, so an invalid member cannot cause partial attachment loss.
+ */
+export function loadMainAuthorizedAcpImageContents(
+  imagePaths: readonly string[],
+  readImageFile: (imagePath: string) => Buffer = readMainAuthorizedAcpImageFile
+): AcpPromptImageContent[] {
+  if (imagePaths.length > ACP_PROMPT_IMAGE_MAX_COUNT) {
+    throw new AcpImagePromptError(
+      `ACP prompts support at most ${ACP_PROMPT_IMAGE_MAX_COUNT} image attachments; received ${imagePaths.length}.`
+    )
+  }
+  const images: AcpPromptImageContent[] = []
+  for (const rawPath of imagePaths) {
+    const imagePath = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!imagePath || !isAbsolute(imagePath)) {
+      throw new AcpImagePromptError('ACP image attachments require main-authorized absolute paths.')
+    }
+    const extension = extname(imagePath).slice(1).toLowerCase()
+    const mimeType = twMediaMimeForExt(extension === 'jpeg' ? 'jpg' : extension)
+    if (!mimeType?.startsWith('image/')) {
+      throw new AcpImagePromptError(
+        `The attached file is not a supported ACP raster image (png, jpeg, gif, webp, bmp): ${imagePath}.`
+      )
+    }
+    let buffer: Buffer
+    try {
+      buffer = readImageFile(imagePath)
+    } catch (error) {
+      if (error instanceof AcpImagePromptError) throw error
+      throw new AcpImagePromptError(
+        `The attached ACP image could not be read (${imagePath}): ${
+          error instanceof Error ? error.message : String(error)
+        }.`
+      )
+    }
+    if (!Buffer.isBuffer(buffer) || buffer.byteLength <= 0) {
+      throw new AcpImagePromptError(`The attached ACP image is empty or unreadable (${imagePath}).`)
+    }
+    if (buffer.byteLength > ACP_PROMPT_IMAGE_MAX_BYTES) {
+      throw new AcpImagePromptError(
+        `The attached ACP image exceeds the ${ACP_PROMPT_IMAGE_MAX_BYTES} byte limit (${imagePath}).`
+      )
+    }
+    images.push({ type: 'image', data: buffer.toString('base64'), mimeType })
+  }
+  return images
+}
 
 function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function isDefinitiveAcpPromptRejection(error: { code?: unknown }): boolean {
+  return error.code === -32600 || error.code === -32601 || error.code === -32602
+}
+
+function isAcpPromptCancellation(error: { code?: unknown; message?: string }): boolean {
+  return (
+    error.code === -32800 ||
+    /\b(?:cancel(?:led|ed)?|interrupt(?:ed|ion)?|abort(?:ed)?)\b/i.test(error.message || '')
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -356,7 +661,11 @@ function advertisedConfigOptions(result: unknown): AcpAdvertisedConfigOption[] {
  * Only the latter is sufficient here because TaskWraith owns transcript UI and
  * must not replay provider history as fresh updates. */
 function agentSupportsSessionResume(initializeResult: unknown): boolean {
-  if (!initializeResult || typeof initializeResult !== 'object' || Array.isArray(initializeResult)) {
+  if (
+    !initializeResult ||
+    typeof initializeResult !== 'object' ||
+    Array.isArray(initializeResult)
+  ) {
     return false
   }
   const capabilities = (initializeResult as { agentCapabilities?: unknown }).agentCapabilities
@@ -371,6 +680,18 @@ function agentSupportsSessionResume(initializeResult: unknown): boolean {
     return false
   }
   return Object.prototype.hasOwnProperty.call(sessionCapabilities, 'resume')
+}
+
+function agentSupportsPromptImages(initializeResult: unknown): boolean {
+  if (!isRecord(initializeResult)) return false
+  const capabilities = isRecord(initializeResult.agentCapabilities)
+    ? initializeResult.agentCapabilities
+    : null
+  const promptCapabilities =
+    capabilities && isRecord(capabilities.promptCapabilities)
+      ? capabilities.promptCapabilities
+      : null
+  return promptCapabilities?.image === true
 }
 
 function isTerminalStdinWriteError(err: unknown): boolean {
@@ -397,6 +718,10 @@ export function createAcpTurnAbortController(handle: { cancel: () => void }): Ab
  * synthesizes the canonical result/exit from `onClose`.
  */
 export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
+  const requestedResumeSessionId = nonEmptyString(options.resumeSessionId)
+  if (requestedResumeSessionId && options.cwdLifetime !== 'session') {
+    throw new Error('ACP session/resume requires a session-scoped cwd.')
+  }
   // Create both join authorities before spawning. `onProcess` is deliberately
   // invoked only after child close/error listeners are installed below.
   let resolveClosed!: () => void
@@ -418,30 +743,76 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   let carry = ''
   let sessionId = ''
-  const requestedResumeSessionId = nonEmptyString(options.resumeSessionId)
   const resumeRequested = Boolean(requestedResumeSessionId)
   let resumeRpcSent = false
   let fallbackFromResume = false
   let promptForTurn = options.prompt
+  let selectedMcpServers: readonly unknown[] = options.mcpServers ?? []
+  let selectedMcpPromptTransform: ((prompt: string) => string) | undefined
+  let mcpSelectionStarted = false
+  const initialImagePaths = [...(options.imagePaths ?? [])]
+  const readImageFile = options.readImageFile ?? readMainAuthorizedAcpImageFile
+  let agentSupportsImagePrompts = false
+  let initialPromptImages: AcpPromptImageContent[] = []
   let promptSent = false
+  let sessionPreparationPending = false
+  let sessionPreparationRecoveryAttempted = false
+  let currentSessionResumed = false
   let turnComplete = false
+  let blockedByHost = false
   let terminalStatus: string | undefined
   let stdinClosed = false
   let closed = false
   let nextPromptRpcId = ACP_ID.prompt
   let nextConfigRpcId = ACP_CONFIG_RPC_START
-  let resumeConfigQueue: Array<{ configId: string; value: string }> = []
+  let sessionConfigQueue: Array<{ configId: string; values: string[] }> = []
+  let configSessionKind: 'new' | 'resumed' = 'new'
   const pendingConfigRpcs = new Map<number, { configId: string; value: string }>()
   let activePromptRpcId: number | null = null
   let deniedPromptRpcId: number | null = null
   let deniedPermissionRequest: AcpPermissionRequest | null = null
   let deniedToolRecoveryAttempted = false
+  /**
+   * Terminal `result` events dropped for id mismatch, and whether any terminal
+   * was seen at all. Together these separate the two ways a turn can end
+   * without ever terminalizing — a swallowed terminal versus none arriving —
+   * which otherwise project identically and are indistinguishable after the
+   * fact unless provider raw logging happened to be on.
+   */
+  let uncorrelatedTerminals = 0
+  let seenAnyTerminalEvent = false
   let assistantTextSeen = false
   let toolFailureSeen = false
   let lastFailedToolName: string | null = null
+  let lastFailedToolId: string | null = null
   let lastFailedToolOutput: string | null = null
   let lastObservedToolName: string | null = null
   const toolNamesById = new Map<string, string>()
+  const outstandingToolIds = new Set<string>()
+  const completedToolIds = new Set<string>()
+  let toolBatchIdentityAmbiguous = false
+  const observeToolBatchEvent = (event: AcpRunEvent): boolean => {
+    if (event.type === 'tool_use') {
+      const toolId = nonEmptyString(event.toolId)
+      if (!toolId) {
+        // Without an identity, a later terminal update cannot be proven to
+        // close this exact call (especially when calls execute in parallel).
+        toolBatchIdentityAmbiguous = true
+        return false
+      }
+      // Some ACP peers replay the full terminal `tool_call` snapshot after
+      // already sending its update. Tool ids are unique within one prompt, so
+      // a completed id cannot reopen the batch or notify twice.
+      if (!completedToolIds.has(toolId)) outstandingToolIds.add(toolId)
+      return false
+    }
+    if (event.type !== 'tool_result') return false
+    const toolId = nonEmptyString(event.toolId)
+    if (!toolId || !outstandingToolIds.has(toolId)) return false
+    outstandingToolIds.delete(toolId)
+    completedToolIds.add(toolId)
+    return outstandingToolIds.size === 0 && !toolBatchIdentityAmbiguous
+  }
   // ACP emits the full ToolCall notification before request_permission, but
   // some agents repeat only its id/title/kind in the permission request. Vibe
   // can also put its structured machine identity on a later tool_call_update
@@ -543,11 +914,19 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
    * close is left for the boundary-delivery path, exactly like pi's undrained
    * steering queue (see PiSteerDelivery finding 3).
    */
-  let pendingSteer: { text: string; hooks: AcpSteerDeliveryHooks[] } | null = null
+  let pendingSteer: PendingAcpSteer | null = null
+  let pendingSteerCancelState: 'none' | 'deferred' | 'sent' = 'none'
+  let activeSteerDelivery: { promptRpcId: number; hooks: AcpSteerDeliveryHooks[] } | null = null
+  let settlingActiveSteerHooks = false
+  let settlingPendingSteerHooks = false
   // Text of the prompt currently in flight — the recovery prompt, not the
   // original, once recovery has taken over. A transient retry must re-send
   // whatever actually failed.
   let inFlightPromptText = ''
+  let inFlightPromptImages: AcpPromptImageContent[] = []
+  let inFlightPromptKind: 'initial' | 'retry' | 'steer' = 'initial'
+  let activePromptAssistantText = ''
+  let activePromptAssistantTextWasTruncated = false
   let transientPromptRetries = 0
   let transientRetryTimer: ReturnType<typeof setTimeout> | null = null
   // Recent provider stderr, kept only long enough to explain a prompt failure
@@ -579,7 +958,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     options.onEvent({ type: 'provider_warning', text: err.message || String(err) })
   })
 
-  const writeFrame = (message: Record<string, unknown>): void => {
+  const writeFrame = (message: Record<string, unknown>, onWritten?: () => void): void => {
     options.onRawFrame?.('out', message)
     const stdin = child.stdin
     if (
@@ -594,7 +973,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
     try {
       stdin.write(encodeAcpFrame(message), (err?: Error | null) => {
-        if (!err) return
+        if (!err) {
+          try {
+            onWritten?.()
+          } catch {
+            // An audit observer cannot alter a reply already written.
+          }
+          return
+        }
         if (isTerminalStdinWriteError(err)) {
           stdinClosed = true
           return
@@ -619,66 +1005,256 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     writeFrame(message)
   }
 
-  const sendPrompt = (text: string): number | null => {
+  const sendPrompt = (
+    text: string,
+    images: readonly AcpPromptImageContent[] = [],
+    kind: 'initial' | 'retry' | 'steer' = 'initial'
+  ): number | null => {
     if (cancelRequested || closed || stdinClosed) return null
     deniedPromptRpcId = null
     deniedPermissionRequest = null
     assistantTextSeen = false
     toolFailureSeen = false
     lastFailedToolName = null
+    lastFailedToolId = null
     lastFailedToolOutput = null
     lastObservedToolName = null
     toolNamesById.clear()
+    outstandingToolIds.clear()
+    completedToolIds.clear()
+    toolBatchIdentityAmbiguous = false
+    pendingSteerCancelState = 'none'
     const promptRpcId = nextPromptRpcId++
     // RPC id 4 is reserved for session/resume. The first prompt remains id 3
     // for trace compatibility; any recovery prompt continues at 5.
     if (nextPromptRpcId === ACP_ID.sessionResume) nextPromptRpcId += 1
     activePromptRpcId = promptRpcId
     inFlightPromptText = text
+    inFlightPromptImages = [...images]
+    inFlightPromptKind = kind
+    activePromptAssistantText = ''
+    activePromptAssistantTextWasTruncated = false
     if (options.onWirePrompt) {
       try {
-        options.onWirePrompt(text)
+        options.onWirePrompt(text, { sessionId, kind })
       } catch {
         // Evidence only — a capture failure must never affect the turn.
       }
     }
     writeRpc(promptRpcId, 'session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text }]
+      prompt: [{ type: 'text', text }, ...images]
     })
     return promptRpcId
+  }
+
+  const settleActiveSteerDelivery = (
+    outcome: 'delivered' | 'rejected' | 'ambiguous',
+    reason?: string
+  ): void => {
+    const delivery = activeSteerDelivery
+    activeSteerDelivery = null
+    if (!delivery) return
+    settlingActiveSteerHooks = true
+    try {
+      for (const hook of delivery.hooks) {
+        try {
+          if (outcome === 'delivered') hook.onDelivered()
+          else if (outcome === 'rejected')
+            hook.onRejected?.(reason || 'ACP rejected the steer prompt.')
+          else hook.onAmbiguous?.(reason || 'ACP steer admission was ambiguous.')
+        } catch {
+          // One receipt callback must not prevent the remaining batch from settling.
+        }
+      }
+    } finally {
+      settlingActiveSteerHooks = false
+    }
+  }
+
+  const rejectSteerHooksBeforeAdmission = (
+    hooks: AcpSteerDeliveryHooks | undefined,
+    reason: string
+  ): boolean => {
+    if (!hooks?.onRejected) return false
+    const wasSettlingPendingHooks = settlingPendingSteerHooks
+    settlingPendingSteerHooks = true
+    try {
+      hooks.onRejected(reason)
+    } catch {
+      // Receipt projection cannot turn a definite non-admission into delivery.
+    } finally {
+      settlingPendingSteerHooks = wasSettlingPendingHooks
+    }
+    return true
+  }
+
+  const settlePendingSteerRejection = (pending: PendingAcpSteer, reason: string): void => {
+    const wasSettlingPendingHooks = settlingPendingSteerHooks
+    settlingPendingSteerHooks = true
+    try {
+      for (const hook of pending.hooks) {
+        try {
+          hook.onRejected?.(reason)
+        } catch {
+          // One receipt callback must not prevent the rest of the batch settling.
+        }
+      }
+    } finally {
+      settlingPendingSteerHooks = wasSettlingPendingHooks
+    }
+  }
+
+  const settleActiveSteerError = (error: { code?: unknown; message?: string }): void => {
+    if (
+      assistantTextSeen ||
+      (pendingSteerCancelState === 'sent' && isAcpPromptCancellation(error))
+    ) {
+      settleActiveSteerDelivery('delivered')
+    } else if (isDefinitiveAcpPromptRejection(error)) {
+      settleActiveSteerDelivery('rejected', error.message || 'ACP rejected the steer prompt.')
+    } else {
+      settleActiveSteerDelivery(
+        'ambiguous',
+        error.message || 'ACP steer admission failed without definitive rejection.'
+      )
+    }
   }
 
   const sendPendingSteer = (): boolean => {
     const pending = pendingSteer
     pendingSteer = null
-    if (!pending || cancelRequested || closed || stdinClosed || !sessionId) return false
-    if (sendPrompt(pending.text) === null) return false
-    for (const hook of pending.hooks) {
+    pendingSteerCancelState = 'none'
+    if (!pending) return false
+    if (cancelRequested || closed || stdinClosed || !sessionId) {
+      settlePendingSteerRejection(
+        pending,
+        'ACP steering was not sent because the live session was no longer available.'
+      )
+      return false
+    }
+    let followUpPrompt = pending.text
+    if (options.formatSteerPrompt) {
       try {
-        hook.onDelivered()
+        const formatted = options.formatSteerPrompt({
+          steerText: pending.text,
+          interruptedAssistantText: activePromptAssistantText,
+          interruptedAssistantTextWasTruncated: activePromptAssistantTextWasTruncated,
+          interruptedPromptText: inFlightPromptText
+        })
+        if (formatted.trim()) followUpPrompt = formatted
       } catch {
-        // Receipt evidence must not stop later receipts or live delivery.
+        // A continuity aid must never lose an accepted steering instruction.
       }
     }
+    const promptRpcId = sendPrompt(followUpPrompt, pending.images, 'steer')
+    if (promptRpcId === null) {
+      settlePendingSteerRejection(
+        pending,
+        'ACP steering was not sent because the follow-up prompt could not be written.'
+      )
+      return false
+    }
+    activeSteerDelivery = { promptRpcId, hooks: pending.hooks }
     return true
   }
 
   const sendSessionNew = (isResumeFallback: boolean): void => {
     fallbackFromResume = isResumeFallback
     if (isResumeFallback && typeof options.resumeFallbackPrompt === 'string') {
-      promptForTurn = options.resumeFallbackPrompt
+      try {
+        promptForTurn = selectedMcpPromptTransform
+          ? selectedMcpPromptTransform(options.resumeFallbackPrompt)
+          : options.resumeFallbackPrompt
+      } catch {
+        terminalStatus = 'rpc_error:session/new'
+        options.onEvent({
+          type: 'provider_warning',
+          text: 'ACP MCP prompt repair failed; the fallback session was not opened.'
+        })
+        endProcess()
+        return
+      }
     }
     writeRpc(ACP_ID.sessionNew, 'session/new', {
       cwd: options.cwd,
-      mcpServers: options.mcpServers ?? []
+      mcpServers: selectedMcpServers
     })
   }
 
   const sendPromptOnce = (): void => {
-    if (promptSent) return
-    promptSent = true
-    sendPrompt(promptForTurn)
+    if (promptSent || sessionPreparationPending || closed || cancelRequested) return
+    const preparedSessionId = sessionId
+    const publishReady = (): void => {
+      options.onEvent({ type: 'init', sessionId })
+      options.onSessionReady?.({
+        sessionId,
+        resumed: currentSessionResumed,
+        fallbackFromResume
+      })
+    }
+    const send = (prompt = promptForTurn): void => {
+      if (options.prepareSessionPrompt) publishReady()
+      promptSent = true
+      sendPrompt(prompt, initialPromptImages)
+    }
+    if (!options.prepareSessionPrompt) {
+      send()
+      return
+    }
+    sessionPreparationPending = true
+    void Promise.resolve()
+      .then(() =>
+        options.prepareSessionPrompt!({
+          sessionId,
+          resumed: currentSessionResumed,
+          fallbackFromResume,
+          prompt: promptForTurn
+        })
+      )
+      .catch(
+        (): AcpSessionPromptPreparation => ({
+          status: 'blocked',
+          message:
+            "TaskWraith could not verify this session's tool surface. No work prompt was sent."
+        })
+      )
+      .then((prepared) => {
+        sessionPreparationPending = false
+        if (closed || cancelRequested || sessionId !== preparedSessionId) return
+        if (prepared.status === 'ready') {
+          send(prepared.prompt)
+          return
+        }
+        try {
+          options.onEvent({ type: 'provider_warning', text: prepared.message })
+        } catch {
+          // Diagnostic projection cannot prevent recovery or blocked settlement.
+        }
+        if (
+          prepared.status === 'recover' &&
+          !sessionPreparationRecoveryAttempted &&
+          options.allowResumeFallback !== false &&
+          (!currentSessionResumed || Boolean(options.resumeFallbackPrompt?.trim()))
+        ) {
+          sessionPreparationRecoveryAttempted = true
+          sendSessionNew(true)
+          return
+        }
+        blockedByHost = true
+        terminalStatus = 'taskwraith_blocked'
+        turnComplete = true
+        try {
+          options.onEvent({
+            type: 'content',
+            text: `TaskWraith lane blocked: ${prepared.message} The existing session and prior work remain available; the coordinator can recover or reassign after this run settles.`
+          })
+        } catch {
+          // Exact child close remains authoritative even if its notice cannot render.
+        } finally {
+          endProcess()
+        }
+      })
   }
 
   const clearTransientRetryTimer = (): void => {
@@ -709,62 +1285,80 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             ? 1000
             : 3000
     const retryText = inFlightPromptText
+    const retryImages = [...inFlightPromptImages]
+    const retryKind = inFlightPromptKind === 'steer' ? 'steer' : 'retry'
     // The old rpc id already received its error response; sendPrompt allocates
     // a fresh one against the same sessionId.
     options.onEvent({
       type: 'provider_warning',
-      text: `ACP session/prompt failed: ${failureText} — transient provider failure; retrying (${attempt}/${limit}) in ${Math.round(
-        delayMs / 100
-      ) / 10}s.`
+      text: `ACP session/prompt failed: ${failureText} — transient provider failure; retrying (${attempt}/${limit}) in ${
+        Math.round(delayMs / 100) / 10
+      }s.`
     })
     clearTransientRetryTimer()
-    transientRetryTimer = setTimeout(() => {
-      transientRetryTimer = null
-      if (cancelRequested || closed || stdinClosed || turnComplete) return
-      sendPrompt(retryText)
-    }, Math.max(0, delayMs))
+    transientRetryTimer = setTimeout(
+      () => {
+        transientRetryTimer = null
+        if (cancelRequested || closed || stdinClosed || turnComplete) return
+        const retryPromptRpcId = sendPrompt(retryText, retryImages, retryKind)
+        if (activeSteerDelivery && retryPromptRpcId !== null) {
+          activeSteerDelivery = { ...activeSteerDelivery, promptRpcId: retryPromptRpcId }
+        }
+      },
+      Math.max(0, delayMs)
+    )
     return true
   }
 
-  const applyNextResumeConfig = (result: unknown): void => {
-    if (resumeConfigQueue.length === 0) {
+  const applyNextSessionConfig = (result: unknown): void => {
+    if (sessionConfigQueue.length === 0) {
       sendPromptOnce()
       return
     }
     const advertised = advertisedConfigOptions(result)
-    const desired = resumeConfigQueue.shift()!
+    const desired = sessionConfigQueue.shift()!
     const option = advertised.find((candidate) => candidate.id === desired.configId)
     if (!option) {
       options.onEvent({
         type: 'provider_warning',
-        text: `ACP resumed session did not advertise config option "${desired.configId}"; keeping its persisted value.`
+        text: `ACP ${configSessionKind} session did not advertise config option "${desired.configId}"; keeping its persisted value.`
       })
-      applyNextResumeConfig(result)
+      applyNextSessionConfig(result)
       return
     }
-    if (String(option.currentValue ?? '') === desired.value) {
-      applyNextResumeConfig(result)
+    const currentValue = String(option.currentValue ?? '')
+    if (desired.values.includes(currentValue)) {
+      applyNextSessionConfig(result)
       return
     }
-    if (option.values.length > 0 && !option.values.includes(desired.value)) {
+    const selectedValue =
+      option.values.length === 0
+        ? desired.values[0]
+        : desired.values.find((value) => option.values.includes(value))
+    if (!selectedValue) {
+      const requested =
+        desired.values.length === 1
+          ? `"${desired.values[0]}"`
+          : `any allowed value (${desired.values.map((value) => `"${value}"`).join(', ')})`
       options.onEvent({
         type: 'provider_warning',
-        text: `ACP resumed session does not offer "${desired.value}" for config option "${desired.configId}"; keeping its persisted value.`
+        text: `ACP ${configSessionKind} session does not offer ${requested} for config option "${desired.configId}"; keeping its persisted value.`
       })
-      applyNextResumeConfig(result)
+      applyNextSessionConfig(result)
       return
     }
     const rpcId = nextConfigRpcId++
-    pendingConfigRpcs.set(rpcId, desired)
+    pendingConfigRpcs.set(rpcId, { configId: desired.configId, value: selectedValue })
     writeRpc(rpcId, 'session/set_config_option', {
       sessionId,
       configId: desired.configId,
-      value: desired.value
+      value: selectedValue
     })
   }
 
   const sessionReady = (resumed: boolean, result: unknown): void => {
-    if (sessionId) {
+    currentSessionResumed = resumed
+    if (sessionId && !options.prepareSessionPrompt) {
       options.onEvent({ type: 'init', sessionId })
       options.onSessionReady?.({ sessionId, resumed, fallbackFromResume })
     }
@@ -773,13 +1367,16 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // and both end at sendPromptOnce().
     const requestedConfig = resumed ? options.resumeConfigOptions : options.sessionConfigOptions
     if (requestedConfig?.length) {
-      resumeConfigQueue = requestedConfig
-        .map((option) => ({
-          configId: nonEmptyString(option.configId),
-          value: nonEmptyString(option.value)
-        }))
-        .filter((option) => option.configId && option.value)
-      applyNextResumeConfig(result)
+      configSessionKind = resumed ? 'resumed' : 'new'
+      sessionConfigQueue = requestedConfig
+        .map((option) => {
+          const values = [option.value, ...(option.fallbackValues ?? [])]
+            .map(nonEmptyString)
+            .filter((value, index, all) => value && all.indexOf(value) === index)
+          return { configId: nonEmptyString(option.configId), values }
+        })
+        .filter((option) => option.configId && option.values.length > 0)
+      applyNextSessionConfig(result)
     } else {
       sendPromptOnce()
     }
@@ -826,6 +1423,20 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
   }
 
+  const failInitialImagePrompt = (reason: string): void => {
+    terminalStatus = 'rpc_error:session/prompt-images'
+    try {
+      options.onEvent({
+        type: 'provider_warning',
+        text: `ACP session/prompt was not sent with its attachments: ${reason}`
+      })
+    } catch {
+      // The transport failure remains authoritative if transcript projection fails.
+    } finally {
+      endProcess()
+    }
+  }
+
   const answerPermissionRequest = (request: AcpPermissionRequest): void => {
     const permissionPromptRpcId = activePromptRpcId
     const permissionPromptIsCurrent = (): boolean =>
@@ -840,10 +1451,15 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         deniedPermissionRequest = request
       }
     }
+    const reply = (decision: AcpPermissionDecision): void => {
+      writeFrame(buildAcpPermissionResponse(request.rpcId, request.options, decision), () => {
+        options.onPermissionResponse?.(request, decision)
+      })
+    }
     const fallbackDeny = (): void => {
       if (!permissionPromptIsCurrent()) return
       recordDeniedPrompt()
-      writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, 'deny'))
+      reply('deny')
     }
     let decision: AcpPermissionDecision | Promise<AcpPermissionDecision>
     try {
@@ -858,7 +1474,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         // cancellation/close or answer a newer recovery prompt; discard stale.
         if (!permissionPromptIsCurrent()) return
         if (resolved === 'deny') recordDeniedPrompt()
-        writeResponse(buildAcpPermissionResponse(request.rpcId, request.options, resolved))
+        reply(resolved)
       })
       .catch(fallbackDeny)
     // Surface the request in the transcript only when no mediator is wired, so
@@ -870,6 +1486,91 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         text: `The agent requested a tool (${request.toolName}) — declined because no TaskWraith permission mediator was attached.`
       })
     }
+  }
+
+  const continueAfterInitialize = (initializeResult: unknown): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    agentSupportsImagePrompts = agentSupportsPromptImages(initializeResult)
+    if (initialImagePaths.length > 0) {
+      if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
+        failInitialImagePrompt(
+          'the runtime did not advertise agentCapabilities.promptCapabilities.image=true. No image was silently omitted.'
+        )
+        return
+      }
+      if (!agentSupportsImagePrompts) {
+        options.onEvent({
+          type: 'provider_warning',
+          text: 'ACP runtime reported promptCapabilities.image=false; forwarding the verified inline image blocks through the provider compatibility path.'
+        })
+      }
+      try {
+        initialPromptImages = loadMainAuthorizedAcpImageContents(initialImagePaths, readImageFile)
+      } catch (error) {
+        failInitialImagePrompt(
+          `${error instanceof Error ? error.message : String(error)} No image was silently omitted.`
+        )
+        return
+      }
+    }
+    if (resumeRequested && agentSupportsSessionResume(initializeResult)) {
+      resumeRpcSent = true
+      writeRpc(ACP_ID.sessionResume, 'session/resume', {
+        sessionId: requestedResumeSessionId,
+        cwd: options.cwd,
+        mcpServers: selectedMcpServers
+      })
+    } else if (resumeRequested && options.allowResumeFallback === false) {
+      options.onEvent({
+        type: 'provider_warning',
+        text: 'ACP session/resume is not advertised by this provider runtime.'
+      })
+      endProcess()
+    } else {
+      sendSessionNew(resumeRequested)
+    }
+  }
+
+  const applyMcpServerSelection = (
+    selection: AcpMcpServerSelectionResult,
+    initializeResult: unknown
+  ): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    if (isStructuredAcpMcpServerSelection(selection)) {
+      selectedMcpServers = Array.isArray(selection.servers) ? selection.servers : []
+      if (typeof selection.transformPrompt === 'function') {
+        selectedMcpPromptTransform = selection.transformPrompt
+        if (typeof selection.prompt === 'string' && selection.prompt.trim()) {
+          promptForTurn = selection.prompt
+        } else {
+          try {
+            promptForTurn = selection.transformPrompt(promptForTurn)
+          } catch {
+            failMcpServerSelection(initializeResult)
+            return
+          }
+        }
+      } else if (typeof selection.prompt === 'string' && selection.prompt.trim()) {
+        promptForTurn = selection.prompt
+      }
+      if (typeof selection.warning === 'string' && selection.warning.trim()) {
+        options.onEvent({ type: 'provider_warning', text: selection.warning.trim() })
+      }
+    } else {
+      selectedMcpServers = selection
+    }
+    continueAfterInitialize(initializeResult)
+  }
+
+  const failMcpServerSelection = (initializeResult: unknown): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    selectedMcpServers = []
+    selectedMcpPromptTransform = undefined
+    options.onEvent({
+      type: 'provider_warning',
+      text: 'ACP MCP transport selection failed; continuing without advertised MCP servers.'
+    })
+    continueAfterInitialize(initializeResult)
   }
 
   child.stdout?.on('data', (chunk) => {
@@ -884,16 +1585,33 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         if (request) answerPermissionRequest(enrichPermissionRequest(request))
         continue
       }
-      // Steering interrupt acknowledgement, error-flavoured: some providers
-      // answer our `session/cancel` with an RPC error on the interrupted
-      // prompt instead of a prompt result. That still closes the prompt — send
-      // the queued steering follow-up rather than failing the whole turn.
+      if (
+        activeSteerDelivery &&
+        typeof message.id === 'number' &&
+        message.id === activeSteerDelivery.promptRpcId &&
+        message.result
+      ) {
+        settleActiveSteerDelivery('delivered')
+      }
+      // Any error closes the prompt slot. Most often this is an error-flavoured
+      // acknowledgement of session/cancel, but a natural failure can also race
+      // a tool-batch-deferred steer. In either case the latest steer may take
+      // the now-free slot; admission for an older steer prompt is classified
+      // separately before sending it.
       if (
         message.error &&
         typeof message.id === 'number' &&
         message.id === activePromptRpcId &&
         pendingSteer
       ) {
+        const rpcError = message.error as { code?: unknown; message?: string }
+        if (activeSteerDelivery?.promptRpcId === message.id) {
+          // A prompt error closes the old follow-up even if a parallel tool
+          // batch made the newer steer defer its cancel. Preserve exact
+          // admission semantics for the old message before the latest steer
+          // takes over the same session.
+          settleActiveSteerError(rpcError)
+        }
         activePromptRpcId = null
         deniedPromptRpcId = null
         deniedPermissionRequest = null
@@ -938,10 +1656,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         // straight through to the terminalize path below.
         if (
           step === 'session/prompt' &&
+          !isDefinitiveAcpPromptRejection(rpcError) &&
           isTransientAcpPromptFailure(rpcError, { evidence: stderrEvidence() }) &&
           scheduleTransientPromptRetry(rpcError?.message || 'request error')
         ) {
           continue
+        }
+        if (step === 'session/prompt' && activeSteerDelivery?.promptRpcId === message.id) {
+          settleActiveSteerError(rpcError)
         }
         // Preserve the failed lifecycle step through child close. Without a
         // non-success status, provider adapters can normalize an unfinished
@@ -960,11 +1682,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         endProcess()
         continue
       }
-      if (
-        message.error &&
-        typeof message.id === 'number' &&
-        pendingConfigRpcs.has(message.id)
-      ) {
+      if (message.error && typeof message.id === 'number' && pendingConfigRpcs.has(message.id)) {
         const config = pendingConfigRpcs.get(message.id)!
         pendingConfigRpcs.delete(message.id)
         const rpcError = message.error as { message?: string }
@@ -974,26 +1692,34 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             rpcError?.message || 'request error'
           }`
         })
-        applyNextResumeConfig({ configOptions: [] })
+        applyNextSessionConfig({ configOptions: [] })
         continue
       }
       if (message.id === ACP_ID.initialize && message.result) {
-        if (resumeRequested && agentSupportsSessionResume(message.result)) {
-          resumeRpcSent = true
-          writeRpc(ACP_ID.sessionResume, 'session/resume', {
-            sessionId: requestedResumeSessionId,
-            cwd: options.cwd,
-            mcpServers: options.mcpServers ?? []
-          })
-        } else if (resumeRequested && options.allowResumeFallback === false) {
-          options.onEvent({
-            type: 'provider_warning',
-            text: 'ACP session/resume is not advertised by this provider runtime.'
-          })
-          endProcess()
-        } else {
-          sendSessionNew(resumeRequested)
+        const initializeResult = message.result
+        if (!options.selectMcpServers) {
+          continueAfterInitialize(initializeResult)
+          continue
         }
+        if (mcpSelectionStarted) continue
+        mcpSelectionStarted = true
+        let selection:
+          | AcpMcpServerSelectionResult
+          | Promise<AcpMcpServerSelectionResult>
+        try {
+          selection = options.selectMcpServers(
+            initializeResult,
+            options.mcpServers ?? [],
+            promptForTurn
+          )
+        } catch {
+          failMcpServerSelection(initializeResult)
+          continue
+        }
+        void Promise.resolve(selection).then(
+          (selected) => applyMcpServerSelection(selected, initializeResult),
+          () => failMcpServerSelection(initializeResult)
+        )
         continue
       }
       if (message.id === ACP_ID.sessionNew && message.result) {
@@ -1037,13 +1763,9 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           )
         continue
       }
-      if (
-        typeof message.id === 'number' &&
-        message.result &&
-        pendingConfigRpcs.has(message.id)
-      ) {
+      if (typeof message.id === 'number' && message.result && pendingConfigRpcs.has(message.id)) {
         pendingConfigRpcs.delete(message.id)
-        applyNextResumeConfig(message.result)
+        applyNextSessionConfig(message.result)
         continue
       }
       // Any OTHER inbound agent→client request: give a provider hook first
@@ -1071,8 +1793,19 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       }
       // Notifications + responses: stream content/thinking; capture completion.
       for (const event of acpMessageToRunEvents(message)) {
+        if (activeSteerDelivery && activePromptRpcId === activeSteerDelivery.promptRpcId) {
+          settleActiveSteerDelivery('delivered')
+        }
+        const completedToolBatch = observeToolBatchEvent(event)
         if (event.type === 'content' && event.text) {
           assistantTextSeen = true
+          activePromptAssistantText += event.text
+          if (activePromptAssistantText.length > MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS) {
+            activePromptAssistantText = activePromptAssistantText.slice(
+              -MAX_ACP_STEER_ASSISTANT_CONTEXT_CHARS
+            )
+            activePromptAssistantTextWasTruncated = true
+          }
         } else if (event.type === 'tool_use') {
           const toolName = nonEmptyString(event.toolName) || 'tool'
           lastObservedToolName = toolName
@@ -1081,6 +1814,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           const toolOutput = nonEmptyString(event.toolOutput)
           if (event.toolStatus === 'error' || toolOutputIndicatesFailure(toolOutput)) {
             toolFailureSeen = true
+            lastFailedToolId = event.toolId || null
             lastFailedToolName =
               (event.toolId ? toolNamesById.get(event.toolId) : undefined) ||
               lastObservedToolName ||
@@ -1089,21 +1823,26 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           }
         }
         if (event.type === 'result') {
+          seenAnyTerminalEvent = true
           const responsePromptRpcId =
-            typeof message.id === 'number' && message.id === activePromptRpcId
-              ? message.id
-              : null
-          if (responsePromptRpcId === null) continue
+            typeof message.id === 'number' && message.id === activePromptRpcId ? message.id : null
+          if (responsePromptRpcId === null) {
+            // Dropping an uncorrelated terminal is usually CORRECT — a stale
+            // terminal from a superseded prompt, or Grok's id-less
+            // `_x.ai/session/prompt_complete` notification, must not kill the
+            // successor. But it is also the one path that can silently swallow
+            // the ONLY terminal a turn ever gets, leaving the turn
+            // un-terminalized and the denied-tool recovery gate below
+            // unreachable. Record it so a turn that never completes can say
+            // which of those two happened; the close handler decides.
+            uncorrelatedTerminals += 1
+            continue
+          }
           const status = event.status || terminalStatus
           const recovery = options.deniedToolRecovery
           // A steering interrupt owns the follow-up slot: never spend the
           // denied-tool one-shot recovery on a prompt WE cancelled on purpose.
-          if (
-            recovery &&
-            !cancelRequested &&
-            !deniedToolRecoveryAttempted &&
-            !pendingSteer
-          ) {
+          if (recovery && !cancelRequested && !deniedToolRecoveryAttempted && !pendingSteer) {
             let deniedCancellation = false
             try {
               deniedCancellation =
@@ -1121,6 +1860,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
               assistantTextSeen,
               toolFailureSeen,
               lastFailedToolName,
+              lastFailedToolId,
               lastFailedToolOutput
             }
             let failedToolRecovery = false
@@ -1155,7 +1895,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
                 // outcome into a fatal participant cancellation.
                 deniedToolRecoveryAttempted = true
                 options.onEvent({ type: 'provider_warning', text: warning })
-                if (sendPrompt(prompt) !== null) continue
+                if (sendPrompt(prompt, [], 'steer') !== null) continue
               }
             }
           }
@@ -1174,6 +1914,26 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
           terminalStatus = status
         } else {
           options.onEvent(event)
+          if (completedToolBatch) {
+            if (
+              pendingSteer &&
+              pendingSteerCancelState === 'deferred' &&
+              sessionId &&
+              activePromptRpcId !== null &&
+              !cancelRequested &&
+              !closed &&
+              !stdinClosed
+            ) {
+              pendingSteerCancelState = 'sent'
+              writeRpc(null, 'session/cancel', { sessionId })
+            }
+            try {
+              options.onToolBatchBoundary?.()
+            } catch {
+              // Boundary notification is advisory. A coordinator failure must
+              // not alter ACP transport or existing live-steer semantics.
+            }
+          }
         }
       }
       if (turnComplete) {
@@ -1197,7 +1957,9 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // transport can otherwise emit no useful exit on provider wrappers and
     // leave the run open indefinitely.
     processError = err
-    const text = options.formatProcessError ? options.formatProcessError(err) : err.message || String(err)
+    const text = options.formatProcessError
+      ? options.formatProcessError(err)
+      : err.message || String(err)
     try {
       options.onEvent({ type: 'provider_warning', text })
     } catch {
@@ -1225,6 +1987,29 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     // process failure must not allow cleanup/history receipt to overtake that
     // pending startup operation.
     const deliverTerminalClose = (): void => {
+      // A turn that never terminalized is a defect, not an ending. Say which
+      // shape it was while the distinction still exists: silence here is what
+      // made a real dead-ended run unattributable.
+      // `processError` is excluded on purpose: that path already emitted a
+      // warning naming the actual cause, and this one would only add a vaguer
+      // second warning to the same defect. The lane is deliberately quiet
+      // (warnings are not transcript rows), so keep it one warning per cause.
+      if (!turnComplete && !cancelRequested && !processError) {
+        // Guarded: a throwing projection must never stop the close from being
+        // delivered — the turn ending is more important than explaining it.
+        try {
+          options.onEvent({
+            type: 'provider_warning',
+            text: uncorrelatedTerminals
+              ? `The provider's turn terminal did not correlate to this prompt (${uncorrelatedTerminals} dropped), so the turn never completed.`
+              : seenAnyTerminalEvent
+                ? 'The provider terminated one prompt and TaskWraith continued with a follow-up, which never reported its own terminal, so the turn never completed.'
+                : 'The provider closed without reporting a turn terminal, so the turn never completed.'
+          })
+        } catch {
+          /* diagnostics only */
+        }
+      }
       let closeResult: void | Promise<void>
       try {
         closeResult = options.onClose?.(terminalCode, turnComplete, terminalStatus)
@@ -1306,31 +2091,116 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   return {
     closed: closeSettled,
+    wasBlockedByHost: () => blockedByHost,
+    finishBlocked: (message: string): boolean => {
+      if (
+        cancelRequested ||
+        closed ||
+        stdinClosed ||
+        turnComplete ||
+        pendingSteer ||
+        outstandingToolIds.size > 0 ||
+        toolBatchIdentityAmbiguous
+      )
+        return false
+      blockedByHost = true
+      terminalStatus = 'taskwraith_blocked'
+      turnComplete = true
+      activePromptRpcId = null
+      clearTransientRetryTimer()
+      try {
+        options.onEvent({ type: 'provider_warning', text: message })
+        options.onEvent({ type: 'content', text: `\n\nTaskWraith lane blocked: ${message}` })
+      } catch {
+        // A failed notice must not leave a blocked provider process running.
+      } finally {
+        endProcess()
+      }
+      return true
+    },
     steer: (text: string, hooks?: AcpSteerDeliveryHooks): boolean => {
       const steerText = typeof text === 'string' ? text.trim() : ''
       if (!steerText) return false
       // Only an in-flight prompt can be interrupted. Before dispatch
       // (activePromptRpcId null), after settle (turnComplete), after a user
       // cancel, or with a dead stdin there is nothing to steer into — the
-      // caller falls back to boundary delivery.
+      // caller falls back to boundary delivery. Check this before negotiated
+      // image capability so startup cannot be misreported as an image refusal.
       if (cancelRequested || closed || stdinClosed || turnComplete) return false
       if (!sessionId || activePromptRpcId === null) return false
+      const steerImagePaths = Array.isArray(hooks?.imagePaths) ? [...hooks.imagePaths] : []
+      let steerImages: AcpPromptImageContent[] = []
+      if (steerImagePaths.length > 0) {
+        if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
+          return rejectSteerHooksBeforeAdmission(
+            hooks,
+            'ACP live steering was not sent because this runtime did not advertise agentCapabilities.promptCapabilities.image=true.'
+          )
+        }
+        if (
+          pendingSteer &&
+          pendingSteer.images.length + steerImagePaths.length > ACP_PROMPT_IMAGE_MAX_COUNT
+        ) {
+          return rejectSteerHooksBeforeAdmission(
+            hooks,
+            `ACP live steering was not sent because the combined follow-up exceeds ${ACP_PROMPT_IMAGE_MAX_COUNT} images.`
+          )
+        }
+        try {
+          steerImages = loadMainAuthorizedAcpImageContents(steerImagePaths, readImageFile)
+        } catch (error) {
+          return rejectSteerHooksBeforeAdmission(
+            hooks,
+            `ACP live steering was not sent: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        }
+      }
       // Preserve every message that arrives before the interrupted prompt
       // closes. Only the first message needs to issue session/cancel; the
       // combined follow-up carries the whole ordered batch.
       if (pendingSteer) {
         pendingSteer.text = appendSteeringMessage(pendingSteer.text, steerText)
         if (hooks) pendingSteer.hooks.push(hooks)
+        pendingSteer.images.push(...steerImages)
       } else {
-        pendingSteer = { text: steerText, hooks: hooks ? [hooks] : [] }
-        writeRpc(null, 'session/cancel', { sessionId })
+        pendingSteer = {
+          text: steerText,
+          hooks: hooks ? [hooks] : [],
+          images: steerImages
+        }
+        if (outstandingToolIds.size > 0 || toolBatchIdentityAmbiguous) {
+          pendingSteerCancelState = 'deferred'
+        } else {
+          pendingSteerCancelState = 'sent'
+          writeRpc(null, 'session/cancel', { sessionId })
+        }
       }
       return true
     },
     cancelSteer: () => {
+      if (settlingActiveSteerHooks || settlingPendingSteerHooks) return
       // If session/cancel was already sent, the prompt close still arrives and
       // simply ends the turn normally — the steer text never becomes a prompt.
-      pendingSteer = null
+      const pending = pendingSteer
+      if (pending) {
+        pendingSteer = null
+        pendingSteerCancelState = 'none'
+        settlePendingSteerRejection(
+          pending,
+          'ACP steering was cancelled before its follow-up prompt was sent.'
+        )
+        return
+      }
+      // With no unsent follow-up left, the only remaining steer may already be
+      // admitted. Cancellation cannot prove otherwise, so it is ambiguous.
+      if (activeSteerDelivery) {
+        settleActiveSteerDelivery(
+          'ambiguous',
+          'ACP steering was cancelled after its follow-up prompt may have been admitted.'
+        )
+      }
     },
     cancel: () => {
       cancelRequested = true
@@ -1338,7 +2208,21 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       activePromptRpcId = null
       deniedPromptRpcId = null
       deniedPermissionRequest = null
+      const pending = pendingSteer
       pendingSteer = null
+      pendingSteerCancelState = 'none'
+      if (pending) {
+        settlePendingSteerRejection(
+          pending,
+          'ACP steering was not sent because the provider run was cancelled.'
+        )
+      }
+      if (activeSteerDelivery) {
+        settleActiveSteerDelivery(
+          'ambiguous',
+          'ACP run cancellation raced a possibly admitted steer prompt.'
+        )
+      }
       // Interrupt an in-progress turn first (protocol), then terminate the
       // process via the provider terminator + SIGKILL backstop.
       if (sessionId && !turnComplete) writeRpc(null, 'session/cancel', { sessionId })

@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import {
+  GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES,
+  GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS,
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
+} from '../mcp/McpToolProfiles'
 import { createKimiMcpDispatch } from './KimiMcpDispatch'
 
 const INSTANCE_EPOCH = 'a'.repeat(48)
@@ -97,6 +102,40 @@ describe('createKimiMcpDispatch', () => {
     expect(names).not.toContain('ensemble_bossman_control')
   })
 
+  it('exposes the exact lean solo catalogue while retaining async coordination', async () => {
+    vi.stubEnv('TASKWRAITH_MCP_SOLO_SUBSET', '0')
+    try {
+      const dispatch = createKimiMcpDispatch({
+        route: { appRunId: 'kimi-run-solo', appChatId: 'chat-solo' },
+        taskWraithMcpProfileId: 'taskwraith-gateway-solo-v1',
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
+        getMcpToolDefinitions: () =>
+          [...GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS, ...GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES].map(
+            (name) => ({ name })
+          ),
+        dispatchBrokerRequest: vi.fn()
+      })
+
+      const response = await dispatch({ jsonrpc: '2.0', id: 881, method: 'tools/list' })
+      const names = (
+        (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+      ).map((tool) => tool.name)
+      expect(GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS).toHaveLength(29)
+      expect(names).toEqual(GATEWAY_SOLO_V1_MCP_ADVERTISE_TOOLS)
+      expect(names).toHaveLength(31)
+      expect(names).toEqual(
+        expect.arrayContaining(['ensemble_await', 'ensemble_lane_result', 'delegate_wave'])
+      )
+      for (const name of GATEWAY_SOLO_V1_DEMOTED_TOOL_NAMES) {
+        expect(names).not.toContain(name)
+      }
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('uses only the selected Kimi profile when ambient MCP selectors are poisoned', async () => {
     const poisonedSelectors = {
       TASKWRAITH_CORE_MCP_PROFILE: '1',
@@ -104,6 +143,7 @@ describe('createKimiMcpDispatch', () => {
       TASKWRAITH_MCP_PLAN_SUBSET: '1',
       TASKWRAITH_MCP_CORE_SUBSET: '1',
       TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
+      TASKWRAITH_MCP_SOLO_SUBSET: '1',
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
       TASKWRAITH_MCP_MESH_DIRECT: '1',
       TASKWRAITH_MCP_MESH_TOPOLOGY_DIRECT: '1',

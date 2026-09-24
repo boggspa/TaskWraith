@@ -53,7 +53,12 @@ export function providerPlanName(provider: ProviderId, rawValue: unknown): strin
     ) {
       return 'Allegretto'
     }
-    if (membership === 'maximum' || membership === 'ultra' || membership.startsWith('ul')) {
+    if (
+      membership === 'maximum' ||
+      membership === 'ultra' ||
+      membership === 'standard' ||
+      membership.startsWith('ul')
+    ) {
       return 'Vivace'
     }
     if (membership === 'advanced' || membership === 'max' || membership.startsWith('ma')) {

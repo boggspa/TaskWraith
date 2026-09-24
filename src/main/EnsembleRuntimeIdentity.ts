@@ -15,9 +15,10 @@ export function currentEnsembleRuntimeInstanceId(): string {
  * relying on a timeout that could either lie early or mask a real crash.
  */
 export function discardForeignEnsembleTurnTransition(
-  round: EnsembleRoundState
+  round: EnsembleRoundState,
+  ownerRuntimeInstanceId: string = runtimeInstanceId
 ): EnsembleRoundState {
-  if (!round.turnTransition || round.turnTransition.runtimeInstanceId === runtimeInstanceId) {
+  if (!round.turnTransition || round.turnTransition.runtimeInstanceId === ownerRuntimeInstanceId) {
     return round
   }
   const next = { ...round }

@@ -21,8 +21,9 @@
  *      feature blurbs but no credit figure; the only place the number appears is
  *      the user's OWN console at admin.mistral.ai/subscription. Since ~3 Aug
  *      2026 that page carries TWO bars — a shared "Included monthly usage" pool
- *      and a Vibe-Code-only "Vibe Code budget" — and this seat spends from the
- *      SECOND one (measured; see PLAN_SEED_USD).
+ *      and a Vibe-Code-only "Vibe Code budget" — and this meter tracks only
+ *      the seat's two Vibe-plan models, which spend from the SECOND one
+ *      (measured; see PLAN_SEED_USD). Key-marked API models are excluded.
  *      That is why {@link MistralQuotaAnchor} exists — the user can read the two
  *      numbers off their own console and hand them to us, which beats any
  *      heuristic and works on every plan.

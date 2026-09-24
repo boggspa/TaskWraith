@@ -31,7 +31,9 @@ export function normalizeFleetLifecycle(raw: unknown): FleetWaveLifecycle {
 }
 
 export function parseFleetWaveRole(raw: unknown): FleetWaveRole | undefined {
-  if (raw === 'scout' || raw === 'worker' || raw === 'reviewer') return raw
+  if (raw === 'scout') return 'scout'
+  if (raw === 'work' || raw === 'worker') return 'worker'
+  if (raw === 'review' || raw === 'reviewer') return 'reviewer'
   return undefined
 }
 
@@ -170,7 +172,11 @@ export interface EphemeralFleetLiveWave {
  * the die-on-return archive landed, or dispatch failed and the child will
  * never run.
  */
-export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView): boolean {
+export function isEphemeralFleetChildSettled(
+  child: EphemeralFleetWaveChildView,
+  parentIsTerminalized?: boolean
+): boolean {
+  if (parentIsTerminalized) return true
   return (
     child.archived === true ||
     typeof child.delegationContext?.resultReturnedAt === 'number' ||
@@ -183,8 +189,7 @@ export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView)
  * the parent's children, or null.
  *
  * Derived from durable child records, never a counter — a counter has to be
- * right on every cancel, failure, timeout and restart path (see
- * EnsembleFanoutConcurrency for the same principle). Wave identity is
+ * right on every cancel, failure, timeout and restart path. Wave identity is
  * `delegationContext.joinPolicy.groupId`, which parse hard-binds to the
  * waveId.
  *
@@ -197,6 +202,7 @@ export function isEphemeralFleetChildSettled(child: EphemeralFleetWaveChildView)
 export function findLiveEphemeralFleetWave(input: {
   children: ReadonlyArray<EphemeralFleetWaveChildView>
   nowMs: number
+  parentIsTerminalized?: boolean
 }): EphemeralFleetLiveWave | null {
   const waves = new Map<string, { total: number; settled: number; heldOpen: boolean }>()
   for (const child of input.children) {
@@ -206,7 +212,7 @@ export function findLiveEphemeralFleetWave(input: {
     if (!waveId) continue
     const wave = waves.get(waveId) || { total: 0, settled: 0, heldOpen: false }
     wave.total += 1
-    if (isEphemeralFleetChildSettled(child)) {
+    if (isEphemeralFleetChildSettled(child, input.parentIsTerminalized)) {
       wave.settled += 1
     } else {
       const deadlineMs = Date.parse(context.joinPolicy?.deadlineAt || '')

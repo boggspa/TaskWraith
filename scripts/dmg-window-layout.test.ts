@@ -153,6 +153,25 @@ describe('DMG visual layout contract', () => {
       width: layout.background.width * 2,
       height: layout.background.height * 2
     })
+    expect(readPngDimensions(path.join(repoRoot, 'build', 'swarm-field.png'))).toEqual(
+      layout.background
+    )
+    expect(readPngDimensions(path.join(repoRoot, 'build', 'swarm-field@2x.png'))).toEqual({
+      width: layout.background.width * 2,
+      height: layout.background.height * 2
+    })
+  })
+
+  it('uses the current brand line and SF Pro wordmark in the DMG source', () => {
+    const exporter = fs.readFileSync(
+      path.join(repoRoot, 'scripts', 'export-dmg-background.cjs'),
+      'utf8'
+    )
+    expect(exporter).toContain('>Orchestrate.</text>')
+    expect(exporter).toContain('>Collaborate.</text>')
+    expect(exporter).toContain('>Deliver.</text>')
+    expect(exporter).toContain("'SF Pro Display'")
+    expect(exporter).not.toContain('OWN YOUR AGENT')
   })
 
   it('keeps icon-sized pedestals out of the independently zoomable Finder layer', () => {

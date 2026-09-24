@@ -25,6 +25,35 @@ function status(
   }
 }
 
+function structuredDispatch(
+  id: string,
+  roundId: string,
+  label: string,
+  participantIds: string[],
+  category: 'user' | 'orchestrated' = 'orchestrated'
+): ChatMessage {
+  return status(
+    id,
+    roundId,
+    `${label} · ${participantIds.length} participant(s) requested; preparing under bounded host admission (read-only seat lanes).`,
+    {
+      ensembleFanoutWaveId: id,
+      ensembleFanoutCategory: category,
+      ensembleFanoutLabel: label,
+      ensembleFanoutDispatch: {
+        label,
+        category,
+        participants: participantIds.map((participantId) => ({
+          participantId,
+          provider: 'codex',
+          role: 'Scout',
+          intent: 'read'
+        }))
+      }
+    }
+  )
+}
+
 function lane(
   id: string,
   roundId: string,
@@ -91,6 +120,252 @@ function failedLane(id: string, roundId: string, laneId = id): ChatMessage {
 }
 
 describe('fan-out disclosure groups', () => {
+  it('keeps explicit waves separate when their receipts are outside the loaded history', () => {
+    const roundId = 'round-paged-waves'
+    const messages = [
+      lane('user-scout', roundId, {
+        ensembleFanoutWaveId: 'user-wave',
+        ensembleFanoutCategory: 'user',
+        ensembleFanoutLabel: 'User Fan-Out',
+        ensembleStageRole: 'scout'
+      }),
+      lane('boss-scout', roundId, {
+        ensembleFanoutWaveId: 'boss-wave',
+        ensembleStageRole: 'scout'
+      }),
+      serialTurn('boss-after-waves', roundId)
+    ]
+    const result = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-paged-waves',
+      roundId,
+      messages,
+      sourceOffset: 100,
+      expandedViewportIds: new Set()
+    })
+
+    expect(result).toHaveLength(3)
+    expect(readEnsembleFanoutViewportHeader(result[0].message)).toMatchObject({
+      waveId: 'user-wave',
+      category: 'user',
+      dispatchLabel: 'User Fan-Out',
+      laneMessageIds: ['user-scout']
+    })
+    expect(readEnsembleFanoutViewportHeader(result[1].message)).toMatchObject({
+      waveId: 'boss-wave',
+      stage: 'scout',
+      laneMessageIds: ['boss-scout']
+    })
+  })
+
+  it('never assigns an explicitly identified wave to another incomplete dispatch', () => {
+    const roundId = 'round-partial-history'
+    const groups = collectEnsembleFanoutViewportGroups('chat-partial-history', roundId, [
+      structuredDispatch('known-wave', roundId, 'Scout fan-out', ['known-a', 'known-b']),
+      lane('known-a', roundId, { ensembleFanoutWaveId: 'known-wave' }),
+      lane('other-wave-scout', roundId, { ensembleFanoutWaveId: 'unloaded-wave' })
+    ])
+
+    expect(
+      groups.map((group) => [group.waveId, group.lanes.map(({ message }) => message.id)])
+    ).toEqual([
+      ['known-wave', ['known-a']],
+      ['unloaded-wave', ['other-wave-scout']]
+    ])
+    expect(groups[0].expectedLaneCount).toBe(2)
+  })
+
+  it('preserves an open viewport when paging adds its receipt and an earlier lane', () => {
+    const roundId = 'round-growing-history'
+    const earlierLane = lane('earlier-scout', roundId, { ensembleFanoutWaveId: 'wave' })
+    const laterLane = lane('later-scout', roundId, { ensembleFanoutWaveId: 'wave' })
+    const nextTurn = serialTurn('next-turn', roundId)
+    const input = {
+      chatId: 'chat-growing-history',
+      roundId,
+      messages: [laterLane, nextTurn],
+      sourceOffset: 0,
+      expandedViewportIds: new Set<string>()
+    }
+    const collapsed = buildEnsembleFanoutViewportRanges(input)
+    const headerId = collapsed[0].message.id
+    const expandedViewportIds = new Set([headerId])
+
+    const expanded = buildEnsembleFanoutViewportRanges({ ...input, expandedViewportIds })
+    expect(expanded.map(({ message }) => message.id)).toEqual([headerId, laterLane.id, nextTurn.id])
+
+    const loaded = buildEnsembleFanoutViewportRanges({
+      ...input,
+      messages: [
+        structuredDispatch('wave', roundId, 'Scout fan-out', ['earlier-scout', 'later-scout']),
+        earlierLane,
+        laterLane,
+        nextTurn
+      ],
+      expandedViewportIds
+    })
+    expect(loaded.map(({ message }) => message.id)).toEqual([
+      headerId,
+      earlierLane.id,
+      laterLane.id,
+      nextTurn.id
+    ])
+    expect(readEnsembleFanoutViewportHeader(loaded[0].message)).toMatchObject({
+      expanded: true,
+      laneCount: 2,
+      stage: 'scout'
+    })
+  })
+
+  it('replaces a structured preparing receipt with one settled scout disclosure', () => {
+    const roundId = 'round-structured-scout'
+    const messages = [
+      structuredDispatch('scout-wave', roundId, 'Scout fan-out', ['scout-a', 'scout-b']),
+      lane('scout-a', roundId, { ensembleFanoutWaveId: 'scout-wave' }),
+      lane('scout-b', roundId, { ensembleFanoutWaveId: 'scout-wave' }),
+      serialTurn('boss-after-scouts', roundId)
+    ]
+    const input = {
+      chatId: 'chat-structured-scout',
+      roundId,
+      messages,
+      sourceOffset: 10,
+      expandedViewportIds: new Set<string>()
+    }
+
+    const collapsed = buildEnsembleFanoutViewportRanges(input)
+    expect(collapsed).toHaveLength(2)
+    const header = collapsed[0].message
+    expect(readEnsembleFanoutViewportHeader(header)).toMatchObject({
+      waveId: 'scout-wave',
+      stage: 'scout',
+      category: 'orchestrated',
+      dispatchLabel: 'Scout fan-out',
+      laneCount: 2,
+      expanded: false,
+      laneMessageIds: ['scout-a', 'scout-b']
+    })
+    expect(collapsed.map((entry) => entry.message.id)).toEqual([header.id, 'boss-after-scouts'])
+    expect(collapsed[0]).toMatchObject({ startIndex: 10, endIndex: 13 })
+
+    const expanded = buildEnsembleFanoutViewportRanges({
+      ...input,
+      expandedViewportIds: new Set([header.id])
+    })
+    expect(expanded.map((entry) => entry.message.id)).toEqual([
+      header.id,
+      'scout-a',
+      'scout-b',
+      'boss-after-scouts'
+    ])
+  })
+
+  it('keeps initial, user and mid-round Boss waves distinct even for the same scout', () => {
+    const roundId = 'round-distinct-dispatches'
+    const scoutLane = (waveId: string) =>
+      lane(`${waveId}-scout`, roundId, {
+        ensembleParticipantId: 'scout',
+        ensembleStageRole: 'scout',
+        ensembleFanoutWaveId: waveId
+      })
+    const result = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-distinct-dispatches',
+      roundId,
+      messages: [
+        structuredDispatch('initial', roundId, 'Scout fan-out', ['scout']),
+        scoutLane('initial'),
+        serialTurn('boss-before-extra', roundId),
+        structuredDispatch('user', roundId, 'User Fan-Out', ['scout'], 'user'),
+        structuredDispatch('boss', roundId, 'Scout fan-out', ['scout']),
+        scoutLane('boss'),
+        scoutLane('user'),
+        serialTurn('next-turn', roundId)
+      ],
+      sourceOffset: 0,
+      expandedViewportIds: new Set()
+    })
+
+    const headers = result
+      .map((entry) => readEnsembleFanoutViewportHeader(entry.message))
+      .filter((header) => header !== null)
+    expect(
+      headers.map((header) => [header.waveId, header.category, header.laneMessageIds])
+    ).toEqual([
+      ['initial', 'orchestrated', ['initial-scout']],
+      ['user', 'user', ['user-scout']],
+      ['boss', 'orchestrated', ['boss-scout']]
+    ])
+    expect(result).toHaveLength(5)
+  })
+
+  it.each(['incomplete', 'live', 'current'] as const)(
+    'keeps a structured wave visible while %s',
+    (state) => {
+      const roundId = 'round-unsettled-structured'
+      const messages = [
+        structuredDispatch('dispatch', roundId, 'Scout fan-out', ['scout-a', 'scout-b']),
+        lane('scout-a', roundId, { ensembleFanoutWaveId: 'dispatch' }),
+        ...(state === 'incomplete'
+          ? []
+          : [
+              lane('scout-b', roundId, {
+                ensembleFanoutWaveId: 'dispatch',
+                ensembleStatus: state === 'live' ? 'running' : 'answered'
+              })
+            ]),
+        ...(state === 'current' ? [] : [serialTurn('boss', roundId)])
+      ]
+      const result = buildEnsembleFanoutViewportRanges({
+        chatId: 'chat-unsettled-structured',
+        roundId,
+        messages,
+        sourceOffset: 0,
+        expandedViewportIds: new Set()
+      })
+
+      expect(result.map((entry) => entry.message)).toEqual(messages)
+    }
+  )
+
+  it('folds a settled wave when the next structured dispatch starts before its lanes arrive', () => {
+    const roundId = 'round-structured-boundary'
+    const result = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-structured-boundary',
+      roundId,
+      messages: [
+        structuredDispatch('scout-wave', roundId, 'Scout fan-out', ['scout']),
+        lane('scout', roundId, { ensembleFanoutWaveId: 'scout-wave' }),
+        structuredDispatch('review-wave', roundId, 'Review wave', ['reviewer'])
+      ],
+      sourceOffset: 0,
+      expandedViewportIds: new Set()
+    })
+
+    expect(result).toHaveLength(2)
+    expect(readEnsembleFanoutViewportHeader(result[0].message)?.waveId).toBe('scout-wave')
+    expect(result[1].message.id).toBe('review-wave')
+  })
+
+  it('uses validated structured receipt data ahead of stale prose and preserves legacy fallback', () => {
+    const roundId = 'round-receipt-validation'
+    const receipt = structuredDispatch('wave', roundId, 'User Fan-Out', ['scout'], 'user')
+    receipt.content = 'Scout fan-out · 2 participant(s) dispatched concurrently.'
+    const messages = [receipt, lane('scout', roundId, { ensembleFanoutWaveId: 'wave' })]
+    const collect = () => collectEnsembleFanoutViewportGroups('chat-validation', roundId, messages)
+
+    expect(collect()[0]).toMatchObject({
+      dispatchLabel: 'User Fan-Out',
+      category: 'user',
+      expectedLaneCount: 1
+    })
+    receipt.metadata = { ...receipt.metadata, ensembleFanoutDispatch: { participants: [] } }
+    expect(collect()[0]).toMatchObject({
+      dispatchLabel: 'Scout fan-out',
+      expectedLaneCount: 2
+    })
+    receipt.content = 'Waiting for host admission.'
+    expect(collect()[0]).toMatchObject({ dispatchLabel: null, expectedLaneCount: null })
+  })
+
   it('recovers separate Scout and Review waves from durable dispatch receipts', () => {
     const roundId = 'round-1'
     const messages = [
@@ -242,8 +517,8 @@ describe('fan-out disclosure groups', () => {
       'speaker-after-lanes'
     ])
     expect([...classifyFanoutLaneSlots(displayMessages, true).entries()]).toEqual([
-      ['orchestrator-1#2', 'lead'],
-      ['work-7#3', 'trail']
+      ['orchestrator-1#0', 'lead'],
+      ['work-7#0', 'trail']
     ])
   })
 

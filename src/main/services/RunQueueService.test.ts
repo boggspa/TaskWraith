@@ -22,6 +22,11 @@ import {
 } from '../executionGraph/ExecutionGraphPermissionAuthority'
 import { executionGraphRunTemplatePermissionCeilingDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type { JsonObject } from '../executionGraph/ExecutionGraphModel'
+import {
+  buildRunQueueDispatchReceipt,
+  runQueueDispatchReceiptIsExact
+} from '../RunQueueDispatchReceipt'
+import { buildRemoteComposerQueueDispatchAction } from './RemoteComposerQueueService'
 import type {
   AppSettings,
   ChatRecord,
@@ -31,6 +36,9 @@ import type {
   RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
+
+const HOST_ACTION_ID_A = 'host:command:11111111-1111-4111-8111-111111111111'
+const HOST_ACTION_ID_B = 'host:command:22222222-2222-4222-8222-222222222222'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -119,12 +127,31 @@ function makeRepository(overrides: Partial<RunQueueRepository> = {}): RunQueueRe
         statusReason: input?.statusReason
       })
     ),
+    markPromotedSteerAdmissionPending: vi.fn((input) =>
+      makeJob({
+        runId: input.runId,
+        status: 'steer_promoting',
+        promotionOwnerToken: input.ownerToken,
+        promotionToken: input.ownerToken,
+        steerPreparationKind: 'solo_steer_transcript_barrier',
+        steerDeliveryPhase: 'provider_admission_pending',
+        steerDeliveryActiveRunId: input.activeRunId,
+        steerDeliveryStrategy: input.strategy
+      })
+    ),
     fallbackPromotedSteerJob: vi.fn((input) =>
       makeJob({
         runId: input?.runId,
         provider: 'gemini',
         status: 'queued',
         statusReason: input?.reason
+      })
+    ),
+    releasePromotedSteerAfterDefiniteNonAdmission: vi.fn((input) =>
+      makeJob({
+        runId: input.runId,
+        status: 'queued',
+        statusReason: input.reason
       })
     ),
     transitionRunQueueJob: vi.fn((runIdOrId, status, partial) =>
@@ -600,6 +627,7 @@ describe('RunQueueService', () => {
         effectiveWorkspacePath: '/repo-worktrees/queued-feature',
         geminiAuthProfileId: 'gauth-1',
         codexReasoningEffort: 'minimal',
+        ollamaReasoningEffort: 'off',
         kimiFastMode: true,
         kimiThinkingEnabled: false,
         geminiWorktree: { enabled: true, name: 'feature' }
@@ -659,6 +687,7 @@ describe('RunQueueService', () => {
           effectiveWorkspacePath: '/repo-worktrees/queued-feature',
           geminiAuthProfileId: 'gauth-1',
           codexReasoningEffort: 'minimal',
+          ollamaReasoningEffort: 'off',
           kimiFastMode: true,
           kimiThinkingEnabled: false,
           geminiWorktree: { enabled: true, name: 'feature' }
@@ -760,13 +789,17 @@ describe('RunQueueService', () => {
           imageAttachments: [{ path: '/tmp/Test 1/one.png', name: 'one.png' }]
         }
       },
-      { authorizedFilePaths: ['/tmp/Test 1/one.png'] }
+      {
+        authorizedFilePaths: ['/tmp/Test 1/one.png'],
+        authorizedDirectoryPickerPaths: ['/tmp/Test 1/folder']
+      }
     )
 
     expect(stageAttachments).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: 'chat-1',
-        authorizedFilePaths: ['/tmp/Test 1/one.png']
+        authorizedFilePaths: ['/tmp/Test 1/one.png'],
+        authorizedDirectoryPickerPaths: ['/tmp/Test 1/folder']
       })
     )
     expect(stageAttachments).not.toHaveBeenCalledWith(
@@ -815,6 +848,68 @@ describe('RunQueueService', () => {
               name: 'reference-folder',
               kind: 'directory'
             }
+          ]
+        })
+      })
+    )
+  })
+
+  it('preserves only the main-minted queue receipt returned by directory staging', () => {
+    const queueReceipt = {
+      schemaVersion: 1 as const,
+      canonicalPath: '/outside/reference-folder',
+      runId: 'run-folder-receipt',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      provider: 'codex' as const,
+      signature: 'a'.repeat(64)
+    }
+    const stageAttachments = vi.fn((input) => ({
+      ok: true as const,
+      attachments: input.attachments.map((attachment) => ({
+        ...attachment,
+        kind: 'directory' as const,
+        queueReceipt
+      }))
+    }))
+    const { deps, repository } = makeDeps({ stageAttachments })
+    const service = new RunQueueService(deps)
+
+    service.requestJob(
+      {
+        runId: 'run-folder-receipt',
+        provider: 'codex',
+        workspacePath: '/repo',
+        chatId: 'chat-1',
+        request: {
+          prompt: 'Inspect this external folder',
+          imageAttachments: [
+            {
+              id: 'folder-1',
+              path: '/outside/reference-folder',
+              name: 'reference-folder',
+              kind: 'directory',
+              queueReceipt: { ...queueReceipt, signature: '0'.repeat(64) }
+            }
+          ]
+        }
+      },
+      {
+        authorizedFilePaths: ['/outside/reference-folder'],
+        authorizedDirectoryPickerPaths: ['/outside/reference-folder']
+      }
+    )
+
+    expect(stageAttachments.mock.calls[0][0].attachments[0]).not.toHaveProperty('queueReceipt')
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          imageAttachments: [
+            expect.objectContaining({
+              kind: 'directory',
+              queueReceipt
+            })
           ]
         })
       })
@@ -1072,32 +1167,38 @@ describe('RunQueueService', () => {
     )
   })
 
-  it('preserves remote source and remoteComposer snapshot fields', () => {
+  it('preserves a trusted Host correlation through queue persistence and restart hydration', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
-    service.requestJob({
-      runId: 'remote-run',
-      provider: 'codex',
-      workspacePath: '/input',
-      chatId: 'chat-1',
-      source: 'remote',
-      request: {
-        prompt: 'From device',
-        workflowMode: 'plan',
-        remoteComposer: {
-          workspaceId: 'workspace-1',
-          threadId: 'thread-2',
-          provider: 'codex',
-          text: 'From paired device',
-          approvalMode: 'default',
+    const queued = service.requestJob(
+      {
+        runId: 'remote-run',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From device',
           workflowMode: 'plan',
-          permissionPresetId: 'full_access',
-          model: 'opus',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From paired device',
+            approvalMode: 'default',
+            workflowMode: 'plan',
+            permissionPresetId: 'full_access',
+            model: 'opus',
+            hostCommandActionId: HOST_ACTION_ID_B,
+            scheduledRunAt: '2026-07-08T21:15:00.000Z'
+          },
           scheduledRunAt: '2026-07-08T21:15:00.000Z'
-        },
-        scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        }
+      },
+      {
+        hostCommandActionId: HOST_ACTION_ID_A
       }
-    })
+    )
     expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: 'remote-run',
@@ -1113,12 +1214,102 @@ describe('RunQueueService', () => {
             workflowMode: 'plan',
             permissionPresetId: 'full_access',
             model: 'opus',
+            hostCommandActionId: HOST_ACTION_ID_A,
             scheduledRunAt: '2026-07-08T21:15:00.000Z'
           },
           scheduledRunAt: '2026-07-08T21:15:00.000Z'
         })
       })
     )
+    expect(queued.dispatchReceipt?.remoteComposer?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(runQueueDispatchReceiptIsExact(queued)).toBe(true)
+
+    const restartedRepository = makeRepository({
+      getRunQueueJobs: vi.fn(() => [queued])
+    })
+    const restarted = new RunQueueService({
+      ...deps,
+      getRunRepository: () => restartedRepository
+    }).getJobs({ includeTerminal: true })
+    expect(restarted[0].request?.remoteComposer?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    const dispatch = buildRemoteComposerQueueDispatchAction(restarted[0])
+    expect(dispatch?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(dispatch?.action).not.toHaveProperty('actionId')
+  })
+
+  it.each([
+    undefined,
+    '',
+    'phone:action:1',
+    'host:command:not-a-uuid',
+    'host:command:' + 'a'.repeat(300),
+    'host:command:11111111-1111-4111-8111-111111111111:extra',
+    'host:command:AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+  ])('strips untrusted or invalid Host correlation %#', (hostCommandActionId) => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const prepared = service.prepareJob(
+      {
+        runId: 'remote-invalid-correlation',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From device',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From paired device',
+            hostCommandActionId: HOST_ACTION_ID_A
+          }
+        }
+      },
+      hostCommandActionId === undefined ? {} : { hostCommandActionId }
+    )
+    expect(prepared.request?.remoteComposer).not.toHaveProperty('hostCommandActionId')
+  })
+
+  it('binds Host correlation into the dispatch receipt and rejects a swapped value', () => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const prepared = service.prepareJob(
+      {
+        runId: 'remote-receipt-binding',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From Host',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From Host'
+          }
+        }
+      },
+      { hostCommandActionId: HOST_ACTION_ID_A }
+    )
+    const receiptA = buildRunQueueDispatchReceipt(prepared, '2026-09-20T00:00:00.000Z')
+    const swapped = {
+      ...prepared,
+      request: {
+        ...prepared.request!,
+        remoteComposer: {
+          ...prepared.request!.remoteComposer!,
+          hostCommandActionId: HOST_ACTION_ID_B
+        }
+      },
+      dispatchReceipt: receiptA
+    }
+    const receiptB = buildRunQueueDispatchReceipt(swapped, receiptA.generatedAt)
+
+    expect(receiptA.receiptHash).not.toBe(receiptB.receiptHash)
+    expect(runQueueDispatchReceiptIsExact({ ...prepared, dispatchReceipt: receiptA })).toBe(true)
+    expect(runQueueDispatchReceiptIsExact(swapped)).toBe(false)
   })
 
   it('rejects invalid request objects before persisting', () => {
@@ -1441,6 +1632,110 @@ describe('RunQueueService', () => {
     expect(repository.leasePromotedSteerJob).not.toHaveBeenCalled()
     expect(repository.fallbackPromotedSteerJob).not.toHaveBeenCalled()
     expect(repository.transitionRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('allows only main to fence an exact prepared barrier before provider admission', () => {
+    const barrier = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'prepared',
+      request: {
+        prompt: 'Deliver this once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => barrier) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.markPromotedSteerAdmissionPending({
+        runId: barrier.runId,
+        ownerToken: 'main-owner-1',
+        activeRunId: 'active-run-1',
+        strategy: 'codex-turn-steer'
+      })
+    ).toMatchObject({ steerDeliveryPhase: 'provider_admission_pending' })
+    expect(repository.markPromotedSteerAdmissionPending).toHaveBeenCalledWith({
+      runId: barrier.runId,
+      ownerToken: 'main-owner-1',
+      activeRunId: 'active-run-1',
+      strategy: 'codex-turn-steer'
+    })
+
+    expect(
+      service.markPromotedSteerAdmissionPending({
+        runId: barrier.runId,
+        ownerToken: 'wrong-owner',
+        activeRunId: 'active-run-1',
+        strategy: 'codex-turn-steer'
+      })
+    ).toBeNull()
+    expect(repository.markPromotedSteerAdmissionPending).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps admission-pending steers non-runnable unless main proves non-admission', () => {
+    const pending = makeJob({
+      runId: 'solo-steer-1',
+      status: 'steer_promoting',
+      promotionOwnerToken: 'main-owner-1',
+      promotionToken: 'main-owner-1',
+      queueMessageId: 'midrun-queued-user-solo-steer-1',
+      steerPreparationKind: 'solo_steer_transcript_barrier',
+      steerDeliveryPhase: 'provider_admission_pending',
+      request: {
+        prompt: 'Deliver once.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => pending) })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+
+    expect(
+      service.fallbackPromotedSteerJob({
+        runId: pending.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'renderer fallback',
+        fallbackStatus: 'queued'
+      })
+    ).toBeNull()
+    expect(
+      service.leasePromotedSteerJob({ runId: pending.runId, ownerToken: 'main-owner-1' })
+    ).toBeNull()
+    expect(service.transitionJob(pending.runId, 'queued')).toBeNull()
+    expect(repository.fallbackPromotedSteerJob).not.toHaveBeenCalled()
+
+    expect(
+      service.releasePromotedSteerAfterDefiniteNonAdmission({
+        runId: pending.runId,
+        ownerToken: 'main-owner-1',
+        reason: 'Provider rejected before admission.'
+      })
+    ).toEqual(
+      makeJob({
+        runId: pending.runId,
+        status: 'queued',
+        statusReason: 'Provider rejected before admission.'
+      })
+    )
+    expect(repository.releasePromotedSteerAfterDefiniteNonAdmission).toHaveBeenCalledWith({
+      runId: pending.runId,
+      ownerToken: 'main-owner-1',
+      reason: 'Provider rejected before admission.'
+    })
   })
 
   it('releases a solo-steer transcript barrier only for its exact saved user row', () => {

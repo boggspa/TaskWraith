@@ -2,6 +2,16 @@ node_modules
 dist
 dist-debug
 out
+
+# A stray main-process bundle copied to the repo ROOT. Seen 2026-09-06: a
+# byte-identical copy of out/main/index.js, 482KB of generated CJS, sitting
+# beside its own unresolvable `require("./ChatPath-*.js")` chunk references.
+# `out` above covers the real build directory, so nothing here ignored it and
+# it sat one `git add` away from being committed as source. Anchored with a
+# leading slash so it can only ever match the root artifact: every nested
+# index file is a real source module (8 tracked, all .ts today) and an
+# unanchored `index.js` would silently swallow any future generated one.
+/index.js
 /artifacts/
 .DS_Store
 .eslintcache
@@ -24,11 +34,24 @@ out
 
 # Local-only planning/release material kept out of the public source tree
 .local-only/
-/SECURITY_ENGINEERING_LEDGER.md
-papercuts/*
-!papercuts/README.md
-!papercuts/2026-07-19-retro.md
-/PLAN-IMPORT-CODEX-BRIEF.md
+/website/
+# Unanchored on purpose: the root-anchored form silently stopped matching when
+# 298f9c2b0 moved this file into docs/, republishing what 758b47e14 had
+# deliberately made private. An ignore rule must survive a move.
+SECURITY_ENGINEERING_LEDGER.md
+# Personal scratch notes and prototype spikes live in .local-only/ (see above),
+# moved there 2026-08-30 to keep them off the public tree. The former
+# `papercuts/*` + negated `!papercuts/*.md` pair is deliberately gone: the
+# negation re-tracked every new .md dropped back at the root, which is exactly
+# what the move was meant to stop.
+papercuts/
+prototypes/
+# Measurement output. Was only in this checkout's private .git/info/exclude, so
+# every other clone saw it as untracked noise.
+perf-artifacts/
+# Synthetic userData profiles contain chat/checkpoint fixtures and belong with
+# local measurement output, never in a public checkout's untracked surface.
+perf-homes/
 docs/
 RELEASING.md
 scripts/publish-clean.sh
@@ -60,6 +83,7 @@ ios/TaskWraithApp/build/
 .WORK-IN-PROGRESS-*.md
 SHIP-HOLD-*.md
 SESSION-IN-PROGRESS-*.md
+.agents/
 .claude/
 .cursor/
 /.fixpass*

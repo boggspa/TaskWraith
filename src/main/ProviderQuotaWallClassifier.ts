@@ -8,7 +8,7 @@ import type { ProviderId } from './store/types'
  * Modeled on SandboxFallback.ts — a pure, fully-unit-tested string classifier
  * with no side effects.
  *
- * DESIGN — a four-stage funnel (see docs/auto-failover-killswitch-spec.md and
+ * DESIGN — a four-stage funnel (see the auto-failover design and
  * the recon notes). This module owns stages 2-3; the caller owns 1 + 4:
  *   1. (caller) Only classify on a TERMINAL non-zero exit. A 429 in a run that
  *      ultimately SUCCEEDED is noise — both the Anthropic and OpenAI SDKs
@@ -25,8 +25,8 @@ import type { ProviderId } from './store/types'
  * Returns `{ hit:false }` for Ollama unconditionally: a LOCAL Ollama server has
  * no quota/rate-limit primitive (its `server busy … maximum pending requests`
  * is transient backpressure, not a billing wall). A cloud-proxied Ollama could
- * 429, but TaskWraith's Ollama transport is local-first; failing closed here
- * avoids a class of false positives.
+ * 429, but this classifier covers TaskWraith's local Ollama path; failing
+ * closed here avoids a class of false positives.
  */
 
 export interface QuotaWallVerdict {
@@ -54,6 +54,9 @@ const PROVIDER_RULES: Partial<Record<ProviderId, ProviderRule>> = {
       /overloaded_error/i, // Anthropic 529 (capacity); treated as a transient wall
       /Claude AI usage limit reached\|\d{10}/i, // -p/stream-json stdout form, epoch reset
       /Claude usage limit reached/i, // interactive OAuth/subscription form
+      // Fable dedicated-credit wall. Require its /usage-credits recovery
+      // command so ordinary prose about credits cannot make a seat unavailable.
+      /You['’]re out of usage credits\.[\s\S]{0,96}\/usage-credits\b/i,
       // C1 — Claude subscription / "Fable" weekly wall, e.g.
       // "You've hit your limit · resets Jul 14". Envelope-anchored per Captain
       // G1: requires the distinctive opener AND a nearby reset token, so bare

@@ -11,7 +11,7 @@ import type {
   AuthoredChatTranscriptMutation,
   ChatTranscriptMutationOperation
 } from './ChatRecordMutation'
-import type { ChatTranscriptOp } from '../../shared/chatUpdateTransport'
+import type { ChatUpdateTranscriptOp } from '../../shared/chatUpdateTransport'
 
 export const TOOL_DETAIL_EXTERNALIZATION_GENERATION = 1
 
@@ -670,11 +670,11 @@ export function substituteToolActivitiesInAuthoredMutation(
     }
   })
 
-  let transcriptOps: ChatTranscriptOp[] | null = authored.transcriptOps
+  let transcriptOps: ChatUpdateTranscriptOp[] | null = authored.transcriptOps
   if (Array.isArray(authored.transcriptOps)) {
     let opsChanged = false
-    const nextOps = authored.transcriptOps.map((operation): ChatTranscriptOp => {
-      if (operation.op === 'append') {
+    const nextOps = authored.transcriptOps.map((operation): ChatUpdateTranscriptOp => {
+      if (operation.op === 'append' || operation.op === 'insertBefore') {
         const messages = substituteMessageList(operation.messages, strippedById)
         if (!messages) return operation
         opsChanged = true

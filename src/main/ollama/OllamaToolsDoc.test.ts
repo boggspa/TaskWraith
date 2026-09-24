@@ -11,7 +11,9 @@ vi.mock('electron', () => ({
 
 import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
-import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { taskWraithGatewayDirectToolNamesForProfile } from '../mcp/McpToolProfiles'
+import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
+import { validateEmulatorStepToolInput } from '../../shared/emulatorCanvas'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
 const generated = buildOllamaToolsMarkdown()
@@ -45,10 +47,18 @@ describe('resources/Tools.md', () => {
     expect(sectionCount).toBe(TASKWRAITH_MCP_TOOLS.length)
   })
 
-  it('uses direct examples only for the compact profile and gateway examples for the tail', () => {
-    const directNames = new Set<string>(GATEWAY_V9_MCP_DIRECT_TOOLS)
+  // capability_invoke reaches HIDDEN capabilities only: selectGatewayHiddenToolNames
+  // filters the profile's direct names out of the eligible set, so a wrapped call
+  // naming a direct tool is rejected `unknown_target` before dispatch. Pinning the
+  // doc to a frozen older direct catalogue therefore publishes a call form that
+  // cannot work for every tool promoted to direct since — most recently
+  // redeem_permission_opportunity, whose only front door is the direct call.
+  it('documents the fresh gateway direct surface with direct examples', () => {
+    const directNames = new Set<string>(
+      taskWraithGatewayDirectToolNamesForProfile(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+    )
     for (const name of TASKWRAITH_MCP_TOOLS) {
-      expect(generated).toContain(
+      expect(generated, name).toContain(
         directNames.has(name)
           ? `{"taskwraith_tool":{"name":"${name}"`
           : `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"${name}"`
@@ -56,20 +66,68 @@ describe('resources/Tools.md', () => {
     }
   })
 
+  it('never documents a capability_invoke form for a directly advertised tool', () => {
+    for (const name of taskWraithGatewayDirectToolNamesForProfile(
+      TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
+    )) {
+      expect(generated, name).not.toContain(
+        `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"${name}"`
+      )
+    }
+  })
+
+  it('documents redeem_permission_opportunity as a direct call under every posture', () => {
+    const section = buildOllamaToolDocSection('redeem_permission_opportunity')
+    expect(section).toContain(
+      '- Example: `{"taskwraith_tool":{"name":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"text"}}}`'
+    )
+    expect(section).not.toContain('capability_invoke')
+    // It is in MCP_AUTO_ALLOWED_TOOLS and in both the read-only and Plan
+    // advertise sets, so the generic role caveat misreports every scoped tier.
+    expect(section).toContain(
+      '- Access: permission elicitation — callable under every permission role including read-only and Plan; redemption only reopens the host review of one exact host-retained target, and all non-grantable guards still apply'
+    )
+    expect(section).not.toContain('- Access: governed by your run permission role')
+  })
+
+  it('follows the profile a seat was born with when tool_help is profile-scoped', () => {
+    // Solo seats keep ensemble coordination behind capability discovery, so the
+    // same tool must render each form for the profile that actually applies.
+    expect(buildOllamaToolDocSection('ensemble_send', 'taskwraith-gateway-v19')).toContain(
+      '{"taskwraith_tool":{"name":"ensemble_send"'
+    )
+    expect(buildOllamaToolDocSection('ensemble_send', 'taskwraith-gateway-solo-v3')).toContain(
+      '{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_send"'
+    )
+    // Redemption is direct on every profile that advertises it at all.
+    for (const profileId of [
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
+      'taskwraith-gateway-solo-v3'
+    ] as const) {
+      expect(
+        buildOllamaToolDocSection('redeem_permission_opportunity', profileId),
+        profileId
+      ).toContain('{"taskwraith_tool":{"name":"redeem_permission_opportunity"')
+    }
+  })
+
   it('uses a valid catalog example for enum-discriminated Boss control calls', () => {
     const section = buildOllamaToolDocSection('ensemble_bossman_control')
     expect(section).toContain(
-      '"arguments":{"action":"set_round_plan","goal":"Review."}'
+      '"arguments":{"action":"set_round_plan","planSummary":"Review."}'
     )
     expect(section).not.toContain('"action":"text"')
   })
 
-  it('does not describe non-grantable canvas_eval as grantable', () => {
+  it('describes the exact-live-surface canvas_eval window without a per-call promise', () => {
     const section = buildOllamaToolDocSection('canvas_eval')
     expect(section).toContain(
-      '- Access: signed-elevated — denied under Plan; approval-gated under Ask and prompts every permitted call with exact desktop review'
+      '- Access: surface-window gated — denied under Plan; first permitted eval on each live Canvas surface requires exact desktop review, then same-surface evals auto-approve for 12 hours across navigation and later turns'
     )
-    expect(section).toContain('under Plan and every other posture where it is permitted')
+    expect(section).toContain('Other Canvas surfaces are not covered')
+    expect(section).not.toContain('PROMPTS EVERY CALL')
+    expect(section).not.toContain('prompts every permitted call')
     expect(section).not.toContain('unless granted')
   })
 
@@ -79,6 +137,34 @@ describe('resources/Tools.md', () => {
       '- Access: permission elicitation — callable under Ask/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
     )
     expect(section).not.toContain('denied under Plan, prompts under Ask')
+  })
+
+  it.each(['canvas_screenshot', 'emulator_observe'])(
+    'keeps %s pixel egress governed rather than auto-allowed',
+    (name) => {
+      const section = buildOllamaToolDocSection(name)
+      expect(section).toContain(
+        '- Access: pixel egress — governed by your run permission role; capture is not auto-allowed merely because it is read-only'
+      )
+      expect(section).not.toContain('- Access: read-only (no approval needed)')
+    }
+  )
+
+  it('uses a shared-valid example for the bounded emulator step macro', () => {
+    const section = buildOllamaToolDocSection('emulator_step')
+    const match = section.match(/- Example: `(\{.+\})`/)
+    expect(match?.[1]).toBeDefined()
+    const example = JSON.parse(match?.[1] ?? '{}') as {
+      taskwraith_tool?: { arguments?: { name?: string; arguments?: unknown } }
+    }
+    const arguments_ = example.taskwraith_tool?.arguments
+    expect(arguments_?.name).toBe('emulator_step')
+    expect(arguments_?.arguments).toEqual({
+      canvasId: 'canvas-demo-1',
+      expectedObservationId: 'observation-1',
+      segments: [{ buttons: ['right'], frames: 1 }]
+    })
+    expect(validateEmulatorStepToolInput(arguments_?.arguments).ok).toBe(true)
   })
 
   it.each([
@@ -95,12 +181,15 @@ describe('resources/Tools.md', () => {
     expect(section).not.toContain('prompts under Accept Edits')
   })
 
-  it.each(['canvas_screenshot', 'canvas_eval'])(
-    'keeps the focused %s resource section in sync with the catalog',
-    (name) => {
-      expect(onDiskToolSection(name)).toBe(buildOllamaToolDocSection(name))
-    }
-  )
+  it.each([
+    'canvas_screenshot',
+    'canvas_eval',
+    'emulator_open',
+    'emulator_observe',
+    'emulator_step'
+  ])('keeps the focused %s resource section in sync with the catalog', (name) => {
+    expect(onDiskToolSection(name)).toBe(buildOllamaToolDocSection(name))
+  })
 })
 
 describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
@@ -149,5 +238,25 @@ describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
     expect(v8Lookup).not.toContain('## request_tool_permission')
     expect(v9List).toContain('request_tool_permission')
     expect(v9Lookup).toContain('## request_tool_permission')
+  })
+
+  it('keeps emulator help absent from v18 and discoverable from v19 successors', () => {
+    const v18 = buildOllamaToolDocSection('', 'taskwraith-gateway-v18')
+    const v19 = buildOllamaToolDocSection('', 'taskwraith-gateway-v19')
+    const soloV3 = buildOllamaToolDocSection('', 'taskwraith-gateway-solo-v3')
+    const fullV3 = buildOllamaToolDocSection('', 'taskwraith-full-v3')
+    for (const toolName of ['emulator_open', 'emulator_observe', 'emulator_step']) {
+      expect(v18).not.toContain(toolName)
+      expect(v19).toContain(toolName)
+      expect(soloV3).toContain(toolName)
+      expect(fullV3).toContain(toolName)
+      expect(buildOllamaToolDocSection(toolName, 'taskwraith-gateway-v18')).toContain(
+        `Unknown tool "${toolName}"`
+      )
+      expect(buildOllamaToolDocSection(toolName, 'taskwraith-gateway-v19')).toContain(
+        `## ${toolName}`
+      )
+      expect(buildOllamaToolDocSection(toolName, 'taskwraith-full-v3')).toContain(`## ${toolName}`)
+    }
   })
 })

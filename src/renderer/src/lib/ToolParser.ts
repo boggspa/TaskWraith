@@ -13,6 +13,10 @@ import {
   isCatalogFileEditTool
 } from '../../../shared/canonicalToolCoalesce'
 import {
+  shellCommandTextFromInput,
+  shellWriteEvidenceDiffSummary
+} from '../../../shared/shellCommandEditEvidence'
+import {
   canonicalImageViewToolName,
   IMAGE_VIEW_DISPLAY_NAME,
   IMAGE_VIEW_TOOL_NAME,
@@ -20,6 +24,11 @@ import {
   imageViewCountFromResult,
   isImageViewToolUse
 } from '../../../shared/imageViewIdentity'
+import {
+  extractToolInvocationParameters,
+  mergeToolResultParameters,
+  presentToolInvocation
+} from '../../../shared/toolInvocationPresentation'
 
 export function extractToolName(event: any): string {
   if (!event || typeof event !== 'object') return 'unknown'
@@ -67,29 +76,7 @@ export function extractParentToolCallId(event: any): string | undefined {
 }
 
 export function extractParameters(event: any): Record<string, unknown> {
-  if (!event || typeof event !== 'object') return {}
-  const raw =
-    event.parameters ||
-    event.params ||
-    event.payload ||
-    event.args ||
-    event.input ||
-    event.arguments ||
-    {}
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
-      }
-    } catch {
-      // Provider-native wrapper tools (notably Codex `exec`) carry source text.
-    }
-    return { input: raw }
-  }
-  return raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>)
-    : {}
+  return extractToolInvocationParameters(event)
 }
 
 /**
@@ -118,7 +105,8 @@ const TOOL_ACTIVITY_PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 function extractToolProvider(event: any): ProviderId | undefined {
@@ -351,6 +339,16 @@ export function extractResultOutput(resultEvent: any): string {
 
 export function extractStatus(resultEvent: any): ToolActivityStatus {
   if (!resultEvent || typeof resultEvent !== 'object') return 'success'
+  // `is_error` is the compat wire's own error flag — Cursor, Grok, Muse, the
+  // canvas sanitizer and the channel collector all publish failures that way,
+  // and `RunItemEventCompat.statusFromPayload` has always honoured it. This
+  // function did not, so the same failed call rendered as an error through the
+  // run-item lane and as a SUCCESS through the legacy `pairToolResult` lane.
+  // That is not cosmetic: `isErroredToolStatus` below is what keeps a failed or
+  // denied edit out of the run diff, the "N files changed" count and the
+  // Create-PR diff, so a missed error let a mutation that never happened be
+  // counted as one.
+  if (resultEvent.is_error === true) return 'error'
   if (resultEvent.error || resultEvent.status === 'error') return 'error'
   if (resultEvent.status === 'warning') return 'warning'
   return 'success'
@@ -468,6 +466,7 @@ const SEARCH_LIKE_TOOL_NAMES = new Set([
   'web_search',
   'websearch',
   'workspace_search',
+  'capability_search',
   'file_search',
   'tw_recall_find'
 ])
@@ -487,6 +486,28 @@ export function isReasoningToolName(toolName: string): boolean {
     unqualified.endsWith('_thinking') ||
     unqualified.endsWith('_reasoning')
   )
+}
+
+/**
+ * Synthetic housekeeping activities that carry no user-facing value and are
+ * hidden from transcript presentation:
+ *   - `antigravity_init` — TaskWraith's own cold-start liveness emission.
+ *   - `generic` — agy brain-transcript steps whose native type is GENERIC
+ *     (unclassified model activity), which would otherwise render as a
+ *     meaningless "Used Generic" card.
+ *   - `provider_diagnostic` — main's Kimi/Pi compatibility-filter notices
+ *     (sendAgentCompatLine), which name no explicit tool and so fall back to
+ *     their raw `type`, rendering as a meaningless "Used Provider
+ *     Diagnostic" card.
+ */
+const HIDDEN_INFRASTRUCTURE_TOOL_NAMES = new Set([
+  'antigravity_init',
+  'generic',
+  'provider_diagnostic'
+])
+
+export function isHiddenInfrastructureToolName(toolName: string): boolean {
+  return HIDDEN_INFRASTRUCTURE_TOOL_NAMES.has(stripToolNamespace((toolName || '').toLowerCase()))
 }
 
 export function getToolCategory(toolName: string): ToolCategory {
@@ -828,8 +849,10 @@ function resolveReplacedText(parameters: Record<string, unknown>): string | unde
   return (
     (typeof parameters.old_string === 'string' && parameters.old_string) ||
     (typeof parameters.oldString === 'string' && parameters.oldString) ||
+    (typeof parameters.OldString === 'string' && parameters.OldString) ||
     (typeof parameters.old_text === 'string' && parameters.old_text) ||
     (typeof parameters.oldText === 'string' && parameters.oldText) ||
+    (typeof parameters.OldText === 'string' && parameters.OldText) ||
     (typeof parameters.TargetContent === 'string' && parameters.TargetContent) ||
     (typeof parameters.targetContent === 'string' && parameters.targetContent) ||
     (typeof parameters.target_content === 'string' && parameters.target_content) ||
@@ -842,8 +865,10 @@ function resolveReplacementText(parameters: Record<string, unknown>): string | u
   return (
     (typeof parameters.new_string === 'string' && parameters.new_string) ||
     (typeof parameters.newString === 'string' && parameters.newString) ||
+    (typeof parameters.NewString === 'string' && parameters.NewString) ||
     (typeof parameters.new_text === 'string' && parameters.new_text) ||
     (typeof parameters.newText === 'string' && parameters.newText) ||
+    (typeof parameters.NewText === 'string' && parameters.NewText) ||
     (typeof parameters.ReplacementContent === 'string' && parameters.ReplacementContent) ||
     (typeof parameters.replacementContent === 'string' && parameters.replacementContent) ||
     (typeof parameters.replacement_content === 'string' && parameters.replacement_content) ||
@@ -861,24 +886,93 @@ function looksLikeStringReplacement(parameters?: Record<string, unknown>): boole
   )
 }
 
+/**
+ * ACP-style freeform tool titles ("Write `notes.md`", "Edit main.py",
+ * AntiGravity TitleCase variants) — a human label rather than an identifier.
+ * Only a title that LEADS with a mutation verb counts: the verb must be
+ * followed by whitespace/backtick/quote, so identifiers (`write_file`,
+ * `update_topic`) never match and stay on catalog resolution.
+ */
+function looksLikeFreeformEditTitle(toolName: string): boolean {
+  return /^(?:edit|write|create|delete|remove|replace|patch|rewrite|modify|move|rename|update)[\s`'"]/i.test(
+    (toolName || '').trim()
+  )
+}
+
+/**
+ * May diff stats be DERIVED (estimated) for this tool call?
+ *
+ * Estimation reads whatever lands in the merged presentation parameters and
+ * result text — and `mergeToolResultParameters` folds result-only fields in,
+ * so a provider whose tool_result carries the whole output as a string
+ * `content` (Muse `exec --json` compat lines duplicate `output` into
+ * `content`) made a 656-line file READ count as a `+656 -0` edit, and a shell
+ * transcript containing `diff --git` markers surfaced as a phantom patch on a
+ * run_shell_command row. Provider-declared summaries (codex `changes`,
+ * bridge/ensemble seeds, measured `git_numstat`) are not estimation and are
+ * not gated here.
+ *
+ * Edit evidence, any one of which admits:
+ *  - the ACTIVITY was classified write (ACP `tool_kind: 'edit'` rows whose
+ *    freeform titles can't be name-resolved),
+ *  - the name resolves to a write category (catalog `workspace.mutate`
+ *    aliases in every spelling, `write_to_file`, …),
+ *  - a namespaced `…__write_file`-style suffix outside the known prefixes,
+ *  - a freeform title leading with a mutation verb,
+ *  - an unambiguous replacement pair (`old_string`/`new_string` in any
+ *    spelling) in the parameters — results never fabricate one.
+ */
+export function mayDeriveToolDiffStats(
+  toolName: string,
+  parameters?: Record<string, unknown>,
+  category?: ToolActivity['category']
+): boolean {
+  if (category === 'write') return true
+  if (getToolCategory(toolName) === 'write') return true
+  const normalized = (toolName || '').trim().toLowerCase()
+  if (
+    /__(?:write_file|create_file|edit_file|replace|apply_patch|create_directory|delete_path|move_path|rename_path|edit|write)$/.test(
+      normalized
+    )
+  ) {
+    return true
+  }
+  if (looksLikeFreeformEditTitle(toolName)) return true
+  if (looksLikeStringReplacement(parameters)) return true
+  return false
+}
+
 export function estimateLineChanges(parameters?: Record<string, unknown>): {
   additions?: number
   deletions?: number
 } {
   if (!parameters) return {}
 
-  const explicitAdditions =
-    typeof parameters.additions === 'number'
-      ? parameters.additions
-      : typeof parameters.additions === 'string'
-        ? parseInt(parameters.additions, 10)
-        : undefined
-  const explicitDeletions =
-    typeof parameters.deletions === 'number'
-      ? parameters.deletions
-      : typeof parameters.deletions === 'string'
-        ? parseInt(parameters.deletions, 10)
-        : undefined
+  const explicitLineCount = (...values: unknown[]): number | undefined => {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value
+      if (typeof value === 'string' && value.trim()) {
+        const parsed = parseInt(value, 10)
+        if (!Number.isNaN(parsed)) return parsed
+      }
+    }
+    return undefined
+  }
+  const explicitAdditions = explicitLineCount(
+    parameters.additions,
+    parameters.added,
+    parameters.linesAdded,
+    parameters.lines_added,
+    parameters.insertions
+  )
+  const explicitDeletions = explicitLineCount(
+    parameters.deletions,
+    parameters.deleted,
+    parameters.linesDeleted,
+    parameters.linesRemoved,
+    parameters.lines_removed,
+    parameters.removals
+  )
   if (
     (explicitAdditions !== undefined && !Number.isNaN(explicitAdditions)) ||
     (explicitDeletions !== undefined && !Number.isNaN(explicitDeletions))
@@ -903,6 +997,7 @@ export function estimateLineChanges(parameters?: Record<string, unknown>): {
     (typeof parameters.CodeContent === 'string' && parameters.CodeContent) ||
     (typeof parameters.codeContent === 'string' && parameters.codeContent) ||
     (typeof parameters.CodeEdit === 'string' && parameters.CodeEdit) ||
+    (typeof parameters.contents === 'string' && parameters.contents) ||
     undefined
   if (typeof content === 'string') {
     return { additions: content.split('\n').length, deletions: 0 }
@@ -991,12 +1086,38 @@ function parseChanges(value: unknown): ToolDiffSummary | undefined {
     .filter((item): item is Record<string, unknown> =>
       Boolean(item && typeof item === 'object' && !Array.isArray(item))
     )
-    .map((item) => ({
-      path: getPathFromRecord(item),
-      status: normalizeStatus(item.kind || item.type || item.operation || item.status),
-      additions: numberValue(item.additions ?? item.added ?? item.linesAdded ?? item.insertions),
-      deletions: numberValue(item.deletions ?? item.deleted ?? item.linesDeleted ?? item.removals)
-    }))
+    .map((item) => {
+      const preview =
+        stringValue(item.diff) ||
+        stringValue(item.patch) ||
+        stringValue(item.patchPreview) ||
+        stringValue(item.patch_preview) ||
+        stringValue(item.unifiedDiff) ||
+        stringValue(item.unified_diff)
+      const previewSummary = preview ? parseUnifiedDiffSummary(preview) : undefined
+      const previewFile = previewSummary?.files?.[0]
+      return {
+        path: getPathFromRecord(item) || previewFile?.path,
+        status:
+          normalizeStatus(item.kind || item.type || item.operation || item.status) ||
+          previewFile?.status,
+        additions:
+          numberValue(
+            item.additions ?? item.added ?? item.linesAdded ?? item.lines_added ?? item.insertions
+          ) ??
+          previewSummary?.additions,
+        deletions:
+          numberValue(
+            item.deletions ??
+              item.deleted ??
+              item.linesDeleted ??
+              item.linesRemoved ??
+              item.lines_removed ??
+              item.removals
+          ) ??
+          previewSummary?.deletions
+      }
+    })
 
   return summarizeFiles(files, 'codex_changes', 'exact')
 }
@@ -1013,7 +1134,8 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
   const hasDiffStructure =
     /^@@ .*@@/m.test(diffText) ||
     /^diff --git /m.test(diffText) ||
-    (/^\+\+\+ /m.test(diffText) && /^--- /m.test(diffText))
+    (/^\+\+\+ /m.test(diffText) && /^--- /m.test(diffText)) ||
+    /^\*\*\*\s+(?:Begin Patch|(?:Update|Add|Delete) File:)/m.test(diffText)
   if (!hasDiffStructure) return undefined
 
   const files: ToolDiffFileSummary[] = []
@@ -1039,6 +1161,19 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
       continue
     }
 
+    const codexHeader = line.match(/^\*{3}\s+(Update|Add|Delete) File:\s*(.+)$/i)
+    if (codexHeader) {
+      commitCurrent()
+      const operation = codexHeader[1].toLowerCase()
+      current = {
+        path: codexHeader[2].trim(),
+        status: operation === 'add' ? 'created' : operation === 'delete' ? 'deleted' : 'modified',
+        additions: 0,
+        deletions: 0
+      }
+      continue
+    }
+
     if (!current) {
       current = { additions: 0, deletions: 0, status: 'unknown' }
     }
@@ -1046,6 +1181,20 @@ export function parseUnifiedDiffSummary(diffText: string): ToolDiffSummary | und
     if (line.startsWith('+++ b/')) current.path = line.slice(6)
     if (line.startsWith('new file mode')) current.status = 'created'
     if (line.startsWith('deleted file mode')) current.status = 'deleted'
+    // A plain unified diff carries create/delete ONLY in its `/dev/null`
+    // markers — `new file mode` / `deleted file mode` are git-specific and
+    // absent from `diff -u` output and from patches that ship just the two
+    // header lines. Without this the file stayed at the `diff --git` header's
+    // default of 'modified', so a deletion reached the close-out card badged
+    // "Edited". `BridgeToolDiffStats` already reads these markers; this parser
+    // did not. Guarded on a hunk not having started, so a removed CONTENT line
+    // that happens to read `-- /dev/null` cannot be mistaken for the header.
+    if ((current.additions || 0) === 0 && (current.deletions || 0) === 0) {
+      if (line.startsWith('--- ') && line.slice(4).trim() === '/dev/null')
+        current.status = 'created'
+      if (line.startsWith('+++ ') && line.slice(4).trim() === '/dev/null')
+        current.status = 'deleted'
+    }
     if (line.startsWith('+') && !line.startsWith('+++'))
       current.additions = (current.additions || 0) + 1
     if (line.startsWith('-') && !line.startsWith('---'))
@@ -1064,6 +1213,8 @@ function getPatchPreview(parameters?: Record<string, unknown>, resultText?: stri
     stringValue(parameters.patch_preview) ||
     stringValue(parameters.patch) ||
     stringValue(parameters.diff) ||
+    stringValue(parameters.diffString) ||
+    stringValue(parameters.diff_string) ||
     stringValue(parameters.unifiedDiff) ||
     stringValue(parameters.unified_diff) ||
     resultText ||
@@ -1071,10 +1222,28 @@ function getPatchPreview(parameters?: Record<string, unknown>, resultText?: stri
   )
 }
 
+/**
+ * Diff stats for a SHELL row, from the command text alone. Shell-only model
+ * families (pi-hosted Xiaomi/MiMo) edit files through `run_shell_command`
+ * heredocs and inline patches instead of the dedicated file tools, so their
+ * rows carried no ± odometer. The command string is the one honest evidence
+ * source on a shell row — result text is arbitrary output (a `git diff`
+ * transcript contains diff markers without editing anything; counting it is
+ * the phantom-badge class), so this deliberately never reads it.
+ */
+export function deriveShellCommandDiffSummary(
+  parameters?: Record<string, unknown>
+): ToolDiffSummary | undefined {
+  const command = shellCommandTextFromInput(parameters || {})
+  if (!command) return undefined
+  return shellWriteEvidenceDiffSummary(command, (body) => parseUnifiedDiffSummary(body))
+}
+
 export function deriveToolDiffSummary(
   toolName: string,
   parameters?: Record<string, unknown>,
-  resultText?: string
+  resultText?: string,
+  options?: { category?: ToolActivity['category'] }
 ): ToolDiffSummary | undefined {
   // Reasoning / thinking pseudo-activities (`grok_thinking`, `kimi_thinking`, …) carry
   // free-form prose as their "result", never a file edit. Never derive a diff for them
@@ -1084,6 +1253,18 @@ export function deriveToolDiffSummary(
   if (typeof parameters?.kind === 'string' && parameters.kind.toLowerCase() === 'reasoning') {
     return undefined
   }
+  // Shell rows take a dedicated command-text path and never fall through to
+  // the generic estimators: result-merged parameters and result text on a
+  // shell row are arbitrary output, not edit evidence.
+  const nameCategory = getToolCategory(toolName)
+  if (nameCategory === 'shell' || (nameCategory === 'unknown' && options?.category === 'shell')) {
+    return deriveShellCommandDiffSummary(parameters)
+  }
+  // Estimation is for edits. Result-merged parameters and result text carry
+  // arbitrary tool output (a read's file body under `content`, a shell
+  // transcript that happens to contain diff markers) — without edit evidence,
+  // counting them invents a `+N -M` for a call that changed nothing.
+  if (!mayDeriveToolDiffStats(toolName, parameters, options?.category)) return undefined
   const category = getToolCategory(toolName)
   const changesSummary = parseChanges(parameters?.changes)
   if (
@@ -1141,12 +1322,24 @@ export function deriveToolDiffSummary(
 export function createToolActivity(toolUseEvent: any): ToolActivity {
   const rawToolName = extractToolName(toolUseEvent)
   const rawParameters = extractParameters(toolUseEvent)
-  const toolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const presentation = presentToolInvocation(rawToolName, rawParameters)
+  const rawImageToolName = canonicalImageViewToolName(rawToolName, rawParameters)
+  const toolName =
+    rawImageToolName === IMAGE_VIEW_TOOL_NAME
+      ? rawImageToolName
+      : canonicalImageViewToolName(presentation.toolName, presentation.parameters)
   const parameterImageCount =
-    toolName === IMAGE_VIEW_TOOL_NAME ? imageViewCountFromParameters(rawParameters) : undefined
+    toolName === IMAGE_VIEW_TOOL_NAME
+      ? imageViewCountFromParameters(rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters)
+      : undefined
   const parameters = parameterImageCount
-    ? { ...rawParameters, imageCount: parameterImageCount }
-    : rawParameters
+    ? {
+        ...(rawImageToolName === IMAGE_VIEW_TOOL_NAME ? rawParameters : presentation.parameters),
+        imageCount: parameterImageCount
+      }
+    : rawImageToolName === IMAGE_VIEW_TOOL_NAME
+      ? rawParameters
+      : presentation.parameters
   // Prefer a transport-supplied canonical kind (e.g. Grok ACP `tool_kind`) for
   // the category icon — the human tool label is often a freeform title ("Write
   // `package.json`") that name-based resolution can't categorise. Fall back to
@@ -1169,7 +1362,7 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
     startedAt: new Date().toISOString(),
     parameters,
     filePath,
-    diffSummary: deriveToolDiffSummary(toolName, parameters),
+    diffSummary: deriveToolDiffSummary(toolName, parameters, undefined, { category }),
     rawUseEvent: toolUseEvent,
     parentToolCallId,
     ...(provider ? { metadata: { provider } } : {}),
@@ -1276,11 +1469,18 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
   const inferred = inferNamelessActivityFromResult(activity, resultOutput)
   const inferredToolName = inferred.toolName || activity.toolName
   const inferredParameters = inferred.parameters || activity.parameters
+  const resultParameters = mergeToolResultParameters(inferredParameters, toolResultEvent)
+  const resultPresentation = presentToolInvocation(inferredToolName, resultParameters)
+  const presentedToolName = resultPresentation.toolName
   const imageView = isImageViewToolUse(inferredToolName, inferredParameters)
   const returnedImageCount = imageView ? imageViewCountFromResult(toolResultEvent) : undefined
   const pairedParameters = returnedImageCount
-    ? { ...(inferredParameters || {}), imageCount: returnedImageCount }
-    : inferredParameters
+    ? { ...resultPresentation.parameters, imageCount: returnedImageCount }
+    : resultPresentation.parameters
+  const pairedFilePath = getPathFromRecord(pairedParameters)
+  const pairedCategory =
+    activity.category === 'unknown' ? getToolCategory(presentedToolName) : activity.category
+  const pairedDisplayName = getToolDisplayName(presentedToolName, pairedParameters)
 
   return {
     ...activity,
@@ -1292,7 +1492,15 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
           category: 'read' as const
         }
       : {}),
+    ...(imageView
+      ? {}
+      : {
+          toolName: presentedToolName,
+          displayName: pairedDisplayName,
+          category: pairedCategory
+        }),
     parameters: pairedParameters,
+    ...(pairedFilePath ? { filePath: pairedFilePath, affectedFilePath: pairedFilePath } : {}),
     status,
     endedAt,
     durationMs,
@@ -1302,7 +1510,9 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     // that; every estimate-versus-estimate outcome below is unchanged.
     diffSummary: preserveMeasuredDiffSummary(
       activity.diffSummary,
-      deriveToolDiffSummary(inferredToolName, pairedParameters, resultOutput) ||
+      deriveToolDiffSummary(presentedToolName, pairedParameters, resultOutput, {
+        category: pairedCategory
+      }) ||
         inferred.diffSummary ||
         activity.diffSummary
     ),

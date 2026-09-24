@@ -105,13 +105,12 @@ describe('McpToolGateway virtual definitions', () => {
     expect(shouldEmitCanonicalTargetTranscript('grok', false)).toBe(true)
   })
 
-  it.each([['pi'], ['claude'], ['kimi'], ['ollama']])(
+  it.each([['pi'], ['claude'], ['ollama']])(
     'stops synthesizing a second %s row for a call the provider already reported',
     (provider) => {
       // Each of these streams its own row for every brokered TaskWraith call
       // (Pi via `toolcall_end`; Claude as a `mcp__TaskWraith__<tool>` tool_use
-      // block in its assistant envelope; Kimi via wire-protocol ToolCall since
-      // the gateway migration; Ollama via its native function-call echo).
+      // block in its assistant envelope; Ollama via its native function-call echo).
       // Synthesizing `<provider>-mcp-<tool>-<ts>-<rand>` on top rendered two
       // complete cards per call — the user-visible "every Edit shows twice"
       // pre-emptive-edit duplicate.
@@ -122,6 +121,16 @@ describe('McpToolGateway virtual definitions', () => {
       expect(shouldEmitCanonicalTargetTranscript(provider, true)).toBe(true)
     }
   )
+
+  it('keeps Kimi host receipts because its native ACP wrapper omits edit arguments', () => {
+    // Kimi still speaks for itself — the native row supplies the real call id
+    // and round-trip timing — but a captured replace call reached TaskWraith as
+    // `parameters: {}`. The host receipt carries path/old/new and the renderer
+    // coalesces the pair into one enriched row instead of painting a duplicate.
+    expect(providerEmitsNativeMcpTranscriptRows('kimi')).toBe(true)
+    expect(shouldEmitCanonicalTargetTranscript('kimi', false)).toBe(true)
+    expect(shouldEmitCanonicalTargetTranscript('kimi', true)).toBe(true)
+  })
 
   it.each([['gemini'], ['cursor'], ['grok'], ['mistral'], ['antigravity']])(
     'keeps synthesizing for %s, whose brokered calls it does not otherwise report',
@@ -317,6 +326,42 @@ describe('searchGatewayCapabilities', () => {
       eligibleToolNames: ['video_thumbnail']
     })
     expect(ineligible).toMatchObject({ ok: true, matches: [] })
+  })
+
+  it('returns direct tools when exact-matched, adding direct=true annotation without widening eligibility', () => {
+    const directTool = {
+      name: 'run_command',
+      description: 'Run a shell command',
+      inputSchema: { type: 'object' }
+    }
+    const eligibleTool = {
+      name: 'read_file',
+      description: 'Read a file',
+      inputSchema: { type: 'object' }
+    }
+
+    const directResult = searchGatewayCapabilities({
+      query: 'run_command',
+      limit: 5,
+      definitions: [directTool, eligibleTool],
+      eligibleToolNames: ['read_file']
+    })
+
+    expect(directResult.ok).toBe(true)
+    if (!directResult.ok) return
+    expect(directResult.matches.length).toBe(1)
+    expect(directResult.matches[0].name).toBe('run_command')
+    expect(directResult.matches[0].annotations?.direct).toBe(true)
+
+    const partialResult = searchGatewayCapabilities({
+      query: 'run',
+      limit: 5,
+      definitions: [directTool, eligibleTool],
+      eligibleToolNames: ['read_file']
+    })
+    expect(partialResult.ok).toBe(true)
+    if (!partialResult.ok) return
+    expect(partialResult.matches.length).toBe(0)
   })
 })
 
@@ -579,6 +624,127 @@ describe('resolveGatewayInvocation', () => {
         arguments: {}
       })
     ).toMatchObject({ ok: false, code: 'invalid_target_schema' })
+  })
+})
+
+describe('resolveGatewayInvocation argument coalescing', () => {
+  const catalog = createTaskWraithMcpToolDefinitions()
+  const replace = catalog.find((definition) => definition.name === 'replace')
+  const readFile = catalog.find((definition) => definition.name === 'read_file')
+  if (!replace?.inputSchema || !readFile?.inputSchema) {
+    throw new Error('Expected replace and read_file catalog definitions with input schemas.')
+  }
+  const base = {
+    definitions: [replace, readFile] as GatewayToolDefinition[],
+    eligibleToolNames: ['replace', 'read_file']
+  }
+
+  it('folds provider-native aliases onto canonical replace old_string/new_string before validation', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'replace',
+      arguments: {
+        path: 'a.ts',
+        old_str: 'before',
+        new_str: 'after'
+      }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.name).toBe('replace')
+    expect(result.arguments).toEqual({
+      path: 'a.ts',
+      old_string: 'before',
+      new_string: 'after'
+    })
+    expect(result.arguments).not.toHaveProperty('old_str')
+    expect(result.arguments).not.toHaveProperty('new_str')
+  })
+
+  it('folds filePath onto path for a hidden path tool', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { filePath: 'src/main/index.ts' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.arguments).toEqual({ path: 'src/main/index.ts' })
+  })
+
+  it('accepts equal canonical/alias duplicates and drops the alias', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { path: 'a.ts', filePath: 'a.ts' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.arguments).toEqual({ path: 'a.ts' })
+  })
+
+  it('rejects ambiguous aliases before schema validation with no executable arguments', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'replace',
+      arguments: {
+        path: 'a.ts',
+        filePath: 'b.ts',
+        old_string: 'before',
+        new_string: 'after'
+      }
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe('ambiguous_argument_alias')
+    expect(result).not.toHaveProperty('arguments')
+    expect(result.conflicts).toEqual([
+      {
+        path: 'path',
+        canonicalKey: 'path',
+        suppliedKeys: ['path', 'filePath'],
+        toolName: 'replace'
+      }
+    ])
+  })
+
+  it('keeps eligibility, recursion, and unknown-target ahead of coalescing', () => {
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: CAPABILITY_INVOKE_TOOL_NAME,
+        arguments: { filePath: 'a.ts' }
+      })
+    ).toMatchObject({ ok: false, code: 'gateway_recursion' })
+
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: 'replace',
+        arguments: { path: 'a.ts', filePath: 'b.ts' },
+        eligibleToolNames: ['read_file']
+      })
+    ).toMatchObject({ ok: false, code: 'ineligible_target' })
+
+    expect(
+      resolveGatewayInvocation({
+        ...base,
+        name: 'missing_capability',
+        arguments: { filePath: 'a.ts' }
+      })
+    ).toMatchObject({ ok: false, code: 'unknown_target' })
+  })
+
+  it('does not let argument aliases rewrite the target identity', () => {
+    const result = resolveGatewayInvocation({
+      ...base,
+      name: 'read_file',
+      arguments: { filePath: 'a.ts', name: 'replace' }
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.name).toBe('read_file')
+    expect(result.arguments).toEqual({ path: 'a.ts', name: 'replace' })
   })
 })
 

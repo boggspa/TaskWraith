@@ -20,7 +20,16 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
-import { promptFreeReadOnlyShellReason } from '../PromptFreeReadOnlyShell'
+import { destructiveShellAskEscalation } from '../shell-policy/DestructiveShellAsk'
+import { isHostDestructiveShellCommand } from '../shell-policy/HostDestructiveShellDeny'
+import {
+  workspaceInspectionExecutionPlan,
+  workspaceInspectionShellReason
+} from '../WorkspaceInspectionShell'
+import {
+  workspaceInspectionProgramPlan,
+  type WorkspaceInspectionProgramRecipe
+} from '../WorkspaceInspectionProgram'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -30,13 +39,32 @@ import {
   canvasEvalApprovalPayloadForDurableStorage,
   type CanvasEvalApprovalReceipt
 } from '../canvas/CanvasEvalAudit'
+import { appendCanvasEvalApprovalWindowDisclosure } from '../canvas/CanvasEvalApprovalWindow'
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
 import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
 import { isAntigravityUserAuthorizedShellCommand } from '../antigravity/AntigravityShellApprovalPolicy'
+import { isUltraTaskDelegationAutoAllowRequest } from '../UltraTaskDelegationConsent'
+import type { BrokeredCommandRuleInput } from '../command-rules/CommandRuleApprovalFlow'
+import type { CommandRuleMatch } from '../command-rules/CommandRuleService'
+import type { ExactCommandRuleOfferView } from '../../shared/commandRules'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
+}
+
+function redactExactCommandRuleOfferForDurableStorage<T>(payload: T): T {
+  if (!isRecord(payload) || !isRecord(payload.preview)) return payload
+  const offer = payload.preview.exactCommandRuleOffer
+  if (!isRecord(offer) || !Object.prototype.hasOwnProperty.call(offer, 'offerId')) return payload
+  const { offerId: _offerId, ...safeOffer } = offer
+  return {
+    ...payload,
+    preview: {
+      ...payload.preview,
+      exactCommandRuleOffer: { ...safeOffer, offerIdRedacted: true }
+    }
+  } as T
 }
 
 /**
@@ -62,13 +90,15 @@ export interface ApprovalPromptReceipt {
  * prefix `requestAgenticServiceApprovalDeps.` → `deps.` differs), preserving the
  * five ordering invariants verbatim:
  *   1. NETWORK-BLOCK auto-deny fires BEFORE permission resolution.
- *   2. policy DENY is absolute — it sits BEFORE session-YOLO / standing-grant /
- *      bossman, so no later auto-allow can override an explicit deny.
+ *   2. policy DENY is absolute except for the exact HMAC-bound UltraTask
+ *      delegation consent — it sits BEFORE session-YOLO / standing-grant /
+ *      bossman, so no ambient auto-allow can override an explicit deny.
  *   3. the plan-artifact fast-path sits AFTER resolve and BEFORE the plain deny.
  *   4. `registerGeminiTool` (the terminal approval registration read live via
  *      `deps.getApprovalService()`) opens the prompt's REGISTER sequence.
- *   5. `neverAutoAllow` (canvasEval / mediaRecording / approval-only posture
- *      plan-instrument-grant-hold) forces a prompt on every auto-allow path.
+ *   5. `neverAutoAllow` keeps ambient grants/YOLO/Bossman from opening
+ *      canvasEval or another approval-only service. Canvas eval's dedicated
+ *      exact-surface window is checked later as an explicit scoped exception.
  * `ApprovalOrchestration.test.ts` is the security net — it fences these branches
  * because `ApprovalServiceM3Gate` only guards `ApprovalService.resolve()`, never
  * this 306-line orchestration.
@@ -83,6 +113,7 @@ export interface RequestAgenticServiceApprovalDeps {
   // whenReady. A by-value capture here freezes null → the terminal approval
   // registration silently no-ops (a security regression on the trust choke point).
   getApprovalService: () => ApprovalService | null
+  matchCommandRule?: (input: BrokeredCommandRuleInput) => CommandRuleMatch | null
   /** History-clear admission fence, scoped by run/workspace where possible. */
   isApprovalAdmissionBlocked?: (
     runId?: string,
@@ -347,6 +378,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         workspacePath: request.workspacePath,
         metadata: { mainAuthority: true }
       })
+      approvalService.publishRendererApprovalRequest(approvalPayload)
       deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
       deps.notifyPairedDevicesOfApproval({
         approvalId,
@@ -379,6 +411,12 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
        * exact approval. The callback itself is never copied into durable data.
        */
       onApprovalPromptCreated?: (receipt: ApprovalPromptReceipt) => CanvasEvalApprovalReceipt | void
+      /** Main-only exact brokered-shell authority; never reconstructed from preview text. */
+      commandRuleInput?: BrokeredCommandRuleInput
+      onCommandRuleMatch?: (match: CommandRuleMatch) => void
+      createCommandRuleOffer?: (receipt: ApprovalPromptReceipt) => ExactCommandRuleOfferView | null
+      discardCommandRuleOffer?: (approvalId: string) => void
+      onWorkspaceInspectionMatch?: () => void
     }
   ): Promise<boolean> => {
     const session = deps.runManager.get(request.runId)
@@ -422,6 +460,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // is the one place that carries the tool's own args this far.
     const requestSurfaceId = ((): string | undefined => {
       const preview = isRecord(request.preview) ? request.preview : null
+      const declaredSurfaceId =
+        preview && typeof preview.surfaceId === 'string' ? preview.surfaceId.trim() : ''
+      if (declaredSurfaceId) return declaredSurfaceId
       const params = preview && isRecord(preview.params) ? preview.params : null
       const canvasId = params && typeof params.canvasId === 'string' ? params.canvasId.trim() : ''
       return canvasId || undefined
@@ -465,39 +506,126 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       requestSurfaceId
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
+    // Selecting the exact synthetic UltraTask picker stop is main-minted,
+    // HMAC-bound consent for the three bounded delegation routes. It is the one
+    // deliberate exception to the ordinary policy-deny and Ask/Plan holds:
+    // those would make the promised delegated review impossible, while child
+    // permissions, depth, provider allowlists, budgets, and lifecycle guards
+    // remain independently enforced. Never infer this from prompt text, tool
+    // arguments, or a worker's requested reasoning effort.
+    if (
+      isUltraTaskDelegationAutoAllowRequest({
+        service,
+        toolName: previewToolName,
+        effectivePermissions
+      })
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'explicit_user_request',
+        'request',
+        {
+          policy,
+          toolName: previewToolName,
+          subThreadDelegationAutoAllowSource: 'ultratask',
+          rationale:
+            'The user selected UltraTask for this exact run, authorizing its delegated review route.'
+        }
+      )
+      return true
+    }
     // Universal read-only shell fast path: strict Git reads and commands the
     // canonical shell proof classifies as inspection-only are allowed under
     // EVERY posture (read_only / plan deny shell; default prompts). AntiGravity
     // also carries the user's exact standing authorization for the bounded
     // maintenance/introspection commands captured in its 2026-08-13 approval
     // screenshots; no other provider or spelling inherits that exception.
-    // forcePrompt (caller-demanded human review) still prompts, and
-    // policy-'allow' resolutions keep flowing through the ordinary audited
-    // path below.
-    if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
+    // forcePrompt (caller-demanded human review) still prompts. A policy-'allow'
+    // resolution keeps flowing through the ordinary audited path below, but it
+    // still receives the inspection callback so execution uses the typed direct
+    // plan rather than falling back to raw shell interpretation.
+    //
+    // 2026-09-07 owner decision — two READ-only widenings, both inside
+    // `workspaceInspectionShellReason`. (1) A command it has already proven
+    // read-only may point outside the workspace, but only into the provider
+    // working-state subtrees in `PROMPT_FREE_OUTSIDE_READ_ROOTS` there; every
+    // other outside path, credentials included, still reaches the gate below.
+    // (2) A multi-segment pipeline is prompt-free when EVERY segment
+    // independently passes. WHICH commands count as read-only is unchanged, so
+    // writes and anything unproven still reach the deny/ask gate untouched. A
+    // workspace binding and an in-workspace cwd are still mandatory, and both
+    // widenings apply to every run that reaches this path, not only fan-out
+    // recon lanes.
+    let workspaceInspectionAuditMetadata:
+      | {
+          executionBoundary: 'brokered-direct-inspection'
+          workspaceInspectionRecipe?: WorkspaceInspectionProgramRecipe
+        }
+      | undefined
+    if (service === 'shellCommands' && !request.forcePrompt) {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
+      const previewCwd = isRecord(request.preview) ? request.preview.cwd : undefined
+      const inspectionContext = {
+        workspacePath,
+        cwd: typeof previewCwd === 'string' ? previewCwd : workspacePath
+      }
+      const workspaceInspectionProgram = workspaceInspectionProgramPlan(
+        readOnlyShellCommand,
+        inspectionContext
+      )
       const shellFastPathReason =
-        promptFreeReadOnlyShellReason(readOnlyShellCommand) ||
+        workspaceInspectionShellReason(readOnlyShellCommand, inspectionContext) ||
+        workspaceInspectionProgram?.reason ||
         (provider === 'antigravity' && isAntigravityUserAuthorizedShellCommand(readOnlyShellCommand)
           ? 'explicit_user_request'
           : null)
       if (shellFastPathReason) {
-        deps.auditService.recordAutomaticApprovalDecision(
-          provider,
-          auditRoute,
-          service,
-          workspacePath,
-          request,
-          'autoAllow',
-          shellFastPathReason,
-          'request',
-          {
-            policy,
-            command: readOnlyShellCommand,
-            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        // The direct-inspection boundary is claimed only when a TYPED plan
+        // actually exists for this command — one trusted executable and one
+        // argv, or the compiled snapshot program. `onWorkspaceInspectionMatch`
+        // is the signal the executor revalidates against, and it fails hard
+        // when the gate promised a direct plan the executor cannot rebuild. A
+        // proven multi-segment pipeline has no single argv, so it is
+        // auto-allowed here and then runs the ordinary brokered way — exactly
+        // as it would have after a human clicked Approve, minus the card.
+        const workspaceInspectionDirectPlan =
+          shellFastPathReason === 'readonly_shell' || shellFastPathReason === 'inspection_shell'
+            ? workspaceInspectionProgram ||
+              workspaceInspectionExecutionPlan(readOnlyShellCommand, inspectionContext)
+            : null
+        if (workspaceInspectionDirectPlan) {
+          request.onWorkspaceInspectionMatch?.()
+          workspaceInspectionAuditMetadata = {
+            executionBoundary: 'brokered-direct-inspection',
+            ...(workspaceInspectionProgram
+              ? { workspaceInspectionRecipe: workspaceInspectionProgram.recipe }
+              : {})
           }
-        )
-        return true
+        }
+        if (decision !== 'allow') {
+          deps.auditService.recordAutomaticApprovalDecision(
+            provider,
+            auditRoute,
+            service,
+            workspacePath,
+            request,
+            'autoAllow',
+            shellFastPathReason,
+            'request',
+            {
+              policy,
+              command: readOnlyShellCommand,
+              ...workspaceInspectionAuditMetadata,
+              ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+            }
+          )
+          return true
+        }
       }
     }
     const planArtifactWriteMetadata = deps.planArtifactWriteApprovalMetadata({
@@ -544,6 +672,43 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       return false
     }
 
+    if (
+      service === 'shellCommands' &&
+      isHostDestructiveShellCommand(shellCommandFromApprovalPreview(request.preview))
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoDeny',
+        'host_destructive',
+        'request',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      deps.safeSendToSender(sender, 'agent-error', {
+        provider,
+        error: agenticServiceBlockedMessage(service)
+      })
+      return false
+    }
+
+    // Owner-approved 2026-09-19, phase 1 of opening native shell/writes on the
+    // Mistral, Kimi, Grok and Muse seats: a destructive command takes the prompt
+    // at EVERY tier, including the three write tiers `shellCommandTierHold` stops
+    // looking at. Ask-hold, never a deny — the non-grantable wall above still owns
+    // the narrow host-wipe set and still wins. Computed here rather than inline in
+    // `neverAutoAllow` because that const is a bare boolean disjunction with
+    // nowhere to put a reason, and the reason has to reach the card and the ledger.
+    const destructiveShellAskHold =
+      service === 'shellCommands'
+        ? destructiveShellAskEscalation(
+            shellCommandFromApprovalPreview(request.preview),
+            workspacePath
+          )
+        : null
+
     // Phase J3: session-scoped YOLO override. Auto-allows every approval
     // for the rest of the process lifetime (or until the user disables
     // it). Sits AFTER the deny check above so an explicit user opt-out
@@ -557,9 +722,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // 'ask' services a read-only posture leaves open (mcpTools / subThreadDelegation)
     // — silently widening "read-only" into "trust everything". Skip the bypass for
     // read-only sessions so the posture is never weakened by a global toggle.
-    // canvasEval (arbitrary eval = RCE) is signed-elevated: NEVER auto-allowed, not
-    // even by session-YOLO or a grant. Every eval is individually human-approved
-    // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
+    // canvasEval cannot be opened by ambient session-YOLO or a broad grant. Its
+    // dedicated exact-surface window is checked later: after the first desktop
+    // accept, that live Canvas may auto-resolve evals for 12h across navigation
+    // and later turns. The explicit deny above still wins.
     // mediaRecording (future capture) shares the same non-grantable invariant: it is
     // never promoted above its default-deny by session-YOLO/grant/preset.
     // externalPublish is grantable, but read_only / plan keep it approval-only:
@@ -597,7 +763,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           service,
           shellCommand: shellCommandFromApprovalPreview(request.preview),
           workspacePath
-        }))
+        })) ||
+      destructiveShellAskHold !== null
     const trustedSessionExternalWrite =
       !request.forcePrompt &&
       !neverAutoAllow &&
@@ -609,6 +776,37 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         effectivePermissions,
         externalPathDetection: request.externalPathDetection
       })
+    if (
+      request.commandRuleInput &&
+      decision !== 'allow' &&
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      !request.externalPathDetection
+    ) {
+      const commandRuleMatch = deps.matchCommandRule?.(request.commandRuleInput) ?? null
+      if (commandRuleMatch) {
+        request.onCommandRuleMatch?.(commandRuleMatch)
+        deps.auditService.recordAutomaticApprovalDecision(
+          provider,
+          auditRoute,
+          service,
+          workspacePath,
+          request,
+          'autoAllow',
+          'command_rule',
+          'request',
+          {
+            policy,
+            commandRuleId: commandRuleMatch.rule.id,
+            commandRuleFingerprint: commandRuleMatch.fingerprint,
+            executableSha256: commandRuleMatch.rule.executableSha256,
+            commandRuleRiskClass: commandRuleMatch.rule.riskClass,
+            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+          }
+        )
+        return true
+      }
+    }
     if (trustedSessionExternalWrite) {
       deps.auditService.recordAutomaticApprovalDecision(
         provider,
@@ -674,6 +872,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         {
           policy,
           yoloEnabledAt: deps.sessionYoloState.enabledAt,
+          ...workspaceInspectionAuditMetadata,
           ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
         }
       )
@@ -698,7 +897,11 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
             ? 'session_grant'
             : 'policy',
         workspaceGrantAllowed ? 'workspace' : sessionGrantAllowed ? 'session' : 'request',
-        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+        {
+          policy,
+          ...workspaceInspectionAuditMetadata,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
       )
       return true
     }
@@ -767,6 +970,31 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     } else {
       request.onApprovalPromptCreated?.({ approvalId })
     }
+    // User-approved 12h per-canvas eval window: once the human has accepted
+    // canvas_eval on THIS exact live Canvas, suppress the re-prompt for 12h,
+    // including after navigation and in later turns. The
+    // script-bound receipt was still minted just above (execution stays audited
+    // and single-use); only the human prompt is skipped, and the window is
+    // anchored to the first accept so it hard-expires 12h later.
+    if (
+      service === 'canvasEval' &&
+      canvasEvalApproval &&
+      requestSurfaceId &&
+      deps.permissionService.hasLiveCanvasEvalWindowGrant(requestSurfaceId, Date.now())
+    ) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'canvas_eval_window',
+        'session',
+        { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+      )
+      return true
+    }
     const externalPathDetection = request.externalPathDetection
     const postureApprovalOnly = isPostureApprovalOnlyService(
       effectivePermissions?.presetId,
@@ -783,19 +1011,46 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         ? ['accept', 'decline', 'cancel']
         : approvalActionsForPolicy(policy, workspacePath, service)
     const baseTitle = externalPathDetection ? deps.externalPathApprovalTitle() : request.title
-    const baseBody = externalPathDetection
+    const rawBody = externalPathDetection
       ? deps.externalPathApprovalBody(externalPathDetection)
       : request.body
+    // One shared disclosure keeps every provider gate honest about the exact
+    // capability being opened: this live Canvas surface, across navigation and
+    // later turns, for 12 hours. Other canvas ids remain outside the window.
+    const baseBody =
+      service === 'canvasEval' ? appendCanvasEvalApprovalWindowDisclosure(rawBody) : rawBody
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
-    const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
+    let body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
     // Built from the preview's STRUCTURED fields, not from `body`: the remote
     // card gets 400 chars with newlines collapsed, and the desktop body leads
     // with a 600-char agent `intent` (the ensemble prefix alone eats 41%), so
     // reusing it truncated the recipients away entirely.
     const remoteSummary = buildRemoteApprovalSummary(request.preview)
+    // Desktop-only: create after the paired-device summary has been frozen so
+    // the opaque offer id never enters MobileApprovalCard or remoteBody.
+    if (
+      request.commandRuleInput &&
+      request.createCommandRuleOffer &&
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      !request.externalPathDetection
+    ) {
+      const offer = request.createCommandRuleOffer({ approvalId })
+      if (offer) {
+        request.preview = {
+          ...(isRecord(request.preview) ? request.preview : {}),
+          exactCommandRuleOffer: offer
+        }
+        body = `${body}\n\nAdding this exact command to the Allowlist creates a revocable rule for this executable hash, literal arguments, relative cwd, and workspace. Future matches run directly in the TaskWraith host process, outside a workspace sandbox and without workspace locks. Task runners may execute repository-controlled scripts whose contents change later. It does not allow other shell commands.`
+      }
+    }
+    if (destructiveShellAskHold) {
+      body = `${body}\n\nTaskWraith held this command for review: ${destructiveShellAskHold.reason} Commands in this class always ask, whatever permission tier or standing grant this run carries.`
+    }
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
+        request.discardCommandRuleOffer?.(approvalId)
         resolveApproval(false)
         return
       }
@@ -823,6 +1078,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         resolve: resolveApproval
       })
       if (registered === false) {
+        request.discardCommandRuleOffer?.(approvalId)
         resolveApproval(false)
         return
       }
@@ -848,6 +1104,16 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         body,
         preview: {
           ...(request.preview || {}),
+          ...(destructiveShellAskHold
+            ? {
+                riskLabels: [
+                  ...(Array.isArray((request.preview as { riskLabels?: unknown })?.riskLabels)
+                    ? (request.preview as { riskLabels: string[] }).riskLabels
+                    : []),
+                  `Destructive command held for review (${destructiveShellAskHold.ruleId})`
+                ]
+              }
+            : {}),
           ...(service === 'canvasEval'
             ? {
                 securityClass: 'signed-elevated',
@@ -873,19 +1139,21 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         },
         actions
       }
-      const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
-        canvasEvalApprovalPayloadForDurableStorage(
-          service,
-          {
-            ...approvalPayload,
-            preview:
-              service === 'canvasEval'
-                ? approvalPayload.preview
-                : (redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
-                  approvalPayload.preview)
-          },
-          approvalId,
-          canvasEvalApproval || undefined
+      const durableApprovalPayload = redactExactCommandRuleOfferForDurableStorage(
+        redactCanvasFillValueForDurableStorage(
+          canvasEvalApprovalPayloadForDurableStorage(
+            service,
+            {
+              ...approvalPayload,
+              preview:
+                service === 'canvasEval'
+                  ? approvalPayload.preview
+                  : (redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
+                    approvalPayload.preview)
+            },
+            approvalId,
+            canvasEvalApproval || undefined
+          )
         )
       )
       const durableCanvasPreview = isRecord(durableApprovalPayload.preview)
@@ -925,6 +1193,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           canvasEvalApproval: canvasEvalApproval || undefined
         }
       )
+      approvalService.publishRendererApprovalRequest(liveApprovalPayload)
       deps.safeSendToSender(sender, 'agent-approval-request', liveApprovalPayload)
       // Fan out a wake-push to any paired iOS device so the user can
       // approve the agentic-service request away from the desktop.

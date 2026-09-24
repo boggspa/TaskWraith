@@ -117,8 +117,11 @@ const PROVIDERS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
+  'antigravity',
   'pi',
-  'mistral'
+  'mistral',
+  'muse',
+  'devin'
 ])
 const OUTCOMES = new Set<SubThreadMailboxOutcome>([
   'done',
@@ -383,6 +386,7 @@ export function enqueueSubThreadMailboxEvent(
       relation: input.sourceRelation === 'sideChat' ? 'sideChat' : 'subThread',
       subThreadId: input.subThreadId,
       ...(input.subThreadProvider ? { subThreadProvider: input.subThreadProvider } : {}),
+      ...(input.subThreadSeat ? { subThreadSeat: input.subThreadSeat } : {}),
       subThreadTitle: input.subThreadTitle,
       sourceAssistantMessageId: input.sourceAssistantMessageId,
       ...(input.sourceRunId ? { sourceRunId: input.sourceRunId } : {})

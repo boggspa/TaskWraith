@@ -460,12 +460,12 @@
 }
 
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > * {
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > * {
   margin-bottom: 0;
 }
 
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty) > *:not(:first-child) {
   border-top-color: rgba(18, 21, 27, 0.12) !important;
 }
 
@@ -610,13 +610,13 @@
 }
 
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > * {
   margin-bottom: 0;
 }
 
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+  .composer-above-bar-stack.composer-above-bar-stack--has-ensemble-rows:not(:empty)
   > *:not(:first-child) {
   border-top-color: rgba(255, 255, 255, 0.12) !important;
 }
@@ -981,13 +981,14 @@
   .app-transcript
   .composer-area.interface-claude
   :is(
-    .composer-textarea,
     .composer-above-bar,
     .ensemble-above-row,
     .queued-messages-above-row,
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   ) {
+  /* The textarea box is deliberately NOT in this family: its fill is the
+   * Claude Desktop parity section at the end of this shard. */
   background: #272726 !important;
   background-image: none !important;
 }
@@ -1321,7 +1322,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="grok"] .composer-top-toggles,
 [data-composer-style="grok"] .composer-chips,
-[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="custom-model"]):not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -1403,7 +1404,12 @@
   max-width: 100% !important;
   align-self: stretch;
 }
-[data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2))
+/* `--multi-row` carries `:has(> :nth-child(2))` (two or more element children)
+ * at identical specificity. Converted only where the subject is featureless;
+ * the sibling grok rules below keep `:has()` because their class subjects
+ * already key the invalidation set narrowly.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
+[data-composer-style="grok"] .composer-above-bar-stack.composer-above-bar-stack--multi-row
   > *:not(:first-child):not(.ensemble-roster-preset-picker.is-compact) {
   border-top: 1px solid var(--grok-border);
 }
@@ -1416,7 +1422,7 @@
   gap: 6px;
   min-width: 0;
 }
-[data-composer-style="grok"] .composer-above-bar-stack:has(> :nth-child(2))
+[data-composer-style="grok"] .composer-above-bar-stack.composer-above-bar-stack--multi-row
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   > * {
   margin-left: 0;
@@ -2064,7 +2070,7 @@
 /* Hide the same extra controls Gemini hides. */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-top-toggles,
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-chips,
-:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left > *:not([data-composer-control="custom-model"]):not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2123,9 +2129,12 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+/* `.composer-area--has-above-stack` carries `:has(.composer-above-bar-stack)`
+ * at identical specificity, for the same featureless-subject reason as the
+ * native shell. See src/renderer/src/lib/ComposerAboveBarStyleState.ts. */
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * {
   margin: 0 !important;
@@ -2138,14 +2147,14 @@
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * + * {
   border-top: 1px solid var(--cursor-shell-border) !important;
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:first-child {
   border-top-left-radius: var(--cursor-shell-stack-radius) !important;
@@ -2154,7 +2163,7 @@
 }
 [data-composer-style="cursor"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:last-child {
   border-bottom-left-radius: var(--cursor-shell-stack-radius) !important;
@@ -2484,6 +2493,12 @@
   border: 0;
   overflow: visible;
 }
+/* The model name is the chip's headline, so it must not be the child the flex
+ * algorithm sacrifices first — but it MUST stay shrinkable, or a long model name
+ * spills outside the 260px-clamped chip instead of ellipsising. Ordering is done
+ * with shrink factors on the provider instead (see the provider rule in the
+ * unified-trigger refinements below); this keeps the ellipsis contract as the
+ * last resort it is meant to be. */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] .composer-combined-picker-trigger-primary {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3101,34 +3116,7 @@
   -webkit-text-fill-color: inherit !important;
 }
 
-/* Claude-shell Stop glyph — the light-mode pass above covered the voice
- * cluster, and the run/send arrow is carried by the Claude-orange
- * `[data-interface-style="claude"]` rule in shard 07, but Stop kept the
- * shell's dark-native `color-mix(in srgb, #ffffff 58%, …)` base from
- * `[data-composer-style="claude"] .composer-action-btn` — an invisible
- * white square on light themes while a run is active. Same dark-neutral
- * ink the Obsidian/Alabaster pairs use for run+stop (shard 10 ~line 906);
- * no `:not(:disabled)` guard on the idle rule so the steer-busy disabled
- * moment dims but never vanishes. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
-  .composer-action-btn.stop-btn {
-  color: rgba(29, 29, 31, 0.72) !important;
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
-  .composer-action-btn.stop-btn:disabled {
-  color: rgba(29, 29, 31, 0.38) !important;
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
-  .composer-action-btn.stop-btn:hover:not(:disabled) {
-  background: rgba(29, 29, 31, 0.08) !important;
-  color: rgba(29, 29, 31, 0.95) !important;
-}
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
-  .composer-action-btn.stop-btn
-  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
-  color: inherit !important;
-  -webkit-text-fill-color: inherit !important;
-}
+/* Claude-shell run/stop light colours: parity section at the end of this shard. */
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
   .app-transcript.chat-kind-ensemble
@@ -3387,6 +3375,51 @@
   ) {
   color: rgba(18, 21, 27, 0.74) !important;
   -webkit-text-fill-color: rgba(18, 21, 27, 0.74) !important;
+}
+
+/* The grouped ink override above is the only rule in the tree that sets
+ * `-webkit-text-fill-color` on the reasoning suffix, so on these two shells it
+ * also erases the provider-hue ladder for every tier below Extra High. (Extra
+ * High and up survive only because they paint through `background-image`,
+ * which it does not touch — which is why "only Max still looks right".) Give
+ * those tiers their ladder mix back at the same weights; every other text run
+ * in the chip keeps the flat alabaster ink. The percentages mirror the light
+ * family ladder in 08-theme-picker-overrides.css — keep the two in step. */
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="low"]
+  .composer-combined-picker-trigger-suffix,
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="light"]
+  .composer-combined-picker-trigger-suffix,
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="on"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 42%, var(--text-primary) 58%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 42%,
+    var(--text-primary) 58%
+  ) !important;
+}
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="medium"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 64%, var(--text-primary) 36%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 64%,
+    var(--text-primary) 36%
+  ) !important;
+}
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="high"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 82%, var(--text-primary) 18%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 82%,
+    var(--text-primary) 18%
+  ) !important;
 }
 
 [data-theme="alabaster"][data-composer-style="gemini"]
@@ -3852,6 +3885,28 @@
   flex: 0 0 auto;
 }
 
+/* Cursor/ChatGPT: the pin above left the model name as the ONLY shrinkable
+ * child of a 260px-clamped chip — bolt, reasoning suffix and chevron are all
+ * `flex: 0 0 auto` — so once the provider identity moved into this chip the
+ * model label ate 100% of the overflow at every viewport width ("Claude Opus"
+ * rendered as "Op…" while "Claude" and the reasoning tier stayed whole).
+ * Make the provider group the shrink target, and a DOMINANT one: flex
+ * distributes a deficit in proportion to shrink-factor x base-size, so a large
+ * factor here means the provider absorbs essentially all of it and collapses
+ * first. The model name keeps its default factor of 1, so it only begins to
+ * ellipsise once the provider has bottomed out at its `min-width: 0` floor —
+ * which preserves containment for genuinely long model names such as
+ * "North Mini Code 1.0 (30B-A3B Q4)" instead of letting the chip overflow.
+ * `.composer-combined-picker-trigger-provider-label` already carries the
+ * ellipsis contract and sits in a `min-width: 0` parent, so it truncates
+ * cleanly. Gemini keeps its pin above. */
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"])
+  [data-composer-control="model"]
+  .composer-combined-picker-trigger-provider {
+  flex: 0 100 auto;
+  min-width: 0;
+}
+
 /* Claude light shell — match the real app's gray above-row family while
  * keeping the textarea/send affordance on its own white, rimmed surface.
  * Primary and secondary workspaces share `.composer-workspace-above-row`, so
@@ -3872,38 +3927,412 @@
   backdrop-filter: none !important;
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
-  .app-transcript
-  .composer-area.interface-claude
-  .composer-textarea {
-  background: #ffffff !important;
-  border-color: rgba(29, 29, 31, 0.14) !important;
-  box-shadow:
-    0 1px 2px rgba(18, 21, 27, 0.06),
-    0 4px 14px rgba(18, 21, 27, 0.05) !important;
+/* The light textarea/send frame is the light palette block of the "Claude
+ * Desktop composer parity" section below (white fill, black 10% inset ring,
+ * black 25% on focus). */
+
+/* ============================================================
+ * Claude shell — Claude Desktop composer parity (comfortable density)
+ *
+ * The real Claude Desktop (Code tab) composer is the claude.ai bundle's
+ * Claude Design System ChatComposer: one rounded box holding the text and
+ * the send/stop control, with a 24px "chin" row of ghost buttons as a
+ * sibling 8px below it. Every value here is read from that bundle (class
+ * strings + design tokens at comfortable density), not eyeballed.
+ *
+ * Isolation contract:
+ *   - Every selector is prefixed
+ *     `[data-composer-style="claude"] .app-transcript .composer-surface`
+ *     so the other 13 composer shells are untouched
+ *     (claudeComposerDesktopParityCss.test.ts pins this). The linked
+ *     side-chat pane and multiview panes mount the same Composer component
+ *     and take the same styling by design; 11-side-chat.css only adjusts
+ *     docking geometry. (There is no `.side-chat-composer` class anywhere in
+ *     the tree — do not reintroduce it as a guard.)
+ *   - Colours are Claude-local custom properties set on the surface; the
+ *     light family (light / mist / sage) only swaps the palette block.
+ *   - The model · effort chip keeps its content, colour, weight, padding and
+ *     hover from shard 08; it only takes the row's 13px type and 24px height.
+ *   - The 40px send notch reuses the shared
+ *     `--composer-inline-send-affordance-inset` contract from shard 08.
+ * ------------------------------------------------------------ */
+
+/* Palette — dark (default). `gap` pins the 8px box→chin distance the send
+ * cluster's anchor below relies on. */
+[data-composer-style="claude"] .app-transcript .composer-surface {
+  --claude-cc-box-bg: #20201f;
+  --claude-cc-box-ring: rgba(255, 255, 255, 0.08);
+  --claude-cc-box-ring-focus: rgba(255, 255, 255, 0.16);
+  --claude-cc-box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --claude-cc-box-shadow-focus: 0 6px 16px rgba(0, 0, 0, 0.12);
+  --claude-cc-text: #f0efec;
+  --claude-cc-text-secondary: #c3c2b7;
+  --claude-cc-text-muted: #898781;
+  --claude-cc-hover: rgba(255, 255, 255, 0.075);
+  --claude-cc-ring-track: rgba(255, 255, 255, 0.1);
+  /* Text insets of the box. Claude Desktop ships 13px vertical (a 48px
+   * single line) and 8px on the left; TaskWraith runs 15px (52px) and 12px
+   * by request — everything below derives from these two numbers. The right
+   * inset is the shared send notch. */
+  --claude-cc-box-pad-y: 15px;
+  --claude-cc-box-pad-x: 12px;
+  gap: 8px;
 }
 
+/* Palette — light family */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .app-transcript
-  .composer-area.interface-claude
-  .composer-surface:focus-within
-  .composer-textarea {
-  border-color: rgba(29, 29, 31, 0.25) !important;
-  box-shadow:
-    0 1px 2px rgba(18, 21, 27, 0.07),
-    0 5px 16px rgba(18, 21, 27, 0.08),
-    0 0 0 1px rgba(29, 29, 31, 0.06) !important;
+  .composer-surface {
+  --claude-cc-box-bg: #ffffff;
+  --claude-cc-box-ring: rgba(0, 0, 0, 0.1);
+  --claude-cc-box-ring-focus: rgba(0, 0, 0, 0.25);
+  --claude-cc-box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --claude-cc-box-shadow-focus: 0 6px 16px rgba(0, 0, 0, 0.04);
+  --claude-cc-text: #0b0b0b;
+  --claude-cc-text-secondary: #52514e;
+  --claude-cc-text-muted: #898781;
+  --claude-cc-hover: rgba(0, 0, 0, 0.075);
+  --claude-cc-ring-track: rgba(0, 0, 0, 0.1);
 }
 
-/* Codex light shell — mirror the real Codex app's pure-white editor and
- * detached status rows over its exact neutral utility bed. The telemetry row
- * is a sibling of `.composer-inner-module`, so changing only the outer surface
- * fill recolors the exposed workspace/tools/token strip without touching its
- * geometry or the white editor above it. */
+/* 1) The box. The textarea is the visible rectangle (the surface stays
+ *    transparent). One line = pad-y + 22px + pad-y (52px at the 15px
+ *    default); text starts pad-x in; the right inset is the send-button
+ *    notch; `display: block`
+ *    drops the inline-block descender gap so the 8px chin gap is exact.
+ *    `!important` only where an earlier shard already pins the same property
+ *    with `!important`. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea {
+  display: block;
+  box-sizing: border-box;
+  background: var(--claude-cc-box-bg) !important;
+  background-image: none !important;
+  border: 0 !important;
+  border-radius: 14px !important;
+  box-shadow:
+    inset 0 0 0 1px var(--claude-cc-box-ring),
+    var(--claude-cc-box-shadow) !important;
+  padding: var(--claude-cc-box-pad-y) var(--composer-inline-send-affordance-inset, 40px)
+    var(--claude-cc-box-pad-y) var(--claude-cc-box-pad-x);
+  min-height: calc(22px + 2 * var(--claude-cc-box-pad-y)) !important;
+  max-height: calc(22px * 8 + 2 * var(--claude-cc-box-pad-y)) !important;
+  font-size: 16px;
+  line-height: 22px;
+  color: var(--claude-cc-text) !important;
+  caret-color: var(--claude-cc-text);
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea::placeholder {
+  color: var(--claude-cc-text-muted) !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface:focus-within
+  .composer-textarea {
+  box-shadow:
+    inset 0 0 0 1px var(--claude-cc-box-ring-focus),
+    var(--claude-cc-box-shadow-focus) !important;
+}
+/* Ensemble mention overlay: the textarea's own glyphs stay transparent so the
+ * overlay (`.composer-textarea-highlight`, z-index 2, metrics synced from the
+ * textarea at runtime) is the only visible text; the overlay takes the box's
+ * ink so mention-free text matches the plain state exactly. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea.has-mention-overlay {
+  color: transparent !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea-highlight-content {
+  color: var(--claude-cc-text);
+}
+
+/* 2) Send / stop cluster: a 32px ghost button 8px from the box's right edge
+ *    and (pad-y − 5px) from its bottom edge, which centres it on a single
+ *    line (8px at Claude Desktop's 13px, 10px at the 15px default). The chin
+ *    (.composer-control-footer) is the positioning context; its top edge sits
+ *    8px below the box, so `100% + 8px + (pad-y − 5px)` holds however many
+ *    lines the draft has. The child buttons return to normal flow inside it. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-control-footer {
+  position: relative;
+  padding: 0;
+  margin: 0;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px + (var(--claude-cc-box-pad-y) - 5px));
+  z-index: 4;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn {
+  position: static;
+  inset: auto;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--claude-cc-text);
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn:hover:not(:disabled) {
+  background: var(--claude-cc-hover);
+  color: var(--claude-cc-text);
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn:active:not(:disabled) {
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn:disabled {
+  background: transparent;
+  color: var(--claude-cc-text);
+  opacity: 0.4;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn:disabled
+  .sf-symbol-icon {
+  color: inherit;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
+  box-shadow: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn
+  .sf-symbol-icon,
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-send-cluster
+  > .composer-action-btn
+  .sf-symbol-icon
+  svg {
+  width: 20px;
+  height: 20px;
+  transform: none;
+}
+
+/* 3) Chin: a 24px row with 4px gaps, inset 8px like the text above it. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-inline-pickers {
+  padding: 0 8px;
+  margin: 0;
+  gap: 4px;
+  min-height: 24px;
+  align-items: center;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-inline-pickers-left {
+  gap: 4px;
+  align-items: center;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-inline-actions {
+  gap: 4px;
+  margin-right: 0;
+}
+/* Row type: 13px on a 24px line for every chip. The model · effort chip keeps
+ * its own colour, weight, padding and hover (shard 08 "Claude shell model
+ * chip"); only its size follows the row. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-combined-picker-trigger {
+  height: 24px;
+  min-height: 24px;
+  font-size: 13px;
+  line-height: 24px;
+}
+
+/* Attach "+": 24px ghost, radius 6, 20px glyph. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-image-picker-btn {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--claude-cc-text-secondary);
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-image-picker-btn:hover:not(:disabled),
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-image-picker-btn:focus-visible {
+  background: var(--claude-cc-hover);
+  border: 0;
+  color: var(--claude-cc-text);
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-image-picker-btn
+  .sf-symbol-icon,
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-image-picker-btn
+  .sf-symbol-icon
+  svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Mic + caret: a split dropdown button — 24px ghost mic with a 20px glyph
+ * joined to a 12px caret segment. The shared light-family voice rules above
+ * pin colours with `!important`, so these do too. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-voice-control {
+  gap: 0;
+  padding: 0;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent !important;
+  box-shadow: none;
+  color: var(--claude-cc-text-secondary) !important;
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn.is-recording {
+  background: var(--claude-cc-hover) !important;
+  color: var(--claude-cc-text) !important;
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn
+  .sf-symbol-icon,
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn
+  .sf-symbol-icon
+  svg {
+  width: 20px;
+  height: 20px;
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-action-btn.voice-btn:disabled,
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-voice-chevron:disabled {
+  background: transparent !important;
+  color: var(--claude-cc-text-muted) !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-voice-chevron {
+  width: 12px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--claude-cc-text-muted) !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-voice-control.is-menu-open
+  .composer-voice-chevron {
+  background: var(--claude-cc-hover) !important;
+  color: var(--claude-cc-text) !important;
+}
+
+/* Permission chip ("Accept edits"): a 24px ghost text button, 13px / 400,
+ * 8px side padding, no fill or border, hover 7.5%. The shared light-family
+ * chip rules pin its colour with `!important`, so this does too. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  [data-composer-control="permission"] {
+  height: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0 !important;
+  border-radius: 6px;
+  background: transparent !important;
+  box-shadow: none;
+  color: var(--claude-cc-text-secondary) !important;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 24px;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  [data-composer-control="permission"]:hover:not(:disabled) {
+  background: var(--claude-cc-hover) !important;
+  color: var(--claude-cc-text) !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  [data-composer-control="permission"]
+  .composer-combined-picker-trigger-primary {
+  color: inherit !important;
+  font-weight: inherit;
+}
+
+/* 4) Context ring: a 12px donut (2px stroke via ContextWheel's claudeShell
+ *    prop) inside a 24px ghost button, last in the row. The track circle is
+ *    the neutral 10% ring; the arc keeps the hue from shard 08 and the shared
+ *    warn/critical tints. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-context-trigger {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  transform: none;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-context-trigger:hover:not(:disabled) {
+  background: var(--claude-cc-hover);
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .context-wheel {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .context-wheel
+  svg {
+  width: 12px;
+  height: 12px;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .context-wheel
+  svg
+  circle:first-child {
+  stroke: var(--claude-cc-ring-track);
+  opacity: 1;
+}
+/* ==================== end Claude Desktop composer parity ==================== */
+
+/* Codex light shell — mirror the real Codex app's pure-white editor over its
+ * exact neutral utility bed. The surface is no longer a visible container (the
+ * Codex Desktop composer parity section near the end of this shard makes the
+ * inner module the box and the telemetry row a tab), so the neutral bed is now
+ * painted by the tab itself through `--codex-cc-strip-bg`; the surface stays
+ * transparent so it does not draw a second rectangle behind the pair. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
   .app-transcript
   .composer-surface {
-  background: #f5f5f5 !important;
+  background: transparent !important;
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
@@ -3961,6 +4390,478 @@
 oser-orchestration-cell-label {
   color: var(--text-secondary);
 }
+
+/* ============================================================
+ * Codex shell — Codex Desktop composer parity
+ *
+ * Codex Desktop draws the composer as ONE rounded box (text + control row)
+ * with the workspace/branch tab tucked behind its top edge on a new thread.
+ * TaskWraith keeps its own cockpit strip (workspace · tools · branch/tally),
+ * so the strip becomes that tab: inset from the box, rounded away from it,
+ * and hidden under the box by `--codex-cc-strip-overlap`. On a NEW thread
+ * (`.welcome-mode` on .app-transcript) it sits ABOVE the box reading
+ * workspace · branch · tools, left-aligned like the real tab; once the
+ * thread has begun it keeps the established underneath ordering
+ * (workspace · tools · tally) as a tab under the box. The outer surface is
+ * no longer a visible container.
+ *
+ * Values are read from Codex Desktop screenshots at 1x/2x (the app is not
+ * installed on this machine), so they are within a pixel and a shade, not
+ * bundle-exact like the Claude section.
+ *
+ * 2026-09-19 re-measurement (1x screenshots, corner-arc fit): the box
+ * corner radius is 24px and the dark box fill is #2a2a2a — the previous
+ * 16px/#282828-era values read visibly sharper and darker-grey than the
+ * real shell. Both are carried as `--codex-cc-box-*` tokens below; the
+ * light family keeps its shard-08 white box by re-pointing the fill
+ * token at the theme composer variables.
+ *
+ * Isolation contract:
+ *   - Every selector is prefixed `[data-composer-style="codex"] .app-transcript .composer-surface` (or its .welcome-mode /
+ *     :not(.welcome-mode) / light-family variants), so the other 13 shells
+ *     are untouched (codexComposerDesktopParityCss.test.ts pins this).
+ *   - The model · effort chip keeps its chrome from shards 07/08.
+ *   - The above rows (git pill, ensemble roster) live outside the surface
+ *     and are not touched; the strip lands between them and the box.
+ * ------------------------------------------------------------ */
+
+/* Palette + geometry (dark). The surface itself becomes invisible. */
+[data-composer-style="codex"] .app-transcript .composer-surface {
+  --codex-cc-strip-bg: #212121;
+  --codex-cc-strip-border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
+  --codex-cc-strip-text: rgba(255, 255, 255, 0.82);
+  --codex-cc-strip-muted: rgba(255, 255, 255, 0.56);
+  --codex-cc-strip-hover: rgba(255, 255, 255, 0.07);
+  --codex-cc-chip-muted: rgba(255, 255, 255, 0.62);
+  --codex-cc-send-bg: rgba(255, 255, 255, 0.86);
+  --codex-cc-send-ink: #0d0d0d;
+  --codex-cc-box-radius: 24px;
+  --codex-cc-box-bg: #2a2a2a;
+  --codex-cc-strip-inset: 14px;
+  --codex-cc-strip-radius: 12px;
+  --codex-cc-strip-overlap: 14px;
+  background: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  overflow: visible;
+}
+[data-composer-style="codex"] .app-transcript .composer-surface:focus-within {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Palette — light family (the box's white fill is the Codex light block above).
+ * The send circle inverts to black ink on white, and the "+" loses the
+ * generic light-theme container so it reads as a bare glyph like the dark
+ * shell. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface {
+  --codex-cc-strip-bg: #f5f5f5;
+  --codex-cc-strip-border: 1px solid color-mix(in srgb, #000000 12%, transparent);
+  --codex-cc-strip-text: rgba(29, 29, 31, 0.82);
+  --codex-cc-strip-muted: rgba(29, 29, 31, 0.56);
+  --codex-cc-strip-hover: rgba(29, 29, 31, 0.06);
+  --codex-cc-chip-muted: rgba(29, 29, 31, 0.62);
+  --codex-cc-send-bg: #0d0d0d;
+  --codex-cc-send-ink: #ffffff;
+  /* Light family keeps the shard-08 white box: the dark token above is
+   * unqualified, so without this reset the light box would inherit the
+   * dark #2a2a2a fill. Falling back to the theme composer variables
+   * preserves the exact pre-token light behavior. */
+  --codex-cc-box-bg: var(--composer-bg-solid, var(--composer-bg));
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-image-picker-btn {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-image-picker-btn:hover:not(:disabled) {
+  background: var(--codex-cc-strip-hover) !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  :is(
+    .composer-action-btn.run-btn:not(:disabled),
+    .composer-action-btn.run-btn:disabled:has(.composer-waveform-glyph),
+    .composer-action-btn.stop-btn
+  ) {
+  background: var(--codex-cc-send-bg) !important;
+  color: var(--codex-cc-send-ink) !important;
+  opacity: 1;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn):hover:not(:disabled) {
+  background: #000000 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn)
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+/* 1) The box: the inner module is the visible rectangle, rounded on all four
+ *    corners now that nothing wraps it. */
+[data-composer-style="codex"] .app-transcript .composer-surface .composer-inner-module {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 14px 8px;
+  background: var(--codex-cc-box-bg, var(--composer-bg-solid, var(--composer-bg)));
+  border-radius: var(--codex-cc-box-radius);
+}
+/* The box's drop shadow stays out of the rule above: this section's prefix
+ * outranks the light-family box in 08-theme-picker-overrides.css, so a shadow
+ * declared there would put the dark 12%-black drop under the WHITE box. Dark
+ * keeps the shadow (the themed Codex box near the top of this shard wins for
+ * the real dark themes; citrus/alabaster fall through to this one). */
+[data-composer-style="codex"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  )
+  .app-transcript
+  .composer-surface
+  .composer-inner-module {
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.12),
+    inset 0 -1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+}
+
+/* 2) The strip as a tab: inset from the box, its own fill, below the box in
+ *    the stacking order. Shared by both placements. */
+[data-composer-style="codex"] .app-transcript .composer-surface .composer-telemetry-row {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  margin: 0 var(--codex-cc-strip-inset);
+  min-height: 0;
+  /* Hairline outline shared with the merged ensemble/roster/queued frame
+   * above (same 1px colour-mix literal as that frame's border, dark and
+   * light families); the tucked edge is dropped per placement below so
+   * the tab slides under the box with an open seam, exactly like the
+   * frame's border-less tucked bottom. */
+  border: var(--codex-cc-strip-border);
+  background: var(--codex-cc-strip-bg);
+  color: var(--codex-cc-strip-text);
+  gap: 16px;
+}
+/* New thread: tab ABOVE the box, rounded top corners, workspace · branch ·
+ * tools from the left. `order: -1` moves it ahead of the inner module inside
+ * the surface's flex column; the negative bottom margin tucks its lower
+ * `--codex-cc-strip-overlap` under the box. */
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode
+  .composer-surface
+  .composer-telemetry-row {
+  order: -1;
+  border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;
+  border-bottom: 0;
+  padding: 9px 16px calc(9px + var(--codex-cc-strip-overlap));
+  margin-bottom: calc(-1 * var(--codex-cc-strip-overlap));
+  justify-content: flex-start;
+}
+/* Joined welcome stack: the merged ensemble/roster/queued frame renders as
+ * the previous sibling of .composer-surface (shard 08 drops the frame's
+ * tuck-under padding band in this configuration), so the pair should read
+ * as ONE continuous stacked tab. Three seams need shaping:
+ *   1. The strip's rounded top corners against the frame's flat bottom —
+ *      flattened below so the kept top border draws the single hairline
+ *      seam, mirroring the frame's internal row separators.
+ *   2. The surface's 1px transparent border-top (leftover base-chrome) runs
+ *      above the strip; the aura's backdrop-filter blur(16px) reaches into
+ *      that transparent strip and smears the frame's bottom edge into a
+ *      dark band across the join. Dropping border-top removes the
+ *      transparent gap, so the strip's opaque top border abuts the frame
+ *      directly and the blur region starts under the opaque strip.
+ *   3. The surface's leftover transparent left/right borders still occupy
+ *      1px per side, so the strip's inset margins resolve against a content
+ *      box 1px narrower per side than the frame's width reference (the
+ *      border-less primary stack) — the strip lands 1px shy of the frame's
+ *      hairline edges on each side. Dropping the whole border makes the
+ *      content box flush with the stack, so `--codex-cc-strip-inset` is
+ *      measured from exactly the same edges the frame's width is, and the
+ *      two outlines align to the pixel.
+ * Without the frame above, the strip keeps its rounded tucked-tab top and
+ * the surface keeps its (invisible) border. Selector note: :has() may not
+ * nest inside another :has() (the previous primary-stack form was invalid
+ * and silently dropped at parse time — the corners never flattened), so
+ * the frame gate uses the adjacent-sibling combinator instead. */
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-above-bar-stack:has(
+    :is(
+      .ensemble-above-row,
+      .queued-messages-above-row,
+      .ensemble-roster-preset-picker.is-compact
+    )
+  )
+  + .composer-surface {
+  border: 0;
+}
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-above-bar-stack:has(
+    :is(
+      .ensemble-above-row,
+      .queued-messages-above-row,
+      .ensemble-roster-preset-picker.is-compact
+    )
+  )
+  + .composer-surface
+  .composer-telemetry-row {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* A zone can be empty (a global chat has no workspace switcher; a welcome
+ * chat without a repo has no branch picker) and would still spend the row's
+ * 16px gap, floating the tools cluster in from the tab's left edge. */
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode
+  .composer-surface
+  .composer-telemetry-row
+  > :empty {
+  display: none;
+}
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode
+  .composer-surface
+  .composer-telemetry-side--left {
+  order: 1;
+  flex: 0 1 auto;
+}
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode
+  .composer-surface
+  .composer-telemetry-side--right {
+  order: 2;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+}
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode
+  .composer-surface
+  .composer-telemetry-cluster {
+  order: 3;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+}
+/* Thread begun: tab BELOW the box (established workspace · tools · tally
+ * ordering), rounded bottom corners, tucked under the box's bottom edge. */
+[data-composer-style="codex"]
+  .app-transcript:not(.welcome-mode)
+  .composer-surface
+  .composer-telemetry-row {
+  border-radius: 0 0 var(--codex-cc-strip-radius) var(--codex-cc-strip-radius);
+  border-top: 0;
+  padding: calc(9px + var(--codex-cc-strip-overlap)) 16px 9px;
+  margin-top: calc(-1 * var(--codex-cc-strip-overlap));
+}
+/* Tab items: workspace and branch read as plain labelled glyphs (no caret),
+ * 14px, in the strip's ink. */
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-telemetry-row
+  .composer-workspace-button,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-telemetry-row
+  .composer-welcome-branch-picker {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--codex-cc-strip-text);
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-telemetry-row
+  [data-composer-control="workspace"]::after {
+  content: none;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-telemetry-row
+  .composer-workspace-button:hover:not(:disabled) {
+  background: var(--codex-cc-strip-hover);
+  border-color: transparent;
+}
+
+/* 3) Permission chip: [mode glyph] label, muted, no chevron — Codex Desktop's
+ *    "Approve for me". The elevated presets keep their own accents (Full WS
+ *    Access orange, Full Access red) from shard 08, so the muted ink skips
+ *    them; the glyph inherits whichever ink applies. The shared light-family
+ *    chip rule pins colour with !important, so this does too. */
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"] {
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  font-weight: 400;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"]:not([data-permission-value="workspace_write"]):not(
+    [data-permission-value="full_access"]
+  ) {
+  color: var(--codex-cc-chip-muted) !important;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"]:not([data-permission-value="workspace_write"]):not(
+    [data-permission-value="full_access"]
+  )
+  .composer-combined-picker-trigger-primary {
+  color: inherit !important;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"]::after {
+  content: none;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"]
+  .composer-permission-glyph,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  [data-composer-control="permission"]
+  .composer-permission-glyph
+  svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 4) Send / stop: the 32px white circle keeps its full fill while the draft
+ *    is empty (Codex Desktop shows the voice-mode waveform there, rendered by
+ *    the Composer's Codex branch), the glyph is 18px, and Stop is a filled
+ *    square. The dark rule below fills the empty state; the light family's
+ *    black circle is in the light palette block above. */
+[data-composer-style="codex"]:not(
+    :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  )
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  .composer-action-btn.run-btn:disabled:has(.composer-waveform-glyph) {
+  background: var(--codex-cc-send-bg);
+  color: var(--codex-cc-send-ink);
+  opacity: 1;
+}
+/* Disabled for any OTHER reason (no workspace picked, the provider is
+ * unavailable, Gemini trust still pending) keeps the arrow, so a full-strength
+ * circle would be pixel-identical to the live control on a dead button. Dim it
+ * instead; the tokens flip with the theme family so one rule covers both. */
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  .composer-action-btn.run-btn:disabled:not(:has(.composer-waveform-glyph)) {
+  background: color-mix(in srgb, var(--codex-cc-send-bg) 34%, transparent) !important;
+  color: color-mix(in srgb, var(--codex-cc-send-ink) 58%, transparent) !important;
+  opacity: 1;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  .composer-action-btn.run-btn:disabled
+  .sf-symbol-icon,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  .composer-action-btn.run-btn:disabled
+  .sf-symbol-icon
+  svg {
+  color: inherit;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn)
+  .sf-symbol-icon,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-send-cluster
+  :is(.composer-action-btn.run-btn, .composer-action-btn.stop-btn)
+  .sf-symbol-icon
+  svg {
+  width: 18px;
+  height: 18px;
+}
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface
+  .composer-action-btn.stop-btn
+  .sf-symbol-icon
+  rect {
+  fill: currentColor;
+}
+/* 5) The linked-chat pane already insets the composer by 14px, so the tab's
+ *    own 14px per side would wrap the tools cluster onto a second row in a
+ *    narrow pane. Halve it there; every other placement is unchanged. */
+[data-composer-style="codex"] .side-chat-pane.app-transcript .composer-surface {
+  --codex-cc-strip-inset: 6px;
+}
+
+/* 6) Advanced-FX agent aura: shard 05 paints the running pulse as a `::after`
+ *    ring that inherits the surface radius. The surface is now an invisible
+ *    square wrapper around the box AND the tab strip, so that ring would trace
+ *    a hard, pulsing rectangle around both (the idle / approval / failed tints
+ *    are plain surface box-shadows, already reset above). Codex Desktop has no
+ *    composer glow: keep the aura off the surface, as the Gemini / Cursor /
+ *    ChatGPT sign-off does for their invisible shells. */
+[data-composer-style="codex"] .app-transcript .composer-surface.fx-agent-aura::after,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface.fx-agent-aura.fx-status-running::after,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface.fx-agent-aura.fx-status-approval::after,
+[data-composer-style="codex"]
+  .app-transcript
+  .composer-surface.fx-agent-aura.fx-status-failed::after {
+  display: none !important;
+  content: none !important;
+  background: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+}
+/* ==================== end Codex Desktop composer parity ==================== */
 
 /* ============================================================
  * ChatGPT shell — final overrides.

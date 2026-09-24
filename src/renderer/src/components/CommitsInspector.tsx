@@ -262,7 +262,7 @@ export function CommitsInspector({
       void loadWorkspaceTaskWraithCommitAttributions({
         chats: [],
         workspaceId: attributionWorkspaceId,
-        loadWorkspaceChats: (workspaceId) => window.api.getChats(workspaceId)
+        loadWorkspaceChats: (workspaceId) => window.api.getWorkspaceCommitAttributions(workspaceId)
       })
         .then((values) => {
           if (!cancelled) setLoadedAttributions({ workspaceId: attributionWorkspaceId, values })

@@ -34,6 +34,9 @@ export const HOST_PROTOCOL_MAX_COLLECTION = 2_000
 export const HOST_PROTOCOL_MAX_DELTAS = 500
 export const HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW = 2_000
 export const HOST_PROTOCOL_MAX_WARNING = 1_000
+/** Goal objectives are bounded display summaries; the App holds the source. */
+export const HOST_PROTOCOL_MAX_GOAL_OBJECTIVE = 2_000
+export const HOST_PROTOCOL_MAX_GOAL_CRITERIA = 24
 /** Channels currently cap live/pending seats at eight members. */
 export const HOST_PROTOCOL_MAX_CHANNEL_MEMBERS = 8
 /** Lowercase SHA-256 hex digest length for command fingerprints on the wire. */
@@ -42,13 +45,20 @@ export const HOST_COMMAND_FINGERPRINT_HEX_LENGTH = 64
 export type HostProtocolVersion = typeof HOST_PROTOCOL_VERSION
 export type HostProjectionVersion = typeof HOST_PROJECTION_VERSION
 
-export type HostClientClass = 'desktop' | 'tui' | 'ios' | 'test'
+export type HostClientClass = 'desktop' | 'tui' | 'ios' | 'test' | 'host-cli'
 
 export type HostCapability =
   | 'bootstrap'
   | 'snapshot'
   | 'deltas'
   | 'model-offers'
+  | 'provider-catalog'
+  | 'provider-auth'
+  | 'history'
+  | 'workspace-git'
+  /** Opt-in setup mutations; never requested by legacy/default clients. */
+  | 'setup'
+  | 'host-lifecycle'
   | 'commands'
   | 'receipts'
   | 'health'
@@ -99,6 +109,34 @@ export const TASKWRAITH_DESKTOP_HOST_ACTOR = {
   clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
   clientClass: 'desktop'
 } as const satisfies HostActorIdentity
+
+/**
+ * The ONE capability grant every consumer binding as the Desktop identity must
+ * request.
+ *
+ * HostSession.bind keys a session by actor identity and, on re-bind, only ever
+ * RETAINS/NARROWS the grant it already issued — a wider later request cannot
+ * add back what an earlier, narrower one dropped. Every main-process consumer
+ * shares TASKWRAITH_DESKTOP_HOST_ACTOR and therefore shares ONE session, so a
+ * consumer that asks for less permanently strips the difference from the whole
+ * app until the Host process restarts. Losing `history` alone makes every
+ * thread.catalogue read fail `unauthorized`, which leaves chats summary-only
+ * (save-chat then throws) and stalls the transcript; losing `deltas`/`snapshot`
+ * freezes live updates outright. Sharing the identity means sharing this list.
+ *
+ * `setup` is deliberately absent: every command these consumers submit is a
+ * governed-mutation (HostCommandRouting), never a setup-mutation.
+ */
+export const TASKWRAITH_DESKTOP_HOST_CAPABILITIES = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'health',
+  'commands',
+  'receipts',
+  'channels',
+  'history'
+] as const satisfies readonly HostCapability[]
 
 /** Generation is bumped on discontinuity/reset; not monotonic across resets. */
 export type HostGeneration = number
@@ -168,6 +206,63 @@ export interface HostHealthProjection {
   freshness: HostProjectionFreshness
 }
 
+/** Host lifetime phase as the Host reports it from its own lease registry. */
+export type HostLifetimePhase = 'held' | 'grace' | 'draining' | 'stopping'
+
+/**
+ * Per-socket lease state. `implicit` is an authenticated client that never
+ * spoke `host.lease` (an older build), counted as a holder for the transition
+ * releases; `declined` covers a socket that said so, released, or lapsed.
+ */
+export type HostClientLeaseState = 'explicit' | 'implicit' | 'declined' | 'none'
+
+export interface HostStatusClientProjection {
+  clientClass: HostClientClass
+  /** Omitted for paired-phone clients: the pair id is not for peers to see. */
+  clientId?: string
+  displayName?: string
+  /** From the Host's own monotonic clock. */
+  connectedForMs: number
+  lease: HostClientLeaseState
+  capabilities: HostCapability[]
+}
+
+export interface HostStatusLifetimeProjection {
+  phase: HostLifetimePhase
+  /** Present only while `phase` is `grace`: awake milliseconds left. */
+  graceRemainingMs?: number
+  /** explicit + implicit */
+  holders: number
+  implicitHolders: number
+  declined: number
+}
+
+/**
+ * Answer to `host.status`. Every duration comes from the Host's own monotonic
+ * clock — never `Date.now() - startedAt` on a client, whose clock, sleep
+ * history and time zone the Host does not share.
+ */
+export interface HostStatusProjection {
+  pid: number
+  /** Listener start, ISO-8601 — the same instant the discovery file carries. */
+  startedAt: string
+  uptimeMs: number
+  hostId: string
+  bootEpoch?: string
+  payloadVersion?: string
+  profilePath: string
+  /** `TASKWRAITH_HOST_PERSIST=1`: the last-lease grace exit is disabled. */
+  persist: boolean
+  lifetime: HostStatusLifetimeProjection
+  liveWork: { runs: number }
+  clients: HostStatusClientProjection[]
+}
+
+/** The listener's client budget; a status never lists more. */
+export const HOST_STATUS_MAX_CLIENTS = 32
+export const HOST_STATUS_MAX_PATH = 4_096
+export const HOST_STATUS_MAX_STARTED_AT = 64
+
 export interface HostWorkspaceProjection {
   id: string
   name: string
@@ -201,6 +296,12 @@ export interface HostParticipantProjection {
   providerId: string
   role: string
   modelId?: string
+  /** Display-only reasoning posture for Mission Control / paired clients. */
+  reasoningEffort?: string
+  /** Kimi-style thinking toggle when the seat exposes one. */
+  thinkingEnabled?: boolean
+  /** Display-only approval tier id; never an authority grant or override. */
+  permissionPresetId?: string
   stage?: 'scout' | 'worker' | 'reviewer' | 'background' | 'any'
   order: number
   enabled: boolean
@@ -238,6 +339,60 @@ export interface HostRoundProjection {
   providerRunIds: string[]
 }
 
+/** Separator between individual warning summaries in a composed reason. */
+export const HOST_RUN_FAILURE_REASON_SEPARATOR = ' · '
+
+/**
+ * Compose one bounded reason from a run's warning summaries, or `undefined`
+ * when there is genuinely nothing to say.
+ *
+ * WHY THIS IS SHARED, AND WHY IT RETURNS undefined
+ * ------------------------------------------------
+ * Three surfaces needed this sentence and each built it differently, which is
+ * how the reason went missing: `writeFinish` joined the summaries and wrote a
+ * transcript notice, `recoverInterruptedRuns` wrote the same fields to the
+ * store and no notice at all, and the projection carried neither. One
+ * composition rule removes that class.
+ *
+ * Returning `''` is the trap this deliberately avoids: an empty reason
+ * concatenated into a sentence produced a dangling `Run failed · ` with
+ * nothing after the separator. `undefined` forces every caller to decide.
+ *
+ * Blank and whitespace-only entries are dropped rather than joined, so a
+ * summary array of `['']` cannot render as a separator with no words.
+ */
+export function hostRunFailureReason(
+  warningSummaries: readonly string[] | undefined,
+  maxLength = HOST_PROTOCOL_MAX_WARNING
+): string | undefined {
+  if (!warningSummaries || warningSummaries.length === 0) return undefined
+  const parts: string[] = []
+  for (const summary of warningSummaries) {
+    if (typeof summary !== 'string') continue
+    const trimmed = summary.trim()
+    if (trimmed) parts.push(trimmed)
+  }
+  if (parts.length === 0) return undefined
+  const joined = parts.join(HOST_RUN_FAILURE_REASON_SEPARATOR)
+  if (joined.length <= maxLength) return joined
+  // A truncated reason must still read as a sentence and must never end
+  // mid-separator, or the wire cap turns a diagnosis into a riddle.
+  return `${joined.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
+}
+
+/**
+ * The transcript notice a failed run publishes, or `undefined` when no reason
+ * is available. Keeping the prefix here stops a second surface from inventing
+ * a slightly different sentence for the same event.
+ */
+export function hostRunFailureNotice(
+  warningSummaries: readonly string[] | undefined,
+  maxLength = HOST_PROTOCOL_MAX_WARNING
+): string | undefined {
+  const reason = hostRunFailureReason(warningSummaries, maxLength)
+  return reason ? `Run failed${HOST_RUN_FAILURE_REASON_SEPARATOR}${reason}` : undefined
+}
+
 export interface HostRunProjection {
   runId: string
   threadId: string
@@ -248,6 +403,25 @@ export interface HostRunProjection {
   endedAt?: number
   modelId?: string
   usage?: HostUsageObservation
+  /**
+   * Machine-readable failure classification, when the Host recorded one.
+   *
+   * Deliberately a bounded free string rather than a closed union: the Host's
+   * own `errorCode` vocabulary grows, and a client that hard-fails an unknown
+   * code would black out the very surface meant to explain the failure.
+   */
+  errorCode?: string
+  /**
+   * Human-readable reason this run failed, already composed and bounded.
+   *
+   * The Host has always known this — it lives on the run row as
+   * `warningSummaries` — but it stopped at the wire, so a client could only
+   * render a bare `provider:failed`. That is exactly the "fails with nothing
+   * evidently wrong" report. Sent pre-joined so every client shows the same
+   * sentence instead of inventing its own; never an empty string, because a
+   * blank reason renders as a dangling separator.
+   */
+  failureReason?: string
 }
 
 export interface HostMissionProjection {
@@ -258,6 +432,30 @@ export interface HostMissionProjection {
   goalId?: string
   updatedAt: number
   activeRoundId?: string
+}
+
+export type HostThreadGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
+
+/**
+ * Bounded projection of a thread's durable goal.
+ *
+ * The App owns goal authorship and writes it onto the chat record; this is a
+ * read-only view of what is already stored, never a second source of truth.
+ * `objective` is a bounded display summary - the App holds the untruncated
+ * source - and `objectiveTruncated` says so, rather than letting a clipped
+ * objective read as the whole objective.
+ */
+export interface HostThreadGoalProjection {
+  id: string
+  objective: string
+  objectiveTruncated?: boolean
+  status: HostThreadGoalStatus
+  mode: string
+  blockedReason?: string
+  acceptanceCriteria?: string[]
+  /** Wall-clock accounting from the goal's runtime ledger, at snapshot time. */
+  wallMs?: number
+  activeMs?: number
 }
 
 export interface HostThreadProjection {
@@ -274,9 +472,16 @@ export interface HostThreadProjection {
   latestPreview?: string
   previewTruncated?: boolean
   providerId?: string
+  /** Display-only configured model; run admission still revalidates provider offers. */
+  modelId?: string
+  /** Display-only configured reasoning/effort value. */
+  reasoningEffort?: string
+  /** Display-only selected permission tier; never grants authority. */
+  permissionPresetId?: string
   missionOutcome?: HostMissionOutcome
   activeRoundId?: string
   usage?: HostUsageObservation
+  goal?: HostThreadGoalProjection
 }
 
 export interface HostQuestionProjection {
@@ -386,6 +591,8 @@ export interface HostChannelProjection {
  * not zero").
  */
 export const HOST_WARNING_PROVIDER_SOURCE_NOT_READY = 'provider_source_not_ready'
+/** Intentional bounded working set; unlike projection_truncated this is safe for mutation capture. */
+export const HOST_WARNING_PROJECTION_WINDOWED = 'projection_windowed'
 
 export interface HostWarningProjection {
   warningId: string
@@ -458,6 +665,12 @@ export interface HostBootstrapWelcome {
   authenticatedClient: HostAuthenticatedClientIdentity
   capabilities: HostCapability[]
   freshness: HostProjectionFreshness
+  /**
+   * Optional public opaque boot epoch (64 lowercase hex), minted per Host
+   * incarnation and compared for equality only. Never the auth token.
+   * Absent on pre-epoch hosts; decoders accept both shapes.
+   */
+  bootEpoch?: string
 }
 
 /**
@@ -499,6 +712,8 @@ export interface HostBootstrapWelcomeMintInput {
   hostCapabilityOffer: readonly HostCapability[]
   clientCapabilityRequest: readonly HostCapability[]
   freshness: HostProjectionFreshness
+  /** Optional public opaque boot epoch; decode validates 64 lowercase hex. */
+  bootEpoch?: string
 }
 
 export type HostDeltaKind = 'upsert' | 'remove' | 'tombstone' | 'generation-reset'
@@ -630,6 +845,16 @@ export const HOST_APPROVAL_DECIDE_DECISIONS: readonly HostApprovalDecideDecision
   'cancel'
 ] as const
 
+/** Maximum durable thread-record artifact size; matches HostProfileDomainStore. */
+export const HOST_THREAD_RECORD_TRANSFER_MAX_BYTES = 128 * 1024 * 1024
+
+export interface HostThreadRecordPersistArguments {
+  transferId: string
+  sha256: string
+  byteLength: number
+  expectedRevision: number
+}
+
 export type HostCommandName =
   | 'snapshot.get'
   | 'deltas.since'
@@ -642,6 +867,17 @@ export type HostCommandName =
   | 'channel.member.revoke'
   | 'channel.close'
   | 'thread.select'
+  | 'workspace.register'
+  | 'workspace.record.upsert'
+  | 'workspace.record.remove'
+  | 'workspace.records.clear'
+  | 'thread.create'
+  | 'thread.configure'
+  | 'thread.record.persist'
+  | 'thread.record.delete'
+  | 'thread.archive'
+  | 'provider.auth.begin'
+  | 'provider.auth.cancel'
   | 'ping'
 
 export interface HostCommand {
@@ -689,6 +925,23 @@ export const HOST_RECEIPT_STATUSES: readonly HostReceiptStatus[] = [
 ] as const
 
 /**
+ * M2 queued-start lifecycle phase (Independent Threads Programme, Amendment
+ * A1.3) — a versioned phase SEPARATE from HostReceiptStatus, which never
+ * changes: `queued`/`starting` ride on the wire as status `pending`, and
+ * `succeeded` still requires durable start evidence plus published start
+ * effects. Emitted only when the TASKWRAITH_HOST_QUEUED_START gate (default
+ * off) is wired by the integration owner; absent on receipts that predate or
+ * bypass the lifecycle.
+ */
+export type HostQueuedStartPhase = 'queued' | 'starting' | 'started'
+
+export const HOST_QUEUED_START_PHASES: readonly HostQueuedStartPhase[] = [
+  'queued',
+  'starting',
+  'started'
+] as const
+
+/**
  * Durable command receipt — reconnect-safe lookup by commandId or idempotencyKey.
  * Persistence is owned by Host storage (Wave 2B+); this type is the wire contract.
  */
@@ -701,6 +954,13 @@ export interface HostCommandReceipt {
   actor: HostActorIdentity
   authority: HostAuthorityDecision
   status: HostReceiptStatus
+  /**
+   * M2 (Amendment A1.3): queued-start lifecycle phase, present only under the
+   * TASKWRAITH_HOST_QUEUED_START gate (default off). `queued`/`starting`
+   * imply status `pending`; `started` is a phase marker and does not by
+   * itself make the receipt `succeeded`.
+   */
+  phase?: HostQueuedStartPhase
   /**
    * Lowercase SHA-256 hex digest of the canonical command body.
    * Required for idempotency replay/conflict; never raw args on the wire.
@@ -720,7 +980,14 @@ export interface HostCommandReceipt {
    * command fingerprint than the durable original.
    */
   conflictCommandId?: string
+  resultRef?: HostResultRef
 }
+
+/** Opaque durable result locator; never a path, URL, credential, or body. */
+export type HostResultRef =
+  | { kind: 'workspace'; workspaceId: string }
+  | { kind: 'thread'; threadId: string }
+  | { kind: 'provider-auth'; providerId: string; operationId: string }
 
 export type HostDecodeResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
@@ -737,6 +1004,47 @@ function isOptionalString(
   max = HOST_PROTOCOL_MAX_STRING
 ): value is string | undefined {
   return value === undefined || isNonEmptyString(value, max)
+}
+
+export function decodeHostResultRef(value: unknown): HostDecodeResult<HostResultRef | undefined> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    return { ok: false, error: 'resultRef is invalid' }
+  }
+  if (value.kind === 'workspace') {
+    if (Object.keys(value).length !== 2 || !isSafeHostEntityIdComponent(value.workspaceId)) {
+      return { ok: false, error: 'resultRef is invalid' }
+    }
+    return {
+      ok: true,
+      value: { kind: 'workspace', workspaceId: value.workspaceId }
+    }
+  }
+  if (value.kind === 'thread') {
+    if (Object.keys(value).length !== 2 || !isSafeHostEntityIdComponent(value.threadId)) {
+      return { ok: false, error: 'resultRef is invalid' }
+    }
+    return {
+      ok: true,
+      value: { kind: 'thread', threadId: value.threadId }
+    }
+  }
+  if (value.kind !== 'provider-auth') return { ok: false, error: 'resultRef is invalid' }
+  if (
+    Object.keys(value).length !== 3 ||
+    !isSafeHostEntityIdComponent(value.providerId) ||
+    !isSafeHostEntityIdComponent(value.operationId)
+  ) {
+    return { ok: false, error: 'resultRef is invalid' }
+  }
+  return {
+    ok: true,
+    value: {
+      kind: 'provider-auth',
+      providerId: value.providerId,
+      operationId: value.operationId
+    }
+  }
 }
 
 function hasUnsafeHostIdentifierControlCharacter(value: string): boolean {
@@ -819,7 +1127,13 @@ function isNonNegativeInt(value: unknown): value is number {
 }
 
 function isClientClass(value: unknown): value is HostClientClass {
-  return value === 'desktop' || value === 'tui' || value === 'ios' || value === 'test'
+  return (
+    value === 'desktop' ||
+    value === 'tui' ||
+    value === 'ios' ||
+    value === 'test' ||
+    value === 'host-cli'
+  )
 }
 
 /** Canonical host capability offer order (stable intersect ordering). */
@@ -828,6 +1142,12 @@ export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'snapshot',
   'deltas',
   'model-offers',
+  'provider-catalog',
+  'provider-auth',
+  'history',
+  'workspace-git',
+  'setup',
+  'host-lifecycle',
   'commands',
   'receipts',
   'health',
@@ -860,6 +1180,17 @@ const HOST_COMMAND_NAMES = new Set<string>([
   'channel.member.revoke',
   'channel.close',
   'thread.select',
+  'workspace.register',
+  'workspace.record.upsert',
+  'workspace.record.remove',
+  'workspace.records.clear',
+  'thread.create',
+  'thread.configure',
+  'thread.record.persist',
+  'thread.record.delete',
+  'thread.archive',
+  'provider.auth.begin',
+  'provider.auth.cancel',
   'ping'
 ])
 
@@ -887,6 +1218,29 @@ const HOST_DELTA_FAMILIES = new Set<string>([
 ])
 
 const HOST_FRESHNESS = new Set<string>(['live', 'cached', 'stale'])
+/**
+ * Public opaque boot epoch (Independent Threads Programme M1): 64 lowercase
+ * hex characters minted per Host incarnation, compared for equality only —
+ * never a timestamp, never a counter, never the auth token. Optional on the
+ * wire so pre-epoch hosts and clients keep decoding each other.
+ */
+const HOST_BOOT_EPOCH_PATTERN = /^[0-9a-f]{64}$/
+
+/**
+ * Exported as the SINGLE definition of the epoch rule for every enforcement
+ * point that can import TypeScript — the standalone mint and the local server
+ * both consume this rather than re-deriving the pattern. The whole design is
+ * an equality comparison across a process boundary, so a second copy that
+ * drifted would make one side accept what the other rejects: the collector
+ * would read a live epoch as a legacy absence and silently stop pinning.
+ *
+ * Two copies necessarily remain and are pinned in lockstep instead: the perf
+ * snapshot writer, and the harness collector, which is `.cjs` and genuinely
+ * cannot import this module.
+ */
+export function isBootEpoch(value: unknown): value is string {
+  return typeof value === 'string' && HOST_BOOT_EPOCH_PATTERN.test(value)
+}
 const HOST_STATUSES = new Set<string>(['ok', 'degraded', 'recovering', 'offline'])
 const HOST_CONNECTION_PHASES = new Set<string>([
   'connecting',
@@ -1123,6 +1477,139 @@ function decodeApprovalDecideArguments(
   return { ok: true, value: out }
 }
 
+const HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS = 128
+const HOST_THREAD_RECORD_TRANSFER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
+const HOST_SHA256_HEX_RE = /^[a-f0-9]{64}$/
+
+function decodeThreadRecordPersistArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<HostThreadRecordPersistArguments> {
+  const allowed = ['transferId', 'sha256', 'byteLength', 'expectedRevision'] as const
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return { ok: false, error: 'thread.record.persist has unknown argument keys' }
+    }
+  }
+  if (Object.keys(value).length !== allowed.length) {
+    return {
+      ok: false,
+      error:
+        'thread.record.persist arguments must be exactly { transferId, sha256, byteLength, expectedRevision }'
+    }
+  }
+  if (
+    !isNonEmptyString(value.transferId, HOST_THREAD_RECORD_TRANSFER_ID_MAX_CHARS) ||
+    !HOST_THREAD_RECORD_TRANSFER_ID_RE.test(value.transferId)
+  ) {
+    return { ok: false, error: 'thread.record.persist transferId is invalid' }
+  }
+  if (typeof value.sha256 !== 'string' || !HOST_SHA256_HEX_RE.test(value.sha256)) {
+    return { ok: false, error: 'thread.record.persist sha256 must be lowercase SHA-256 hex' }
+  }
+  if (
+    !Number.isSafeInteger(value.byteLength) ||
+    (value.byteLength as number) <= 0 ||
+    (value.byteLength as number) > HOST_THREAD_RECORD_TRANSFER_MAX_BYTES
+  ) {
+    return { ok: false, error: 'thread.record.persist byteLength is invalid' }
+  }
+  if (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0) {
+    return { ok: false, error: 'thread.record.persist expectedRevision is invalid' }
+  }
+  return {
+    ok: true,
+    value: {
+      transferId: value.transferId,
+      sha256: value.sha256,
+      byteLength: value.byteLength as number,
+      expectedRevision: value.expectedRevision as number
+    }
+  }
+}
+
+function decodeThreadRecordDeleteArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const keys = Object.keys(value)
+  if (keys.some((key) => key !== 'expectedRevision')) {
+    return { ok: false, error: 'thread.record.delete has unknown argument keys' }
+  }
+  if (keys.length !== 1) {
+    return {
+      ok: false,
+      error: 'thread.record.delete arguments must be exactly { expectedRevision }'
+    }
+  }
+  if (!Number.isSafeInteger(value.expectedRevision) || (value.expectedRevision as number) < 0) {
+    return { ok: false, error: 'thread.record.delete expectedRevision is invalid' }
+  }
+  return { ok: true, value: { expectedRevision: value.expectedRevision } }
+}
+
+function decodeWorkspaceRecordUpsertArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const allowed = [
+    'path',
+    'displayName',
+    'createdAt',
+    'lastOpenedAt',
+    'pinned',
+    'branch',
+    'geminiWorktree'
+  ] as const
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key as (typeof allowed)[number])) {
+      return { ok: false, error: 'workspace.record.upsert has unknown argument keys' }
+    }
+  }
+  if (
+    !isNonEmptyString(value.path, HOST_PROTOCOL_MAX_STRING) ||
+    !isNonEmptyString(value.displayName, HOST_PROTOCOL_MAX_SHORT) ||
+    !isNonNegativeInt(value.createdAt) ||
+    !isNonNegativeInt(value.lastOpenedAt) ||
+    typeof value.pinned !== 'boolean'
+  ) {
+    return { ok: false, error: 'workspace.record.upsert arguments are invalid' }
+  }
+  if (value.branch !== undefined && !isNonEmptyString(value.branch, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: 'workspace.record.upsert branch is invalid' }
+  }
+  let geminiWorktree: Record<string, unknown> | undefined
+  if (value.geminiWorktree !== undefined) {
+    if (!isRecord(value.geminiWorktree)) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree is invalid' }
+    }
+    const keys = Object.keys(value.geminiWorktree)
+    if (keys.some((key) => key !== 'enabled' && key !== 'name')) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree has unknown keys' }
+    }
+    if (typeof value.geminiWorktree.enabled !== 'boolean') {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree is invalid' }
+    }
+    if (
+      value.geminiWorktree.name !== undefined &&
+      !isNonEmptyString(value.geminiWorktree.name, HOST_PROTOCOL_MAX_SHORT)
+    ) {
+      return { ok: false, error: 'workspace.record.upsert geminiWorktree name is invalid' }
+    }
+    geminiWorktree = { enabled: value.geminiWorktree.enabled }
+    if (value.geminiWorktree.name !== undefined) {
+      geminiWorktree.name = value.geminiWorktree.name
+    }
+  }
+  const output: Record<string, unknown> = {
+    path: value.path,
+    displayName: value.displayName,
+    createdAt: value.createdAt,
+    lastOpenedAt: value.lastOpenedAt,
+    pinned: value.pinned
+  }
+  if (value.branch !== undefined) output.branch = value.branch
+  if (geminiWorktree !== undefined) output.geminiWorktree = geminiWorktree
+  return { ok: true, value: output }
+}
+
 /**
  * Deterministic capability intersection: host offer ∩ client request.
  * Preserves host offer order, dedupes, and never invents capabilities.
@@ -1285,6 +1772,10 @@ export function decodeHostBootstrapWelcome(value: unknown): HostDecodeResult<Hos
   if (value.freshness !== 'live' && value.freshness !== 'cached' && value.freshness !== 'stale') {
     return { ok: false, error: 'freshness is invalid' }
   }
+  const bootEpoch = value.bootEpoch
+  if (bootEpoch !== undefined && !isBootEpoch(bootEpoch)) {
+    return { ok: false, error: 'bootEpoch must be 64 lowercase hex characters when present' }
+  }
   const authenticatedClient = decodeClientIdentity(value.authenticatedClient, 'authenticatedClient')
   if (!authenticatedClient.ok) return authenticatedClient
   const capabilities = decodeCapabilities(value.capabilities)
@@ -1303,7 +1794,8 @@ export function decodeHostBootstrapWelcome(value: unknown): HostDecodeResult<Hos
       cursor: value.cursor,
       authenticatedClient: authenticatedClient.value,
       capabilities: capabilities.value,
-      freshness: value.freshness
+      freshness: value.freshness,
+      ...(bootEpoch === undefined ? {} : { bootEpoch })
     }
   }
 }
@@ -1402,10 +1894,18 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
   if (
     (value.name === 'run.cancel' ||
       value.name === 'thread.select' ||
-      value.name === 'ensemble.seat.toggle') &&
+      value.name === 'ensemble.seat.toggle' ||
+      value.name === 'thread.record.persist' ||
+      value.name === 'thread.record.delete') &&
     !isNonEmptyString(target.value.threadId, HOST_PROTOCOL_MAX_ID)
   ) {
     return { ok: false, error: 'target.threadId is required' }
+  }
+  if (
+    (value.name === 'workspace.record.upsert' || value.name === 'workspace.record.remove') &&
+    !isNonEmptyString(target.value.workspaceId, HOST_PROTOCOL_MAX_ID)
+  ) {
+    return { ok: false, error: 'target.workspaceId is required' }
   }
   if (
     value.name === 'question.answer' &&
@@ -1428,6 +1928,32 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
     const approvalArgs = decodeApprovalDecideArguments(args.value)
     if (!approvalArgs.ok) return approvalArgs
     args = { ok: true, value: approvalArgs.value }
+  }
+  if (value.name === 'thread.record.persist') {
+    const persistArgs = decodeThreadRecordPersistArguments(args.value)
+    if (!persistArgs.ok) return persistArgs
+    args = { ok: true, value: { ...persistArgs.value } }
+  }
+  if (value.name === 'thread.record.delete') {
+    const deleteArgs = decodeThreadRecordDeleteArguments(args.value)
+    if (!deleteArgs.ok) return deleteArgs
+    args = { ok: true, value: deleteArgs.value }
+  }
+  if (value.name === 'workspace.record.upsert') {
+    const workspaceArgs = decodeWorkspaceRecordUpsertArguments(args.value)
+    if (!workspaceArgs.ok) return workspaceArgs
+    args = { ok: true, value: workspaceArgs.value }
+  }
+  if (value.name === 'workspace.record.remove' && Object.keys(args.value).length !== 0) {
+    return { ok: false, error: 'workspace.record.remove arguments must be empty' }
+  }
+  if (value.name === 'workspace.records.clear') {
+    if (Object.keys(target.value).length !== 0) {
+      return { ok: false, error: 'workspace.records.clear target must be empty' }
+    }
+    if (Object.keys(args.value).length !== 0) {
+      return { ok: false, error: 'workspace.records.clear arguments must be empty' }
+    }
   }
   if (
     (value.name === 'channel.member.revoke' || value.name === 'channel.close') &&
@@ -1516,6 +2042,13 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (!commandFingerprint) {
     return { ok: false, error: 'commandFingerprint must be lowercase SHA-256 hex' }
   }
+  if (
+    value.phase !== undefined &&
+    (typeof value.phase !== 'string' ||
+      !(HOST_QUEUED_START_PHASES as readonly string[]).includes(value.phase))
+  ) {
+    return { ok: false, error: 'receipt phase is invalid' }
+  }
   if (!isNonNegativeInt(value.generation) || !isNonNegativeInt(value.cursor)) {
     return { ok: false, error: 'generation/cursor must be non-negative integers' }
   }
@@ -1533,6 +2066,11 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   }
   if (!isOptionalString(value.conflictCommandId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: 'conflictCommandId is invalid' }
+  }
+  const resultRef = decodeHostResultRef(value.resultRef)
+  if (!resultRef.ok) return resultRef
+  if (resultRef.value !== undefined && status !== 'succeeded') {
+    return { ok: false, error: 'resultRef requires a succeeded receipt' }
   }
   let authority: HostAuthorityDecision
   if (value.authority.decision === 'deny') {
@@ -1566,6 +2104,9 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (value.resultSummary !== undefined) {
     receipt.resultSummary = value.resultSummary
   }
+  if (value.phase !== undefined) {
+    receipt.phase = value.phase as HostQueuedStartPhase
+  }
   if (value.errorCode !== undefined) {
     receipt.errorCode = value.errorCode
   }
@@ -1575,6 +2116,7 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (value.conflictCommandId !== undefined) {
     receipt.conflictCommandId = value.conflictCommandId
   }
+  if (resultRef.value) receipt.resultRef = resultRef.value
   return { ok: true, value: receipt }
 }
 
@@ -1833,6 +2375,129 @@ export function decodeHostHealthProjection(value: unknown): HostDecodeResult<Hos
   return { ok: true, value: health }
 }
 
+const HOST_LIFETIME_PHASES = new Set<string>(['held', 'grace', 'draining', 'stopping'])
+const HOST_CLIENT_LEASE_STATES = new Set<string>(['explicit', 'implicit', 'declined', 'none'])
+const HOST_STATUS_PAYLOAD_VERSION_PATTERN = /^sha256:[0-9a-f]{64}$/
+
+function decodeHostStatusClient(
+  value: unknown,
+  label: string
+): HostDecodeResult<HostStatusClientProjection> {
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isClientClass(value.clientClass)) {
+    return { ok: false, error: `${label}.clientClass is invalid` }
+  }
+  if (!isOptionalString(value.clientId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.clientId is invalid` }
+  }
+  if (!isOptionalString(value.displayName, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.displayName is invalid` }
+  }
+  if (!isNonNegativeInt(value.connectedForMs)) {
+    return { ok: false, error: `${label}.connectedForMs is invalid` }
+  }
+  if (typeof value.lease !== 'string' || !HOST_CLIENT_LEASE_STATES.has(value.lease)) {
+    return { ok: false, error: `${label}.lease is invalid` }
+  }
+  if (
+    !Array.isArray(value.capabilities) ||
+    value.capabilities.length > HOST_PROTOCOL_MAX_CAPABILITIES ||
+    !value.capabilities.every(
+      (entry: unknown) => typeof entry === 'string' && HOST_CAPABILITIES.has(entry)
+    )
+  ) {
+    return { ok: false, error: `${label}.capabilities is invalid` }
+  }
+  const client: HostStatusClientProjection = {
+    clientClass: value.clientClass,
+    connectedForMs: value.connectedForMs,
+    lease: value.lease as HostClientLeaseState,
+    capabilities: [...(value.capabilities as HostCapability[])]
+  }
+  if (value.clientId !== undefined) client.clientId = value.clientId
+  if (value.displayName !== undefined) client.displayName = value.displayName
+  return { ok: true, value: client }
+}
+
+/** Strict wire decoder for `HostStatusProjection`; unknown keys are dropped. */
+export function decodeHostStatusProjection(value: unknown): HostDecodeResult<HostStatusProjection> {
+  if (!isRecord(value)) return { ok: false, error: 'status must be an object' }
+  if (!isNonNegativeInt(value.pid) || value.pid === 0) {
+    return { ok: false, error: 'status.pid is invalid' }
+  }
+  if (
+    !isNonEmptyString(value.startedAt, HOST_STATUS_MAX_STARTED_AT) ||
+    Number.isNaN(Date.parse(value.startedAt))
+  ) {
+    return { ok: false, error: 'status.startedAt is invalid' }
+  }
+  if (!isNonNegativeInt(value.uptimeMs)) return { ok: false, error: 'status.uptimeMs is invalid' }
+  if (!isNonEmptyString(value.hostId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'status.hostId is invalid' }
+  }
+  if (value.bootEpoch !== undefined && !isBootEpoch(value.bootEpoch)) {
+    return { ok: false, error: 'status.bootEpoch is invalid' }
+  }
+  if (
+    value.payloadVersion !== undefined &&
+    (typeof value.payloadVersion !== 'string' ||
+      !HOST_STATUS_PAYLOAD_VERSION_PATTERN.test(value.payloadVersion))
+  ) {
+    return { ok: false, error: 'status.payloadVersion is invalid' }
+  }
+  if (!isNonEmptyString(value.profilePath, HOST_STATUS_MAX_PATH)) {
+    return { ok: false, error: 'status.profilePath is invalid' }
+  }
+  if (typeof value.persist !== 'boolean') return { ok: false, error: 'status.persist is invalid' }
+  const lifetime = value.lifetime
+  if (
+    !isRecord(lifetime) ||
+    typeof lifetime.phase !== 'string' ||
+    !HOST_LIFETIME_PHASES.has(lifetime.phase) ||
+    !isNonNegativeInt(lifetime.holders) ||
+    !isNonNegativeInt(lifetime.implicitHolders) ||
+    !isNonNegativeInt(lifetime.declined) ||
+    (lifetime.graceRemainingMs !== undefined && !isNonNegativeInt(lifetime.graceRemainingMs))
+  ) {
+    return { ok: false, error: 'status.lifetime is invalid' }
+  }
+  const liveWork = value.liveWork
+  if (!isRecord(liveWork) || !isNonNegativeInt(liveWork.runs)) {
+    return { ok: false, error: 'status.liveWork is invalid' }
+  }
+  if (!Array.isArray(value.clients) || value.clients.length > HOST_STATUS_MAX_CLIENTS) {
+    return { ok: false, error: 'status.clients is invalid' }
+  }
+  const clients: HostStatusClientProjection[] = []
+  for (let index = 0; index < value.clients.length; index += 1) {
+    const client = decodeHostStatusClient(value.clients[index], `status.clients[${index}]`)
+    if (!client.ok) return client
+    clients.push(client.value)
+  }
+  const status: HostStatusProjection = {
+    pid: value.pid,
+    startedAt: value.startedAt,
+    uptimeMs: value.uptimeMs,
+    hostId: value.hostId,
+    profilePath: value.profilePath,
+    persist: value.persist,
+    lifetime: {
+      phase: lifetime.phase as HostLifetimePhase,
+      holders: lifetime.holders,
+      implicitHolders: lifetime.implicitHolders,
+      declined: lifetime.declined
+    },
+    liveWork: { runs: liveWork.runs },
+    clients
+  }
+  if (value.bootEpoch !== undefined) status.bootEpoch = value.bootEpoch
+  if (value.payloadVersion !== undefined) status.payloadVersion = value.payloadVersion
+  if (lifetime.graceRemainingMs !== undefined) {
+    status.lifetime.graceRemainingMs = lifetime.graceRemainingMs
+  }
+  return { ok: true, value: status }
+}
+
 function decodeHostUsageObservation(value: unknown): HostDecodeResult<HostUsageObservation> {
   if (!isRecord(value)) return { ok: false, error: 'usage must be an object' }
   if (typeof value.availability !== 'string' || !HOST_USAGE_AVAILABILITY.has(value.availability)) {
@@ -2024,6 +2689,15 @@ function decodeHostThreadProjection(
   if (!isOptionalString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.providerId is invalid` }
   }
+  if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  if (!isOptionalString(value.reasoningEffort, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.reasoningEffort is invalid` }
+  }
+  if (!isOptionalString(value.permissionPresetId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.permissionPresetId is invalid` }
+  }
   if (!isOptionalString(value.activeRoundId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.activeRoundId is invalid` }
   }
@@ -2039,6 +2713,12 @@ function decodeHostThreadProjection(
     if (!decodedUsage.ok) return decodedUsage
     usage = decodedUsage.value
   }
+  let goal: HostThreadGoalProjection | undefined
+  if (value.goal !== undefined) {
+    const decodedGoal = decodeHostThreadGoalProjection(value.goal, label)
+    if (!decodedGoal.ok) return decodedGoal
+    goal = decodedGoal.value
+  }
   const thread: HostThreadProjection = {
     id: value.id,
     workspaceId: value.workspaceId as string | null,
@@ -2053,12 +2733,79 @@ function decodeHostThreadProjection(
   if (value.latestPreview !== undefined) thread.latestPreview = value.latestPreview
   if (value.previewTruncated !== undefined) thread.previewTruncated = value.previewTruncated
   if (value.providerId !== undefined) thread.providerId = value.providerId
+  if (value.modelId !== undefined) thread.modelId = value.modelId
+  if (value.reasoningEffort !== undefined) thread.reasoningEffort = value.reasoningEffort
+  if (value.permissionPresetId !== undefined) {
+    thread.permissionPresetId = value.permissionPresetId
+  }
   if (value.missionOutcome !== undefined) {
     thread.missionOutcome = value.missionOutcome as HostMissionOutcome
   }
   if (value.activeRoundId !== undefined) thread.activeRoundId = value.activeRoundId
   if (usage !== undefined) thread.usage = usage
+  if (goal !== undefined) thread.goal = goal
   return { ok: true, value: thread }
+}
+
+const HOST_THREAD_GOAL_STATUSES: ReadonlySet<string> = new Set([
+  'active',
+  'paused',
+  'blocked',
+  'completed'
+])
+
+function decodeHostThreadGoalProjection(
+  value: unknown,
+  parentLabel: string
+): HostDecodeResult<HostThreadGoalProjection> {
+  const label = `${parentLabel}.goal`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.id is required` }
+  }
+  if (!isNonEmptyString(value.objective, HOST_PROTOCOL_MAX_GOAL_OBJECTIVE)) {
+    return { ok: false, error: `${label}.objective is invalid` }
+  }
+  if (typeof value.status !== 'string' || !HOST_THREAD_GOAL_STATUSES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isNonEmptyString(value.mode, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.mode is invalid` }
+  }
+  if (value.objectiveTruncated !== undefined && typeof value.objectiveTruncated !== 'boolean') {
+    return { ok: false, error: `${label}.objectiveTruncated must be boolean` }
+  }
+  if (!isOptionalString(value.blockedReason, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.blockedReason is invalid` }
+  }
+  if (value.acceptanceCriteria !== undefined) {
+    if (
+      !Array.isArray(value.acceptanceCriteria) ||
+      value.acceptanceCriteria.length > HOST_PROTOCOL_MAX_GOAL_CRITERIA ||
+      !value.acceptanceCriteria.every((entry) => isNonEmptyString(entry, HOST_PROTOCOL_MAX_SHORT))
+    ) {
+      return { ok: false, error: `${label}.acceptanceCriteria is invalid` }
+    }
+  }
+  for (const key of ['wallMs', 'activeMs'] as const) {
+    if (value[key] !== undefined && !isNonNegativeInt(value[key])) {
+      return { ok: false, error: `${label}.${key} is invalid` }
+    }
+  }
+  const goal: HostThreadGoalProjection = {
+    id: value.id,
+    objective: value.objective,
+    status: value.status as HostThreadGoalStatus,
+    mode: value.mode
+  }
+  if (value.objectiveTruncated !== undefined) goal.objectiveTruncated = value.objectiveTruncated
+  if (value.blockedReason !== undefined) goal.blockedReason = value.blockedReason
+  if (value.acceptanceCriteria !== undefined) {
+    goal.acceptanceCriteria = value.acceptanceCriteria as string[]
+  }
+  if (value.wallMs !== undefined) goal.wallMs = value.wallMs as number
+  if (value.activeMs !== undefined) goal.activeMs = value.activeMs as number
+  return { ok: true, value: goal }
 }
 
 function decodeHostRunProjection(
@@ -2089,6 +2836,12 @@ function decodeHostRunProjection(
   if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.modelId is invalid` }
   }
+  if (!isOptionalString(value.errorCode, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.errorCode is invalid` }
+  }
+  if (!isOptionalString(value.failureReason, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.failureReason is invalid` }
+  }
   let usage: HostUsageObservation | undefined
   if (value.usage !== undefined) {
     const decodedUsage = decodeHostUsageObservation(value.usage)
@@ -2104,6 +2857,8 @@ function decodeHostRunProjection(
   if (startedAt.value !== undefined) run.startedAt = startedAt.value
   if (endedAt.value !== undefined) run.endedAt = endedAt.value
   if (value.modelId !== undefined) run.modelId = value.modelId
+  if (value.errorCode !== undefined) run.errorCode = value.errorCode
+  if (value.failureReason !== undefined) run.failureReason = value.failureReason
   if (usage !== undefined) run.usage = usage
   return { ok: true, value: run }
 }
@@ -2281,6 +3036,18 @@ function decodeHostParticipantProjection(
   if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: `${label}.modelId is invalid` }
   }
+  const reasoningEffort = value.reasoningEffort
+  if (!isOptionalString(reasoningEffort, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.reasoningEffort is invalid` }
+  }
+  const thinkingEnabled = value.thinkingEnabled
+  if (thinkingEnabled !== undefined && typeof thinkingEnabled !== 'boolean') {
+    return { ok: false, error: `${label}.thinkingEnabled is invalid` }
+  }
+  const permissionPresetId = value.permissionPresetId
+  if (!isOptionalString(permissionPresetId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.permissionPresetId is invalid` }
+  }
   if (!isOptionalString(value.status, HOST_PROTOCOL_MAX_SHORT)) {
     return { ok: false, error: `${label}.status is invalid` }
   }
@@ -2300,6 +3067,15 @@ function decodeHostParticipantProjection(
     active: value.active
   }
   if (value.modelId !== undefined) participant.modelId = value.modelId
+  if (reasoningEffort !== undefined) {
+    participant.reasoningEffort = reasoningEffort
+  }
+  if (thinkingEnabled !== undefined) {
+    participant.thinkingEnabled = thinkingEnabled
+  }
+  if (permissionPresetId !== undefined) {
+    participant.permissionPresetId = permissionPresetId
+  }
   if (value.stage !== undefined) {
     participant.stage = value.stage as NonNullable<HostParticipantProjection['stage']>
   }
@@ -2888,7 +3664,8 @@ export function buildHostBootstrapWelcome(
     cursor: input.cursor,
     authenticatedClient: authenticatedClient.value,
     capabilities,
-    freshness: input.freshness
+    freshness: input.freshness,
+    ...(input.bootEpoch === undefined ? {} : { bootEpoch: input.bootEpoch })
   }
   return decodeHostBootstrapWelcome(welcome)
 }

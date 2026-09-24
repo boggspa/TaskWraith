@@ -294,7 +294,7 @@ export function ComposerHighlightOverlay({
               <span
                 key={idx}
                 className={`composer-mention-token composer-mention-token--group${flagClasses ? ` ${flagClasses}` : ''}`}
-                style={{ color: `var(--user-bubble-base, var(--accent))` }}
+                style={{ color: `var(--accent)` }}
               >
                 {run.text}
               </span>
@@ -346,7 +346,7 @@ export function ComposerHighlightOverlay({
               <span
                 key={idx}
                 className="composer-mention-token composer-mention-token--group"
-                style={{ color: `var(--user-bubble-base, var(--accent))` }}
+                style={{ color: `var(--accent)` }}
               >
                 {segment.text}
               </span>

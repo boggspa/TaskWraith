@@ -10,6 +10,9 @@ import { isAntigravityGeminiApiModelCandidate } from './AntigravityCombinedModeD
 
 describe('antigravityAgyStaticModels', () => {
   it('offers Gemini and third-party families now that CLAUDE/GPT fallback IDs are supported', () => {
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-high')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-medium')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.8-flash-low')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.7-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.6-flash-high')
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.1-pro-low')
@@ -24,14 +27,14 @@ describe('antigravityAgyStaticModels', () => {
     expect(isResoldFirstPartyAgyModelId('claude-sonnet-4-6')).toBe(false)
     expect(isResoldFirstPartyAgyModelId('claude-opus-4-6-thinking')).toBe(false)
     expect(isResoldFirstPartyAgyModelId('gpt-oss-120b-medium')).toBe(false)
-    expect(isResoldFirstPartyAgyModelId('gemini-3.7-flash-high')).toBe(false)
+    expect(isResoldFirstPartyAgyModelId('gemini-3.8-flash-high')).toBe(false)
     const filtered = offerableAgyModels([
-      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
+      { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
       { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
       { id: 'gpt-oss-120b-medium', label: 'gpt-oss-120b-medium' }
     ])
     expect(filtered.map((model) => model.id)).toEqual([
-      'gemini-3.7-flash-high',
+      'gemini-3.8-flash-high',
       'claude-sonnet-4-6',
       'gpt-oss-120b-medium'
     ])

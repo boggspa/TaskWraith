@@ -106,15 +106,73 @@ function normalizePerfStatsPayload(payload) {
 }
 
 /**
+ * Per-call bounds. The runner's capture budget still wraps the whole sample —
+ * this is the INNER bound, and its job is to make a wedge cheap and NAMED
+ * rather than budget-consuming. A transport whose post() ignores sendOptions
+ * (every test fake does) is unaffected and falls back to the outer budget.
+ */
+const DEFAULT_LIVENESS_TIMEOUT_MS = 5_000
+const DEFAULT_EVALUATE_TIMEOUT_MS = 30_000
+
+/**
+ * One bounded Runtime.evaluate. The timeout is asked of the transport, which is
+ * where the pending-request map lives: openCdpWebSocketSession only rejects an
+ * outstanding request on socket close, so an unanswered evaluate otherwise
+ * settles NEVER — which is the mechanism behind attempt 4's 18m44s and
+ * attempt 6's 298.5s.
+ */
+async function postEvaluate(session, expression, timeoutMs) {
+  try {
+    const result = await Promise.resolve(
+      session.post(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: false },
+        { timeoutMs }
+      )
+    )
+    return { ok: true, result }
+  } catch (error) {
+    return { ok: false, reason: String(error && error.message ? error.message : error) }
+  }
+}
+
+/**
  * Sample the handle from the running main process.
  *
  * @param {{ post: (method: string, params?: object) => Promise<unknown>|unknown }} session
  * @returns {Promise<{ ok: true, stats: object } | { ok: false, reason: string }>}
  */
-async function sampleMainPersistenceStats(session) {
+async function sampleMainPersistenceStats(session, options = {}) {
   if (!session || typeof session.post !== 'function') {
     return { ok: false, reason: 'inspector session adapter with post() required' }
   }
+  const livenessTimeoutMs = isFiniteNumber(options.livenessTimeoutMs)
+    ? options.livenessTimeoutMs
+    : DEFAULT_LIVENESS_TIMEOUT_MS
+  const evaluateTimeoutMs = isFiniteNumber(options.evaluateTimeoutMs)
+    ? options.evaluateTimeoutMs
+    : DEFAULT_EVALUATE_TIMEOUT_MS
+
+  // LIVENESS FIRST, and it is a DISCRIMINATOR, not a formality. Attempt 6 spent
+  // 298,503 ms of a 300,000 ms capture budget inside the evaluate below and came
+  // back with one undifferentiated `timed out`, which cannot separate "the main
+  // thread never answered anything" from "the perf handle itself is wedged".
+  // Those have different fixes, so the instrument has to say which. A trivial
+  // expression costs one round trip; if THAT does not answer, the handle is
+  // irrelevant and the finding is about main.
+  const liveness = await postEvaluate(session, '1', livenessTimeoutMs)
+  if (!liveness.ok) {
+    // Deliberately keeps the `Runtime.evaluate failed` prefix: an immediate
+    // throw (socket closed) and a silent non-answer are both transport
+    // failures, and only the trailing detail separates them. What the
+    // discriminator adds is the SIDE — this cannot be the handle, because the
+    // handle was never reached.
+    return {
+      ok: false,
+      reason: `Runtime.evaluate failed on a trivial liveness probe (bound ${livenessTimeoutMs}ms) — main or its inspector, not the perf handle: ${liveness.reason}`
+    }
+  }
+
   // `typeof` guard first so a missing handle is a clean refusal rather than a
   // ReferenceError that reads like a harness crash.
   const expression = `(() => {
@@ -122,14 +180,14 @@ async function sampleMainPersistenceStats(session) {
     try { return globalThis[${JSON.stringify(PERF_STATS_GLOBAL)}]() } catch (e) { return { error: String(e) } }
   })()`
 
-  let result
-  try {
-    result = await Promise.resolve(
-      session.post('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: false })
-    )
-  } catch (error) {
-    return { ok: false, reason: `Runtime.evaluate failed: ${String(error)}` }
+  const sampled = await postEvaluate(session, expression, evaluateTimeoutMs)
+  if (!sampled.ok) {
+    return {
+      ok: false,
+      reason: `Runtime.evaluate failed on ${PERF_STATS_GLOBAL} (bound ${evaluateTimeoutMs}ms) — a trivial evaluate answered first, so this is the handle, not the transport: ${sampled.reason}`
+    }
   }
+  const result = sampled.result
 
   if (isPlainObject(result) && result.exceptionDetails) {
     return { ok: false, reason: 'Runtime.evaluate reported an exception in the main context' }
@@ -237,6 +295,8 @@ function applyPersistenceStatsToMetrics(metrics, stats) {
 
 module.exports = {
   PERF_STATS_GLOBAL,
+  DEFAULT_LIVENESS_TIMEOUT_MS,
+  DEFAULT_EVALUATE_TIMEOUT_MS,
   normalizePerfStatsPayload,
   sampleMainPersistenceStats,
   applyPersistenceStatsToMetrics

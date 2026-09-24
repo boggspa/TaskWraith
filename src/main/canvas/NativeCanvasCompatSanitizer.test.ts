@@ -5,8 +5,160 @@ import {
   nativeCanvasCompatToolName
 } from './NativeCanvasCompatSanitizer'
 import { createCanvasEvalApprovalReceipt, createCanvasEvalCompatSanitizer } from './CanvasEvalAudit'
+import { isCanvasMcpToolName } from '../mcp/CanvasToolExecutors'
 
 describe('NativeCanvasCompatSanitizer', () => {
+  it.each(['computer_use', 'mcp__TaskWraith__computer_use'])(
+    'projects %s fill inputs and paired observations without changing the provider payload',
+    (toolName) => {
+      const sanitizer = createNativeCanvasCompatSanitizer()
+      const scope = 'codex:computer-use'
+      const use = {
+        type: 'tool_use',
+        tool_id: 'computer-fill-call',
+        tool_name: toolName,
+        parameters: {
+          action: 'fill',
+          canvasId: 'private-window',
+          ref: 'private-field',
+          text: 'FILL-SECRET',
+          expectedObservationId: 'private-observation'
+        },
+        provider: 'codex'
+      }
+      const result = {
+        type: 'tool_result',
+        tool_call_id: 'computer-fill-call',
+        output: 'DOM-SECRET',
+        result: {
+          observation: { url: 'https://example.test/?token=URL-SECRET', text: 'DOM-SECRET' },
+          content: [{ type: 'image', mimeType: 'image/png', data: 'BASE64-SECRET' }]
+        },
+        provider: 'codex'
+      }
+      const originalPayload = JSON.stringify([use, result])
+      const projectedUse = sanitizer.sanitize(use, scope) as Record<string, unknown>
+      const projectedResult = sanitizer.sanitize(result, scope) as Record<string, unknown>
+
+      expect(isCanvasMcpToolName('computer_use')).toBe(false)
+      expect(projectedUse).toEqual({
+        type: 'tool_use',
+        tool_name: 'computer_use',
+        tool_id: expect.stringMatching(/^canvas-tool-/),
+        parameters: {
+          redacted: true,
+          argumentByteLength: Buffer.byteLength(JSON.stringify(use.parameters), 'utf8')
+        },
+        provider: 'codex'
+      })
+      expect(projectedResult).toEqual({
+        type: 'tool_result',
+        tool_name: 'computer_use',
+        tool_id: projectedUse.tool_id,
+        status: 'success',
+        output: 'Canvas operation completed.',
+        result: { redacted: true, tool: 'computer_use', ok: true },
+        structuredContent: { redacted: true, tool: 'computer_use', ok: true },
+        provider: 'codex'
+      })
+      expect(JSON.stringify([projectedUse, projectedResult])).not.toMatch(
+        /SECRET|private-|computer-fill-call/
+      )
+      expect(JSON.stringify([use, result])).toBe(originalPayload)
+    }
+  )
+
+  it.each([false, true])(
+    'protects gateway-wrapped Computer Use and nameless native results (JSON arguments: %s)',
+    (jsonArguments) => {
+      const sanitizer = createNativeCanvasCompatSanitizer()
+      const parameters = {
+        name: 'mcp__TaskWraith__computer_use',
+        arguments: { action: 'fill', canvasId: 'private-window', text: 'WRAPPED-FILL-SECRET' }
+      }
+      const use = {
+        type: 'item_started',
+        item: {
+          type: 'mcp_tool_call',
+          id: 'wrapped-native-call',
+          name: 'mcp__TaskWraith__capability_invoke',
+          arguments: jsonArguments ? JSON.stringify(parameters) : parameters
+        }
+      }
+      const result = {
+        type: 'item_completed',
+        item: {
+          type: 'mcp_tool_call',
+          id: 'wrapped-native-call',
+          content: [{ type: 'text', text: 'OBSERVATION-SECRET' }]
+        }
+      }
+      expect(nativeCanvasCompatToolName(use)).toBe('computer_use')
+      const projectedUse = sanitizer.sanitize(use, 'codex:wrapped') as Record<string, unknown>
+      const projectedResult = sanitizer.sanitize(result, 'codex:wrapped') as Record<string, unknown>
+      expect(projectedUse).toMatchObject({
+        type: 'tool_use',
+        tool_name: 'computer_use',
+        parameters: { redacted: true }
+      })
+      expect(projectedResult).toMatchObject({
+        type: 'tool_result',
+        tool_name: 'computer_use',
+        tool_id: projectedUse.tool_id,
+        result: { redacted: true, tool: 'computer_use' }
+      })
+      expect(projectedUse.tool_id).toMatch(/^canvas-tool-/)
+      expect(JSON.stringify([projectedUse, projectedResult])).not.toMatch(
+        /SECRET|private-|wrapped-native-call/
+      )
+    }
+  )
+
+  it('protects Computer Use permission retries and primed result-only aliases', () => {
+    const wrapper = {
+      type: 'tool_use',
+      tool_name: 'capability_invoke',
+      parameters: {
+        name: 'request_tool_permission',
+        arguments: {
+          toolName: 'computer_use',
+          args: { action: 'fill', text: 'RETRY-FILL-SECRET' }
+        }
+      }
+    }
+    expect(nativeCanvasCompatToolName(wrapper)).toBe('computer_use')
+    expect(
+      JSON.stringify(createNativeCanvasCompatSanitizer().sanitize(wrapper, 'retry'))
+    ).not.toContain('RETRY-FILL-SECRET')
+
+    const sanitizer = createNativeCanvasCompatSanitizer()
+    sanitizer.prime('kimi:computer-use', 'mcp__TaskWraith__computer_use', [
+      'approval-call',
+      'native-call-alias'
+    ])
+    const projectedId = sanitizer.projectedToolId('kimi:computer-use', ['approval-call'])
+    const result = sanitizer.sanitize(
+      {
+        type: 'function_call_output',
+        call_id: 'native-call-alias',
+        output: 'OBSERVATION-SECRET',
+        is_error: true
+      },
+      'kimi:computer-use'
+    )
+    expect(projectedId).toMatch(/^canvas-tool-/)
+    expect(result).toMatchObject({
+      type: 'tool_result',
+      tool_name: 'computer_use',
+      tool_id: projectedId,
+      status: 'error',
+      result: { redacted: true, tool: 'computer_use', ok: false }
+    })
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|approval-call|native-call-alias/)
+    const unrelated = { type: 'tool_result', tool_id: 'read-file-call', output: 'file contents' }
+    expect(sanitizer.sanitize(unrelated, 'kimi:computer-use')).toBe(unrelated)
+  })
+
   it('recognizes prefixed and gateway Canvas identities', () => {
     expect(
       nativeCanvasCompatToolName({

@@ -43,6 +43,35 @@
   margin-bottom: 0;
 }
 
+.archived-threads-import-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--space-sm, 8px);
+}
+
+.archived-threads-import-controls select,
+.archived-threads-import-controls button {
+  min-height: 32px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 5px 9px;
+  background: var(--popout-control-bg, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.archived-threads-import-controls button {
+  cursor: pointer;
+}
+
+.archived-threads-import-controls :disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .archived-threads-list {
   display: flex;
   flex-direction: column;

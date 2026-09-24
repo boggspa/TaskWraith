@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest'
+
+import type { OllamaModelInfo } from '../host-shared/ollama/OllamaDaemonClient'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+
+function model(
+  id: string,
+  source: 'local' | 'cloud',
+  options: Partial<OllamaModelInfo> = {}
+): OllamaModelInfo {
+  return {
+    id,
+    label: id === 'minimax-m3:cloud' ? 'MiniMax M3' : id,
+    source,
+    isCloud: source === 'cloud',
+    installed: source === 'local',
+    isDefault: false,
+    ...options
+  }
+}
+
+describe('hostNodeOllamaOffersFromCatalog', () => {
+  it('projects discovered rows, keeping an unproven Cloud row present but unavailable', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: [
+        model('qwen3.5:9b', 'local'),
+        model('minimax-m3:cloud', 'cloud', { isDefault: true, requiredPlan: 'pro' }),
+        model('unproven:cloud', 'cloud', {
+          disabled: true,
+          disabledReason: 'Account state unavailable.'
+        })
+      ]
+    })
+
+    expect(offers.models).toEqual([
+      expect.objectContaining({ modelId: 'qwen3.5:9b', available: true }),
+      expect.objectContaining({
+        modelId: 'minimax-m3:cloud',
+        label: 'MiniMax M3',
+        available: true,
+        default: true,
+        detail: 'Ollama Cloud · pro plan'
+      }),
+      expect.objectContaining({
+        modelId: 'unproven:cloud',
+        available: false,
+        detail: 'Account state unavailable.'
+      })
+    ])
+    expect(offers.models.find((entry) => entry.modelId === 'unproven:cloud')).not.toHaveProperty(
+      'default'
+    )
+  })
+
+  it('keeps a local default when no proven Cloud model is present', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: [model('qwen3.5:9b', 'local', { isDefault: true })]
+    })
+
+    expect(offers.models).toEqual([
+      expect.objectContaining({ modelId: 'qwen3.5:9b', default: true })
+    ])
+    expect(offers.offerRevision).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('respects the Host model-row bound for a large Cloud catalog', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: Array.from({ length: 129 }, (_, index) => model(`cloud-${index}:cloud`, 'cloud'))
+    })
+
+    expect(offers.models).toHaveLength(128)
+    expect(offers.models.at(-1)?.modelId).toBe('cloud-127:cloud')
+  })
+
+  it('never lets an unavailable Cloud list crowd the installed local models out of the bound', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: [
+        ...Array.from({ length: 129 }, (_, index) =>
+          model(`cloud-${index}:cloud`, 'cloud', {
+            disabled: true,
+            disabledReason: 'Ollama Cloud account status is unavailable.'
+          })
+        ),
+        model('qwen3.5:9b', 'local', { isDefault: true })
+      ]
+    })
+
+    expect(offers.models).toHaveLength(128)
+    expect(offers.models[0]).toEqual(
+      expect.objectContaining({ modelId: 'qwen3.5:9b', available: true, default: true })
+    )
+    const unavailable = offers.models.slice(1)
+    expect(unavailable).toHaveLength(127)
+    expect(unavailable.every((entry) => entry.available === false)).toBe(true)
+    expect(unavailable.at(-1)?.modelId).toBe('cloud-126:cloud')
+  })
+})

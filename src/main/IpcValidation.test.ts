@@ -20,6 +20,13 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('accepts OpenRouter at the Pi key-management IPC gate', () => {
+    expect(() => validateIpcArgs('pi:set-upstream-key', ['openrouter', 'or-key'])).not.toThrow()
+    expect(() => validateIpcArgs('pi:set-upstream-key', ['not-openrouter', 'or-key'])).toThrow(
+      /supported Pi upstream/
+    )
+  })
+
   it('runs renderer authorization before dispatching a validated invocation', async () => {
     type InvokeHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
     const handlers = new Map<string, InvokeHandler>()
@@ -129,6 +136,9 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('host-lifecycle:set', [{ action: 'start' }])).not.toThrow()
     expect(() => validateIpcArgs('host-lifecycle:set', [])).toThrow(/object/)
     expect(() => validateIpcArgs('host-lifecycle:set', ['stop'])).toThrow(/object/)
+    expect(() => validateIpcArgs('host-lifecycle:set', [{ action: 'restart' }])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:inspect', [])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:inspect', [{}])).toThrow(/too many arguments/)
   })
 
   it('shape-gates opening an owned video asset in Studio', () => {
@@ -296,10 +306,12 @@ describe('IpcValidation', () => {
       validateIpcArgs('canvas:open-window', [
         {
           url: 'http://localhost:5173',
-          originAllowlist: ['http://localhost:5173'],
           chatId: 'chat-1'
         }
       ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
     ).not.toThrow()
     expect(() =>
       validateIpcArgs('canvas:open-embedded', [
@@ -309,7 +321,19 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('canvas:open-sketch-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-emulator-embedded', [{ chatId: 'chat-1', presentation: 'dock' }])
+    ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:open-popout', [
+        { chatId: 'chat-1', surface: 'browser', session: { canvasId: 'canvas-1', kind: 'web' } }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('canvas:dock-popout', [{ chatId: 'chat-1', surface: 'mesh' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('canvas:open-popout', ['bad'])).toThrow(/object/)
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: 800, height: 600 }])
     ).not.toThrow()
@@ -333,10 +357,25 @@ describe('IpcValidation', () => {
       ])
     ).toThrow(/unknown field/)
     expect(() =>
+      validateIpcArgs('canvas:open-window', [
+        { url: 'https://x.test', chatId: 'chat-1', originAllowlist: ['x.test'] }
+      ])
+    ).toThrow(/unknown field/)
+    expect(() =>
       validateIpcArgs('canvas:open-embedded', [
         { url: 'https://x.test', chatId: 'chat-1', presentation: 'window' }
       ])
     ).toThrow(/presentation must be dock/)
+    for (const payload of [
+      { chatId: 'chat-1', url: 'https://x.test' },
+      { chatId: 'chat-1', gameId: 'other-rom' },
+      { chatId: 'chat-1', driver: 'web' },
+      { chatId: 'chat-1', presentation: 'window' }
+    ]) {
+      expect(() => validateIpcArgs('canvas:open-emulator-embedded', [payload])).toThrow(
+        /unknown field|presentation must be dock/
+      )
+    }
     expect(() =>
       validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: '1', y: 2, width: 800, height: 600 }])
     ).toThrow(/bounds.x must be a finite number/)
@@ -455,6 +494,27 @@ describe('IpcValidation', () => {
       expect(() => validateIpcArgs(channel, [{ workspacePath: '/repo' }])).not.toThrow()
       expect(() => validateIpcArgs(channel, ['not-an-object'])).toThrow(/object/)
     }
+  })
+
+  it('registers every shared-workspace contribution channel', () => {
+    for (const channel of [
+      'git:shared-workspace',
+      'git:contribution-preview',
+      'git:contribution-action'
+    ]) {
+      expect(channel in IPC_ARGUMENT_SCHEMAS, `${channel} must be registered`).toBe(true)
+      expect(() => validateIpcArgs(channel, [])).not.toThrow()
+      expect(() =>
+        validateIpcArgs(channel, [{ workspacePath: '/repo', worktreePath: '/repo/wt' }])
+      ).not.toThrow()
+      expect(() => validateIpcArgs(channel, ['not-an-object'])).toThrow(/object/)
+      expect(() => validateIpcArgs(channel, [[]])).toThrow(/object/)
+    }
+    expect(() =>
+      validateIpcArgs('git:contribution-action', [
+        { workspacePath: '/repo', id: 'c-1', generation: 'g-1', action: 'commit' }
+      ])
+    ).not.toThrow()
   })
 
   it('accepts optional provider usage refresh options', () => {
@@ -641,6 +701,19 @@ describe('IpcValidation', () => {
     ).not.toThrow()
   })
 
+  it('accepts Devin on provider terminal login/logout/upgrade IPC', () => {
+    // Devin is a live ACP seat surfaced in the UI; its provider id must clear
+    // the IpcValidation PROVIDERS gate or the Settings auth buttons look dead.
+    expect(() => validateIpcArgs('provider:open-login-terminal', ['devin'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-logout-terminal', ['devin'])).not.toThrow()
+    expect(() => validateIpcArgs('provider:open-upgrade-terminal', ['devin'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('run-agent', [
+        { provider: 'devin', workspace: '/tmp/workspace', prompt: 'hello' }
+      ])
+    ).not.toThrow()
+  })
+
   it('bounds host CLI tool ids and mirrors the shared catalog exactly', () => {
     for (const channel of ['host-tool:open-install-terminal', 'host-tool:status']) {
       for (const id of HOST_CLI_TOOL_IDS) {
@@ -677,6 +750,7 @@ describe('IpcValidation', () => {
   })
 
   it('validates approval actions and external grant access', () => {
+    expect(() => validateIpcArgs('get-pending-agent-approvals', [])).not.toThrow()
     expect(() => validateIpcArgs('respond-agent-approval', ['approval-1', 'accept'])).not.toThrow()
     expect(() =>
       validateIpcArgs('respond-agent-approval', ['approval-1', 'useProviderNative'])
@@ -684,6 +758,12 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('respond-agent-approval', ['approval-1', 'useTaskWraithSubthread'])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('respond-agent-approval', ['approval-1', 'accept', undefined, 'offer-1'])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:list', [])).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:remove', ['rule-1'])).not.toThrow()
+    expect(() => validateIpcArgs('command-rules:remove', [''])).toThrow(/non-empty/)
     expect(() => validateIpcArgs('respond-agent-approval', ['approval-1', 'maybe'])).toThrow(
       /approval action/
     )
@@ -821,6 +901,16 @@ describe('IpcValidation', () => {
         }
       ])
     ).toThrow(/safe chat id/)
+    expect(() =>
+      validateIpcArgs('patch-chat-composer-selection', [
+        {
+          chatId: 'chat-1',
+          provider: 'claude',
+          patch: { selectedModelType: 'claude-opus-5' }
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('patch-chat-composer-selection', ['chat-1'])).toThrow()
   })
 
   it('accepts ensemble and sub-thread chat IPC payloads', () => {
@@ -911,6 +1001,12 @@ describe('IpcValidation', () => {
   it('rejects renderer-written workspace grants', () => {
     expect(() => validateIpcArgs('update-settings', [{ agenticWorkspaceGrants: [] }])).toThrow(
       /workspace grants/
+    )
+  })
+
+  it('rejects renderer-written command rules', () => {
+    expect(() => validateIpcArgs('update-settings', [{ commandRules: [] }])).toThrow(
+      /command rules/
     )
   })
 
@@ -1017,6 +1113,10 @@ describe('IpcValidation', () => {
       validateIpcArgs('export-archived-chat', [{ chatId: 'archived-1', format: 'md' }])
     ).not.toThrow()
     expect(() => validateIpcArgs('export-archived-chat', ['archived-1'])).toThrow(/object/)
+    expect(() =>
+      validateIpcArgs('import-external-provider-thread', [{ provider: 'codex' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('import-external-provider-thread', ['codex'])).toThrow(/object/)
   })
 
   it('accepts bridge daemon status and toggle APIs', () => {

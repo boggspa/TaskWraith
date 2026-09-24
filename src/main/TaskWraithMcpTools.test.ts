@@ -19,7 +19,11 @@ describe('TaskWraith MCP tool registry', () => {
     )
     expect(bossmanControl).toBeDefined()
     const inputSchema = bossmanControl!.inputSchema as {
-      properties?: { action?: { enum?: string[] } }
+      properties?: {
+        action?: { enum?: string[] }
+        goal?: { description?: string }
+        planSummary?: { description?: string }
+      }
     }
     const actionEnum = inputSchema.properties?.action?.enum
 
@@ -44,6 +48,10 @@ describe('TaskWraith MCP tool registry', () => {
         'check_quota_resets'
       ])
     )
+    expect(inputSchema.properties?.goal?.description).toContain('set_goal only')
+    expect(inputSchema.properties?.planSummary?.description).toContain(
+      'never creates, replaces, or completes the Goal'
+    )
     expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_poll_response')
   })
 
@@ -59,15 +67,15 @@ describe('TaskWraith MCP tool registry', () => {
     expect(yieldTool?.description).toContain('normal serial routing resumes')
   })
 
-  it('routes scope-less full-roster writers to locked writer fan-out', () => {
+  it('admits write-capable seats to scope-less full-roster reader fan-out', () => {
     const fanoutAll = createTaskWraithMcpToolDefinitions().find(
       (tool) => tool.name === 'ensemble_fanout_all'
     )
 
-    expect(fanoutAll?.description).toContain('fails before provider dispatch')
-    expect(fanoutAll?.description).toContain('Full WS Access')
+    expect(fanoutAll?.description).toContain('a write-capable seat is admitted')
+    expect(fanoutAll?.description).toContain('workspace and external mutations remain blocked')
     expect(fanoutAll?.description).toContain('mode="locked_writers"')
-    expect(fanoutAll?.description).toContain('writeScopes keyed by every writer target')
+    expect(fanoutAll?.description).not.toContain('fails before provider dispatch')
   })
 
   it('advertises explicit transcript-only User summaries without widening @All', () => {
@@ -121,15 +129,71 @@ describe('TaskWraith MCP tool registry', () => {
     expect(
       normalizePortableEnsembleControlArguments('ensemble_control', {
         action: 'set_round_plan',
-        params: { goal: 'Review.' }
+        params: { planSummary: 'Review.' }
       })
-    ).toEqual({ action: 'set_round_plan', goal: 'Review.' })
+    ).toEqual({ action: 'set_round_plan', planSummary: 'Review.' })
     expect(
       normalizePortableEnsembleControlArguments('ensemble_control', {
         action: 'select_participants',
         params: { participantRoles: ['Reviewer'] }
       })
     ).toEqual({ action: 'select_participants', participantRoles: ['Reviewer'] })
+  })
+
+  it('defines todos as Goal-scoped contribution steps rather than root completion', () => {
+    const todo = createTaskWraithMcpToolDefinitions().find((tool) => tool.name === 'todo_write')
+    expect(todo?.description).toContain('binds each item to the current root Goal')
+    expect(todo?.description).toContain('never completes or blocks the root Goal')
+  })
+
+  it('advertises the richer Canvas control verbs with bounded public schemas', () => {
+    const definitions = createTaskWraithMcpToolDefinitions()
+    const findTool = (name: string) => definitions.find((candidate) => candidate.name === name)
+
+    for (const name of ['canvas_key', 'canvas_scroll', 'canvas_hover', 'canvas_select']) {
+      expect(findTool(name)?.annotations?.readOnlyHint).toBe(false)
+      expect(TASKWRAITH_MCP_TOOLS).toContain(name)
+    }
+
+    expect(findTool('canvas_key')?.inputSchema).toMatchObject({
+      required: ['canvasId', 'key'],
+      properties: { key: { enum: expect.arrayContaining(['Enter', 'Escape', 'Tab']) } }
+    })
+    expect(findTool('canvas_scroll')?.inputSchema).toMatchObject({
+      required: ['canvasId'],
+      properties: { deltaX: { type: 'number' }, deltaY: { type: 'number' } }
+    })
+    expect(findTool('canvas_select')?.inputSchema).toMatchObject({
+      required: ['canvasId', 'value'],
+      properties: { value: { type: 'string' } }
+    })
+    expect(findTool('canvas_wait_for')).toMatchObject({
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      inputSchema: {
+        required: ['canvasId'],
+        properties: { timeoutMs: { type: 'number', minimum: 0, maximum: 30000 } }
+      }
+    })
+    expect(TASKWRAITH_MCP_TOOLS).toContain('canvas_wait_for')
+    expect(findTool('canvas_click')?.inputSchema).toMatchObject({
+      properties: { requireIndependentVerifier: { type: 'boolean' } }
+    })
+    expect(findTool('canvas_drive_report')).toMatchObject({
+      annotations: { readOnlyHint: true },
+      inputSchema: { properties: { limit: { maximum: 50 } } }
+    })
+    expect(findTool('canvas_drive_verify')).toMatchObject({
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        required: ['reportId', 'actionId', 'surfaceId', 'observationId', 'verdict'],
+        properties: {
+          verdict: { enum: ['confirmed', 'not-confirmed', 'inconclusive'] }
+        }
+      }
+    })
+    expect(findTool('canvas_snapshot')?.inputSchema).toMatchObject({
+      properties: { driveActionId: { type: 'string' } }
+    })
   })
 
   it('does not expose a Session Activity Ledger write path to agents', () => {

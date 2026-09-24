@@ -4,8 +4,8 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 
-function expectedChannel(version) {
-  return String(version).includes('-') ? 'beta' : 'latest'
+function expectedChannel(version, channelOverride) {
+  return channelOverride || (String(version).includes('-') ? 'beta' : 'latest')
 }
 
 function cleanArtifactName(value) {
@@ -80,6 +80,7 @@ function extractArtifactEntries(feedText) {
 function validateMacUpdateFeedText(feedText, options = {}) {
   const fileName = options.fileName || 'mac update feed'
   const expectedVersion = options.expectedVersion
+  const channel = expectedChannel(expectedVersion, options.expectedChannel)
   const version = parseFeedScalar(feedText.match(/(?:^|\n)version:\s*([^\n]+)/)?.[1])
   const entries = extractArtifactEntries(feedText)
   const errors = []
@@ -95,13 +96,8 @@ function validateMacUpdateFeedText(feedText, options = {}) {
   const topLevelPathCount = (feedText.match(/(?:^|\n)path:\s*[^\n]+/g) || []).length
   const topLevelSha512Count = (feedText.match(/(?:^|\n)sha512:\s*[^\n]+/g) || []).length
 
-  if (
-    expectedVersion &&
-    path.basename(fileName) !== `${expectedChannel(expectedVersion)}-mac.yml`
-  ) {
-    errors.push(
-      `${fileName}: feed filename does not match ${expectedChannel(expectedVersion)} channel.`
-    )
+  if (expectedVersion && path.basename(fileName) !== `${channel}-mac.yml`) {
+    errors.push(`${fileName}: feed filename does not match ${channel} channel.`)
   }
   if (!version) {
     errors.push(`${fileName}: missing version.`)
@@ -206,11 +202,12 @@ function validateFeedArtifactMetadata(feedPath, artifacts) {
   return errors
 }
 
-function validateMacUpdateFeedFile(filePath, expectedVersion) {
+function validateMacUpdateFeedFile(filePath, expectedVersion, expectedFeedChannel) {
   const text = fs.readFileSync(filePath, 'utf8')
   const result = validateMacUpdateFeedText(text, {
     fileName: path.basename(filePath),
-    expectedVersion
+    expectedVersion,
+    expectedChannel: expectedFeedChannel
   })
   const metadataErrors = validateFeedArtifactMetadata(filePath, result.artifacts)
   return {
@@ -220,7 +217,7 @@ function validateMacUpdateFeedFile(filePath, expectedVersion) {
   }
 }
 
-function validateMacReleaseDirectory(distDir, version) {
+function validateMacReleaseDirectory(distDir, version, channelOverride) {
   const names = fs.existsSync(distDir)
     ? fs
         .readdirSync(distDir, { withFileTypes: true })
@@ -232,7 +229,7 @@ function validateMacReleaseDirectory(distDir, version) {
     `TaskWraith-${version}-universal-mac.dmg`,
     `TaskWraith-${version}-universal-mac.zip`,
     `TaskWraith-${version}-universal-mac.zip.blockmap`,
-    `${expectedChannel(version)}-mac.yml`
+    `${expectedChannel(version, channelOverride)}-mac.yml`
   ]) {
     if (!names.includes(required)) {
       errors.push(`${path.basename(distDir)}: missing exact macOS release artifact ${required}.`)
@@ -251,7 +248,7 @@ function validateMacReleaseDirectory(distDir, version) {
   return errors
 }
 
-function resolveFeedFiles(targets, version) {
+function resolveFeedFiles(targets, version, channelOverride) {
   const resolved = []
   for (const target of targets) {
     const absolute = path.resolve(target)
@@ -259,7 +256,7 @@ function resolveFeedFiles(targets, version) {
     const stat = fs.statSync(absolute)
     if (stat.isDirectory()) {
       const feedNames = version
-        ? [`${expectedChannel(version)}-mac.yml`]
+        ? [`${expectedChannel(version, channelOverride)}-mac.yml`]
         : ['latest-mac.yml', 'beta-mac.yml']
       for (const feedName of feedNames) {
         const candidate = path.join(absolute, feedName)
@@ -276,13 +273,15 @@ function runCli(argv = process.argv.slice(2)) {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
   )
-  const version = packageJson.version
-  const targets = argv.length > 0 ? argv : ['dist']
-  const files = resolveFeedFiles(targets, version)
+  const parsed = parseCliArgs(argv)
+  const version = parsed.version || packageJson.version
+  const channel = parsed.channel
+  const targets = parsed.targets.length > 0 ? parsed.targets : ['dist']
+  const files = resolveFeedFiles(targets, version, channel)
   const directoryErrors = targets.flatMap((target) => {
     const absolute = path.resolve(target)
     return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()
-      ? validateMacReleaseDirectory(absolute, version)
+      ? validateMacReleaseDirectory(absolute, version, channel)
       : []
   })
   if (files.length === 0) {
@@ -297,7 +296,7 @@ function runCli(argv = process.argv.slice(2)) {
     console.error(`[validate-mac-update-feed] ${error}`)
   }
   for (const file of files) {
-    const result = validateMacUpdateFeedFile(file, version)
+    const result = validateMacUpdateFeedFile(file, version, channel)
     if (result.ok) {
       console.log(
         `[validate-mac-update-feed] ${path.basename(file)} ok (${result.artifacts
@@ -314,6 +313,22 @@ function runCli(argv = process.argv.slice(2)) {
   return failed ? 1 : 0
 }
 
+function parseCliArgs(argv) {
+  const options = { targets: [] }
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg === '--version' || arg === '--channel') {
+      const value = argv[index + 1]
+      if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}`)
+      options[arg.slice(2)] = value
+      index += 1
+      continue
+    }
+    options.targets.push(arg)
+  }
+  return options
+}
+
 if (require.main === module) {
   process.exitCode = runCli()
 }
@@ -323,6 +338,7 @@ module.exports = {
   expectedChannel,
   extractArtifactEntries,
   resolveFeedFiles,
+  parseCliArgs,
   runCli,
   validateFeedArtifactMetadata,
   validateMacReleaseDirectory,

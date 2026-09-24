@@ -22,7 +22,9 @@ describe('SubThreadEphemeralFleet', () => {
 
   it('parses fleet roles and rejects Ensemble background / unknown', () => {
     expect(parseFleetWaveRole('scout')).toBe('scout')
+    expect(parseFleetWaveRole('work')).toBe('worker')
     expect(parseFleetWaveRole('worker')).toBe('worker')
+    expect(parseFleetWaveRole('review')).toBe('reviewer')
     expect(parseFleetWaveRole('reviewer')).toBe('reviewer')
     expect(parseFleetWaveRole('background')).toBeUndefined()
     expect(parseFleetWaveRole('Boss')).toBeUndefined()

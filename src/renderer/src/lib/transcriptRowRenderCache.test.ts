@@ -3,6 +3,7 @@ import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import {
   transcriptChatRenderSignature,
   transcriptMessageRenderSignature,
+  transcriptSeatRenderSignature,
   transcriptRowRenderSignatureEqual,
   type TranscriptRowRenderSignature
 } from './transcriptRowRenderCache'
@@ -31,6 +32,7 @@ const signature = (
   message,
   messageSignature: transcriptMessageRenderSignature(message),
   chatSignature: transcriptChatRenderSignature(chat()),
+  seatSignature: '',
   providerLabel: 'Codex',
   provider: 'codex',
   workspacePath: '/repo',
@@ -50,6 +52,7 @@ const signature = (
   liveViewportExpandedKey: '',
   collapsedStackKey: '',
   superGroupKey: '',
+  blackboardStackKey: '',
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   agentQuestionTombstoneKey: '',
@@ -63,6 +66,85 @@ const signature = (
 })
 
 describe('transcriptRowRenderCache', () => {
+  // 2026-09-11 — "changing the model selection repaints the entire transcript",
+  // and the same for a role rename and a stage-role change. The roster used to
+  // be folded into the chat-wide signature that every row carries, so one seat's
+  // edit missed the row element cache for every row in the thread.
+  describe('a seat edit is scoped to that seat\'s rows', () => {
+    const rosterChat = (seats: Record<string, unknown>[]): ChatRecord =>
+      chat({
+        chatKind: 'ensemble',
+        ensemble: { enabled: true, maxParticipants: 6, participants: seats }
+      } as unknown as Partial<ChatRecord>)
+
+    const before = rosterChat([
+      { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5' },
+      { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+    ])
+    const afterModel = rosterChat([
+      { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5-codex' },
+      { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+    ])
+
+    it('leaves the chat-wide signature untouched by a seat model change', () => {
+      expect(transcriptChatRenderSignature(afterModel)).toBe(
+        transcriptChatRenderSignature(before)
+      )
+    })
+
+    it('keeps a row spoken by an untouched seat cache-compatible', () => {
+      const rowB = (source: ChatRecord): TranscriptRowRenderSignature =>
+        signature({
+          chatSignature: transcriptChatRenderSignature(source),
+          seatSignature: transcriptSeatRenderSignature(source, 'seat-b')
+        })
+
+      expect(transcriptRowRenderSignatureEqual(rowB(before), rowB(afterModel))).toBe(true)
+    })
+
+    it('invalidates a row spoken by the edited seat', () => {
+      const rowA = (source: ChatRecord): TranscriptRowRenderSignature =>
+        signature({
+          chatSignature: transcriptChatRenderSignature(source),
+          seatSignature: transcriptSeatRenderSignature(source, 'seat-a')
+        })
+
+      expect(transcriptRowRenderSignatureEqual(rowA(before), rowA(afterModel))).toBe(false)
+    })
+
+    it.each([
+      ['a role rename', { role: 'Renamed' }],
+      // Effort/thinking are in the seat signature although no other render key
+      // carries them: `activitySpeakerMessage` falls back to the live seat for a
+      // row with no run snapshot, so leaving them out served a stale row.
+      ['a reasoning effort change', { reasoningEffort: 'max' }],
+      ['a thinking toggle', { thinkingEnabled: true }]
+    ])('invalidates the edited seat\'s row for %s', (_label, patch) => {
+      const edited = rosterChat([
+        { id: 'seat-a', role: 'Worker', provider: 'codex', model: 'gpt-5', ...patch },
+        { id: 'seat-b', role: 'Reviewer', provider: 'claude', model: 'opus' }
+      ])
+
+      expect(transcriptSeatRenderSignature(edited, 'seat-a')).not.toBe(
+        transcriptSeatRenderSignature(before, 'seat-a')
+      )
+      expect(transcriptSeatRenderSignature(edited, 'seat-b')).toBe(
+        transcriptSeatRenderSignature(before, 'seat-b')
+      )
+    })
+  })
+
+  it('invalidates headers and stack edges when neighboring transcript events change', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(signature(), signature({ speakerContinuation: true }))
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ seatChangeStackPosition: 'end' }),
+        signature({ seatChangeStackPosition: 'middle' })
+      )
+    ).toBe(false)
+  })
   it('keeps equivalent chat records cache-compatible for stable rows', () => {
     const first = transcriptChatRenderSignature(chat())
     const second = transcriptChatRenderSignature(chat({ messages: [{ ...message }] }))
@@ -96,6 +178,21 @@ describe('transcriptRowRenderCache', () => {
     ).toBe(false)
   })
 
+  it('invalidates an execution-result row when only its live graph view changes', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ executionViewKey: 'execution-1:queued' }),
+        signature({ executionViewKey: 'execution-1:running' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ executionViewKey: 'execution-1:running' }),
+        signature({ executionViewKey: 'execution-1:running' })
+      )
+    ).toBe(true)
+  })
+
   it('invalidates when peer-message attribution metadata changes', () => {
     const first: ChatMessage = {
       ...message,
@@ -118,11 +215,242 @@ describe('transcriptRowRenderCache', () => {
     )
   })
 
+  it('invalidates when an assistant speaker snapshot arrives after the bubble mounts', () => {
+    const first: ChatMessage = {
+      ...message,
+      metadata: { assistantProvider: 'pi', providerModel: 'deepseek/deepseek-v4-flash' }
+    }
+    const changed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        providerModelLabel: 'DeepSeek V4 Flash',
+        assistantReasoningEffort: 'ultratask'
+      }
+    }
+
+    expect(transcriptMessageRenderSignature(changed)).not.toBe(
+      transcriptMessageRenderSignature(first)
+    )
+  })
+
+  it('invalidates a cached Task Complete card when late commit repair updates metadata only', () => {
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      content: 'Close-out content remains unchanged',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutScope: 'ensembleRound',
+        closeoutRoundId: 'round-1',
+        closeoutReceipt: {
+          version: 1,
+          targetId: 'round-1',
+          scope: 'ensembleRound',
+          status: 'completed',
+          observedCommitCount: 0,
+          observedChangedFileCount: 2
+        }
+      }
+    }
+    const repaired: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        closeoutCommits: [
+          {
+            hash: 'a048ce5',
+            subject: 'Repair persisted close-out commits',
+            stats: '2 files, +212 -157',
+            participantId: 'writer',
+            files: [
+              {
+                path: 'src/renderer/src/lib/transcriptRowRenderCache.ts',
+                additions: 12,
+                deletions: 3,
+                hunks: '@@ cache repair @@'
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    expect(repaired.content).toBe(first.content)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ message: first, messageSignature: transcriptMessageRenderSignature(first) }),
+        signature({
+          message: repaired,
+          messageSignature: transcriptMessageRenderSignature(repaired)
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('invalidates a cached Task Complete card when a sub-thread tombstone is refreshed', () => {
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      content: 'Close-out content remains unchanged',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutScope: 'run',
+        sourceRunId: 'run-1',
+        closeoutSubagentDelegations: [
+          {
+            subThreadId: 'child-1',
+            identitySeed: 'child-1',
+            title: 'Review the cache',
+            provider: 'claude',
+            parentProvider: 'codex',
+            status: 'running',
+            promptPreview: 'Find stale transcript rows.'
+          }
+        ]
+      }
+    }
+    const refreshed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        closeoutSubagentDelegations: [
+          {
+            ...first.metadata!.closeoutSubagentDelegations![0],
+            status: 'returned',
+            promptPreview: 'Found and repaired stale transcript rows.'
+          }
+        ]
+      }
+    }
+
+    expect(refreshed.content).toBe(first.content)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ message: first, messageSignature: transcriptMessageRenderSignature(first) }),
+        signature({
+          message: refreshed,
+          messageSignature: transcriptMessageRenderSignature(refreshed)
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('uses a deterministic compact signature for complete close-out card metadata', () => {
+    const hugeHunk = 'line\n'.repeat(4_000)
+    const first: ChatMessage = {
+      ...message,
+      role: 'system',
+      metadata: {
+        kind: 'taskWraithCloseout',
+        closeoutSource: 'summaryProvider',
+        closeoutProvider: 'claude',
+        closeoutModel: 'claude-opus-5',
+        closeoutDurationMs: 63_000,
+        closeoutParticipantTable: {
+          totalWorkLabel: '1 turn',
+          rows: [
+            {
+              participantId: 'writer',
+              seatLink: {
+                participantId: 'writer',
+                before: { provider: 'claude', model: 'claude-opus-5' },
+                after: { provider: 'claude', model: 'claude-opus-5' }
+              },
+              seatText: 'Claude / Writer',
+              workLabel: '1 turn',
+              status: 'answered',
+              statusGlyphMarkdown: ':white_check_mark:'
+            }
+          ]
+        },
+        closeoutFileChanges: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 2 }],
+        closeoutCommits: [
+          {
+            hash: '1234567890abcdef',
+            subject: 'Keep cache fresh',
+            files: [{ path: 'src/a.ts', hunks: hugeHunk }]
+          }
+        ],
+        closeoutSubagentDelegations: [
+          {
+            subThreadId: 'child-1',
+            identitySeed: 'child-1',
+            title: 'Inspect close-out',
+            provider: 'claude',
+            status: 'completed'
+          }
+        ]
+      }
+    }
+    const equivalent: ChatMessage = {
+      ...first,
+      metadata: {
+        closeoutSubagentDelegations: first.metadata!.closeoutSubagentDelegations,
+        closeoutCommits: first.metadata!.closeoutCommits,
+        closeoutFileChanges: first.metadata!.closeoutFileChanges,
+        closeoutParticipantTable: first.metadata!.closeoutParticipantTable,
+        closeoutDurationMs: 63_000,
+        closeoutModel: 'claude-opus-5',
+        closeoutProvider: 'claude',
+        closeoutSource: 'summaryProvider',
+        kind: 'taskWraithCloseout'
+      }
+    }
+
+    const firstSignature = transcriptMessageRenderSignature(first)
+    expect(transcriptMessageRenderSignature(equivalent)).toBe(firstSignature)
+    expect(firstSignature.length).toBeLessThan(1_500)
+  })
+
+  it('invalidates when a captured ensemble seat adds effort or thinking state', () => {
+    const first: ChatMessage = {
+      ...message,
+      metadata: {
+        ensembleProvider: 'kimi',
+        ensembleModel: 'kimi-k2.7-code',
+        ensembleSeatSnapshot: { provider: 'kimi', model: 'kimi-k2.7-code' }
+      }
+    }
+    const changed: ChatMessage = {
+      ...first,
+      metadata: {
+        ...first.metadata,
+        ensembleThinkingEnabled: true,
+        ensembleSeatSnapshot: {
+          provider: 'kimi',
+          model: 'kimi-k2.7-code',
+          reasoningEffort: 'ultratask',
+          thinkingEnabled: true
+        }
+      }
+    }
+
+    expect(transcriptMessageRenderSignature(changed)).not.toBe(
+      transcriptMessageRenderSignature(first)
+    )
+  })
+
   it('invalidates when any per-kind live-viewport expansion toggles', () => {
     expect(
       transcriptRowRenderSignatureEqual(
         signature({ liveViewportExpandedKey: '000' }),
         signature({ liveViewportExpandedKey: '010' })
+      )
+    ).toBe(false)
+  })
+
+  it('invalidates when a Blackboard stack grows or changes disclosure state', () => {
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ blackboardStackKey: 'first#1:2:closed:lead' }),
+        signature({ blackboardStackKey: 'first#1:3:closed:lead' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ blackboardStackKey: 'first#1:3:closed:lead' }),
+        signature({ blackboardStackKey: 'first#1:3:open:lead' })
       )
     ).toBe(false)
   })
@@ -241,5 +569,35 @@ describe('transcriptRowRenderCache', () => {
         signature({ renameContinuityKey: 'Planner\u0000Architect' })
       )
     ).toBe(false)
+  })
+
+  it('invalidates a cached row when the transcript view changes', () => {
+    // The cached ELEMENT was built under one view. Without this the reader
+    // switches to Minimal, every row already on screen keeps its pre-switch
+    // element, and the transcript ignores the menu — nothing fails to compile
+    // and nothing fails to render.
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'standard' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'tools' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(false)
+  })
+
+  it('reuses a cached row when the view is unchanged', () => {
+    // Positive control: proves the assertion above discriminates on the view
+    // rather than on signature identity, which would make it vacuous.
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'minimal' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(true)
   })
 })

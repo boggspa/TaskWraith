@@ -28,6 +28,12 @@ describe('classifyProviderQuotaWall — real provider 429/quota bodies', () => {
     expect(classifyProviderQuotaWall('claude', 'You’ve hit your limit — resets on Monday').hit).toBe(true)
   })
 
+  it('claude Fable dedicated usage-credit wall', () => {
+    const body =
+      "You're out of usage credits. Run /usage-credits to keep using Fable 5 or /model to switch models."
+    expect(classifyProviderQuotaWall('claude', body).hit).toBe(true)
+  })
+
   it('codex insufficient_quota (billing wall)', () => {
     const body =
       '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}'

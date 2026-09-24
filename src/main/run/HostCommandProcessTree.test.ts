@@ -52,46 +52,41 @@ describe('HostCommandProcessTreeJoin', () => {
   )
 
   it('terminates descendants after the root closes and settles only after the tree is gone', async () => {
-    let alive = true
-    let releaseForceKill!: () => void
-    const forceKill = new Promise<void>((resolve) => {
-      releaseForceKill = resolve
-    })
-    const signal = vi.fn((next: 'SIGTERM' | 'SIGKILL') => {
-      if (next === 'SIGKILL') {
-        void forceKill.then(() => {
-          alive = false
-        })
-      }
-    })
-    const join = new HostCommandProcessTreeJoin({
-      signal,
-      isAlive: () => alive,
-      wait: async () => {
-        await Promise.resolve()
-      },
-      killGraceMs: 25,
-      pollMs: 5
-    })
+    vi.useFakeTimers()
+    try {
+      let alive = true
+      const signal = vi.fn()
+      const join = new HostCommandProcessTreeJoin({
+        signal,
+        isAlive: () => alive,
+        now: () => Date.now(),
+        killGraceMs: 25,
+        pollMs: 5
+      })
+      const first = join.joinAfterRootClose()
+      expect(join.joinAfterRootClose()).toBe(first)
+      let settled = false
+      void first.then(() => {
+        settled = true
+      })
 
-    const first = join.joinAfterRootClose()
-    const second = join.joinAfterRootClose()
-    expect(second).toBe(first)
-    await Promise.resolve()
-    expect(signal).toHaveBeenNthCalledWith(1, 'SIGTERM')
-    await Promise.resolve()
-    expect(signal).toHaveBeenNthCalledWith(2, 'SIGKILL')
+      await vi.advanceTimersByTimeAsync(24)
+      expect(signal).toHaveBeenCalledExactlyOnceWith('SIGTERM')
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signal).toHaveBeenNthCalledWith(2, 'SIGKILL')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(signal).toHaveBeenCalledTimes(2)
+      expect(settled).toBe(false)
 
-    let settled = false
-    void first.then(() => {
-      settled = true
-    })
-    await Promise.resolve()
-    expect(settled).toBe(false)
-
-    releaseForceKill()
-    await first
-    expect(settled).toBe(true)
+      alive = false
+      await vi.advanceTimersByTimeAsync(5)
+      await first
+      expect(settled).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('accepts already-dead tree evidence without sending a signal', async () => {
@@ -105,6 +100,58 @@ describe('HostCommandProcessTreeJoin', () => {
     await join.joinAfterRootClose()
 
     expect(signal).not.toHaveBeenCalled()
+  })
+
+  it('settles promptly when descendants exit during the termination grace period', async () => {
+    vi.useFakeTimers()
+    try {
+      let alive = true
+      const signal = vi.fn((next: 'SIGTERM' | 'SIGKILL') => {
+        if (next === 'SIGTERM') setTimeout(() => (alive = false), 10)
+      })
+      const join = new HostCommandProcessTreeJoin({
+        signal,
+        isAlive: () => alive,
+        now: () => Date.now()
+      })
+      let settled = false
+      const result = join.joinAfterRootClose().then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(50)
+
+      expect(settled).toBe(true)
+      expect(signal).toHaveBeenCalledExactlyOnceWith('SIGTERM')
+      expect(vi.getTimerCount()).toBe(0)
+      await result
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the grace deadline when an event-loop delay postpones the next observation', async () => {
+    let elapsed = 0
+    let alive = true
+    const signal = vi.fn((next: 'SIGTERM' | 'SIGKILL') => {
+      if (next === 'SIGKILL') alive = false
+    })
+    const wait = vi.fn(async () => {
+      elapsed += 100
+    })
+    const join = new HostCommandProcessTreeJoin({
+      signal,
+      isAlive: () => alive,
+      now: () => elapsed,
+      wait,
+      killGraceMs: 25,
+      pollMs: 5
+    })
+
+    await join.joinAfterRootClose()
+
+    expect(wait).toHaveBeenCalledExactlyOnceWith(5)
+    expect(signal.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
   })
 
   it('does not mistake a failed signal for process-tree death', async () => {

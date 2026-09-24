@@ -225,12 +225,19 @@ describe('getParticipantAliases', () => {
   })
 
   it('does not let participant roles steal canonical group tokens', () => {
-    const namedAll = participant({
-      id: 'ensemble-all-role',
-      provider: 'codex',
-      role: 'All'
-    })
-    expect(getParticipantAliases(namedAll)).not.toContain('all')
+    for (const role of ['All', 'Captains', 'Management']) {
+      const namedGroup = participant({
+        id: `ensemble-${role.toLowerCase()}-role`,
+        provider: 'codex',
+        role
+      })
+      expect(getParticipantAliases(namedGroup)).not.toContain(role.toLowerCase())
+    }
+    expect(
+      getParticipantAliases(
+        participant({ id: 'ensemble-captain-role', provider: 'codex', role: 'Captain' })
+      )
+    ).toContain('captain')
   })
 })
 
@@ -266,7 +273,15 @@ describe('isUserMentionToken', () => {
 
 describe('isGroupMentionToken', () => {
   it('recognises only the provider-neutral public group aliases', () => {
-    for (const token of ['@All', 'scouts', '@Workers', 'reviewers', '@BG']) {
+    for (const token of [
+      '@All',
+      '@Captains',
+      'management',
+      'scouts',
+      '@Workers',
+      'reviewers',
+      '@BG'
+    ]) {
       expect(isGroupMentionToken(token)).toBe(true)
     }
     expect(isGroupMentionToken('@Scout')).toBe(false)
@@ -603,6 +618,8 @@ describe('resolveSingleEnsembleDmTarget', () => {
 
   it('keeps roster-group mentions panel-routed', () => {
     expect(resolveSingleEnsembleDmTarget('@All compare this', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('@Captains decide this', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('@Management review this', panel)).toBeNull()
     expect(resolveSingleEnsembleDmTarget('@Reviewers verify this', panel)).toBeNull()
   })
 
@@ -762,6 +779,14 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
         exactPickerParticipantId: CLAUDE_WRITE.id
       })
     ).toEqual({ kind: 'multiple' })
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Management decide this',
+        participants: [CLAUDE_WRITE, CLAUDE_READ],
+        advisoryParticipantId: CLAUDE_READ.id,
+        exactPickerParticipantId: CLAUDE_WRITE.id
+      })
+    ).toEqual({ kind: 'multiple' })
   })
 
   it('does not infer a plain alias to a disabled participant', () => {
@@ -862,5 +887,120 @@ describe('resolveYieldTargetDetail self detection', () => {
   it('keeps a genuinely unknown alias unresolved', () => {
     const detail = resolveYieldTargetDetail('Nobody', participants, new Set(['lead']))
     expect(detail.kind).toBe('unresolved')
+  })
+})
+
+describe('unresolved mentions do not swallow the next one', () => {
+  const bob = participant({ id: 'bob', provider: 'claude', role: 'Bob' })
+
+  it('finds a mention that directly follows an unresolvable one', () => {
+    // `.` is in BOTH the boundary set and the per-chunk class, so the regex
+    // captures `@Luna.` whole and lands lastIndex ON the next `@` — where no
+    // boundary can precede it. Luna is absent from the roster here, standing
+    // in for the real case: a seat the user switched off, filtered out before
+    // alias matching.
+    const all = findAllMentions('ask @Luna.@Bob will follow up', [bob])
+
+    expect(all.map((match) => match.kind)).toEqual(['participant'])
+    expect(all[0].kind === 'participant' && all[0].participant.id).toBe('bob')
+    expect('ask @Luna.@Bob will follow up'[all[0].atIndex]).toBe('@')
+  })
+
+  it('finds a mention that directly follows a user alias', () => {
+    const all = findAllMentions('@user.@Bob take it', [bob])
+
+    expect(all.map((match) => match.kind)).toEqual(['user', 'participant'])
+    expect(all[1].kind === 'participant' && all[1].participant.id).toBe('bob')
+  })
+
+  it('still refuses an email address, which has no boundary before the @', () => {
+    expect(findAllMentions('@Nobody see foo@bar.com', [bob])).toEqual([])
+    expect(findAllMentions('write to bob@example.com today', [bob])).toEqual([])
+  })
+
+  it('terminates on repeated unresolvable mentions', () => {
+    expect(findAllMentions('@x.@y.@z', [bob])).toEqual([])
+    expect(findAllMentions('@a@a@a', [bob])).toEqual([])
+  })
+})
+
+describe('DM routing across a punctuation-adjacent mention', () => {
+  const luna = participant({ id: 'luna', provider: 'codex', role: 'Luna', enabled: false })
+  const bob = participant({ id: 'bob', provider: 'claude', role: 'Bob' })
+
+  it('routes to the reachable seat when the one before it is switched off', () => {
+    // Before the rewind fix `@Luna.` swallowed `@Bob`, so this resolved to
+    // nothing and the send opened the WHOLE panel. Addressing one live seat is
+    // the narrower, more faithful reading of what the user typed.
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Luna.@Bob take it',
+        participants: [luna, bob]
+      })
+    ).toEqual({ kind: 'target', participantId: 'bob', source: 'plain' })
+  })
+
+  it('treats two reachable punctuation-adjacent seats as a panel round', () => {
+    const ada = participant({ id: 'ada', provider: 'grok', role: 'Ada' })
+
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Ada.@Bob take it',
+        participants: [ada, bob]
+      })
+    ).toEqual({ kind: 'multiple' })
+  })
+})
+
+describe('resolveYieldTargetDetail provider / role targets', () => {
+  // The roster the seats see (participant-health, roster cards, transcript
+  // headings) spells a seat "Muse / Work 2". A Boss that yields with that
+  // exact spelling must land on that one seat, not on "every Muse seat".
+  const boss = participant({
+    id: 'participant-1',
+    provider: 'muse',
+    role: 'Boss',
+    model: 'muse-spark-1.3'
+  })
+  const work = participant({
+    id: 'participant-5',
+    provider: 'mistral',
+    role: 'Work',
+    model: 'devstral-2'
+  })
+  const work2 = participant({
+    id: 'participant-6',
+    provider: 'muse',
+    role: 'Work 2',
+    model: 'muse-spark-1.3'
+  })
+  const review3 = participant({
+    id: 'participant-9',
+    provider: 'muse',
+    role: 'Review3',
+    model: 'muse-spark-1.3'
+  })
+  const roster = [boss, work, work2, review3]
+
+  it('resolves the roster spelling "Muse / Work 2" to the one seat it names', () => {
+    expect(resolveYieldTargetDetail('Muse / Work 2', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work2
+    })
+  })
+
+  it('resolves the provider + role pair without the slash', () => {
+    expect(resolveYieldTargetDetail('muse work 2', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work2
+    })
+    expect(resolveYieldTargetDetail('@Mistral/Work', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work
+    })
+  })
+
+  it('still reports a bare shared provider as ambiguous', () => {
+    expect(resolveYieldTargetDetail('Muse', roster, new Set([boss.id])).kind).toBe('ambiguous')
   })
 })

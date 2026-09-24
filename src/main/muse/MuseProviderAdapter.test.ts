@@ -3,6 +3,7 @@ import { createMuseOrchestrationStubs } from './MuseOrchestrationContracts'
 import {
   createMuseProviderAdapter,
   createStubWiredMuseProviderAdapter,
+  mapMuseExecEventToNormalized,
   museProviderAdapterDescriptor,
   prepareMuseLaunchPlan,
   runMuseOpaqueExec,
@@ -31,6 +32,27 @@ function fakeSpawn(stdoutLines: string[], code = 0): MuseSpawnHandle {
 }
 
 describe('MuseProviderAdapter', () => {
+  it('retains reasoning identity and cumulative text on the normalized adapter route', () => {
+    expect(
+      mapMuseExecEventToNormalized({
+        type: 'thinking',
+        payloadType: 'runtime.session',
+        sessionId: 'session-1',
+        thinkingId: 'native-summary-1',
+        thinkingCumulative: true,
+        text: 'Verify the result.',
+        raw: { kind: 'reasoning_summary_committed' }
+      })
+    ).toEqual({
+      type: 'thinking',
+      sessionId: 'session-1',
+      thinkingId: 'native-summary-1',
+      thinkingCumulative: true,
+      text: 'Verify the result.',
+      raw: { kind: 'reasoning_summary_committed' }
+    })
+  })
+
   describe('museProviderAdapterDescriptor', () => {
     it('declares opaque exec transport without claiming ProviderId', () => {
       const descriptor = museProviderAdapterDescriptor()
@@ -38,7 +60,9 @@ describe('MuseProviderAdapter', () => {
       expect(descriptor.transport).toBe('muse-exec-json')
       expect(descriptor.features.agentBenchMcpBridge).toBe(false)
       expect(descriptor.features.providerManagedMcp).toBe(false)
-      expect(descriptor.features.appManagedApprovals).toBe(false)
+      // MSP seats raise TaskWraith approval cards per tool; only a seat pinned
+      // to the exec fallback is sandbox-governed.
+      expect(descriptor.features.appManagedApprovals).toBe(true)
       expect(descriptor.capabilities.reasoningEffort).toBe(true)
     })
   })

@@ -11,6 +11,7 @@ import {
 import { HostProjectionProvider } from '../components/HostProjectionProvider'
 import { HostProjectionStore, type HostProjectionState } from '../lib/host/HostProjectionStore'
 import {
+  antigravityAdmittedProviderSnapshot,
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
   configuredProviderSnapshotFromHostProjection,
@@ -574,6 +575,46 @@ describe('isDispatchableProviderForRun', () => {
   })
 })
 
+describe('antigravityAdmittedProviderSnapshot', () => {
+  it('injects the antigravity row when admitted but the snapshot has not settled', () => {
+    expect(antigravityAdmittedProviderSnapshot({ ready: false, providerIds: [] }, true)).toEqual({
+      ready: false,
+      providerIds: ['antigravity']
+    })
+  })
+
+  it('keeps antigravity when already present and admitted', () => {
+    const snapshot: ConfiguredProviderSnapshot = {
+      ready: true,
+      providerIds: ['codex', 'antigravity'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    }
+    expect(antigravityAdmittedProviderSnapshot(snapshot, true)).toEqual(snapshot)
+  })
+
+  it('removes antigravity from the offered set when admission is withdrawn', () => {
+    const snapshot: ConfiguredProviderSnapshot = {
+      ready: true,
+      providerIds: ['codex', 'antigravity'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    }
+    expect(antigravityAdmittedProviderSnapshot(snapshot, false)).toEqual({
+      ready: true,
+      providerIds: ['codex'],
+      modelsByProvider: { antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }] }
+    })
+  })
+
+  it('does not duplicate antigravity when injecting into a nonempty snapshot', () => {
+    expect(
+      antigravityAdmittedProviderSnapshot(
+        { ready: false, providerIds: ['claude', 'antigravity'] },
+        true
+      )
+    ).toEqual({ ready: false, providerIds: ['claude', 'antigravity'] })
+  })
+})
+
 describe('sanitizeConfiguredProviderSnapshot', () => {
   it('keeps unique live providers in discovery order', () => {
     expect(
@@ -609,7 +650,11 @@ describe('sanitizeConfiguredProviderSnapshot', () => {
         providerIds: ['antigravity'],
         modelsByProvider: {
           antigravity: [
-            { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' },
+            {
+              id: 'gemini-3.5-pro',
+              label: 'Gemini 3.5 Pro',
+              ultraTaskSupported: true
+            },
             { id: 'gemini-3.5-pro', label: 'Duplicate is ignored' },
             { id: '', label: 'Ignored' }
           ]
@@ -619,7 +664,13 @@ describe('sanitizeConfiguredProviderSnapshot', () => {
       ready: true,
       providerIds: ['antigravity'],
       modelsByProvider: {
-        antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
+        antigravity: [
+          {
+            id: 'gemini-3.5-pro',
+            label: 'Gemini 3.5 Pro',
+            ultraTaskSupported: true
+          }
+        ]
       }
     })
   })
@@ -702,7 +753,7 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
       ready: true,
       providerIds: ['antigravity'],
       modelsByProvider: {
-        antigravity: [{ id: 'agy-model', label: 'AGY model' }]
+        antigravity: [{ id: 'agy-model', label: 'AGY model', ultraTaskSupported: true }]
       }
     })
   })
@@ -806,8 +857,8 @@ describe('configuredProviderSnapshotFromHostProjection · honesty pins', () => {
       providerIds: ['antigravity'],
       modelsByProvider: {
         antigravity: [
-          { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' },
-          { id: 'gemini-flash', label: 'Flash' }
+          { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro', ultraTaskSupported: true },
+          { id: 'gemini-flash', label: 'Flash', ultraTaskSupported: true }
         ]
       }
     })

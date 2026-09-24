@@ -1,4 +1,10 @@
-import type { ChatMessage, ChatRecord, ChatRun, ProviderId } from '../../../main/store/types'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ChatRun,
+  ProviderId,
+  TranscriptView
+} from '../../../main/store/types'
 import type { FanoutLaneSlot } from './fanoutLanePairing'
 
 export interface TranscriptRowRenderSignature {
@@ -7,18 +13,41 @@ export interface TranscriptRowRenderSignature {
   messageSignature: string
   boundaryRun?: ChatRun
   chatSignature: string
+  /**
+   * The signature of the SEAT that spoke this row, when it has one.
+   *
+   * Split out of `chatSignature` on 2026-09-11. The chat signature used to
+   * carry the whole roster, so retitling one seat or changing one seat's model
+   * changed the string stamped on EVERY row, missed every entry in the row
+   * element cache, and repainted the entire transcript — reported as "changing
+   * the model selection repaints the entire transcript". A row only depends on
+   * its own speaker, so that is what it keys on.
+   */
+  seatSignature: string
   providerLabel: string
   provider: ProviderId
   workspacePath?: string
   compactDensity: boolean
   liveActivityViewport?: boolean
   liveActivityViewportActive?: boolean
+  /** How much of each turn the transcript renders. Part of the signature
+   * because the cached ELEMENT was built under one view: without it a row
+   * already on screen keeps its pre-switch element and the transcript ignores
+   * the menu, with nothing failing to compile and nothing failing to render. */
+  transcriptView?: TranscriptView
   virtualized: boolean
   /** Which cell of a paired fan-out row this is, or undefined while the lanes
    * are stacked. Part of the signature because it is stamped onto the cached
    * ELEMENT as `data-fanout-slot`, and both the grid placement and the
    * virtualiser's zero-delta measurement read it off the DOM. */
   fanoutLaneSlot?: FanoutLaneSlot
+  /** True when this fan-out lane sits in a run of six-plus adjacent lanes and
+   * so renders the compact (half) collapsed band. In the signature because the
+   * threshold crossing flips EARLIER rows in the run: the sixth lane's arrival
+   * must re-render the cached first five, or they keep the full band. */
+  fanoutLaneCompact?: boolean
+  speakerContinuation?: boolean
+  seatChangeStackPosition?: string
   isGlobal?: boolean
   sideChatSeed: boolean
   highlighted: boolean
@@ -38,6 +67,8 @@ export interface TranscriptRowRenderSignature {
   /** "<leadId>:<size>:<open|closed>:<lead|member>" when this row belongs to a
    * super-group of condensed one-liners; '' otherwise. */
   superGroupKey: string
+  /** Stable-first-member key + size/disclosure/lead state for a Blackboard stack. */
+  blackboardStackKey: string
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
   /** Settled ask_user_question card: outcome + answer + whether this row is the
@@ -53,6 +84,8 @@ export interface TranscriptRowRenderSignature {
   renameContinuityKey: string
   auxiliaryKey: string
   revealKey: string
+  /** Live execution projection for an authored execution-result row. */
+  executionViewKey?: string
   callbackRefs: readonly unknown[]
 }
 
@@ -91,6 +124,81 @@ function primitiveSignature(value: unknown): string {
   return sampledTextSignature(stableJson(value).slice(0, MESSAGE_SIGNATURE_SAMPLE_CHARS * 2))
 }
 
+/**
+ * Close-out cards retain their detailed evidence on metadata rather than in
+ * message content. Keep their fingerprint short, but hash the complete,
+ * canonical value so a late commit repair (or sub-thread refresh) cannot be
+ * hidden behind an otherwise unchanged transcript row.
+ */
+function canonicalJson(value: unknown): string {
+  const ancestors = new WeakSet<object>()
+  const visit = (current: unknown): string => {
+    if (current === null) return 'null'
+    if (current === undefined) return 'undefined'
+    if (typeof current === 'string') return JSON.stringify(current)
+    if (typeof current === 'boolean') return current ? 'true' : 'false'
+    if (typeof current === 'number') {
+      return Number.isFinite(current) ? String(current) : JSON.stringify(String(current))
+    }
+    if (typeof current === 'bigint') return `${current}n`
+    if (typeof current !== 'object') return JSON.stringify(String(current))
+    if (ancestors.has(current)) return '"[circular]"'
+
+    ancestors.add(current)
+    const result = Array.isArray(current)
+      ? `[${current.map(visit).join(',')}]`
+      : `{${Object.keys(current)
+          .sort()
+          .map(
+            (key) => `${JSON.stringify(key)}:${visit((current as Record<string, unknown>)[key])}`
+          )
+          .join(',')}}`
+    ancestors.delete(current)
+    return result
+  }
+  return visit(value)
+}
+
+function compactFullValueSignature(value: unknown): string {
+  const text = canonicalJson(value)
+  let first = 2166136261
+  let second = 0x9e3779b9
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    first = Math.imul(first ^ code, 16777619)
+    second = Math.imul(second ^ code, 2246822519)
+  }
+  return `${text.length.toString(36)}:${(first >>> 0).toString(36)}:${(second >>> 0).toString(36)}`
+}
+
+function closeoutMetadataRenderSignature(message: ChatMessage): string {
+  const metadata = message.metadata
+  if (metadata?.kind !== 'taskWraithCloseout') return ''
+  // This is deliberately an explicit projection. It includes every close-out
+  // field that the row itself renders or uses to decide which Task Complete
+  // card hosts the epic stack, without making unrelated metadata churn
+  // invalidate the rest of the transcript.
+  return compactFullValueSignature({
+    closeoutSource: metadata.closeoutSource,
+    closeoutProvider: metadata.closeoutProvider,
+    closeoutModel: metadata.closeoutModel,
+    closeoutAiSummary: metadata.closeoutAiSummary,
+    closeoutScope: metadata.closeoutScope,
+    sourceRunId: metadata.sourceRunId,
+    closeoutRoundId: metadata.closeoutRoundId,
+    closeoutStatus: metadata.closeoutStatus,
+    closeoutDurationMs: metadata.closeoutDurationMs,
+    closeoutGoalId: metadata.closeoutGoalId,
+    closeoutGoalStatus: metadata.closeoutGoalStatus,
+    closeoutReceipt: metadata.closeoutReceipt,
+    closeoutParticipantTable: metadata.closeoutParticipantTable,
+    closeoutCommits: metadata.closeoutCommits,
+    closeoutFileChanges: metadata.closeoutFileChanges,
+    closeoutFileChangesTotal: metadata.closeoutFileChangesTotal,
+    closeoutSubagentDelegations: metadata.closeoutSubagentDelegations
+  })
+}
+
 function metadataRenderSignature(message: ChatMessage): string {
   const metadata = message.metadata
   if (!metadata) return ''
@@ -101,6 +209,7 @@ function metadataRenderSignature(message: ChatMessage): string {
     metadata.kind,
     metadata.subThreadId,
     metadata.subThreadProvider,
+    primitiveSignature(metadata.subThreadSeat),
     metadata.subThreadTitle,
     metadata.parentProvider,
     metadata.delegationPromptPreview,
@@ -120,12 +229,20 @@ function metadataRenderSignature(message: ChatMessage): string {
     metadata.ensembleProvider,
     metadata.ensembleRole,
     metadata.ensembleModel,
+    metadata.ensembleReasoningEffort,
+    metadata.ensembleThinkingEnabled,
+    primitiveSignature(metadata.ensembleSeatSnapshot),
     metadata.ensembleOrder,
     metadata.guestChatId,
     metadata.guestProvider,
     metadata.guestModel,
     metadata.guestRole,
     metadata.parentChatId,
+    metadata.assistantProvider,
+    metadata.providerModel,
+    metadata.providerModelLabel,
+    metadata.assistantReasoningEffort,
+    metadata.assistantThinkingEnabled,
     metadata.pinnedAt,
     metadata.feedback?.vote,
     metadata.feedback?.reason,
@@ -158,7 +275,8 @@ function metadataRenderSignature(message: ChatMessage): string {
       ? metadata.imageThumbnails
           .map((thumb: any) => `${thumb?.mimeType || ''}:${thumb?.dataBase64?.length || 0}`)
           .join('|')
-      : ''
+      : '',
+    closeoutMetadataRenderSignature(message)
   ].join('\u0001')
 }
 
@@ -204,15 +322,10 @@ function toolActivitySignature(
 
 export function transcriptChatRenderSignature(chat: ChatRecord | null | undefined): string {
   if (!chat) return ''
-  const participants =
-    chat.ensemble?.participants?.map((participant) => ({
-      id: participant.id,
-      role: participant.role,
-      provider: participant.provider,
-      model: participant.model,
-      pooledAgentId: participant.pooledAgentId,
-      pooledAgentIdentity: participant.pooledAgentIdentity || null
-    })) || []
+  // The roster deliberately does NOT belong here: this string is stamped on
+  // every row, so folding a per-seat field into it makes one seat's edit
+  // invalidate the whole transcript. Per-seat state lives in
+  // `transcriptSeatRenderSignature` and is keyed per row.
   return stableJson({
     appChatId: chat.appChatId,
     chatKind: chat.chatKind,
@@ -221,8 +334,36 @@ export function transcriptChatRenderSignature(chat: ChatRecord | null | undefine
     workspacePath: chat.workspacePath,
     agentIdentities: chat.providerMetadata?.agentIdentities || null,
     pooledAgentId: chat.providerMetadata?.pooledAgentId || null,
-    pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null,
-    participants
+    pooledAgentIdentity: chat.providerMetadata?.pooledAgentIdentity || null
+  })
+}
+
+/**
+ * Everything a row renders about the seat that spoke it.
+ *
+ * Carries the effort/thinking/tier fields as well as the identity ones because
+ * `activitySpeakerMessage` falls back to the live participant for a row with no
+ * run seat snapshot: leaving them out served a stale cached row after an
+ * effort-only change.
+ */
+export function transcriptSeatRenderSignature(
+  chat: ChatRecord | null | undefined,
+  participantId: string | null | undefined
+): string {
+  if (!chat || !participantId) return ''
+  const seat = chat.ensemble?.participants?.find((participant) => participant.id === participantId)
+  if (!seat) return ''
+  return stableJson({
+    id: seat.id,
+    role: seat.role,
+    provider: seat.provider,
+    model: seat.model,
+    pooledAgentId: seat.pooledAgentId,
+    pooledAgentIdentity: seat.pooledAgentIdentity || null,
+    reasoningEffort: seat.reasoningEffort ?? null,
+    thinkingEnabled: seat.thinkingEnabled ?? null,
+    serviceTier: seat.serviceTier ?? null,
+    fastModeEnabled: seat.fastModeEnabled ?? null
   })
 }
 
@@ -248,15 +389,20 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.messageSignature !== next.messageSignature) return false
   if (prev.boundaryRun !== next.boundaryRun) return false
   if (prev.chatSignature !== next.chatSignature) return false
+  if (prev.seatSignature !== next.seatSignature) return false
   if (prev.providerLabel !== next.providerLabel) return false
   if (prev.provider !== next.provider) return false
   if (prev.workspacePath !== next.workspacePath) return false
   if (prev.compactDensity !== next.compactDensity) return false
   if (prev.liveActivityViewport !== next.liveActivityViewport) return false
   if (prev.liveActivityViewportActive !== next.liveActivityViewportActive) return false
+  if (prev.transcriptView !== next.transcriptView) return false
   if (prev.virtualized !== next.virtualized) return false
   if (prev.fanoutLaneSlot !== next.fanoutLaneSlot) return false
+  if (prev.fanoutLaneCompact !== next.fanoutLaneCompact) return false
   if (prev.isGlobal !== next.isGlobal) return false
+  if (prev.speakerContinuation !== next.speakerContinuation) return false
+  if (prev.seatChangeStackPosition !== next.seatChangeStackPosition) return false
   if (prev.sideChatSeed !== next.sideChatSeed) return false
   if (prev.highlighted !== next.highlighted) return false
   if (prev.copied !== next.copied) return false
@@ -269,6 +415,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.liveViewportExpandedKey !== next.liveViewportExpandedKey) return false
   if (prev.collapsedStackKey !== next.collapsedStackKey) return false
   if (prev.superGroupKey !== next.superGroupKey) return false
+  if (prev.blackboardStackKey !== next.blackboardStackKey) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
   if (prev.agentQuestionTombstoneKey !== next.agentQuestionTombstoneKey) return false
@@ -277,6 +424,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.renameContinuityKey !== next.renameContinuityKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false
   if (prev.revealKey !== next.revealKey) return false
+  if ((prev.executionViewKey || '') !== (next.executionViewKey || '')) return false
   if (prev.callbackRefs.length !== next.callbackRefs.length) return false
   for (let i = 0; i < prev.callbackRefs.length; i += 1) {
     if (prev.callbackRefs[i] !== next.callbackRefs[i]) return false

@@ -331,3 +331,29 @@ describe('CursorStreamJson', () => {
     })
   })
 })
+
+// A cursor-agent that writes NOTHING to stdout and exits 0 is a failed turn, not
+// an empty one. It is the exact signature of the argv-ceiling drop (and of any
+// future silent bail): TaskWraith used to synthesize an init + `result: success`
+// around that silence, the run settled as SUCCESS, and the ensemble recorded
+// "Completed without producing output." A run that produced no provider bytes at
+// all must fail loudly instead.
+describe('cursorEffectiveExitCode — silent transport', () => {
+  it('fails a zero-exit run that produced no provider output at all', () => {
+    expect(cursorEffectiveExitCode(0, false, false)).toBe(1)
+  })
+
+  it('leaves a zero-exit run that DID produce output alone', () => {
+    expect(cursorEffectiveExitCode(0, false, true)).toBe(0)
+  })
+
+  it('defaults to the produced-output reading so existing callers are unchanged', () => {
+    expect(cursorEffectiveExitCode(0, false)).toBe(0)
+    expect(cursorEffectiveExitCode(0, true)).toBe(1)
+  })
+
+  it('never rewrites a non-zero exit code, silent or not', () => {
+    expect(cursorEffectiveExitCode(2, false, false)).toBe(2)
+    expect(cursorEffectiveExitCode(null, false, false)).toBe(null)
+  })
+})

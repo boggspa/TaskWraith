@@ -51,7 +51,7 @@ describe('CanvasWebDriver browser profile binding', () => {
     await driver.open({ url: 'http://localhost:3000/' })
 
     expect(surfaceOptions).toEqual([
-      { partition: 'persist:test-canvas-browser', width: 1280, height: 800 }
+      { partition: 'persist:test-canvas-browser', kind: 'web', width: 1280, height: 800 }
     ])
     expect(register).toHaveBeenCalledWith(webContents, expect.any(Object))
 

@@ -261,6 +261,10 @@ function makeStubExecutor(
       executed: true,
       message: 'githubCreatePr done'
     }),
+    executeGithubMergePr: make('executeGithubMergePr', {
+      executed: true,
+      message: 'githubMergePr done'
+    }),
     executeCancelRun: make('executeCancelRun', { executed: true, message: 'cancelRun done' }),
     executeWorkflowSetEnabled: make('executeWorkflowSetEnabled', {
       executed: true,
@@ -309,6 +313,10 @@ function makeStubExecutor(
     executeCreateSideChat: make('executeCreateSideChat', {
       executed: true,
       message: 'ensembleSteer done'
+    }),
+    executeCreateSubThread: make('executeCreateSubThread', {
+      executed: true,
+      message: 'createSubThread done'
     }),
     executeSetThreadNotes: make('executeSetThreadNotes', {
       executed: true,
@@ -1887,6 +1895,42 @@ describe('BridgeActionRouter', () => {
       expect(result.data?.result?.threadId).toBe('side-1')
     })
 
+    it('returns the created sub-thread id instead of the parent id', async () => {
+      const { executor, calls } = makeStubExecutor({
+        executeCreateSubThread: async () => ({
+          executed: true,
+          message: 'Sub-thread created.',
+          data: {
+            actionKind: 'createSubThread',
+            result: { ok: true, threadId: 'child-1' }
+          }
+        })
+      })
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'createSubThread',
+          workspaceId: 'ws-allowed',
+          threadId: 'parent-1',
+          provider: 'codex',
+          prompt: 'Review the failing test.'
+        })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as {
+        accepted: boolean
+        threadId?: string
+        data?: { result?: { threadId?: string } }
+      }
+      expect(result.accepted).toBe(true)
+      expect(result.threadId).toBe('child-1')
+      expect(result.data?.result?.threadId).toBe('child-1')
+      expect(calls.map((call) => call.method)).toEqual(['executeCreateSubThread'])
+    })
+
     it('registerApnsToken bypasses workspace allowlist (system action)', async () => {
       const { executor, calls } = makeStubExecutor()
       const { ledger, records } = makeAuditLedger()
@@ -2376,6 +2420,25 @@ describe('BridgeActionRouter', () => {
       expect(result.workspaceId).toBe('ws-readonly')
       expect(result.threadId).toBe('t-1')
       expect(result.message).toMatch(/capability "startTurn"/i)
+    })
+
+    it('denies createSubThread against read-only workspace via startTurn capability', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly(), executor })
+      const wire = encodeAction({
+        kind: 'createSubThread',
+        workspaceId: 'ws-readonly',
+        threadId: 'parent-1',
+        provider: 'codex',
+        prompt: 'Review the failing test.'
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.message).toMatch(/capability "startTurn"/i)
+      expect(calls).toHaveLength(0)
     })
 
     it('denies composerPrompt against read-only workspace', async () => {
@@ -2976,7 +3039,12 @@ describe('BridgeActionRouter', () => {
         { kind: 'gitPush', setUpstream: true, method: 'executeGitPush' },
         { kind: 'githubPrStatus', method: 'executeGithubPrStatus' },
         { kind: 'githubPrReadiness', method: 'executeGithubPrReadiness' },
-        { kind: 'githubCreatePr', title: 'Phone PR', method: 'executeGithubCreatePr' }
+        { kind: 'githubCreatePr', title: 'Phone PR', method: 'executeGithubCreatePr' },
+        {
+          kind: 'githubMergePr',
+          elevationAcknowledged: true,
+          method: 'executeGithubMergePr'
+        }
       ]
 
       for (const action of actions) {
@@ -3027,7 +3095,11 @@ describe('BridgeActionRouter', () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
 
-      for (const payload of [{ kind: 'gitPush' }, { kind: 'githubCreatePr' }]) {
+      for (const payload of [
+        { kind: 'gitPush' },
+        { kind: 'githubCreatePr' },
+        { kind: 'githubMergePr', elevationAcknowledged: true }
+      ]) {
         const result = (await router.route('bridge.requestActionAck', {
           pairID: `pair-git-publish-deny-${payload.kind}`,
           payloadBase64: encodeGitAction(payload)
@@ -3069,6 +3141,34 @@ describe('BridgeActionRouter', () => {
           decision: 'allowed'
         })
       ])
+    })
+
+    it('denies githubMergePr without the workflowDelete elevation receipt before capability checks', async () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(allowlist, [
+        'monitor',
+        'diffReview',
+        'fileBrowse',
+        'fileRead',
+        'fileWrite',
+        'externalPublish'
+      ])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, executor })
+
+      for (const payload of [
+        { kind: 'githubMergePr' },
+        { kind: 'githubMergePr', elevationAcknowledged: false },
+        { kind: 'githubMergePr', elevationAcknowledged: true, prNumber: 7 }
+      ]) {
+        const result = (await router.route('bridge.requestActionAck', {
+          pairID: `pair-merge-elev-${JSON.stringify(payload)}`,
+          payloadBase64: encodeGitAction(payload)
+        })) as { accepted: boolean; reasonCode?: string }
+        expect(result.accepted).toBe(false)
+        expect(result.reasonCode).toBe('unknownAction')
+      }
+      expect(calls).toHaveLength(0)
     })
 
     it('denies git reads when the diffReview capability is absent', async () => {

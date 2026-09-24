@@ -9,6 +9,7 @@ import {
   buildTimelineSegments,
   compactGroupExpansionId,
   LIVE_THINKING_TRACE_RENDER_CHAR_CAP,
+  liveActivityRevision,
   liveThinkingTraceRenderBody,
   nextExpandedActivityIds,
   shouldDebounceActivityTimelineCollapse,
@@ -130,13 +131,106 @@ describe('ActivityStack provider accent scope', () => {
   })
 })
 
+describe('liveActivityRevision', () => {
+  it('changes when a settled activity gains diff evidence without new output text', () => {
+    const base: ToolActivity = {
+      id: 'late-diff',
+      toolName: 'replace',
+      displayName: 'Edited src/a.ts',
+      category: 'write',
+      status: 'success',
+      outputPreview: 'done',
+      parameters: { path: 'src/a.ts' }
+    }
+    const enriched: ToolActivity = {
+      ...base,
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'git_numstat',
+        confidence: 'exact',
+        files: [{ path: 'src/a.ts', additions: 2, deletions: 1, status: 'modified' }]
+      }
+    }
+
+    expect(liveActivityRevision([enriched])).not.toBe(liveActivityRevision([base]))
+  })
+})
+
 describe('ActivityStack ensemble_yield rendering', () => {
+  it('keeps an in-flight handoff in the present tense', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeEnsembleYieldActivity({ status: 'running' })]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Captain K yielding to')
+  })
+
+  it('shows a rejected handoff as failed instead of yielding to a healthy-looking target', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            status: 'error',
+            displayName: 'Validator yielding to Advisor',
+            parameters: { target: 'Advisor' },
+            resultSummary: 'Yield target was not routed (blocked_status).'
+          })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Handoff to')
+    expect(html).toContain('@Advisor')
+    expect(html).toContain('failed')
+    expect(html).not.toContain('yielding to')
+    expect(html).not.toContain('Yielding to')
+  })
+
+  it('uses completed wording for a successful handoff and preserves its actor', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeEnsembleYieldActivity({ displayName: 'Captain K yielded to Gems' })]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Captain K yielded to')
+    expect(html).not.toContain('Yielding to')
+  })
+
+  it.each([true, false])('shows a held fan-out handoff with raw details present=%s', (withDetails) => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeEnsembleYieldActivity({
+            resultSummary: 'Fan-out handoff held: lanes are still settling.',
+            ...(withDetails
+              ? { rawResultEvent: { result: { ok: true, action: 'held_for_active_fanout' } } }
+              : {})
+          })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('Handoff to')
+    expect(html).toContain('@Gems')
+    expect(html).toContain('held')
+    expect(html).not.toContain('yielding to')
+    expect(html).not.toContain('yielded to')
+  })
+
   it('humanizes the Codex-style mcp_TaskWraith_ensemble_yield tool name', () => {
     const html = renderToStaticMarkup(
       <ActivityStack activities={[makeEnsembleYieldActivity()]} provider="codex" />
     )
 
-    expect(html).toContain('yielding to')
+    expect(html).toContain('yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')
   })
@@ -154,7 +248,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('yielding to')
+    expect(html).toContain('yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp__TaskWraith__ensemble_yield')
   })
@@ -172,7 +266,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html.toLowerCase()).toContain('yielding to')
+    expect(html.toLowerCase()).toContain('yielded to')
     expect(html).toContain('@Gems')
   })
 
@@ -224,7 +318,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
     expect(html).not.toContain('@ensemble-participant-4')
     // Actor half and the provider tint both survive the swap, and the
     // model's own words stay reachable on hover.
-    expect(html).toContain('DSeekWork yielding to')
+    expect(html).toContain('DSeekWork yielded to')
     expect(html).toContain('provider-gemini')
     expect(html).toContain('title="ensemble-participant-4"')
   })
@@ -282,7 +376,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('Yielding to')
+    expect(html).toContain('Yielded to')
     expect(html).toContain('@Gems')
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')
   })
@@ -307,7 +401,7 @@ describe('ActivityStack ensemble_yield rendering', () => {
       />
     )
 
-    expect(html).toContain('Yielding to')
+    expect(html).toContain('Yielded to')
     expect(html).toContain('@Captain K')
     expect(html).not.toMatch(/<strong[^>]*>Captain K<\/strong>/)
     expect(html).not.toContain('mcp_TaskWraith_ensemble_yield')
@@ -881,6 +975,19 @@ describe('ActivityStack compact tool groups', () => {
     expect(shouldDebounceActivityTimelineCollapse(first, appended)).toBe(false)
     expect(shouldDebounceActivityTimelineCollapse(running, warning)).toBe(false)
   })
+
+  it('drops hidden infrastructure activities (antigravity_init, generic, provider_diagnostic) from the timeline', () => {
+    const items = buildTimelineItems([
+      makeReadActivity({ id: 'tool-init', toolName: 'antigravity_init' }),
+      makeReadActivity({ id: 'tool-generic', toolName: 'generic' }),
+      makeReadActivity({ id: 'tool-diagnostic', toolName: 'provider_diagnostic' }),
+      makeReadActivity({ id: 'tool-read-1' })
+    ])
+    const activityIds = items.flatMap((item) =>
+      item.type === 'activity' ? [item.activity.id] : item.activities.map((a) => a.id)
+    )
+    expect(activityIds).toEqual(['tool-read-1'])
+  })
 })
 
 describe('ActivityStack compactDensity routing', () => {
@@ -1318,30 +1425,30 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('open raw events for full output')
   })
 
-  it('renders Used callmcptool as the dancing tool icon easter egg', () => {
+  it('hides MCP transport wrappers from rows and compact-group call counts', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
         activities={[
-          makeWriteActivity({
+          makeReadActivity({
             id: 'call-mcp-tool',
             toolName: 'callmcptool',
             displayName: 'Used callmcptool',
-            category: 'unknown',
             parameters: {},
             resultSummary: ''
-          })
+          }),
+          makeReadActivity({ id: 'read-a', parameters: { file_path: '/repo/a.ts' } }),
+          makeReadActivity({ id: 'read-b', parameters: { file_path: '/repo/b.ts' } })
         ]}
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('aria-label="Used callmcptool"')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>Used callmcptool<')
+    expect(html).not.toContain('callmcptool')
+    expect(html).toContain('2 raw tool calls')
+    expect(html).not.toContain('3 raw tool calls')
   })
 
-  it('renders generic MCP wrapper calls as the dancing tool icon easter egg', () => {
+  it('renders nothing for a stack containing only a generic MCP wrapper', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
@@ -1358,12 +1465,10 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>MCP<')
+    expect(html).toBe('')
   })
 
-  it('renders unknown wrapper calls as the dancing tool icon easter egg', () => {
+  it('renders nothing for an unknown activity carrying MCP wrapper evidence', () => {
     const html = renderToStaticMarkup(
       <ActivityStack
         provider="grok"
@@ -1381,9 +1486,7 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).toContain('callmcp-tool-easter-egg')
-    expect(html).toContain('callmcp-tool-easter-egg-icon')
-    expect(html).not.toContain('>Used unknown<')
+    expect(html).toBe('')
   })
 
   it('does not obscure command-shaped unknown tool calls', () => {
@@ -1403,7 +1506,6 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).not.toContain('callmcp-tool-easter-egg')
     expect(html).toContain('Used unknown')
   })
 
@@ -1445,14 +1547,29 @@ describe('ActivityStack agent invocation presentation', () => {
       />
     )
 
-    expect(html).not.toContain('callmcp-tool-easter-egg')
     expect(html).toContain('MCP')
   })
 
-  it('keeps provider-native child-agent cards free of source chips', () => {
+  it('starts provider-native child-agent cards collapsed with the selected agent seat', () => {
+    const chat = makeChat({
+      provider: 'kimi',
+      requestedModel: 'kimi-k3',
+      providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true },
+      runs: [
+        {
+          runId: 'run-kimi-agent',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true }
+        }
+      ]
+    })
     const html = renderToStaticMarkup(
       <ActivityStack
-        provider="claude"
+        provider="kimi"
+        chat={chat}
+        runId="run-kimi-agent"
         activities={[
           makeWriteActivity({
             id: 'task-1',
@@ -1481,9 +1598,13 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).not.toContain('Invocation prompt')
     expect(html).not.toContain('Provider-native activity')
     expect(html).not.toContain('Invocation result')
-    expect(html).toContain('Provider-native')
-    expect(html).toContain('Prompt')
-    expect(html).toContain('Activity · 1')
+    expect(html).not.toContain('Provider-native')
+    expect(html).not.toContain('child-agent-thread-body')
+    expect(html).toContain('seat-state-chips child-agent-thread-seat')
+    expect(html).toContain('Kimi')
+    expect(html).toContain('K3')
+    expect(html).toContain('Max')
+    expect(html).toContain('--subagent-seat-accent:var(--provider-kimi-color')
   })
 
   it('labels multi-agent spawn blocks as Agents + N agents via CollapsedTranscriptRow', () => {
@@ -1518,11 +1639,24 @@ describe('ActivityStack agent invocation presentation', () => {
     expect(html).toContain('2 agents')
   })
 
-  it('renders child-agent identities with named identicons', () => {
-    const chat = makeChat()
+  it('keeps the named identicon but does not expose its generated nickname', () => {
+    const chat = makeChat({
+      provider: 'kimi',
+      requestedModel: 'kimi-k3',
+      providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true },
+      runs: [
+        {
+          runId: 'run-identity',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: { kimiReasoningEffort: 'max', kimiThinkingEnabled: true }
+        }
+      ]
+    })
     const html = renderToStaticMarkup(
       <ActivityStack
-        provider="claude"
+        provider="kimi"
         chat={chat}
         chatId="chat-identity"
         runId="run-identity"
@@ -1543,7 +1677,11 @@ describe('ActivityStack agent invocation presentation', () => {
 
     expect(html).toContain('agent-identity-icon-named')
     expect(html).toContain('data-agent-slug="donny-davis"')
-    expect(html).toContain('Donny-Davis')
+    expect(html).not.toContain('child-agent-thread-name')
+    expect(html).toContain('seat-state-chips child-agent-thread-seat')
+    expect(html).toContain('Kimi')
+    expect(html).toContain('K3')
+    expect(html).toContain('Max')
     const metadata = chat.providerMetadata as
       | {
           agentIdentities?: Record<

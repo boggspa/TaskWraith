@@ -127,6 +127,26 @@ describe('runGrokAcpTurn', () => {
     expect(prompt).not.toContain('do not retry the same call')
   })
 
+  it('recognises a fresh opaque permission opportunity without reconstructing its target', () => {
+    const prompt = grokToolRecoveryPrompt(
+      {
+        reason: 'failed-tool-terminal',
+        terminalStatus: 'cancelled',
+        deniedPermissionRequest: null,
+        assistantTextSeen: false,
+        toolFailureSeen: true,
+        lastFailedToolName: 'TaskWraith__run_shell_command',
+        lastFailedToolOutput:
+          '{"ok":false,"permissionOpportunity":{"tool":"redeem_permission_opportunity","arguments":{"permissionOpportunityId":"[opaque]"}}}'
+      },
+      true
+    )
+
+    expect(prompt).toContain('redeem_permission_opportunity')
+    expect(prompt).toContain('Never reconstruct or alter')
+    expect(prompt).not.toContain('do not retry the same call')
+  })
+
   afterEach(() => vi.useRealTimers())
 
   it('drives initialize → session/new → session/prompt and streams the answer', async () => {
@@ -178,6 +198,39 @@ describe('runGrokAcpTurn', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(child.killed).toBe(true)
     expect(closes).toEqual([0])
+  })
+
+  it('forwards images when Grok reports its stale image capability as false', () => {
+    const child = new FakeAcpChild()
+    const image = Buffer.from('grok-vision-image')
+    const { handle } = run(child, {
+      prompt: 'what is in this screenshot?',
+      imagePaths: ['/authorized/screenshot.png'],
+      readImageFile: () => image
+    })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: { promptCapabilities: { image: false } }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'grok-vision-session' } })
+
+    expect(child.killed).toBe(false)
+    expect(child.sent().find((message) => message.method === 'session/prompt')).toMatchObject({
+      params: {
+        sessionId: 'grok-vision-session',
+        prompt: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'image', mimeType: 'image/png', data: image.toString('base64') }
+        ]
+      }
+    })
+
+    handle.cancel()
   })
 
   it('passes abnormal ACP terminal status to close-out without forwarding result events', async () => {

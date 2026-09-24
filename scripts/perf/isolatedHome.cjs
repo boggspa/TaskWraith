@@ -14,6 +14,18 @@
  * components from the worktree perf-homes boundary through HOME, canonicalize
  * with realpath, and prove lexical + canonical HOME/userData via the main
  * inspector before replay.
+ *
+ * macOS `/tmp` is a symlink to `/private/tmp`. Node `path.resolve` preserves
+ * whichever form `--home` used; Electron `app.getPath('userData')` is derived
+ * from `app.getPath('appData')` (TaskWraith `InstanceLaunchPosture` joins the
+ * dev app name onto that) through Chromium/Foundation path standardization.
+ * `-[NSString stringByStandardizingPath]` replaces a `/private/tmp` prefix
+ * with `/tmp`. Evidence-v1 2026-09-10: `--home=/private/tmp/...` passed the
+ * HOME env lexical check, then isolation_verify refused because userData was
+ * observed as `/tmp/...`. Canonical realpath of both is `/private/tmp/...` —
+ * same directory, not an isolation escape. Inspector verification therefore
+ * treats lexical `/tmp` vs `/private/tmp` as the same location when realpaths
+ * match. Realpath mismatch still fails.
  */
 
 const path = require('path')
@@ -32,6 +44,55 @@ const ISOLATED_HOME_USERDATA_PROBE_EXPRESSION =
  */
 function perfHomesBoundary(repoRoot) {
   return path.join(path.resolve(repoRoot), PERF_HOMES_DIRNAME)
+}
+
+/**
+ * Environment overlay that makes `home` the only home the child can see.
+ *
+ * HOME alone is not isolation. The child is spawned with
+ * `{ ...process.env, ...plan.env }`, so whatever config root the parent
+ * inherited reaches Electron unless it is overridden here — and Electron's
+ * `app.getPath('appData')` does not read HOME on any platform:
+ *   - linux: `$XDG_CONFIG_HOME`, else `$HOME/.config`. GitHub's Ubuntu runners
+ *     export XDG_CONFIG_HOME=/home/runner/.config, so a HOME-only override
+ *     derived userData under the REAL profile (matrix run 34957150379).
+ *   - win32: `%APPDATA%`, always set and never derived from HOME/USERPROFILE.
+ *   - darwin: CoreFoundation (CFFIXED_USER_HOME, set by buildElectronSpawnPlan).
+ * The expected-userData derivation (devUserDataPath.cjs) reads the same keys,
+ * so it MUST be handed this overlay too: deriving from the parent env while
+ * launching with the overlay is exactly the mismatch the containment gate
+ * refuses ("userData ... is not under isolated HOME").
+ *
+ * This is the lexical contract only. Whether the launched Electron honoured it
+ * is proven per run by verifyIsolatedHomeAndUserDataViaMainInspector; on win32
+ * the shell folder API may ignore the env, and the proof then fails closed.
+ *
+ * @param {{ home: string, platform?: string }} options
+ * @returns {Record<string, string>}
+ */
+function isolatedHomeEnvironment(options = {}) {
+  const raw = options.home
+  if (raw == null || String(raw).trim() === '') {
+    throw new Error('isolatedHomeEnvironment requires an absolute isolated home')
+  }
+  const home = path.resolve(String(raw).trim())
+  const platform = options.platform || process.platform
+  const env = {
+    HOME: home,
+    // The external Host prefers this override to HOME, including inherited values.
+    TASKWRAITH_HOST_REGISTRY_ROOT: path.join(home, '.taskwraith', 'hosts')
+  }
+  if (platform === 'win32') {
+    env.USERPROFILE = home
+    env.APPDATA = path.join(home, 'AppData', 'Roaming')
+    env.LOCALAPPDATA = path.join(home, 'AppData', 'Local')
+  } else if (platform !== 'darwin') {
+    env.XDG_CONFIG_HOME = path.join(home, '.config')
+    env.XDG_DATA_HOME = path.join(home, '.local', 'share')
+    env.XDG_STATE_HOME = path.join(home, '.local', 'state')
+    env.XDG_CACHE_HOME = path.join(home, '.cache')
+  }
+  return env
 }
 
 /**
@@ -153,11 +214,27 @@ function assertDirectoryChain(root, target, options = {}) {
 }
 
 /**
- * @param {string} absPath
- * @param {typeof fs} fsApi
- * @param {string} label
- * @returns {string}
+ * True when two already-resolved paths name the same location.
+ * Lexical equality always counts. Differing `/tmp` vs `/private/tmp` forms
+ * count only when both canonical realpaths are non-empty and equal.
+ *
+ * @param {string} observed
+ * @param {string} expected
+ * @param {string} observedRealpath
+ * @param {string} expectedRealpath
+ * @returns {boolean}
  */
+function isolatedPathsReferToSameLocation(observed, expected, observedRealpath, expectedRealpath) {
+  if (observed === expected) return true
+  return (
+    typeof observedRealpath === 'string' &&
+    typeof expectedRealpath === 'string' &&
+    observedRealpath.length > 0 &&
+    expectedRealpath.length > 0 &&
+    observedRealpath === expectedRealpath
+  )
+}
+
 function realpathOrThrow(absPath, fsApi, label) {
   if (typeof fsApi.realpathSync !== 'function') {
     throw new Error(`Refuse isolated HOME: realpathSync unsupported while resolving ${label}`)
@@ -473,12 +550,26 @@ async function verifyIsolatedHomeAndUserDataViaMainInspector(mainInspector, expe
   const observedHomeRealpath = path.resolve(value.homeRealpath)
   const observedUserDataRealpath = path.resolve(value.userDataRealpath)
 
-  if (observedHome !== expectedHome) {
+  if (
+    !isolatedPathsReferToSameLocation(
+      observedHome,
+      expectedHome,
+      observedHomeRealpath,
+      expectedHomeRealpath
+    )
+  ) {
     throw new Error(
       `Refuse replay: process.env.HOME mismatch (expected ${expectedHome}, observed ${observedHome})`
     )
   }
-  if (observedUserDataPath !== expectedUserDataPath) {
+  if (
+    !isolatedPathsReferToSameLocation(
+      observedUserDataPath,
+      expectedUserDataPath,
+      observedUserDataRealpath,
+      expectedUserDataRealpath
+    )
+  ) {
     throw new Error(
       `Refuse replay: app.getPath('userData') mismatch (expected ${expectedUserDataPath}, observed ${observedUserDataPath})`
     )
@@ -512,8 +603,10 @@ module.exports = {
   PERF_HOMES_DIRNAME,
   ISOLATED_HOME_USERDATA_PROBE_EXPRESSION,
   perfHomesBoundary,
+  isolatedHomeEnvironment,
   pathPrefixes,
   isPathEqualOrBeneath,
+  isolatedPathsReferToSameLocation,
   assertExistingComponentIsRealDirectory,
   assertDirectoryChain,
   assertAuthoritativeIsolatedHome,

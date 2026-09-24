@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "gameId": "homebrew-demo",
+  "coreId": "sameboy-libretro",
+  "coreSha256": "d22bc58f152733c8731c17348a1b1ff1f99384fd146784a8f58793419be46611",
+  "runtimeWasmSha256": "b39d5364ad374d365ae1e3b5ef142b990a5a159713a2a26be379ae9c86dededf",
+  "romSha256": "2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7",
+  "stateAdapter": {
+    "schemaVersion": 2,
+    "adapterId": "twgb-state-window",
+    "adapterRevision": "v1",
+    "schemaSha256": "3555c44a29fcd601c5800d2984e4a64fc6f74b709d53f7145cf0153e52030925",
+    "coreId": "sameboy-libretro",
+    "romSha256": "2175c6b758fdd76e4e878ccf10ee04f50135be74226f548df78dff4fea5806c7",
+    "memoryBytes": 13,
+    "stateWindow": {
+      "source": "system_ram",
+      "startAddress": 49408,
+      "byteLength": 13
+    },
+    "fields": [
+      {
+        "key": "x",
+        "kind": "integer",
+        "read": { "address": 6, "encoding": "u8" },
+        "unit": "px"
+      },
+      {
+        "key": "y",
+        "kind": "integer",
+        "read": { "address": 7, "encoding": "u8" },
+        "unit": "px"
+      },
+      {
+        "key": "input",
+        "kind": "integer",
+        "read": { "address": 8, "encoding": "u8" },
+        "unit": "mask"
+      },
+      {
+        "key": "frame-counter",
+        "kind": "integer",
+        "read": { "address": 9, "encoding": "u32le" },
+        "unit": "frames"
+      }
+    ]
+  }
+}

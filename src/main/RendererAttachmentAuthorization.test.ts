@@ -9,14 +9,14 @@ import {
 describe('RendererAttachmentAuthorization', () => {
   const canonicalize = (path: string) => `/real${path}`
 
-  it('does not let a Test 1 popout resolve a Test 3 attachment receipt', () => {
-    expect(() =>
+  it('drops a Test 3 attachment receipt a Test 1 popout is not authorized for', () => {
+    expect(
       resolveAuthorizedRendererAttachmentPaths(
         ['/Test 3/secret.png'],
         ['/real/Test 1/allowed.png'],
         canonicalize
       )
-    ).toThrow('Renderer is not authorized to use one or more attachments.')
+    ).toEqual([])
   })
 
   it('returns canonical paths so a symlink cannot be retargeted after authorization', () => {
@@ -38,7 +38,7 @@ describe('RendererAttachmentAuthorization', () => {
     ).toEqual([{ id: 'one', path: '/real/Test 1/allowed.png' }])
   })
 
-  it('rejects an unauthorized PDF before expansion can touch the file', async () => {
+  it('drops an unauthorized PDF before expansion can touch the file', async () => {
     const expand = vi.fn(async () => [])
 
     await expect(
@@ -49,11 +49,11 @@ describe('RendererAttachmentAuthorization', () => {
         },
         expand
       )
-    ).rejects.toThrow('not authorized')
-    expect(expand).not.toHaveBeenCalled()
+    ).resolves.toEqual([])
+    expect(expand).toHaveBeenCalledWith([])
   })
 
-  it('rejects a Test 3 immediate-run path before provider dispatch', async () => {
+  it('drops a Test 3 immediate-run path before provider dispatch', async () => {
     const dispatch = vi.fn(async () => 'dispatched')
 
     await expect(
@@ -64,7 +64,20 @@ describe('RendererAttachmentAuthorization', () => {
         },
         dispatch
       )
-    ).rejects.toThrow('Renderer is not authorized to use one or more attachments.')
-    expect(dispatch).not.toHaveBeenCalled()
+    ).resolves.toBe('dispatched')
+    expect(dispatch).toHaveBeenCalledWith({ imagePaths: [] })
+  })
+
+  it('keeps authorized paths and drops only the unauthorized ones', async () => {
+    const dispatch = vi.fn(async () => 'dispatched')
+
+    await expect(
+      dispatchWithAuthorizedAttachmentPaths(
+        { imagePaths: ['/Test 1/allowed.png', '/Test 3/secret.png'] },
+        (paths) => paths.filter((path) => path.startsWith('/Test 1/')),
+        dispatch
+      )
+    ).resolves.toBe('dispatched')
+    expect(dispatch).toHaveBeenCalledWith({ imagePaths: ['/Test 1/allowed.png'] })
   })
 })

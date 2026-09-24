@@ -16,8 +16,8 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 ## Part A — Canonical style list & selection
 
 - **Type:** `ComposerStyle` union — `src/main/store/types.ts:103-160`. Exactly **14**:
-  `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster`.
-  No others. `cursor`/`grok`/`chatgpt` are **VISUAL-ONLY** shells, independent of any provider. `chatgpt`
+  `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster, chatgpt`.
+  No others. `chatgpt` is a **VISUAL-ONLY** shell, independent of any provider. `chatgpt`
   (added CS14) is a cross of the codex + cursor shells — codex above-row tucked-tab chrome + cursor capsule
   body, with the cursor inset rim removed so the input pill reads flat; NOT the ChatGPT product/runtime.
 - **Setting:** `AppSettings.composerStyle` (`types.ts:1381`), default `'default'` (`store/index.ts:392`).
@@ -26,7 +26,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
   `data-composer-style` and `data-interface-style` on `<html>` (`:257-258`). Every composer
   descendant matches → the shell is global.
 - **Three sync'd lists:** type union (`types.ts:103`), `COMPOSER_STYLE_OPTIONS`
-  (`SettingsPanel.tsx:462-548`), `SIDEBAR_COMPOSER_STYLE_OPTIONS` (`Sidebar.tsx:316-330`).
+  (`settingsUiOptions.ts:59`), `SIDEBAR_COMPOSER_STYLE_OPTIONS` (`Sidebar.tsx:316-330`).
   Picker = SettingsPanel `<select>` (`:2469-2491`) + Sidebar quick-switcher.
 - **Send-glyph mapping** (`App.tsx:20675-20685`): `claude`→ClaudeReturn (return); `codex`/`gemini`/
   `cursor`/`grok`/`kimi`/`chatgpt`→ArrowUp; **all others**→RunSymbol (triangle).
@@ -139,14 +139,14 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 **Evidence:** `07-composer-shells.css:2131-2139` (capsule tokens), `:2152-2184` (surface invisible + single-h), `:2188-2210` (capsule 26px + anchor-name + focus), `:2211-2223` (gutters 9px 224px 9px 46px), `:2276-2301` (LIFT abs+anchor), `:2330-2392` (attach/model/permission), `:2480-2545` (provider/ensemble/send); `05-polish-fx-layouts.css:3011-3284` (per-row aura); `08-theme-picker-overrides.css:4408-4425` (light capsule); `10-provider-shell-overrides.css:691-751` (obsidian), `:3249-3363` (alabaster), `:3009-3012` (chrome darken); `App.tsx:20677-20682` (ArrowUpSendIcon).
 
 ### kimi — Kimi
-> **CORRECTION (2026-07-14 parity audit):** the accent hexes recorded below
-> (#4da6ff dark / #1a8cff light, plus the #70b8ff/#cfe4ff wash family) are
-> STALE — the live desktop shell now keys every kimi accent off
-> `var(--provider-kimi-color)` = **#0073E6** (07-composer-shells.css:2867-2870,
-> 3016), and iOS matches via `providerAccent("kimi")`
-> (ComposerShellResolver.swift:617-619). Zero hardcoded #4da6ff/#1a8cff hexes
-> remain in either codebase; read the hardcoded blues below as historical
-> recipe detail, with the provider token as the source of truth.
+> **Accent source of truth:** the live desktop shell keys every kimi accent off
+> `var(--provider-kimi-color)` = **#0073E6** (defined in `theme.css`; consumed
+> by the kimi rules in `07-composer-shells.css` — chip wash, `:focus-within`
+> border + ring, ensemble/run fills). iOS matches via
+> `TWTheme.providerAccent("kimi")` (`Theme.swift` `providerAccentHex` returns
+> `0x0073E6`; `ComposerShellResolver.swift` `kimiRecipe` uses it for
+> `focusAccent`). Any hardcoded #4da6ff/#1a8cff hexes below are historical
+> recipe detail; the provider token is the source of truth.
 
 **Essence:** Single solid near-black rounded rectangle (no glass, no card-in-card) with a blue (#4da6ff) accent surfacing only on focus and hover/active. Textarea sits directly on the surface; footer is a flat strip of mostly-transparent outlined pills; send button is a 32px filled circle whose hover flips to blue.
 **Material:** Solid, opaque — NOT glass. Base fill `color-mix(#0a0a0c 96%, transparent)` ≈ `rgba(10,10,12,0.96)` (07:2577). No backdrop-filter ever; reduce-transparency swaps are no-ops. Base blue edge-gradient ::before suppressed (display:none). Light (light/mist/sage/alabaster) `var(--unified-soft-surface-bg)`. Obsidian forces solid **#202124** surface / **#1f2023** above-bar. Ensemble dark contexts force surface #202124, above-bar #1f2023.
@@ -321,7 +321,7 @@ signed off on iOS** — this effort adds the other 13 + their theme handling, pl
 | alabaster | charcoal mirror of obsidian (08:6140) | **charcoal rim-shimmer chase** |
 
 ### Two-surface split
-ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → transparent; `.composer-textarea-wrap` + `.composer-bottom-controls` each become a separately-lit rect with its own animated rim-chase (`.composer-bottom-controls` flips `display:contents` → `display:flex` column). All other 11 shells keep `.composer-bottom-controls` as `display:contents`.
+ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → transparent; `.composer-textarea-wrap` + `.composer-bottom-controls` each become a separately-lit rect with its own animated rim-chase (`.composer-bottom-controls` flips `display:contents` → `display:flex` column). All other 12 shells keep `.composer-bottom-controls` as `display:contents`.
 
 ---
 
@@ -469,7 +469,7 @@ all but grok (grok tucks its above-rows behind the composer lip).
   the view untouched, so the merged/default path is byte-identical.
 
 ### F.5 — Build scope
-**Build 11 (CS10):** `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10 shells),
+**Build 11 (CS10):** `controlsBelowTextarea` (12 shells) + `detachedAboveRows` (11 shells),
 plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius 0 → square
 detached pills; now 26px to match the capsule). `liftedSend` + `controlsAsPlainText` are
 effectively already satisfied on iOS (trailing-edge send; flat plain-text model picker).
@@ -481,10 +481,10 @@ byte-parity PASS, both fixes PASS.
 
 ### F.6 — Verification
 - `swift build` + 69 Kit tests + a full `xcodebuild` simulator app build, per slice.
-- A 15-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
+- A 16-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
   graded default byte-parity **PASS** (traced element-by-element + git-diff confirmed),
   layout values/wiring **PASS** (all 13 cases match the table), detached-restructure
-  **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 12 non-default
+  **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 13 non-default
   shells: layout value correct, consumed-flag structural match **full**.
 
 ### F.7 — Done in build 12 (CS11 A+B)

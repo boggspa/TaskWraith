@@ -9,7 +9,6 @@ import {
   type PreviewModelCatalogEntry
 } from '../../shared/previewModelCatalog'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -17,11 +16,21 @@ import {
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS,
   cursorGrokBaseModelId,
-  isCursorGrokModelId
+  isCursorGrokModelId,
+  migrateRetiredCursorGrokModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+import {
+  isAboveXhighReasoningEffort,
+  sortByReasoningEffortLadder
+} from '../../shared/reasoningEffortLadder'
 import { activePiModelRows } from '../../shared/piModelLifecycle'
+import { resolvePiReasoningSupport } from '../../shared/piReasoning'
 import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_MEDIUM,
@@ -33,6 +42,45 @@ import {
 } from '../../shared/mistralModels'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
+import { canonicalPiWireModelId } from '../../shared/piBrandTable'
+import {
+  KIMI_256K_CONTEXT_WINDOW,
+  KIMI_HIGHSPEED_API_MODEL,
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K27_MODEL_ID,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_API_MODEL,
+  KIMI_K3_256K_CLI_MODEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_API_MODEL,
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_LONG_CONTEXT_WINDOW,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
+  KIMI_K3_REASONING_EFFORTS,
+  KIMI_STANDARD_API_MODEL,
+  KIMI_STANDARD_CLI_MODEL,
+  kimiCliModelAlias,
+  kimiExplicitCliModelAlias,
+  kimiModelSupportsReasoningEfforts,
+  type KimiK3ReasoningEffort
+} from '../../shared/kimiModels'
+
+export {
+  KIMI_HIGHSPEED_CLI_MODEL,
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K28_MODEL_ID,
+  KIMI_K3_256K_CLI_MODEL,
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_REASONING_EFFORTS,
+  KIMI_STANDARD_CLI_MODEL,
+  isKimiK3Model,
+  kimiModelSupportsReasoningEfforts
+} from '../../shared/kimiModels'
 
 export {
   activeCodexModelRows,
@@ -42,10 +90,25 @@ export {
   hasReachedCodexRetirementDate,
   isCodexModelRetired
 } from '../../shared/codexModelLifecycle'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  devinModelDescription,
+  devinReasoningEfforts,
+  normalizeDevinModelId
+} from '../../shared/devinModelCatalog'
+import { filterDevinModelsForPlan } from '../../shared/devinPlanAccess'
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
   now?: Date
+  /**
+   * True only when a Devin-owned plan blob positively reported the free tier
+   * (see DevinUsage). A free Devin plan may run only SWE-1.6 Slow, so the rest
+   * of the catalogue is withheld. Omitted/undefined leaves the catalogue
+   * whole — the gate is fail-open by design.
+   */
+  devinFreePlan?: boolean
 }
 
 export interface CodexModelContextConfig {
@@ -57,6 +120,24 @@ export const CODEX_LONG_CONTEXT_WINDOW = 1_050_000
 export const CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT = 850_000
 
 const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConfig>> = {
+  // Request the long-context policy explicitly; the native runtime may report
+  // a smaller effective window, which must remain authoritative in telemetry.
+  'gpt-6-astra': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  // GPT-6 Sol and Luna (rolling out from 2026-09-22): the official model pages
+  // (developers.openai.com/api/docs/models/gpt-6-sol and -luna) publish the
+  // same 1,050,000 raw API window and 128K max output as Astra, so both take
+  // the same long-context override.
+  'gpt-6-sol': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  'gpt-6-luna': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
   'gpt-5.5': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
@@ -97,7 +178,7 @@ export function codexModelSupportsLightReasoning(modelId?: string | null): boole
   const id = String(modelId || '')
     .trim()
     .toLowerCase()
-  return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
+  return /^gpt-[56](?:[.-]|$)/.test(id) && !id.startsWith('preview:')
 }
 
 // The CLI's discovery row for the Spark preview has appeared with only the
@@ -113,12 +194,16 @@ function codexModelRequiresFullStandardReasoning(modelId?: string | null): boole
 }
 
 // Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
-// `max` tier ("Maximum reasoning depth for the hardest problems").
+// `max` tier ("Maximum reasoning depth for the hardest problems"). GPT-6 Sol
+// and Luna (2026-09-22) list `max` on their official model pages too.
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
     .toLowerCase()
   return (
+    id === 'gpt-6-astra' ||
+    id === 'gpt-6-sol' ||
+    id === 'gpt-6-luna' ||
     id === 'gpt-5.6-sol' ||
     id === 'gpt-5.6-terra' ||
     id === 'gpt-5.6-luna' ||
@@ -144,6 +229,7 @@ export function codexModelSupportsUltracodeReasoning(modelId?: string | null): b
     .trim()
     .toLowerCase()
   return (
+    id === 'gpt-6-astra' ||
     id === 'gpt-5.6-sol' ||
     id === 'gpt-5.6-terra' ||
     id === 'preview:openai:gpt-5.6:sol' ||
@@ -201,7 +287,10 @@ function explicitCodexWireReasoningEffort(effort?: string | null): CodexWireReas
   if (normalized === 'light') return 'low'
   if (normalized === 'extra') return 'xhigh'
   // Above-`xhigh` internal tiers are not in the API's reasoning.effort enum.
-  if (normalized === 'ultracode' || normalized === 'ultra' || normalized === 'max') {
+  // 'ultratask' is TaskWraith's top-of-ladder tier; like 'ultracode'/'ultra'
+  // it clamps to the API's highest wire effort instead of being dropped
+  // (a dropped token falls back to the model default — a silent downgrade).
+  if (isAboveXhighReasoningEffort(normalized)) {
     return 'xhigh'
   }
   return CODEX_WIRE_REASONING_EFFORT_SET.has(normalized)
@@ -281,7 +370,13 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
   if (codexModelSupportsUltracodeReasoning(modelId) && !seen.has('ultracode')) {
     normalized.push({ reasoningEffort: 'ultracode' })
   }
-  return normalized
+  // Assembly above is append-ordered, which was only incidentally the ladder
+  // order. A live `model/list` rung that arrives out of band — `persistent`,
+  // which Codex places above `ultra` and below `ultratask` — would land
+  // wherever the catalog happened to list it. Sort onto the canonical ladder
+  // so every picker agrees; the sort is stable, so same-rung rows keep their
+  // catalog order and the existing tiers do not move.
+  return sortByReasoningEffortLadder(normalized, (option) => option.reasoningEffort)
 }
 
 // GPT-5.6 trio: GA'd upstream on 2026-07-09, but OpenAI is ramping accounts
@@ -291,26 +386,38 @@ export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOpti
 // live list when missing (the id-dedupe prefers the CLI's row the day it
 // appears). This replaces the retired preview-catalog append for the trio.
 export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
+  // GPT-6 Astra (launched 2026-09-03). Codex CLI 0.153.1 bundles the catalog
+  // entry, but the app-server withholds the row from `model/list` entirely
+  // while rollout is per-organisation — verified 2026-09-03 against 0.153.1:
+  // neither `includeHidden: false` nor `true` returns it. `thread/start`
+  // nonetheless ACCEPTS the id and echoes it back, which is exactly what the
+  // release note promises ("configurable ... without showing it in the model
+  // picker"), so the append offers a model the seat can really select. The
+  // CLI's own row wins the id-dedupe the day discovery starts returning it.
+  'gpt-6-astra',
+  // GPT-6 Sol and Luna (Codex changelog 2026-09-22, alongside Codex CLI
+  // 0.155.0). The official model pages list both ids, but neither the account
+  // catalog the installed 0.153.0 fetched that day nor upstream's bundled
+  // catalog at rust-v0.155.1 carries the rows, and a ChatGPT-account turn on
+  // 0.153.0 was refused with "model is not supported" — the same staged
+  // rollout the 5.6 trio went through. The CLI's own row wins the id-dedupe
+  // the day discovery returns it.
+  'gpt-6-sol',
+  'gpt-6-luna',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna'
 ])
 
-// Codex CLI 0.144.0 stopped returning these rows from `model/list`, but direct
-// read-only requests to both ids still completed on 2026-07-18 and OpenAI's
-// current model cards still list them as active. Keep them discoverable in
-// TaskWraith until the shared lifecycle schedule reaches a verified sunset.
-export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set([
-  'gpt-5.4',
-  'gpt-5.4-mini',
-  // 2026-07-25: a later CLI catalog update dropped the GPT-5.3 Codex Spark
-  // research-preview row from `model/list` the same way, which silently
-  // removed it from every picker (the merge only re-appends listed ids).
-  // Spark has NO published sunset (see CODEX_MODEL_RETIREMENTS) and its
-  // static row is already hedged ("Research preview where available"), so
-  // keep it offered; the CLI's own row wins the id-dedupe if it returns.
-  'gpt-5.3-codex-spark'
-])
+// Models the Codex CLI stopped returning from `model/list` but which still
+// answer a direct request, re-appended so a discovery gap cannot silently empty
+// a picker row. EMPTY since 2026-09-18: its three members — gpt-5.4,
+// gpt-5.4-mini and gpt-5.3-codex-spark — were retired from the lineup by the
+// user, so they are now dated rows in CODEX_MODEL_RETIREMENTS instead and
+// `mergeCodexLiveModelRows` filters them out of the appends anyway. The set
+// stays because the discovery-gap problem it solves is real and recurring; the
+// next discovery-hidden-but-runnable model belongs here.
+export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set<string>()
 
 // Fallback default when a persisted/unknown id can't be resolved. Deliberately
 // NOT the newest family: gpt-5.6 is still ramping account-by-account (see
@@ -366,6 +473,60 @@ export function mergeCodexLiveModelRows<
 // tiers per the codexModelSupports* predicates.
 export const CODEX_STATIC_MODELS = [
   {
+    // Official metadata from the upstream catalog (codex-rs/models-manager/
+    // models.json at 0.153.1): hyphenated display name, the "most capable"
+    // description verbatim, LOW default (confirmed live — a thread/start on
+    // gpt-6-astra echoes effort 'low'), the `fast` service tier, and the full
+    // low..ultra ladder. Deliberately NOT isDefault: upstream shipped Astra
+    // "without changing the default model", and GPT-5.5 stays the default.
+    id: 'gpt-6-astra',
+    label: 'GPT-6-Astra',
+    description: 'Our most capable model for complex, demanding work.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-astra', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    // GPT-6 Sol and Luna (rolling out from 2026-09-22; the Codex changelog
+    // pairs them with Codex CLI 0.155.0). Metadata is from the official model
+    // pages (developers.openai.com/api/docs/models/gpt-6-sol and -luna): the
+    // documented ladder is none..max with a Medium default, and both sit on the
+    // pricing page's Fast-mode table. Neither page lists Codex's `ultra` tier
+    // and no catalog row is observable yet, so `ultracode` is deliberately NOT
+    // offered until the live `model/list` says so. Display names follow the
+    // Codex catalog's hyphenated convention (GPT-6-Astra, GPT-5.6-Sol).
+    // Neither takes the default: GPT-5.5 stays the fallback.
+    id: 'gpt-6-sol',
+    label: 'GPT-6-Sol',
+    description: 'Built to power complex coding and agentic workflows.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-sol', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    id: 'gpt-6-luna',
+    label: 'GPT-6-Luna',
+    description: 'Our most efficient model for focused, high-volume tasks.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-luna', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',
     description: 'Latest frontier agentic coding model.',
@@ -375,7 +536,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'low',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.6-terra',
@@ -387,7 +549,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.6-luna',
@@ -399,7 +562,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: CODEX_DEFAULT_MODEL_ID,
@@ -412,7 +576,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.4',
@@ -423,7 +588,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.4-mini',
@@ -434,7 +600,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-5.3-codex-spark',
@@ -446,10 +613,17 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'low'
+    defaultReasoningEffort: 'low',
+    ultraTaskSupported: true
   }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (see CODEX_RETIRED_MODEL_IDS)
   // and intentionally omitted here.
+  //
+  // gpt-5.4, gpt-5.4-mini and gpt-5.3-codex-spark are RETIRED BY DATE, not
+  // hard-retired, so their rows deliberately STAY: a dated row still resolves
+  // a label and a context window for a saved transcript, and
+  // `activeCodexModelRows` drops it from every offer surface. Deleting them
+  // would gain nothing and would strip old chats of their model names.
 ]
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
 const CLAUDE_FULL_REASONING_EFFORTS = [
@@ -484,6 +658,7 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_FAST_MODE_MODEL_IDS: ReadonlySet<string> = new Set([
   'opus',
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
@@ -513,19 +688,30 @@ export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
 // models lead; the Legacy cluster (… Legacy) sits below them.
 const CLAUDE_STATIC_MODELS = [
   {
+    id: 'claude-opus-5-5',
+    label: 'Opus 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
     id: 'claude-opus-5',
     label: 'Opus 5',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
-    id: 'claude-fable-5',
-    label: 'Fable 5',
+    id: 'claude-fable-5-1',
+    label: 'Fable 5.1',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
@@ -533,14 +719,24 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5 Legacy',
+    description: '1M context window — legacy Fable',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'claude-sonnet-4-6',
     label: 'Sonnet 4.6 Legacy',
     description: '200K context window — legacy Sonnet',
     supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    ultraTaskSupported: true
   },
   {
     id: 'claude-opus-4-8-1m',
@@ -548,7 +744,8 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'claude-opus-4-7-1m',
@@ -556,36 +753,69 @@ const CLAUDE_STATIC_MODELS = [
     description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
   {
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
     description: 'Fast & efficient',
-    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS,
+    ultraTaskSupported: false // Haiku doesn't support max/ultracode
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
-export const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max'] as const
-
 const KIMI_STATIC_MODELS = [
   {
-    id: 'kimi-k2.7-code',
-    label: 'K2.7 Coding',
-    description: 'Standard and Highspeed tiers with always-on thinking',
+    // The standard `kimi-code/kimi-for-coding` route. Moonshot rolled K2.8
+    // Preview onto it on 2026-09-11 and deliberately kept the wire id, so this
+    // is the same route the retired "K2.7 Coding" row always dispatched with
+    // Fast off — and it took K3's Low/High/Max axis and 1M window with it.
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    description: "Moonshot's newest coding model - 1M context - Low, High, or Max thinking",
     isDefault: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max',
+    contextWindow: KIMI_K3_LONG_CONTEXT_WINDOW,
+    ultraTaskSupported: true
+  },
+  {
+    // Highspeed stayed on K2.7 when the standard route moved to K2.8, so the
+    // two no longer share a capability set: 256K, always-on thinking, and no
+    // effort axis at all. That is why it is a row rather than K2.8's Fast tier.
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
+    description: 'Low-latency K2.7 route - 256K context - always-on thinking, no effort axis',
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
     defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    contextWindow: KIMI_256K_CONTEXT_WINDOW,
+    ultraTaskSupported: true
   },
   {
     // Managed `kimi-code/k3` alias (2026-07-16): 256K on Moderato and up to 1M
     // on Allegretto+, with model-advertised Low/High/Max effort choices. No
-    // Highspeed tier — Fast stays a K2.7 Coding capability.
-    id: 'kimi-k3',
-    label: 'K3',
+    // Highspeed route — that one stayed on K2.7 and is its own row above.
+    id: KIMI_K3_MODEL_ID,
+    label: KIMI_K3_MODEL_LABEL,
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
+    ultraTaskSupported: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    // `k3-256k` is a distinct, quota-efficient route for the same K3 model
+    // generation. It is regular speed and must never inherit K2.7 Fast.
+    id: KIMI_K3_256K_MODEL_ID,
+    label: KIMI_K3_256K_MODEL_LABEL,
+    description:
+      "Moonshot's quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking",
+    ultraTaskSupported: true,
     supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
       reasoningEffort
     })),
@@ -600,12 +830,20 @@ const KIMI_STATIC_MODELS = [
 // shared/contextWindows.ts, matching every other provider.
 function piStaticModelRows(now: Date = new Date()) {
   return activePiModelRows(
-    PI_STATIC_MODELS.map((model) => ({
-      id: model.wireId,
-      label: model.label,
-      description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
-      ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
-    })),
+    PI_STATIC_MODELS.map((model) => {
+      const reasoning = resolvePiReasoningSupport(model.wireId)
+      return {
+        id: model.wireId,
+        label: model.label,
+        description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
+        ultraTaskSupported: true,
+        supportedReasoningEfforts: reasoning.efforts.map((reasoningEffort) => ({
+          reasoningEffort
+        })),
+        defaultReasoningEffort: reasoning.defaultEffort,
+        ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
+      }
+    }),
     now
   )
 }
@@ -627,6 +865,7 @@ const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = antigravityGeminiApiStaticModels().
   // marker in the text — the API lane carries its own glyph.
   label: model.label,
   description: 'Gemini API key lane · 1M context',
+  ultraTaskSupported: true,
   ...(model.id === ANTIGRAVITY_DEFAULT_MODEL_ID ? { isDefault: true } : {})
 }))
 
@@ -635,346 +874,529 @@ const OLLAMA_STATIC_MODELS = [
     id: 'qwen3:4b-instruct',
     label: 'Qwen 3 (4B Param)',
     description: 'Local Ollama model · 262k context',
-    isDefault: true
+    isDefault: true,
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:2b',
     label: 'Qwen 3.5 (2B Param)',
-    description: 'Qwen 3.5 2B via Ollama · 262k context · vision/tools/thinking'
+    description: 'Qwen 3.5 2B via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:4b',
     label: 'Qwen 3.5 (4B Param)',
-    description: 'Qwen 3.5 4B via Ollama · 262k context'
+    description: 'Qwen 3.5 4B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.5:9b',
     label: 'Qwen 3.5 (9B Param)',
-    description: 'Qwen 3.5 9B via Ollama · 262k context'
+    description: 'Qwen 3.5 9B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.6:35b',
     label: 'Qwen 3.6 (35B-A3B)',
-    description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking'
+    description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'qwen3.8:27b-mlx',
     label: 'Qwen 3.8 (27B-MLX)',
-    description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking'
+    description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'qwen3.8-flash-next:125b-mlx',
+    label: 'Qwen 3.8 Flash Next (125B-MLX)',
+    description:
+      'Alibaba Qwen 3.8 Flash Next 125B-MLX (6B active) via Ollama · 262k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma3:4b',
     label: 'Gemma 3 (4B Param)',
-    description: 'Google Gemma 3 4B via Ollama · 131k context · vision'
+    description: 'Google Gemma 3 4B via Ollama · 131k context · vision',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma4:12b',
     label: 'Gemma 4 (12B Param)',
-    description: 'Google Gemma 4 12B via Ollama · 262k context'
+    description: 'Google Gemma 4 12B via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'gemma4:31b-mlx',
     label: 'Gemma 4 (31B-MLX)',
-    description: 'Google Gemma 4 31B-MLX via Ollama · 262k context'
+    description: 'Google Gemma 4 31B-MLX via Ollama · 262k context',
+    ultraTaskSupported: true
   },
   {
     id: 'ornith:9b',
     label: 'Ornith 1.0 (9B Param)',
-    description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding'
+    description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'ornith:35b',
     label: 'Ornith 1.0 (35B Param)',
-    description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
+    description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'ornith-1.5:9b',
+    label: 'Ornith 1.5 (9B Param)',
+    description: 'Ornith 1.5 9B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'ornith-1.5:35b',
+    label: 'Ornith 1.5 (35B Param)',
+    description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'laguna-xs-2.1:q8_0',
     label: 'Laguna XS 2.1 (33B-A3B Q8)',
-    description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking'
+    description: 'Poolside Laguna XS 2.1 33B-A3B Q8 via Ollama · 262k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'gpt-oss:20b',
     label: 'GPT OSS (20B Param)',
-    description: 'OpenAI gpt-oss 20B via Ollama · 131k context'
+    description: 'OpenAI gpt-oss 20B via Ollama · 131k context',
+    ultraTaskSupported: true
   },
   {
     id: 'lfm2.5-thinking:1.2b',
     label: 'LFM 2.5 Thinking (1.2B Param)',
-    description: 'Liquid LFM2.5 Thinking 1.2B via Ollama · 128k context · tools/thinking'
+    description: 'Liquid LFM2.5 Thinking 1.2B via Ollama · 128k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'lfm2.5:8b',
     label: 'LFM 2.5 (8B-A1B)',
-    description: 'Liquid LFM2.5 8B-A1B via Ollama · 128k context · tools/thinking'
+    description: 'Liquid LFM2.5 8B-A1B via Ollama · 128k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'minicpm-v4.5:8b',
     label: 'MiniCPM-V 4.5 (8B Param)',
-    description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking'
+    description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4:3b',
     label: 'Granite 4.0 (3B Param)',
-    description: 'IBM Granite 4.0 3B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.0 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4.1:3b',
     label: 'Granite 4.1 (3B Param)',
-    description: 'IBM Granite 4.1 3B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.1 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'granite4.1:30b',
     label: 'Granite 4.1 (30B Param)',
-    description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools'
+    description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'granite4.2:3b',
+    label: 'Granite 4.2 (3B Param)',
+    description: 'IBM Granite 4.2 3B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'granite4.2:8b',
+    label: 'Granite 4.2 (8B Param)',
+    description: 'IBM Granite 4.2 8B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'granite4.2:30b',
+    label: 'Granite 4.2 (30B Param)',
+    description: 'IBM Granite 4.2 30B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
-    description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'
+    description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron3:33b',
     label: 'Nemotron 3 Nano Omni (33B Param)',
-    description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking'
+    description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'nemotron-3.5-lightning:30b-mlx',
     label: 'Nemotron 3.5 Lightning (30B-MLX)',
     description:
-      'NVIDIA Nemotron 3.5 Lightning 30B-MLX via Ollama · 262k context · tools/thinking · 3B active · always-on agents'
+      'NVIDIA Nemotron 3.5 Lightning 30B-MLX via Ollama · 262k context · tools/thinking · 3B active · always-on agents',
+    ultraTaskSupported: true
   },
   {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     description:
-      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
+      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'mistral-medium-3.5:128b',
+    label: 'Mistral Medium 3.5 (128B Param)',
+    description:
+      'Mistral Medium 3.5 128B via Ollama · 262k context · vision/tools/thinking · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3:3b',
     label: 'Ministral 3 (3B Param)',
-    description: 'Mistral Ministral 3 3B via Ollama · 262k context · vision/tools'
+    description: 'Mistral Ministral 3 3B via Ollama · 262k context · vision/tools',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3:14b',
     label: 'Ministral 3 (14B Param)',
-    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
+    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools',
+    ultraTaskSupported: true
   },
   {
     id: 'muse-glimmer:30b-mlx',
     label: 'Muse Glimmer (30B-MLX)',
     description:
-      'Meta Muse Glimmer 30B-MLX via Ollama · 131k context · vision/tools/thinking · agentic'
+      'Meta Muse Glimmer 30B-MLX via Ollama · 131k context · vision/tools/thinking · agentic',
+    ultraTaskSupported: true
   },
   {
     id: 'llama3.1:8b',
     label: 'Llama 3.1 (8B Param)',
-    description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools'
+    description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   {
     id: 'deepseek-r1:1.5b',
-    label: 'DeepSeek R1 (1.5B Param)',
-    description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking'
+    label: 'R1 (1.5B Param)',
+    description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'deepseek-r1:8b',
-    label: 'DeepSeek R1 (8B Param)',
-    description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking'
+    label: 'R1 (8B Param)',
+    description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'rnj-1',
     label: 'Rnj-1 (8B Param)',
-    description: 'Essential AI Rnj-1 8B via Ollama · 33k context · tools · agentic coding'
+    description: 'Essential AI Rnj-1 8B via Ollama · 33k context · tools · agentic coding',
+    ultraTaskSupported: true
   },
   {
     id: 'glm-4.7-flash:q4_K_M',
     label: 'GLM-4.7-Flash (30B-A3B Q4)',
-    description: 'Z.ai GLM-4.7-Flash 30B-A3B Q4 via Ollama · 203k context · tools/thinking'
+    description: 'Z.ai GLM-4.7-Flash 30B-A3B Q4 via Ollama · 203k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'north-mini-code-1.0:q4_K_M',
     label: 'North Mini Code 1.0 (30B-A3B Q4)',
-    description: 'Cohere North Mini Code 1.0 30B-A3B Q4 via Ollama · 500k context · tools/thinking'
+    description: 'Cohere North Mini Code 1.0 30B-A3B Q4 via Ollama · 500k context · tools/thinking',
+    ultraTaskSupported: true
   },
   {
     id: 'llama3.2:3b',
     label: 'Llama 3.2 (3B Param)',
-    description: 'Meta Llama 3.2 3B via Ollama · 131k context · tools'
+    description: 'Meta Llama 3.2 3B via Ollama · 131k context · tools',
+    ultraTaskSupported: true
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
 const GEMINI_STATIC_MODELS = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'pro', label: 'Pro' },
-  { id: 'flash', label: 'Flash' },
-  { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
+  { id: 'auto', label: 'Auto', ultraTaskSupported: true },
+  { id: 'pro', label: 'Pro', ultraTaskSupported: true },
+  { id: 'flash', label: 'Flash', ultraTaskSupported: true },
+  { id: 'flash-lite', label: 'Flash Lite', isDefault: true, ultraTaskSupported: true }
 ]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
+const GROK_DEFAULT_MODEL = GROK_47_MODEL_ID
 const GROK_STATIC_MODELS = [
   {
     id: GROK_DEFAULT_MODEL,
+    // Grok 4.7 ships as a standard/Fast PAIR (two wire ids), unlike 4.6's
+    // single permanently-Fast row. The standard row is the seat default.
+    label: 'Grok 4.7',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
+    id: GROK_46_MODEL_ID,
     // Direct Grok CLI models run permanently in Fast mode, so the label
     // distinguishes them from Cursor's separately toggled resale rows.
     label: 'Grok 4.6 Fast',
     description: '500K context - low/medium/high/extra-high reasoning',
-    isDefault: true,
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
   },
   {
     id: GROK_45_MODEL_ID,
     label: 'Grok 4.5 Fast',
     description: '500K context - low/medium/high reasoning',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  }
+  // Grok Composer 2.5 Fast was RETIRED from the lineup by the user on
+  // 2026-09-18. This was xAI's resale row and says nothing about Cursor's own
+  // `composer-2.5` / `composer-2.5-fast` pair, which is untouched. Persisted
+  // grok seats migrate to Grok 4.7 in normalizeCliProviderModel below; the
+  // context-window and display-name rows stay so saved chats keep their label.
 ]
 // Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
-// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0), which exposes each
-// model under an ALIAS over ACP while storing a canonical name internally — the
-// aliases are what `session/set_config_option` accepts, so aliases are the ids.
+// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.25.0) plus the
+// GrowthBook-injected hosted GLM-5.2 extra. Vibe exposes each model under an
+// ALIAS over ACP; aliases are the ids `session/set_config_option` accepts.
 //
-// devstral-small leads and is the default rather than the flagship: graded
-// head-to-head on an identical task with a known-correct answer, it was ~26x
-// cheaper, used fewer turns, AND was the one that got the answer right.
+// Medium 3.5 is the Vibe 2.25 default and the documented successor of hosted
+// Devstral 2 / Devstral Small (retired from the API). Hosted Devstral rows are
+// omitted from the picker; stale stored ids remap via normalizeMistralModel.
 //
-// Vibe's third catalogue entry, `local`, is a llamacpp backend on
-// 127.0.0.1:8080. It is deliberately absent: local inference is Ollama's lane
-// here, and listing it would put a permanently-dead row in the picker for every
-// user without their own llama-server running.
+// Vibe's other bundled entry, `local` (TUI: "Devstral (local)"), is a llamacpp
+// backend on 127.0.0.1:8080. It is deliberately absent: local inference is
+// Ollama's lane here (`devstral-small-2:24b`).
 const MISTRAL_STATIC_MODELS = [
-  {
-    id: MISTRAL_DEFAULT_MODEL,
-    label: 'Devstral Small',
-    description: '256K context - coding-tuned, $0.10/$0.30 per Mtok',
-    isDefault: true,
-    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
-  },
   {
     id: MISTRAL_MODEL_MEDIUM,
     label: 'Mistral Medium 3.5',
     description: '256K context - flagship, $1.50/$7.50 per Mtok',
+    isDefault: true,
     supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
-    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT
+    defaultReasoningEffort: MISTRAL_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    // GLM-5.2's Vibe-native default is `high` (not the shared `medium`), so
+    // default to it. Every effort in the ladder above maps 1:1 onto Vibe's
+    // `thinking` config option via normalizeMistralThinkingLevel.
+    defaultReasoningEffort: 'high',
+    ultraTaskSupported: true
+  },
+  {
+    // Added 2026-09-21: the Vibe-subscription GLM-5.3, mirroring the `glm-5-2`
+    // subscription extra. Listed in MISTRAL_SUBSCRIPTION_MODELS, so no key
+    // glyph. Price/window carried forward from 5.2; default `high` like 5.2.
+    id: 'glm-5-3',
+    label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: 'high',
+    ultraTaskSupported: true
+  },
+  {
+    // Added 2026-09-18 as the API-KEY ONLY GLM-5.3; renamed 2026-09-21 to
+    // `via Mistral` when the Vibe-subscription `glm-5-3` row above landed, so
+    // the two lanes mirror the 5.2 pair. Still absent from
+    // MISTRAL_SUBSCRIPTION_MODELS, so the row carries the key glyph. The
+    // `zai-` prefix keeps it off Devin's `glm-5-3` and the new Vibe row.
+    //
+    // Price and window are both CARRIED FORWARD from the 5.2 deployment and
+    // are not independently verified — Mistral has published no GLM-5.3 page
+    // yet. The rate row exists because providerApiRatesTable requires every
+    // offered model to have one; see its note in ProviderRateService.
+    id: 'zai-glm-5-3',
+    label: 'GLM-5.3 (via Mistral)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-large-2512',
     label: 'Mistral Large 3',
-    description: '262K context - flagship, $0.50/$1.50 per Mtok'
+    description: '262K context - flagship, $0.50/$1.50 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'zai-glm-5-2',
     label: 'GLM-5.2 (via Mistral)',
-    description: '1M context - $1.40/$4.40 per Mtok'
+    description: '1M context - $1.40/$4.40 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'codestral-2508',
     label: 'Codestral (Aug 2025)',
-    description: '131K context - coding-tuned, $0.30/$0.90 per Mtok'
+    description: '131K context - coding-tuned, $0.30/$0.90 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-small-2603',
     label: 'Mistral Small 4',
-    description: '256K context - $0.15/$0.60 per Mtok'
-  },
-  {
-    id: 'devstral-2512',
-    label: 'Devstral 2',
-    description: '262K context - $0.40/$2.00 per Mtok'
+    description: '256K context - $0.15/$0.60 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'labs-leanstral-1-5',
     label: 'Leanstral 1.5 (Labs)',
-    description: '262K context - free research tier'
+    description: '262K context - free research tier',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-latest',
     label: 'Mistral Medium (Latest)',
-    description: '262K context - flagship, $1.50/$7.50 per Mtok'
+    description: '262K context - flagship, $1.50/$7.50 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-2508',
     label: 'Mistral Medium 3.1',
-    description: '262K context - $0.40/$2.00 per Mtok'
+    description: '262K context - $0.40/$2.00 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'mistral-medium-2505',
     label: 'Mistral Medium 3',
-    description: '131K context - $0.40/$2.00 per Mtok'
+    description: '131K context - $0.40/$2.00 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-14b-2512',
     label: 'Ministral 3 (14B)',
-    description: '262K context - $0.20/$0.20 per Mtok'
+    description: '262K context - $0.20/$0.20 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-8b-2512',
     label: 'Ministral 3 (8B)',
-    description: '262K context - $0.15/$0.15 per Mtok'
+    description: '262K context - $0.15/$0.15 per Mtok',
+    ultraTaskSupported: true
   },
   {
     id: 'ministral-3b-2512',
     label: 'Ministral 3 (3B)',
-    description: '262K context - $0.10/$0.10 per Mtok'
+    description: '262K context - $0.10/$0.10 per Mtok',
+    ultraTaskSupported: true
   }
 ]
-// Muse Code CLI seat. Exactly one row on purpose: Meta withdrew Muse Spark 1.1
-// when 1.2 shipped, and the CLI's own catalogue
-// (~/.local/share/muse/model-catalog/<provider>__p<profile>.json) carries
-// `is_current` + `visibility`, so lifecycle is PROVIDER-PUBLISHED — do not add
+// Muse Code CLI seat. Rows mirror the visible entries in the CLI's own catalogue.
+// That catalogue (~/.local/share/muse/model-catalog/<provider>__p<profile>.json)
+// carries `is_current` + `visibility`, so lifecycle is PROVIDER-PUBLISHED — do not add
 // a hand-kept retirement table like PI_MODEL_RETIREMENTS. Metadata comes from
 // that catalogue, never the web: the true context limit is 1,007,997, not the
 // widely-quoted 1,048,576.
 //
-// The id must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
+// The contributor rows are selectable but deliberately not TaskWraith's default:
+// their discount comes with the catalogue's product-improvement data-use notice,
+// so the user must choose one rather than being opted in by a default migration.
+//
+// Spark 1.3 (catalogue release_date 2026-09-02) leads the list in the CLI's own
+// order; 1.2 stays the seat default because the catalogue still flags it
+// `is_current`, and moving the default is a separate, user-decided change.
+// Pricing per Meta's Model API page (verified 2026-09-02) is identical for 1.2
+// and 1.3.
+//
+// The ids must stay byte-identical to MUSE_DEFAULT_MODELS in the renderer's
 // providerModelDefaults.ts — providerFallthroughGuards compares the two sides
 // and a divergence means the picker and the run disagree.
 const MUSE_STATIC_MODELS = [
   {
+    id: 'muse-spark-1.3',
+    label: 'Muse Spark 1.3',
+    description: '1M context - $1.25/$4.25 per Mtok',
+    ultraTaskSupported: true
+  },
+  {
+    id: 'muse-spark-1.3-contributor',
+    label: 'Muse Contributor Spark 1.3',
+    description: '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+    ultraTaskSupported: true
+  },
+  {
     id: 'muse-spark-1.2',
     label: 'Muse Spark 1.2',
     description: '1M context - $1.25/$4.25 per Mtok',
-    isDefault: true
+    isDefault: true,
+    ultraTaskSupported: true
+  },
+  {
+    id: 'muse-spark-1.2-contributor',
+    label: 'Muse Contributor Spark 1.2',
+    description: '1M context - $0.10/$0.20 per Mtok - content may be used for product improvement',
+    ultraTaskSupported: true
   }
 ]
+/** Read off the catalogue's own `isDefault` row so the seat default has one
+ *  owner: moving the flag moves the resolution with it. */
+const MUSE_DEFAULT_MODEL =
+  MUSE_STATIC_MODELS.find((model) => model.isDefault)?.id ?? MUSE_STATIC_MODELS[0].id
+// Devin's rows are one per model family the CLI itself enumerates
+// (`devin models list --format json`), curated once in the shared
+// devinModelCatalog.ts so this side, the renderer's providerModelDefaults.ts,
+// and the Host catalogue read one list — providerFallthroughGuards compares
+// main and renderer and a divergence means the picker and the run disagree.
+// The reasoning ladder is the family's variant set; the run folds the chosen
+// level into `devin acp --model <family>-<level>` (resolveDevinVariantId).
+const DEVIN_STATIC_MODELS = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    description: devinModelDescription(family),
+    ...(family.id === DEVIN_DEFAULT_MODEL_ID ? { isDefault: true } : {}),
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
+  }
+})
 const CURSOR_STATIC_MODELS = [
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
-  { id: 'composer-2.5', label: 'Composer 2.5' },
+  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true, ultraTaskSupported: true },
+  { id: 'composer-2.5', label: 'Composer 2.5', ultraTaskSupported: true },
   {
     id: CURSOR_GROK_46_BASE_MODEL_ID,
     label: 'Cursor Grok 4.6',
     description: 'First-party Cursor model pool - 256K context',
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
   },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    description: 'First-party Cursor model pool - 500K context',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
-  }
+  // Cursor Grok 4.5 is RETIRED — Cursor's own catalogue dropped the family and
+  // rejects every grok-4.5 wire id outright (exit 1, "Cannot use this model").
+  // Persisted seats migrate to 4.6 in normalizeCliProviderModel below.
 ]
-const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code'
-const KIMI_STANDARD_API_MODEL = 'kimi-for-coding'
-const KIMI_HIGHSPEED_API_MODEL = 'kimi-for-coding-highspeed'
+const KIMI_DEFAULT_MODEL = KIMI_K28_MODEL_ID
 // Kimi CLI's --model option resolves configured model aliases, not raw API
 // model ids. OAuth-managed Kimi Code models use the stable `kimi-code/` key
-// namespace in ~/.kimi/config.toml; passing only `kimi-for-coding` leaves the
+// namespace in ~/.kimi-code/config.toml; passing only `kimi-for-coding` leaves the
 // CLI without an LLM even though that is the correct third-party API model id.
-export const KIMI_STANDARD_CLI_MODEL = `kimi-code/${KIMI_STANDARD_API_MODEL}`
-export const KIMI_HIGHSPEED_CLI_MODEL = `kimi-code/${KIMI_HIGHSPEED_API_MODEL}`
-const KIMI_K3_API_MODEL = 'k3'
-export const KIMI_K3_CLI_MODEL = `kimi-code/${KIMI_K3_API_MODEL}`
 const KIMI_CLI_MODEL_IDS = new Set([
   ...KIMI_STATIC_MODELS.map((model) => model.id),
   KIMI_STANDARD_CLI_MODEL,
   KIMI_HIGHSPEED_CLI_MODEL,
-  KIMI_K3_CLI_MODEL
+  KIMI_K3_CLI_MODEL,
+  KIMI_K3_256K_CLI_MODEL
 ])
 const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['default', KIMI_DEFAULT_MODEL],
@@ -983,14 +1405,22 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['best', KIMI_DEFAULT_MODEL],
   ['kimi-latest', KIMI_DEFAULT_MODEL],
   ['kimi-code', KIMI_DEFAULT_MODEL],
-  [KIMI_STANDARD_API_MODEL, KIMI_STANDARD_CLI_MODEL],
-  [KIMI_HIGHSPEED_API_MODEL, KIMI_HIGHSPEED_CLI_MODEL],
+  [KIMI_STANDARD_API_MODEL, KIMI_K28_MODEL_ID],
+  [KIMI_STANDARD_CLI_MODEL, KIMI_K28_MODEL_ID],
+  // Highspeed became its own picker row on 2026-09-11. Both upstream spellings
+  // resolve to it so a seat that reached it through the retired Fast tier lands
+  // on the row instead of silently falling back to the standard route.
+  [KIMI_HIGHSPEED_API_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
+  [KIMI_HIGHSPEED_CLI_MODEL, KIMI_K27_HIGHSPEED_MODEL_ID],
   // K3's raw API id and managed CLI alias both resolve to the canonical
   // TaskWraith id; 'kimi-k3' itself passes through via KIMI_CLI_MODEL_IDS.
   [KIMI_K3_API_MODEL, 'kimi-k3'],
   [KIMI_K3_CLI_MODEL, 'kimi-k3'],
+  [KIMI_K3_256K_API_MODEL, KIMI_K3_256K_MODEL_ID],
+  [KIMI_K3_256K_CLI_MODEL, KIMI_K3_256K_MODEL_ID],
   ['kimi-k2.7', KIMI_DEFAULT_MODEL],
-  ['kimi-k2.7-code', KIMI_DEFAULT_MODEL],
+  // The retired combined row. Its standard tier is exactly today's K2.8 route.
+  [KIMI_K27_MODEL_ID, KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-code-thinking', KIMI_DEFAULT_MODEL],
   ['kimi-k2.7-thinking', KIMI_DEFAULT_MODEL],
   ['kimi-k2.6', KIMI_DEFAULT_MODEL],
@@ -1009,28 +1439,22 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-k2-turbo', KIMI_DEFAULT_MODEL]
 ])
 
-export function isKimiK3Model(model?: string | null): boolean {
-  const normalized = String(model || '')
-    .trim()
-    .toLowerCase()
-  return (
-    normalized === 'kimi-k3' || normalized === KIMI_K3_API_MODEL || normalized === KIMI_K3_CLI_MODEL
-  )
-}
-
-/** K3 defaults to Max; K2.7 Coding has no configurable effort axis. */
+/**
+ * K2.8 Preview and both K3 routes share Kimi's Low/High/Max axis and default to
+ * Max; K2.7 Code Highspeed has no configurable effort axis at all.
+ */
 export function normalizeKimiReasoningEffort(
   model?: string | null,
   effort?: string | null
-): (typeof KIMI_K3_REASONING_EFFORTS)[number] | null {
-  if (!isKimiK3Model(model)) return null
+): KimiK3ReasoningEffort | null {
+  if (!kimiModelSupportsReasoningEfforts(model)) return null
   const normalized = String(effort || '')
     .trim()
     .toLowerCase()
   return KIMI_K3_REASONING_EFFORTS.includes(
-    normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number]
+    normalized as KimiK3ReasoningEffort
   )
-    ? (normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number])
+    ? (normalized as KimiK3ReasoningEffort)
     : 'max'
 }
 
@@ -1086,6 +1510,12 @@ function staticRowsForProvider(provider: ProviderId, options: StaticProviderMode
       return MISTRAL_STATIC_MODELS
     case 'muse':
       return MUSE_STATIC_MODELS
+    case 'devin':
+      // A free Devin plan may dispatch only SWE-1.6 Slow. Offering the other
+      // 24 families would advertise rows the account cannot run; withholding
+      // them on an UNKNOWN plan would strip a paying seat, so the filter acts
+      // only on a positively observed free plan.
+      return filterDevinModelsForPlan(DEVIN_STATIC_MODELS, { freePlan: options.devinFreePlan })
     case 'pi':
       return piStaticModelRows(options.now)
     case 'antigravity':
@@ -1138,12 +1568,20 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'grok') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GROK_DEFAULT_MODEL
     if (lowered === 'grok-build' || lowered === 'grok-build-0.1') return GROK_DEFAULT_MODEL
+    // Retired 2026-09-18. Must precede the `grok` passthrough below, which
+    // would otherwise hand the retired id straight back to the seat.
+    if (lowered === 'grok-composer-2.5-fast') return GROK_DEFAULT_MODEL
     if (lowered.startsWith('grok')) return trimmed
     return GROK_DEFAULT_MODEL
   }
   if (provider === 'cursor') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'composer-2.5-fast'
     if (trimmed.startsWith('composer-')) return trimmed
+    // A seat still pinned to the retired Cursor Grok 4.5 row keeps its Grok
+    // intent by moving to 4.6 (a superset ladder), rather than silently
+    // becoming Composer.
+    const migrated = migrateRetiredCursorGrokModelId(trimmed)
+    if (migrated) return migrated
     if (isCursorGrokModelId(trimmed)) {
       return cursorGrokBaseModelId(trimmed) || 'composer-2.5-fast'
     }
@@ -1174,7 +1612,8 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') {
       return PI_DEFAULT_MODEL_WIRE_ID
     }
-    return PI_MODEL_WIRE_IDS.has(trimmed) ? trimmed : PI_DEFAULT_MODEL_WIRE_ID
+    const canonicalModel = canonicalPiWireModelId(trimmed)
+    return PI_MODEL_WIRE_IDS.has(canonicalModel) ? canonicalModel : PI_DEFAULT_MODEL_WIRE_ID
   }
   if (provider === 'antigravity') {
     // S3 intentionally has no static AntiGravity model catalogue. Preserve a
@@ -1200,7 +1639,9 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     // `preview:anthropic:claude-sonnet-5` from before Sonnet 5 went GA) maps
     // to the concrete default — it is never a valid CLI/SDK model name.
     if (lowered.startsWith('preview:')) return CLAUDE_DEFAULT_MODEL
-    if (lowered === 'fable') return 'claude-fable-5'
+    // Bare `fable` follows the current Fable release; the previous release
+    // stays reachable by its concrete id (claude-fable-5, Legacy row).
+    if (lowered === 'fable') return 'claude-fable-5-1'
     if (lowered === 'mythos') return 'claude-mythos-5'
     if (['sonnet', 'opus', 'haiku'].includes(lowered)) return lowered
     if (trimmed.startsWith('claude-')) {
@@ -1214,6 +1655,26 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
       return trimmed.endsWith('-1m') ? trimmed.slice(0, -'-1m'.length) : trimmed
     }
   }
+  if (provider === 'muse') {
+    // Muse had no branch here, so a sentinel fell through to the generic tail
+    // and became `'default'` — another sentinel, not a model. `'cli-default'`
+    // is TaskWraith-internal and is not a Muse model id: the exec lane strips
+    // it (`resolveModelArg` in MuseCliArgs), but the MSP lane forwarded it
+    // verbatim as `session/start`'s modelId and the turn died. Resolve it to
+    // the concrete catalogue default instead, so no run, record or picker ever
+    // carries the sentinel where a model id belongs.
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default' || lowered === 'auto') {
+      return MUSE_DEFAULT_MODEL
+    }
+    return trimmed
+  }
+  if (provider === 'devin') {
+    // Sentinels — including a legacy 'cli-default' selection — resolve to the
+    // catalogue default and catalogue ids canonicalise; anything else passes
+    // through verbatim so a custom id reaches `devin acp --model <id>` exactly
+    // as typed and fails visibly at the CLI rather than being substituted here.
+    return normalizeDevinModelId(trimmed)
+  }
   if (!trimmed || trimmed === 'cli-default' || trimmed === 'custom' || trimmed === 'best')
     return 'default'
   return trimmed || 'default'
@@ -1224,28 +1685,14 @@ export function appendKimiThinkingArgs(args: string[], kimiThinking?: boolean | 
 }
 
 function kimiCliModelArg(model: string, serviceTier?: string | null): string | null {
-  const normalized = model.trim().toLowerCase()
-  // Resolve K3 before the tier switch: it has no speed tiers, so a stale or
-  // queued Fast flag must never silently reroute a K3 run onto the K2.7
-  // HighSpeed alias.
-  if (
-    normalized === 'kimi-k3' ||
-    normalized === KIMI_K3_API_MODEL ||
-    normalized === KIMI_K3_CLI_MODEL
-  ) {
-    return KIMI_K3_CLI_MODEL
-  }
-  if (serviceTier === 'fast') return KIMI_HIGHSPEED_CLI_MODEL
-  if (serviceTier === 'standard') return KIMI_STANDARD_CLI_MODEL
-  if (!normalized || normalized === 'default' || normalized === KIMI_DEFAULT_MODEL) return null
-  return model
+  return kimiCliModelAlias(model, serviceTier)
 }
 
 /** Exact model value understood by Kimi Code's ACP config picker. Unlike the
  * CLI argv helper, this must be explicit for the default model because a
  * resumed session's persisted model takes precedence over process defaults. */
 export function kimiAcpModelConfigValue(model: string, serviceTier?: string | null): string {
-  return kimiCliModelArg(model, serviceTier) || KIMI_STANDARD_CLI_MODEL
+  return kimiExplicitCliModelAlias(model, serviceTier)
 }
 
 export function appendKimiModelArgs(
@@ -1304,6 +1751,11 @@ function previewModelForPicker(entry: PreviewModelCatalogEntry) {
     ...(entry.defaultReasoningEffort
       ? { defaultReasoningEffort: entry.defaultReasoningEffort }
       : {}),
-    ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {})
+    ...(entry.additionalSpeedTiers ? { additionalSpeedTiers: entry.additionalSpeedTiers } : {}),
+    // Spread only when set, so a preview row that is not the default keeps the
+    // exact shape it had before; declaring it here is what lets the merged
+    // picker list be read for the flag at all (a static row's isDefault is
+    // unreadable while one member of the union omits the property).
+    ...(entry.isDefault ? { isDefault: entry.isDefault } : {})
   }
 }

@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import {
   GROK_USAGE_BINARY_OVERRIDE_ENV,
   resolveGrokUsageProbeBinary
 } from './GrokUsageBinaryOverride'
+
+const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
 
 describe('resolveGrokUsageProbeBinary', () => {
   it('uses an explicit disposable binary without consulting host discovery', async () => {
@@ -52,15 +55,51 @@ describe('resolveGrokUsageProbeBinary', () => {
   })
 
   it('is wired into the production Grok usage handler', () => {
+    // `src/main/index.ts` cannot be imported (it reaches into Electron at
+    // load), so this claim is proven structurally rather than by slicing the
+    // source between two literals. The slice this replaces ran from the
+    // `ipcMain.handle('grok-usage:probe'` literal to `const watchPrPoller`,
+    // i.e. past the end of the handler itself — anything registered in
+    // between could satisfy its `toContain` checks, and the whole scan went
+    // green-but-empty on any reformatting of the anchor line. Anchoring on
+    // the registered channel and on the callback node keeps the claim scoped
+    // to this handler and makes a rename throw instead of pass.
+    const registrations = probe
+      .callsTo(probe.source, 'handle')
+      .filter(
+        (call) =>
+          probe.text(call.expression) === 'ipcMain.handle' &&
+          call.arguments.length > 0 &&
+          probe.argText(call, 0) === "'grok-usage:probe'"
+      )
+    expect(registrations).toHaveLength(1)
+
+    const handler = registrations[0].arguments[1]
+    const resolveBinary = probe.callsTo(handler, 'resolveGrokUsageProbeBinary')
+    expect(resolveBinary).toHaveLength(1)
+    // Production reads the override out of the real process environment —
+    // a hard-coded or filtered env would strip the acceptance override that
+    // the unit cases above prove this resolver honours.
+    expect(probe.propText(resolveBinary[0], 0, 'env')).toBe('process.env')
+    // ...and ordinary discovery stays the CLI provider lookup for 'grok', so
+    // the no-override path still finds the owner's own installed binary.
+    expect(probe.propText(resolveBinary[0], 0, 'resolveDefault')).toBe(
+      "() => resolveCliProviderBinary('grok')"
+    )
+  })
+
+  // Left as a text assertion deliberately: MainSourceProbe exposes no
+  // source-order relation between two declarations, so "the grok-usage
+  // handler is registered ahead of the watch-PR poller" — the bound that kept
+  // the original slice from running to end-of-file — has no structural
+  // counterpart. Migrating it would mean dropping the ordering, which is a
+  // loosening, so it stays as it was.
+  it('registers the handler ahead of the watch-PR poller construction', () => {
     const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
     const handlerStart = source.indexOf("ipcMain.handle('grok-usage:probe'")
-    const handlerEnd = source.indexOf('const watchPrPoller', handlerStart)
-    const handler = source.slice(handlerStart, handlerEnd)
+    const pollerStart = source.indexOf('const watchPrPoller', handlerStart)
 
     expect(handlerStart).toBeGreaterThan(-1)
-    expect(handlerEnd).toBeGreaterThan(handlerStart)
-    expect(handler).toContain('resolveGrokUsageProbeBinary({')
-    expect(handler).toContain('env: process.env')
-    expect(handler).toContain("resolveDefault: () => resolveCliProviderBinary('grok')")
+    expect(pollerStart).toBeGreaterThan(handlerStart)
   })
 })

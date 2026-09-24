@@ -64,6 +64,18 @@ describe('CanvasBrowserChrome (static render)', () => {
     )
     expect(plain).not.toContain('is-secure')
   })
+
+  it('renders a usable empty address rail for a blank browser', () => {
+    const html = renderToStaticMarkup(
+      <CanvasBrowserChrome
+        {...baseProps}
+        initialState={{ ...baseProps.initialState, url: 'about:blank', title: '' }}
+      />
+    )
+    expect(html).toContain('placeholder="Enter a web address"')
+    expect(html).toContain('value=""')
+    expect(html).toContain('aria-label="Address"')
+  })
 })
 
 describe('toCanvasBrowserNavState', () => {

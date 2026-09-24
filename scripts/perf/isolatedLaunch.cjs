@@ -2,6 +2,7 @@
 
 const path = require('path')
 const { WORKLOADS, FX_POSTURES } = require('./schema.cjs')
+const { isolatedHomeEnvironment } = require('./isolatedHome.cjs')
 
 /**
  * Build an isolated TaskWraith launch plan for perf baselines.
@@ -24,6 +25,8 @@ const DEFAULT_INSPECTOR_BASE_PORT = 9800
  * @param {string} [options.repoRoot]
  * @param {string} [options.electronEntry='.']
  * @param {string} [options.home] — synthetic isolated HOME propagated into child env (blocker F)
+ * @param {string} [options.platform=process.platform] — selects the platform config-root keys
+ *   (XDG_* / APPDATA) that ride along with HOME; see isolatedHomeEnvironment
  */
 function buildIsolatedLaunchPlan(options) {
   const instanceId = options.instanceId
@@ -89,9 +92,13 @@ function buildIsolatedLaunchPlan(options) {
     options.home != null && String(options.home).trim() !== ''
       ? path.resolve(String(options.home).trim())
       : null
-  if (isolatedHome) {
-    env.HOME = isolatedHome
-  }
+  // HOME plus the platform config-root keys Electron actually reads. The
+  // spawn layers this over process.env, so an inherited XDG_CONFIG_HOME or
+  // APPDATA would otherwise point the child at the real profile.
+  const homeEnv = isolatedHome
+    ? isolatedHomeEnvironment({ home: isolatedHome, platform: options.platform })
+    : {}
+  Object.assign(env, homeEnv)
 
   const argv = [
     'electron',
@@ -102,7 +109,7 @@ function buildIsolatedLaunchPlan(options) {
   const shellCommand = [
     `TASKWRAITH_INSTANCE_ID=${shellQuote(instanceId)}`,
     'IOS_REMOTE_TRUE=0',
-    ...(isolatedHome ? [`HOME=${shellQuote(isolatedHome)}`] : []),
+    ...Object.entries(homeEnv).map(([key, value]) => `${key}=${shellQuote(value)}`),
     `npx electron ${shellQuote(electronEntry)} --remote-debugging-port=${port} --inspect=${mainInspectorPort}`
   ].join(' ')
 

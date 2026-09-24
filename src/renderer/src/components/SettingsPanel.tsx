@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MascotGhost } from './AppChromeSymbols'
+import { ApprovalTimeoutField } from './ApprovalTimeoutField'
 import { ComposerShellPreview } from './ComposerShellPreview'
+import { SettingsDiffStatColorControl } from './SettingsDiffStatColorControl'
 import { SettingsDiffStatPreview } from './SettingsDiffStatPreview'
+import { SettingsProviderAuthCard } from './SettingsProviderAuthCard'
 import { SettingsSharedAccentControl } from './SettingsSharedAccentControl'
 import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
 import type {
@@ -27,6 +30,9 @@ import type {
   AuditRetentionSurface,
   PromptSurfaceStyle,
   FanoutLaneLayout,
+  TranscriptView,
+  TranscriptTextSize,
+  TranscriptWidth,
   ComposerStyle,
   ThemeAppearance,
   ThemeCornerStyle,
@@ -47,19 +53,12 @@ import {
   summariseCodexStatus,
   summariseMistralVibeStatus,
   summariseMuseCodeStatus,
+  summariseOllamaStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
 import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../../../shared/retiredProviders'
-import {
-  APPROVAL_TIMEOUT_MAX_MS,
-  APPROVAL_TIMEOUT_MIN_MS
-} from '../../../shared/interactionTimeouts'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
-import appIconRegularThumb from '../assets/app-icons/regular.png'
-import appIconMonolineThumb from '../assets/app-icons/monoline.png'
-import appIconGlassThumb from '../assets/app-icons/glass.png'
-import appIconLightMonolineThumb from '../assets/app-icons/light-monoline.png'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   COMPOSER_FONT_OPTIONS,
@@ -73,17 +72,12 @@ import {
   quoteInstalledFontFamily,
   type TypefaceOption
 } from '../lib/typefaceOptions'
-import {
-  accentFromHue,
-  normalizePoolIconBrightness,
-  normalizePoolIconSaturation,
-  parsePoolColorInput,
-  rgbStringFromHexColor
-} from '../lib/ensembleAgentPool'
 import { setFxRatesPerUsd } from '../lib/formatCost'
 import { useUsageSummary } from '../lib/usageSummaryStore'
 import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
-import { formatResetShort } from '../lib/UsageFormat'
+import { resolveTranscriptView } from '../lib/transcriptViewOverride'
+import { resolveTranscriptTextSize } from '../lib/transcriptTextSize'
+import { resolveTranscriptWidth } from '../lib/transcriptWidth'
 import {
   KEY_COMMAND_DEFINITIONS,
   KEY_COMMAND_GROUPS,
@@ -95,7 +89,6 @@ import {
   sanitizeKeyCommandOverrides,
   type KeyCommandId
 } from '../lib/keyCommands'
-import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 // Paired-device workspace access is configured per workspace via
 // `WorkspaceRemoteAccessToggle` in Settings → Workspaces.
 import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
@@ -150,16 +143,13 @@ import {
 } from '../lib/policyPosture'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import type {
-  TaskWraithPluginActivatedConnector,
-  TaskWraithPluginCapabilityDiff,
-  TaskWraithPluginCapabilitySnapshot,
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginActivationSnapshot,
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginSecretStatusSnapshot
 } from '../../../shared/plugins/PluginTypes'
 import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
-import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
+import { canPersistPlaintextFieldValue } from '../../../shared/PlaintextSecretPolicy'
 import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
 import { OllamaApiKeyControls } from './OllamaApiKeyControls'
@@ -174,105 +164,168 @@ import {
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
-import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
+import { ToolFamilyIcon } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate, ModelUsageProviderId } from '../lib/usageAggregateTypes'
-import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../../../main/TaskWraithMcpTools'
-import { catalogToolAgenticService } from '../../../shared/canonicalToolCoalesce'
+import {
+  TASKWRAITH_MCP_TOOLS,
+  type TaskWraithMcpToolName
+} from '../../../shared/taskWraithMcpCatalog'
+import {
+  MCP_TOOL_CATALOG,
+  MCP_TOOL_GROUP_LABELS,
+  MCP_TOOL_GROUP_ORDER,
+  countMcpStatusServers,
+  countMcpStatusTools,
+  formatMcpInvocation,
+  getMcpPolicyLabel,
+  getMcpToolMeta,
+  pluralizeCount,
+  resolveMcpToolIconFamily
+} from './settings/settingsMcpHelpers'
+import {
+  pluginConnectorSecretSummaries,
+  pluginSettingsActionState,
+  pluginSettingsCapabilityDiffLines,
+  pluginSettingsCapabilityDiffSummary,
+  pluginSettingsEntryMatchesQuery,
+  pluginSettingsProvenancePayload,
+  pluginSettingsUpdateReviewMessage
+} from './settings/settingsPluginHelpers'
+import {
+  USER_MCP_STDIO_HTTP_RUNTIME_LABEL,
+  USER_MCP_TRANSPORT_OPTIONS,
+  buildUserMcpServerFromForm,
+  emptyUserMcpServerForm,
+  formFromUserMcpServer,
+  formatUserMcpServerAuditJson,
+  formatUserMcpServerClaudeJsonSnippet,
+  formatUserMcpServerCodexTomlSnippet,
+  formatUserMcpServerCursorJsonSnippet,
+  formatUserMcpServersAuditJson,
+  formatUserMcpServersClaudeJson,
+  formatUserMcpServersCodexToml,
+  formatUserMcpServersCursorJson,
+  hasUserMcpServerNameConflict,
+  hasRunnableUserMcpEndpoint,
+  isClaudeExportableUserMcpServer,
+  isCodexExportableUserMcpServer,
+  isCursorExportableUserMcpServer,
+  parseUserMcpServerEnv,
+  parseUserMcpServerSecretLines,
+  parseUserMcpServersImportJson,
+  userMcpServerMatchesQuery,
+  userMcpServerProviderExportLabels,
+  userMcpServerReadiness,
+  userMcpServerRuntimeLabel,
+  userMcpServerStatusLabel
+} from './settings/userMcpServerUtils'
+import type {
+  UserMcpServerFormState,
+  UserMcpServerSecretValues
+} from './settings/userMcpServerUtils'
+// Re-export the extracted User MCP server helper surface so existing
+// importers of `./SettingsPanel` (tests, sidebar, views) keep working.
+export {
+  buildUserMcpServerFromForm,
+  formatUserMcpServerClaudeJsonSnippet,
+  formatUserMcpServerCodexTomlSnippet,
+  formatUserMcpServerCursorJsonSnippet,
+  formatUserMcpServersAuditJson,
+  formatUserMcpServersClaudeJson,
+  formatUserMcpServersCodexToml,
+  formatUserMcpServersCursorJson,
+  hasUserMcpServerNameConflict,
+  parseUserMcpServersImportJson,
+  userMcpServerMatchesQuery,
+  userMcpServerProviderExportLabels,
+  userMcpServerReadiness,
+  userMcpServerStatusLabel
+} from './settings/userMcpServerUtils'
+export type {
+  UserMcpServerFormState,
+  UserMcpServerReadiness
+} from './settings/userMcpServerUtils'
+// Re-exported so existing importers of `./SettingsPanel` (e.g.
+// SettingsPanelProviders.test.tsx) keep resolving the extracted MCP helper.
+export { uncategorizedMcpToolsForSettings } from './settings/settingsMcpHelpers'
+// Re-exported so existing importers of `./SettingsPanel` (e.g.
+// SettingsPanelPlugins.test.tsx) keep resolving the extracted plugin helpers.
+export {
+  pluginConnectorSecretSummaries,
+  pluginMcpPresetServerId,
+  pluginSettingsActionState,
+  pluginSettingsCapabilityDiffLines,
+  pluginSettingsCapabilityDiffSummary,
+  pluginSettingsEntryMatchesQuery,
+  pluginSettingsProvenancePayload,
+  pluginSettingsUpdateReviewMessage
+} from './settings/settingsPluginHelpers'
+import {
+  getVisibleSettingsTabs,
+  isSettingsTabVisible,
+  resolveVisibleSettingsTab
+} from './settings/settingsTabs'
+import type { SettingsTab } from './settings/settingsTabs'
+// Re-export the extracted settings-tab registry so existing importers of
+// `./SettingsPanel` (SettingsSidebar, views, tests) keep working.
+export {
+  SETTINGS_TABS,
+  SETTINGS_TAB_GROUP_LABELS,
+  getVisibleSettingsTabs,
+  isSettingsTabVisible,
+  resolveVisibleSettingsTab,
+  settingsTabMatchesQuery
+} from './settings/settingsTabs'
+export type {
+  SettingsScope,
+  SettingsTab,
+  SettingsTabDefinition,
+  SettingsTabGroup
+} from './settings/settingsTabs'
+import {
+  AUDIT_RETENTION_SURFACES,
+  applyOutOfUsage,
+  auditBundleCheckLabel,
+  auditBundleSignatureLabel,
+  auditBundleTamperEvidenceLabel,
+  formatFxRate,
+  formatFxUpdatedAt,
+  fromPauseDateTimeLocal,
+  fxConfidenceLabel,
+  isProviderPauseStillActive,
+  shortAuditHash,
+  toPauseDateTimeLocal
+} from './settings/settingsPureHelpers'
+import type { FxRateSnapshot } from './settings/settingsPureHelpers'
+import { emptyRuntimeProfileForm, formFromRuntimeProfile } from './settings/runtimeProfileForm'
+import type {
+  RuntimeProfileFormState,
+  RuntimeProfileSecretValues
+} from './settings/runtimeProfileForm'
+import { isManagedPolicySettingLocked, managedPolicySettingList } from './settings/managedPolicy'
+import type { ManagedPolicyStatus } from './settings/managedPolicy'
+import {
+  CONTEXT_TURN_OPTIONS,
+  clampPaneOpacity,
+  rangeFillStyle,
+  VISUAL_EFFECT_OPTIONS,
+  APP_ICON_THUMBS,
+  PROMPT_SURFACE_OPTIONS,
+  FANOUT_LANE_LAYOUT_OPTIONS,
+  TRANSCRIPT_VIEW_OPTIONS,
+  TRANSCRIPT_TEXT_SIZE_OPTIONS,
+  TRANSCRIPT_WIDTH_OPTIONS,
+  COMPOSER_STYLE_OPTIONS,
+  NATIVE_SUB_AGENT_REQUEST_OPTIONS,
+  CODEX_SANDBOX_FALLBACK_OPTIONS,
+  FUN_FX_MODES
+} from './settings/settingsUiOptions'
+// Re-export the previously exported form-state type so existing importers of
+// `./SettingsPanel` keep working.
+export type { RuntimeProfileFormState } from './settings/runtimeProfileForm'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
-type ManagedPolicyStatus = Record<string, unknown>
 type AuditBundleExportScope = 'all' | 'workspace' | 'chat' | 'run'
-interface PluginConnectorSecretSummary {
-  key: string
-  pluginId: string
-  secretId: string
-  label: string
-  required: boolean
-  configured: boolean
-  installed: boolean
-  enabled: boolean
-  envVar?: string
-  description?: string
-  updatedAt?: string
-}
-
-export function pluginConnectorSecretSummaries(
-  connector: TaskWraithPluginActivatedConnector,
-  secretStatus: TaskWraithPluginSecretStatusSnapshot | null | undefined
-): PluginConnectorSecretSummary[] {
-  const requiredSecrets = connector.connector.requiredSecrets || []
-  if (requiredSecrets.length === 0) return []
-  const statuses = new Map(
-    (secretStatus?.secrets || [])
-      .filter((secret) => secret.pluginId === connector.plugin.pluginId)
-      .map((secret) => [secret.secretId, secret])
-  )
-  return requiredSecrets.map((secretId) => {
-    const status = statuses.get(secretId)
-    return {
-      key: `${connector.plugin.pluginId}:${secretId}`,
-      pluginId: connector.plugin.pluginId,
-      secretId,
-      label: status?.label || secretId,
-      required: status?.required ?? true,
-      configured: status?.configured ?? false,
-      installed: status?.installed ?? false,
-      enabled: status?.enabled ?? false,
-      ...(status?.envVar ? { envVar: status.envVar } : {}),
-      ...(status?.description ? { description: status.description } : {}),
-      ...(status?.updatedAt ? { updatedAt: status.updatedAt } : {})
-    }
-  })
-}
-
-function managedPolicySettingList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
-    : []
-}
-
-function isManagedPolicySettingLocked(
-  status: ManagedPolicyStatus | null | undefined,
-  setting: string
-): boolean {
-  if (status?.active !== true) return false
-  return (
-    managedPolicySettingList(status.lockedSettings).includes(setting) ||
-    managedPolicySettingList(status.enforcedSettings).includes(setting)
-  )
-}
-
-function auditBundleCheckLabel(value: boolean | undefined): string {
-  return value ? 'pass' : 'fail'
-}
-
-function auditBundleSignatureLabel(
-  verification: ProductAuditBundleVerificationResult['verification']
-): string {
-  if (!verification) return 'not checked'
-  if (!verification.signaturePresent) return 'not present'
-  return verification.signatureValid ? 'valid' : 'invalid'
-}
-
-function auditBundleTamperEvidenceLabel(value: string | undefined): string {
-  if (value === 'local_hashes_signed') return 'signed local hashes'
-  if (value === 'local_hashes_unsigned') return 'unsigned local hashes'
-  return 'unknown evidence'
-}
-
-function shortAuditHash(value: string | undefined): string {
-  return value ? value.slice(0, 12) : 'unavailable'
-}
-
-const AUDIT_RETENTION_SURFACES: Array<{ key: AuditRetentionSurface; label: string }> = [
-  { key: 'approvalLedger', label: 'Approvals' },
-  { key: 'runEvents', label: 'Run events' },
-  { key: 'workspaceChanges', label: 'Workspace changes' },
-  { key: 'auditRuns', label: 'Audit runs' },
-  { key: 'messageFeedback', label: 'Feedback receipts' },
-  { key: 'externalPublish', label: 'Publish receipts' },
-  { key: 'productCrashes', label: 'Crash diagnostics' }
-]
 
 interface SettingsPanelProps {
   mode: AppearanceMode
@@ -305,6 +358,12 @@ interface SettingsPanelProps {
   reduceMotion: boolean
   compactDensity: boolean
   fanoutLaneLayout?: FanoutLaneLayout
+  /** Settings → Appearance default for the per-chat transcript view. */
+  defaultTranscriptView?: TranscriptView
+  /** Settings → Appearance size for transcript message text. */
+  transcriptTextSize?: TranscriptTextSize
+  /** Settings → Appearance width for the transcript reading column. */
+  transcriptWidth?: TranscriptWidth
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
@@ -323,13 +382,14 @@ interface SettingsPanelProps {
   currencyOverestimatePercent?: number
   /** Settings → General toggle for Task Complete / Final Summary cards. */
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
-  /** Settings → General toggle for on-device AI close-out summaries. */
+  /** Settings → General toggle for Apple Foundation Models close-out summaries. */
   closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
-  /** Settings → General toggle for the bounded on-device continuation ranker. */
+  /** Settings → General toggle for the bounded Foundation Models continuation ranker. */
   composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+  keepAwakeWhileWorking?: AppSettings['keepAwakeWhileWorking']
   /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
   maxWaveAgents?: AppSettings['maxWaveAgents']
   /**
@@ -351,6 +411,9 @@ interface SettingsPanelProps {
   antigravityOptInAcceptedAt?: number | null
   antigravityGeminiApiDisclosureAcceptedAt?: number | null
   antigravityGeminiApiMonthlySpendCapUsd?: number | null
+  /** Transport switch for the consented AntiGravity lane: false/absent =
+   * legacy `agy` CLI, true = official ACP binary. Recorded only in S2. */
+  antigravityUseAcp?: boolean
   museMonthlySpendCapUsd?: number | null
   userName?: string
   claudeBinaryPath: string
@@ -363,6 +426,10 @@ interface SettingsPanelProps {
   cliPathDirectories?: string[]
   ollamaBaseUrl: string
   ollamaDefaultModel: string
+  /** Custom Devin api_server_url (HTTPS only, loopback HTTP allowed). Empty
+   * = unset; the Devin launch lane then uses the WINDSURF_API_SERVER_URL
+   * environment variable or the endpoint stored by `devin auth login`. */
+  devinApiServerUrl?: string
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -445,6 +512,9 @@ interface SettingsPanelProps {
     reduceMotion?: boolean
     compactDensity?: boolean
     fanoutLaneLayout?: FanoutLaneLayout
+    defaultTranscriptView?: TranscriptView
+    transcriptTextSize?: TranscriptTextSize
+    transcriptWidth?: TranscriptWidth
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -459,13 +529,14 @@ interface SettingsPanelProps {
     currencyOverestimatePercent?: number
     /** Settings → General toggle for Task Complete / Final Summary cards. */
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
-    /** Settings → General toggle for on-device AI close-out summaries. */
+    /** Settings → General toggle for Apple Foundation Models close-out summaries. */
     closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
-    /** Settings → General toggle for the bounded on-device continuation ranker. */
+    /** Settings → General toggle for the bounded Foundation Models continuation ranker. */
     composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+    keepAwakeWhileWorking?: AppSettings['keepAwakeWhileWorking']
     /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
     maxWaveAgents?: AppSettings['maxWaveAgents']
     /**
@@ -486,6 +557,7 @@ interface SettingsPanelProps {
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
     antigravityGeminiApiMonthlySpendCapUsd?: number | null
+    antigravityUseAcp?: boolean
     museMonthlySpendCapUsd?: number | null
     userName?: string
     claudeBinaryPath?: string
@@ -493,6 +565,10 @@ interface SettingsPanelProps {
     cliPathDirectories?: string[]
     ollamaBaseUrl?: string
     ollamaDefaultModel?: string
+    /** Custom Devin api_server_url. HTTPS only (HTTP allowed on loopback);
+     * empty = unset, in which case the run uses the WINDSURF_API_SERVER_URL
+     * environment variable or the endpoint stored by `devin auth login`. */
+    devinApiServerUrl?: string
     auditOrchestration?: AppSettings['auditOrchestration']
     agenticServices?: AgenticServicesSettings
     nativeSubAgentRequests?: NativeSubAgentRequestPolicy
@@ -550,165 +626,6 @@ interface SettingsPanelProps {
   layout?: 'sheet' | 'takeover'
 }
 
-type FxRateSnapshot = Awaited<ReturnType<typeof window.api.getFxRates>>
-
-const CONTEXT_TURN_OPTIONS = [0, 2, 4, 6, 8, 10, 12, 16, 20]
-const clampPaneOpacity = (value: unknown): number => {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 100
-}
-const rangeFillStyle = (value: number, min: number, max: number): React.CSSProperties => {
-  const fill = max > min ? ((value - min) / (max - min)) * 100 : 0
-  return {
-    '--ensemble-context-slider-fill': `${Math.max(0, Math.min(100, fill))}%`
-  } as React.CSSProperties
-}
-const VISUAL_EFFECT_OPTIONS: Array<{ value: VisualEffectStyle; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'liquid_glass', label: 'LiquidGlass' },
-  { value: 'thin_material', label: 'ultraThinMaterial' },
-  { value: 'classic', label: 'PoorMansGlassBackground' }
-]
-const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
-  regular: appIconRegularThumb,
-  monoline: appIconMonolineThumb,
-  glass: appIconGlassThumb,
-  lightMonoline: appIconLightMonolineThumb
-}
-const PROMPT_SURFACE_OPTIONS: Array<{ value: PromptSurfaceStyle; label: string }> = [
-  { value: 'theme', label: 'Follow theme' },
-  { value: 'liquid_glass', label: 'Liquid glass' },
-  { value: 'classic', label: 'Poor man glass' },
-  { value: 'solid', label: 'Solid' }
-]
-
-const FANOUT_LANE_LAYOUT_OPTIONS: Array<{ value: FanoutLaneLayout; label: string }> = [
-  { value: 'stacked', label: 'One per line' },
-  { value: 'paired', label: 'Two side by side' }
-]
-const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helper: string }> = [
-  {
-    value: 'default',
-    label: 'TaskWraith native',
-    helper: 'Provider chrome off; keep the existing TaskWraith shell.'
-  },
-  {
-    value: 'codex',
-    label: 'Codex shell',
-    helper: 'Codex-like sidebar, transcript, status bar, and composer hierarchy.'
-  },
-  {
-    value: 'chatgpt',
-    label: 'ChatGPT shell',
-    helper: 'Codex tucked-tab above-row with a flat Cursor-style capsule body and bottom rows.'
-  },
-  {
-    value: 'claude',
-    label: 'Claude shell',
-    helper: 'Claude-like sidebar, transcript, status bar, and composer hierarchy.'
-  },
-  {
-    value: 'cursor',
-    label: 'Cursor shell',
-    helper:
-      'Flat neutral-gray Gemini-style pill composer — no glass or gradient effects, theme-immune.'
-  },
-  {
-    value: 'grok',
-    label: 'Grok shell',
-    helper:
-      'Monochrome Grok-like shell with Gemini-style pill layout and no glass or gradient effects.'
-  },
-  {
-    value: 'gemini',
-    label: 'Gemini shell',
-    helper: 'Gemini-like minimal pill composer, centered welcome, blue focus glow.'
-  },
-  {
-    value: 'kimi',
-    label: 'Kimi shell',
-    helper: 'Kimi-like dark rounded composer, blue accent, minimal sidebar.'
-  },
-  {
-    value: 'modular',
-    label: 'Modular',
-    helper: 'Each composer element floats as its own pill — no grouped container.'
-  },
-  {
-    value: 'terminal',
-    label: 'Terminal',
-    helper: 'Monospace command-line aesthetic with bracketed chips and a caret prompt.'
-  },
-  {
-    value: 'stub',
-    label: 'Ticket stub',
-    helper: 'Paper-textured composer with a perforated separator above the textarea.'
-  },
-  {
-    value: 'satellite',
-    label: 'Satellite',
-    helper: 'All containers invisible — every element floats freely on the page.'
-  },
-  /*
-    1.0.5-EW55 — "Obsidian" composer style (renamed from EW54's
-    `rimshine`). Pure black fill + crisp 1px white rim + slow rim
-    chase animation + subtle white outer glow. Above-row siblings
-    (Ensemble chip strip, queued messages, Create-PR, secondary
-    workspace pill) inherit the same chrome + corner radius, so
-    the composer area reads as one black-with-white-rim family.
-  */
-  {
-    value: 'obsidian',
-    label: 'Obsidian',
-    helper:
-      'Pure black fill with a crisp white rim highlight, slow rim shimmer chase, and matching chrome on the detached rows above.'
-  },
-  /*
-    1.0.5-EW61 — "Alabaster" composer style. Polar inverse of
-    obsidian: cream fill, charcoal 2px rim, slow black/charcoal
-    rim-chase, warm-cream outer glow. Theme-immune subtree
-    (locks light-mode tokens regardless of app theme).
-  */
-  {
-    value: 'alabaster',
-    label: 'Alabaster',
-    helper:
-      'Cream fill with a crisp charcoal rim, slow black rim shimmer chase, and matching chrome on the detached rows above.'
-  }
-]
-
-const NATIVE_SUB_AGENT_REQUEST_OPTIONS: Array<{
-  value: NativeSubAgentRequestPolicy
-  label: string
-  helper: string
-}> = [
-  {
-    value: 'ask',
-    label: 'Ask',
-    helper: 'Prompt on the first observable native sub-agent request.'
-  },
-  {
-    value: 'provider',
-    label: 'Provider',
-    helper: 'Allow provider-native Task / invoke_agent style sub-agents.'
-  },
-  {
-    value: 'taskwraith',
-    label: 'TaskWraith',
-    helper: 'Redirect native sub-agent requests to durable TaskWraith sub-threads.'
-  }
-]
-const CODEX_SANDBOX_FALLBACK_OPTIONS: Array<{ value: CodexSandboxFallbackMode; label: string }> = [
-  { value: 'ask_rerun', label: 'Ask to rerun outside sandbox' },
-  { value: 'off', label: 'Off' }
-]
-const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; helper: string }> = [
-  { value: 'off', label: 'Off', helper: 'No cinematic effects.' },
-  { value: 'subtle', label: 'Subtle', helper: 'One effect layer with gentle motion.' },
-  { value: 'cinematic', label: 'Cinematic', helper: 'Sky + ghost in synchronized balance.' },
-  { value: 'epic', label: 'Epic', helper: 'Adds additional ambient scene accents.' }
-]
-
 // Settings status order for the current live providers. Offer/run membership
 // remains owned by the canonical shared provider set, not this presentation list.
 const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
@@ -720,7 +637,8 @@ const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ]
 
 const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -734,248 +652,59 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   antigravity: 'Antigravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  muse: 'Muse'
+  muse: 'Muse',
+  devin: 'Devin'
 }
 
-export type UserMcpServerFormState = {
-  name: string
-  description: string
-  transport: UserMcpServerTransport
-  command: string
-  url: string
-  argsText: string
-  envText: string
-  envSecretText: string
-  headersText: string
-  headerSecretText: string
-  bearerTokenEnvVar: string
-  enabled: boolean
-}
-
-type UserMcpServerSecretValues = {
-  env: Record<string, string>
-  headers: Record<string, string>
-}
-
-export type RuntimeProfileFormState = {
-  id: string
-  name: string
-  provider: ProviderId
-  scope: 'workspace' | 'global'
-  workspaceMode: 'local' | 'worktree' | 'container'
-  binaryPath: string
-  envText: string
-  envSecretText: string
-  approvalMode: string
-  networkPolicy: 'inherit' | 'allow' | 'deny'
-  persistence: 'reusable' | 'ephemeral'
-}
-
-type RuntimeProfileSecretValues = {
-  env: Record<string, string>
-}
-
-const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: string }> = [
-  { value: 'stdio', label: 'stdio' },
-  { value: 'http', label: 'HTTP' },
-  { value: 'sse', label: 'SSE' }
-]
-const USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT: Record<UserMcpServerTransport, readonly string[]> = {
-  stdio: ['Codex', 'Claude'],
-  http: ['Codex', 'Claude'],
-  sse: ['Claude']
-}
-const USER_MCP_STDIO_HTTP_RUNTIME_LABEL = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT.stdio.join(' + ')
-const USER_MCP_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
-const USER_MCP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function emptyUserMcpServerForm(): UserMcpServerFormState {
-  return {
-    name: '',
-    description: '',
-    transport: 'stdio',
-    command: '',
-    url: '',
-    argsText: '',
-    envText: '',
-    envSecretText: '',
-    headersText: '',
-    headerSecretText: '',
-    bearerTokenEnvVar: '',
-    enabled: false
-  }
-}
-
-function formatUserMcpServerArgs(args?: string[]): string {
-  return Array.isArray(args) ? args.join('\n') : ''
-}
-
-function formatUserMcpServerEnv(env?: Record<string, string>): string {
-  return env
-    ? Object.entries(env)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('\n')
-    : ''
-}
-
-function formatUserMcpServerHeaders(headers?: Record<string, string>): string {
-  return headers
-    ? Object.entries(headers)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('\n')
-    : ''
-}
-
-function formatUserMcpServerSecretRefs(names?: string[]): string {
-  return Array.isArray(names) && names.length > 0
-    ? names
-        .filter(Boolean)
-        .map((name) => `${name}=`)
-        .join('\n')
-    : ''
-}
-
-function omitSecretBackedFields(
-  values: Record<string, string> | undefined,
-  secretNames: readonly string[] | undefined
-): Record<string, string> | undefined {
-  if (!values) return undefined
-  const secretSet = new Set(secretNames ?? [])
-  const visible = Object.fromEntries(
-    Object.entries(values).filter(([key]) => !secretSet.has(key))
-  ) as Record<string, string>
-  return Object.keys(visible).length > 0 ? visible : undefined
-}
-
-function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormState {
-  return {
-    name: server.name,
-    description: server.description || '',
-    transport: server.transport,
-    command: server.command || '',
-    url: server.url || '',
-    argsText: formatUserMcpServerArgs(server.args),
-    envText: formatUserMcpServerEnv(omitSecretBackedFields(server.env, server.secretRefs?.env)),
-    envSecretText: formatUserMcpServerSecretRefs(server.secretRefs?.env),
-    headersText: formatUserMcpServerHeaders(
-      omitSecretBackedFields(server.headers, server.secretRefs?.headers)
-    ),
-    headerSecretText: formatUserMcpServerSecretRefs(server.secretRefs?.headers),
-    bearerTokenEnvVar: server.bearerTokenEnvVar || '',
-    enabled: server.enabled
-  }
-}
-
-function parseUserMcpServerArgs(value: string): string[] {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 64)
-}
-
-function parseUserMcpServerEnv(value: string): { env: Record<string, string>; error?: string } {
-  const env: Record<string, string> = {}
-  for (const rawLine of value.split('\n')) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const separatorIndex = line.indexOf('=')
-    if (separatorIndex <= 0) return { env, error: 'Environment lines must use KEY=value.' }
-    const key = line.slice(0, separatorIndex).trim()
-    const val = line.slice(separatorIndex + 1)
-    if (!USER_MCP_ENV_NAME_RE.test(key)) {
-      return { env, error: `Invalid environment variable name: ${key}` }
+/**
+ * Devin CLI status → the shared provider vocabulary. The Devin seat authenticates
+ * through env keys (WINDSURF_API_KEY canonical, DEVIN_API_KEY) or the stored
+ * credentials file written by `devin auth login`
+ * (~/.local/share/devin/credentials.toml); deriveAuthState reports
+ * 'windsurf-api-key' as Devin's primary authenticated state. Kept local to this
+ * panel (and mirrored in FirstLaunchSheet) so the renderer surface does not
+ * depend on the usage/analytics lane's shared summariser while the waves land.
+ */
+export function summariseDevinStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin setup not checked yet',
+      hint:
+        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
     }
-    env[key] = val
   }
-  return { env }
-}
-
-function parseUserMcpServerHeaders(value: string): {
-  headers: Record<string, string>
-  error?: string
-} {
-  const headers: Record<string, string> = {}
-  for (const rawLine of value.split('\n')) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const separatorIndex = line.indexOf('=')
-    if (separatorIndex <= 0) return { headers, error: 'Header lines must use Name=value.' }
-    const key = line.slice(0, separatorIndex).trim()
-    const val = line.slice(separatorIndex + 1)
-    if (!USER_MCP_HEADER_NAME_RE.test(key)) {
-      return { headers, error: `Invalid HTTP header name: ${key}` }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Devin CLI not found',
+      hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
     }
-    headers[key] = val
   }
-  return { headers }
-}
-
-function parseUserMcpServerSecretLines(
-  value: string,
-  kind: 'env' | 'header'
-): { names: string[]; values: Record<string, string>; error?: string } {
-  const names: string[] = []
-  const values: Record<string, string> = {}
-  const seen = new Set<string>()
-  const namePattern = kind === 'env' ? USER_MCP_ENV_NAME_RE : USER_MCP_HEADER_NAME_RE
-  const label = kind === 'env' ? 'environment variable' : 'HTTP header'
-  for (const rawLine of value.split('\n')) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const separatorIndex = line.indexOf('=')
-    if (separatorIndex <= 0)
-      return { names, values, error: `Secret ${label} lines must use Name=value.` }
-    const key = line.slice(0, separatorIndex).trim()
-    const val = line.slice(separatorIndex + 1)
-    if (!namePattern.test(key)) {
-      return { names, values, error: `Invalid secret ${label} name: ${key}` }
+  const authState = String(record.authState || '').trim().toLowerCase()
+  const credentialPresent = record.credentialPresent === true
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Devin signed in',
+      hint: 'You can launch Devin runs from TaskWraith.'
     }
-    if (seen.has(key)) return { names, values, error: `Duplicate secret ${label} name: ${key}` }
-    seen.add(key)
-    names.push(key)
-    if (val.length > 0) values[key] = val
   }
-  return { names, values }
-}
-
-function emptyRuntimeProfileForm(provider: ProviderId = 'codex'): RuntimeProfileFormState {
-  return {
-    id: '',
-    name: '',
-    provider,
-    scope: 'workspace',
-    workspaceMode: 'local',
-    binaryPath: '',
-    envText: '',
-    envSecretText: '',
-    approvalMode: 'default',
-    networkPolicy: 'inherit',
-    persistence: 'reusable'
+  if (['missing', 'unauthenticated', 'signed-out'].includes(authState)) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin not signed in',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
   }
-}
-
-function formatRuntimeProfileSecretRefs(names?: string[]): string {
-  return formatUserMcpServerSecretRefs(names)
-}
-
-function formFromRuntimeProfile(profile: RuntimeProfile): RuntimeProfileFormState {
   return {
-    id: profile.id,
-    name: profile.name,
-    provider: profile.provider,
-    scope: profile.scope,
-    workspaceMode: profile.workspaceMode,
-    binaryPath: profile.binaryPath || '',
-    envText: formatUserMcpServerEnv(omitSecretBackedFields(profile.env, profile.secretRefs?.env)),
-    envSecretText: formatRuntimeProfileSecretRefs(profile.secretRefs?.env),
-    approvalMode: profile.approvalMode || 'default',
-    networkPolicy: profile.networkPolicy,
-    persistence: profile.persistence
+    variant: 'partial',
+    statusText: 'Devin CLI ready · credential state not observed',
+    hint: 'Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
   }
 }
 
@@ -1038,1046 +767,6 @@ export function buildRuntimeProfileFromForm(
   }
 }
 
-function isValidUserMcpRemoteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-function hasRunnableUserMcpEndpoint(
-  server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>
-): boolean {
-  if (server.transport === 'stdio') return Boolean(server.command?.trim())
-  const url = server.url?.trim()
-  return Boolean(url && isValidUserMcpRemoteUrl(url))
-}
-
-function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'>): string {
-  const providers = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT[server.transport]
-  return providers.length > 0 ? `runtime: ${providers.join(' + ')}` : 'saved only'
-}
-
-type UserMcpServerReadinessState = 'ready' | 'disabled' | 'blocked'
-
-export interface UserMcpServerReadiness {
-  state: UserMcpServerReadinessState
-  label: string
-  providers: string[]
-  blockers: string[]
-  notes: string[]
-}
-
-export function userMcpServerStatusLabel(
-  server: Pick<UserMcpServerConfig, 'enabled' | 'transport' | 'command' | 'url'>
-): string {
-  if (!hasRunnableUserMcpEndpoint(server)) {
-    if (server.transport === 'stdio') return 'needs command'
-    return server.url?.trim() ? 'needs valid URL' : 'needs URL'
-  }
-  return server.enabled ? 'enabled' : 'disabled'
-}
-
-export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServerReadiness {
-  const providers = [...USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT[server.transport]]
-  const blockers: string[] = []
-  const notes: string[] = []
-  if (server.transport === 'stdio') {
-    if (!server.command?.trim()) blockers.push('Missing command')
-  } else {
-    const url = server.url?.trim()
-    if (!url) blockers.push('Missing URL')
-    else if (!isValidUserMcpRemoteUrl(url)) blockers.push('URL must use http:// or https://')
-  }
-  if (server.transport === 'sse') {
-    notes.push('SSE attaches to Claude only')
-  } else {
-    notes.push(
-      'Cursor JSON remains exportable; managed Path-B runs attach TaskWraith’s built-in broker separately and do not attach these user-server records'
-    )
-  }
-  if (!server.enabled) {
-    return {
-      state: 'disabled',
-      label: 'Disabled',
-      providers: [],
-      blockers: ['Enable this server before it attaches to provider launches'],
-      notes
-    }
-  }
-  if (blockers.length > 0) {
-    return {
-      state: 'blocked',
-      label: 'Needs attention',
-      providers: [],
-      blockers,
-      notes
-    }
-  }
-  return {
-    state: 'ready',
-    label: `Ready for ${providers.join(' + ')}`,
-    providers,
-    blockers: [],
-    notes
-  }
-}
-
-export function userMcpServerMatchesQuery(server: UserMcpServerConfig, query: string): boolean {
-  const search = query.trim().toLowerCase()
-  if (!search) return true
-  const haystack = [
-    server.name,
-    server.description || '',
-    server.transport,
-    userMcpServerStatusLabel(server),
-    userMcpServerReadiness(server).label,
-    ...userMcpServerReadiness(server).blockers,
-    ...userMcpServerReadiness(server).notes,
-    server.command || '',
-    server.url || '',
-    ...(server.args ?? []),
-    ...Object.keys(server.env ?? {}),
-    ...(server.secretRefs?.env ?? []),
-    ...Object.keys(userMcpServerRemoteHeaders(server, { redactValues: true }) ?? {}),
-    ...(server.secretRefs?.headers ?? []),
-    server.bearerTokenEnvVar || '',
-    userMcpServerRuntimeLabel(server),
-    ...userMcpServerProviderExportLabels(server)
-  ]
-    .join(' ')
-    .toLowerCase()
-  return haystack.includes(search)
-}
-
-function makeUserMcpServerId(name: string): string {
-  const slug =
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48) || 'server'
-  return `user-mcp-${slug}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-}
-
-function uniqueImportedUserMcpName(name: string, usedNames: Set<string>): string {
-  const base = name.trim() || 'Imported MCP server'
-  let candidate = base
-  let suffix = 2
-  while (usedNames.has(candidate.toLowerCase())) {
-    candidate = `${base} ${suffix}`
-    suffix += 1
-  }
-  usedNames.add(candidate.toLowerCase())
-  return candidate
-}
-
-function normalizeUserMcpServerName(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-export function hasUserMcpServerNameConflict(
-  servers: readonly UserMcpServerConfig[],
-  candidateName: string,
-  candidateId?: string
-): boolean {
-  const normalized = normalizeUserMcpServerName(candidateName)
-  if (!normalized) return false
-  return servers.some(
-    (server) => server.id !== candidateId && normalizeUserMcpServerName(server.name) === normalized
-  )
-}
-
-export function buildUserMcpServerFromForm(
-  form: UserMcpServerFormState,
-  existing?: UserMcpServerConfig
-): {
-  server?: UserMcpServerConfig
-  secretValues?: UserMcpServerSecretValues
-  error?: string
-} {
-  const name = form.name.trim()
-  if (!name) return { error: 'Server name is required.' }
-  const args = form.transport === 'stdio' ? parseUserMcpServerArgs(form.argsText) : []
-  const parsedEnv: { env: Record<string, string>; error?: string } =
-    form.transport === 'stdio' ? parseUserMcpServerEnv(form.envText) : { env: {} }
-  if (parsedEnv.error) return { error: parsedEnv.error }
-  const parsedEnvSecrets =
-    form.transport === 'stdio'
-      ? parseUserMcpServerSecretLines(form.envSecretText, 'env')
-      : { names: [], values: {} }
-  if (parsedEnvSecrets.error) return { error: parsedEnvSecrets.error }
-  const parsedHeaders: { headers: Record<string, string>; error?: string } =
-    form.transport === 'stdio' ? { headers: {} } : parseUserMcpServerHeaders(form.headersText)
-  if (parsedHeaders.error) return { error: parsedHeaders.error }
-  const parsedHeaderSecrets =
-    form.transport === 'stdio'
-      ? { names: [], values: {} }
-      : parseUserMcpServerSecretLines(form.headerSecretText, 'header')
-  if (parsedHeaderSecrets.error) return { error: parsedHeaderSecrets.error }
-  for (const key of parsedEnvSecrets.names) {
-    if (key in parsedEnv.env) {
-      return { error: `${key} is listed as both a plaintext and encrypted environment value.` }
-    }
-  }
-  for (const key of parsedHeaderSecrets.names) {
-    if (key in parsedHeaders.headers) {
-      return { error: `${key} is listed as both a plaintext and encrypted HTTP header.` }
-    }
-  }
-  const existingEnvSecrets = new Set(existing?.secretRefs?.env ?? [])
-  for (const key of parsedEnvSecrets.names) {
-    if (!(key in parsedEnvSecrets.values) && !existingEnvSecrets.has(key)) {
-      return { error: `Secret environment variable ${key} needs a value before it can be saved.` }
-    }
-  }
-  const existingHeaderSecrets = new Set(existing?.secretRefs?.headers ?? [])
-  for (const key of parsedHeaderSecrets.names) {
-    if (!(key in parsedHeaderSecrets.values) && !existingHeaderSecrets.has(key)) {
-      return { error: `Secret HTTP header ${key} needs a value before it can be saved.` }
-    }
-  }
-  const command = form.command.trim()
-  const url = form.url.trim()
-  const bearerTokenEnvVar = form.bearerTokenEnvVar.trim()
-  if (
-    form.transport !== 'stdio' &&
-    bearerTokenEnvVar &&
-    !USER_MCP_ENV_NAME_RE.test(bearerTokenEnvVar)
-  ) {
-    return { error: 'Bearer token environment variable must be a valid environment variable name.' }
-  }
-  if (form.transport === 'stdio' && form.enabled && !command) {
-    return { error: 'A stdio server needs a command before it can be enabled.' }
-  }
-  if (form.transport !== 'stdio' && form.enabled && !url) {
-    return { error: 'HTTP and SSE servers need a URL before they can be enabled.' }
-  }
-  if (form.transport !== 'stdio' && url) {
-    if (!isValidUserMcpRemoteUrl(url)) {
-      return { error: 'MCP server URL is not valid.' }
-    }
-  }
-  const now = new Date().toISOString()
-  const server: UserMcpServerConfig = {
-    id: existing?.id || makeUserMcpServerId(name),
-    name,
-    enabled: form.enabled,
-    transport: form.transport,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now
-  }
-  const description = form.description.trim()
-  if (description) server.description = description
-  if (form.transport === 'stdio') {
-    if (command) server.command = command
-    if (args.length > 0) server.args = args
-    if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
-    if (parsedEnvSecrets.names.length > 0) {
-      server.secretRefs = { env: parsedEnvSecrets.names }
-    }
-  } else {
-    if (url) server.url = url
-    if (Object.keys(parsedHeaders.headers).length > 0) server.headers = parsedHeaders.headers
-    if (parsedHeaderSecrets.names.length > 0) {
-      server.secretRefs = { headers: parsedHeaderSecrets.names }
-    }
-    if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
-  }
-  return {
-    server,
-    secretValues: {
-      env: parsedEnvSecrets.values,
-      headers: parsedHeaderSecrets.values
-    }
-  }
-}
-
-function normalizeImportedUserMcpEnv(value: unknown): Record<string, string> | undefined {
-  if (!isPlainRecord(value)) return undefined
-  const env: Record<string, string> = {}
-  for (const [key, rawValue] of Object.entries(value)) {
-    if (!USER_MCP_ENV_NAME_RE.test(key) || typeof rawValue !== 'string') continue
-    env[key] = rawValue
-  }
-  return Object.keys(env).length > 0 ? env : undefined
-}
-
-function normalizeImportedUserMcpHeaders(value: unknown): Record<string, string> | undefined {
-  if (!isPlainRecord(value)) return undefined
-  const headers: Record<string, string> = {}
-  for (const [key, rawValue] of Object.entries(value)) {
-    if (!USER_MCP_HEADER_NAME_RE.test(key) || typeof rawValue !== 'string') continue
-    headers[key] = rawValue
-  }
-  return Object.keys(headers).length > 0 ? headers : undefined
-}
-
-function splitImportedUserMcpSecretFields(
-  values: Record<string, string> | undefined,
-  kind: 'env' | 'header'
-): {
-  plaintext?: Record<string, string>
-  secretNames: string[]
-  secretValues: Record<string, string>
-} {
-  const plaintext: Record<string, string> = {}
-  const secretValues: Record<string, string> = {}
-  for (const [key, value] of Object.entries(values ?? {})) {
-    if (canPersistPlaintextFieldValue({ key, value, kind })) {
-      plaintext[key] = value
-    } else {
-      secretValues[key] = value
-    }
-  }
-  return {
-    plaintext: Object.keys(plaintext).length > 0 ? plaintext : undefined,
-    secretNames: Object.keys(secretValues),
-    secretValues
-  }
-}
-
-function normalizeImportedBearerTokenEnvVar(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed && USER_MCP_ENV_NAME_RE.test(trimmed) ? trimmed : undefined
-}
-
-function normalizeImportedUserMcpArgs(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const args = value
-    .map((arg) => (typeof arg === 'string' ? arg.trim() : String(arg).trim()))
-    .filter(Boolean)
-    .slice(0, 64)
-  return args.length > 0 ? args : undefined
-}
-
-function stripTomlComment(line: string): string {
-  let quote: '"' | "'" | null = null
-  let escaped = false
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index]
-    if (quote === '"') {
-      if (escaped) {
-        escaped = false
-        continue
-      }
-      if (char === '\\') {
-        escaped = true
-        continue
-      }
-      if (char === '"') quote = null
-      continue
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null
-      continue
-    }
-    if (char === '"' || char === "'") {
-      quote = char
-      continue
-    }
-    if (char === '#') return line.slice(0, index)
-  }
-  return line
-}
-
-function splitTomlTopLevel(value: string, separator: ',' | '.' = ','): string[] {
-  const parts: string[] = []
-  let start = 0
-  let quote: '"' | "'" | null = null
-  let escaped = false
-  let squareDepth = 0
-  let braceDepth = 0
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]
-    if (quote === '"') {
-      if (escaped) {
-        escaped = false
-        continue
-      }
-      if (char === '\\') {
-        escaped = true
-        continue
-      }
-      if (char === '"') quote = null
-      continue
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null
-      continue
-    }
-    if (char === '"' || char === "'") {
-      quote = char
-      continue
-    }
-    if (char === '[') squareDepth += 1
-    else if (char === ']') squareDepth = Math.max(0, squareDepth - 1)
-    else if (char === '{') braceDepth += 1
-    else if (char === '}') braceDepth = Math.max(0, braceDepth - 1)
-    else if (char === separator && squareDepth === 0 && braceDepth === 0) {
-      parts.push(value.slice(start, index).trim())
-      start = index + 1
-    }
-  }
-  const tail = value.slice(start).trim()
-  if (tail) parts.push(tail)
-  return parts
-}
-
-function findTomlTopLevelEquals(value: string): number {
-  let quote: '"' | "'" | null = null
-  let escaped = false
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]
-    if (quote === '"') {
-      if (escaped) {
-        escaped = false
-        continue
-      }
-      if (char === '\\') {
-        escaped = true
-        continue
-      }
-      if (char === '"') quote = null
-      continue
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null
-      continue
-    }
-    if (char === '"' || char === "'") {
-      quote = char
-      continue
-    }
-    if (char === '=') return index
-  }
-  return -1
-}
-
-function parseTomlString(value: string): string | undefined {
-  const trimmed = value.trim()
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    try {
-      return JSON.parse(trimmed)
-    } catch {
-      return undefined
-    }
-  }
-  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-    return trimmed.slice(1, -1)
-  }
-  return undefined
-}
-
-function formatTomlBasicString(value: string): string {
-  return `"${value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t')}"`
-}
-
-function parseTomlKey(value: string): string | undefined {
-  const trimmed = value.trim()
-  const quoted = parseTomlString(trimmed)
-  if (quoted !== undefined) return quoted
-  return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : undefined
-}
-
-function formatTomlKeyComponent(value: string): string {
-  const trimmed = value.trim()
-  return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : formatTomlBasicString(trimmed)
-}
-
-function parseTomlDottedPath(value: string): string[] | undefined {
-  const parts = splitTomlTopLevel(value, '.').map(parseTomlKey)
-  return parts.every((part): part is string => typeof part === 'string') ? parts : undefined
-}
-
-function parseTomlStringArray(value: string): string[] | undefined {
-  const trimmed = value.trim()
-  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return undefined
-  const inner = trimmed.slice(1, -1).trim()
-  if (!inner) return []
-  const values = splitTomlTopLevel(inner).map(parseTomlString)
-  return values.every((entry): entry is string => typeof entry === 'string') ? values : undefined
-}
-
-function formatTomlStringArray(values: readonly string[]): string {
-  return `[${values.map(formatTomlBasicString).join(', ')}]`
-}
-
-function parseTomlStringInlineTable(value: string): Record<string, string> | undefined {
-  const trimmed = value.trim()
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined
-  const inner = trimmed.slice(1, -1).trim()
-  if (!inner) return {}
-  const table: Record<string, string> = {}
-  for (const pair of splitTomlTopLevel(inner)) {
-    const separatorIndex = findTomlTopLevelEquals(pair)
-    if (separatorIndex <= 0) return undefined
-    const key = parseTomlKey(pair.slice(0, separatorIndex))
-    const val = parseTomlString(pair.slice(separatorIndex + 1))
-    if (key === undefined || val === undefined) return undefined
-    table[key] = val
-  }
-  return table
-}
-
-function formatTomlStringInlineTable(
-  value: Record<string, string>,
-  options: { redactValues?: boolean } = {}
-): string {
-  const entries = Object.keys(value)
-    .sort()
-    .map((key) => {
-      const rawValue = options.redactValues ? '[stored in TaskWraith settings]' : value[key]
-      return `${formatTomlKeyComponent(key)} = ${formatTomlBasicString(rawValue ?? '')}`
-    })
-  return `{ ${entries.join(', ')} }`
-}
-
-function parseTomlBoolean(value: string): boolean | undefined {
-  const trimmed = value.trim().toLowerCase()
-  if (trimmed === 'true') return true
-  if (trimmed === 'false') return false
-  return undefined
-}
-
-function parseCodexMcpServersToml(text: string): Record<string, Record<string, unknown>> | null {
-  const servers: Record<string, Record<string, unknown>> = {}
-  let currentServerName: string | null = null
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = stripTomlComment(rawLine).trim()
-    if (!line) continue
-    const tableMatch = line.match(/^\[(.+)]$/)
-    if (tableMatch) {
-      const path = parseTomlDottedPath(tableMatch[1])
-      currentServerName = path && path.length === 2 && path[0] === 'mcp_servers' ? path[1] : null
-      if (currentServerName && !servers[currentServerName]) servers[currentServerName] = {}
-      continue
-    }
-    if (!currentServerName) continue
-    const separatorIndex = findTomlTopLevelEquals(line)
-    if (separatorIndex <= 0) continue
-    const key = parseTomlKey(line.slice(0, separatorIndex))
-    if (!key) continue
-    const rawValue = line.slice(separatorIndex + 1).trim()
-    const entry = servers[currentServerName]
-    if (key === 'args') {
-      const args = parseTomlStringArray(rawValue)
-      if (args) entry.args = args
-    } else if (key === 'env' || key === 'headers' || key === 'http_headers') {
-      const table = parseTomlStringInlineTable(rawValue)
-      if (table) entry[key] = table
-    } else if (key === 'enabled' || key === 'disabled') {
-      const boolValue = parseTomlBoolean(rawValue)
-      if (boolValue !== undefined) entry[key] = boolValue
-    } else {
-      const stringValue = parseTomlString(rawValue)
-      if (stringValue !== undefined) entry[key] = stringValue
-    }
-  }
-  return Object.keys(servers).length > 0 ? servers : null
-}
-
-function normalizeImportedUserMcpTransport(entry: Record<string, unknown>): UserMcpServerTransport {
-  const raw = String(entry.type || entry.transport || '')
-    .trim()
-    .toLowerCase()
-  if (raw === 'sse') return 'sse'
-  if (
-    raw === 'http' ||
-    raw === 'streamable_http' ||
-    raw === 'streamable-http' ||
-    raw === 'streamablehttp'
-  ) {
-    return 'http'
-  }
-  return typeof entry.url === 'string' && entry.url.trim() ? 'http' : 'stdio'
-}
-
-function buildImportedUserMcpServer(
-  name: string,
-  value: unknown,
-  usedNames: Set<string>
-): { server: UserMcpServerConfig; secretValues: UserMcpServerSecretValues } | null {
-  if (!isPlainRecord(value)) return null
-  const transport = normalizeImportedUserMcpTransport(value)
-  const command = typeof value.command === 'string' ? value.command.trim() : ''
-  const url = typeof value.url === 'string' ? value.url.trim() : ''
-  if (transport === 'stdio' && !command) return null
-  if (transport !== 'stdio' && !url) return null
-  if (transport !== 'stdio' && !isValidUserMcpRemoteUrl(url)) return null
-  const serverName = uniqueImportedUserMcpName(name, usedNames)
-  const now = new Date().toISOString()
-  const server: UserMcpServerConfig = {
-    id: makeUserMcpServerId(serverName),
-    name: serverName,
-    enabled:
-      typeof value.enabled === 'boolean'
-        ? value.enabled
-        : typeof value.disabled === 'boolean'
-          ? !value.disabled
-          : true,
-    transport,
-    createdAt: now,
-    updatedAt: now
-  }
-  if (typeof value.description === 'string' && value.description.trim()) {
-    server.description = value.description.trim()
-  }
-  if (command) server.command = command
-  if (url) server.url = url
-  const args = normalizeImportedUserMcpArgs(value.args)
-  if (args) server.args = args
-  const env = normalizeImportedUserMcpEnv(value.env)
-  const envSplit = splitImportedUserMcpSecretFields(env, 'env')
-  if (envSplit.plaintext) server.env = envSplit.plaintext
-  if (envSplit.secretNames.length > 0) {
-    server.secretRefs = { ...(server.secretRefs || {}), env: envSplit.secretNames }
-  }
-  const secretValues: UserMcpServerSecretValues = {
-    env: envSplit.secretValues,
-    headers: {}
-  }
-  if (transport !== 'stdio') {
-    const headers =
-      normalizeImportedUserMcpHeaders(value.headers) ??
-      normalizeImportedUserMcpHeaders(value.http_headers)
-    const headerSplit = splitImportedUserMcpSecretFields(headers, 'header')
-    if (headerSplit.plaintext) server.headers = headerSplit.plaintext
-    if (headerSplit.secretNames.length > 0) {
-      server.secretRefs = { ...(server.secretRefs || {}), headers: headerSplit.secretNames }
-      secretValues.headers = headerSplit.secretValues
-    }
-    const bearerTokenEnvVar =
-      normalizeImportedBearerTokenEnvVar(value.bearerTokenEnvVar) ??
-      normalizeImportedBearerTokenEnvVar(value.bearer_token_env_var)
-    if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
-  }
-  return { server, secretValues }
-}
-
-export function parseUserMcpServersImportJson(
-  text: string,
-  existingServers: readonly UserMcpServerConfig[] = []
-): {
-  servers: UserMcpServerConfig[]
-  skipped: number
-  secretValuesByServerId: Record<string, UserMcpServerSecretValues>
-  error?: string
-} {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    const tomlServers = parseCodexMcpServersToml(text)
-    if (tomlServers) {
-      parsed = { mcpServers: tomlServers }
-    } else {
-      return {
-        servers: [],
-        skipped: 0,
-        secretValuesByServerId: {},
-        error: 'Paste valid JSON or Codex MCP TOML before importing.'
-      }
-    }
-  }
-  if (!isPlainRecord(parsed)) {
-    return {
-      servers: [],
-      skipped: 0,
-      secretValuesByServerId: {},
-      error: 'MCP import config must be an object.'
-    }
-  }
-  const rawServers = isPlainRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
-  const usedNames = new Set(existingServers.map((server) => server.name.trim().toLowerCase()))
-  const servers: UserMcpServerConfig[] = []
-  const secretValuesByServerId: Record<string, UserMcpServerSecretValues> = {}
-  let skipped = 0
-  for (const [name, value] of Object.entries(rawServers)) {
-    const result = buildImportedUserMcpServer(name, value, usedNames)
-    if (result) {
-      servers.push(result.server)
-      if (
-        Object.keys(result.secretValues.env).length > 0 ||
-        Object.keys(result.secretValues.headers).length > 0
-      ) {
-        secretValuesByServerId[result.server.id] = result.secretValues
-      }
-    } else {
-      skipped += 1
-    }
-  }
-  if (servers.length === 0) {
-    return {
-      servers,
-      skipped,
-      secretValuesByServerId,
-      error: 'No supported MCP servers found. Import entries need either command or url.'
-    }
-  }
-  return { servers, skipped, secretValuesByServerId }
-}
-
-function userMcpServerAuditKey(server: UserMcpServerConfig): string {
-  return server.name.trim() || server.id
-}
-
-function uniqueUserMcpServerAuditKey(server: UserMcpServerConfig, usedKeys: Set<string>): string {
-  const base = userMcpServerAuditKey(server)
-  let candidate = base
-  let suffix = 2
-  while (usedKeys.has(candidate.toLowerCase())) {
-    candidate = `${base} ${suffix}`
-    suffix += 1
-  }
-  usedKeys.add(candidate.toLowerCase())
-  return candidate
-}
-
-function slugForUserMcpProviderName(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 48) || 'server'
-  )
-}
-
-function userMcpServerProviderKey(
-  server: Pick<UserMcpServerConfig, 'id' | 'name'>,
-  usedKeys: Set<string>
-): string {
-  const base = `user_${slugForUserMcpProviderName(server.name || server.id)}`
-  let candidate = base
-  let suffix = 2
-  while (usedKeys.has(candidate) || candidate === 'TaskWraith') {
-    candidate = `${base}_${suffix}`
-    suffix += 1
-  }
-  usedKeys.add(candidate)
-  return candidate
-}
-
-function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, unknown> {
-  const env =
-    server.env && Object.keys(server.env).length > 0
-      ? Object.fromEntries(
-          Object.keys(server.env)
-            .sort()
-            .map((key) => [key, '[stored in TaskWraith settings]'])
-        )
-      : undefined
-  const headers =
-    server.headers && Object.keys(server.headers).length > 0
-      ? Object.fromEntries(
-          Object.keys(server.headers)
-            .sort()
-            .map((key) => [key, '[stored in TaskWraith settings]'])
-        )
-      : undefined
-  const entry =
-    server.transport === 'stdio'
-      ? {
-          type: 'stdio',
-          command: server.command || '',
-          ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
-          ...(env ? { env } : {})
-        }
-      : {
-          type: server.transport,
-          url: server.url || '',
-          ...(headers ? { headers } : {}),
-          ...(server.bearerTokenEnvVar ? { bearer_token_env_var: server.bearerTokenEnvVar } : {}),
-          ...(env ? { env } : {})
-        }
-  return entry
-}
-
-function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        [userMcpServerAuditKey(server)]: userMcpServerAuditEntry(server)
-      },
-      taskwraith: {
-        id: server.id,
-        enabled: server.enabled,
-        ...(server.pluginProvenance ? { pluginProvenance: server.pluginProvenance } : {})
-      }
-    },
-    null,
-    2
-  )
-}
-
-export function formatUserMcpServersAuditJson(servers: readonly UserMcpServerConfig[]): string {
-  const usedKeys = new Set<string>()
-  return JSON.stringify(
-    {
-      mcpServers: Object.fromEntries(
-        servers.map((server) => [
-          uniqueUserMcpServerAuditKey(server, usedKeys),
-          userMcpServerAuditEntry(server)
-        ])
-      ),
-      taskwraith: {
-        servers: servers.map((server) => ({
-          id: server.id,
-          name: server.name,
-          enabled: server.enabled,
-          ...(server.pluginProvenance ? { pluginProvenance: server.pluginProvenance } : {})
-        }))
-      }
-    },
-    null,
-    2
-  )
-}
-
-function isCodexExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  return server.enabled && server.transport !== 'sse' && hasRunnableUserMcpEndpoint(server)
-}
-
-function isClaudeExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  return server.enabled && hasRunnableUserMcpEndpoint(server)
-}
-
-function isCursorExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  return server.enabled && server.transport !== 'sse' && hasRunnableUserMcpEndpoint(server)
-}
-
-export function userMcpServerProviderExportLabels(server: UserMcpServerConfig): string[] {
-  const labels: string[] = []
-  if (isCodexExportableUserMcpServer(server)) labels.push('Codex TOML')
-  if (isClaudeExportableUserMcpServer(server)) labels.push('Claude JSON')
-  if (isCursorExportableUserMcpServer(server)) labels.push('Cursor mcp.json')
-  return labels
-}
-
-function hasUserMcpAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
-  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === 'authorization')
-}
-
-function userMcpServerRemoteHeaders(
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): Record<string, string> | undefined {
-  const headers: Record<string, string> =
-    server.headers && Object.keys(server.headers).length > 0
-      ? Object.fromEntries(
-          Object.keys(server.headers)
-            .sort()
-            .map((key) => [
-              key,
-              options.redactValues ? '[stored in TaskWraith settings]' : server.headers?.[key] || ''
-            ])
-        )
-      : {}
-  const bearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
-  if (bearerTokenEnvVar && !hasUserMcpAuthorizationHeader(server.headers)) {
-    headers.Authorization = options.redactValues
-      ? '[stored in TaskWraith settings]'
-      : `Bearer \${${bearerTokenEnvVar}}`
-  }
-  return Object.keys(headers).length > 0 ? headers : undefined
-}
-
-function userMcpServerProviderEntry(
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): Record<string, unknown> {
-  if (server.transport === 'stdio') {
-    const env =
-      server.env && Object.keys(server.env).length > 0
-        ? Object.fromEntries(
-            Object.keys(server.env)
-              .sort()
-              .map((key) => [
-                key,
-                options.redactValues ? '[stored in TaskWraith settings]' : server.env?.[key] || ''
-              ])
-          )
-        : undefined
-    return {
-      type: 'stdio',
-      command: server.command?.trim() || '',
-      ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
-      ...(env ? { env } : {})
-    }
-  }
-  const headers = userMcpServerRemoteHeaders(server, options)
-  return {
-    type: server.transport,
-    url: server.url?.trim() || '',
-    ...(headers ? { headers } : {})
-  }
-}
-
-function findUserMcpServerProviderKey(
-  servers: readonly UserMcpServerConfig[],
-  targetServer: UserMcpServerConfig,
-  isExportable: (server: UserMcpServerConfig) => boolean
-): string | null {
-  const usedKeys = new Set<string>()
-  for (const server of servers) {
-    if (!isExportable(server)) continue
-    const key = userMcpServerProviderKey(server, usedKeys)
-    if (server.id === targetServer.id) return key
-  }
-  return null
-}
-
-export function formatUserMcpServersClaudeJson(
-  servers: readonly UserMcpServerConfig[],
-  options: { redactValues?: boolean } = {}
-): string {
-  const usedKeys = new Set<string>()
-  const mcpServers = Object.fromEntries(
-    servers
-      .filter(isClaudeExportableUserMcpServer)
-      .map((server) => [
-        userMcpServerProviderKey(server, usedKeys),
-        userMcpServerProviderEntry(server, options)
-      ])
-  )
-  return JSON.stringify({ mcpServers }, null, 2)
-}
-
-export function formatUserMcpServerClaudeJsonSnippet(
-  servers: readonly UserMcpServerConfig[],
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): string {
-  const providerKey = findUserMcpServerProviderKey(servers, server, isClaudeExportableUserMcpServer)
-  if (!providerKey) return ''
-  return JSON.stringify(
-    { mcpServers: { [providerKey]: userMcpServerProviderEntry(server, options) } },
-    null,
-    2
-  )
-}
-
-function userMcpServerCursorEntry(
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): Record<string, unknown> {
-  if (server.transport === 'stdio') {
-    const env =
-      server.env && Object.keys(server.env).length > 0
-        ? Object.fromEntries(
-            Object.keys(server.env)
-              .sort()
-              .map((key) => [
-                key,
-                options.redactValues ? '[stored in TaskWraith settings]' : server.env?.[key] || ''
-              ])
-          )
-        : undefined
-    return {
-      command: server.command?.trim() || '',
-      args: [...(server.args ?? [])],
-      ...(env ? { env } : {})
-    }
-  }
-  const headers = userMcpServerRemoteHeaders(server, options)
-  return {
-    url: server.url?.trim() || '',
-    ...(headers ? { headers } : {})
-  }
-}
-
-export function formatUserMcpServersCursorJson(
-  servers: readonly UserMcpServerConfig[],
-  options: { redactValues?: boolean } = {}
-): string {
-  const usedKeys = new Set<string>()
-  const mcpServers = Object.fromEntries(
-    servers
-      .filter(isCursorExportableUserMcpServer)
-      .map((server) => [
-        userMcpServerProviderKey(server, usedKeys),
-        userMcpServerCursorEntry(server, options)
-      ])
-  )
-  return JSON.stringify({ mcpServers }, null, 2)
-}
-
-export function formatUserMcpServerCursorJsonSnippet(
-  servers: readonly UserMcpServerConfig[],
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): string {
-  const providerKey = findUserMcpServerProviderKey(servers, server, isCursorExportableUserMcpServer)
-  if (!providerKey) return ''
-  return JSON.stringify(
-    { mcpServers: { [providerKey]: userMcpServerCursorEntry(server, options) } },
-    null,
-    2
-  )
-}
-
-function formatUserMcpServerCodexTomlEntry(
-  server: UserMcpServerConfig,
-  providerKey: string,
-  options: { redactValues?: boolean } = {}
-): string {
-  const tableKey = formatTomlKeyComponent(providerKey)
-  const lines = [`[mcp_servers.${tableKey}]`]
-  if (server.transport === 'stdio') {
-    lines.push(`command = ${formatTomlBasicString(server.command?.trim() || '')}`)
-    if (server.args && server.args.length > 0) {
-      lines.push(`args = ${formatTomlStringArray(server.args)}`)
-    }
-    if (server.env && Object.keys(server.env).length > 0) {
-      lines.push(`env = ${formatTomlStringInlineTable(server.env, options)}`)
-    }
-  } else {
-    lines.push(`url = ${formatTomlBasicString(server.url?.trim() || '')}`)
-    if (server.bearerTokenEnvVar) {
-      lines.push(`bearer_token_env_var = ${formatTomlBasicString(server.bearerTokenEnvVar)}`)
-    }
-    if (server.headers && Object.keys(server.headers).length > 0) {
-      lines.push(`http_headers = ${formatTomlStringInlineTable(server.headers, options)}`)
-    }
-  }
-  return lines.join('\n')
-}
-
-export function formatUserMcpServersCodexToml(
-  servers: readonly UserMcpServerConfig[],
-  options: { redactValues?: boolean } = {}
-): string {
-  const usedKeys = new Set<string>()
-  const entries: string[] = []
-  for (const server of servers) {
-    if (!isCodexExportableUserMcpServer(server)) continue
-    entries.push(
-      formatUserMcpServerCodexTomlEntry(server, userMcpServerProviderKey(server, usedKeys), options)
-    )
-  }
-  return entries.length > 0 ? entries.join('\n\n') : '# No enabled Codex-compatible MCP servers.'
-}
-
-export function formatUserMcpServerCodexTomlSnippet(
-  servers: readonly UserMcpServerConfig[],
-  server: UserMcpServerConfig,
-  options: { redactValues?: boolean } = {}
-): string {
-  const providerKey = findUserMcpServerProviderKey(servers, server, isCodexExportableUserMcpServer)
-  return providerKey ? formatUserMcpServerCodexTomlEntry(server, providerKey, options) : ''
-}
-
 const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
   value: ProviderId
   label: string
@@ -2096,1112 +785,6 @@ const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
   }
 ]
 
-type McpToolGroup =
-  | 'workspace'
-  | 'git'
-  | 'runtime'
-  | 'web'
-  | 'canvas'
-  | 'ensemble'
-  | 'goals'
-  | 'memory'
-  | 'media'
-  | 'creative'
-  | 'outlook'
-  | 'ide'
-
-type McpToolPolicyKey = keyof AgenticServicesSettings
-
-const MCP_TOOL_GROUP_LABELS: Record<McpToolGroup, string> = {
-  workspace: 'Workspace files and search',
-  git: 'Git',
-  runtime: 'Runtime and diagnostics',
-  web: 'Web and window context',
-  canvas: 'Canvas and launches',
-  ensemble: 'Ensemble and collaboration',
-  goals: 'Goals and evidence',
-  memory: 'Recall and wakeups',
-  media: 'Media tools',
-  creative: 'Creative apps',
-  outlook: 'Outlook mail and calendar',
-  ide: 'IDE and provider status'
-}
-
-const MCP_TOOL_GROUP_ORDER: McpToolGroup[] = [
-  'workspace',
-  'git',
-  'runtime',
-  'web',
-  'canvas',
-  'ensemble',
-  'goals',
-  'memory',
-  'media',
-  'creative',
-  'outlook',
-  'ide'
-]
-
-const MCP_TOOL_OVERRIDES: Partial<
-  Record<
-    TaskWraithMcpToolName,
-    {
-      label: string
-      transcript: string
-      group: McpToolGroup
-      iconRef: string
-      policyKey: McpToolPolicyKey
-      description: string
-    }
-  >
-> = {
-  run_shell_command: {
-    label: 'Run shell command',
-    transcript: 'Ran shell command',
-    group: 'runtime',
-    iconRef: 'tool:terminal',
-    policyKey: 'shellCommands',
-    description: 'Executes workspace-scoped shell commands with approval and audit capture.'
-  },
-  write_file: {
-    label: 'Write file',
-    transcript: 'Wrote file',
-    group: 'workspace',
-    iconRef: 'tool:file-write',
-    policyKey: 'fileChanges',
-    description: 'Writes a workspace file and records the resulting change summary.'
-  },
-  replace: {
-    label: 'Replace text',
-    transcript: 'Edited file',
-    group: 'workspace',
-    iconRef: 'tool:replace',
-    policyKey: 'fileChanges',
-    description: 'Applies a targeted replacement inside a workspace file.'
-  },
-  create_directory: {
-    label: 'Create directory',
-    transcript: 'Created directory',
-    group: 'workspace',
-    iconRef: 'tool:folder',
-    policyKey: 'fileChanges',
-    description: 'Creates a workspace directory after file-change approval.'
-  },
-  delete_path: {
-    label: 'Delete path',
-    transcript: 'Deleted path',
-    group: 'workspace',
-    iconRef: 'tool:file-write',
-    policyKey: 'fileChanges',
-    description: 'Deletes a workspace file or empty directory after approval.'
-  },
-  move_path: {
-    label: 'Move path',
-    transcript: 'Moved path',
-    group: 'workspace',
-    iconRef: 'tool:file-write',
-    policyKey: 'fileChanges',
-    description: 'Moves a workspace file or directory after approval.'
-  },
-  rename_path: {
-    label: 'Rename path',
-    transcript: 'Renamed path',
-    group: 'workspace',
-    iconRef: 'tool:file-write',
-    policyKey: 'fileChanges',
-    description: 'Renames a workspace file or directory after approval.'
-  },
-  read_file: {
-    label: 'Read file',
-    transcript: 'Read file',
-    group: 'workspace',
-    iconRef: 'tool:file-read',
-    policyKey: 'mcpTools',
-    description: 'Reads a workspace file for provider context.'
-  },
-  list_directory: {
-    label: 'List directory',
-    transcript: 'Listed directory',
-    group: 'workspace',
-    iconRef: 'tool:folder',
-    policyKey: 'mcpTools',
-    description: 'Lists workspace folders without leaving the project boundary.'
-  },
-  workspace_search: {
-    label: 'Workspace search',
-    transcript: 'Searched workspace',
-    group: 'workspace',
-    iconRef: 'tool:search',
-    policyKey: 'mcpTools',
-    description: 'Searches project text and file names for provider grounding.'
-  },
-  web_search: {
-    label: 'Web search',
-    transcript: 'Searched web',
-    group: 'web',
-    iconRef: 'tool:search',
-    policyKey: 'mcpTools',
-    description: 'Searches the web for current information through TaskWraith policy.'
-  },
-  web_fetch: {
-    label: 'Web fetch',
-    transcript: 'Fetched web page',
-    group: 'web',
-    iconRef: 'tool:browser',
-    policyKey: 'mcpTools',
-    description: 'Fetches a live web page as read-only text through TaskWraith policy.'
-  },
-  apply_patch: {
-    label: 'Apply patch',
-    transcript: 'Applied patch',
-    group: 'workspace',
-    iconRef: 'tool:patch',
-    policyKey: 'fileChanges',
-    description: 'Applies a structured patch with file-change audit output.'
-  },
-  mesh_topology_convert: {
-    label: 'Mesh Topology Convert',
-    transcript: 'Converted mesh topology',
-    group: 'canvas',
-    iconRef: 'tool:mesh-convert',
-    policyKey: 'meshCanvas',
-    description: 'Converts a primitive or imported mesh node into revisioned editable topology.'
-  },
-  mesh_topology_inspect: {
-    label: 'Mesh Topology Inspect',
-    transcript: 'Inspected mesh topology',
-    group: 'canvas',
-    iconRef: 'tool:mesh-inspect',
-    policyKey: 'meshCanvas',
-    description: 'Reads bounded pages of mesh vertices, edges, faces, UV loops, bones, or summary.'
-  },
-  mesh_topology_edit: {
-    label: 'Mesh Topology Edit',
-    transcript: 'Edited mesh topology',
-    group: 'canvas',
-    iconRef: 'tool:mesh-edit',
-    policyKey: 'meshCanvas',
-    description: 'Applies an atomic CAS batch of topology, UV, sculpt, or rigging operations.'
-  },
-  delegate_to_subthread: {
-    label: 'Delegate to sub-thread',
-    transcript: 'Delegated sub-thread',
-    group: 'ensemble',
-    iconRef: 'tool:delegate',
-    policyKey: 'subThreadDelegation',
-    description: 'Starts or continues a linked provider sub-thread after policy checks.'
-  },
-  ensemble_yield: {
-    label: 'Yield ensemble turn',
-    transcript: 'Yielded ensemble turn',
-    group: 'ensemble',
-    iconRef: 'tool:yield',
-    policyKey: 'mcpTools',
-    description: 'Lets an Ensemble participant pass control to the next speaker.'
-  },
-  appwatch_latest_frame: {
-    label: 'Latest Appwatch frame',
-    transcript: 'Captured latest frame',
-    group: 'web',
-    iconRef: 'tool:image',
-    policyKey: 'mcpTools',
-    description: 'Returns metadata plus the newest attached-window image frame.'
-  },
-  appwatch_frames: {
-    label: 'Appwatch frame batch',
-    transcript: 'Captured frame batch',
-    group: 'web',
-    iconRef: 'tool:frames',
-    policyKey: 'mcpTools',
-    description: 'Returns a bounded batch of recent attached-window frames.'
-  },
-  get_diagnostics: {
-    label: 'Get diagnostics',
-    transcript: 'Checked diagnostics',
-    group: 'runtime',
-    iconRef: 'tool:diagnostics',
-    policyKey: 'shellCommands',
-    description: 'Runs fixed workspace diagnostic tools and returns structured problems.'
-  },
-  project_reference_propose: {
-    label: 'Propose Project reference',
-    transcript: 'Proposed Project reference',
-    group: 'goals',
-    iconRef: 'tool:plan',
-    policyKey: 'mcpTools',
-    description:
-      'Adds an untrusted file, folder, or link suggestion to the human review inbox without reading it or granting access.'
-  },
-  project_reference_list: {
-    label: 'List Project references',
-    transcript: 'Listed Project references',
-    group: 'goals',
-    iconRef: 'tool:plan',
-    policyKey: 'mcpTools',
-    description:
-      'Lists Project reference catalogue metadata for the active chat without fetching, statting, or probing locators.'
-  }
-}
-
-function titleFromSnake(value: string): string {
-  return value
-    .split('_')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-/** "1 tool" / "2 tools" — naive count + singular/plural noun. */
-function pluralizeCount(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`
-}
-
-const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolName[]> = {
-  workspace: [
-    'read_file',
-    'list_directory',
-    'find_files',
-    'workspace_search',
-    'workspace_symbols',
-    'list_chat_attachments',
-    'inspect_chat_attachment',
-    'open_workspace_file',
-    'write_file',
-    'replace',
-    'create_directory',
-    'delete_path',
-    'move_path',
-    'rename_path',
-    'apply_patch'
-  ],
-  git: [
-    'git_status',
-    'git_diff',
-    'git_log',
-    'git_show',
-    'git_blame',
-    'git_stage',
-    'git_commit',
-    'git_push',
-    'git_create_pr',
-    'github_ci_status'
-  ],
-  runtime: [
-    'run_shell_command',
-    'run_task',
-    'start_background_process',
-    'list_background_processes',
-    'read_background_process',
-    'kill_background_process',
-    'get_diagnostics',
-    'list_active_runs',
-    'cancel_active_run',
-    'test_result_summary',
-    'run_timeline',
-    'raw_provider_events',
-    'request_tool_permission',
-    // Appearance of TaskWraith itself — an agent-accessed capability rather
-    // than a workspace or canvas one, so it groups with the other tools that
-    // act on the running app.
-    'theme_tokens_get',
-    'theme_tokens_set'
-  ],
-  web: [
-    'web_search',
-    'web_fetch',
-    'browser_open',
-    'browser_click',
-    'browser_screenshot',
-    'browser_console',
-    'attached_window_capture',
-    'attached_window_status',
-    'appwatch_start',
-    'appwatch_stop',
-    'appwatch_status',
-    'appwatch_latest_frame',
-    'appwatch_frames',
-    'appshots',
-    'appshots_status'
-  ],
-  canvas: [
-    'launch_list_targets',
-    'launch_start',
-    'launch_adopt',
-    'launch_stop',
-    'launch_status',
-    'canvas_open',
-    'canvas_render_html',
-    'canvas_render_chart',
-    'canvas_open_attachment',
-    'canvas_open_launch',
-    'canvas_sketch_open',
-    'canvas_sketch_get',
-    'canvas_sketch_update',
-    'canvas_list',
-    'canvas_status',
-    'canvas_snapshot',
-    'canvas_screenshot',
-    'canvas_inspect',
-    'canvas_network',
-    'canvas_console',
-    'canvas_resize',
-    'canvas_click',
-    'canvas_fill',
-    'canvas_annotate',
-    'canvas_eval',
-    'canvas_navigate',
-    'canvas_close',
-    'mesh_scene_create',
-    'mesh_scene_list',
-    'mesh_scene_inspect',
-    'mesh_scene_import',
-    'mesh_scene_apply',
-    'mesh_scene_set_material',
-    'mesh_scene_present',
-    'mesh_scene_close',
-    'mesh_scene_delete',
-    'mesh_topology_convert',
-    'mesh_topology_inspect',
-    'mesh_topology_edit',
-    'simulator_status',
-    'simulator_open',
-    'simulator_boot',
-    'simulator_install',
-    'simulator_launch',
-    'simulator_screenshot',
-    'simulator_terminate',
-    'simulator_inspect',
-    'simulator_button',
-    'simulator_rotate',
-    'simulator_tap',
-    'simulator_type',
-    'simulator_scroll'
-  ],
-  ensemble: [
-    'delegate_to_subthread',
-    'delegate_wave',
-    'list_subthreads',
-    'read_subthread_result',
-    'cancel_subthread',
-    'claim_fleet_wave',
-    'ensemble_yield',
-    'ensemble_send',
-    'ensemble_fanout',
-    'ensemble_fanout_all',
-    'ensemble_await',
-    'ensemble_lane_result',
-    'thread_message',
-    'ensemble_bossman_control',
-    'ensemble_control',
-    'ensemble_poll_response',
-    'ensemble_propose_goal_complete',
-    'ensemble_roster_edit',
-    'ensemble_brief_update',
-    'list_ensemble_participants',
-    'scout_brief',
-    'blackboard_post',
-    'blackboard_read',
-    'blackboard_delete',
-    'ask_user_question'
-  ],
-  goals: [
-    'goal_read',
-    'goal_update',
-    'update_goal',
-    'goal_complete',
-    'goal_blocked',
-    'todo_write',
-    'workspace_board_snapshot',
-    'workspace_board_preview_plan',
-    'workspace_board_apply_plan',
-    'project_reference_propose',
-    'project_reference_list',
-    'prompt_task_normalize',
-    'scope_radar',
-    'repo_convention_scan',
-    'coherence_gate_check',
-    'evidence_pack_write',
-    'completion_claim_check'
-  ],
-  memory: [
-    'schedule_wakeup',
-    'cancel_wakeup',
-    'tw_recall_find',
-    'tw_recall_read',
-    'tw_recall_read_events',
-    'tw_introspection_run',
-    'tw_introspection_list',
-    'tw_introspection_read',
-    'tw_introspection_review',
-    'skill_list',
-    'skill_read'
-  ],
-  media: [
-    'image_view',
-    'image_edit',
-    'svg_rasterize',
-    'image_generate',
-    'audio_render_wav',
-    'audio_analyze',
-    'inspect_audio_segment',
-    'video_probe',
-    'video_thumbnail',
-    'video_decode_frame',
-    'inspect_video_frames',
-    'video_encode_clip',
-    'video_concat_clips',
-    'audio_extract',
-    'transcode_audio',
-    'audio_mix',
-    'transcribe_audio',
-    'document_extract_text',
-    'document_ocr_image',
-    'transcode_video'
-  ],
-  creative: [
-    'creative_app_status',
-    'creative_app_capabilities',
-    'creative_project_snapshot',
-    'creative_timeline_validate',
-    'creative_timeline_ir',
-    'creative_timeline_diff',
-    'creative_timeline_import',
-    'creative_applescript_dispatch',
-    'creative_blender_python',
-    'creative_midi_dispatch'
-  ],
-  outlook: [
-    'outlook_list_messages',
-    'outlook_search_messages',
-    'outlook_get_message',
-    'outlook_list_events',
-    'outlook_create_draft',
-    'outlook_create_event'
-  ],
-  ide: [
-    'approval_status',
-    'provider_auth_status',
-    'provider_usage_status',
-    'open_in_ide',
-    'open_in_ide_at_position',
-    'reveal_in_finder',
-    'ide_app_status',
-    'ide_app_capabilities',
-    'list_running_ides',
-    'create_handoff_card',
-    'switch_auth_profile',
-    'agent_delegation_role'
-  ]
-}
-
-const MCP_TOOL_GROUP_LOOKUP = new Map<TaskWraithMcpToolName, McpToolGroup>(
-  Object.entries(MCP_TOOL_GROUPED_NAMES).flatMap(([group, tools]) =>
-    tools.map((tool) => [tool, group as McpToolGroup])
-  )
-)
-
-export function uncategorizedMcpToolsForSettings(): TaskWraithMcpToolName[] {
-  return TASKWRAITH_MCP_TOOLS.filter((tool) => !MCP_TOOL_GROUP_LOOKUP.has(tool))
-}
-
-function inferMcpToolGroup(tool: TaskWraithMcpToolName): McpToolGroup {
-  return MCP_TOOL_GROUP_LOOKUP.get(tool) ?? 'workspace'
-}
-
-function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
-  // WS-C: the per-tool Settings policy chip reads from the SAME shared canonical
-  // ladder as the runtime approval gate (catalogToolAgenticService), so the
-  // bucket shown here can never drift from the one actually enforced. Agentic
-  // ServiceId is a subset of keyof AgenticServicesSettings (McpToolPolicyKey).
-  return catalogToolAgenticService(tool)
-}
-
-function getMcpToolMeta(tool: TaskWraithMcpToolName): {
-  label: string
-  transcript: string
-  group: McpToolGroup
-  iconRef: string
-  policyKey: McpToolPolicyKey
-  description: string
-} {
-  const override = MCP_TOOL_OVERRIDES[tool]
-  if (override) return override
-  const group = inferMcpToolGroup(tool)
-  return {
-    label: titleFromSnake(tool),
-    transcript: titleFromSnake(tool.replace(/^creative_/, '').replace(/^appwatch_/, 'Appwatch ')),
-    group,
-    iconRef: `tool:${group}`,
-    policyKey: inferMcpPolicyKey(tool),
-    description: `${MCP_TOOL_GROUP_LABELS[group]} tool exposed through the TaskWraith MCP bridge.`
-  }
-}
-
-const MCP_ICON_REF_FAMILIES: Record<string, ToolFamily> = {
-  'tool:auth': 'diagnostic',
-  'tool:browser': 'browser',
-  'tool:canvas': 'canvas',
-  'tool:creative': 'diagnostic',
-  'tool:delegate': 'delegate',
-  'tool:diagnostics': 'diagnostic',
-  'tool:ensemble': 'roster',
-  'tool:file-read': 'file',
-  'tool:file-write': 'edit',
-  'tool:files': 'edit',
-  'tool:folder': 'file',
-  'tool:frames': 'window-context',
-  'tool:git': 'git',
-  'tool:goals': 'plan',
-  'tool:ide': 'handoff',
-  'tool:image': 'image',
-  'tool:media': 'video',
-  'tool:mesh-convert': 'mesh-convert',
-  'tool:mesh-inspect': 'mesh-inspect',
-  'tool:mesh-edit': 'mesh-edit',
-  'tool:memory': 'memory',
-  'tool:patch': 'patch',
-  'tool:replace': 'edit',
-  'tool:runtime': 'process',
-  'tool:search': 'search',
-  'tool:subthreads': 'subthread',
-  'tool:terminal': 'shell',
-  'tool:web': 'browser',
-  'tool:workspace': 'task',
-  'tool:yield': 'yield'
-}
-
-function resolveMcpToolIconFamily(tool: {
-  name: TaskWraithMcpToolName
-  iconRef: string
-}): ToolFamily {
-  return toolNameToFamily(tool.name) ?? MCP_ICON_REF_FAMILIES[tool.iconRef] ?? 'mcp'
-}
-
-function formatMcpInvocation(provider: ProviderId, tool: TaskWraithMcpToolName): string {
-  if (provider === 'claude') return `mcp__TaskWraith__${tool}`
-  return `TaskWraith__${tool}`
-}
-
-function getMcpPolicyLabel(
-  agenticServices: AgenticServicesSettings,
-  policyKey: McpToolPolicyKey
-): string {
-  const value = agenticServices[policyKey] ?? ''
-  if (policyKey === 'networkAccess') {
-    return NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
-  }
-  return AGENTIC_SERVICE_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
-}
-
-function countMcpStatusTools(status: any): number {
-  if (!status) return 0
-  if (Array.isArray(status.tools)) return status.tools.length
-  if (status.tools && typeof status.tools === 'object') return Object.keys(status.tools).length
-  if (Array.isArray(status.data)) {
-    return status.data.reduce((total: number, server: any) => {
-      if (Array.isArray(server?.tools)) return total + server.tools.length
-      if (server?.tools && typeof server.tools === 'object')
-        return total + Object.keys(server.tools).length
-      return total
-    }, 0)
-  }
-  return 0
-}
-
-function countMcpStatusServers(status: any): number {
-  return Array.isArray(status?.data) ? status.data.length : 0
-}
-
-const MCP_TOOL_CATALOG = TASKWRAITH_MCP_TOOLS.map((name) => ({
-  name,
-  ...getMcpToolMeta(name)
-})).sort((a, b) => {
-  const groupDelta = MCP_TOOL_GROUP_ORDER.indexOf(a.group) - MCP_TOOL_GROUP_ORDER.indexOf(b.group)
-  return groupDelta === 0 ? a.label.localeCompare(b.label) : groupDelta
-})
-
-export type SettingsTab =
-  | 'appearance'
-  | 'behavior'
-  | 'about'
-  | 'providers'
-  | 'roster'
-  | 'agent-pool'
-  | 'mcp'
-  | 'mcp-servers'
-  | 'runtime-profiles'
-  | 'plugins'
-  | 'instructions'
-  | 'skills'
-  | 'hooks'
-  | 'key-commands'
-  | 'approval-ledger'
-  | 'thread-introspection'
-  | 'safety-privacy'
-  | 'pairing'
-  | 'channels'
-  | 'workspaces'
-  | 'pinned-messages'
-  | 'archived'
-  | 'model-usage'
-  | 'local-servers'
-  | 'notification-banners'
-
-/**
- * Tab grouping discriminator. The settings sidebar renders user-facing
- * group labels so the takeover scales beyond a flat list while the
- * underlying tab ids remain stable for persisted state.
- */
-export type SettingsTabGroup =
-  | 'app'
-  | 'ai-providers'
-  | 'automation'
-  | 'workspaces'
-  | 'integrations'
-  | 'data'
-
-export const SETTINGS_TAB_GROUP_LABELS: Record<SettingsTabGroup, string> = {
-  app: 'App',
-  'ai-providers': 'AI & Providers',
-  automation: 'Automation',
-  workspaces: 'Workspaces',
-  integrations: 'Integrations',
-  data: 'Data'
-}
-
-export type SettingsScope = 'global' | 'provider' | 'workspace' | 'device'
-
-export interface SettingsTabDefinition {
-  id: SettingsTab
-  label: string
-  group: SettingsTabGroup
-  description: string
-  aliases: string[]
-  scope: SettingsScope
-}
-
-/**
- * Canonical settings-tab list. Exported so `SettingsSidebar` (used in
- * full-app takeover layout) can render the same list of tabs as the
- * inline tab bar inside this panel — keeping both render sites in
- * lockstep when tabs are added / renamed.
- *
- * Order matters: the sidebar renders tabs in this order and inserts
- * a divider whenever the `group` field changes from the previous
- * tab. The TestFlight-gated Devices tab remains last in the canonical
- * list, but `getVisibleSettingsTabs` hides it while the iOS remote
- * feature flag is off.
- */
-export const SETTINGS_TABS: SettingsTabDefinition[] = [
-  {
-    id: 'behavior',
-    label: 'General',
-    group: 'app',
-    description: 'Core app behavior, dashboard defaults, approval timeouts, and maintenance.',
-    aliases: ['behavior', 'system', 'timeouts', 'currency', 'dashboard', 'desktop'],
-    scope: 'global'
-  },
-  {
-    id: 'appearance',
-    label: 'Appearance',
-    group: 'app',
-    description:
-      'Themes, composer shells, fonts, density, motion, transparency, and visual effects.',
-    aliases: ['theme', 'font', 'motion', 'transparency', 'density', 'accessibility', 'composer'],
-    scope: 'global'
-  },
-  {
-    id: 'key-commands',
-    label: 'Keyboard shortcuts',
-    group: 'app',
-    description: 'Editable app keybindings and command shortcuts.',
-    aliases: ['key commands', 'hotkeys', 'keybindings', 'commands', 'record shortcut'],
-    scope: 'global'
-  },
-  {
-    id: 'about',
-    label: 'About & Licenses',
-    group: 'app',
-    description:
-      'TaskWraith licensing, exact packaged dependency notices, and Chromium attribution.',
-    aliases: [
-      'about',
-      'license',
-      'licenses',
-      'attribution',
-      'third party',
-      'open source',
-      'chromium'
-    ],
-    scope: 'global'
-  },
-  {
-    id: 'providers',
-    label: 'Providers',
-    group: 'ai-providers',
-    description: 'Provider sign-in, runtime health, CLI/API setup, and agentic service policies.',
-    aliases: [
-      'models',
-      'auth',
-      'login',
-      'codex',
-      'claude',
-      'kimi',
-      'cursor',
-      'grok',
-      'ollama',
-      'gemini'
-    ],
-    scope: 'provider'
-  },
-  {
-    id: 'roster',
-    label: 'Ensemble roster',
-    group: 'ai-providers',
-    description:
-      'Saved Ensemble participant presets, roles, provider chains, and orchestration defaults.',
-    aliases: ['roster', 'ensemble', 'participants', 'roles', 'multi-provider', 'panel'],
-    scope: 'provider'
-  },
-  {
-    id: 'agent-pool',
-    label: 'Agent pool',
-    group: 'ai-providers',
-    description:
-      'Reusable Agents — provider, model, role, icon and hue — you can add to any Ensemble preset.',
-    aliases: ['agent pool', 'agents', 'pool', 'reusable agents', 'icon', 'hue', 'nickname'],
-    scope: 'provider'
-  },
-  {
-    id: 'approval-ledger',
-    label: 'Approvals & Grants',
-    group: 'automation',
-    description: 'Approval history, durable audit entries, and saved workspace grants.',
-    aliases: ['approvals', 'audit', 'ledger', 'grants', 'permissions', 'risk', 'safety'],
-    scope: 'workspace'
-  },
-  {
-    id: 'thread-introspection',
-    label: 'Thread introspection',
-    group: 'automation',
-    description:
-      'Review distilled lessons from recent runs before promoting preferences, conventions, or skill updates.',
-    aliases: [
-      'introspection',
-      'memory promotion',
-      'memory proposals',
-      'retrospective',
-      'agent memory',
-      'skill distillation',
-      'daily introspection'
-    ],
-    scope: 'workspace'
-  },
-  {
-    id: 'workspaces',
-    label: 'Workspaces',
-    group: 'workspaces',
-    description:
-      'Registered workspaces, launch targets, pinning, removal, and paired-device access shortcuts.',
-    aliases: ['projects', 'folders', 'environments', 'remote access', 'workspace list'],
-    scope: 'workspace'
-  },
-  {
-    id: 'mcp',
-    label: 'Provider Tools',
-    group: 'integrations',
-    description:
-      'TaskWraith MCP bridge status, built-in tool catalog, provider surfaces, and policy audit.',
-    aliases: [
-      'provider tools',
-      'taskwraith tools',
-      'tools',
-      'tools mcp',
-      'tools and mcps',
-      'tool audit',
-      'bridge',
-      'mcp bridge'
-    ],
-    scope: 'provider'
-  },
-  {
-    id: 'mcp-servers',
-    label: 'MCP Servers',
-    group: 'integrations',
-    description:
-      'User-managed MCP server definitions, enablement, transport, commands, URLs, and env vars.',
-    aliases: [
-      'mcp',
-      'servers',
-      'mcp servers',
-      'custom mcp',
-      'external tools',
-      'connectors',
-      'codex mcp',
-      'codex toml',
-      'claude mcp',
-      'claude json',
-      'cursor mcp',
-      'cursor json',
-      'cursor mcp.json',
-      'cursor mcp json',
-      'mcp json',
-      'mcp.json',
-      'model context protocol',
-      'claude desktop',
-      'claude desktop config',
-      'claude_desktop_config.json',
-      'cursor config',
-      'codex config',
-      'codex config toml',
-      'connect mcp',
-      'manage mcp',
-      'stdio mcp',
-      'http mcp',
-      'streamable http',
-      'sse server',
-      'user mcp',
-      'user-managed mcp',
-      'toml',
-      'import mcp',
-      'import json'
-    ],
-    scope: 'global'
-  },
-  {
-    id: 'runtime-profiles',
-    label: 'Runtime profiles',
-    group: 'integrations',
-    description: 'Provider runtime profiles, binary overrides, env vars, and encrypted env refs.',
-    aliases: [
-      'runtime',
-      'runtime profiles',
-      'profiles',
-      'binary path',
-      'environment',
-      'encrypted environment',
-      'secret env',
-      'provider runtime'
-    ],
-    scope: 'provider'
-  },
-  {
-    id: 'plugins',
-    label: 'Plugins',
-    group: 'integrations',
-    description:
-      'Declarative capability bundles, installed state, marketplace metadata, and preflight status.',
-    aliases: [
-      'plugins',
-      'extensions',
-      'connectors',
-      'marketplace',
-      'installed',
-      'bundles',
-      'capability bundles'
-    ],
-    scope: 'global'
-  },
-  {
-    id: 'instructions',
-    label: 'Custom Instructions',
-    group: 'integrations',
-    description:
-      'Standing prompt preferences: the global instructions document and the workspace TASKWRAITH.md layer.',
-    aliases: [
-      'custom instructions',
-      'instructions',
-      'taskwraith.md',
-      'system prompt',
-      'prompt layers',
-      'global instructions',
-      'workspace instructions'
-    ],
-    scope: 'workspace'
-  },
-  {
-    id: 'skills',
-    label: 'Skills',
-    group: 'integrations',
-    description:
-      'User and workspace skill libraries — enablement, create, delete, and Finder roots.',
-    aliases: [
-      'skills',
-      'skill library',
-      'skill.md',
-      'agent skills',
-      'workspace skills',
-      'user skills'
-    ],
-    scope: 'workspace'
-  },
-  {
-    id: 'hooks',
-    label: 'Hooks',
-    group: 'integrations',
-    description:
-      'Host-mediated shell hooks for SessionStart, PreToolUse, PostToolUse, and Stop lifecycle events.',
-    aliases: [
-      'hooks',
-      'shell hooks',
-      'session start',
-      'pre tool use',
-      'post tool use',
-      'stop hook',
-      'lifecycle hooks'
-    ],
-    scope: 'workspace'
-  },
-  {
-    id: 'local-servers',
-    label: 'Local servers',
-    group: 'integrations',
-    description:
-      'Dev servers and watchers running under workspaces, with stop and lifecycle controls.',
-    aliases: ['localhost', 'ports', 'preview', 'vite', 'next', 'watchers', 'browser'],
-    scope: 'workspace'
-  },
-  {
-    id: 'pairing',
-    label: 'Devices',
-    group: 'integrations',
-    description: 'iPhone and iPad pairing, Tailscale, bridge networking, and push wake.',
-    aliases: [
-      'ios',
-      'iphone',
-      'ipad',
-      'remote',
-      'pairing',
-      'tailscale',
-      'apns',
-      'mobile',
-      'bridge'
-    ],
-    scope: 'device'
-  },
-  {
-    id: 'channels',
-    label: 'Channels',
-    group: 'integrations',
-    description:
-      'Chats you share as channels — members, access, per-channel close, and the audit log.',
-    aliases: [
-      'channel',
-      'channels',
-      'share',
-      'shares',
-      'shared chats',
-      'collaborators',
-      'people',
-      'collaboration',
-      'invite'
-    ],
-    scope: 'global'
-  },
-  {
-    id: 'safety-privacy',
-    label: 'Safety & Privacy',
-    group: 'data',
-    description:
-      'Risk posture, local history, provider data flow, mobile visibility, and grant status.',
-    aliases: [
-      'privacy',
-      'safety',
-      'security',
-      'risk',
-      'data',
-      'history',
-      'grants',
-      'permissions',
-      'mobile visibility',
-      'screen watch',
-      'canvas'
-    ],
-    scope: 'global'
-  },
-  {
-    id: 'notification-banners',
-    label: 'Notification banners',
-    group: 'data',
-    description: 'Wording of run-complete notifications on paired iPhone and iPad.',
-    aliases: ['notifications', 'banners', 'push', 'apns', 'ios', 'iphone', 'ipad', 'alerts'],
-    scope: 'global'
-  },
-  {
-    id: 'pinned-messages',
-    label: 'Pinned messages',
-    group: 'data',
-    description: 'Pinned transcript snippets and saved context across chats.',
-    aliases: ['pins', 'messages', 'saved context', 'notes'],
-    scope: 'global'
-  },
-  {
-    id: 'archived',
-    label: 'Archived',
-    group: 'data',
-    description: 'Restore, permanently delete, or export archived conversation threads.',
-    aliases: ['archive', 'archived', 'history', 'restore', 'unarchive', 'export threads'],
-    scope: 'global'
-  },
-  {
-    id: 'model-usage',
-    label: 'Model usage',
-    group: 'data',
-    description: 'Cross-provider quota, token, usage, cost, and context snapshots.',
-    aliases: [
-      'usage',
-      'quota',
-      'tokens',
-      'cost',
-      'credits',
-      'billing',
-      'context',
-      'rates',
-      'pricing',
-      'api cost'
-    ],
-    scope: 'provider'
-  }
-]
-
-const FEATURE_GATED_SETTINGS_TABS = new Set<SettingsTab>([
-  // Banner wording is meaningless without a paired device to render it, so it
-  // hides on the same signal as pairing itself.
-  ...(IOS_REMOTE_ENABLED ? [] : (['pairing', 'notification-banners'] as SettingsTab[]))
-])
-
-export function isSettingsTabVisible(tab: SettingsTab): boolean {
-  return !FEATURE_GATED_SETTINGS_TABS.has(tab)
-}
-
-export function getVisibleSettingsTabs(): SettingsTabDefinition[] {
-  return SETTINGS_TABS.filter((tab) => isSettingsTabVisible(tab.id))
-}
-
-export function resolveVisibleSettingsTab(tab: SettingsTab): SettingsTab {
-  return isSettingsTabVisible(tab) ? tab : 'behavior'
-}
-
-export function settingsTabMatchesQuery(tab: SettingsTabDefinition, query: string): boolean {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return true
-  const haystack = [
-    tab.label,
-    tab.id,
-    tab.description,
-    tab.scope,
-    SETTINGS_TAB_GROUP_LABELS[tab.group],
-    ...tab.aliases
-  ]
-    .join(' ')
-    .toLowerCase()
-  return haystack.includes(normalized)
-}
-
-export function pluginMcpPresetServerId(pluginId: string, presetId: string): string {
-  return `plugin:${pluginId}:mcp:${presetId}`
-}
-
 function runtimeProfileReadOnlyReason(profile: RuntimeProfile): string | null {
   if (profile.builtin)
     return 'Built-in runtime profiles are read-only. Create a custom profile instead.'
@@ -3209,176 +792,6 @@ function runtimeProfileReadOnlyReason(profile: RuntimeProfile): string | null {
     return 'Plugin runtime profiles are read-only. Disable the contributing plugin to remove this profile.'
   }
   return null
-}
-
-export function pluginSettingsEntryMatchesQuery(
-  entry: TaskWraithPluginCatalogEntry,
-  query: string
-): boolean {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return true
-  const haystack = [
-    entry.manifest.id,
-    entry.manifest.publisher,
-    entry.manifest.name,
-    entry.manifest.description,
-    entry.manifest.marketplace?.category || '',
-    ...(entry.manifest.marketplace?.tags || []),
-    entry.source,
-    entry.namespace,
-    entry.trust.status,
-    entry.trust.reason,
-    entry.preflight.status,
-    entry.installed ? 'installed' : 'available',
-    entry.enabled ? 'enabled' : 'disabled',
-    ...(entry.update?.status === 'available' ? ['update available'] : []),
-    ...entry.manifest.capabilities.flatMap((capability) => [
-      capability.kind,
-      capability.id,
-      capability.label,
-      capability.description || ''
-    ])
-  ]
-    .join(' ')
-    .toLowerCase()
-  return haystack.includes(normalized)
-}
-
-function pluginSettingsCapabilityName(capability: TaskWraithPluginCapabilitySnapshot): string {
-  return `${capability.kind}: ${capability.label || capability.id}`
-}
-
-export function pluginSettingsCapabilityDiffLines(
-  diff: TaskWraithPluginCapabilityDiff | undefined
-): string[] {
-  if (!diff) return []
-  return [
-    ...diff.added.map((capability) => `Added ${pluginSettingsCapabilityName(capability)}`),
-    ...diff.removed.map((capability) => `Removed ${pluginSettingsCapabilityName(capability)}`),
-    ...diff.changed.map(
-      ({ before, after }) =>
-        `Changed ${pluginSettingsCapabilityName(before)} -> ${pluginSettingsCapabilityName(after)}`
-    )
-  ]
-}
-
-export function pluginSettingsCapabilityDiffSummary(
-  diff: TaskWraithPluginCapabilityDiff | undefined
-): string {
-  if (!diff) return 'No capability-surface changes.'
-  const parts = [
-    diff.added.length ? `${diff.added.length} added` : '',
-    diff.removed.length ? `${diff.removed.length} removed` : '',
-    diff.changed.length ? `${diff.changed.length} changed` : ''
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : 'No capability-surface changes.'
-}
-
-export function pluginSettingsUpdateReviewMessage(entry: TaskWraithPluginCatalogEntry): string {
-  const update = entry.update
-  const header = `Review plugin update: ${entry.manifest.name}\n${update?.installedVersion || 'installed'} -> ${update?.availableVersion || entry.manifest.version}`
-  const lines = pluginSettingsCapabilityDiffLines(update?.capabilityDiff)
-  if (lines.length === 0) return `${header}\n\nNo capability-surface changes were detected.`
-  return `${header}\n\nCapability changes:\n${lines.map((line) => `- ${line}`).join('\n')}`
-}
-
-export function pluginSettingsProvenancePayload(entry: TaskWraithPluginCatalogEntry): {
-  pluginId: string
-  publisher: string
-  version: string
-  source: string
-  namespace: string
-  manifestHash: string
-  trust: TaskWraithPluginCatalogEntry['trust']
-  installed: boolean
-  enabled: boolean
-  preflight: TaskWraithPluginCatalogEntry['preflight']
-  capabilities: Array<{
-    id: string
-    kind: string
-    agenticServices: string[]
-    fileScopes: string[]
-    networkScopes: string[]
-    remoteCapabilities: string[]
-  }>
-} {
-  return {
-    pluginId: entry.manifest.id,
-    publisher: entry.manifest.publisher,
-    version: entry.manifest.version,
-    source: entry.source,
-    namespace: entry.namespace,
-    manifestHash: entry.manifestHash,
-    trust: entry.trust,
-    installed: entry.installed,
-    enabled: entry.enabled,
-    preflight: entry.preflight,
-    capabilities: entry.manifest.capabilities.map((capability) => ({
-      id: capability.id,
-      kind: capability.kind,
-      agenticServices: capability.agenticServices || [],
-      fileScopes: capability.fileScopes || [],
-      networkScopes: capability.networkScopes || [],
-      remoteCapabilities: capability.remoteCapabilities || []
-    }))
-  }
-}
-
-export interface PluginSettingsMcpPresetActionState {
-  serverId: string
-  busy: boolean
-  materialized: boolean
-  disabled: boolean
-}
-
-export interface PluginSettingsActionState {
-  busy: boolean
-  updateAvailable: boolean
-  installDisabled: boolean
-  enableDisabled: boolean
-  updateDisabled: boolean
-  uninstallDisabled: boolean
-  mcpPresets: Record<string, PluginSettingsMcpPresetActionState>
-}
-
-export function pluginSettingsActionState(
-  entry: TaskWraithPluginCatalogEntry,
-  userMcpServers: Pick<UserMcpServerConfig, 'id'>[],
-  pluginBusyId: string | null
-): PluginSettingsActionState {
-  const pluginId = entry.manifest.id
-  const busy = pluginBusyId === pluginId
-  const updateAvailable = entry.update?.status === 'available'
-  const blocked = entry.preflight.status === 'blocked'
-  const trusted = entry.trust.status === 'trusted'
-  const userMcpServerIds = new Set(userMcpServers.map((server) => server.id))
-  const mcpPresets = Object.fromEntries(
-    (entry.manifest.mcpServers || []).map((preset) => {
-      const serverId = pluginMcpPresetServerId(pluginId, preset.id)
-      const presetBusy = pluginBusyId === `mcp:${pluginId}:${preset.id}`
-      const materialized = userMcpServerIds.has(serverId)
-      return [
-        preset.id,
-        {
-          serverId,
-          busy: presetBusy,
-          materialized,
-          disabled:
-            presetBusy || materialized || !entry.installed || updateAvailable || blocked || !trusted
-        }
-      ]
-    })
-  )
-
-  return {
-    busy,
-    updateAvailable,
-    installDisabled: busy || blocked,
-    enableDisabled: busy || blocked || updateAvailable || !trusted,
-    updateDisabled: busy,
-    uninstallDisabled: busy,
-    mcpPresets
-  }
 }
 
 type LocalFontData = {
@@ -3389,58 +802,6 @@ type LocalFontData = {
 
 type LocalFontWindow = Window & {
   queryLocalFonts?: () => Promise<LocalFontData[]>
-}
-
-function SettingsProviderAuthCard({
-  provider,
-  label,
-  summary,
-  description,
-  optional,
-  children
-}: {
-  provider: ProviderId
-  label: string
-  summary: ProviderAuthSummary
-  description: string
-  optional?: boolean
-  children?: React.ReactNode
-}): React.JSX.Element {
-  // The status dot has CSS for signed-in / partial / not-available only.
-  // "out-of-usage" (signed in but rate-limited) reads as a warning, so
-  // borrow the amber `partial` dot styling rather than fall back to the
-  // neutral base dot. Grok is a CLI-owned auth surface: when the adapter is
-  // available, its card should read as ready/connected even though TaskWraith
-  // cannot inspect the provider's private login state. Cursor and Grok both
-  // use that partial → ready-dot path.
-  const dotVariant =
-    summary.variant === 'out-of-usage'
-      ? 'partial'
-      : (provider === 'cursor' || provider === 'grok') && summary.variant === 'partial'
-        ? 'signed-in'
-        : summary.variant
-  return (
-    <article
-      className={`settings-provider-auth-card settings-provider-auth-card-${summary.variant} provider-${provider}`}
-      data-provider={provider}
-    >
-      <div className="settings-provider-auth-card-header">
-        <ProviderLogoTile provider={provider} />
-        <strong>{label}</strong>
-        {optional && <span className="settings-provider-auth-optional">Optional</span>}
-      </div>
-      <div className="settings-provider-auth-status">
-        <span
-          className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${dotVariant}`}
-          aria-hidden
-        />
-        <span>{summary.statusText}</span>
-      </div>
-      <p>{description}</p>
-      <p className="settings-provider-auth-hint">{summary.hint}</p>
-      {children && <div className="settings-provider-auth-actions">{children}</div>}
-    </article>
-  )
 }
 
 function SettingsProviderPauseControls({
@@ -3614,268 +975,6 @@ function SettingsProviderPauseControls({
   )
 }
 
-function isProviderPauseStillActive(state?: ProviderRunPauseState): boolean {
-  if (!state?.paused) return false
-  if (!state.until) return true
-  const until = Date.parse(state.until)
-  return Number.isFinite(until) && until > Date.now()
-}
-
-function toPauseDateTimeLocal(value?: string): string {
-  if (!value) return ''
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return ''
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
-}
-
-function fromPauseDateTimeLocal(value: string): string | undefined {
-  if (!value) return undefined
-  const date = new Date(value)
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
-}
-
-function fxConfidenceLabel(source?: FxRateSnapshot['source']): string {
-  if (source === 'live') return 'Live'
-  if (source === 'cached') return 'Cached'
-  if (source === 'fallback') return 'Fallback'
-  return 'Unknown'
-}
-
-function formatFxUpdatedAt(snapshot: FxRateSnapshot | null): string {
-  if (!snapshot) return 'Not loaded yet'
-  const time = Date.parse(snapshot.fetchedAt)
-  if (!Number.isFinite(time)) return 'Unknown'
-  return new Date(time).toLocaleString()
-}
-
-function formatFxRate(snapshot: FxRateSnapshot | null, currency: 'GBP' | 'EUR'): string {
-  const rate = snapshot?.rates?.[currency]
-  return typeof rate === 'number' && Number.isFinite(rate) ? rate.toFixed(4) : 'n/a'
-}
-
-/** A provider's worst quota window is at ~100% (0.999 absorbs float
- * noise from `usedPercent / 100`) so its card must read "out of usage"
- * instead of a bare "signed in". Mirrors FirstLaunchSheet. */
-const OUT_OF_USAGE_FRACTION = 0.999
-
-/**
- * Worst (most-consumed) quota window for a provider, derived from the
- * same `usageSummary` the Model Usage tab reads. Prefers the honest
- * `usedPercent`, falls back to `1 - remainingPercent`. Returns null when
- * the provider has no quota data (Cursor/Grok never do; the others only
- * after a usage probe). Replicates FirstLaunchSheet's `worstProviderUsage`
- * locally — the duplication is a few lines and avoids a cross-component
- * import.
- */
-function worstProviderUsage(
-  usageSummary: ModelUsageAggregate[] | undefined,
-  providerId: ProviderId
-): { fraction: number; resetAt?: string } | null {
-  if (!usageSummary || usageSummary.length === 0) return null
-  const entry = usageSummary.find(
-    (e) => e.provider === providerId && e.model === 'usage limits' && (e.windows?.length || 0) > 0
-  )
-  if (!entry?.windows) return null
-  let worst: { fraction: number; resetAt?: string } | null = null
-  for (const w of entry.windows) {
-    const used = Number.isFinite(w.usedPercent)
-      ? Math.max(0, Math.min(1, (w.usedPercent as number) / 100))
-      : Number.isFinite(w.remainingPercent)
-        ? Math.max(0, Math.min(1, 1 - (w.remainingPercent as number) / 100))
-        : 0
-    if (!worst || used > worst.fraction) worst = { fraction: used, resetAt: w.resetAt }
-  }
-  return worst
-}
-
-/**
- * Flip a signed-in provider summary to the "out of usage" state when its
- * worst quota window is at ~100%. No-op for every other variant (you
- * can't be "out of usage" if you were never signed in) and when there's
- * no quota data — so hosts/tests that omit `usageSummary` are unchanged.
- */
-function applyOutOfUsage(
-  provider: ProviderId,
-  summary: ProviderAuthSummary,
-  usageSummary: ModelUsageAggregate[] | undefined
-): ProviderAuthSummary {
-  if (summary.variant !== 'signed-in') return summary
-  const worst = worstProviderUsage(usageSummary, provider)
-  if (!worst || worst.fraction < OUT_OF_USAGE_FRACTION) return summary
-  const reset = formatResetShort({ resetAt: worst.resetAt })
-  return {
-    variant: 'out-of-usage',
-    statusText: reset ? `100% used · resets ${reset}` : '100% used',
-    hint: 'Signed in, but rate-limited right now — wait for the reset, switch provider, or switch model. This is a quota wall, not a bug.'
-  }
-}
-
-type DiffStatColorTone = keyof DiffStatColors
-
-function normalizeHue(hue: number): number {
-  if (!Number.isFinite(hue)) return 0
-  return ((Math.round(hue) % 360) + 360) % 360
-}
-
-function SettingsDiffStatColorControl({
-  tone,
-  label,
-  value,
-  fallback,
-  onChange
-}: {
-  tone: DiffStatColorTone
-  label: string
-  value: string
-  fallback: string
-  onChange: (next: string) => void
-}): React.JSX.Element {
-  const safeColor = normalizeDiffStatColors({ [tone]: value })[tone] || fallback
-  const parsed = parsePoolColorInput(safeColor) || parsePoolColorInput(fallback)
-  const safeHue = normalizeHue(parsed?.hue ?? 0)
-  const safeSaturation = normalizePoolIconSaturation(parsed?.saturation ?? 70)
-  const safeBrightness = normalizePoolIconBrightness(parsed?.brightness ?? 45)
-  const rgbText = rgbStringFromHexColor(safeColor)
-  const [hexDraft, setHexDraft] = useState(safeColor)
-  const [rgbDraft, setRgbDraft] = useState(rgbText)
-
-  useEffect(() => {
-    setHexDraft(safeColor)
-    setRgbDraft(rgbText)
-  }, [safeColor, rgbText])
-
-  const applyColor = ({
-    hue = safeHue,
-    saturation = safeSaturation,
-    brightness = safeBrightness
-  }: {
-    hue?: number
-    saturation?: number
-    brightness?: number
-  }): void => {
-    const nextHue = normalizeHue(hue)
-    const nextSaturation = normalizePoolIconSaturation(saturation)
-    const nextBrightness = normalizePoolIconBrightness(brightness)
-    onChange(accentFromHue(nextHue, nextBrightness, nextSaturation))
-  }
-
-  const commitHexDraft = (): void => {
-    const next = parsePoolColorInput(hexDraft)
-    if (!next) {
-      setHexDraft(safeColor)
-      return
-    }
-    onChange(next.accent)
-  }
-
-  const commitRgbDraft = (): void => {
-    const next = parsePoolColorInput(rgbDraft)
-    if (!next) {
-      setRgbDraft(rgbText)
-      return
-    }
-    onChange(next.accent)
-  }
-
-  const blurOnEnter = (event: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key !== 'Enter') return
-    event.preventDefault()
-    event.currentTarget.blur()
-  }
-
-  return (
-    <section
-      className={`settings-diff-stat-color-card settings-diff-stat-color-card--${tone}`}
-      style={{ ['--settings-diff-stat-color' as string]: safeColor }}
-    >
-      <header className="settings-diff-stat-color-header">
-        <span className="agent-pool-color-swatch" style={{ backgroundColor: safeColor }} />
-        <span className="settings-diff-stat-color-name">{label}</span>
-        <span className="settings-diff-stat-color-hsl">
-          HSL {safeHue} / {safeSaturation}% / {safeBrightness}%
-        </span>
-        <button
-          type="button"
-          className="agent-pool-mini-btn settings-diff-stat-color-reset"
-          disabled={safeColor === fallback}
-          onClick={() => onChange(fallback)}
-        >
-          Reset
-        </button>
-      </header>
-      <div className="agent-pool-color-controls settings-diff-stat-color-controls">
-        <label className="agent-pool-color-slider">
-          <span className="agent-pool-hue-label">Hue</span>
-          <input
-            type="range"
-            className="composer-ensemble-context-slider"
-            min={0}
-            max={359}
-            value={safeHue}
-            onChange={(event) => applyColor({ hue: Number(event.target.value) })}
-            aria-label={`${label} hue`}
-            style={rangeFillStyle(safeHue, 0, 359)}
-          />
-        </label>
-        <label className="agent-pool-color-slider">
-          <span className="agent-pool-hue-label">Saturation</span>
-          <input
-            type="range"
-            className="composer-ensemble-context-slider"
-            min={0}
-            max={100}
-            value={safeSaturation}
-            onChange={(event) => applyColor({ saturation: Number(event.target.value) })}
-            aria-label={`${label} saturation`}
-            style={rangeFillStyle(safeSaturation, 0, 100)}
-          />
-        </label>
-        <label className="agent-pool-color-slider">
-          <span className="agent-pool-hue-label">Luma</span>
-          <input
-            type="range"
-            className="composer-ensemble-context-slider"
-            min={0}
-            max={100}
-            value={safeBrightness}
-            onChange={(event) => applyColor({ brightness: Number(event.target.value) })}
-            aria-label={`${label} luma`}
-            style={rangeFillStyle(safeBrightness, 0, 100)}
-          />
-        </label>
-        <div className="agent-pool-color-fields">
-          <span className="agent-pool-color-swatch" style={{ backgroundColor: safeColor }} />
-          <label className="agent-pool-color-field">
-            <span>Hex</span>
-            <input
-              type="text"
-              value={hexDraft}
-              onChange={(event) => setHexDraft(event.target.value)}
-              onBlur={commitHexDraft}
-              onKeyDown={blurOnEnter}
-              aria-label={`${label} hex color`}
-              spellCheck={false}
-            />
-          </label>
-          <label className="agent-pool-color-field agent-pool-color-field--rgb">
-            <span>RGB</span>
-            <input
-              type="text"
-              value={rgbDraft}
-              onChange={(event) => setRgbDraft(event.target.value)}
-              onBlur={commitRgbDraft}
-              onKeyDown={blurOnEnter}
-              aria-label={`${label} RGB color`}
-              spellCheck={false}
-            />
-          </label>
-        </div>
-      </div>
-    </section>
-  )
-}
-
 export function SettingsPanel({
   mode,
   visualEffectStyle,
@@ -3897,6 +996,9 @@ export function SettingsPanel({
   reduceMotion,
   compactDensity,
   fanoutLaneLayout,
+  defaultTranscriptView,
+  transcriptTextSize,
+  transcriptWidth,
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
@@ -3909,6 +1011,7 @@ export function SettingsPanel({
   composerContinuationAiEnabled,
   hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
+  keepAwakeWhileWorking,
   maxWaveAgents,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
@@ -3919,6 +1022,7 @@ export function SettingsPanel({
   antigravityOptInAcceptedAt = null,
   antigravityGeminiApiDisclosureAcceptedAt = null,
   antigravityGeminiApiMonthlySpendCapUsd = null,
+  antigravityUseAcp = false,
   museMonthlySpendCapUsd,
   userName = '',
   claudeBinaryPath,
@@ -3926,6 +1030,7 @@ export function SettingsPanel({
   cliPathDirectories,
   ollamaBaseUrl,
   ollamaDefaultModel,
+  devinApiServerUrl,
   auditOrchestration,
   agenticServices,
   nativeSubAgentRequests = 'ask',
@@ -4049,6 +1154,14 @@ export function SettingsPanel({
   }
   const [installedFontOptions, setInstalledFontOptions] = useState<TypefaceOption[]>([])
   const [installedFontStatus, setInstalledFontStatus] = useState('')
+  // Kimi web session state (self-contained, mirrors MistralQuotaCard)
+  const [kimiWebSessionBusy, setKimiWebSessionBusy] = useState(false)
+  const [kimiWebSessionStatus, setKimiWebSessionStatus] = useState<{
+    configured: boolean
+    encryptionAvailable: boolean
+    updatedAt?: string
+  } | null>(null)
+  const [kimiWebSessionError, setKimiWebSessionError] = useState<string | null>(null)
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
   const [mcpServerQuery, setMcpServerQuery] = useState('')
@@ -4076,6 +1189,53 @@ export function SettingsPanel({
   )
   const [runtimeProfileLoading, setRuntimeProfileLoading] = useState(false)
   const [runtimeProfileError, setRuntimeProfileError] = useState('')
+  // Kimi web session handlers (self-contained, mirrors MistralQuotaCard)
+  const loadKimiWebSessionStatus = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.getKimiWebSessionStatus !== 'function') return
+    try {
+      const status = await api.getKimiWebSessionStatus()
+      setKimiWebSessionStatus(status ?? null)
+    } catch {
+      setKimiWebSessionStatus(null)
+    }
+  }, [])
+  useEffect(() => {
+    void loadKimiWebSessionStatus()
+  }, [loadKimiWebSessionStatus])
+  const importKimiWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.importKimiWebSession !== 'function') return
+    setKimiWebSessionBusy(true)
+    setKimiWebSessionError(null)
+    try {
+      const outcome = await api.importKimiWebSession()
+      if (outcome?.ok) {
+        setKimiWebSessionStatus(outcome.status ?? { configured: true, encryptionAvailable: false })
+      } else if (outcome && outcome.reason !== 'cancelled') {
+        setKimiWebSessionError('Could not import the web session.')
+      }
+    } catch {
+      setKimiWebSessionError('Could not import the web session.')
+    } finally {
+      setKimiWebSessionBusy(false)
+    }
+  }, [])
+  const clearKimiWebSession = useCallback(async () => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (typeof api?.clearKimiWebSession !== 'function') return
+    setKimiWebSessionBusy(true)
+    setKimiWebSessionError(null)
+    try {
+      const result = await api.clearKimiWebSession()
+      if (result?.ok) setKimiWebSessionStatus({ configured: false, encryptionAvailable: false })
+      else setKimiWebSessionError('Could not clear the web session.')
+    } catch {
+      setKimiWebSessionError('Could not clear the web session.')
+    } finally {
+      setKimiWebSessionBusy(false)
+    }
+  }, [])
   const [runtimeProfileFormMode, setRuntimeProfileFormMode] = useState<
     'hidden' | 'create' | 'edit'
   >('hidden')
@@ -4939,34 +2099,11 @@ export function SettingsPanel({
   const ollamaCloudApiKeyConfigured = ollamaStatus?.cloud?.apiKeyConfigured === true
   const ollamaCloudDisabled = ollamaStatus?.cloud?.enabled === false
   const ollamaCloudPlan = String(ollamaStatus?.cloud?.plan || '').trim()
-  // The local daemon remains the provider transport in both modes. Its account
-  // state is shown separately so a green local-runtime signal cannot imply that
-  // Cloud models are authenticated when only local tags are runnable.
-  const ollamaAuthSummary: ProviderAuthSummary = ollamaStatus?.available
-    ? ollamaCloudAuthenticated
-      ? {
-          variant: 'signed-in',
-          statusText: ollamaCloudApiKeyConfigured
-            ? 'Cloud API key configured'
-            : `Cloud connected${ollamaCloudPlan ? ` · ${ollamaCloudPlan}` : ''}`,
-          hint: ollamaCloudApiKeyConfigured
-            ? 'Cloud models use Ollama’s direct API; local models remain on the local daemon.'
-            : 'Local and Ollama Cloud models are available through the local Ollama daemon.'
-        }
-      : {
-          variant: 'partial',
-          statusText: ollamaCloudDisabled
-            ? 'Local runtime ready · Cloud disabled'
-            : 'Local runtime ready · Cloud sign-in optional',
-          hint: ollamaCloudDisabled
-            ? 'Local models remain available; this Ollama daemon has Cloud features disabled.'
-            : 'Local models need no account. Run `ollama signin` to unlock the separate Cloud catalog.'
-        }
-    : {
-        variant: 'partial',
-        statusText: 'Local setup optional',
-        hint: 'Install Ollama, then pull a local model or sign in to use Ollama Cloud models.'
-      }
+  // Ollama reports through the shared provider vocabulary: green once the
+  // server can run something (account or not), neutral when there is neither a
+  // server nor an account. The account half is spelled out in the label and in
+  // the Local / Ollama group below.
+  const ollamaAuthSummary: ProviderAuthSummary = summariseOllamaStatus(ollamaStatus)
 
   const renderOllamaModelOption = (model: any): React.JSX.Element => {
     const modelId = String(model.id || '')
@@ -5041,6 +2178,7 @@ export function SettingsPanel({
   }
   const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
   const museAuthSummary = summariseMuseCodeStatus(providerStatusByProvider?.muse)
+  const devinAuthSummary = summariseDevinStatus(providerStatusByProvider?.devin)
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -5121,6 +2259,14 @@ export function SettingsPanel({
     onRefreshProviderMcpStatus?.('muse')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Devin is the same fail-closed CLI seat: its credential lane lives in env or
+  // the `devin auth login` credentials.toml, so the card must be warmed once or
+  // it reads "setup not checked yet" until an unrelated refresh.
+  useEffect(() => {
+    if (providerStatusByProvider?.devin !== undefined) return
+    onRefreshProviderMcpStatus?.('devin')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const providerMcpSummaries = providerSurfaceOrder.map((provider) => {
     const contract =
       providerCapabilitiesByProvider?.[provider] ??
@@ -5137,7 +2283,7 @@ export function SettingsPanel({
     // can be conditional per run, but that must not turn their static runtime
     // status into a misleading "delegated" or policy "gated" label.
     const firstClassRuntimeProvider =
-      provider === 'pi' || provider === 'mistral' || provider === 'muse'
+      provider === 'pi' || provider === 'mistral' || provider === 'muse' || provider === 'devin'
     // AntiGravity's capability contract hard-codes an `unsupported` MCP block —
     // honest for the agy print-mode transport, which really does get no bridge —
     // but running the card off that block would pin an admitted provider to a
@@ -5234,7 +2380,7 @@ export function SettingsPanel({
             provisionalFallback?.source ||
             (provider === 'codex' ? 'provider' : 'taskwraith')
     const codexInventoryNote =
-      provider === 'codex' && rawToolCount > toolCount
+      provider === 'codex' && rawServerCount > 0 && rawToolCount > 0
         ? ` Codex app-server also reports ${rawServerCount} MCP server${rawServerCount === 1 ? '' : 's'} with ${pluralizeCount(rawToolCount, 'total tool')}.`
         : ''
     const messageBase =
@@ -5251,9 +2397,13 @@ export function SettingsPanel({
             ? available
               ? 'Pi is a first-class TaskWraith provider. Its fixed Ensemble coordination extension is attached only after the per-run readiness receipt; this card reports the Pi runtime, not generic MCP injection.'
               : 'Pi is a first-class TaskWraith provider, but its local runtime is unavailable. Install Pi and configure at least one upstream API key in Settings.'
-            : available
-              ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
-              : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
+            : provider === 'devin'
+              ? available
+                ? 'Devin is a first-class Devin ACP provider (`devin acp`). TaskWraith’s broker is attached per run; this card reports the Devin runtime rather than treating Devin as a delegated provider.'
+                : 'Devin is a first-class Devin ACP provider, but `devin` is unavailable. Install it with `curl -fsSL https://cli.devin.ai/install.sh | bash`, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+              : available
+                ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
+                : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
           : provider === 'codex' && enabled
             ? 'TaskWraith registers the MCP bridge for Codex runs.'
             : mcp?.message ||
@@ -5774,7 +2924,7 @@ export function SettingsPanel({
               </div>
 
               <div className="settings-group settings-shared-accent-group">
-                <label className="settings-label">Accent &amp; chat bubble</label>
+                <label className="settings-label">Message bubble</label>
                 <SettingsSharedAccentControl
                   color={themeAccentColor}
                   cornerStyle={themeCornerStyle}
@@ -5783,8 +2933,8 @@ export function SettingsPanel({
                   onCornerStyleChange={(themeCornerStyle) => onChange({ themeCornerStyle })}
                 />
                 <p className="settings-hint">
-                  One shared color drives the interface accent, your message bubble, and its “You”
-                  label.
+                  This color is your message bubble and its “You” label. Buttons, focus rings, and
+                  the rest of the interface accent follow your operating system’s accent color.
                 </p>
               </div>
 
@@ -6159,6 +3309,100 @@ export function SettingsPanel({
                         still spans the full width.
                       </small>
                     </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Default transcript view</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptView(defaultTranscriptView)}
+                        onChange={(e) =>
+                          onChange({ defaultTranscriptView: e.target.value as TranscriptView })
+                        }
+                      >
+                        {TRANSCRIPT_VIEW_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue the per-chat menu reads, so the
+                            two can never describe the same three views differently.
+                            The lookup cannot miss: the value is resolved to one of
+                            exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_VIEW_OPTIONS.find(
+                            (option) =>
+                              option.value === resolveTranscriptView(defaultTranscriptView)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        Where every chat starts. A chat switched to its own view from the
+                        composer&rsquo;s view menu keeps that view for the rest of the session.
+                      </small>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Transcript text size</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptTextSize(transcriptTextSize)}
+                        onChange={(e) =>
+                          onChange({ transcriptTextSize: e.target.value as TranscriptTextSize })
+                        }
+                      >
+                        {TRANSCRIPT_TEXT_SIZE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue that owns the three scales, so
+                            this control cannot describe a size the transcript does not
+                            render at. The lookup cannot miss: the value is resolved to
+                            one of exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_TEXT_SIZE_OPTIONS.find(
+                            (option) => option.value === resolveTranscriptTextSize(transcriptTextSize)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        Message text only. The composer, the sidebar and Settings keep their
+                        own size.
+                      </small>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Transcript width</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptWidth(transcriptWidth)}
+                        onChange={(e) =>
+                          onChange({ transcriptWidth: e.target.value as TranscriptWidth })
+                        }
+                      >
+                        {TRANSCRIPT_WIDTH_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue that owns the three caps, so this
+                            control cannot describe a column the transcript does not
+                            render at. The lookup cannot miss: the value is resolved to
+                            one of exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_WIDTH_OPTIONS.find(
+                            (option) => option.value === resolveTranscriptWidth(transcriptWidth)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        The reading column only. The composer keeps its own width, so at Wide
+                        the two no longer share the same edges.
+                      </small>
+                    </label>
                   </section>
 
                   <section className="settings-effects-card">
@@ -6478,13 +3722,13 @@ export function SettingsPanel({
                     checked={composerContinuationAiEnabled !== false}
                     onChange={(e) => onChange({ composerContinuationAiEnabled: e.target.checked })}
                   />
-                  <span>Prioritize safe composer suggestions with Foundation Models</span>
+                  <span>Generate contextual composer drafts with Foundation Models</span>
                 </label>
                 <p className="settings-hint">
-                  Lets on-device Apple Foundation Models rank only host-approved suggestion
-                  categories and opaque IDs. It never receives prompt text, transcripts, agent
-                  output, tool output, telemetry, or suggestion wording. Turning this off keeps
-                  deterministic task continuity and local aggregate preference ranking.
+                  Uses a bounded, main-owned snapshot of your request and settled thread evidence.
+                  Agent output is labelled untrusted, unsafe or generic proposals are rejected,
+                  and the model may show nothing. A suggestion enters your draft only when you
+                  press Tab. Turning this off disables composer AutoDraft.
                 </p>
               </div>
 
@@ -6498,10 +3742,10 @@ export function SettingsPanel({
                   <span>Summarize close-outs with Foundation Models</span>
                 </label>
                 <p className="settings-hint">
-                  When a run or Ensemble round finishes, writes the close-out paragraph with
-                  on-device Apple Foundation Models instead of quoting the final reply. Requires
-                  macOS 26; the deterministic close-out text is used when unavailable. Nothing
-                  leaves this Mac.
+                  When a run or Ensemble round finishes, TaskWraith uses Apple Foundation Models on
+                  this Mac to write the close-out paragraph instead of quoting the final reply.
+                  Requires macOS 26; the deterministic close-out text is used when unavailable.
+                  Nothing leaves this Mac.
                 </p>
               </div>
 
@@ -6536,6 +3780,24 @@ export function SettingsPanel({
                   most recent and any in-progress round stay open). Click a round card to reveal its
                   full transcript. Turn this off to always show every round expanded, like the
                   classic flat transcript.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={keepAwakeWhileWorking !== false}
+                    onChange={(e) => onChange({ keepAwakeWhileWorking: e.target.checked })}
+                  />
+                  <span>Keep this Mac awake while agents are working</span>
+                </label>
+                <p className="settings-hint">
+                  Stops the Mac going to sleep while a run or round is in flight, so a long job
+                  survives an unattended night. The display still sleeps and the screen still locks
+                  on your normal schedule — only system sleep is held off, and only while work is
+                  actually running. Closing the lid, or choosing Sleep yourself, still sleeps the
+                  Mac: macOS does not let any app override those.
                 </p>
               </div>
 
@@ -7343,6 +4605,32 @@ export function SettingsPanel({
                         </PillButton>
                       )}
                     </div>
+                    <div className="settings-provider-auth-actions settings-web-session-actions">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={importKimiWebSession}
+                        disabled={kimiWebSessionBusy}
+                      >
+                        {kimiWebSessionStatus?.configured ? 'Re-import web session…' : 'Import web session…'}
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
+                        onClick={clearKimiWebSession}
+                        disabled={kimiWebSessionBusy || kimiWebSessionStatus?.configured !== true}
+                      >
+                        Clear session
+                      </PillButton>
+                    </div>
+                    {kimiWebSessionStatus?.configured ? (
+                      <p className="settings-provider-auth-footnote">
+                        Web session imported.
+                      </p>
+                    ) : null}
+                    {kimiWebSessionError ? (
+                      <p className="settings-provider-auth-error">{kimiWebSessionError}</p>
+                    ) : null}
                     {renderProviderUpgradeFootnote('kimi')}
                     {renderProviderPauseControls('kimi')}
                   </SettingsProviderAuthCard>
@@ -7513,6 +4801,47 @@ export function SettingsPanel({
                     />
                     {renderProviderPauseControls('muse')}
                   </SettingsProviderAuthCard>
+                  <SettingsProviderAuthCard
+                    provider="devin"
+                    label="Devin"
+                    summary={devinAuthSummary}
+                    description="Devin CLI over managed ACP (devin acp)."
+                    optional
+                  >
+                    <div className="settings-provider-auth-command">
+                      <code>devin acp</code>
+                      <span>
+                        Sign in below with devin auth login, or export WINDSURF_API_KEY before
+                        launching TaskWraith. The install command is under Need to install a CLI?
+                        above.
+                      </span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={() => onProviderLogin?.('devin')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </PillButton>
+                      {renderProviderUpgradeButton('devin')}
+                    </div>
+                    {renderProviderUpgradeFootnote('devin')}
+                    <label className="settings-label">Custom API server URL</label>
+                    <CommittedDraftField
+                      className="settings-select"
+                      committed={devinApiServerUrl ?? ''}
+                      onCommit={(value) => onChange({ devinApiServerUrl: value })}
+                      placeholder="https://…"
+                    />
+                    <p className="settings-hint">
+                      HTTPS only, or HTTP on loopback. Leave empty to use the
+                      WINDSURF_API_SERVER_URL environment variable or the endpoint saved by{' '}
+                      <code>devin auth login</code>.
+                    </p>
+                    {renderProviderPauseControls('devin')}
+                  </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
                   <ApiUsageQuotaCard />
                   <MistralQuotaCard />
@@ -7522,6 +4851,7 @@ export function SettingsPanel({
                     acceptedAt={antigravityOptInAcceptedAt}
                     geminiApiDisclosureAcceptedAt={antigravityGeminiApiDisclosureAcceptedAt}
                     geminiApiMonthlySpendCapUsd={antigravityGeminiApiMonthlySpendCapUsd}
+                    antigravityUseAcp={antigravityUseAcp}
                     onChange={onChange}
                     onOpenLogin={onProviderLogin ? () => onProviderLogin('antigravity') : undefined}
                     onOpenUpgrade={
@@ -7696,9 +5026,10 @@ export function SettingsPanel({
                     <span>
                       Canvas interaction
                       <small>
-                        Whether agents can click and fill elements in a Canvas preview. Default
-                        &apos;ask&apos; prompts before each interaction; &apos;Always allow&apos;
-                        lets agents drive the preview without prompting. Denied under read-only.
+                        Whether agents can click and fill elements in a Canvas preview or advance a
+                        reviewed fixed emulator surface. Default &apos;ask&apos; prompts before each
+                        interaction; &apos;Always allow&apos; lets agents drive that exact surface
+                        without prompting. Denied under read-only.
                       </small>
                     </span>
                     <select
@@ -8131,7 +5462,7 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   {claudeApiKeyStorageUnavailable
                     ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on-device.'}
+                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on this Mac.'}
                 </p>
 
                 <label className="settings-label">Claude CLI binary</label>
@@ -8243,7 +5574,7 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   {kimiApiKeyStorageUnavailable
                     ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on-device; not supplied to managed ACP.'}
+                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on this Mac; not supplied to managed ACP.'}
                 </p>
 
                 <label className="settings-label">Kimi CLI binary</label>
@@ -8278,7 +5609,7 @@ export function SettingsPanel({
                       ● Local service reachable
                     </span>
                   ) : (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                       ● Local service not reachable
                     </span>
                   )}
@@ -8298,16 +5629,18 @@ export function SettingsPanel({
                     <span
                       style={{
                         fontSize: '0.75rem',
+                        // Not signed in is a neutral state here, not a warning —
+                        // the same read every other provider gets.
                         color: ollamaCloudAuthenticated
                           ? 'var(--color-success, #3fb950)'
-                          : 'var(--color-warning, #d29922)'
+                          : 'var(--text-tertiary)'
                       }}
                     >
                       {ollamaCloudAuthenticated
                         ? ollamaCloudApiKeyConfigured
                           ? 'Cloud API key configured'
                           : `Cloud signed in${ollamaCloudPlan ? ` (${ollamaCloudPlan})` : ''}`
-                        : 'Cloud sign-in required'}
+                        : 'Cloud not signed in'}
                     </span>
                   )}
                   <PillButton
@@ -8680,7 +6013,7 @@ export function SettingsPanel({
                                 <code>{tool.iconRef}</code>
                               </span>
                               <span>
-                                Codex / Gemini / Kimi
+                                Codex / Kimi / Cursor / Grok / Mistral / Muse / Devin / Ollama
                                 <code>{formatMcpInvocation('codex', tool.name)}</code>
                               </span>
                               <span>
@@ -11532,79 +8865,5 @@ export function SettingsPanel({
         />
       )}
     </div>
-  )
-}
-
-interface ApprovalTimeoutFieldProps {
-  label: string
-  valueMs: number
-  disabled?: boolean
-  onChange: (ms: number) => void
-}
-
-/**
- * ApprovalTimeoutField — labeled seconds input for the per-provider
- * timeout settings. Displays seconds (more readable than ms) but
- * persists ms in the underlying setting.
- */
-function ApprovalTimeoutField({
-  label,
-  valueMs,
-  disabled,
-  onChange
-}: ApprovalTimeoutFieldProps): React.JSX.Element {
-  const [draftSec, setDraftSec] = useState<string>(String(Math.round(valueMs / 1000)))
-
-  // Sync local draft when the upstream value changes (e.g. parent
-  // re-renders with a fresh settings snapshot). Defer to microtask so
-  // React's cascading-render lint guard treats the setState as a
-  // detached update rather than a synchronous one.
-  useEffect(() => {
-    void Promise.resolve().then(() => setDraftSec(String(Math.round(valueMs / 1000))))
-  }, [valueMs])
-
-  const commit = (raw: string): void => {
-    if (disabled) {
-      setDraftSec(String(Math.round(valueMs / 1000)))
-      return
-    }
-    const parsed = Math.round(Number(raw))
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      // Reset to last valid value rather than persisting a bad number.
-      setDraftSec(String(Math.round(valueMs / 1000)))
-      return
-    }
-    // Floor + ceil bounds — keep timeouts in a sensible range.
-    const clamped = Math.max(
-      APPROVAL_TIMEOUT_MIN_MS / 1000,
-      Math.min(parsed, APPROVAL_TIMEOUT_MAX_MS / 1000)
-    )
-    setDraftSec(String(clamped))
-    onChange(clamped * 1000)
-  }
-
-  return (
-    <label className="approval-timeout-field">
-      <span className="approval-timeout-field-label">{label}</span>
-      <span className="approval-timeout-field-input-wrap">
-        <input
-          type="number"
-          min={APPROVAL_TIMEOUT_MIN_MS / 1000}
-          max={APPROVAL_TIMEOUT_MAX_MS / 1000}
-          step={5}
-          className="approval-timeout-field-input"
-          value={draftSec}
-          disabled={disabled}
-          onChange={(e) => setDraftSec(e.target.value)}
-          onBlur={(e) => commit(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              commit((e.target as HTMLInputElement).value)
-            }
-          }}
-        />
-        <span className="approval-timeout-field-unit">s</span>
-      </span>
-    </label>
   )
 }

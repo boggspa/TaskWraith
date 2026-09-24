@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const mainSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const roundSource = readFileSync(new URL('./ipc/ensembleRoundHandlers.ts', import.meta.url), 'utf8')
 const composerSource = readFileSync(
   new URL('../renderer/src/components/Composer.tsx', import.meta.url),
   'utf8'
@@ -17,23 +18,32 @@ function sourceSection(source: string, startMarker: string, endMarker: string): 
 
 describe('Ensemble DM routing ingress integration', () => {
   it('re-resolves desktop IPC routing from the canonical roster after attachment expansion', () => {
+    // The run-ensemble-round callback body moved to ensembleRoundHandlers.ts;
+    // the ipcMain.handle registration stays in index.ts by design (pinned by
+    // StartupWindowGate + projectReferenceContextDispatch).
+    expect(mainSource).toContain("ipcMain.handle(\n      'run-ensemble-round'")
     const handler = sourceSection(
-      mainSource,
-      "'run-ensemble-round'",
-      "'steer-queued-ensemble-prompt'"
+      roundSource,
+      'export async function handleRunEnsembleRound(',
+      'return ensembleStartResult'
     )
     const attachmentExpansion = handler.indexOf('authorizeThenExpandAttachmentRecords(')
-    const canonicalChatRead = handler.indexOf('const ensembleChat = AppStore.getChat(chatId)')
+    const canonicalChatRead = handler.indexOf('const ensembleChat = deps.getChat(chatId)')
     const authoritativeResolution = handler.indexOf(
       'const dmTargetResolution = resolveEnsembleDmTargetForDispatch({'
     )
-    const roundStart = handler.indexOf('ensembleOrchestratorRef?.startRound({')
+    const roundStart = handler.indexOf('deps.getEnsembleOrchestrator()?.startRound({')
 
     expect(attachmentExpansion).toBeGreaterThanOrEqual(0)
     expect(canonicalChatRead).toBeGreaterThan(attachmentExpansion)
     expect(authoritativeResolution).toBeGreaterThan(canonicalChatRead)
     expect(roundStart).toBeGreaterThan(authoritativeResolution)
-    expect(handler).toContain('participants: ensembleChat.ensemble.participants')
+    // 51010be84 hoisted the roster into a guarded local (a catalogue
+    // projection can drop the field once the chrome budget is spent): the
+    // canonical-roster routing claim now spans two pins plus the fail-closed.
+    expect(handler).toContain('const roster = ensembleChat.ensemble.participants')
+    expect(handler).toContain('participants: roster')
+    expect(handler).toContain('Ensemble roster is unavailable')
     expect(handler).toContain('advisoryParticipantId: payload?.dmTargetParticipantId')
     expect(handler).toContain('exactPickerParticipantId: payload?.exactPickerParticipantId')
     expect(handler).toContain('if (dmTargetError) throw new Error(dmTargetError)')

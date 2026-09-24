@@ -9,9 +9,13 @@ max_context_size = 262144
 
 [models."kimi-code/k3"]
 max_context_size = 1_048_576
+
+[models."kimi-code/k3-256k"]
+max_context_size = 262_144
 `
 
     expect(effectiveKimiModelContextWindow(config, 'kimi-code/k3')).toBe(1_048_576)
+    expect(effectiveKimiModelContextWindow(config, 'kimi-code/k3-256k')).toBe(262_144)
     expect(effectiveKimiModelContextWindow(config, 'kimi-code/kimi-for-coding')).toBe(262_144)
   })
 

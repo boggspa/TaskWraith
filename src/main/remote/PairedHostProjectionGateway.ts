@@ -6,12 +6,18 @@
  * stores, or fabricates lifecycle state: it connects to the already-supervised
  * local Host, forwards its versioned frames, and sends governed commands back
  * through that same Host authority path.
+ *
+ * A phone never keeps the Host alive. Every socket the gateway opens declines
+ * the Host lease right after it connects, before anything is forwarded to the
+ * phone or requested for it, reconnects included; a socket whose decline fails
+ * is closed rather than left counting as a holder. The phone's own `host.lease`
+ * and `host.status` requests are refused.
  */
 
 import {
-  HOST_CAPABILITY_ORDER,
   decodeHostCommand,
   type HostBootstrapWelcome,
+  type HostCapability,
   type HostCommand,
   type HostDeltasFrame,
   type HostHealthFrame,
@@ -23,10 +29,25 @@ import {
   type HostLocalTransportRequest,
   type HostLocalTransportSuccessResult
 } from '../../shared/hostProtocolTransport'
+import { declineHostLease } from '../../host-client/HostLeaseClient'
 import {
   HostProjectionClient,
   type HostProjectionClientOptions
 } from '../host/HostProjectionClient'
+
+/**
+ * Remote/iOS remains on the existing projection ceiling until it has explicit
+ * setup/history UX and a separate decision to expose repository contents.
+ */
+const PAIRED_HOST_CAPABILITIES: readonly HostCapability[] = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'model-offers',
+  'commands',
+  'receipts',
+  'health'
+]
 
 export const PAIRED_HOST_PROJECTION_METHODS = {
   request: 'bridge.requestHost',
@@ -205,6 +226,15 @@ export class PairedHostProjectionGateway {
       }
       existing.send = attachment.send
       existing.displayName = attachment.displayName
+      // `attach` is scoped to the phone's current E2EE delivery epoch, while
+      // `seeded` used to describe only the longer-lived local Host client. A
+      // phone can re-handshake without the Mac↔relay socket or Host client ever
+      // disconnecting; in that case the old `connected && seeded` fast path
+      // returned here and the new phone epoch received no welcome, snapshot, or
+      // live state. Re-seed every authenticated reattachment. The Host client
+      // remains connected, so this is one bounded snapshot read, not a restart.
+      existing.seeded = false
+      this.sendState(existing, { phase: 'connecting' })
       await this.connectAndSeed(existing)
       return
     }
@@ -218,7 +248,7 @@ export class PairedHostProjectionGateway {
         subjectId: attachment.deviceKey,
         ...(attachment.displayName ? { displayName: attachment.displayName } : {})
       },
-      capabilities: HOST_CAPABILITY_ORDER
+      capabilities: PAIRED_HOST_CAPABILITIES
     })
     const session: PairedHostProjectionSession = {
       deviceKey: attachment.deviceKey,
@@ -263,6 +293,12 @@ export class PairedHostProjectionGateway {
     switch (request.kind) {
       case 'snapshot.get': {
         const frame = await session.client.getSnapshot()
+        const welcome = session.client.welcome
+        if (!welcome) throw new PairedHostProjectionRequestError('host_unavailable')
+        // A phone recovering a lost welcome cannot apply even a valid snapshot.
+        // Ack continuations and push handlers can resume independently on iOS,
+        // so the ordered push stream must carry a complete seed of its own.
+        this.sendSeed(session, welcome, frame)
         session.seeded = true
         return { kind: 'snapshot.get', frame }
       }
@@ -276,6 +312,21 @@ export class PairedHostProjectionGateway {
           kind: 'thread.offers',
           offers: await session.client.getThreadOffers(request.params.threadId)
         }
+      case 'provider.status':
+      case 'provider.offers':
+      case 'provider.auth.flows':
+      case 'provider.auth.status':
+      case 'thread.history':
+      case 'thread.catalogue':
+      case 'thread.catalogue.maintenance':
+      case 'workspace.git.read':
+      case 'history.since':
+      case 'host.shutdown':
+      case 'host.lease':
+      case 'host.status':
+        // The lease kinds included: a phone never holds or inspects the Host
+        // itself; its keep-alive, when it has one, is a reason on main's lease.
+        throw new PairedHostProjectionRequestError('unauthorized')
       case 'receipt.lookup':
         return {
           kind: 'receipt.lookup',
@@ -309,8 +360,10 @@ export class PairedHostProjectionGateway {
       await this.connectAndSeed(session)
       const frame = await session.client.getSnapshot()
       if (!this.isCurrent(session)) return false
+      const welcome = session.client.welcome
+      if (!welcome) return false
       session.seeded = true
-      this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
+      this.sendSeed(session, welcome, frame)
       return true
     } catch {
       return false
@@ -353,20 +406,18 @@ export class PairedHostProjectionGateway {
         let welcome: HostBootstrapWelcome | null = session.client.welcome
         if (!session.client.connected) {
           welcome = await session.client.connect()
+          if (!this.isCurrent(session)) return
+          await this.declineLease(session)
         }
         if (!this.isCurrent(session)) return
         if (!welcome) throw new PairedHostProjectionRequestError('host_unavailable')
-        this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.welcome, welcome)
         const frame: HostSnapshotFrame = await session.client.getSnapshot()
         if (!this.isCurrent(session)) return
         session.seeded = true
         session.retryAttempt = 0
-        this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
-        this.sendState(session, {
-          phase: 'live',
-          generation: frame.snapshot.generation,
-          cursor: frame.snapshot.cursor
-        })
+        // `attach` can replace the phone delivery while getSnapshot is pending.
+        // Send the complete seed to the current delivery without an await gap.
+        this.sendSeed(session, welcome, frame)
       } catch (error) {
         if (this.isCurrent(session)) {
           this.sendState(session, { phase: 'unavailable' })
@@ -380,6 +431,20 @@ export class PairedHostProjectionGateway {
       await work
     } finally {
       if (session.connecting === work) session.connecting = null
+    }
+  }
+
+  /**
+   * Declares this socket a non-holder for its lifetime. A Host that predates
+   * leases has nothing to decline. Any other failure closes the socket: an
+   * undeclined phone socket would count as holding the Host.
+   */
+  private async declineLease(session: PairedHostProjectionSession): Promise<void> {
+    try {
+      await declineHostLease(session.client)
+    } catch (error) {
+      session.client.close()
+      throw error
     }
   }
 
@@ -405,6 +470,20 @@ export class PairedHostProjectionGateway {
 
   private isCurrent(session: PairedHostProjectionSession): boolean {
     return this.sessions.get(session.deviceKey) === session
+  }
+
+  private sendSeed(
+    session: PairedHostProjectionSession,
+    welcome: HostBootstrapWelcome,
+    frame: HostSnapshotFrame
+  ): void {
+    this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.welcome, welcome)
+    this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
+    this.sendState(session, {
+      phase: 'live',
+      generation: frame.snapshot.generation,
+      cursor: frame.snapshot.cursor
+    })
   }
 
   private safeSend(session: PairedHostProjectionSession, method: string, params?: unknown): void {

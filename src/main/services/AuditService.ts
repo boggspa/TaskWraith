@@ -44,8 +44,14 @@ export type AutomaticApprovalDecisionSource =
   | 'plan_artifact'
   | 'readonly_shell'
   | 'inspection_shell'
+  // Host-destructive shell (disk wipe, shutdown, etc.) — deny-wall before YOLO/grants.
+  | 'host_destructive'
+  | 'command_rule'
   | 'external_read'
   | 'explicit_user_request'
+  // canvas_eval auto-approved by its dedicated 12h exact-live-surface window
+  // (the first human accept on that canvasId; navigation/turn changes retain it).
+  | 'canvas_eval_window'
 export type AutomaticApprovalGrantedScope = 'request' | 'session' | 'workspace'
 
 export interface AuditServiceDeps {
@@ -228,7 +234,8 @@ function expirationForDecision(
   if (grantedScope === 'session') {
     return {
       mode: 'session_end',
-      description: 'Session approval expires when the active provider runtime session ends.'
+      description:
+        'This run-scoped approval expires when the current TaskWraith run reaches a terminal state.'
     }
   }
   return {

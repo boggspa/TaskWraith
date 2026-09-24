@@ -12,6 +12,8 @@ import {
   type TaskWraithControlHostMessage,
   type TaskWraithControlRequest,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadFindParams,
+  type TaskWraithControlThreadFindResult,
   type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot,
   type TaskWraithControlWelcome
@@ -23,6 +25,26 @@ import {
 
 export interface TaskWraithControlClientOptions {
   clientVersion: string
+  /**
+   * A short label the host stamps on every prompt this client sends, so the
+   * transcript reads "Sent from PID … / <label>" instead of "You". Leave it
+   * unset for the TUI, which is the user at the keyboard.
+   */
+  clientLabel?: string
+  /**
+   * Pid to present at hello. Defaults to this process. A one-shot `tw send`
+   * passes the OWNING agent's pid instead: its own process lives about a
+   * second, so its pid names nothing a human could look up in the transcript
+   * afterwards.
+   */
+  clientPid?: number
+  /**
+   * Capabilities to advertise at hello. Defaults to everything the terminal
+   * UI drives. A one-shot sender should pass `['compose']`: the host runs its
+   * projection poll only for clients that asked for `snapshot`/`transcript`,
+   * so a narrow request costs the host nothing per tick.
+   */
+  capabilities?: readonly TaskWraithControlCapability[]
   userDataPath?: string
   discoveryPath?: string
   connectTimeoutMs?: number
@@ -139,8 +161,10 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
             protocolVersion: TASKWRAITH_CONTROL_PROTOCOL_VERSION,
             client: TASKWRAITH_CONTROL_CLIENT_NAME,
             clientVersion: this.options.clientVersion,
+            clientPid: this.options.clientPid ?? process.pid,
+            ...(this.options.clientLabel ? { clientLabel: this.options.clientLabel } : {}),
             token,
-            capabilities: CLIENT_CAPABILITIES
+            capabilities: this.options.capabilities ?? CLIENT_CAPABILITIES
           })}\n`
         )
       })
@@ -191,6 +215,13 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
 
   async threadOffers(threadId: string): Promise<TaskWraithControlThreadOffers> {
     return this.request('thread.offers', { threadId })
+  }
+
+  /** Slim thread rows for a sender; never needs the whole-profile snapshot. */
+  async findThreads(
+    params: TaskWraithControlThreadFindParams = {}
+  ): Promise<TaskWraithControlThreadFindResult> {
+    return this.request('thread.find', { ...params })
   }
 
   async toggleEnsembleSeat(

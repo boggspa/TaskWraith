@@ -57,4 +57,66 @@ describe('EnsembleBriefEditor', () => {
     expect(html).toContain('Save changes')
     expect(html).toContain('Save this participant')
   })
+
+  it('keeps mention highlighting while omitting preset controls in compact hosts', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleBriefEditor
+        label="Goal / brief"
+        value="Coordinate with @Captain on the next step."
+        participants={[participant()]}
+        rows={4}
+        textareaClassName="compact-roster-brief"
+        textareaAriaLabel="Goal / brief for Captain"
+        showPresetControls={false}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('aria-label="Goal / brief for Captain"')
+    expect(html).toContain('has-mention-overlay')
+    expect(html).toContain('composer-textarea-highlight')
+    expect(html).toContain('composer-mention-token')
+    expect(html).toContain('var(--provider-codex-color, var(--accent))')
+    expect(html).not.toContain('ensemble-brief-preset-controls')
+    expect(html).not.toContain('Brief preset…')
+  })
+
+  // `EnsembleParticipant.instructions` is typed required, but participants
+  // reach the renderer without it — which is why main defends every read
+  // with `|| ''` (EnsemblePrompt, EnsembleRosterMutation, the orchestrator).
+  // This editor trusted the type and took the whole transcript surface down
+  // with `Cannot read properties of undefined (reading 'trim')`.
+  it('renders a brief whose value is absent instead of crashing the surface', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleBriefEditor
+        label="Brief / goal"
+        value={undefined as unknown as string}
+        participants={[participant()]}
+        rows={4}
+        textareaClassName="settings-roster-textarea"
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('ensemble-brief-preset-controls')
+    expect(html).toContain('<textarea')
+  })
+
+  // Guards the cheap wrong fix: deleting the `.trim()` guard also stops the
+  // crash, but then an absent brief offers a Save preset button that saves
+  // nothing. An absent brief is an empty brief, so the action stays disabled.
+  it('keeps preset saving disabled for an absent brief', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleBriefEditor
+        label="Brief / goal"
+        value={undefined as unknown as string}
+        participants={[participant()]}
+        rows={4}
+        textareaClassName="settings-roster-textarea"
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(html).toMatch(/<button[^>]*disabled[^>]*title="Save this brief as a reusable preset"/)
+  })
 })

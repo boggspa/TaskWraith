@@ -37,6 +37,28 @@ function round(patch: Partial<EnsembleRoundState> = {}): EnsembleRoundState {
 }
 
 describe('deriveEnsembleParticipantChipStatus', () => {
+  // The composer's first render of any ensemble chat uses the thread-catalogue
+  // summary row: `ThreadCatalogueChrome` projects `activeRound` down to a
+  // scalar whitelist and drops its `participants`, and `catalogueChatListItem`
+  // spreads that chrome onto a `ChatListItem` that `extends ChatRecord`.
+  // Hydration only replaces it after paint, so this runs on every open.
+  it('falls back to idle on a catalogue summary round with no participants', () => {
+    const projectedRound = {
+      roundId: 'round-1',
+      status: 'running',
+      startedAt: '2026-08-16T16:00:00.000Z',
+      activeParticipantId: 'advisor'
+    } as unknown as EnsembleRoundState
+
+    const speaking = deriveEnsembleParticipantChipStatus(projectedRound, 'advisor')
+    expect(speaking.statusLabel).toBe('speaking')
+    expect(speaking.participantState).toBeUndefined()
+
+    const other = deriveEnsembleParticipantChipStatus(projectedRound, 'reviewer')
+    expect(other.statusLabel).toBe('idle')
+    expect(other.active).toBe(false)
+  })
+
   it('keeps a serial speaker live when its earlier fan-out lane completed', () => {
     const projection = deriveEnsembleParticipantChipStatus(
       round({

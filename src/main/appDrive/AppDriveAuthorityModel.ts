@@ -1,3 +1,5 @@
+import type { EnsembleAuthorityRole } from '../../shared/ensembleAuthority'
+
 /**
  * Pure App Drive permission / identity / audit / secret / takeover disclosure.
  *
@@ -119,18 +121,39 @@ export const APP_DRIVE_CONSENT_LAYERS: readonly AppDriveConsentDisclosure[] = [
   }
 ] as const
 
-export type AppDriveAllowedVerb = 'observe' | 'inspect' | 'click' | 'fill'
+export type AppDriveAllowedVerb =
+  | 'observe'
+  | 'inspect'
+  | 'click'
+  | 'fill'
+  | 'key'
+  | 'scroll'
+  | 'hover'
+  | 'select'
+  | 'wait_for'
 
 export const APP_DRIVE_ALLOWED_VERBS: readonly AppDriveAllowedVerb[] = [
   'observe',
   'inspect',
   'click',
-  'fill'
+  'fill',
+  'key',
+  'scroll',
+  'hover',
+  'select',
+  'wait_for'
 ] as const
 
-export type AppDriveControlVerb = Extract<AppDriveAllowedVerb, 'click' | 'fill'>
+export type AppDriveControlVerb = Exclude<AppDriveAllowedVerb, 'observe' | 'inspect' | 'wait_for'>
 
-export const APP_DRIVE_CONTROL_VERBS: readonly AppDriveControlVerb[] = ['click', 'fill'] as const
+export const APP_DRIVE_CONTROL_VERBS: readonly AppDriveControlVerb[] = [
+  'click',
+  'fill',
+  'key',
+  'scroll',
+  'hover',
+  'select'
+] as const
 
 export type AppDriveSessionControlAction = 'pause' | 'resume' | 'takeover' | 'stop'
 
@@ -254,7 +277,7 @@ export interface AppDriveAuthorityAdmissionInput {
   /** True only when a current user-approved View & Control lease exists. */
   readonly hasUserViewAndControlLease: boolean
   /** Consent mint source for the current control lease, when present. */
-  readonly leaseApprovedBy?: AppDriveConsentApprover | 'agent' | 'boss' | 'captain' | null
+  readonly leaseApprovedBy?: AppDriveConsentApprover | 'agent' | EnsembleAuthorityRole | null
   readonly lifecycle: AppDriveSessionLifecycleState
   readonly verb: AppDriveAllowedVerb | string
   /** When true, the target is a secure/password-like field. */

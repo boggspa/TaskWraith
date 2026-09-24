@@ -22,6 +22,11 @@ import {
   uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
+import {
+  TRANSCRIPT_TEXT_SIZE_OPTIONS,
+  TRANSCRIPT_VIEW_OPTIONS,
+  TRANSCRIPT_WIDTH_OPTIONS
+} from './settings/settingsUiOptions'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -144,17 +149,21 @@ function makeRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimePro
 }
 
 describe('SettingsPanel provider cards', () => {
-  it('renders shared accent/bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
+  it('renders message bubble controls, theme cards, and adjustable diff colors on Appearance', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance' })} />
     )
 
     expect(html).toContain('Diff stat colors')
-    expect(html).toContain('Accent &amp; chat bubble')
-    expect(html).toContain('Shared color')
-    expect(html).toContain('Accent and message bubble preview')
+    expect(html).toContain('Message bubble')
+    expect(html).toContain('Bubble color')
+    expect(html).toContain('Message bubble preview')
     expect(html).toContain('Message bubble corners')
-    expect(html).toContain('Looks good — your accent and message bubble now stay in sync.')
+    expect(html).toContain('Looks good — this color is your message bubble’s alone.')
+    // This picker stopped driving the interface accent when --accent moved to
+    // the OS accent, so the section must not still promise that it does.
+    expect(html).toContain('follow your operating system’s accent color')
+    expect(html).not.toContain('One shared color drives the interface accent')
     expect(html).toContain('Additions')
     expect(html).toContain('Deletions')
     expect(html).toContain('#2DB777')
@@ -172,6 +181,110 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('Tool-icon color')
     expect(html).not.toContain('Your chat bubble')
     expect(html).not.toContain('Selected accent')
+  })
+
+  it('renders the transcript text size control on Appearance, from the shared catalogue', () => {
+    // Every other assertion about this control reads SettingsPanel.tsx as a
+    // STRING, so the whole <label> block can be gated behind a condition that
+    // is never true and the entire guard set stays green — the control renders
+    // for nobody while the tests report a shipped setting. This is the only
+    // assertion that it REACHES the Appearance tab and binds the value it was
+    // given, and it is the assertion the Default-transcript-view slice below
+    // already calls "the only assertion that it actually REACHES" for its own
+    // control.
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptTextSize: 'large' })} />
+    )
+
+    expect(html).toContain('Transcript text size')
+    // Read from the catalogue, so a second hard-coded copy of the wording
+    // cannot satisfy it.
+    for (const option of TRANSCRIPT_TEXT_SIZE_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The BINDING, not merely the presence of three options.
+    const large = TRANSCRIPT_TEXT_SIZE_OPTIONS.find((option) => option.value === 'large')!
+    expect(html).toContain(`<option value="large" selected="">${large.label}</option>`)
+
+    // A second value, so the `selected` above is tracking the prop rather than
+    // being the catalogue's own last entry.
+    const small = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptTextSize: 'small' })} />
+    )
+    const smallOption = TRANSCRIPT_TEXT_SIZE_OPTIONS.find((option) => option.value === 'small')!
+    expect(small).toContain(`<option value="small" selected="">${smallOption.label}</option>`)
+    expect(small).not.toContain(`<option value="large" selected="">`)
+  })
+
+  it('renders the transcript width control on Appearance, from the shared catalogue', () => {
+    // Same stake as the text-size test directly above: every other assertion
+    // about this control reads SettingsPanel.tsx as a STRING, so the whole
+    // <label> block could be gated behind a condition that is never true and
+    // the entire guard set would stay green while the control rendered for
+    // nobody. Order 10 shipped without one of these.
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptWidth: 'wide' })} />
+    )
+
+    expect(html).toContain('Transcript width')
+    for (const option of TRANSCRIPT_WIDTH_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The BINDING, not merely the presence of three options.
+    const wide = TRANSCRIPT_WIDTH_OPTIONS.find((option) => option.value === 'wide')!
+    expect(html).toContain(`<option value="wide" selected="">${wide.label}</option>`)
+
+    // A second value, so the `selected` above tracks the prop rather than being
+    // the catalogue's own last entry — and specifically MEDIUM, because medium
+    // is the value that stamps nothing on the transcript. A control that
+    // silently refused to bind it would look identical in the app.
+    const medium = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', transcriptWidth: 'medium' })}
+      />
+    )
+    const mediumOption = TRANSCRIPT_WIDTH_OPTIONS.find((option) => option.value === 'medium')!
+    expect(medium).toContain(`<option value="medium" selected="">${mediumOption.label}</option>`)
+    expect(medium).not.toContain(`<option value="wide" selected="">`)
+  })
+
+  it('renders the default transcript view control on Appearance, from the shared catalogue', () => {
+    // The control is a source-pinned seam everywhere else; this is the only
+    // assertion that it actually REACHES the Appearance tab and selects the
+    // value it was given.
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', defaultTranscriptView: 'minimal' })}
+      />
+    )
+
+    expect(html).toContain('Default transcript view')
+    // Labels come from the catalogue, so a second copy of the wording cannot
+    // satisfy this — the expected strings are read from the catalogue itself.
+    for (const option of TRANSCRIPT_VIEW_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The chosen value is marked selected, so this is the BINDING and not
+    // merely the presence of three options.
+    expect(html).toContain('<option value="minimal" selected="">Minimal</option>')
+
+    const tools = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', defaultTranscriptView: 'tools' })}
+      />
+    )
+    expect(tools).toContain('<option value="tools" selected="">Tools</option>')
+    // The helper text follows the selection, straight from the catalogue.
+    // (`TRANSCRIPT_VIEW_OPTIONS[1]` is the only one of the three whose helper
+    // contains no character React escapes on the way out.)
+    expect(tools).toContain(TRANSCRIPT_VIEW_OPTIONS[1].helper)
+    // Negative with its positive control directly above: the same string is
+    // present for `tools` and absent for `minimal`, so this cannot pass over a
+    // page that simply never rendered the control.
+    expect(html).not.toContain(TRANSCRIPT_VIEW_OPTIONS[1].helper)
   })
 
   it('binds the custom transcript-font input to the PERSISTED value (not appearance state)', () => {
@@ -296,13 +409,73 @@ describe('SettingsPanel provider cards', () => {
   it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
-    // Ollama now has a sign-in card (filling the retired-Gemini slot) offering the
-    // optional ollama.com cloud auth — local models still need no account.
-    expect(html).toContain('settings-provider-auth-card-partial provider-ollama')
+    // Ollama's sign-in card (filling the retired-Gemini slot) reports the
+    // ollama.com account in the same vocabulary as every other provider —
+    // before any status lands, that is the shared "not checked yet", never the
+    // retired amber "setup optional".
+    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(html).not.toContain('settings-provider-auth-card-partial provider-ollama')
+    expect(html).not.toContain('Local setup optional')
     expect(html).toContain('ollama signin')
     expect(html).toContain('sign in or add a key for Ollama Cloud')
     expect(html).toContain('Open Terminal to sign in')
     expect(html).toContain('Ollama Cloud API key')
+  })
+
+  it('reads a running but signed-out Ollama as ready, not as optional setup', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: true,
+            localAvailable: true,
+            setupRequired: false,
+            modelCount: 1,
+            localModelCount: 1,
+            cloudModelCount: 0,
+            cloud: { supported: true, enabled: true, authenticated: false, models: [] },
+            models: [{ id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)', source: 'local' }]
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
+    expect(html).toContain('Running · not signed in')
+    expect(html).not.toContain('Local runtime ready')
+    expect(html).not.toContain('Cloud sign-in optional')
+    // The Local / Ollama group keeps the runtime signal, without amber.
+    const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
+    expect(localGroup).toContain('Local service reachable')
+    expect(localGroup).toContain('Cloud not signed in')
+    expect(localGroup).not.toContain('--color-warning')
+  })
+
+  it('keeps an Ollama with neither server nor account neutral, not red', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          ollamaStatus: {
+            available: false,
+            localAvailable: false,
+            setupRequired: true,
+            modelCount: 0,
+            localModelCount: 0,
+            cloudModelCount: 0,
+            cloud: { supported: false, enabled: true, authenticated: null, models: [] }
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('settings-provider-auth-card-not-signed-in provider-ollama')
+    expect(html).not.toContain('settings-provider-auth-card-not-available provider-ollama')
+    expect(html).toContain('Ollama not running')
+    expect(html).not.toContain('Local setup optional')
+    const localGroup = html.slice(html.indexOf('Local / Ollama'), html.indexOf('Ollama endpoint'))
+    expect(localGroup).toContain('Local service not reachable')
+    expect(localGroup).not.toContain('--color-warning')
+    expect(localGroup).not.toContain('--color-danger')
   })
 
   it('separates authenticated Ollama Cloud models from installed local models', () => {
@@ -345,7 +518,7 @@ describe('SettingsPanel provider cards', () => {
     )
 
     expect(html).toContain('settings-provider-auth-card-signed-in provider-ollama')
-    expect(html).toContain('Cloud connected · pro')
+    expect(html).toContain('Signed in (pro)')
     expect(html).toContain('Ollama Cloud</span>')
     expect(html).toContain('Local models')
     expect(html).toContain('glm-5.2:cloud')
@@ -385,7 +558,7 @@ describe('SettingsPanel provider cards', () => {
       />
     )
 
-    expect(html).toContain('Cloud API key configured')
+    expect(html).toContain('Cloud API key saved')
     expect(html).toContain('Cloud models use Ollama’s direct API')
     expect(html).toContain('Local service not reachable')
   })
@@ -415,6 +588,91 @@ describe('SettingsPanel provider cards', () => {
     expect(card).toContain('Open Terminal to sign in')
     expect(card).toContain('Upgrade CLI…')
     expect(card).not.toContain('Sign out')
+  })
+
+  it("renders Vibe's authenticated ACP status as a green signed-in card", () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            mistral: {
+              available: true,
+              authState: 'authenticated',
+              credentialPresent: true,
+              authSource: 'os_keyring',
+              probeStatus: 'verified'
+            }
+          }
+        })}
+      />
+    )
+
+    const mistralStart = html.indexOf('provider-mistral')
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      mistralStart + 'provider-mistral'.length
+    )
+    const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Mistral Vibe signed in')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).toContain('did not read or store the credential')
+    expect(card).not.toContain('sign-in status unavailable')
+  })
+
+  it('renders verified Muse login as a green configured card', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            muse: {
+              available: true,
+              setupRequired: false,
+              authState: 'oauth',
+              credentialPresent: true
+            }
+          }
+        })}
+      />
+    )
+
+    const museStart = html.indexOf('provider-muse')
+    expect(museStart).toBeGreaterThanOrEqual(0)
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      museStart + 'provider-muse'.length
+    )
+    const card = html.slice(museStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Muse Code configured')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).not.toContain('setup unverified')
+  })
+
+  it('renders a windsurf-api-key Devin status as a green signed-in card', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            devin: {
+              available: true,
+              authState: 'windsurf-api-key',
+              credentialPresent: false
+            }
+          }
+        })}
+      />
+    )
+
+    const devinStart = html.indexOf('provider-devin')
+    expect(devinStart).toBeGreaterThanOrEqual(0)
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      devinStart + 'provider-devin'.length
+    )
+    const card = html.slice(devinStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Devin signed in')
+    expect(card).toContain('settings-provider-auth-status-dot-signed-in')
+    expect(card).toContain('Custom API server URL')
+    expect(card).not.toContain('credential state not observed')
   })
 
   it('buries the AntiGravity risk-consent card after Ollama', () => {
@@ -479,7 +737,8 @@ describe('SettingsPanel provider cards', () => {
           activeTab: 'mcp',
           providerStatusByProvider: {
             pi: { available: true },
-            mistral: { available: true }
+            mistral: { available: true },
+            devin: { available: true }
           },
           providerCapabilitiesByProvider: {
             pi: {
@@ -518,7 +777,8 @@ describe('SettingsPanel provider cards', () => {
 
     const pi = card('pi')
     const mistral = card('mistral')
-    for (const surface of [pi, mistral]) {
+    const devin = card('devin')
+    for (const surface of [pi, mistral, devin]) {
       expect(surface).toContain('<span class="settings-mcp-state-pill">available</span>')
       expect(surface).toContain('<span>first-class runtime</span>')
       expect(surface).not.toContain('>delegated</span>')
@@ -529,6 +789,8 @@ describe('SettingsPanel provider cards', () => {
     expect(pi).toContain('first-class TaskWraith provider')
     expect(mistral).toContain('Mistral Vibe ACP')
     expect(mistral).toContain('first-class Mistral Vibe ACP provider')
+    expect(devin).toContain('devin acp')
+    expect(devin).toContain('first-class Devin ACP provider')
   })
 
   it('hides the AntiGravity connected-surface card until an admission lane is live', () => {
@@ -682,7 +944,16 @@ describe('SettingsPanel provider cards', () => {
 
   it('groups recent MCP tool families under their product headers', () => {
     const html = renderToStaticMarkup(
-      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          agenticServices: {
+            ...DEFAULT_AGENTIC_SERVICES,
+            mcpTools: 'allow',
+            canvasInteraction: 'deny'
+          }
+        })}
+      />
     )
     const groupSlice = (label: string, nextLabel: string) => {
       const start = html.indexOf(`<strong>${label}</strong>`)
@@ -695,6 +966,27 @@ describe('SettingsPanel provider cards', () => {
     expect(groupSlice('Canvas and launches', 'Ensemble and collaboration')).toContain(
       '<strong>Canvas Sketch Get</strong>'
     )
+    const canvasGroup = groupSlice('Canvas and launches', 'Ensemble and collaboration')
+    expect(canvasGroup).toContain('<strong>Open homebrew emulator</strong>')
+    expect(canvasGroup).toContain('<strong>Observe homebrew emulator</strong>')
+    expect(canvasGroup).toContain('<strong>Step homebrew emulator</strong>')
+    expect(canvasGroup).toContain('no URL, ROM, or game override exists')
+    expect(canvasGroup).toContain('raw emulator memory is never exposed')
+    const toolSlice = (label: string) => {
+      const start = html.indexOf(`<strong>${label}</strong>`)
+      const end = html.indexOf('</article>', start)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+    for (const label of [
+      'Redeem permission opportunity',
+      'Open homebrew emulator',
+      'Observe homebrew emulator'
+    ]) {
+      expect(toolSlice(label)).toContain('Policy<code>Always allow</code>')
+    }
+    expect(toolSlice('Step homebrew emulator')).toContain('Policy<code>Block</code>')
     expect(groupSlice('Ensemble and collaboration', 'Goals and evidence')).toContain(
       '<strong>Ensemble Fanout</strong>'
     )
@@ -705,6 +997,7 @@ describe('SettingsPanel provider cards', () => {
       '<strong>Tw Recall Find</strong>'
     )
     expect(groupSlice('Media tools', 'Creative apps')).toContain('<strong>Audio Mix</strong>')
+    expect(html).toContain('Redeem permission opportunity')
   })
 
   it('shows Codex TaskWraith bridge tools separately from app-server MCP inventory', () => {
@@ -996,6 +1289,9 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toMatch(
       /<label class="settings-service-row"><span>Network access<\/span><select class="settings-select" disabled="">/
     )
+    expect(html).toContain(
+      'click and fill elements in a Canvas preview or advance a reviewed fixed emulator surface'
+    )
   })
 
   it('does not render the retired auto-resume parent toggle', () => {
@@ -1051,7 +1347,8 @@ describe('SettingsPanel provider cards', () => {
       'Ollama',
       'Pi',
       'Mistral',
-      'Muse'
+      'Muse',
+      'Devin'
     ]) {
       expect(html).toContain(
         `<span class="approval-timeout-field-label">${provider}</span>`
@@ -2364,5 +2661,45 @@ describe('user MCP server name/audit helpers', () => {
 
     expect(toml).toContain('Authorization = "[stored in TaskWraith settings]"')
     expect(toml).not.toContain('Bearer ${DOCS_TOKEN}')
+  })
+  it('renders the keep-awake toggle on General and binds it to the setting', () => {
+    // Same reason the transcript-text-size slice above gives: every other
+    // assertion about this control reads SettingsPanel.tsx as a STRING, so the
+    // whole <label> can sit behind a never-true condition and stay green while
+    // rendering for nobody. This is the only assertion that it REACHES the
+    // General tab.
+    const on = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior', keepAwakeWhileWorking: true })} />
+    )
+    expect(on).toContain('Keep this Mac awake while agents are working')
+    expect(on).toContain('type="checkbox" checked=""')
+
+    // The BINDING, not merely the presence of a checkbox: an explicit false
+    // must render unchecked.
+    const off = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'behavior', keepAwakeWhileWorking: false })}
+      />
+    )
+    expect(off).toContain('Keep this Mac awake while agents are working')
+    const offRow = off.slice(0, off.indexOf('Keep this Mac awake while agents are working'))
+    expect(offRow.slice(-220)).not.toContain('checked=""')
+
+    // Absent means ON, matching `defaultSettings` — a settings file written
+    // before this shipped must not read as an opt-out.
+    const absent = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
+    )
+    const absentRow = absent.slice(
+      0,
+      absent.indexOf('Keep this Mac awake while agents are working')
+    )
+    expect(absentRow.slice(-220)).toContain('checked=""')
+
+    // It is a GENERAL control: it must not leak onto Appearance.
+    const appearance = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', keepAwakeWhileWorking: true })} />
+    )
+    expect(appearance).not.toContain('Keep this Mac awake while agents are working')
   })
 })

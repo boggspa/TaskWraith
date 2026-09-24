@@ -1,3 +1,4 @@
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -6,10 +7,22 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   WorkspaceLockRuntime,
+  createCommitFenceOwnerReader,
   createWorkspaceExternalMutationAuthorityReceipt,
+  listCommitFenceOwners,
+  mutationFencePartitionKeys,
   workspaceLockAuthorityRootForHome
 } from './WorkspaceLockRuntime'
-import type { WorkspaceLockLease, WorkspaceLockSnapshot } from './workLocks/WorkspaceLockTypes'
+import {
+  WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY,
+  WorkspaceMutationCommitFence
+} from './workLocks/WorkspaceMutationCommitFence'
+import type {
+  CanonicalWorkspaceLockClaim,
+  WorkspaceLockLease,
+  WorkspaceLockProcessObservation,
+  WorkspaceLockSnapshot
+} from './workLocks/WorkspaceLockTypes'
 
 function emptySnapshot(): WorkspaceLockSnapshot {
   return {
@@ -179,7 +192,362 @@ function harness() {
   }
 }
 
+/** A real commit fence over a temporary root, with exact process observation injected. */
+async function commitFenceRoot(
+  observations: Map<number, WorkspaceLockProcessObservation>,
+  options: { onReclaimGuardAcquired?: () => void | Promise<void> } = {}
+) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'tw-fence-owners-')))
+  const fence = new WorkspaceMutationCommitFence({
+    userDataRoot: root,
+    observeProcess: async (pid) => observations.get(pid) ?? { state: 'identity_unavailable' },
+    ...(options.onReclaimGuardAcquired
+      ? { onReclaimGuardAcquired: options.onReclaimGuardAcquired }
+      : {})
+  })
+  const owner = (pid: number) => ({
+    lockOwnerId: `owner-${pid}`,
+    runId: `run-${pid}`,
+    pid,
+    processBirthIdentity: `birth-${pid}`
+  })
+  return { root, directory: join(root, WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY), fence, owner }
+}
+
+function live(...pids: number[]): Map<number, WorkspaceLockProcessObservation> {
+  return new Map(
+    pids.map((pid) => [pid, { state: 'live' as const, processBirthIdentity: `birth-${pid}` }])
+  )
+}
+
+const PARTITION_A = `mutation-target:${'a'.repeat(64)}`
+const PARTITION_B = `mutation-target:${'b'.repeat(64)}`
+
+describe('listCommitFenceOwners', () => {
+  it('names the owner of every partition and of the unpartitioned fence, and nothing without a fence directory', async () => {
+    const f = await commitFenceRoot(live(11, 22, 33))
+    try {
+      expect(listCommitFenceOwners(f.root)).toEqual([])
+      // Reading never creates the fence directory.
+      expect(existsSync(f.directory)).toBe(false)
+      await f.fence.acquire(f.owner(11), PARTITION_A)
+      await f.fence.acquire(f.owner(22), PARTITION_B)
+      await f.fence.acquire(f.owner(33))
+      const owners = listCommitFenceOwners(f.root)
+      expect([...owners].sort((left, right) => left.pid - right.pid)).toEqual([
+        { pid: 11, processBirthIdentity: 'birth-11', partitionKey: PARTITION_A },
+        { pid: 22, processBirthIdentity: 'birth-22', partitionKey: PARTITION_B },
+        { pid: 33, processBirthIdentity: 'birth-33' }
+      ])
+      // A released partition is no longer named.
+      const heldB = f.fence.readFence(PARTITION_B)
+      expect(f.fence.release(heldB!)).toBe(true)
+      expect(
+        listCommitFenceOwners(f.root)
+          .map((owner) => owner.pid)
+          .sort()
+      ).toEqual([11, 33])
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it('names a contender while it holds the reclaim guard over a dead owner', async () => {
+    const observations = live(44)
+    observations.set(55, { state: 'dead' })
+    let seen: number[] = []
+    const f = await commitFenceRoot(observations, {
+      onReclaimGuardAcquired: () => {
+        seen = listCommitFenceOwners(f.root)
+          .map((owner) => owner.pid)
+          .sort()
+      }
+    })
+    try {
+      // A record left by a process that is now dead, then a live contender.
+      const stale = new WorkspaceMutationCommitFence({
+        userDataRoot: f.root,
+        observeProcess: async () => ({ state: 'live', processBirthIdentity: 'birth-55' })
+      })
+      await stale.acquire(f.owner(55), PARTITION_A)
+      const won = await f.fence.acquire(f.owner(44), PARTITION_A)
+      expect(won.pid).toBe(44)
+      // Mid-reclaim both the stale owner and the guard's contender are named.
+      expect(seen).toEqual([44, 55])
+      expect(listCommitFenceOwners(f.root).map((owner) => owner.pid)).toEqual([44])
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it('skips unpublished temporaries and quarantined guards', async () => {
+    const f = await commitFenceRoot(live(11))
+    try {
+      await f.fence.acquire(f.owner(11), PARTITION_A)
+      await writeFile(join(f.directory, '.0f0e-temporary.tmp'), 'partial')
+      await writeFile(join(f.directory, `.reclaim-guard-quarantine-${'c'.repeat(64)}-x.json`), '{')
+      expect(listCommitFenceOwners(f.root).map((owner) => owner.pid)).toEqual([11])
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it('throws on any record it cannot read or does not recognise, so the reclaim defers', async () => {
+    const f = await commitFenceRoot(live(11))
+    try {
+      await f.fence.acquire(f.owner(11), PARTITION_A)
+      const unknown = join(f.directory, 'fence-v2-layout.json')
+      await writeFile(unknown, '{}')
+      expect(() => listCommitFenceOwners(f.root)).toThrow(/Unrecognised commit-fence entry/)
+      await rm(unknown)
+      const corrupt = join(f.directory, `fence-${'d'.repeat(64)}.json`)
+      await writeFile(corrupt, '{"pid":')
+      expect(() => listCommitFenceOwners(f.root)).toThrow(/not valid JSON/)
+      await writeFile(corrupt, JSON.stringify({ processBirthIdentity: 'birth-x' }))
+      expect(() => listCommitFenceOwners(f.root)).toThrow(/names no exact owner/)
+      await writeFile(corrupt, JSON.stringify({ pid: 12, processBirthIdentity: '' }))
+      expect(() => listCommitFenceOwners(f.root)).toThrow(/names no exact owner/)
+      await rm(corrupt)
+      await writeFile(join(f.directory, `reclaim-guard-${'e'.repeat(64)}.json`), '{"contender":7}')
+      expect(() => listCommitFenceOwners(f.root)).toThrow(/names no exact owner/)
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a symlinked record or fence directory instead of following it',
+    async () => {
+      const f = await commitFenceRoot(live(11))
+      try {
+        await f.fence.acquire(f.owner(11), PARTITION_A)
+        const record = readdirSync(f.directory).find((name) => name.startsWith('fence-'))!
+        const elsewhere = join(f.root, 'elsewhere.json')
+        await writeFile(elsewhere, readFileSync(join(f.directory, record), 'utf8'))
+        const link = join(f.directory, `fence-${'f'.repeat(64)}.json`)
+        await symlink(elsewhere, link)
+        expect(() => listCommitFenceOwners(f.root)).toThrow(/not a regular file/)
+        await rm(link)
+
+        const other = await realpath(await mkdtemp(join(tmpdir(), 'tw-fence-owners-link-')))
+        try {
+          await symlink(f.directory, join(other, WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY))
+          expect(() => listCommitFenceOwners(other)).toThrow(/not a real directory/)
+        } finally {
+          await rm(other, { recursive: true, force: true })
+        }
+      } finally {
+        await rm(f.root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'is read-only: the directory, its mode and every record are untouched',
+    async () => {
+      const f = await commitFenceRoot(live(11, 22))
+      try {
+        await f.fence.acquire(f.owner(11), PARTITION_A)
+        await f.fence.acquire(f.owner(22))
+        const snapshot = () => {
+          const directory = lstatSync(f.directory)
+          return {
+            directory: [directory.mode, directory.mtimeMs, directory.ctimeMs],
+            entries: readdirSync(f.directory)
+              .sort()
+              .map((name) => {
+                const entry = lstatSync(join(f.directory, name))
+                return [
+                  name,
+                  entry.mode,
+                  entry.mtimeMs,
+                  entry.ctimeMs,
+                  readFileSync(join(f.directory, name), 'utf8')
+                ]
+              })
+          }
+        }
+        const before = snapshot()
+        for (let read = 0; read < 3; read += 1) listCommitFenceOwners(f.root)
+        expect(snapshot()).toEqual(before)
+      } finally {
+        await rm(f.root, { recursive: true, force: true })
+      }
+    }
+  )
+})
+
+describe('mutationFencePartitionKeys', () => {
+  const claim: CanonicalWorkspaceLockClaim = {
+    workspaceIdentity: '/ws',
+    worktreeCanonicalPath: '/ws',
+    worktreeIdentity: '/ws',
+    worktreeObjectIdentity: 'dev:1:ino:10',
+    targetCanonicalPath: '/ws/src/a.ts',
+    comparisonTargetPath: '/ws/src/a.ts',
+    objectIdentity: 'dev:1:ino:20',
+    physicalTargetIdentity: '/ws/src/a.ts',
+    displayWorkspacePath: '/ws',
+    displayWorktreePath: '/ws',
+    relativeTargetPath: 'src/a.ts',
+    kind: 'file',
+    mode: 'write'
+  }
+  /** Derived as every earlier build derives it, from the worktree and the object. */
+  const OBJECT_KEY =
+    'mutation-target:1a5be236e4b1ef19600ea73c924dcea3f045fbc061b0c8cfcc6e5ce65e0c85f3'
+
+  it('fences an exact claim by its object and by its location', () => {
+    const keys = mutationFencePartitionKeys([claim])
+    expect(keys).toHaveLength(2)
+    expect(keys).toContain(OBJECT_KEY)
+    const [location] = keys.filter((key) => key !== OBJECT_KEY)
+
+    // The location outlives the object under the path: created, replaced, deleted.
+    for (const objectIdentity of ['planned:dev:1:ino:11:a.ts', 'dev:1:ino:21']) {
+      const moved = mutationFencePartitionKeys([{ ...claim, objectIdentity }])
+      expect(moved).toContain(location)
+      expect(moved).not.toContain(OBJECT_KEY)
+    }
+    // A hard link shares the object and not the location.
+    const link = mutationFencePartitionKeys([
+      {
+        ...claim,
+        targetCanonicalPath: '/ws/src/a-link.ts',
+        comparisonTargetPath: '/ws/src/a-link.ts',
+        physicalTargetIdentity: '/ws/src/a-link.ts',
+        relativeTargetPath: 'src/a-link.ts'
+      }
+    ])
+    expect(link).toContain(OBJECT_KEY)
+    expect(link).not.toContain(location)
+    // A hunk of the same file takes the same two.
+    const hunk = {
+      ...claim,
+      kind: 'hunk' as const,
+      hunk: { baseline: 'x', startLine: 1, endLine: 2 }
+    }
+    expect(mutationFencePartitionKeys([claim, hunk])).toEqual(keys)
+  })
+
+  it('returns one sorted, deduplicated set, the single order every caller acquires in', () => {
+    const other: CanonicalWorkspaceLockClaim = {
+      ...claim,
+      targetCanonicalPath: '/ws/src/b.ts',
+      comparisonTargetPath: '/ws/src/b.ts',
+      objectIdentity: 'dev:1:ino:30',
+      physicalTargetIdentity: '/ws/src/b.ts',
+      relativeTargetPath: 'src/b.ts'
+    }
+    const forward = mutationFencePartitionKeys([claim, other])
+    expect(forward).toHaveLength(4)
+    expect(mutationFencePartitionKeys([other, claim, other])).toEqual(forward)
+    expect([...forward]).toEqual([...forward].sort())
+  })
+})
+
+describe('createCommitFenceOwnerReader', () => {
+  it('warns once when reads start failing, once per different failure, and once when they recover', async () => {
+    const f = await commitFenceRoot(live(11))
+    try {
+      await f.fence.acquire(f.owner(11), PARTITION_A)
+      const warnings: string[] = []
+      const read = createCommitFenceOwnerReader(f.root, (message) => warnings.push(message))
+      expect(read().map((owner) => owner.pid)).toEqual([11])
+      expect(warnings).toEqual([])
+
+      // An outside writer's entry: every read throws (so every lapse reclaim
+      // defers), scan after scan, and only the first failure is named.
+      const stray = join(f.directory, 'desktop.ini')
+      await writeFile(stray, '[.ShellClassInfo]\n')
+      for (let scan = 0; scan < 5; scan += 1) {
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry: desktop\.ini/)
+      }
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toMatch(/^Lapse reclaim is paused: /)
+      expect(warnings[0]).toContain(JSON.stringify(f.directory))
+      expect(warnings[0]).toContain('Unrecognised commit-fence entry: desktop.ini')
+
+      // A different failure is news: named once more.
+      await rm(stray)
+      await mkdir(join(f.directory, 'backup'))
+      for (let scan = 0; scan < 3; scan += 1) {
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry: backup/)
+      }
+      expect(warnings).toHaveLength(2)
+      expect(warnings[1]).toContain('Unrecognised commit-fence entry: backup')
+
+      // Clean again: said once, then silence.
+      await rm(join(f.directory, 'backup'), { recursive: true })
+      for (let scan = 0; scan < 3; scan += 1) {
+        expect(read().map((owner) => owner.pid)).toEqual([11])
+      }
+      expect(warnings).toHaveLength(3)
+      expect(warnings[2]).toMatch(/^Lapse reclaim resumed: /)
+
+      // A failure after the recovery is named again.
+      await writeFile(stray, '[.ShellClassInfo]\n')
+      expect(() => read()).toThrow(/Unrecognised commit-fence entry/)
+      expect(warnings).toHaveLength(4)
+      expect(warnings[3]).toMatch(/^Lapse reclaim is paused: /)
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'names an entry with a control character escaped, on one line',
+    async () => {
+      const f = await commitFenceRoot(live(11))
+      try {
+        await f.fence.acquire(f.owner(11), PARTITION_A)
+        const warnings: string[] = []
+        const read = createCommitFenceOwnerReader(f.root, (message) => warnings.push(message))
+        // Finder's custom-folder-icon file.
+        await writeFile(join(f.directory, 'Icon\r'), '')
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry/)
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain('Unrecognised commit-fence entry: Icon\\r')
+        expect(warnings[0]).not.toMatch(/[\r\n]/)
+      } finally {
+        await rm(f.root, { recursive: true, force: true })
+      }
+    }
+  )
+})
+
 describe('WorkspaceLockRuntime', () => {
+  it('projects holder liveness per lease and never a process identity', () => {
+    const h = harness()
+    h.authority.snapshot.mockReturnValue({
+      ...emptySnapshot(),
+      leases: [
+        projectedLease('lapsed-peer', 'orphan_live', '2026-07-29T00:00:00.000Z'),
+        projectedLease('mine', 'held', '2026-07-29T00:00:01.000Z')
+      ],
+      holderLiveness: {
+        'lapsed-peer': {
+          instanceScope: 'other',
+          liveness: 'lapsed',
+          heartbeatAgeMs: 91_000,
+          generation: 3
+        }
+      }
+    })
+
+    const locks = h.runtime.snapshot().locks
+    expect(locks.map((lock) => lock.lockId)).toEqual(['lapsed-peer', 'mine'])
+    expect(locks[0].holder).toEqual({
+      instanceScope: 'other',
+      liveness: 'lapsed',
+      heartbeatAgeMs: 91_000,
+      generation: 3
+    })
+    expect(locks[1].holder).toBeUndefined()
+    expect(JSON.stringify(h.runtime.snapshot())).not.toContain('main-birth')
+    expect(JSON.stringify(h.runtime.snapshot())).not.toContain('"pid"')
+  })
+
   it('uses one profile-independent authority root for a local OS user', () => {
     const homePath = '/Users/example'
     const releaseUserData = '/Users/example/Library/Application Support/TaskWraith'

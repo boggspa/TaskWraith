@@ -27,7 +27,7 @@ export { derEcdsaToConcat } from '../shared/apns/apnsSendCore'
  * a path or a safeStorage-decrypted PEM) and building the privacy-safe,
  * routing-only aps bodies. JWT minting + HTTP/2 delivery are delegated to
  * `ApnsClient`, which the Tier-2 relay gateway reuses with a project-held key
- * loaded OUTSIDE Electron main (docs/ios-push-gateway-design.md §7).
+ * loaded OUTSIDE Electron main (the APNs gateway design §7).
  *
  * One key + key id + team id triplet works for both production and sandbox APNs
  * gateways; the iOS device's reported env (from

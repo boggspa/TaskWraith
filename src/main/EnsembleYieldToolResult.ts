@@ -114,16 +114,15 @@ export function buildEnsembleYieldToolResult(input: {
     // authority-routing message above) so no profile is stranded.
     const rejectionGuidance =
       routing.reason === 'blocked_status'
-        ? ' The target seat is not routable in this pass (disabled, unreachable, mid fan-out, or no longer pending).' +
-          ' To hand work to it anyway, call whichever control tool this session lists — `ensemble_control` or' +
-          ' `ensemble_bossman_control` — with select_participants to queue it for the next pass, then end your turn.' +
-          ' Do not retry the same yield.'
+        ? ' The target seat is unavailable, explicitly skipped, still in fan-out, or blocked by its turn budget.' +
+          ' The active Boss/Captain can use `ensemble_control` or `ensemble_bossman_control`' +
+          ' with select_participants to request it in the next pass.'
         : ''
     return {
       ...base,
       ok: false,
       error: routing.reason,
-      message: `Yield target was not routed (${routing.reason}).${rejectionGuidance}`,
+      message: `Yield target was not routed (${routing.reason}). Your turn has ended; foreground rotation continues. Do not retry this yield from the settled run.${rejectionGuidance}`,
       ...(routing.suggestedAliases?.length
         ? { suggestedAliases: routing.suggestedAliases }
         : {})
@@ -135,5 +134,20 @@ export function buildEnsembleYieldToolResult(input: {
     ok: true,
     action: routing.action,
     ...(routing.targetParticipantId ? { targetParticipantId: routing.targetParticipantId } : {})
+  }
+}
+
+/** Seal the visible activity with the same routing receipt returned to the caller. */
+export function buildEnsembleYieldActivityCompletion(input: {
+  outcome: EnsembleYieldOutcome
+  reason?: string
+  target?: string
+}): { success: boolean; content: string; result: EnsembleYieldToolResult } {
+  const result = buildEnsembleYieldToolResult(input)
+  return {
+    success: result.ok,
+    content:
+      result.message || input.reason || (input.target ? `Yielded to ${input.target}.` : 'Yielded.'),
+    result
   }
 }

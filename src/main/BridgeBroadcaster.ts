@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { ChatRecord, ProviderId, WorkspaceRecord } from './store/types'
+import type { ChatRecord, ChatRun, ProviderId, WorkspaceRecord } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import type { BannerTemplateMessage } from '../shared/bannerTemplate'
 import type { AllowlistDecision, PrepareStartTurnEvaluation } from './RemoteWorkspaceAllowlist'
@@ -11,7 +11,8 @@ import type { RemoteProjectionEnvelope, RemoteTaskCapabilities, RemoteTaskStatus
 import {
   deriveRemoteTaskStatusForChat,
   latestChatRun,
-  projectChatKind
+  projectChatKind,
+  projectGithubMergePrCapability
 } from './RemoteTaskProjection'
 
 const DEFAULT_REMOTE_PROJECTION_SNAPSHOT_MAX_BYTES = 700_000
@@ -94,12 +95,38 @@ export interface ThreadSummary {
   runStartedAt?: string
 }
 
+/** Status and latest-run facts the thread-catalogue decoder distils from a
+ * chat's full canonical record (`ChatListItem.cataloguePresentation`). The
+ * shape is mirrored structurally so this module carries no dependency on the
+ * catalogue's own type surface. */
+export interface CatalogueRunPresentation {
+  status: RemoteTaskStatus
+  runId?: string
+  startedAt?: string
+  runningRunCount: number
+}
+
+/** One chat as the inventory sees it: a full record, or a chat-list row. A
+ * list row has no run array; a catalogue row carries the decoder's
+ * presentation instead, and a legacy index row keeps only `lastRun`. */
+export type ChatInventoryRow = ChatRecord & {
+  summaryOnly?: true
+  cataloguePresentation?: CatalogueRunPresentation
+  lastRun?: ChatRun
+}
+
 /** Narrowed view of `AppStore` the broadcaster needs. Using an
  * interface instead of `typeof AppStore` lets tests pass an in-memory
- * fixture without mocking the electron module. */
+ * fixture without mocking the electron module.
+ *
+ * The port is metadata-only by construction: inventory comes from the
+ * bounded chat-list projection (`AppStore.getChatList`), never from the
+ * full-history `getChats()`, which parses the whole profile — and the list
+ * broadcasts fire on every inventory tick. Full records are read one at a
+ * time through `getChat`, for per-thread updates only. */
 export interface BridgeBroadcasterAppStore {
   getWorkspaces(): WorkspaceRecord[]
-  getChats(workspaceId?: string): ChatRecord[]
+  getChatList(workspaceId?: string): ChatInventoryRow[]
   getChat(chatId: string): ChatRecord | null
 }
 
@@ -149,6 +176,13 @@ export interface BridgeBroadcasterOptions {
   remoteProjectionEnvelopeMaxBytes?: number
   /** Injectable batch id factory for deterministic oversized-snapshot tests. */
   snapshotBatchIdFactory?: () => string
+  /**
+   * Host merge callbacks. Bound from index.ts with the same assignment
+   * pattern as `injectedCreateSubThreadFn` — live functions, never a hardcoded
+   * true. Workspace-summary projection reads these; absence fail-closes the bit.
+   */
+  githubMergePrFn?: unknown
+  requestGithubMergePrApprovalFn?: unknown
 }
 
 interface RemoteProjectionSnapshotBatchParams {
@@ -171,6 +205,7 @@ export interface ProviderModelOption {
     disabledReason?: string
   }>
   defaultReasoningEffort?: string | null
+  contextWindow?: number
 }
 
 /** Per-provider model catalogs — drives the remote client's hierarchical
@@ -200,7 +235,7 @@ export const BRIDGE_BROADCAST_METHODS = {
  * need to instantiate the broadcaster to verify the projection. */
 export function workspaceRecordToSummary(
   workspace: WorkspaceRecord,
-  chats: ChatRecord[],
+  chats: ChatInventoryRow[],
   capabilities?: RemoteTaskCapabilities,
   remoteAccessGranted?: boolean,
   remoteAccessMode?: 'read-only' | 'read-write'
@@ -240,11 +275,10 @@ export function workspaceRecordToSummary(
 /** Convert a `ChatRecord` to the iOS-facing summary. Defaults
  * (`provider: 'gemini'` when missing, `status: 'idle'` when no runs)
  * mirror the desktop sidebar's behavior for legacy records. */
-export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
-  const provider: ProviderId = chat.provider ?? 'gemini'
-  const status = deriveThreadStatus(chat)
-  const runningRun =
-    status === 'running' ? latestRunningRun(chat) ?? latestChatRun(chat) : undefined
+export function chatRecordToSummary(chat: ChatInventoryRow): ThreadSummary {
+  // A catalogue row carries `provider: ''` for a record that never had one.
+  const provider: ProviderId = chat.provider || 'gemini'
+  const run = threadRunFacts(chat)
   const lastMessageAt = msToIsoOrUndefined(chat.updatedAt)
   // `scope: 'global'` is the canonical signal but for the iOS contract
   // we collapse "no workspace id" → null regardless, which catches both
@@ -256,23 +290,62 @@ export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
     workspaceId,
     provider,
     chatKind: projectChatKind(chat),
-    status,
+    status: run.status,
     pinned: Boolean(chat.pinned)
   }
   if (chat.parentChatId) {
     summary.parentChatId = chat.parentChatId
   }
-  if (runningRun?.runId) {
-    summary.runId = runningRun.runId
-    const runStartedAt = isoOrUndefined(runningRun.startedAt)
-    if (runStartedAt !== undefined) {
-      summary.runStartedAt = runStartedAt
+  if (run.runId !== undefined) {
+    summary.runId = run.runId
+    if (run.runStartedAt !== undefined) {
+      summary.runStartedAt = run.runStartedAt
     }
   }
   if (lastMessageAt !== undefined) {
     summary.lastMessageAt = lastMessageAt
   }
   return summary
+}
+
+/** The run-derived half of a summary: status plus the run to surface while running. */
+interface ThreadRunFacts {
+  status: ThreadSummaryStatus
+  runId?: string
+  runStartedAt?: string
+}
+
+/**
+ * Catalogue rows arrive with `runs: []`; the decoder already applied the
+ * status and latest-run rules below to the full canonical record and left the
+ * answer in `cataloguePresentation`, which is therefore authoritative for them.
+ * Full records derive from `runs` exactly as before. A legacy chat-list row
+ * carries neither, so its `lastRun` stands in for the run array.
+ */
+function threadRunFacts(chat: ChatInventoryRow): ThreadRunFacts {
+  const presentation = chat.cataloguePresentation
+  if (presentation) {
+    const status = threadSummaryStatusFromRemoteTaskStatus(presentation.status)
+    if (status !== 'running' || !presentation.runId) return { status }
+    return withRunStart({ status, runId: presentation.runId }, presentation.startedAt)
+  }
+  const record = withInventoryRuns(chat)
+  const status = deriveThreadStatus(record)
+  const runningRun =
+    status === 'running' ? (latestRunningRun(record) ?? latestChatRun(record)) : undefined
+  if (!runningRun?.runId) return { status }
+  return withRunStart({ status, runId: runningRun.runId }, runningRun.startedAt)
+}
+
+function withRunStart(facts: ThreadRunFacts, startedAt: string | undefined): ThreadRunFacts {
+  const runStartedAt = isoOrUndefined(startedAt)
+  return runStartedAt === undefined ? facts : { ...facts, runStartedAt }
+}
+
+/** A chat-list row without a presentation knows only its `lastRun`. */
+function withInventoryRuns(chat: ChatInventoryRow): ChatRecord {
+  if ((chat.runs ?? []).length > 0 || !chat.lastRun) return chat
+  return { ...chat, runs: [chat.lastRun] }
 }
 
 /** Mirrors `deriveRemoteTaskStatusForChat` / task-card projection so thread-list
@@ -298,8 +371,8 @@ function threadSummaryStatusFromRemoteTaskStatus(status: RemoteTaskStatus): Thre
   }
 }
 
-function isChatRunning(chat: ChatRecord): boolean {
-  return deriveThreadStatus(chat) === 'running'
+function isChatRunning(chat: ChatInventoryRow): boolean {
+  return threadRunFacts(chat).status === 'running'
 }
 
 function latestRunningRun(chat: ChatRecord): ChatRecord['runs'][number] | undefined {
@@ -344,6 +417,10 @@ export class BridgeBroadcaster {
   private readonly canonicalChatWorkspaceId?: (
     workspaceId: string | null | undefined
   ) => string | null
+  /** Live host merge callback. Assigned after construction; not a capability grant. */
+  githubMergePrFn: unknown
+  /** Live host-approval callback for merge. Assigned after construction. */
+  requestGithubMergePrApprovalFn: unknown
   /** Per-throttle-key timestamp of the last successful emit. List
    * methods key on the bare method name; updated methods key on
    * `method:id` so two different chats can update in the same tick. */
@@ -366,9 +443,11 @@ export class BridgeBroadcaster {
       options.remoteProjectionEnvelopeMaxBytes ?? DEFAULT_REMOTE_PROJECTION_ENVELOPE_MAX_BYTES
     this.snapshotBatchIdFactory = options.snapshotBatchIdFactory ?? (() => randomUUID())
     this.canonicalChatWorkspaceId = options.canonicalChatWorkspaceId
+    this.githubMergePrFn = options.githubMergePrFn
+    this.requestGithubMergePrApprovalFn = options.requestGithubMergePrApprovalFn
   }
 
-  private canonicalizeChat(chat: ChatRecord): ChatRecord {
+  private canonicalizeChat<T extends ChatRecord>(chat: T): T {
     const resolve = this.canonicalChatWorkspaceId
     if (!resolve || !chat.workspaceId) return chat
     const canonical = resolve(chat.workspaceId)
@@ -376,7 +455,7 @@ export class BridgeBroadcaster {
     return { ...chat, workspaceId: canonical }
   }
 
-  private canonicalizeChats(chats: ChatRecord[]): ChatRecord[] {
+  private canonicalizeChats<T extends ChatRecord>(chats: T[]): T[] {
     if (!this.canonicalChatWorkspaceId) return chats
     return chats.map((chat) => this.canonicalizeChat(chat))
   }
@@ -466,11 +545,11 @@ export class BridgeBroadcaster {
    * throttled broadcast and the targeted `emitSnapshotTo` resync. */
   private buildWorkspaceListParams(): { workspaces: WorkspaceSummary[] } | null {
     const method = BRIDGE_BROADCAST_METHODS.workspaceList
-    let chats: ChatRecord[]
+    let chats: ChatInventoryRow[]
     let workspaces: WorkspaceRecord[]
     try {
       workspaces = this.appStore.getWorkspaces()
-      chats = this.canonicalizeChats(this.appStore.getChats())
+      chats = this.canonicalizeChats(this.appStore.getChatList())
     } catch (err) {
       this.logErr(`failed to load workspaces/chats for ${method}`, err)
       return null
@@ -487,9 +566,9 @@ export class BridgeBroadcaster {
    * failure. Shared by the throttled broadcast and `emitSnapshotTo`. */
   private buildThreadListParams(): { threads: ReturnType<typeof chatRecordToSummary>[] } | null {
     const method = BRIDGE_BROADCAST_METHODS.threadList
-    let chats: ChatRecord[]
+    let chats: ChatInventoryRow[]
     try {
-      chats = this.canonicalizeChats(this.appStore.getChats())
+      chats = this.canonicalizeChats(this.appStore.getChatList())
     } catch (err) {
       this.logErr(`failed to load chats for ${method}`, err)
       return null
@@ -507,10 +586,10 @@ export class BridgeBroadcaster {
     const throttleKey = `${method}:${workspaceId}`
     if (!this.shouldEmit(throttleKey)) return
     let workspaces: WorkspaceRecord[]
-    let chats: ChatRecord[]
+    let chats: ChatInventoryRow[]
     try {
       workspaces = this.appStore.getWorkspaces()
-      chats = this.canonicalizeChats(this.appStore.getChats())
+      chats = this.canonicalizeChats(this.appStore.getChatList())
     } catch (err) {
       this.logErr(`failed to load workspace ${workspaceId} for ${method}`, err)
       return
@@ -790,7 +869,7 @@ export class BridgeBroadcaster {
     )
   }
 
-  private visibleChats(chats: ChatRecord[], visibleWorkspaceIds: Set<string>): ChatRecord[] {
+  private visibleChats<T extends ChatRecord>(chats: T[], visibleWorkspaceIds: Set<string>): T[] {
     if (!this.allowlist) return chats
     // T71 — scope-global chats (no workspaceId) pass through READ-ONLY when
     // the synthetic global scope is live (≥1 real workspace allowlisted).
@@ -815,7 +894,10 @@ export class BridgeBroadcaster {
     return this.allowlist?.evaluate({ workspaceId }).allowed ?? true
   }
 
-  private workspaceRecordToSummary(workspace: WorkspaceRecord, chats: ChatRecord[]): WorkspaceSummary {
+  private workspaceRecordToSummary(
+    workspace: WorkspaceRecord,
+    chats: ChatInventoryRow[]
+  ): WorkspaceSummary {
     const decision = this.allowlist?.evaluate({ workspaceId: workspace.id })
     const granted = decision?.allowed ?? true
     return workspaceRecordToSummary(
@@ -845,7 +927,12 @@ export class BridgeBroadcaster {
       fileWrite: capabilities.has('fileWrite'),
       externalPublish: capabilities.has('externalPublish'),
       pin: capabilities.has('pin'),
-      yolo: capabilities.has('yolo')
+      yolo: capabilities.has('yolo'),
+      githubMergePr: projectGithubMergePrCapability(
+        this.githubMergePrFn,
+        this.requestGithubMergePrApprovalFn,
+        capabilities.has('externalPublish')
+      )
     }
   }
 

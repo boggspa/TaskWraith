@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRun } from '../../../main/store/types'
+import type { ChatRecord, ChatRun } from '../../../main/store/types'
 import {
   composedSeatRole,
   seatFromApprovalAttribution,
   seatFromChatRun,
   seatFromEnsembleMetadata,
+  seatFromProviderNativeRun,
   seatFromSubThreadMetadata
 } from './transcriptSeat'
 
@@ -102,6 +103,97 @@ describe('seatFromEnsembleMetadata', () => {
       model: 'claude-opus-5',
       role: 'Reviewer',
       seatNumber: 3
+    })
+  })
+
+  describe('the SEAL outranks the configured preset', () => {
+    const sealed = (presetId: string, over: Partial<ChatRun> = {}): ChatRun =>
+      ({
+        runId: 'lane-run-1',
+        startedAt: '2026-09-07T10:00:00.000Z',
+        permissionPosture: {
+          schemaVersion: 1,
+          presetId,
+          readOnly: presetId === 'read_only',
+          externalPathGrantCount: 0,
+          postureHash: 'hash',
+          signaturePresent: true
+        },
+        ...over
+      }) as ChatRun
+
+    it('shows what the lane RAN under when config and seal DISAGREE', () => {
+      // The defect, exactly: the roster said workspace_write, the round sealed
+      // read_only, and the lane card wore "Full WS Access" while the close-out
+      // table beside it said "Ask" for the same lane.
+      const row = metadata({
+        ensembleSeatSnapshot: { ...SNAPSHOT, configuredPermissionPresetId: 'workspace_write' }
+      })
+      expect(seatFromEnsembleMetadata(row)?.permissionPresetId).toBe('workspace_write')
+      expect(seatFromEnsembleMetadata(row, sealed('read_only'))?.permissionPresetId).toBe(
+        'read_only'
+      )
+    })
+
+    it('keeps the honest unknown when the run carries no posture', () => {
+      // Rows written before postures were recorded have no seal. The config
+      // fallback is what keeps them rendering their captured tier, and a row
+      // with neither must still render NO chip rather than a default.
+      const run = { runId: 'lane-run-1', startedAt: '2026-09-07T10:00:00.000Z' } as ChatRun
+      expect(seatFromEnsembleMetadata(metadata(), run)?.permissionPresetId).toBe('read_only')
+      expect(
+        seatFromEnsembleMetadata(metadata({ ensembleSeatSnapshot: undefined }), run)
+      ).not.toHaveProperty('permissionPresetId')
+      expect(
+        seatFromEnsembleMetadata(metadata({ ensembleSeatSnapshot: undefined }))
+      ).not.toHaveProperty('permissionPresetId')
+    })
+
+    it('does not fall back to configured tier when the signed seal omits presetId', () => {
+      const row = metadata({
+        ensembleSeatSnapshot: { ...SNAPSHOT, configuredPermissionPresetId: 'workspace_write' }
+      })
+      const run = {
+        runId: 'lane-run-1',
+        startedAt: '2026-09-07T10:00:00.000Z',
+        permissionPosture: {
+          schemaVersion: 1,
+          externalPathGrantCount: 0,
+          postureHash: 'hash',
+          signaturePresent: true
+        }
+      } as ChatRun
+
+      expect(seatFromEnsembleMetadata(row, run)?.permissionPresetId).not.toBe('workspace_write')
+      expect(seatFromEnsembleMetadata(row, run)).not.toHaveProperty('permissionPresetId')
+    })
+
+    it('ignores a posture that records no preset rather than blanking the chip', () => {
+      // An unsigned/legacy posture object with no presetId must not erase the
+      // captured configuration — falling through is the whole point of `||`.
+      const posture = {
+        runId: 'lane-run-1',
+        startedAt: '2026-09-07T10:00:00.000Z',
+        permissionPosture: {
+          schemaVersion: 1,
+          externalPathGrantCount: 0,
+          postureHash: 'hash',
+          signaturePresent: false
+        }
+      } as ChatRun
+      expect(seatFromEnsembleMetadata(metadata(), posture)?.permissionPresetId).toBe('read_only')
+    })
+
+    it('leaves every other field to the row, changing only the tier', () => {
+      expect(seatFromEnsembleMetadata(metadata(), sealed('plan'))).toEqual({
+        provider: 'claude',
+        model: 'claude-opus-5',
+        role: 'Reviewer',
+        seatNumber: 3,
+        reasoningEffort: 'xhigh',
+        thinkingEnabled: false,
+        permissionPresetId: 'plan'
+      })
     })
   })
 })
@@ -287,6 +379,134 @@ describe('seatFromChatRun', () => {
 
   it('makes no authority claim — a run does not record one', () => {
     expect(seatFromChatRun(run())).not.toHaveProperty('authority')
+  })
+
+  it('prefers the signed posture on the SAME run over the configured preset', () => {
+    // `permissionPosture` sits on the very object the snapshot came off, so
+    // reading the configured tier here was never for want of the real one.
+    const sealedReadOnly = run({
+      permissionPosture: {
+        schemaVersion: 1,
+        presetId: 'read_only',
+        readOnly: true,
+        externalPathGrantCount: 0,
+        postureHash: 'hash',
+        signaturePresent: true
+      }
+    })
+    expect(seatFromChatRun(run())?.permissionPresetId).toBe('workspace_write')
+    expect(seatFromChatRun(sealedReadOnly)?.permissionPresetId).toBe('read_only')
+  })
+
+  it('does not fall back to the snapshot when the signed seal omits presetId', () => {
+    const chatRun = run({
+      permissionPosture: {
+        schemaVersion: 1,
+        externalPathGrantCount: 0,
+        postureHash: 'hash',
+        signaturePresent: true
+      }
+    })
+    expect(seatFromChatRun(chatRun)?.permissionPresetId).not.toBe('workspace_write')
+    expect(seatFromChatRun(chatRun)).not.toHaveProperty('permissionPresetId')
+  })
+
+  it('falls back to the snapshot for a run recorded before postures existed', () => {
+    expect(seatFromChatRun(run({ permissionPosture: undefined }))?.permissionPresetId).toBe(
+      'workspace_write'
+    )
+  })
+
+  it('renders no tier at all when neither the seal nor the snapshot has one', () => {
+    expect(
+      seatFromChatRun(
+        run({
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'claude',
+            model: 'claude-fable-5'
+          } as never
+        })
+      )
+    ).not.toHaveProperty('permissionPresetId')
+  })
+})
+
+describe('seatFromProviderNativeRun', () => {
+  it('reads the selected provider/model/reasoning from the immutable run', () => {
+    expect(
+      seatFromProviderNativeRun({
+        fallbackProvider: 'kimi',
+        run: {
+          runId: 'run-kimi',
+          provider: 'kimi',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'kimi-k3',
+          providerMetadata: {
+            kimiReasoningEffort: 'max',
+            kimiThinkingEnabled: true
+          }
+        }
+      })
+    ).toEqual({
+      provider: 'kimi',
+      model: 'kimi-k3',
+      reasoningEffort: 'max',
+      thinkingEnabled: true
+    })
+  })
+
+  it('expands a default model from the selected chat configuration', () => {
+    expect(
+      seatFromProviderNativeRun({
+        fallbackProvider: 'codex',
+        run: {
+          runId: 'run-default',
+          provider: 'codex',
+          startedAt: '2026-08-26T00:00:00.000Z',
+          requestedModel: 'cli-default'
+        },
+        chat: {
+          provider: 'codex',
+          requestedModel: 'gpt-5.6-sol',
+          providerMetadata: { codexReasoningEffort: 'xhigh' }
+        } as unknown as ChatRecord
+      })
+    ).toEqual({
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh'
+    })
+  })
+
+  it('uses an Ensemble snapshot but deliberately omits role and permission', () => {
+    const seat = seatFromProviderNativeRun({
+      run: {
+        runId: 'run-ensemble',
+        provider: 'claude',
+        startedAt: '2026-08-26T00:00:00.000Z',
+        ensembleRole: 'Boss',
+        ensembleOrder: 1,
+        ensembleSeatSnapshot: {
+          schemaVersion: 1,
+          provider: 'claude',
+          model: 'claude-opus-5',
+          reasoningEffort: 'max',
+          configuredPermissionPresetId: 'full_access'
+        }
+      }
+    })
+    expect(seat).toEqual({
+      provider: 'claude',
+      model: 'claude-opus-5',
+      reasoningEffort: 'max'
+    })
+    expect(seat).not.toHaveProperty('role')
+    expect(seat).not.toHaveProperty('permissionPresetId')
+  })
+
+  it('returns null rather than inventing a selected agent without a model', () => {
+    expect(seatFromProviderNativeRun({ fallbackProvider: 'kimi' })).toBeNull()
   })
 })
 

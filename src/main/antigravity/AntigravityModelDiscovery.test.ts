@@ -1,12 +1,28 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   captureAgyModelDiscoveryOutput,
   discoverAuthenticatedAgyModels,
+  type AgyModelDiscoveryPtyLike,
   type AuthenticatedAgyModelDiscoveryDependencies
 } from './AntigravityModelDiscovery'
 import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from './AntigravityAgyOptInEnabledSignal'
 
 const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1 }
+
+// The live consent read main wires from persisted settings. `settings` given to
+// discovery is its caller's earlier snapshot; this is what the user holds now.
+let consentHeld = true
+beforeEach(() => {
+  consentHeld = true
+  setAntigravityAgyOptInEnabledProbe(() => consentHeld)
+})
+afterEach(() => {
+  resetAntigravityAgyOptInEnabledProbeForTests()
+})
 
 describe('captureAgyModelDiscoveryOutput', () => {
   it('captures model discovery through a PTY because current agy blocks on piped stdout', async () => {
@@ -400,5 +416,118 @@ describe('discoverAuthenticatedAgyModels', () => {
       capture: vi.fn(async () => ({ stdout: 'gemini-3.1-pro-high', stderr: '', code: 0 }))
     })
     expect(resolveBinary).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('consent withdrawn before agy models spawns', () => {
+  function silentPty(): AgyModelDiscoveryPtyLike {
+    return { onData: () => {}, onExit: () => {}, kill: () => {} }
+  }
+
+  it('the capture reads consent itself and starts no process once it is withdrawn', async () => {
+    consentHeld = false
+    const spawnPty = vi.fn(silentPty)
+
+    const capture = captureAgyModelDiscoveryOutput(
+      '/Users/test/.local/bin/agy',
+      ['models'],
+      { env: {}, timeoutMs: 8_000 },
+      { spawnPty, setTimer: () => 1, clearTimer: () => {} }
+    )
+
+    expect(spawnPty).not.toHaveBeenCalled()
+    await expect(capture).resolves.toEqual({
+      stdout: '',
+      stderr: '',
+      code: null,
+      timedOut: false,
+      error: 'agy models was not started because AntiGravity consent is not recorded.'
+    })
+  })
+
+  // The real capture with a fake PTY, so the read under test is the one
+  // production reaches.
+  function realCapture(spawnPty: ReturnType<typeof vi.fn>) {
+    return (
+      command: string,
+      args: readonly string[],
+      options: { env: Record<string, string>; timeoutMs: number }
+    ) =>
+      captureAgyModelDiscoveryOutput(command, args, options, {
+        spawnPty: spawnPty as never,
+        setTimer: () => 1,
+        clearTimer: () => {}
+      })
+  }
+
+  it('a withdrawal while the binary resolves: the awaited probe spawns nothing', async () => {
+    const spawnPty = vi.fn(silentPty)
+    let releaseBinary!: () => void
+    const discovery = discoverAuthenticatedAgyModels(optedIn, {
+      resolveBinary: () =>
+        new Promise((resolve) => {
+          releaseBinary = () =>
+            resolve({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' })
+        }),
+      capture: realCapture(spawnPty),
+      readCachedModelRecord: async () => ({ models: [], updatedAtMs: null }),
+      recordProvenance: () => {}
+    })
+    await Promise.resolve()
+
+    consentHeld = false
+    releaseBinary()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(spawnPty).not.toHaveBeenCalled()
+    // Refused like any failed probe: the caller still gets the floor.
+    await expect(discovery).resolves.toEqual(antigravityAgyStaticModels())
+  })
+
+  it('a withdrawal while the cache is read: the background refresh spawns nothing', async () => {
+    const spawnPty = vi.fn(silentPty)
+    let releaseCache!: () => void
+    const models = await (async () => {
+      const discovery = discoverAuthenticatedAgyModels(optedIn, {
+        resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+        capture: realCapture(spawnPty),
+        readCachedModelRecord: () =>
+          new Promise((resolve) => {
+            releaseCache = () =>
+              resolve({
+                models: [{ id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' }],
+                updatedAtMs: 5
+              })
+          }),
+        recordProvenance: () => {}
+      })
+      for (let attempt = 0; attempt < 50 && !releaseCache; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+      consentHeld = false
+      releaseCache()
+      return discovery
+    })()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    // The cached rows are still returned; the refresh behind them is refused.
+    expect(models).toEqual([{ id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' }])
+    expect(spawnPty).not.toHaveBeenCalled()
+  })
+
+  it('control: with consent held, the background refresh spawns', async () => {
+    const spawnPty = vi.fn(silentPty)
+    await discoverAuthenticatedAgyModels(optedIn, {
+      resolveBinary: async () => ({ binaryPath: '/Users/test/.local/bin/agy', source: 'path' }),
+      capture: realCapture(spawnPty),
+      readCachedModelRecord: async () => ({
+        models: [{ id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' }],
+        updatedAtMs: 5
+      }),
+      recordProvenance: () => {}
+    })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(spawnPty).toHaveBeenCalledTimes(1)
   })
 })

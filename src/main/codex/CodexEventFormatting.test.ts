@@ -5,9 +5,26 @@ import {
   codexReasoningSummaryGroupDisplayText,
   codexReasoningSummaryModeForEffort,
   codexReasoningSummaryText,
+  codexCommandFileEditMetadata,
   shouldGroupCodexReasoningSummaries,
   type CodexReasoningSummaryGroupState
 } from './CodexEventFormatting'
+
+describe('codexCommandFileEditMetadata', () => {
+  it('classifies actual patch invocations but not searches or text rewrites that mention them', () => {
+    expect(codexCommandFileEditMetadata('apply_patch <<\'PATCH\'\n*** Begin Patch\nPATCH')).toMatchObject({
+      toolName: 'edit_file'
+    })
+    expect(codexCommandFileEditMetadata("/bin/zsh -lc 'rg apply_patch src' ")).toBeNull()
+    expect(codexCommandFileEditMetadata("perl -0pi -e 's/apply_patch/patch/g' src/a.ts")).toBeNull()
+  })
+
+  it('still promotes a structurally valid patch emitted by a shell wrapper', () => {
+    expect(
+      codexCommandFileEditMetadata('zsh -lc "some wrapper"', '*** Begin Patch\n*** Update File: a.ts\n-old\n+new\n*** End Patch')
+    ).toMatchObject({ toolName: 'edit_file', parameters: { patchPreview: expect.stringContaining('Update File') } })
+  })
+})
 
 describe('codexReasoningSummaryModeForEffort', () => {
   it('opts into OpenAI reasoning summaries for active reasoning efforts', () => {

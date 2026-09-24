@@ -7,6 +7,7 @@ export interface BlackboardExpiryServiceDeps {
   listChats: () => ChatRecord[]
   getChat: (chatId: string) => ChatRecord | null
   saveChat: (chat: ChatRecord) => ChatRecord
+  pruneExpired?: (chatId: string, nowMs: number) => Promise<number | null>
   now?: () => number
   setTimeout?: (callback: () => void, delayMs: number) => unknown
   clearTimeout?: (handle: unknown) => void
@@ -27,6 +28,7 @@ export class BlackboardExpiryService {
   private readonly listChats: () => ChatRecord[]
   private readonly getChat: (chatId: string) => ChatRecord | null
   private readonly saveChat: (chat: ChatRecord) => ChatRecord
+  private readonly pruneExpired?: BlackboardExpiryServiceDeps['pruneExpired']
   private readonly now: () => number
   private readonly setTimer: (callback: () => void, delayMs: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
@@ -41,6 +43,7 @@ export class BlackboardExpiryService {
     this.listChats = deps.listChats
     this.getChat = deps.getChat
     this.saveChat = deps.saveChat
+    this.pruneExpired = deps.pruneExpired
     this.now = deps.now || Date.now
     this.setTimer = deps.setTimeout || ((callback, delayMs) => setTimeout(callback, delayMs))
     this.clearTimer =
@@ -71,6 +74,12 @@ export class BlackboardExpiryService {
   observeChat(chat: ChatRecord): void {
     const changed = this.indexChat(chat)
     if (changed && this.started && !this.sweeping) this.rearm()
+  }
+
+  observeExpiry(chatId: string, nextExpiry: number | null): void {
+    if (nextExpiry === null) this.expiryByChatId.delete(chatId)
+    else this.expiryByChatId.set(chatId, nextExpiry)
+    if (this.started && !this.sweeping) this.rearm()
   }
 
   stop(): void {
@@ -113,6 +122,10 @@ export class BlackboardExpiryService {
 
   private sweepDue(): void {
     if (!this.started || this.sweeping) return
+    if (this.pruneExpired) {
+      void this.sweepDueAsync()
+      return
+    }
     this.sweeping = true
     const nowMs = this.now()
     let failed = false
@@ -150,6 +163,27 @@ export class BlackboardExpiryService {
     } finally {
       this.retryNotBefore = failed ? nowMs + BLACKBOARD_EXPIRY_RETRY_MS : 0
       this.sweeping = false
+      this.rearm()
+    }
+  }
+
+  private async sweepDueAsync(): Promise<void> {
+    this.sweeping = true
+    const now = this.now()
+    let failed = false
+    try {
+      for (const [chatId, expiry] of [...this.expiryByChatId]) {
+        if (!this.started || expiry > now) continue
+        try {
+          this.observeExpiry(chatId, await this.pruneExpired!(chatId, now))
+        } catch (error) {
+          failed = true
+          this.reportError(error, chatId)
+        }
+      }
+    } finally {
+      this.sweeping = false
+      this.retryNotBefore = failed ? this.now() + BLACKBOARD_EXPIRY_RETRY_MS : 0
       this.rearm()
     }
   }

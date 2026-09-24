@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react'
+import { SharedWorkspaceContributions } from './SharedWorkspaceContributions'
 import type { GitWorkspaceStats } from '../../../main/services/GitWorkspaceStats'
 import type { WorkProvenanceSnapshot } from '../../../shared/workProvenance'
 import type { WorkLockProjectionSnapshot } from '../../../shared/workLockProjection'
@@ -188,7 +189,7 @@ export function WorkspaceStatsPanel({
     >
       <header className="workspace-stats-header">
         <div>
-          <div className="workspace-stats-eyebrow">Read-only · Local Git</div>
+          <div className="workspace-stats-eyebrow">Local Git · Shared work</div>
           <h2>Workspace Stats</h2>
           <p title={context.workspacePath}>{context.label}</p>
         </div>
@@ -205,7 +206,7 @@ export function WorkspaceStatsPanel({
 
       <div className="workspace-stats-observation" role="status" aria-live="polite">
         <span>{statsStatus}</span>
-        <span>Checkout unchanged · no fetch</span>
+        <span>Local snapshot · no fetch</span>
       </div>
 
       <div className="workspace-stats-grid">
@@ -369,6 +370,13 @@ export function WorkspaceStatsPanel({
         )}
         {provenanceSnapshot?.available && <WorkspaceProvenanceList snapshot={provenanceSnapshot} />}
       </section>
+
+      <SharedWorkspaceContributions
+        key={`${context.chatId}:${context.workspacePath}`}
+        repoPath={context.baseWorkspacePath}
+        workspacePath={context.workspacePath}
+        chatId={context.chatId}
+      />
 
       <section className="workspace-stats-work" aria-label="TaskWraith edit authority">
         <div className={`workspace-stats-lock-summary${attentionLocks > 0 ? ' is-attention' : ''}`}>

@@ -31,6 +31,8 @@ import {
   projectMuseAuthJson,
   type MuseIsolatedHomeLease
 } from './MuseIsolatedHome'
+import type { MuseMcpSettings } from './MuseMcpConfig'
+import { buildMuseSkillPinSettings, type MuseSkillPinSettings } from './MuseSkillPin'
 import {
   createMuseSessionLogTailer,
   resolveMuseSessionLogPath,
@@ -46,6 +48,8 @@ import {
   type MuseProviderStats,
   type MuseUsageReducer
 } from './MuseUsage'
+import { composeMuseLaunchPrompt } from './MuseLongTurnProgress'
+import { createMuseReasoningProjector } from './MuseReasoningProjection'
 import { MUSE_FORBIDDEN_ARGV_FLAGS, MUSE_METERING_EXCLUSIVE_ARGV_FLAGS } from './MuseTypes'
 
 export interface MuseRunSpawnHandle {
@@ -75,7 +79,15 @@ export interface MuseRunInput {
   readonly sessionId?: string | null
   readonly model?: string | null
   readonly reasoningEffort?: string | null
+  /**
+   * Vestigial: the pre-turn introduction pass that used to supply this is gone,
+   * so nothing populates it any more. Kept only because `composeMuseLaunchPrompt`
+   * still takes the parameter for `MuseMspRun`; both retire together.
+   */
+  readonly introductionText?: string | null
   readonly approvalMode?: string | null
+  /** Derived only from the main-signed UltraTask delegation consent. */
+  readonly ultraTaskDelegationAutoAllow?: boolean
   /** BYOK for `--api-key-stdin` only — never placed on argv. */
   readonly apiKey?: string | null
   /**
@@ -83,7 +95,11 @@ export interface MuseRunInput {
    * into the private run home and deleted with that lease at teardown.
    */
   readonly authJsonText?: string | null
+  /** App-owned, route-bound MCP entries for this one isolated Muse run. */
+  readonly mcpSettings?: MuseMcpSettings
   readonly sourceEnvironment?: NodeJS.ProcessEnv
+  /** Directory placed first on the Muse launch PATH; see MuseIsolatedHome. */
+  readonly developerToolsBinPath?: string
   readonly spawn: MuseRunSpawn
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
   readonly shouldCancel?: () => boolean
@@ -106,6 +122,9 @@ export interface MuseRunInput {
     readonly temporaryRoot: string
     readonly runId: string
     readonly sourceEnvironment?: NodeJS.ProcessEnv
+    readonly developerToolsBinPath?: string
+    readonly skillPinSettings?: MuseSkillPinSettings
+    readonly mcpSettings?: MuseMcpSettings
   }) => MuseIsolatedHomeLease
 }
 
@@ -181,8 +200,9 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const temporaryRoot = requireNonEmpty(input.temporaryRoot, 'temporaryRoot')
   const sessionId = resolveMuseExecSessionId(input.sessionId)
   const writeCapable = museWriteCapable(input.approvalMode)
-  const effort = normalizeMuseReasoningEffort(input.reasoningEffort)
+  const effort = normalizeMuseReasoningEffort(input.reasoningEffort, input.model)
   const apiKeyStdin = Boolean(input.apiKey && input.apiKey.length > 0)
+  const ultraTaskDelegationAutoAllow = input.ultraTaskDelegationAutoAllow === true
   const warnings: string[] = []
   const events: MuseExecNormalizedEvent[] = []
 
@@ -190,7 +210,16 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   const lease = createHome({
     temporaryRoot,
     runId,
-    sourceEnvironment: input.sourceEnvironment
+    sourceEnvironment: input.sourceEnvironment,
+    ...(input.developerToolsBinPath ? { developerToolsBinPath: input.developerToolsBinPath } : {}),
+    ...(ultraTaskDelegationAutoAllow
+      ? {
+          skillPinSettings: buildMuseSkillPinSettings('off', {
+            ultraTaskDelegationAutoAllow: true
+          })
+        }
+      : {}),
+    ...(input.mcpSettings ? { mcpSettings: input.mcpSettings } : {})
   })
   const skillPinHash = hashSkillPinSettings(lease.settingsPath)
 
@@ -203,6 +232,16 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
   let usageReducer: MuseUsageReducer | null = null
   const sessionTailers = new Map<string, MuseSessionLogTailer>()
   const pendingSubagentPaths = new Set<string>()
+  const projectReasoning = createMuseReasoningProjector()
+  const pendingSessionEvents: { event: MuseExecNormalizedEvent; recordedAt: number }[] = []
+  let terminalEvent: MuseExecNormalizedEvent | undefined
+  const logReadWarnings = new Set<string>()
+  const warnLogRead = (error: unknown): void => {
+    const warning = `Muse session-log read failed: ${error instanceof Error ? error.message : String(error)}`
+    if (logReadWarnings.has(warning)) return
+    logReadWarnings.add(warning)
+    warnings.push(warning)
+  }
 
   const emitEvent = (event: MuseExecNormalizedEvent): void => {
     events.push(event)
@@ -222,11 +261,21 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   const ingestSessionEnvelope = (envelope: MuseEnvelope, forUsage: boolean): void => {
     if (forUsage && usageReducer) usageReducer.ingestEnvelope(envelope)
-    for (const toolEvent of projectMuseEnvelopeTools(envelope)) {
-      emitEvent(toolEvent)
+    for (const event of [...projectReasoning(envelope), ...projectMuseEnvelopeTools(envelope)]) {
+      pendingSessionEvents.push({ event, recordedAt: envelope.recorded_at })
     }
     const linked = museLinkedSubagentSessionLogPath(envelope)
     if (linked) pendingSubagentPaths.add(linked)
+  }
+
+  // Stdout and the session log are separate transports. Drain older log
+  // records before assistant text so a polling delay cannot put Thinking
+  // below the answer or collapse reasoning across an intervening tool call.
+  const flushSessionEvents = (through = Infinity): void => {
+    pendingSessionEvents.sort((a, b) => a.recordedAt - b.recordedAt)
+    while (pendingSessionEvents.length && pendingSessionEvents[0].recordedAt <= through) {
+      emitEvent(pendingSessionEvents.shift()!.event)
+    }
   }
 
   const attachSessionLogTailer = (
@@ -263,22 +312,22 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
   const pollSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
     for (const tailer of sessionTailers.values()) {
-      await tailer.poll()
+      await tailer.poll().catch(warnLogRead)
     }
     if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
     // Newly attached subagent tailers need an immediate poll.
     for (const tailer of sessionTailers.values()) {
-      await tailer.poll()
+      await tailer.poll().catch(warnLogRead)
     }
   }
 
   const flushSessionLogs = async (mainSessionLogPath: string | null): Promise<void> => {
     for (const tailer of sessionTailers.values()) {
-      await tailer.flushFinal()
+      await tailer.flushFinal().catch(warnLogRead)
     }
     if (mainSessionLogPath) openPendingSubagentTailers(mainSessionLogPath)
     for (const tailer of sessionTailers.values()) {
-      await tailer.flushFinal()
+      await tailer.flushFinal().catch(warnLogRead)
     }
   }
 
@@ -286,12 +335,15 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     const parsed = parseMuseExecJsonChunk(chunk, stdoutCarry)
     stdoutCarry = parsed.carry
     for (const line of parsed.lines) {
+      flushSessionEvents(line.envelope?.recorded_at)
       for (const event of museExecLineToEvents(line)) {
-        emitEvent(event)
+        if (event.type === 'terminal') terminalEvent = event
+        else emitEvent(event)
       }
       // Defensive: if Muse ever emits runtime.session tool commits on stdout,
       // project them the same way as the durable session log.
       if (line.envelope) {
+        for (const reasoning of projectReasoning(line.envelope)) emitEvent(reasoning)
         for (const toolEvent of projectMuseEnvelopeTools(line.envelope)) {
           emitEvent(toolEvent)
         }
@@ -299,14 +351,16 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     }
   }
 
+  // Isolated-home exec has no native resume. Host-side only; never shown.
   const argv = buildMuseExecArgv({
-    prompt: input.prompt,
+    prompt: composeMuseLaunchPrompt(input.prompt, input.introductionText),
     workspace: workspacePath,
     sessionId,
     model: input.model,
-    reasoningEffort: input.reasoningEffort,
+    reasoningEffort: effort,
     readOnlySeat: !writeCapable,
-    apiKeyStdin
+    apiKeyStdin,
+    ultraTaskDelegationAutoAllow
   })
   assertSafeMuseArgv(argv)
 
@@ -368,15 +422,24 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       stdin: apiKeyStdin ? (input.apiKey ?? null) : null
     })
 
-    handle.onStdout((chunk) => handleStdoutEvents(chunk))
     handle.onStderr((chunk) => {
       const text = chunk.trim()
       if (text) warnings.push(`muse stderr: ${text.slice(0, 500)}`)
     })
 
-    if (input.shouldCancel?.()) {
-      handle.kill('SIGTERM')
+    // Stop must end the turn, not just relabel it. The cancel flag is polled
+    // for the life of the child (on the session-log timer below) and the first
+    // observation kills it. Before this, cancellation was consulted once at
+    // spawn and once after exit, so a stopped Muse run kept executing — and
+    // billing — to completion.
+    let killRequested = false
+    const spawnedHandle = handle
+    const killIfCancelled = (): void => {
+      if (killRequested || !input.shouldCancel?.()) return
+      killRequested = true
+      spawnedHandle.kill('SIGTERM')
     }
+    killIfCancelled()
 
     let mainSessionLogPath: string | null = null
     const pollMs = Math.max(10, input.sessionLogPollIntervalMs ?? 50)
@@ -398,30 +461,70 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
       return result
     })
 
+    // The launcher/keychain can outlast the first bounded lookup. Keep
+    // discovery alive until the log appears, including one final lookup for
+    // short runs, instead of silently losing all tools, summaries and usage.
+    let nextLogLookupAt = 0
+    const refreshSessionLog = async (force = false): Promise<void> => {
+      await attachPromise
+      if (mainSessionLogPath || (!force && Date.now() < nextLogLookupAt)) return
+      nextLogLookupAt = Date.now() + 1_000
+      try {
+        const result = await resolveSessionLog({ dataHome: museDataHome, sessionId })
+        if (result.sessionLogPath) attachMainSessionLog(result.sessionLogPath)
+      } catch (error) {
+        warnLogRead(error)
+      }
+    }
+
+    let streamWork = Promise.resolve()
+    let streamError: unknown
+    const enqueueStreamWork = (work: () => Promise<void>): void => {
+      streamWork = streamWork.then(work).catch((error: unknown) => {
+        streamError ??= error
+        spawnedHandle.kill('SIGTERM')
+      })
+    }
+    handle.onStdout((chunk) => {
+      enqueueStreamWork(async () => {
+        await refreshSessionLog()
+        await pollSessionLogs(mainSessionLogPath)
+        handleStdoutEvents(chunk)
+      })
+    })
+
     pollTimer = setInterval(() => {
-      void pollSessionLogs(mainSessionLogPath)
+      killIfCancelled()
+      enqueueStreamWork(async () => {
+        await refreshSessionLog()
+        await pollSessionLogs(mainSessionLogPath)
+        flushSessionEvents()
+      })
     }, pollMs)
 
     const waited = await handle.wait()
     exitCode = waited.code
-    if (stdoutCarry.trim()) handleStdoutEvents('\n')
 
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
     }
 
-    const sessionLog = await attachPromise
-    if (sessionLog.sessionLogPath) {
-      attachMainSessionLog(sessionLog.sessionLogPath)
-      await flushSessionLogs(sessionLog.sessionLogPath)
+    await streamWork
+    if (streamError) throw streamError
+    if (stdoutCarry.trim()) handleStdoutEvents('\n')
+    await refreshSessionLog(true)
+    if (mainSessionLogPath) {
+      await flushSessionLogs(mainSessionLogPath)
       meter =
         (usageReducer as MuseUsageReducer | null)?.snapshot() ??
         unavailableMuseMeterSnapshot(sessionId)
-    } else if (sessionLog.source === 'missing') {
+    } else {
       warnings.push('Muse session.jsonl was not resolved for metering; usage marked unavailable')
       meter = unavailableMuseMeterSnapshot(sessionId)
     }
+    flushSessionEvents()
+    if (terminalEvent) emitEvent(terminalEvent)
 
     for (const tailer of sessionTailers.values()) {
       await tailer.close()
@@ -485,6 +588,3 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
 
 /** Alias matching wave-1 F naming (`MuseRun` lifecycle entry). */
 export const runMuseOpaqueExecTurn = runMuseProvider
-
-/** IPC bridge entry — implemented in MuseIpcBridge (deps-injected spawn/binary). */
-export { runMuseProviderFromIpc } from './MuseIpcBridge'

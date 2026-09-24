@@ -14,7 +14,7 @@
  * table and the peer-message capture already follow.
  */
 
-import type { ChatRun } from '../../../main/store/types'
+import type { ChatRecord, ChatRun, ProviderId } from '../../../main/store/types'
 import type { SeatChangeSeatState } from '../../../shared/seatChange'
 import { resolveSeatAuthority } from '../../../shared/seatChange'
 import type { AgentApprovalEnsembleAttribution } from './agentApprovalAttribution'
@@ -44,12 +44,26 @@ function stageRoleOf(value: unknown): SeatChangeSeatState['stageRole'] {
  * `ensembleModel` fields do not carry. Without it the permission chip would
  * silently render the default tier for a lane that ran read-only.
  *
+ * The snapshot's preset is what the seat was CONFIGURED as, not what executed:
+ * `EnsembleSeatSnapshot` says so in its own type contract, and the run's signed
+ * `permissionPosture.presetId` is the value the round actually ran under after
+ * the unattended, trust, and preview-risk gates. Pass the row's run and the
+ * SEAL wins — measured, a lane sealed `read_only` was wearing "Full WS Access"
+ * off its roster config while the close-out table beside it correctly said
+ * "Ask". Same precedence `taskWraithCloseoutMessage` already uses, so the two
+ * surfaces can no longer contradict each other on one screen.
+ *
+ * The `|| snapshot` half is load-bearing, not defensive: rows written before
+ * postures were recorded have no seal, and `SeatChangeRow` renders NO chip for
+ * an absent preset on purpose. An unknown must stay unknown.
+ *
  * Unlike the peer-message card, `seatNumber` IS carried here: a fan-out lane
  * belongs to the reader's OWN roster, so "#3" names a seat they can see. (It is
  * meaningless for a peer sender, whose roster the reader is not in.)
  */
 export function seatFromEnsembleMetadata(
-  metadata: Record<string, unknown> | undefined | null
+  metadata: Record<string, unknown> | undefined | null,
+  run?: ChatRun | null
 ): SeatChangeSeatState | null {
   if (!metadata) return null
   const snapshot =
@@ -65,7 +79,9 @@ export function seatFromEnsembleMetadata(
 
   const role = trimmed(metadata.ensembleRole)
   const reasoningEffort = trimmed(snapshot?.reasoningEffort)
-  const permissionPresetId = trimmed(snapshot?.configuredPermissionPresetId)
+  const permissionPresetId = run?.permissionPosture?.signaturePresent
+    ? trimmed(run.permissionPosture.presetId)
+    : trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot?.configuredPermissionPresetId)
   const seatNumber = positiveInt(metadata.ensembleOrder)
   const stageRole = stageRoleOf(metadata.ensembleStageRole)
   // Sibling field rather than part of the snapshot: authority is chat-level,
@@ -129,7 +145,12 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
   const seatNumber = positiveInt(run?.ensembleOrder)
   const stageRole = stageRoleOf(run?.ensembleStageRole)
   const reasoningEffort = trimmed(snapshot.reasoningEffort)
-  const permissionPresetId = trimmed(snapshot.configuredPermissionPresetId)
+  // Seal before config, as above — and here the signed posture is on the very
+  // same run object the snapshot came off, so reading the configured preset was
+  // never a matter of not having the authoritative one to hand.
+  const permissionPresetId = run?.permissionPosture?.signaturePresent
+    ? trimmed(run.permissionPosture.presetId)
+    : trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot.configuredPermissionPresetId)
 
   return {
     provider,
@@ -143,6 +164,77 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
       ? { thinkingEnabled: snapshot.thinkingEnabled }
       : {}),
     ...(permissionPresetId ? { permissionPresetId } : {})
+  }
+}
+
+const PROVIDER_REASONING_METADATA_KEY: Partial<Record<ProviderId, string>> = {
+  codex: 'codexReasoningEffort',
+  claude: 'claudeReasoningEffort',
+  kimi: 'kimiReasoningEffort',
+  grok: 'grokReasoningEffort',
+  cursor: 'cursorReasoningEffort',
+  ollama: 'ollamaReasoningEffort',
+  antigravity: 'antigravityReasoningEffort',
+  pi: 'piReasoningEffort',
+  mistral: 'mistralReasoningEffort',
+  muse: 'museReasoningEffort',
+  devin: 'devinReasoningEffort'
+}
+
+function providerNativeMetadataValue(
+  key: string,
+  run: ChatRun | null | undefined,
+  chat: ChatRecord | null | undefined
+): unknown {
+  return run?.providerMetadata?.[key] ?? chat?.providerMetadata?.[key]
+}
+
+/**
+ * The selected provider/model/reasoning control behind a provider-native
+ * subagent invocation. Unlike an Ensemble seat, this intentionally carries no
+ * role, roster ordinal, authority, or permission chip: the subagent inherits
+ * the current provider run, and the card's identicon remains its only child
+ * identity. Run data outranks mutable chat configuration; configuration only
+ * expands legacy/default sentinels or fills an unstamped live run.
+ */
+export function seatFromProviderNativeRun(input: {
+  run?: ChatRun | null
+  chat?: ChatRecord | null
+  fallbackProvider?: ProviderId
+}): SeatChangeSeatState | null {
+  const { run, chat } = input
+  const snapshot = run?.ensembleSeatSnapshot
+  const provider =
+    run?.providerReroute?.to ||
+    snapshot?.provider ||
+    run?.provider ||
+    input.fallbackProvider ||
+    chat?.provider
+  if (!provider) return null
+
+  const configuredModel =
+    trimmed(chat?.requestedModel) || trimmed(chat?.providerMetadata?.selectedModelType)
+  const recordedModel =
+    trimmed(run?.actualModel) || trimmed(snapshot?.model) || trimmed(run?.requestedModel)
+  const model =
+    recordedModel === 'cli-default' || recordedModel === 'default'
+      ? configuredModel || recordedModel
+      : recordedModel || configuredModel || trimmed(chat?.lastActualModel)
+  if (!model) return null
+
+  const reasoningKey = PROVIDER_REASONING_METADATA_KEY[provider]
+  const reasoningEffort =
+    trimmed(snapshot?.reasoningEffort) ||
+    (reasoningKey ? trimmed(providerNativeMetadataValue(reasoningKey, run, chat)) : '') ||
+    trimmed(providerNativeMetadataValue('reasoningEffort', run, chat))
+  const thinkingValue =
+    snapshot?.thinkingEnabled ?? providerNativeMetadataValue('kimiThinkingEnabled', run, chat)
+
+  return {
+    provider,
+    model,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(typeof thinkingValue === 'boolean' ? { thinkingEnabled: thinkingValue } : {})
   }
 }
 

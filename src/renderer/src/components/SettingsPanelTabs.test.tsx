@@ -100,6 +100,46 @@ describe('Settings tabs', () => {
     expect(settingsTabMatchesQuery(tabsById.appearance, 'billing')).toBe(false)
   })
 
+  it('surfaces Appearance in sidebar search for the transcript control terms', () => {
+    // Mirrors the real consumer: SettingsSidebar.tsx:220-221 filters the visible tabs with
+    // `settingsTabMatchesQuery`. Asserting the FILTERED LIST (rather than that a string sits
+    // in `tab.aliases`) is what makes this a resolution guard: an alias that existed but was
+    // matched by nothing would still fail here.
+    const search = (query: string) =>
+      getVisibleSettingsTabs()
+        .filter((tab) => settingsTabMatchesQuery(tab, query))
+        .map((tab) => tab.id)
+
+    // Positive control: this filter has no default tab and CAN return nothing. An empty list
+    // is exactly what every query below returned before the Appearance aliases were added,
+    // so these assertions cannot be passing by way of a fallback.
+    expect(search('zzzz no such settings tab')).toEqual([])
+
+    for (const query of [
+      'transcript',
+      'transcript view',
+      'transcript text size',
+      'text size',
+      'transcript width',
+      'width',
+      'view',
+      'size'
+    ]) {
+      expect(search(query)).toContain('appearance')
+    }
+
+    // Widening only: the tabs that already answered these queries must still answer them.
+    expect(search('transcript')).toContain('pinned-messages')
+    expect(search('view')).toContain('local-servers')
+    expect(search('text')).toContain('model-usage')
+    // And the widening must not reach 'default', which belongs to Behavior. Appearance
+    // carries the bare 'view' alias rather than 'default transcript view' precisely so a
+    // one-word 'default' never lands here; see resolveSettingsSlashTab.test.ts for the
+    // score arithmetic that makes the qualified form win it.
+    expect(search('default')).not.toContain('appearance')
+    expect(search('default')).toContain('behavior')
+  })
+
   it('surfaces Safety & Privacy in the Data group', () => {
     const html = renderToStaticMarkup(
       <SettingsSidebar

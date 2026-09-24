@@ -128,6 +128,36 @@ describe('TodoList', () => {
     expect(merged.codex).toEqual([{ id: '1', content: 'C', status: 'pending' }])
   })
 
+  it('binds seat todos to the current Goal/assignment and drops stale-goal steps', () => {
+    const prior = {
+      worker: [
+        {
+          id: 'old',
+          content: 'Old Goal step',
+          status: 'completed' as const,
+          goalId: 'goal-old'
+        }
+      ]
+    }
+    const next = applyLaneTodoWrite(
+      prior,
+      'worker',
+      [{ id: 'new', content: 'Current assignment step', status: 'in_progress' }],
+      true,
+      { goalId: 'goal-current', assignmentId: 'assignment-1' }
+    )
+
+    expect(next.worker).toEqual([
+      {
+        id: 'new',
+        content: 'Current assignment step',
+        status: 'in_progress',
+        goalId: 'goal-current',
+        assignmentId: 'assignment-1'
+      }
+    ])
+  })
+
   it('groups todo activities into per-lane merged lists (ensemble PlanRail)', () => {
     const byLane = computeMergedTodosByLane(
       [

@@ -77,11 +77,83 @@ manually-maintained iOS mirror `ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swi
 `MODEL_CATALOGUE.md`'s provider rail was missed and has been corrected
 separately.
 
-**Still carrying the old `#8D7312`** (design assets, not corrected here because
-they are artwork rather than paperwork — flagging for a design pass):
-`design-assets/provider-glyphs/glyphs/ensemble.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom.svg`,
-`design-assets/provider-glyphs/auditions/ensemble-confluence-loom-comparison.svg`.
+**Resolved 2026-08-30.** The three design assets that still carried `#8D7312`
+— `design-assets/provider-glyphs/glyphs/ensemble.svg` and the two
+`auditions/ensemble-confluence-loom*.svg` files — were re-synced to `#8C7508`
+in the same pass that fixed the Ollama stop below, and the baked PNGs were
+regenerated. The glyph's stops are now checked against `theme.css` wholesale,
+not one hex at a time: every `data-brand` stop matches its live token.
+
+### Collision revision — 2026-08-30 (Ollama, Thinking Machines)
+
+The 2026-07-13 allocation rows above are left as recorded. Two swatches have
+since been re-hued because the palette grew into them, not because their own
+contrast drifted: both old values still met the AA-on-both-grounds invariant,
+but each had a neighbour close enough to be the same colour on a chip strip.
+
+Separation is measured here with **CIEDE2000** against every other
+`--provider-*-color` in `theme.css` (with `var()` aliases resolved first), the
+same dE 7.6 bar `theme.css` cites for the Xiaomi allocation. Both replacements
+were picked by sweeping the whole integer-sRGB cube for colours inside the
+equal-contrast band and maximising the minimum dE2000 to the rest of the
+palette within the requested colour family.
+
+| Provider | Old token | Old white / black | New token | New RGB | Relative luminance | New white / black | Nearest neighbour (dE2000) | Note |
+| --- | --- | ---: | --- | --- | ---: | ---: | --- | --- |
+| Ollama | `#1A8562` | 4.59 / 4.58 | **`#976C52`** | `rgb(151, 108, 82)` | `0.1791363` | **4.5824 / 4.5827** | cerebras `#BB584A` — **12.93** | Green-teal to walnut brown. |
+| Thinking Machines / Inkling | `#016EF6` | 4.60 / 4.56 | **`#C24E68`** | `rgb(194, 78, 104)` | `0.1791759` | **4.5816 / 4.5835** | liquid `#D72D82` — **9.28** | Royal blue to rose. |
+
+Why each moved:
+
+- **Ollama** `#1A8562` sat dE2000 **7.89** from Xiaomi's `#008844` — over the
+  7.6 bar, but the tightest pair in the palette's green band and the reason the
+  local-inference chip read as a duplicate of MiMo. Brown was the one warm
+  family with headroom left. At this luminance a brown is a low-chroma orange
+  (`C* 25.4` against Claude's `62.7`), and it is that chroma gap, not hue, that
+  clears the crowded 6-32 degree orange band: claude `#B16105` dE **13.02**,
+  deep-reinforce `#BE5809` dE **13.71**, cursor `#8C7508` dE **19.22**,
+  mistral `#D44404` dE **17.11**.
+- **Thinking Machines** `#016EF6` sat dE2000 **1.73** from Meta/Muse's
+  `#1671EA` and **1.88** from Gemini's `#346EEC` — indistinguishable, not
+  merely close. The blue band was full, so Inkling took a rose of its own.
+  `#E02948` stays reserved as the generic OpenRouter fallback; the new token
+  clears it by dE **9.50** and clears liquid `#D72D82` by dE **9.28**, then
+  cerebras **12.25** and ensemble **12.91**.
+
+The pink region is the tighter of the two. `#C24E68` is the best-separated
+colour in the equal-contrast band that still reads as a saturated rose
+(`HSL S 0.49`); trading saturation for distance is available if wanted — a
+duskier `#B75769` (`S 0.40`) reaches dE **10.97**, and a more vivid `#D04066`
+(`S 0.61`) drops to dE **8.18**. Every one of those still clears 7.6, so the
+choice is identity, not compliance.
+
+Mirrors updated for this revision: `src/renderer/src/styles/theme.css`,
+`src/shared/taskWraithProviderPresentation.ts`,
+`ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift`,
+`src/renderer/src/styles/providerPaletteContrast.test.ts` (hex pins, the iOS
+case list, and the `ollama` Agent-Aura RGB triplet), the `--agent-accent-rgb` /
+`--agent-aura-rgb` triplets in `02-transcript-messages-fx.css` and
+`05-polish-fx-layouts.css`, the hard-coded fallbacks in
+`03-composer-welcome-activity.css`, `06-component-panels-modals.css`,
+`07-composer-shells.css`, `ModelUsageSettingsTable.css`, `UsageHeatmap.ts`,
+`WelcomeUsageDashboard.tsx`, `agentPoolIconAssets.ts`, `canvasChartSvg.ts`,
+`ProviderGlyph.tsx` and `scripts/export-dmg-background.cjs`.
+
+**Design assets corrected in the same pass, 2026-08-30.** All three files —
+`design-assets/provider-glyphs/glyphs/ensemble.svg` and the two
+`auditions/ensemble-confluence-loom*.svg` — now carry `#976C52`, and the
+long-outstanding Cursor `#8D7312` was cleared alongside it. The glyph is the
+live source for the baked Ensemble PNG and for the Agent Pool artwork, so
+`npx electron design-assets/provider-glyphs/render-glyph-pngs.cjs` was run in
+the same pass; it rewrites three copies at once (the master under `png/`, the
+`TaskWraithUI/Resources` copy, and the `Assets.xcassets` imageset), and all
+three now share one digest. Rebake whenever a stop changes — the SVG and its
+PNGs drift silently otherwise, and the PNG is what iOS ships.
+
+**This document remains incomplete.** It has no allocation rows for Meta,
+Xiaomi/MiMo, OpenRouter, or the original Thinking Machines swatch, nor for the
+other Pi-backed upstream brands added after 2026-07-13. `theme.css` is the
+authority in the meantime. Backfilling them was out of scope for this revision.
 
 ### Grok exception
 
@@ -122,7 +194,7 @@ relationships as aliases.
   for visual identity review after implementation.
 - Do not flatten the Google, OpenAI, Qwen, or Ornith aliases into duplicate literals.
   Keeping the aliases prevents future palette drift.
-- Gemini remains in the allocation because historical records and Google/Gemma branding
+- Google Gemma now inherits AntiGravity green. because historical records and Google/Gemma branding
   still consume its hue even though Gemini is retired for new desktop runs.
 
 ## Implementation record
@@ -170,3 +242,5 @@ participant filters, transcript accents, light/dark themes, and reduce-transpare
 | --- | --- | --- |
 | 2026-07-13 | Proposed | Allocated balanced provider and Ollama display-brand swatches. Codex `#705AFF` approved as the new direction. Production code unchanged. |
 | 2026-07-13 | Implemented | Applied the allocations across desktop and iOS in `8dccc4625`; added exact palette, alias, RGB-mirror, and dual-background contrast regression coverage. |
+| 2026-08-16 | Revised | Cursor re-tuned `#8D7312` to `#8C7508` in `a52b510ae`; see the Cursor revision above. |
+| 2026-08-30 | Revised | Ollama `#1A8562` to `#976C52` and Thinking Machines `#016EF6` to `#C24E68` on CIEDE2000 collision grounds (Xiaomi dE 7.89, Meta/Muse dE 1.73); both held at the equal-contrast luminance. See the collision revision above. |

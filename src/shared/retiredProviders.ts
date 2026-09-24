@@ -38,7 +38,8 @@ export const LIVE_SELECTABLE_PROVIDER_IDS = [
   'ollama',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ] as const
 const LIVE_SELECTABLE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(
   LIVE_SELECTABLE_PROVIDER_IDS

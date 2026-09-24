@@ -14,8 +14,24 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('multi-file')
   })
 
+  it('adds agentic profiles for the newest large local models', () => {
+    const qwen = ollamaModelFamilyPromptLines('qwen3.8-flash-next:125b-mlx').join(' ')
+    expect(qwen).toContain('Qwen 3.8 Flash Next 125B')
+    expect(qwen).toContain('native tools')
+
+    const mistral = ollamaModelFamilyPromptLines('mistral-medium-3.5:128b').join(' ')
+    expect(mistral).toContain('Mistral Medium 3.5 128B')
+    expect(mistral).toContain('multimodal')
+
+    const granite = ollamaModelFamilyPromptLines('granite4.2:8b').join(' ')
+    expect(granite).toContain('Granite 4.2')
+    expect(granite).toContain('configurable thinking')
+  })
+
   it('states the real permission on read-only and never hedges on edit tiers', () => {
-    const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
+    const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(
+      ' '
+    )
     // Read-only text describes the tier's actual permission, which is honest.
     expect(qwenReadOnly).toContain('no edit tools')
     const qwenEdits = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'provider_parity').join(
@@ -60,6 +76,10 @@ describe('ollamaModelFamilyPromptLines', () => {
     const lines = ollamaModelFamilyPromptLines('ornith:35b')
     expect(lines.join(' ')).toContain('agentic coding')
     expect(lines.join(' ')).toContain('verification gaps')
+
+    const ornith15 = ollamaModelFamilyPromptLines('ornith-1.5:35b')
+    expect(ornith15.join(' ')).toContain('Ornith 1.5 35B')
+    expect(ornith15.join(' ')).toContain('agentic coding')
   })
 
   it('adds LFM 2.5 long-context tool guidance', () => {
@@ -199,9 +219,9 @@ describe('ollamaLocalToolSystemPrompt', () => {
       true
     )
     // No model id → generic, still an identity line, no crash.
-    expect(ollamaLocalToolSystemPrompt('read_only').startsWith('You are a local model running')).toBe(
-      true
-    )
+    expect(
+      ollamaLocalToolSystemPrompt('read_only').startsWith('You are a local model running')
+    ).toBe(true)
   })
 
   it('advertises the immutable gateway working set, not the full catalog', () => {
@@ -259,7 +279,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
     // just wastes a weak model's tool budget.
     const readOnly = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', { readOnly: true })
     expect(readOnly).not.toContain('write_file')
-    expect(readOnly).not.toContain('run_shell_command')
+    expect(readOnly).toContain('run_shell_command')
     expect(readOnly).not.toContain('run_task')
     // Reads/search/web stay available and the seat is told writes are unavailable.
     expect(readOnly).toContain('read_file')
@@ -284,9 +304,32 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(plan).toContain('canvas_sketch_get')
     expect(plan).toContain('canvas_sketch_update')
     expect(plan).not.toContain('write_file')
-    expect(plan).not.toContain('run_shell_command')
+    expect(plan).toContain('run_shell_command')
     expect(plan).toContain('This run is PLAN-scoped')
     expect(plan).toContain('approval modal')
+  })
+
+  it('teaches the delegated-wave lifecycle only for signed UltraTask auto-allow', () => {
+    const ordinary = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', {
+      readOnly: true
+    })
+    expect(ordinary).not.toContain('delegate_to_subthread')
+    expect(ordinary).not.toContain('delegate_wave')
+    expect(ordinary).not.toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+
+    const ultraTask = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', {
+      readOnly: true,
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(ultraTask).toContain('- delegate_to_subthread:')
+    expect(ultraTask).toContain('- delegate_wave:')
+    expect(ultraTask).toContain('list_subthreads')
+    expect(ultraTask).toContain('read_subthread_result')
+    expect(ultraTask).toContain('cancel_subthread')
+    expect(ultraTask).toContain('ULTRATASK DELEGATION IS AUTO-ALLOWED')
+    expect(ultraTask).toContain('ensemble_await')
+    expect(ultraTask).not.toContain('write_file')
+    expect(ultraTask).toContain('run_shell_command')
   })
 })
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { ComposerShellPreview, getComposerPreviewMeta } from './ComposerShellPreview'
@@ -116,14 +116,14 @@ describe('ComposerShellPreview — single metadata source', () => {
     expect(getComposerPreviewMeta('terminal').modelLabel).toBe('Shell')
     expect(getComposerPreviewMeta('terminal')).not.toEqual(getComposerPreviewMeta('default'))
     // The canonical claude/codex copy (kept in step with the live composer chip).
-    expect(getComposerPreviewMeta('claude').modelLabel).toBe('Opus 5')
+    expect(getComposerPreviewMeta('claude').modelLabel).toBe('Opus 5.5')
     expect(getComposerPreviewMeta('claude').permissionLabel).toBe('Plan')
     expect(getComposerPreviewMeta('codex').modelLabel).toBe('GPT-5.5')
   })
 
   it('renders the resolved metadata into the card', () => {
     const html = render('claude')
-    expect(html).toContain('Opus 5')
+    expect(html).toContain('Opus 5.5')
     expect(html).toContain('Plan')
     expect(html).toContain('Claude')
   })
@@ -154,16 +154,14 @@ describe('ComposerShellPreview — single metadata source', () => {
     }
   })
 
-  it('feeds the canonical controls each shell\'s sample selections', () => {
-    const samples: Array<
-      [ComposerStyle, string, string, string, string]
-    > = [
+  it("feeds the canonical controls each shell's sample selections", () => {
+    const samples: Array<[ComposerStyle, string, string, string, string]> = [
       ['codex', 'codex', '5.5', 'full_access', 'Full Access'],
-      ['claude', 'claude', 'Opus 5', 'plan', 'Plan'],
+      ['claude', 'claude', 'Opus 5.5', 'plan', 'Plan'],
       ['cursor', 'cursor', 'Composer 2.5', 'default', 'Accept Edits'],
       ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Accept Edits'],
       ['gemini', 'gemini', 'Gemini Pro', 'default', 'Accept Edits'],
-      ['kimi', 'kimi', 'K2.7 Coding', 'read_only', 'Read workspace'],
+      ['kimi', 'kimi', 'K2.8 Preview', 'read_only', 'Read workspace'],
       ['default', 'codex', 'Auto', 'default', 'Accept Edits'],
       ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']
     ]
@@ -177,8 +175,8 @@ describe('ComposerShellPreview — single metadata source', () => {
     }
 
     const kimi = render('kimi')
-    expect(kimi).toContain('data-selected-reasoning="on"')
-    expect(kimi).toContain('Thinking')
+    expect(kimi).toContain('data-selected-reasoning="max"')
+    expect(kimi).toContain('composer-combined-picker-trigger-suffix">Max')
 
     const native = render('default')
     expect(native).toContain('composer-combined-picker-trigger-provider-label">TaskWraith')
@@ -235,8 +233,11 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
   it('renders the above-row branch label without italic emphasis markup', () => {
     const html = render('codex')
 
-    expect(html).toContain(
-      '<span class="composer-above-bar-secondary-branch git-tone-main">main</span>'
+    // The live primary row renders the branch as the real
+    // ComposerBranchWorktreePopover trigger (a button carrying the tone class),
+    // not a static span — the preview must mount the same primitive.
+    expect(html).toMatch(
+      /<button[^>]*class="composer-branch-trigger composer-above-bar-secondary-branch git-tone-main"[^>]*>main<\/button>/
     )
     expect(html).not.toContain('<em class="composer-above-bar-secondary-branch')
   })
@@ -281,6 +282,17 @@ describe('ComposerShellPreview — per-shell send glyph', () => {
 })
 
 describe('ComposerShellPreview — inertness + modes', () => {
+  it('renders all shells in a browser without an Electron bridge', () => {
+    vi.stubGlobal('window', {})
+    try {
+      for (const style of ALL_SHELLS) {
+        expect(() => render(style), style).not.toThrow()
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('renders the same first-class textarea as editable or inert', () => {
     const editable = render('claude', { editable: true, value: 'hello' })
     expect(editable).toContain('<textarea')
@@ -323,5 +335,82 @@ describe('ComposerShellPreview — inertness + modes', () => {
 
   it('scopes the chosen theme onto the card', () => {
     expect(render('claude', { themeAppearance: 'blue' })).toContain('data-theme="blue"')
+  })
+})
+
+describe('ComposerShellPreview — live-composer fidelity', () => {
+  it('marks the workspace above-row as the primary row for every shell', () => {
+    // 17-composer-hint-pills.css keys the persistent-row rules on this class;
+    // without it the preview collapsed the row differently from the product.
+    for (const style of ALL_SHELLS) {
+      const html = render(style)
+      expect(html, style).toContain(
+        'composer-workspace-above-row composer-workspace-above-row--primary'
+      )
+    }
+  })
+
+  it('mounts the real branch trigger, diff-stat odometers and token tally', () => {
+    const html = render('codex')
+    // Branch/worktree popover trigger (not a static span).
+    expect(html).toContain('composer-branch-trigger composer-above-bar-secondary-branch')
+    // WorkspaceDiffStatsButton + AnimatedDiffNumber instead of hand-rolled spans.
+    expect(html).toContain('composer-above-bar-files-cluster composer-above-bar-stat-clickable')
+    expect(html).toContain('composer-odometer-number composer-diff-add')
+    expect(html).toContain('composer-odometer-number composer-diff-del')
+    expect(html).not.toContain('<span class="composer-diff-add">+42</span>')
+    // LiveThreadTokenTally carries the tooltip the hand-rolled span never had.
+    expect(html).toMatch(/composer-thread-token-tally"[^>]*title=/)
+    expect(html).toContain('1.2M in / 5k out')
+  })
+
+  it('mounts the full telemetry cluster the live composer renders', () => {
+    for (const style of ALL_SHELLS) {
+      const html = render(style)
+      expect(html, style).toContain('composer-screen-watch-button composer-hint-pill')
+      expect(html, style).toContain('composer-terminal-button composer-hint-pill')
+      expect(html, style).toContain('composer-goal-button composer-hint-pill')
+      expect(html, style).toContain('composer-plan-button composer-hint-pill')
+      expect(html, style).toContain('class="composer-copy-transcript-button')
+      expect(html, style).toContain('data-composer-control="view"')
+      expect(html, style).toContain('data-composer-control="multiview"')
+      expect(html, style).toContain('data-composer-control="canvas"')
+      expect(html, style).toContain('composer-above-rows-toggle-button')
+    }
+  })
+
+  it('places the voice control where composerVoicePlacementForStyle puts it', () => {
+    const voice = 'data-composer-control="voice"'
+
+    // codex → send cluster
+    const codex = render('codex')
+    const codexCluster = codex.indexOf('class="composer-send-cluster"')
+    expect(codexCluster).toBeGreaterThan(-1)
+    expect(codex.indexOf(voice)).toBeGreaterThan(codexCluster)
+
+    // claude → permissions row (left picker cluster, before the actions block)
+    const claude = render('claude')
+    const claudeActions = claude.indexOf('class="composer-inline-actions"')
+    const claudeVoice = claude.indexOf(voice)
+    expect(claudeVoice).toBeGreaterThan(-1)
+    expect(claudeVoice).toBeLessThan(claudeActions)
+
+    // grok → action row (inside the actions block, before the send cluster)
+    const grok = render('grok')
+    const grokActions = grok.indexOf('class="composer-inline-actions"')
+    const grokCluster = grok.indexOf('class="composer-send-cluster"')
+    const grokVoice = grok.indexOf(voice)
+    expect(grokVoice).toBeGreaterThan(grokActions)
+    expect(grokVoice).toBeLessThan(grokCluster)
+  })
+
+  it('shows the Codex waveform idle glyph and the arrow once there is a draft', () => {
+    const idle = sendGlyph(render('codex'))
+    const draft = sendGlyph(render('codex', { editable: true, value: 'ship it' }))
+    const chatgpt = sendGlyph(render('chatgpt'))
+    expect(idle).not.toBe('__no-send-button__')
+    expect(idle).not.toEqual(draft)
+    // The ChatGPT shell keeps the arrow even when idle; only Codex swaps.
+    expect(chatgpt).toEqual(draft)
   })
 })

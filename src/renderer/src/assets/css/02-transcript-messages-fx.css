@@ -2,7 +2,18 @@
 .app-transcript {
   --workspace-terminal-height: 260px;
   --workspace-terminal-bottom-gap: var(--space-md);
+  /* Single source of truth for the workspace terminal's side inset. The panel
+   * and its drag divider are separate absolutely-positioned elements, so two
+   * hand-kept copies of the same value drifted apart the moment either was
+   * tuned — the divider stopped lining up with the pane it resizes. One token
+   * makes that impossible, and the narrow-width step below re-declares it once
+   * instead of restating both rules. */
+  --workspace-terminal-inline-inset: var(--space-lg);
   --composer-bottom-gap: 12px;
+  /* Bottom inset of the participant-filter dock (the seat strip under the
+   * composer timecodes). The dock's JS reserve writer reads this token back,
+   * so CSS stays the single source of the gap. */
+  --participant-filter-dock-bottom-gap: 10px;
   --composer-reserved-height: calc(var(--composer-min-height) + (var(--space-lg) * 4));
   /*
    * 1.0.4 — bumped from 14px to 56px (4x). The clearance is the air
@@ -40,8 +51,9 @@
   --composer-scroll-clearance: 15px;
   --composer-above-row-clearance: 0px;
   --composer-scroll-under-padding: calc(
-    var(--composer-reserved-height) + var(--composer-bottom-gap) + var(--composer-scroll-clearance) +
-      var(--composer-above-row-clearance) + env(safe-area-inset-bottom, 0px)
+    var(--composer-reserved-height) + var(--composer-bottom-gap) +
+      var(--composer-scroll-clearance) + var(--composer-above-row-clearance) +
+      var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px)
   );
   --composer-terminal-scroll-under-padding: calc(
     var(--composer-scroll-under-padding) + var(--workspace-terminal-height) +
@@ -76,11 +88,11 @@
 }
 
 :root[data-platform='darwin'] .app-transcript::before {
-  content: "";
+  content: '';
 }
 
 .app-transcript::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -147,7 +159,7 @@
 }
 
 .app-transcript.provider-ollama {
-  --agent-accent-rgb: 26 133 98;
+  --agent-accent-rgb: 151 108 82;
   --transcript-provider-color: var(--provider-ollama-color);
 }
 
@@ -225,8 +237,17 @@
 }
 .app-transcript.chat-scope-global:not(.welcome-mode) .transcript-inner {
   /* Keep the legacy General Chat reading column narrow without shrinking the
-   * modern composer shell, which also consumes --composer-content-max-width. */
-  max-width: min(100%, 760px);
+   * modern composer shell, which also consumes --composer-content-max-width.
+   *
+   * Expressed as the PANE TERM of `.transcript-inner`'s single `max-width`
+   * rather than as a second `max-width` declaration. As a second declaration it
+   * beat the base rule on specificity, so a transcript-width variable added to
+   * the base rule would have been inert in General Chat — the control doing
+   * nothing in one of the four scopes, with every guard green. As a term it
+   * still wins over the composer cap and still loses to an explicit choice,
+   * which is the intent: 760px is a default reading column, not a ceiling the
+   * user may not raise. */
+  --transcript-pane-max-width: 760px;
 }
 .app-transcript.chat-scope-global .message-bubble.assistant {
   line-height: 1.68;
@@ -379,8 +400,7 @@
   transform-origin: bottom left;
 }
 
-.chat-corner-controls.chat-corner-controls-bottom-left
-  > .sidebar-settings-menu::before {
+.chat-corner-controls.chat-corner-controls-bottom-left > .sidebar-settings-menu::before {
   content: none;
 }
 
@@ -471,7 +491,8 @@
   height: 14px;
   padding: 0 4px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--provider-accent, var(--accent)) 52%, rgba(255, 255, 255, 0.22));
+  border: 1px solid
+    color-mix(in srgb, var(--provider-accent, var(--accent)) 52%, rgba(255, 255, 255, 0.22));
   background: color-mix(in srgb, var(--provider-accent, var(--accent)) 56%, rgba(8, 10, 14, 0.92));
   color: var(--text-primary);
   font-size: 8px;
@@ -521,7 +542,7 @@
 /* Refraction sheen shared by the top transcript pills and the collapsed
  * bottom-left quick-controls pill. Kept on its own layer so the buttons and
  * popovers are never filtered or clipped. */
-:root[data-advanced-fx-refraction="true"] .chat-corner-controls::after {
+:root[data-advanced-fx-refraction='true'] .chat-corner-controls::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -547,30 +568,32 @@
   transform: translateZ(0);
 }
 
-:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
+:root[data-advanced-fx-refraction='true'][data-advanced-fx-intensity='cinematic']
   .chat-corner-controls::after,
-:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"] .chat-corner-controls::after {
+:root[data-advanced-fx-refraction='true'][data-advanced-fx-intensity='epic']
+  .chat-corner-controls::after {
   filter: url(#tw-glass-refract);
 }
 
-:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"] .chat-corner-controls::after {
+:root[data-advanced-fx-refraction='true'][data-advanced-fx-intensity='epic']
+  .chat-corner-controls::after {
   opacity: 0.9;
 }
 
 /* Light themes → 60% white fill (the base above is the dark-mode 60% black). */
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .chat-corner-controls {
   background: rgba(255, 255, 255, 0.6);
 }
 /* `system` follows the OS — flip to white only when the OS is in light mode. */
 @media (prefers-color-scheme: light) {
-  :root[data-theme="system"] .chat-corner-controls {
+  :root[data-theme='system'] .chat-corner-controls {
     background: rgba(255, 255, 255, 0.6);
   }
 }
@@ -629,7 +652,10 @@
   background: transparent;
   box-shadow: none;
   opacity: 0;
-  transition: opacity 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  transition:
+    opacity 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
   pointer-events: none;
   z-index: -1;
 }
@@ -821,7 +847,7 @@
  * 8-bit displays. One tiled SVG turbulence texture, painted once, no
  * animation; sits above the sky layers inside the same mask. */
 .sky-visual-fx::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   z-index: 6;
@@ -988,29 +1014,14 @@
  * out-specifies this base rule — it consumes the var so both stay in sync. */
 .sky-visual-fx {
   --sky-scene-transitions:
-    --sky-top 2600ms linear,
-    --sky-upper 2600ms linear,
-    --sky-mid 2600ms linear,
-    --sky-horizon 2600ms linear,
-    --sky-sun-core 2600ms linear,
-    --sky-sun-mid 2600ms linear,
-    --sky-sun-edge 2600ms linear,
-    --sky-glow-color 2600ms linear,
-    --sky-cloud-lit 2600ms linear,
-    --sky-cloud-shade 2600ms linear,
-    --sky-sun-opacity 2600ms linear,
-    --sky-sun-scale 2600ms linear,
-    --sky-sun-rays 2600ms linear,
-    --sky-glow-opacity 2600ms linear,
-    --sky-moon-bright 2600ms linear,
-    --sky-stars 2600ms linear,
-    --sky-cloud-density 2600ms linear,
-    --sky-ink 2600ms linear,
-    --sky-sun-x 28s linear,
-    --sky-sun-y 28s linear,
-    --sky-moon-x 28s linear,
-    --sky-moon-y 28s linear,
-    opacity 220ms ease;
+    --sky-top 2600ms linear, --sky-upper 2600ms linear, --sky-mid 2600ms linear,
+    --sky-horizon 2600ms linear, --sky-sun-core 2600ms linear, --sky-sun-mid 2600ms linear,
+    --sky-sun-edge 2600ms linear, --sky-glow-color 2600ms linear, --sky-cloud-lit 2600ms linear,
+    --sky-cloud-shade 2600ms linear, --sky-sun-opacity 2600ms linear, --sky-sun-scale 2600ms linear,
+    --sky-sun-rays 2600ms linear, --sky-glow-opacity 2600ms linear, --sky-moon-bright 2600ms linear,
+    --sky-stars 2600ms linear, --sky-cloud-density 2600ms linear, --sky-ink 2600ms linear,
+    --sky-sun-x 28s linear, --sky-sun-y 28s linear, --sky-moon-x 28s linear,
+    --sky-moon-y 28s linear, opacity 220ms ease;
   transition:
     --sky-top 2600ms linear,
     --sky-upper 2600ms linear,
@@ -1045,9 +1056,17 @@
  * brightest dusk band melts into the app instead of hitting the mask edge. */
 .sky-gradient {
   --sg-top: color-mix(in srgb, var(--sky-top) var(--sky-ink, 100%), var(--sky-paper, transparent));
-  --sg-upper: color-mix(in srgb, var(--sky-upper) var(--sky-ink, 100%), var(--sky-paper, transparent));
+  --sg-upper: color-mix(
+    in srgb,
+    var(--sky-upper) var(--sky-ink, 100%),
+    var(--sky-paper, transparent)
+  );
   --sg-mid: color-mix(in srgb, var(--sky-mid) var(--sky-ink, 100%), var(--sky-paper, transparent));
-  --sg-horizon: color-mix(in srgb, var(--sky-horizon) var(--sky-ink, 100%), var(--sky-paper, transparent));
+  --sg-horizon: color-mix(
+    in srgb,
+    var(--sky-horizon) var(--sky-ink, 100%),
+    var(--sky-paper, transparent)
+  );
   position: absolute;
   inset: -6% -2% -4%;
   pointer-events: none;
@@ -1080,7 +1099,7 @@
 }
 
 .sky-glow::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background:
@@ -1108,9 +1127,19 @@
 .sky-mist .sky-glow::before,
 .sky-fog .sky-glow::before {
   background:
-    linear-gradient(180deg, rgba(204, 215, 218, 0.3), rgba(175, 189, 195, 0.2) 54%, transparent 84%),
+    linear-gradient(
+      180deg,
+      rgba(204, 215, 218, 0.3),
+      rgba(175, 189, 195, 0.2) 54%,
+      transparent 84%
+    ),
     repeating-linear-gradient(178deg, rgba(255, 255, 255, 0.065) 0 2px, transparent 2px 23px),
-    repeating-linear-gradient(184deg, transparent 0 13px, rgba(255, 255, 255, 0.035) 13px 15px, transparent 15px 48px);
+    repeating-linear-gradient(
+      184deg,
+      transparent 0 13px,
+      rgba(255, 255, 255, 0.035) 13px 15px,
+      transparent 15px 48px
+    );
   filter: url(#sky-fog-mist-warp);
 }
 
@@ -1124,8 +1153,14 @@
  * magnified as it drops (the low-sun illusion). */
 .sky-orb {
   --sky-orb-gaussian-blur: 0.75px;
-  --sky-sun-disc-background:
-    radial-gradient(circle at 32% 28%, var(--sky-sun-core) 0 13%, color-mix(in srgb, var(--sky-sun-mid) 98%, transparent) 26%, color-mix(in srgb, var(--sky-sun-edge) 96%, transparent) 58%, color-mix(in srgb, var(--sky-sun-edge) 78%, transparent) 82%, transparent 84%);
+  --sky-sun-disc-background: radial-gradient(
+    circle at 32% 28%,
+    var(--sky-sun-core) 0 13%,
+    color-mix(in srgb, var(--sky-sun-mid) 98%, transparent) 26%,
+    color-mix(in srgb, var(--sky-sun-edge) 96%, transparent) 58%,
+    color-mix(in srgb, var(--sky-sun-edge) 78%, transparent) 82%,
+    transparent 84%
+  );
   --sky-sun-disc-shadow:
     0 0 24px color-mix(in srgb, var(--sky-sun-mid) 82%, transparent),
     0 0 58px color-mix(in srgb, var(--sky-sun-edge) 58%, transparent),
@@ -1162,8 +1197,11 @@
 
 .sky-day .sky-orb::before {
   z-index: 0;
-  background:
-    repeating-conic-gradient(from 7deg, color-mix(in srgb, var(--sky-sun-mid) 34%, transparent) 0deg 9deg, transparent 9deg 20deg);
+  background: repeating-conic-gradient(
+    from 7deg,
+    color-mix(in srgb, var(--sky-sun-mid) 34%, transparent) 0deg 9deg,
+    transparent 9deg 20deg
+  );
   filter: blur(2.6px);
   opacity: calc(var(--sky-sun-rays, 0) * 0.72);
   transform-origin: 50% 50%;
@@ -1205,17 +1243,15 @@
   width: 72px;
   height: 72px;
   opacity: calc(var(--sky-moon-bright, 0) * var(--fx-sky-night-orb-opacity, 1));
-  filter:
-    drop-shadow(0 0 7px rgba(244, 250, 255, 0.72))
-    drop-shadow(0 0 22px rgba(178, 220, 255, 0.5))
-    drop-shadow(0 0 58px rgba(99, 157, 255, 0.3));
+  filter: drop-shadow(0 0 7px rgba(244, 250, 255, 0.72))
+    drop-shadow(0 0 22px rgba(178, 220, 255, 0.5)) drop-shadow(0 0 58px rgba(99, 157, 255, 0.3));
   animation: skyMoonDrift 22s ease-in-out infinite;
   backface-visibility: hidden;
   will-change: transform, opacity;
 }
 
 .sky-moon::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: -30px -34px -26px -32px;
   border-radius: 50%;
@@ -1347,7 +1383,13 @@
     0 0 25px rgba(110, 168, 255, 0.22);
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .sky-cat-star {
   box-shadow:
     0 0 10px rgba(172, 211, 255, 1),
@@ -1362,7 +1404,12 @@
   width: 74px;
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.95), rgba(178, 214, 255, 0.4) 55%, transparent);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(178, 214, 255, 0.4) 55%,
+    transparent
+  );
   opacity: 0;
   transform: rotate(16deg);
   animation: skyShootingStar 46s linear infinite;
@@ -1370,14 +1417,26 @@
   will-change: transform, opacity;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .sky-real-star {
   box-shadow:
     0 0 8px rgba(172, 211, 255, 0.92),
     0 0 16px rgba(120, 178, 255, 0.48);
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .sky-orb {
   --sky-sun-disc-shadow:
     0 0 30px color-mix(in srgb, var(--sky-sun-mid) 94%, transparent),
@@ -1388,15 +1447,19 @@
   height: 76px;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .sky-night
   .sky-moon {
   width: 78px;
   height: 78px;
-  filter:
-    drop-shadow(0 0 9px rgba(250, 253, 255, 0.92))
-    drop-shadow(0 0 30px rgba(181, 221, 255, 0.68))
-    drop-shadow(0 0 74px rgba(97, 145, 255, 0.42));
+  filter: drop-shadow(0 0 9px rgba(250, 253, 255, 0.92))
+    drop-shadow(0 0 30px rgba(181, 221, 255, 0.68)) drop-shadow(0 0 74px rgba(97, 145, 255, 0.42));
 }
 
 /* ===== Light themes: real sky depth via normal compositing ================
@@ -1409,7 +1472,7 @@
  * dark sky truce). The --fx-sky-mode-filter-* seams tame the fx-mode
  * saturation boosts that were tuned for screen-over-dark. Alabaster keeps
  * its opaque-cream-slab contract (same opt-out as the theme reveal). */
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx {
   --fx-sky-blend-mode: normal;
   --fx-sky-filter: saturate(1.07) brightness(1.01);
@@ -1423,37 +1486,37 @@
   --sky-ink: 72%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-day {
   --sky-ink: 80%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-golden {
   --sky-ink: 74%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-sunrise {
   --sky-ink: 70%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-civil {
   --sky-ink: 62%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-nautical {
   --sky-ink: 52%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-astro {
   --sky-ink: 46%;
 }
 
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
   .sky-visual-fx.sky-scene-night {
   --sky-ink: 40%;
 }
@@ -1470,17 +1533,45 @@
    * allocating five large filtered textures while they drift. */
   filter: blur(4px);
   background:
-    radial-gradient(ellipse at 12% 68%, color-mix(in srgb, var(--sky-cloud-lit) 34%, transparent) 0 15%, transparent 16%),
-    radial-gradient(ellipse at 25% 48%, color-mix(in srgb, var(--sky-cloud-lit) 56%, transparent) 0 23%, transparent 24%),
-    radial-gradient(ellipse at 44% 30%, color-mix(in srgb, var(--sky-cloud-lit) 68%, transparent) 0 31%, transparent 32%),
-    radial-gradient(ellipse at 62% 36%, color-mix(in srgb, var(--sky-cloud-lit) 54%, transparent) 0 26%, transparent 27%),
-    radial-gradient(ellipse at 80% 58%, color-mix(in srgb, var(--sky-cloud-lit) 38%, transparent) 0 20%, transparent 21%),
-    linear-gradient(180deg, color-mix(in srgb, var(--sky-cloud-lit) 50%, transparent), color-mix(in srgb, var(--sky-cloud-shade) 24%, transparent) 68%, color-mix(in srgb, var(--sky-cloud-shade) 8%, transparent));
+    radial-gradient(
+      ellipse at 12% 68%,
+      color-mix(in srgb, var(--sky-cloud-lit) 34%, transparent) 0 15%,
+      transparent 16%
+    ),
+    radial-gradient(
+      ellipse at 25% 48%,
+      color-mix(in srgb, var(--sky-cloud-lit) 56%, transparent) 0 23%,
+      transparent 24%
+    ),
+    radial-gradient(
+      ellipse at 44% 30%,
+      color-mix(in srgb, var(--sky-cloud-lit) 68%, transparent) 0 31%,
+      transparent 32%
+    ),
+    radial-gradient(
+      ellipse at 62% 36%,
+      color-mix(in srgb, var(--sky-cloud-lit) 54%, transparent) 0 26%,
+      transparent 27%
+    ),
+    radial-gradient(
+      ellipse at 80% 58%,
+      color-mix(in srgb, var(--sky-cloud-lit) 38%, transparent) 0 20%,
+      transparent 21%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sky-cloud-lit) 50%, transparent),
+      color-mix(in srgb, var(--sky-cloud-shade) 24%, transparent) 68%,
+      color-mix(in srgb, var(--sky-cloud-shade) 8%, transparent)
+    );
   box-shadow:
     inset 0 -7px 14px color-mix(in srgb, var(--sky-cloud-shade) 12%, transparent),
     inset 0 6px 12px color-mix(in srgb, var(--sky-cloud-lit) 20%, transparent),
     0 8px 20px color-mix(in srgb, var(--sky-cloud-lit) 5%, transparent);
-  opacity: calc(0.85 * var(--sky-cloud-self, 1) * var(--sky-cloud-density, 0.5) * var(--fx-sky-cloud-opacity-scale, 1));
+  opacity: calc(
+    0.85 * var(--sky-cloud-self, 1) * var(--sky-cloud-density, 0.5) *
+      var(--fx-sky-cloud-opacity-scale, 1)
+  );
   animation: skyCloudDrift 138s linear infinite;
   backface-visibility: hidden;
   will-change: transform, opacity;
@@ -1488,7 +1579,7 @@
 
 .sky-cloud::before,
 .sky-cloud::after {
-  content: "";
+  content: '';
   position: absolute;
   pointer-events: none;
   border-radius: 999px;
@@ -1500,9 +1591,21 @@
   bottom: 3px;
   height: 24px;
   background:
-    radial-gradient(ellipse at 18% 56%, color-mix(in srgb, var(--sky-cloud-shade) 30%, transparent), transparent 58%),
-    radial-gradient(ellipse at 54% 48%, color-mix(in srgb, var(--sky-cloud-shade) 22%, transparent), transparent 62%),
-    linear-gradient(180deg, color-mix(in srgb, var(--sky-cloud-lit) 22%, transparent), color-mix(in srgb, var(--sky-cloud-shade) 14%, transparent));
+    radial-gradient(
+      ellipse at 18% 56%,
+      color-mix(in srgb, var(--sky-cloud-shade) 30%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse at 54% 48%,
+      color-mix(in srgb, var(--sky-cloud-shade) 22%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sky-cloud-lit) 22%, transparent),
+      color-mix(in srgb, var(--sky-cloud-shade) 14%, transparent)
+    );
 }
 
 .sky-cloud::after {
@@ -1511,9 +1614,21 @@
   width: 110px;
   height: 54px;
   background:
-    radial-gradient(ellipse at 22% 58%, color-mix(in srgb, var(--sky-cloud-lit) 52%, transparent) 0 24%, transparent 25%),
-    radial-gradient(ellipse at 48% 34%, color-mix(in srgb, var(--sky-cloud-lit) 62%, transparent) 0 30%, transparent 31%),
-    radial-gradient(ellipse at 76% 52%, color-mix(in srgb, var(--sky-cloud-lit) 42%, transparent) 0 24%, transparent 25%);
+    radial-gradient(
+      ellipse at 22% 58%,
+      color-mix(in srgb, var(--sky-cloud-lit) 52%, transparent) 0 24%,
+      transparent 25%
+    ),
+    radial-gradient(
+      ellipse at 48% 34%,
+      color-mix(in srgb, var(--sky-cloud-lit) 62%, transparent) 0 30%,
+      transparent 31%
+    ),
+    radial-gradient(
+      ellipse at 76% 52%,
+      color-mix(in srgb, var(--sky-cloud-lit) 42%, transparent) 0 24%,
+      transparent 25%
+    );
 }
 
 /* Coverage bands (scene cloudBand 0–4): a nearly clear sky floats one or two
@@ -1598,9 +1713,7 @@
   animation: skyUfoFlight var(--sky-ufo-duration, 60s) linear both;
   backface-visibility: hidden;
   will-change: transform, opacity;
-  filter:
-    drop-shadow(0 0 8px rgba(144, 239, 255, 0.38))
-    drop-shadow(0 8px 12px rgba(0, 0, 0, 0.24));
+  filter: drop-shadow(0 0 8px rgba(144, 239, 255, 0.38)) drop-shadow(0 8px 12px rgba(0, 0, 0, 0.24));
 }
 
 .sky-ufo::before {
@@ -1632,7 +1745,12 @@
   border-radius: 50% 50% 42% 42% / 68% 68% 32% 32%;
   background:
     radial-gradient(circle at 38% 30%, rgba(255, 255, 255, 0.86), transparent 22%),
-    linear-gradient(180deg, rgba(165, 238, 255, 0.82), rgba(70, 147, 190, 0.52) 76%, rgba(31, 56, 78, 0.76));
+    linear-gradient(
+      180deg,
+      rgba(165, 238, 255, 0.82),
+      rgba(70, 147, 190, 0.52) 76%,
+      rgba(31, 56, 78, 0.76)
+    );
   box-shadow:
     inset 0 1px 3px rgba(255, 255, 255, 0.5),
     0 0 9px rgba(114, 221, 255, 0.42);
@@ -1646,7 +1764,12 @@
   border-radius: 50% / 58%;
   background:
     radial-gradient(ellipse at 50% 88%, rgba(22, 28, 37, 0.52), transparent 48%),
-    linear-gradient(180deg, rgba(241, 247, 248, 0.9), rgba(142, 158, 171, 0.72) 50%, rgba(47, 58, 72, 0.94) 100%);
+    linear-gradient(
+      180deg,
+      rgba(241, 247, 248, 0.9),
+      rgba(142, 158, 171, 0.72) 50%,
+      rgba(47, 58, 72, 0.94) 100%
+    );
   box-shadow:
     inset 0 2px 3px rgba(255, 255, 255, 0.42),
     inset 0 -2px 3px rgba(0, 0, 0, 0.34);
@@ -1780,15 +1903,46 @@
 
 /* Light rain uses the first five streaks; heavy rain and storms open the
  * back four for a denser curtain. */
-.sky-rainfall span:nth-child(1) { left: 16%; animation-delay: -0.2s; }
-.sky-rainfall span:nth-child(2) { left: 32%; animation-delay: -1.25s; }
-.sky-rainfall span:nth-child(3) { left: 49%; animation-delay: -0.65s; }
-.sky-rainfall span:nth-child(4) { left: 67%; animation-delay: -1.55s; }
-.sky-rainfall span:nth-child(5) { left: 86%; animation-delay: -0.9s; }
-.sky-rainfall span:nth-child(6) { left: 8%; animation-delay: -1.05s; height: 34px; }
-.sky-rainfall span:nth-child(7) { left: 41%; animation-delay: -0.42s; height: 36px; }
-.sky-rainfall span:nth-child(8) { left: 58%; animation-delay: -1.72s; height: 32px; }
-.sky-rainfall span:nth-child(9) { left: 77%; animation-delay: -0.08s; height: 38px; }
+.sky-rainfall span:nth-child(1) {
+  left: 16%;
+  animation-delay: -0.2s;
+}
+.sky-rainfall span:nth-child(2) {
+  left: 32%;
+  animation-delay: -1.25s;
+}
+.sky-rainfall span:nth-child(3) {
+  left: 49%;
+  animation-delay: -0.65s;
+}
+.sky-rainfall span:nth-child(4) {
+  left: 67%;
+  animation-delay: -1.55s;
+}
+.sky-rainfall span:nth-child(5) {
+  left: 86%;
+  animation-delay: -0.9s;
+}
+.sky-rainfall span:nth-child(6) {
+  left: 8%;
+  animation-delay: -1.05s;
+  height: 34px;
+}
+.sky-rainfall span:nth-child(7) {
+  left: 41%;
+  animation-delay: -0.42s;
+  height: 36px;
+}
+.sky-rainfall span:nth-child(8) {
+  left: 58%;
+  animation-delay: -1.72s;
+  height: 32px;
+}
+.sky-rainfall span:nth-child(9) {
+  left: 77%;
+  animation-delay: -0.08s;
+  height: 38px;
+}
 
 .sky-rain .sky-rainfall span:nth-child(n + 6) {
   opacity: 0;
@@ -1808,14 +1962,44 @@
   will-change: transform, opacity;
 }
 
-.sky-snowfall span:nth-child(1) { left: 13%; animation-delay: -1s; }
-.sky-snowfall span:nth-child(2) { left: 29%; animation-delay: -6s; }
-.sky-snowfall span:nth-child(3) { left: 47%; animation-delay: -3.1s; }
-.sky-snowfall span:nth-child(4) { left: 66%; animation-delay: -7.4s; }
-.sky-snowfall span:nth-child(5) { left: 86%; animation-delay: -4.2s; }
-.sky-snowfall span:nth-child(6) { left: 21%; animation-delay: -8.3s; width: 5px; height: 5px; }
-.sky-snowfall span:nth-child(7) { left: 57%; animation-delay: -2s; width: 5px; height: 5px; }
-.sky-snowfall span:nth-child(8) { left: 76%; animation-delay: -5.4s; width: 4px; height: 4px; }
+.sky-snowfall span:nth-child(1) {
+  left: 13%;
+  animation-delay: -1s;
+}
+.sky-snowfall span:nth-child(2) {
+  left: 29%;
+  animation-delay: -6s;
+}
+.sky-snowfall span:nth-child(3) {
+  left: 47%;
+  animation-delay: -3.1s;
+}
+.sky-snowfall span:nth-child(4) {
+  left: 66%;
+  animation-delay: -7.4s;
+}
+.sky-snowfall span:nth-child(5) {
+  left: 86%;
+  animation-delay: -4.2s;
+}
+.sky-snowfall span:nth-child(6) {
+  left: 21%;
+  animation-delay: -8.3s;
+  width: 5px;
+  height: 5px;
+}
+.sky-snowfall span:nth-child(7) {
+  left: 57%;
+  animation-delay: -2s;
+  width: 5px;
+  height: 5px;
+}
+.sky-snowfall span:nth-child(8) {
+  left: 76%;
+  animation-delay: -5.4s;
+  width: 4px;
+  height: 4px;
+}
 
 .sky-mist,
 .sky-fog {
@@ -1832,7 +2016,12 @@
     radial-gradient(ellipse at 24% 32%, rgba(245, 251, 252, 0.12), transparent 30%),
     radial-gradient(ellipse at 72% 18%, rgba(206, 221, 224, 0.1), transparent 34%),
     repeating-linear-gradient(178deg, rgba(235, 244, 246, 0.1) 0 15px, transparent 15px 43px),
-    repeating-linear-gradient(185deg, transparent 0 20px, rgba(246, 252, 253, 0.045) 20px 23px, transparent 23px 58px),
+    repeating-linear-gradient(
+      185deg,
+      transparent 0 20px,
+      rgba(246, 252, 253, 0.045) 20px 23px,
+      transparent 23px 58px
+    ),
     linear-gradient(180deg, rgba(225, 234, 235, 0.18), transparent 78%);
   filter: url(#sky-fog-mist-warp);
   transform: scale(1.03);
@@ -1843,7 +2032,7 @@
 }
 
 .sky-storm .sky-glow::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: -8%;
   pointer-events: none;
@@ -1914,14 +2103,18 @@
 }
 
 .ghost-avatar::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: -18px -16px -10px;
   z-index: -1;
   border-radius: 50%;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse at 50% 38%, rgba(130, 205, 255, 0.22), rgba(82, 133, 255, 0.1) 42%, transparent 72%);
+  background: radial-gradient(
+    ellipse at 50% 38%,
+    rgba(130, 205, 255, 0.22),
+    rgba(82, 133, 255, 0.1) 42%,
+    transparent 72%
+  );
 }
 
 .ghost-body {
@@ -1931,15 +2124,31 @@
   width: 54px;
   height: 66px;
   image-rendering: pixelated;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(173, 221, 255, 0.74) 48%, rgba(94, 140, 255, 0.38));
-  clip-path: polygon(18% 100%, 18% 30%, 28% 12%, 48% 2%, 70% 10%, 82% 29%, 82% 100%, 68% 88%, 56% 100%, 44% 88%, 31% 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(173, 221, 255, 0.74) 48%,
+    rgba(94, 140, 255, 0.38)
+  );
+  clip-path: polygon(
+    18% 100%,
+    18% 30%,
+    28% 12%,
+    48% 2%,
+    70% 10%,
+    82% 29%,
+    82% 100%,
+    68% 88%,
+    56% 100%,
+    44% 88%,
+    31% 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.44);
 }
 
 .ghost-body::before,
 .ghost-body::after {
-  content: "";
+  content: '';
   position: absolute;
   background: rgba(255, 255, 255, 0.34);
   mix-blend-mode: screen;
@@ -2087,7 +2296,8 @@
 }
 
 @keyframes skyOrbFloat {
-  0%, 100% {
+  0%,
+  100% {
     transform: translate3d(0, 0, 0);
   }
   50% {
@@ -2096,7 +2306,8 @@
 }
 
 @keyframes skyMoonDrift {
-  0%, 100% {
+  0%,
+  100% {
     transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
   }
   50% {
@@ -2105,7 +2316,8 @@
 }
 
 @keyframes skySunPulse {
-  0%, 100% {
+  0%,
+  100% {
     filter: brightness(1) saturate(1.06);
   }
   50% {
@@ -2129,7 +2341,9 @@
 
 /* Visible for ~0.9% of a 46 s cycle — a rare treat, not a screensaver. */
 @keyframes skyShootingStar {
-  0%, 97.2%, 100% {
+  0%,
+  97.2%,
+  100% {
     transform: translate3d(0, 0, 0) rotate(16deg) scaleX(0.4);
     opacity: 0;
   }
@@ -2144,7 +2358,8 @@
 }
 
 @keyframes skyStarTwinkle {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(0.8);
     opacity: 0.42;
   }
@@ -2157,7 +2372,8 @@
 /* Catalog stars twinkle around their magnitude-driven brightness — Vega
  * breathes near full, a mag-3 belt star flickers faintly. */
 @keyframes skyCatalogTwinkle {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(0.88);
     opacity: calc(var(--st-bright, 0.8) * 0.55);
   }
@@ -2178,39 +2394,46 @@
 
 @keyframes skyUfoFlight {
   0% {
-    transform: translate3d(-76px, var(--sky-ufo-y0), 0) rotate(var(--sky-ufo-r0)) scale(var(--sky-ufo-scale, 0.94));
+    transform: translate3d(-76px, var(--sky-ufo-y0), 0) rotate(var(--sky-ufo-r0))
+      scale(var(--sky-ufo-scale, 0.94));
     opacity: 0;
   }
   4% {
     opacity: 0.72;
   }
   18% {
-    transform: translate3d(16cqw, var(--sky-ufo-y1), 0) rotate(var(--sky-ufo-r1)) scale(calc(var(--sky-ufo-scale, 0.94) * 1.08));
+    transform: translate3d(16cqw, var(--sky-ufo-y1), 0) rotate(var(--sky-ufo-r1))
+      scale(calc(var(--sky-ufo-scale, 0.94) * 1.08));
     opacity: 0.82;
   }
   37% {
-    transform: translate3d(39cqw, var(--sky-ufo-y2), 0) rotate(var(--sky-ufo-r2)) scale(calc(var(--sky-ufo-scale, 0.94) * 0.92));
+    transform: translate3d(39cqw, var(--sky-ufo-y2), 0) rotate(var(--sky-ufo-r2))
+      scale(calc(var(--sky-ufo-scale, 0.94) * 0.92));
     opacity: 0.76;
   }
   57% {
-    transform: translate3d(58cqw, var(--sky-ufo-y3), 0) rotate(var(--sky-ufo-r3)) scale(calc(var(--sky-ufo-scale, 0.94) * 1.1));
+    transform: translate3d(58cqw, var(--sky-ufo-y3), 0) rotate(var(--sky-ufo-r3))
+      scale(calc(var(--sky-ufo-scale, 0.94) * 1.1));
     opacity: 0.86;
   }
   78% {
-    transform: translate3d(82cqw, var(--sky-ufo-y4), 0) rotate(var(--sky-ufo-r4)) scale(calc(var(--sky-ufo-scale, 0.94) * 0.96));
+    transform: translate3d(82cqw, var(--sky-ufo-y4), 0) rotate(var(--sky-ufo-r4))
+      scale(calc(var(--sky-ufo-scale, 0.94) * 0.96));
     opacity: 0.74;
   }
   95% {
     opacity: 0.64;
   }
   100% {
-    transform: translate3d(calc(100cqw + 84px), var(--sky-ufo-y5), 0) rotate(var(--sky-ufo-r5)) scale(var(--sky-ufo-scale, 0.94));
+    transform: translate3d(calc(100cqw + 84px), var(--sky-ufo-y5), 0) rotate(var(--sky-ufo-r5))
+      scale(var(--sky-ufo-scale, 0.94));
     opacity: 0;
   }
 }
 
 @keyframes skyUfoGlow {
-  0%, 100% {
+  0%,
+  100% {
     transform: scaleX(0.82);
     opacity: 0.42;
   }
@@ -2221,7 +2444,8 @@
 }
 
 @keyframes skyUfoLightBlink {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.3;
   }
   33% {
@@ -2231,33 +2455,39 @@
 
 @keyframes skyDiffCloudFlight {
   0% {
-    transform: translate3d(var(--sky-diff-x0), var(--sky-diff-y0), 0) rotate(var(--sky-diff-r0)) scale(var(--sky-diff-scale, 0.94));
+    transform: translate3d(var(--sky-diff-x0), var(--sky-diff-y0), 0) rotate(var(--sky-diff-r0))
+      scale(var(--sky-diff-scale, 0.94));
     opacity: 0;
   }
   6% {
     opacity: 0.7;
   }
   18% {
-    transform: translate3d(var(--sky-diff-x1), var(--sky-diff-y1), 0) rotate(var(--sky-diff-r1)) scale(calc(var(--sky-diff-scale, 0.94) * 1.04));
+    transform: translate3d(var(--sky-diff-x1), var(--sky-diff-y1), 0) rotate(var(--sky-diff-r1))
+      scale(calc(var(--sky-diff-scale, 0.94) * 1.04));
     opacity: 0.78;
   }
   38% {
-    transform: translate3d(var(--sky-diff-x2), var(--sky-diff-y2), 0) rotate(var(--sky-diff-r2)) scale(calc(var(--sky-diff-scale, 0.94) * 0.96));
+    transform: translate3d(var(--sky-diff-x2), var(--sky-diff-y2), 0) rotate(var(--sky-diff-r2))
+      scale(calc(var(--sky-diff-scale, 0.94) * 0.96));
     opacity: 0.72;
   }
   58% {
-    transform: translate3d(var(--sky-diff-x3), var(--sky-diff-y3), 0) rotate(var(--sky-diff-r3)) scale(calc(var(--sky-diff-scale, 0.94) * 1.08));
+    transform: translate3d(var(--sky-diff-x3), var(--sky-diff-y3), 0) rotate(var(--sky-diff-r3))
+      scale(calc(var(--sky-diff-scale, 0.94) * 1.08));
     opacity: 0.8;
   }
   79% {
-    transform: translate3d(var(--sky-diff-x4), var(--sky-diff-y4), 0) rotate(var(--sky-diff-r4)) scale(calc(var(--sky-diff-scale, 0.94) * 0.98));
+    transform: translate3d(var(--sky-diff-x4), var(--sky-diff-y4), 0) rotate(var(--sky-diff-r4))
+      scale(calc(var(--sky-diff-scale, 0.94) * 0.98));
     opacity: 0.68;
   }
   94% {
     opacity: 0.56;
   }
   100% {
-    transform: translate3d(var(--sky-diff-x5), var(--sky-diff-y5), 0) rotate(var(--sky-diff-r5)) scale(var(--sky-diff-scale, 0.94));
+    transform: translate3d(var(--sky-diff-x5), var(--sky-diff-y5), 0) rotate(var(--sky-diff-r5))
+      scale(var(--sky-diff-scale, 0.94));
     opacity: 0;
   }
 }
@@ -2291,7 +2521,9 @@
 }
 
 @keyframes skyStormFlash {
-  0%, 82%, 100% {
+  0%,
+  82%,
+  100% {
     opacity: 0;
   }
   84% {
@@ -2306,7 +2538,8 @@
 }
 
 @keyframes ghostGutterFloat {
-  0%, 100% {
+  0%,
+  100% {
     transform: translate3d(clamp(20px, 5cqw, 72px), 18cqh, 0) rotate(-2deg) scale(1);
     opacity: 0.48;
   }
@@ -2319,76 +2552,98 @@
     opacity: 0.48;
   }
   34% {
-    transform: translate3d(clamp(24px, 5cqw, 74px), calc(100cqh - 136px), 0) rotate(2deg) scale(0.94);
+    transform: translate3d(clamp(24px, 5cqw, 74px), calc(100cqh - 136px), 0) rotate(2deg)
+      scale(0.94);
     opacity: 0.48;
   }
   46% {
-    transform: translate3d(calc(100cqw - clamp(136px, 11cqw, 178px)), calc(100cqh - 136px), 0) rotate(-2deg) scale(0.94);
+    transform: translate3d(calc(100cqw - clamp(136px, 11cqw, 178px)), calc(100cqh - 136px), 0)
+      rotate(-2deg) scale(0.94);
     opacity: 0.48;
   }
   56% {
-    transform: translate3d(calc(100cqw - clamp(132px, 10cqw, 178px)), 42cqh, 0) rotate(4deg) scale(1);
+    transform: translate3d(calc(100cqw - clamp(132px, 10cqw, 178px)), 42cqh, 0) rotate(4deg)
+      scale(1);
     opacity: 0.48;
   }
   68% {
-    transform: translate3d(calc(100cqw - clamp(148px, 12cqw, 194px)), 20cqh, 0) rotate(-3deg) scale(1.03);
+    transform: translate3d(calc(100cqw - clamp(148px, 12cqw, 194px)), 20cqh, 0) rotate(-3deg)
+      scale(1.03);
     opacity: 0.48;
   }
   78% {
-    transform: translate3d(calc(100cqw - clamp(134px, 10cqw, 178px)), 34cqh, 0) rotate(3deg) scale(1);
+    transform: translate3d(calc(100cqw - clamp(134px, 10cqw, 178px)), 34cqh, 0) rotate(3deg)
+      scale(1);
     opacity: 0.48;
   }
   88% {
-    transform: translate3d(calc(100cqw - clamp(136px, 11cqw, 180px)), calc(100cqh - 136px), 0) rotate(-2deg) scale(0.92);
+    transform: translate3d(calc(100cqw - clamp(136px, 11cqw, 180px)), calc(100cqh - 136px), 0)
+      rotate(-2deg) scale(0.92);
     opacity: 0.48;
   }
   94% {
-    transform: translate3d(clamp(24px, 5cqw, 76px), calc(100cqh - 136px), 0) rotate(2deg) scale(0.94);
+    transform: translate3d(clamp(24px, 5cqw, 76px), calc(100cqh - 136px), 0) rotate(2deg)
+      scale(0.94);
     opacity: 0.48;
   }
 }
 
 @keyframes ghostBlink {
-  0%, 88%, 94%, 100% { transform: scaleY(1); }
-  90%, 92% { transform: scaleY(0.18); }
+  0%,
+  88%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  90%,
+  92% {
+    transform: scaleY(0.18);
+  }
 }
 
 @keyframes ghostShadowPulse {
-  0%, 100% { transform: scaleX(0.88); opacity: 0.22; }
-  50% { transform: scaleX(1.18); opacity: 0.12; }
+  0%,
+  100% {
+    transform: scaleX(0.88);
+    opacity: 0.22;
+  }
+  50% {
+    transform: scaleX(1.18);
+    opacity: 0.12;
+  }
 }
 
-[data-reduce-motion="true"] .ghost-avatar,
-[data-reduce-motion="true"] .ghost-eye,
-[data-reduce-motion="true"] .ghost-shadow,
-[data-reduce-motion="true"] .sky-glow,
-[data-reduce-motion="true"] .sky-orb,
-[data-reduce-motion="true"] .sky-day .sky-orb::before,
-[data-reduce-motion="true"] .sky-moon,
-[data-reduce-motion="true"] .sky-star,
-[data-reduce-motion="true"] .sky-cloud,
-[data-reduce-motion="true"] .sky-ufo,
-[data-reduce-motion="true"] .sky-ufo::before,
-[data-reduce-motion="true"] .sky-ufo-light,
-[data-reduce-motion="true"] .sky-diff-cloud,
-[data-reduce-motion="true"] .sky-storm .sky-glow::after,
-[data-reduce-motion="true"] .sky-rainfall span,
-[data-reduce-motion="true"] .sky-snowfall span {
+[data-reduce-motion='true'] .ghost-avatar,
+[data-reduce-motion='true'] .ghost-eye,
+[data-reduce-motion='true'] .ghost-shadow,
+[data-reduce-motion='true'] .sky-glow,
+[data-reduce-motion='true'] .sky-orb,
+[data-reduce-motion='true'] .sky-day .sky-orb::before,
+[data-reduce-motion='true'] .sky-moon,
+[data-reduce-motion='true'] .sky-star,
+[data-reduce-motion='true'] .sky-cloud,
+[data-reduce-motion='true'] .sky-ufo,
+[data-reduce-motion='true'] .sky-ufo::before,
+[data-reduce-motion='true'] .sky-ufo-light,
+[data-reduce-motion='true'] .sky-diff-cloud,
+[data-reduce-motion='true'] .sky-storm .sky-glow::after,
+[data-reduce-motion='true'] .sky-rainfall span,
+[data-reduce-motion='true'] .sky-snowfall span {
   animation: none;
 }
 
-[data-reduce-motion="true"] .sky-ufo,
-[data-reduce-motion="true"] .sky-diff-cloud {
+[data-reduce-motion='true'] .sky-ufo,
+[data-reduce-motion='true'] .sky-diff-cloud {
   display: none;
 }
 
-[data-reduce-motion="true"] .ghost-avatar {
+[data-reduce-motion='true'] .ghost-avatar {
   opacity: 0.48;
 }
 
 /* Honour reduce-motion for the inline-SVG eyes too (higher specificity than the
  * .ghost-svg .ghost-eye blink rule, so it wins regardless of source order). */
-[data-reduce-motion="true"] .ghost-svg .ghost-eye {
+[data-reduce-motion='true'] .ghost-svg .ghost-eye {
   animation: none;
 }
 
@@ -2426,7 +2681,7 @@
 
 .ghost-body::before,
 .ghost-body::after {
-  content: "";
+  content: '';
   position: absolute;
   display: block;
   border: 0;
@@ -2471,8 +2726,12 @@
   left: 12px;
   width: 60px;
   height: 66px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0 34%, rgba(235, 249, 255, 0.9) 34% 62%, rgba(169, 213, 239, 0.66) 62% 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.96) 0 34%,
+    rgba(235, 249, 255, 0.9) 34% 62%,
+    rgba(169, 213, 239, 0.66) 62% 100%
+  );
   clip-path: polygon(
     18px 0,
     42px 0,
@@ -2632,7 +2891,13 @@
     opacity: calc(var(--fx-sky-layer-opacity, 0.9) * 0.9);
   }
 
-  :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  :is(
+      [data-theme='light'],
+      [data-theme='citrus'],
+      [data-theme='mist'],
+      [data-theme='sage'],
+      [data-theme='alabaster']
+    )
     .sky-visual-fx {
     opacity: calc(var(--fx-sky-layer-opacity, 1) * 0.96);
   }
@@ -2653,8 +2918,7 @@
    * frame, feeding the window↔measurement oscillation). */
   scrollbar-gutter: stable;
   box-sizing: border-box;
-  padding: calc(var(--space-lg) * 7.5) var(--chat-side-gutter)
-    var(--composer-scroll-under-padding);
+  padding: calc(var(--space-lg) * 7.5) var(--chat-side-gutter) var(--composer-scroll-under-padding);
   margin-bottom: 0;
   scroll-padding-top: calc(var(--space-lg) * 7.5);
   scroll-padding-bottom: var(--composer-scroll-under-padding);
@@ -2684,7 +2948,7 @@
   --transcript-composer-fade: 176px;
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
-      env(safe-area-inset-bottom, 0px)
+      var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px)
   );
   /* Easing stops are a FRACTION of the fade band (not fixed px), so growing
    * --transcript-composer-fade stretches the whole ease-out — broader AND
@@ -2718,7 +2982,7 @@
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
       var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
-      env(safe-area-inset-bottom, 0px)
+      var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px)
   );
 }
 
@@ -2753,41 +3017,68 @@
   display: none;
 }
 
+/* Filter-by-participant dock. Anchored to the BOTTOM of its own chat pane
+ * (portaled into `.app-transcript`, not <body>): one or two centred rows of
+ * seat chips sitting under the composer's timecode bar. The composer and the
+ * transcript's bottom reserve rise to make room via
+ * `--participant-filter-dock-reserve`, which the component writes onto the
+ * pane (own height + `--participant-filter-dock-bottom-gap`). */
 .transcript-participant-filter-rail {
-  position: fixed;
-  z-index: 10031;
-  display: inline-flex;
+  position: absolute;
+  left: var(--chat-side-gutter);
+  right: var(--chat-side-gutter);
+  bottom: calc(var(--participant-filter-dock-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  z-index: 4;
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 3px;
   padding: 0;
   pointer-events: none;
   overflow: visible;
 }
 
-.transcript-participant-filter-rail.is-unmeasured {
+/* The dock climbs above the open workspace terminal exactly the way the
+ * composer does (same offsets, keyed on the same pane class). */
+.workspace-terminal-open .transcript-participant-filter-rail {
+  bottom: calc(
+    var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
+      var(--participant-filter-dock-bottom-gap) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+/* Welcome mode has no transcript to filter, and its centred composer anchors
+ * with `top` (ignoring the dock reserve) — hide the dock rather than float it
+ * along the bottom of an empty pane. */
+.welcome-mode .transcript-participant-filter-rail {
   display: none;
 }
 
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-participant-filter-rail,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop, .composer-permission-card--overlay))
+html:has(
+    :is(
+      .first-launch-sheet-backdrop,
+      .bug-report-sheet-backdrop,
+      .changelog-sheet-backdrop,
+      .sub-thread-creator-backdrop,
+      .discord-context-picker-backdrop,
+      .creative-approval-backdrop,
+      .chat-media-preview-backdrop,
+      .composer-permission-card--overlay
+    )
+  )
   .transcript-participant-filter-rail {
   display: none !important;
 }
 
-.transcript-participant-filter-grid {
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(25, 24px);
-  grid-auto-columns: 36px;
-  column-gap: 4px;
-  row-gap: 2px;
-  pointer-events: none;
-}
-
-.transcript-participant-filter-system-row {
+.transcript-participant-filter-row {
   display: flex;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: 4px;
+  row-gap: 3px;
+  max-width: 100%;
   pointer-events: none;
 }
 
@@ -2819,7 +3110,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .transcript-participant-filter-button:hover,
 .transcript-participant-filter-button:focus-visible {
-  transform: translateX(-2px) scale(1.04);
+  transform: translateY(-2px) scale(1.04);
   color: color-mix(in srgb, var(--text-primary) 88%, var(--participant-filter-accent) 12%);
   filter: drop-shadow(
     0 0 8px color-mix(in srgb, var(--participant-filter-accent) 34%, transparent)
@@ -2828,8 +3119,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .transcript-participant-filter-button.is-active {
   color: color-mix(in srgb, var(--text-primary) 92%, var(--participant-filter-accent) 8%);
-  filter:
-    drop-shadow(0 0 2px color-mix(in srgb, var(--participant-filter-accent) 70%, transparent))
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--participant-filter-accent) 70%, transparent))
     drop-shadow(0 0 12px color-mix(in srgb, var(--participant-filter-accent) 32%, transparent));
 }
 
@@ -2906,7 +3196,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-left: 16px;
 }
 
-[data-reduce-motion="true"] .transcript-participant-filter-button {
+[data-reduce-motion='true'] .transcript-participant-filter-button {
   transition: none;
 }
 
@@ -2977,7 +3267,18 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
    hide condition. Keep this selector list in sync with the participant-filter-rail rule
    above. */
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gutter,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop, .composer-permission-card--overlay))
+html:has(
+    :is(
+      .first-launch-sheet-backdrop,
+      .bug-report-sheet-backdrop,
+      .changelog-sheet-backdrop,
+      .sub-thread-creator-backdrop,
+      .discord-context-picker-backdrop,
+      .creative-approval-backdrop,
+      .chat-media-preview-backdrop,
+      .composer-permission-card--overlay
+    )
+  )
   .transcript-user-gutter {
   display: none !important;
 }
@@ -3052,13 +3353,21 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * huge marker; the accent/hover COLOUR above still applies during the bulge. A
  * marker is at most one of hover/in-view under the pointer, so this also covers
  * keyboard focus-visible / roving `.is-active` when there's no pointer at all. */
-.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker.is-in-view .transcript-user-gutter-line {
+.transcript-user-gutter:not(.is-bulging)
+  .transcript-user-gutter-marker.is-in-view
+  .transcript-user-gutter-line {
   width: 14px;
 }
 
-.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker:hover .transcript-user-gutter-line,
-.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker:focus-visible .transcript-user-gutter-line,
-.transcript-user-gutter:not(.is-bulging) .transcript-user-gutter-marker.is-active .transcript-user-gutter-line {
+.transcript-user-gutter:not(.is-bulging)
+  .transcript-user-gutter-marker:hover
+  .transcript-user-gutter-line,
+.transcript-user-gutter:not(.is-bulging)
+  .transcript-user-gutter-marker:focus-visible
+  .transcript-user-gutter-line,
+.transcript-user-gutter:not(.is-bulging)
+  .transcript-user-gutter-marker.is-active
+  .transcript-user-gutter-line {
   width: 20px;
 }
 
@@ -3137,12 +3446,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 78%, var(--text-primary) 10%);
   border-radius: 12px;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--app-bg-elevated) 92%, var(--text-primary) 8%),
-      color-mix(in srgb, var(--app-bg-elevated) 84%, transparent)
-    );
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--app-bg-elevated) 92%, var(--text-primary) 8%),
+    color-mix(in srgb, var(--app-bg-elevated) 84%, transparent)
+  );
   box-shadow:
     0 18px 42px rgba(0, 0, 0, 0.28),
     inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
@@ -3230,11 +3538,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   }
 }
 
-:root[data-reduce-motion="true"] .transcript-user-gutter-line {
+:root[data-reduce-motion='true'] .transcript-user-gutter-line {
   transition: none;
 }
 
-:root[data-reduce-transparency="true"] .transcript-user-gutter-preview {
+:root[data-reduce-transparency='true'] .transcript-user-gutter-preview {
   background: var(--panel-bg-solid, var(--app-bg-elevated));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -3360,8 +3668,24 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   transform: translateX(-50%);
   pointer-events: none;
   box-shadow: 0 0 4px -1px currentColor;
+  z-index: 2;
 }
-[data-reduce-motion="true"] .quota-progress-fill {
+
+/* Pass 1 dash markers (Limit Counter parity) — window-subdivision
+ * dividers. Count comes from `quotaSegmentCount`; the component
+ * renders `segmentCount - 1` ticks at `(i + 1) / segmentCount`.
+ * z-index sits below the pace tick so the pace marker stays on top. */
+.quota-segment-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translateX(-0.75px);
+  pointer-events: none;
+  z-index: 1;
+}
+[data-reduce-motion='true'] .quota-progress-fill {
   transition: none;
 }
 
@@ -3384,12 +3708,24 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
   line-height: 1.25;
 }
-.model-usage-item.provider-gemini .model-usage-tier-badge { color: var(--provider-gemini-color); }
-.model-usage-item.provider-codex  .model-usage-tier-badge { color: var(--provider-codex-color); }
-.model-usage-item.provider-claude .model-usage-tier-badge { color: var(--provider-claude-color); }
-.model-usage-item.provider-kimi   .model-usage-tier-badge { color: var(--provider-kimi-color); }
-.model-usage-item.provider-grok   .model-usage-tier-badge { color: var(--provider-grok-color); }
-.model-usage-item.provider-cursor   .model-usage-tier-badge { color: var(--provider-cursor-color); }
+.model-usage-item.provider-gemini .model-usage-tier-badge {
+  color: var(--provider-gemini-color);
+}
+.model-usage-item.provider-codex .model-usage-tier-badge {
+  color: var(--provider-codex-color);
+}
+.model-usage-item.provider-claude .model-usage-tier-badge {
+  color: var(--provider-claude-color);
+}
+.model-usage-item.provider-kimi .model-usage-tier-badge {
+  color: var(--provider-kimi-color);
+}
+.model-usage-item.provider-grok .model-usage-tier-badge {
+  color: var(--provider-grok-color);
+}
+.model-usage-item.provider-cursor .model-usage-tier-badge {
+  color: var(--provider-cursor-color);
+}
 
 .model-usage-provider-name {
   color: var(--text-primary);
@@ -3438,11 +3774,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-light {
@@ -3450,11 +3786,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-dark {
@@ -3462,43 +3798,39 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 @media (prefers-color-scheme: light) {
-  [data-theme="system"]
-    .provider-brand-logo.has-theme-pair
-    .provider-brand-logo-image-light {
+  [data-theme='system'] .provider-brand-logo.has-theme-pair .provider-brand-logo-image-light {
     display: block;
   }
 
-  [data-theme="system"]
-    .provider-brand-logo.has-theme-pair
-    .provider-brand-logo-image-dark {
+  [data-theme='system'] .provider-brand-logo.has-theme-pair .provider-brand-logo-image-dark {
     display: none;
   }
 }
 
 /* Obsidian deliberately carries a light sidebar on a dark main surface;
  * Alabaster does the inverse. These surface-local rules beat root theme tone. */
-[data-theme="obsidian"]
+[data-theme='obsidian']
   .app-sidebar
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-light {
   display: block;
 }
 
-[data-theme="obsidian"]
+[data-theme='obsidian']
   .app-sidebar
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-dark {
   display: none;
 }
 
-[data-theme="alabaster"]
+[data-theme='alabaster']
   .app-sidebar
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-light {
   display: none;
 }
 
-[data-theme="alabaster"]
+[data-theme='alabaster']
   .app-sidebar
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-dark {
@@ -3507,7 +3839,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* Obsidian and Alabaster composer shells are theme-immune. Their in-tree
  * controls and body-portaled pickers therefore override the root app tone. */
-[data-composer-style="obsidian"]
+[data-composer-style='obsidian']
   .composer-area
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-light,
@@ -3517,7 +3849,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: none;
 }
 
-[data-composer-style="obsidian"]
+[data-composer-style='obsidian']
   .composer-area
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-dark,
@@ -3527,7 +3859,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: block;
 }
 
-[data-composer-style="alabaster"]
+[data-composer-style='alabaster']
   .composer-area
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-light,
@@ -3537,7 +3869,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: block;
 }
 
-[data-composer-style="alabaster"]
+[data-composer-style='alabaster']
   .composer-area
   .provider-brand-logo.has-theme-pair
   .provider-brand-logo-image-dark,
@@ -3548,14 +3880,39 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 /* Preserve each supplied canvas while balancing tiny inline slots optically. */
-.provider-brand-logo-codex { --provider-brand-logo-scale: 1.2; }
-.provider-brand-logo-gemini { --provider-brand-logo-scale: 0.96; }
+.provider-brand-logo-codex {
+  --provider-brand-logo-scale: 1.2;
+}
+.provider-brand-logo-gemini {
+  --provider-brand-logo-scale: 0.96;
+}
 .provider-brand-logo-claude,
 .provider-brand-logo-kimi,
-.provider-brand-logo-grok { --provider-brand-logo-scale: 0.92; }
-.provider-brand-logo-cursor { --provider-brand-logo-scale: 0.95; }
-.provider-brand-logo-ollama { --provider-brand-logo-scale: 1.04; }
-.provider-brand-logo-antigravity { --provider-brand-logo-scale: 1.08; }
+.provider-brand-logo-grok {
+  --provider-brand-logo-scale: 0.92;
+}
+.provider-brand-logo-cursor {
+  --provider-brand-logo-scale: 0.95;
+}
+.provider-brand-logo-ollama {
+  --provider-brand-logo-scale: 1.04;
+}
+.provider-brand-logo-antigravity {
+  --provider-brand-logo-scale: 1.08;
+}
+
+/* Show the complete leading Meta mark (340 x 237) from the intact 1024 x 237
+ * wordmark, matching the local source apps' compact icon presentation. */
+.provider-brand-logo-muse {
+  overflow: hidden;
+}
+.provider-brand-logo-muse .provider-brand-logo-image {
+  inset: 50% auto auto 0;
+  width: calc(100% * 1024 / 340);
+  max-width: none;
+  height: auto;
+  transform: translateY(-50%);
+}
 
 .provider-glyph-line,
 .provider-glyph-accent {
@@ -3762,7 +4119,10 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   letter-spacing: 0.01em;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .usage-heatmap-provider-filter-tab:hover,
@@ -3772,65 +4132,82 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   outline: none;
 }
 
-.usage-heatmap-provider-filter-tab[data-active="true"] {
+.usage-heatmap-provider-filter-tab[data-active='true'] {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--text-primary) 12%, transparent);
   border-color: color-mix(in srgb, var(--text-primary) 22%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-codex[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-codex[data-active='true'] {
   color: var(--provider-codex-color);
-  background: color-mix(in srgb, var(--provider-codex-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-codex-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-codex-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-codex-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-claude[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-claude[data-active='true'] {
   color: var(--provider-claude-color);
-  background: color-mix(in srgb, var(--provider-claude-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-claude-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-claude-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-claude-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-gemini[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-gemini[data-active='true'] {
   color: var(--provider-gemini-color);
-  background: color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-gemini-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-gemini-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-kimi[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-kimi[data-active='true'] {
   color: var(--provider-kimi-color);
-  background: color-mix(in srgb, var(--provider-kimi-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-kimi-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-kimi-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-kimi-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-grok[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-grok[data-active='true'] {
   color: var(--provider-grok-color);
-  background: color-mix(in srgb, var(--provider-grok-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-grok-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-grok-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-grok-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-cursor[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-cursor[data-active='true'] {
   color: var(--provider-cursor-color);
-  background: color-mix(in srgb, var(--provider-cursor-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-cursor-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-cursor-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-cursor-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-ollama[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-ollama[data-active='true'] {
   color: var(--provider-ollama-color);
-  background: color-mix(in srgb, var(--provider-ollama-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-ollama-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-ollama-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-ollama-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-antigravity[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-antigravity[data-active='true'] {
   color: var(--provider-antigravity-color);
-  background: color-mix(in srgb, var(--provider-antigravity-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-antigravity-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-antigravity-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-antigravity-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-pi[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-pi[data-active='true'] {
   color: var(--provider-pi-color);
-  background: color-mix(in srgb, var(--provider-pi-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-pi-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-pi-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-pi-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-mistral[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-mistral[data-active='true'] {
   color: var(--provider-mistral-color);
-  background: color-mix(in srgb, var(--provider-mistral-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-mistral-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-mistral-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-mistral-color) 40%, transparent);
 }
 
-.usage-heatmap-provider-filter-tab.provider-muse[data-active="true"] {
+.usage-heatmap-provider-filter-tab.provider-muse[data-active='true'] {
   color: var(--provider-muse-color);
-  background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);  border-color: color-mix(in srgb, var(--provider-muse-color) 40%, transparent);
+  background: color-mix(in srgb, var(--provider-muse-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-muse-color) 40%, transparent);
+}
+
+.usage-heatmap-provider-filter-tab.provider-devin[data-active='true'] {
+  color: var(--provider-devin-color);
+  background: color-mix(in srgb, var(--provider-devin-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--provider-devin-color) 40%, transparent);
 }
 
 .usage-heatmap-chips {
@@ -3919,12 +4296,21 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .usage-heatmap-cell {
   border-radius: 2px;
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  transition: opacity 180ms ease;
+  opacity: var(--usage-heatmap-cell-opacity, 1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
   /* When cells have no events they inherit the background from
-   * this rule; when they have a provider colour the inline style
-   * overrides background + opacity. */
+   * this rule; active cells receive their provider colour and intensity
+   * through custom properties so welcome surfaces can keep a crisp rim while
+   * moving only the fill from faint to saturated. */
 }
-[data-reduce-motion="true"] .usage-heatmap-cell {
+.usage-heatmap-cell:not([data-empty='true']) {
+  background-color: var(--usage-heatmap-cell-color, var(--accent));
+}
+[data-reduce-motion='true'] .usage-heatmap-cell {
   transition: none;
 }
 
@@ -4058,8 +4444,8 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   }
 }
 
-[data-reduce-motion="true"] .welcome-standalone-heatmap-pane.is-incoming,
-[data-reduce-motion="true"] .welcome-standalone-heatmap-pane.is-outgoing {
+[data-reduce-motion='true'] .welcome-standalone-heatmap-pane.is-incoming,
+[data-reduce-motion='true'] .welcome-standalone-heatmap-pane.is-outgoing {
   animation: none;
 }
 
@@ -4084,56 +4470,157 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   min-height: 70px;
 }
 
-.usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+.usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty='true'] {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-.usage-heatmap--workspace-activity .workspace-activity-heatmap-cell:not([data-empty="true"]) {
+.usage-heatmap--workspace-activity .workspace-activity-heatmap-cell:not([data-empty='true']) {
   box-shadow:
-    inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 42%, transparent),
-    0 0 8px color-mix(in srgb, var(--accent) 16%, transparent);
+    inset 0 0 0 0.5px color-mix(in srgb, var(--usage-heatmap-cell-color, #39d353) 42%, transparent),
+    0 0 8px color-mix(in srgb, var(--usage-heatmap-cell-color, #39d353) 16%, transparent);
 }
 
-[data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-title {
+[data-theme='obsidian'] .usage-heatmap--welcome-standalone .usage-heatmap-title {
+  color: rgba(255, 232, 214, 0.78);
+}
+
+[data-theme='obsidian'] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
   color: rgba(255, 232, 214, 0.56);
 }
 
-[data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
-  color: rgba(255, 232, 214, 0.36);
+[data-theme='obsidian'] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
+  color: rgba(255, 232, 214, 0.64);
+  background: transparent;
+  border-color: rgba(255, 232, 214, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 242, 232, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28);
 }
 
-[data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
-  color: rgba(255, 232, 214, 0.44);
-  background: rgba(255, 232, 214, 0.075);
+[data-theme='obsidian'] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
+  color: rgba(255, 242, 232, 0.9);
 }
 
-[data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
-  color: rgba(255, 242, 232, 0.68);
+[data-theme='obsidian'] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty='true'] {
+  background: transparent;
+  border-color: rgba(255, 232, 214, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 242, 232, 0.065);
 }
 
-[data-theme="obsidian"] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: rgba(255, 232, 214, 0.105);
+[data-theme='alabaster'] .usage-heatmap--welcome-standalone .usage-heatmap-title {
+  color: rgba(18, 21, 27, 0.76);
 }
 
-[data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-title {
-  color: rgba(18, 21, 27, 0.58);
+[data-theme='alabaster'] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
+  color: rgba(18, 21, 27, 0.55);
 }
 
-[data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-time-labels {
-  color: rgba(18, 21, 27, 0.36);
+[data-theme='alabaster'] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
+  color: rgba(18, 21, 27, 0.64);
+  background: transparent;
+  border-color: rgba(18, 21, 27, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(18, 21, 27, 0.08);
 }
 
-[data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-chip {
-  color: rgba(18, 21, 27, 0.50);
-  background: rgba(18, 21, 27, 0.065);
+[data-theme='alabaster'] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
+  color: rgba(18, 21, 27, 0.9);
 }
 
-[data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-chip strong {
-  color: rgba(18, 21, 27, 0.72);
+[data-theme='alabaster'] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty='true'] {
+  background: transparent;
+  border-color: rgba(18, 21, 27, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
-[data-theme="alabaster"] .usage-heatmap--welcome-standalone .usage-heatmap-cell[data-empty="true"] {
-  background: rgba(18, 21, 27, 0.085);
+/* Thread Home activity cycle — high-contrast rim treatment. The cycle, width,
+ * provider filter state, and provider colour variables remain untouched; this
+ * scopes the auditioned paint only to the existing welcome variants. */
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab {
+  border-color: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-provider-filter-tab[data-active='true'] {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border-color: color-mix(in srgb, currentColor 58%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, currentColor 42%, transparent),
+    0 0 7px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+:is(
+    .usage-heatmap--welcome-standalone,
+    .daily-heatmap--welcome-standalone,
+    .token-usage-chart--welcome
+  )
+  .usage-heatmap-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 17%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, black 24%, transparent);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.usage-heatmap--welcome-standalone .usage-heatmap-cell {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: transparent;
+}
+
+.usage-heatmap--welcome-standalone .usage-heatmap-cell:not([data-empty='true']) {
+  border-color: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-rim),
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-strength),
+    transparent
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 28%, transparent),
+    0 0 6px
+      color-mix(
+        in srgb,
+        var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-glow),
+        transparent
+      );
+  opacity: 1;
 }
 
 /* Phase L6 slice 6 — glass chrome polish on the Model Usage Card.
@@ -4162,11 +4649,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin: 8px 0;
   box-sizing: border-box;
 }
-[data-appearance="solid"] .model-usage-summary {
+[data-appearance='solid'] .model-usage-summary {
   background: color-mix(in srgb, var(--app-bg-elevated) 92%, transparent);
   border: 1px solid color-mix(in srgb, var(--sidebar-border) 80%, transparent);
 }
-[data-appearance="soft_glass"] .model-usage-summary {
+[data-appearance='soft_glass'] .model-usage-summary {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
     color-mix(in srgb, var(--sidebar-bg) 36%, transparent);
@@ -4177,9 +4664,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 4px 18px -8px rgba(0, 0, 0, 0.25);
 }
-[data-appearance="native_glass"] .model-usage-summary {
+[data-appearance='native_glass'] .model-usage-summary {
   background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -4189,14 +4676,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * we use for tool-call cards (paper / slate / glass / neon / playful)
  * applies here too. Each archetype's subtle background + border
  * tweaks layer on top of the appearance-mode treatment above. */
-[data-theme="cyber"] .model-usage-summary,
-[data-theme="rainbow"] .model-usage-summary {
+[data-theme='cyber'] .model-usage-summary,
+[data-theme='rainbow'] .model-usage-summary {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent) inset,
     0 0 18px -8px color-mix(in srgb, var(--accent) 36%, transparent);
 }
-[data-theme="nebula"] .model-usage-summary,
-[data-theme="candy"] .model-usage-summary {
+[data-theme='nebula'] .model-usage-summary,
+[data-theme='candy'] .model-usage-summary {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 22px -8px color-mix(in srgb, var(--accent) 26%, transparent);
@@ -4291,17 +4778,129 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .transcript-inner {
+  /* Transcript text size (Settings → Appearance).
+   *
+   * Scoped HERE, and the scope is the whole decision. `.transcript-inner` holds
+   * exactly the message rows and the two virtualiser spacers; the composer, the
+   * external-provider import banner, the user-message gutter, the
+   * participant-filter rail and the welcome surfaces are all outside it. One
+   * level up (`.transcript-scroll`) would take the import banner. TWO levels up
+   * (`.app-transcript`) CONTAINS the composer, so it would resize the user's own
+   * text box and with it `--composer-reserved-height` and the transcript's
+   * scroll-under padding. `:root` would resize Settings, every popover and every
+   * modal while leaving the sidebar alone, since `.app-sidebar` re-declares
+   * these four tokens against its own literals.
+   *
+   * `--transcript-font-scale` is an INLINE style, set by `TranscriptPanel` from
+   * the same `const` it mints the virtualiser's layout epoch from. That is why
+   * it is not a `:root` attribute the way `data-fanout-lane-layout` is: an
+   * attribute would put the number CSS renders at in a different module from the
+   * number the height estimator is calibrated for, with nothing but a comment
+   * holding them equal.
+   *
+   * The fallback is 1 and the panel emits NO style attribute at Default, so
+   * every computed value below is `calc(<base> * 1)` — identical to `:root`, and
+   * identical to the build before this setting existed. */
+  --font-size-xs: calc(var(--font-size-xs-base) * var(--transcript-font-scale, 1));
+  --font-size-sm: calc(var(--font-size-sm-base) * var(--transcript-font-scale, 1));
+  --font-size-md: calc(var(--font-size-md-base) * var(--transcript-font-scale, 1));
+  --font-size-lg: calc(var(--font-size-lg-base) * var(--transcript-font-scale, 1));
   width: 100%;
   /* 1.0.6-CRUX44 — cap the transcript + run-summary to the SAME fixed width as
    * the composer (--composer-content-max-width, 850px) and centre it, so resizing
    * the window grows the side gutters instead of widening the chat column. The
    * composer is already centred at this width, so the two line up at the same
-   * column edges. (Was max-width:none → the transcript stretched full-width.) */
-  max-width: min(100%, var(--composer-content-max-width));
+   * column edges. (Was max-width:none → the transcript stretched full-width.)
+   *
+   * Transcript width (Settings → Appearance) composes OVER that cap rather than
+   * retuning it, and the layering is the whole trap. `--composer-content-max-width`
+   * is declared on `.app-transcript`, which CONTAINS the composer — and also the
+   * workspace terminal, its drag divider, the Codex/ChatGPT/Grok tucked rows, the
+   * approval overlay (pinned at cap + 96px) and every welcome surface. Retuning
+   * it to serve a transcript setting moves the user's own text box, and through
+   * `--composer-reserved-height` it feeds back into this scroller's own bottom
+   * padding. So the token is READ here and never written.
+   *
+   * Three terms, innermost first:
+   *   --composer-content-max-width   the pane's composer-aligned cap (850px, or
+   *                                  the popout / Multiview re-expressions).
+   *   --transcript-pane-max-width    a pane's own TRANSCRIPT ceiling where it
+   *                                  differs — General Chat's narrower reading
+   *                                  column, side chat's full bleed. Declared
+   *                                  only by those panes.
+   *   --transcript-column-max-width  the user's chosen width. Declared only by
+   *                                  the two [data-transcript-width] rules below,
+   *                                  so it WINS over a pane ceiling when set: an
+   *                                  explicit Wide should fill General Chat too,
+   *                                  and an explicit Narrow should still be 640
+   *                                  inside a wide side chat.
+   *
+   * At Medium the panel stamps no attribute, nothing declares the outer two, and
+   * this reduces to `min(100%, var(--composer-content-max-width))` — the same
+   * computed value in all four scopes as the declaration it replaced.
+   *
+   * ONE max-width declaration, and it has to stay one. CSS is last-wins within a
+   * block and these rules are the ones most often "fixed" by appending: the
+   * General Chat, side-chat and popout overrides below used to write a SECOND
+   * `max-width` onto this same element, which is exactly how a width control
+   * ships doing nothing in three of the four places a transcript renders. They
+   * now set the pane term instead. */
+  max-width: min(
+    100%,
+    var(
+      --transcript-column-max-width,
+      var(--transcript-pane-max-width, var(--composer-content-max-width))
+    )
+  );
   margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+}
+
+/* ============================================================
+ * Transcript width  (settings.transcriptWidth)
+ * ------------------------------------------------------------
+ * Two rules, and Medium is the absence of both. `TranscriptPanel` stamps
+ * `data-transcript-width` on `.transcript-inner` itself and emits NOTHING at
+ * Medium, so a user who never opens the control renders through the untouched
+ * fallback chain above.
+ *
+ * On the ELEMENT, not on `:root`. A `:root` attribute is written by
+ * `useAppearance.applyToDocument`, which runs in the MAIN WINDOW only — a
+ * popped-out chat would keep Medium forever — and one document cannot carry two
+ * values at once, which a Multiview of panes at different widths would need. It
+ * also keeps the width where the number is measured: the ResizeObserver that
+ * feeds the virtualiser's layout epoch observes this same element, so whatever
+ * these rules resolve to is what the estimator is calibrated for.
+ *
+ * Both set the OUTERMOST term only. Neither writes `max-width`, so there is
+ * still exactly one `max-width` declaration for this element anywhere in the
+ * sheets and no cascade to lose.
+ * ============================================================ */
+.transcript-inner[data-transcript-width='narrow'] {
+  --transcript-column-max-width: 640px;
+}
+
+.transcript-inner[data-transcript-width='wide'] {
+  /* 100% of `.transcript-scroll`'s CONTENT box, which is already inset by
+   * `--chat-side-gutter` on both sides — so "uncapped" still leaves the
+   * message-navigation rail its lane. The rail is `position: fixed`, 34px wide,
+   * placed at `contentRect.left - 34`, i.e. inside that padding; it hides itself
+   * when the gap falls under 34px or the scroller under 720px, and
+   * `clamp(24px, 4.4vw, 72px)` only drops below 34px under a ~773px viewport,
+   * where the 720px gate has already hidden it. No explicit reserve is needed
+   * and none is taken: subtracting one here would narrow the column — and move
+   * the measured bucket — at every width.
+   *
+   * That makes this lane the budget every gutter-anchored overlay has to live
+   * inside at Wide, and the jump-to-latest pill is the one that did not: it is
+   * ~130px wide at `right: var(--chat-side-gutter)`, so its right edge sits on
+   * the column's right edge and the rest of it sits on the text. It collapses to
+   * a 34px square centred in this lane under `[data-transcript-width='wide']`,
+   * in `03-composer-welcome-activity.css`. Anything else added here owes the
+   * same. */
+  --transcript-column-max-width: 100%;
 }
 
 /* ============================================================
@@ -4341,9 +4940,40 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  *
  * `min(100%, var(--fanout-lane-min))` rather than the bare floor so a container
  * narrower than the floor itself still yields one usable track instead of
- * overflowing. Three tracks would need ~1240px; `.transcript-inner` is capped at
- * `--composer-content-max-width` (850px), so two is the real ceiling — if that
- * cap is ever raised, revisit this before the grid quietly goes three-across.
+ * overflowing.
+ *
+ * THE TRACK COUNT IS UNCAPPED, and everything downstream now derives it rather
+ * than assuming two. `auto-fit` against the 360px floor yields three tracks from
+ * ~1104px of column, four from ~1476px, and an uncapped Wide column clears both
+ * on an ordinary window. The JS half computes the same number from the
+ * transcript's layout epoch — `transcriptLayoutLaneTracks`, which inverts this
+ * rule's own arithmetic, `floor((column + gap) / (360 + gap))` — and feeds it to
+ * the slot classifier and to the height estimator. That count is derived from
+ * the epoch's bucket, which resolves to its UPPER edge, so JS can read one track
+ * MORE than the browser lays out for a column in the ~64px band below a
+ * threshold. Two consequences, stated as they actually present:
+ *
+ *   - the estimate under-estimates, which is the safe direction the module's
+ *     constants are chosen for;
+ *   - the slot map groups cells in Ns the browser does not honour, so a grid row
+ *     can end up PART-FILLED: a card at one track width with empty column beside
+ *     it. That is the shape `solo` exists to refuse, and in the band it is
+ *     reachable. It is cosmetic — no height is mis-attributed, because
+ *     `admitsMeasuredRowDelta` reads the slot rather than the count and admits a
+ *     zero only for a `lead`, which is true of the DOM whatever N the browser
+ *     chose — and it self-corrects the moment the column leaves the band.
+ *
+ * A part-filled row is also reachable OUTSIDE the band, and by design: a
+ * trailing group of two or more keeps its cells rather than spanning, so seven
+ * lanes at five tracks end as five + two. The alternative — spanning the whole
+ * trailing group — would re-slot up to N-1 PREDECESSORS on every appended lane,
+ * charging the measure-rewrite budget on the hot streaming path. A lone trailing
+ * card still spans, which is why this reduces to today at two tracks.
+ *
+ * If you change the floor or the gap here, change `FANOUT_LANE_MIN_PX` /
+ * `FANOUT_LANE_COLUMN_GAP_PX` in `transcriptLayoutEpoch.ts` with them —
+ * `transcriptWidthSetting.test.ts` derives the expected declaration below from
+ * those two constants and will red if the two halves part company.
  * ============================================================ */
 :root[data-fanout-lane-layout='paired'] .transcript-inner {
   /* Track floor, and therefore the width at which pairing switches itself off.
@@ -4360,18 +4990,34 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   column-gap: var(--space-md);
 }
 
-/* Every row spans the column by default — only a lane opts out below. The
+/* Wide's two-track containment rule stood here — an override that forced
+ * `--fanout-lane-min` to half the column so three tracks could never be
+ * satisfied. It existed because the slot model emitted only lead/trail/solo,
+ * the window's band extension stepped by exactly one, the pre-paint measurement
+ * admitted a zero offsetTop delta only for a `lead`, and the estimator halved
+ * unconditionally. All four now derive the track count instead of assuming two,
+ * so the containment is gone and Wide uses the width it was given. Do not
+ * reintroduce a width-scoped `--fanout-lane-min`: the guard in
+ * `transcriptWidthSetting.test.ts` refuses one by name. */
+
+/* Every row spans the column by default — only a lane cell opts out below. The
  * virtualiser's spacers are matched by this too, which they must be: a spacer
  * confined to one column would let a collapsed run of rows sit beside live
- * content. */
+ * content. It is also what makes the band extension in `selectTranscriptWindow`
+ * load-bearing rather than tidy: a spacer forces a fresh grid row, so cutting a
+ * grid row at a band edge shifts the COLUMN PHASE of every lane below it. */
 :root[data-fanout-lane-layout='paired'] .transcript-inner > * {
   grid-column: 1 / -1;
 }
 
-/* A paired lane takes one cell. `solo` is deliberately absent: an unpaired lane
- * keeps the span above, so an odd lane count (three scouts, five workers — the
- * common shape, not an edge case) ends in a full-width card rather than a
- * half-width one with a hole beside it. */
+/* A lane CELL takes one grid cell. `solo` is deliberately absent: a lane with no
+ * neighbours to share a row with keeps the span above, so a run that does not
+ * divide by the track count (three scouts, five workers — the common shape, not
+ * an edge case) ends in a full-width card rather than a lone 1/N-wide one with
+ * an empty 1/N beside it. A trailing group of TWO OR MORE cells keeps its cells
+ * and simply leaves the last grid row partly empty, which is what every grid of
+ * cards looks like; only a group of one spans. At two tracks those two rules
+ * coincide, which is what keeps Medium byte-identical. */
 :root[data-fanout-lane-layout='paired']
   .transcript-inner
   > .transcript-message-block[data-fanout-slot='lead'],
@@ -4381,10 +5027,84 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   grid-column: auto;
 }
 
+/* Same grid contract for Fleet cards: the slot classifier admits only
+ * adjacent cards from the same calling run. Fill the grid cell (message-group
+ * normally shrink-wraps its children) and leave more room for the exact
+ * close-out seat strip by reducing the right column to glyph + open affordance
+ * in a shared grid row. A full-span Fleet card keeps its full State label.
+ *
+ * The two selectors mean different things and both are correct at N tracks. The
+ * first keys on the mere PRESENCE of the attribute, i.e. "this is a lane at all"
+ * — `solo` included, because a spanning lane still has to fill its row. The
+ * second keys on the two CELL values, i.e. "this card is narrower than the
+ * column", which is true for every cell of a multi-cell grid row and false for a
+ * span. Neither enumerates column indices, which is why neither needed touching
+ * when the count stopped being two. */
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block[data-fanout-slot]
+  .fleet-wave-message,
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block[data-fanout-slot]
+  .fleet-wave-card {
+  width: 100%;
+  max-width: 100%;
+}
+:root[data-fanout-lane-layout='paired']
+  .transcript-message-block:is([data-fanout-slot='lead'], [data-fanout-slot='trail'])
+  .fleet-wave-card-seat-state-label {
+  display: none;
+}
+
 .transcript-message-block {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
+}
+
+/* Keep the frozen attribution in the DOM for provider theme selectors, while
+ * showing its label only at the start of a speaker's consecutive events. */
+.transcript-message-block.is-speaker-continuation > .message-group > .message-meta,
+.transcript-message-block.is-speaker-continuation
+  > .activity-timeline
+  > .activity-stack-speaker-header,
+.transcript-message-block.is-speaker-continuation
+  > .collapsed-activity-stack
+  > .activity-stack-speaker-header {
+  display: none;
+}
+
+/* A contiguous seat-edit stack keeps the original virtual rows and controls.
+ * Its shared edge/background joins them into one event without reparenting
+ * a disclosure when another seat update arrives at the live tail. */
+.transcript-message-block[data-seat-change-stack] {
+  border-inline-start: 1px solid var(--surface-border);
+  background: color-mix(in srgb, var(--surface-1) 30%, transparent);
+  padding: 2px 10px;
+  gap: 0;
+}
+.transcript-message-block[data-seat-change-stack='start'] {
+  border-radius: 8px 8px 0 0;
+}
+.transcript-message-block[data-seat-change-stack='end'] {
+  border-radius: 0 0 8px 8px;
+}
+.transcript-message-block[data-seat-change-stack] > .seat-change-message {
+  margin: 0;
+}
+.transcript-inner:not(.transcript-virtualized)
+  > .transcript-message-block:is(
+    [data-seat-change-stack='middle'],
+    [data-seat-change-stack='end']
+  ) {
+  margin-top: calc(-1 * var(--space-lg));
+}
+/* Outrank the generic virtual-row margin declared below. */
+.transcript-inner.transcript-virtualized
+  > .transcript-message-block[data-seat-change-stack]:is(
+    [data-seat-change-stack='start'],
+    [data-seat-change-stack='middle']
+  ) {
+  margin-bottom: 0;
 }
 
 .transcript-history-page-boundary {
@@ -4498,15 +5218,30 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-bottom: 0;
 }
 
+/* The workspace terminal is a card docked ABOVE the composer, so it has to
+ * read as the same column. It used to span the whole pane at a hard-coded
+ * doubled inset while the composer under it is capped at
+ * --composer-content-max-width and centred: past ~900px the two surfaces
+ * shared no edge at all, which is the "horizontal padding" the terminal was
+ * reported for. Capping to the composer column and centring makes the two
+ * edges the same line at every width; below the cap the token inset takes
+ * over, so the terminal still breathes on a narrow pane.
+ *
+ * Both custom properties carry fallbacks on purpose: the Gemini terminal in
+ * the right dock reuses this class from OUTSIDE .app-transcript, where neither
+ * token resolves. The fallbacks are its current values, so the dock's geometry
+ * is byte-identical and this stays a composer-terminal change. */
 .workspace-terminal-split {
   position: absolute;
-  left: calc(var(--space-lg) * 2);
-  right: calc(var(--space-lg) * 2);
+  left: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  right: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
   bottom: var(--workspace-terminal-bottom-gap);
-  max-width: none;
+  max-width: var(--composer-content-max-width, none);
   height: var(--workspace-terminal-height);
   min-height: 0;
-  margin: 0;
+  /* Auto inline margins are what centre the box once max-width clamps it
+   * narrower than the left/right slot. */
+  margin: 0 auto;
   z-index: 3;
   pointer-events: auto;
   display: flex;
@@ -4527,22 +5262,21 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .workspace-terminal-split::after,
 .activity-output-terminal::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: -1px;
   border-radius: inherit;
   padding: 1px;
   pointer-events: none;
-  background:
-    conic-gradient(
-      from var(--agent-chase-angle, 0deg),
-      transparent 0deg,
-      transparent 248deg,
-      rgb(var(--agent-accent-rgb) / 0.05) 284deg,
-      rgb(var(--agent-accent-rgb) / 0.72) 316deg,
-      rgb(var(--agent-accent-rgb) / 0.08) 342deg,
-      transparent 360deg
-    );
+  background: conic-gradient(
+    from var(--agent-chase-angle, 0deg),
+    transparent 0deg,
+    transparent 248deg,
+    rgb(var(--agent-accent-rgb) / 0.05) 284deg,
+    rgb(var(--agent-accent-rgb) / 0.72) 316deg,
+    rgb(var(--agent-accent-rgb) / 0.08) 342deg,
+    transparent 360deg
+  );
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -4556,10 +5290,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   animation: agentBorderChase 30s linear infinite;
 }
 
+/* Geometry mirrors the pane exactly — same token, same cap, same centring —
+ * so the drag target can never overhang the terminal it resizes. */
 .workspace-terminal-resize-divider {
   position: absolute;
-  left: calc(var(--space-lg) * 2);
-  right: calc(var(--space-lg) * 2);
+  left: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  right: var(--workspace-terminal-inline-inset, calc(var(--space-lg) * 2));
+  max-width: var(--composer-content-max-width, none);
+  margin-inline: auto;
   bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) - 2px);
   height: 12px;
   z-index: 6;
@@ -4569,7 +5307,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .workspace-terminal-resize-divider::before {
-  content: "";
+  content: '';
   position: absolute;
   left: 12px;
   right: 12px;
@@ -4784,7 +5522,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .panel-resize-handle::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   bottom: 0;
@@ -4877,14 +5615,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     padding-inline: var(--space-lg);
   }
 
-  .workspace-terminal-split {
-    left: var(--space-lg);
-    right: var(--space-lg);
-  }
-
-  .workspace-terminal-resize-divider {
-    left: var(--space-lg);
-    right: var(--space-lg);
+  /* One token, so the pane and its divider stay locked together. */
+  .app-transcript {
+    --workspace-terminal-inline-inset: var(--space-md);
   }
 
   .gemini-terminal-line {
@@ -4892,43 +5625,45 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   }
 }
 
-[data-reduce-transparency="true"] .app-sidebar,
-[data-reduce-transparency="true"] .app-file-editor,
-[data-reduce-transparency="true"] .app-inspector,
-[data-reduce-transparency="true"] .workspace-terminal-split,
-[data-reduce-transparency="true"] .composer-surface,
-[data-reduce-transparency="true"] .settings-panel-header {
+[data-reduce-transparency='true'] .app-sidebar,
+[data-reduce-transparency='true'] .app-file-editor,
+[data-reduce-transparency='true'] .app-inspector,
+[data-reduce-transparency='true'] .workspace-terminal-split,
+[data-reduce-transparency='true'] .composer-surface,
+[data-reduce-transparency='true'] .settings-panel-header {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-[data-reduce-transparency="true"] .app-file-editor,
-[data-reduce-transparency="true"] .app-inspector {
+[data-reduce-transparency='true'] .app-file-editor,
+[data-reduce-transparency='true'] .app-inspector {
   background: var(--panel-bg-solid);
 }
 
-[data-reduce-transparency="true"] .app-sidebar {
+[data-reduce-transparency='true'] .app-sidebar {
   background: var(--sidebar-bg-solid);
 }
 
-[data-reduce-transparency="true"] .settings-panel-header {
+[data-reduce-transparency='true'] .settings-panel-header {
   background: var(--panel-bg-solid);
 }
 
-[data-reduce-motion="true"] .composer-action-btn:hover:not(:disabled),
-[data-reduce-motion="true"] .chat-corner-btn:hover,
-[data-reduce-motion="true"] .activity-row:hover {
+[data-reduce-motion='true'] .composer-action-btn:hover:not(:disabled),
+[data-reduce-motion='true'] .chat-corner-btn:hover,
+[data-reduce-motion='true'] .activity-row:hover {
   transform: none;
 }
 
-[data-reduce-motion="true"] .workspace-terminal-split::after,
-[data-reduce-motion="true"] .activity-output-terminal::after,
-[data-reduce-motion="true"] .message-bubble.user::after,
-[data-reduce-motion="true"] .composer-action-btn.run-btn.send-confirming:not(:disabled) .sf-symbol-icon {
+[data-reduce-motion='true'] .workspace-terminal-split::after,
+[data-reduce-motion='true'] .activity-output-terminal::after,
+[data-reduce-motion='true'] .message-bubble.user::after,
+[data-reduce-motion='true']
+  .composer-action-btn.run-btn.send-confirming:not(:disabled)
+  .sf-symbol-icon {
   animation: none;
 }
 
-[data-reduce-motion="true"] .message-bubble.user::after {
+[data-reduce-motion='true'] .message-bubble.user::after {
   opacity: 0;
 }
 
@@ -4961,11 +5696,17 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-[data-reduce-motion="true"] .message-group { animation: none; }
+[data-reduce-motion='true'] .message-group {
+  animation: none;
+}
 
 .message-meta {
   font-size: var(--font-size-xs);
@@ -4979,12 +5720,38 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  min-height: 24px;
+  min-height: 22px;
   margin-top: -2px;
   color: color-mix(in srgb, var(--text-muted) 86%, transparent);
   font-size: var(--font-size-xs);
   line-height: 1;
   align-self: flex-start;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+/* Reserve the compact footer's height so revealing actions never moves the
+ * transcript. Keyboard focus exposes the same controls as pointer hover. */
+.transcript-message-block:hover > .message-footer,
+.transcript-message-block:focus-within > .message-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.message-footer .message-actions-chip {
+  pointer-events: inherit;
+}
+
+@media (hover: none) {
+  .message-footer {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+[data-reduce-motion='true'] .message-footer {
+  transition: none;
 }
 
 .message-footer-end {
@@ -4999,14 +5766,16 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 .message-footer .message-actions-chip {
   background: transparent;
-  border-color: transparent;
+  border: 0;
+  padding: 0;
+  opacity: 1;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.message-footer:hover .message-actions-chip,
-.message-footer:focus-within .message-actions-chip {
-  opacity: 1;
+.message-footer .message-actions-chip-button svg {
+  width: 15px;
+  height: 15px;
 }
 
 /* Slice M4 (1.0.3 ship-night): show the participant's short model name
@@ -5053,6 +5822,124 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   display: inline-block;
   margin-right: var(--space-sm);
   opacity: 0.6;
+}
+
+/* ══════════════════════════════════════════════════════════════
+ * INTER-SEAT NOTE ROUTING HEADER (`ensemble_send`)
+ * --------------------------------------------------------------
+ * The route replaces the provider name on this row's meta line:
+ * `[crown] #1 Boss  ->  [hat] #2 Capt`, drawn with the same seat
+ * vocabulary as `.seat-change-role` — the authority/stage glyph,
+ * `#N Role`, and the seat's own provider accent (set inline by
+ * the component, because the hue resolves from the humanised
+ * model label and re-deriving it here would drift for Ollama and
+ * Pi seats). Names only: the composer chip cluster states a
+ * seat's CONFIGURATION, which is not what a line of conversation
+ * is asking.
+ * ══════════════════════════════════════════════════════════════ */
+
+.ensemble-side-message-meta {
+  /* Wider than the meta line's default `--space-sm` so the two ends of the
+   * route do not read as one name, and wrapping so a fan-out to three seats
+   * degrades to a second line instead of overflowing. */
+  gap: 10px;
+  flex-wrap: wrap;
+  /* `.message-group` aligns its children to flex-start, so a meta line
+   * shrink-wraps its content and `margin-left: auto` on the trailing time has
+   * no free space to consume. Claiming the row is what puts the time at the
+   * far edge (mock-approved 2026-09-09) rather than tucked against the last
+   * recipient's name. */
+  width: 100%;
+}
+
+.ensemble-side-party {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* Matches `.seat-change-role`: this is the same element, in a meta line. */
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The reader is not a seat, so it wears no provider accent — the plain
+ * primary text colour, which is what "You" reads as everywhere else. */
+.ensemble-side-party.is-user {
+  color: var(--text-primary);
+}
+
+.ensemble-side-party.is-user .ensemble-side-party-icon {
+  opacity: 0.7;
+}
+
+.ensemble-side-party-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+/* Consecutive recipients need a mark between them: two accent-tinted names
+ * separated only by the flex gap read as one two-tone name. Not a comma —
+ * the middot is already this line's separator convention (`.message-meta-
+ * model-badge::before`). */
+.ensemble-side-party + .ensemble-side-party::before {
+  content: '·';
+  margin-right: 9px;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text-primary) 34%, transparent);
+}
+
+.ensemble-side-route-arrow {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-primary) 32%, transparent);
+}
+
+.ensemble-side-route-arrow svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* "+5" — the recipients the line elided. Weighted like the timestamp, not
+ * like a name: it is a count, and dressing it as a seat would invite the
+ * reader to look for the seat it names. */
+.ensemble-side-route-more {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The `reason` field, under the note's own words.
+ *
+ * Muted and small, sharing the timestamp's treatment, because it is the
+ * sender's annotation ABOUT the note rather than part of it — it arrived in a
+ * separate tool field, and rendering it as a closing paragraph put words in
+ * their mouth. The label is lower-case for the same reason a footnote marker
+ * is: it names the line without competing with it. */
+.ensemble-side-message-reason {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+
+.ensemble-side-message-reason-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 36%, transparent);
+}
+
+/* Trailing, as on every other transcript row that carries its own time. */
+.ensemble-side-route-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  font-variant-numeric: tabular-nums;
 }
 
 .taskwraith-closeout-meta {
@@ -5217,6 +6104,33 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-pi {
   color: var(--provider-pi-color) !important;
 }
+.message-meta.provider-openrouter {
+  color: var(--provider-openrouter-color) !important;
+}
+.message-meta.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color) !important;
+}
+.message-meta.provider-tencent {
+  color: var(--provider-tencent-color) !important;
+}
+.message-meta.provider-inception {
+  color: var(--provider-inception-color) !important;
+}
+.message-meta.provider-nexagi {
+  color: var(--provider-nexagi-color) !important;
+}
+.message-meta.provider-sakana {
+  color: var(--provider-sakana-color) !important;
+}
+.message-meta.provider-stealth {
+  color: var(--provider-stealth-color) !important;
+}
+.message-meta.provider-unbiased {
+  color: var(--provider-unbiased-color) !important;
+}
+.message-meta.provider-typesafe {
+  color: var(--provider-typesafe-color) !important;
+}
 .message-meta.provider-deepseek {
   color: var(--provider-deepseek-color) !important;
 }
@@ -5232,12 +6146,18 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-muse {
   color: var(--provider-muse-color) !important;
 }
+.message-meta.provider-devin {
+  color: var(--provider-devin-color) !important;
+}
 
 .message-meta.provider-groq {
   color: var(--provider-groq-color) !important;
 }
 .message-meta.provider-cerebras {
   color: var(--provider-cerebras-color) !important;
+}
+.message-meta.provider-xiaomi {
+  color: var(--provider-xiaomi-color) !important;
 }
 .message-meta.provider-antigravity {
   color: var(--provider-antigravity-color) !important;
@@ -5323,6 +6243,33 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-group:has(.message-meta.provider-pi) {
   --message-working-accent: var(--provider-pi-color);
 }
+.message-group:has(.message-meta.provider-openrouter) {
+  --message-working-accent: var(--provider-openrouter-color);
+}
+.message-group:has(.message-meta.provider-thinkingmachines) {
+  --message-working-accent: var(--provider-thinkingmachines-color);
+}
+.message-group:has(.message-meta.provider-tencent) {
+  --message-working-accent: var(--provider-tencent-color);
+}
+.message-group:has(.message-meta.provider-inception) {
+  --message-working-accent: var(--provider-inception-color);
+}
+.message-group:has(.message-meta.provider-nexagi) {
+  --message-working-accent: var(--provider-nexagi-color);
+}
+.message-group:has(.message-meta.provider-sakana) {
+  --message-working-accent: var(--provider-sakana-color);
+}
+.message-group:has(.message-meta.provider-stealth) {
+  --message-working-accent: var(--provider-stealth-color);
+}
+.message-group:has(.message-meta.provider-unbiased) {
+  --message-working-accent: var(--provider-unbiased-color);
+}
+.message-group:has(.message-meta.provider-typesafe) {
+  --message-working-accent: var(--provider-typesafe-color);
+}
 .message-group:has(.message-meta.provider-deepseek) {
   --message-working-accent: var(--provider-deepseek-color);
 }
@@ -5338,12 +6285,18 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-group:has(.message-meta.provider-muse) {
   --message-working-accent: var(--provider-muse-color);
 }
+.message-group:has(.message-meta.provider-devin) {
+  --message-working-accent: var(--provider-devin-color);
+}
 
 .message-group:has(.message-meta.provider-groq) {
   --message-working-accent: var(--provider-groq-color);
 }
 .message-group:has(.message-meta.provider-cerebras) {
   --message-working-accent: var(--provider-cerebras-color);
+}
+.message-group:has(.message-meta.provider-xiaomi) {
+  --message-working-accent: var(--provider-xiaomi-color);
 }
 .message-group:has(.message-meta.provider-antigravity) {
   --message-working-accent: var(--provider-antigravity-color);
@@ -5365,7 +6318,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .message-bubble.user {
-  --user-bubble-padding: 4px 14px;
+  --user-bubble-padding: 7px 17px;
   background: var(--app-bg-elevated);
   border: 1px solid var(--sidebar-border);
   align-self: flex-end;
@@ -5388,14 +6341,17 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * like a tint rather than a fill — the text still reads against the
  * surface, the bubble just gets a visible identity. Border tracks
  * at a higher mix so the silhouette stays crisp. */
-[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user {
+[data-user-bubble-color]:not([data-user-bubble-color='system']) .message-bubble.user {
   background: color-mix(in srgb, var(--user-bubble-base) 20%, var(--app-bg-elevated));
   border-color: color-mix(in srgb, var(--user-bubble-base) 38%, var(--sidebar-border));
 }
 
 /* Light themes need a slightly stronger tint to read on the bright
  * elevated surface — 20% gets washed out against `#f4f6fa`-ish bg. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-bubble.user {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-user-bubble-color]:not(
+    [data-user-bubble-color='system']
+  )
+  .message-bubble.user {
   background: color-mix(in srgb, var(--user-bubble-base) 30%, var(--app-bg-elevated));
   border-color: color-mix(in srgb, var(--user-bubble-base) 48%, var(--sidebar-border));
 }
@@ -5409,27 +6365,26 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * the same specificity (0,2,0) and appears later in source. The
  * provider-tinted assistant labels needed the same treatment (see
  * lines 3378-3398). */
-[data-user-bubble-color]:not([data-user-bubble-color="system"]) .message-meta.user-meta {
+[data-user-bubble-color]:not([data-user-bubble-color='system']) .message-meta.user-meta {
   color: var(--user-bubble-base) !important;
 }
 
 .message-bubble.user::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: -1px;
   border-radius: inherit;
   padding: 1px;
   pointer-events: none;
-  background:
-    conic-gradient(
-      from var(--agent-chase-angle, 0deg),
-      transparent 0deg,
-      transparent 250deg,
-      rgb(var(--agent-accent-rgb) / 0.04) 286deg,
-      rgb(var(--agent-accent-rgb) / 0.46) 318deg,
-      rgb(var(--agent-accent-rgb) / 0.06) 344deg,
-      transparent 360deg
-    );
+  background: conic-gradient(
+    from var(--agent-chase-angle, 0deg),
+    transparent 0deg,
+    transparent 250deg,
+    rgb(var(--agent-accent-rgb) / 0.04) 286deg,
+    rgb(var(--agent-accent-rgb) / 0.46) 318deg,
+    rgb(var(--agent-accent-rgb) / 0.06) 344deg,
+    transparent 360deg
+  );
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -5515,7 +6470,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   vertical-align: -0.12em;
   opacity: 0.3;
   border-radius: 5px;
-  transition: opacity 0.12s ease, color 0.12s ease;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease;
 }
 .markdown-external-link:hover .markdown-open-in-canvas,
 .markdown-open-in-canvas:hover,
@@ -5777,8 +6734,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .message-working-jump:hover {
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--message-working-accent) 42%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--message-working-accent) 42%, transparent);
 }
 
 .message-working-jump:focus-visible {
@@ -5936,15 +6892,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   content: attr(data-label);
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(
-      105deg,
-      color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 0%,
-      color-mix(in srgb, var(--message-working-accent) 68%, var(--text-primary)) 34%,
-      color-mix(in srgb, white 46%, var(--message-working-accent)) 48%,
-      color-mix(in srgb, var(--message-working-accent) 76%, var(--text-primary)) 62%,
-      color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 100%
-    );
+  background-image: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 0%,
+    color-mix(in srgb, var(--message-working-accent) 68%, var(--text-primary)) 34%,
+    color-mix(in srgb, white 46%, var(--message-working-accent)) 48%,
+    color-mix(in srgb, var(--message-working-accent) 76%, var(--text-primary)) 62%,
+    color-mix(in srgb, var(--message-working-accent) 54%, var(--text-secondary)) 100%
+  );
   /* Seamless-loop arithmetic — do not round this to a tidy 260%. Position
    * percentages resolve against (box − image), so with the image `t` box-widths
    * wide the shared keyframes' 220% → -120% travel covers 3.4(t − 1) box-widths
@@ -6025,20 +6980,23 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   z-index: 0;
   border-radius: 999px;
   pointer-events: none;
-  background:
-    radial-gradient(
-      ellipse at 40% 50%,
-      color-mix(in srgb, var(--message-working-accent) 22%, transparent) 0%,
-      color-mix(in srgb, var(--message-working-accent) 10%, transparent) 46%,
-      transparent 78%
-    );
+  background: radial-gradient(
+    ellipse at 40% 50%,
+    color-mix(in srgb, var(--message-working-accent) 22%, transparent) 0%,
+    color-mix(in srgb, var(--message-working-accent) 10%, transparent) 46%,
+    transparent 78%
+  );
   filter: blur(5px);
   opacity: 0.38;
 }
 
 @keyframes working-ghost-pulse {
-  from { opacity: 0.45; }
-  to { opacity: 1; }
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes text-shimmer-sweep {
@@ -6086,7 +7044,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .message-working .thinking-dot {
-  background: color-mix(in srgb, var(--message-working-accent, var(--text-secondary)) 78%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--message-working-accent, var(--text-secondary)) 78%,
+    transparent
+  );
 }
 
 .thinking-dots {
@@ -6112,7 +7074,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 @keyframes thinkingPulse {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     opacity: 0.25;
     transform: scale(0.72);
   }
@@ -6122,7 +7086,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   }
 }
 
-[data-reduce-motion="true"] .thinking-dot {
+[data-reduce-motion='true'] .thinking-dot {
   animation: none;
   opacity: 0.9;
 }
@@ -6152,7 +7116,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .guest-participant-reply-message .message-meta-label::before {
-  content: "Guest";
+  content: 'Guest';
   display: inline-flex;
   align-items: center;
   height: 16px;
@@ -6467,6 +7431,33 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .participant-health-chip.provider-pi {
   color: var(--provider-pi-color, var(--text-primary));
 }
+.participant-health-chip.provider-openrouter {
+  color: var(--provider-openrouter-color, var(--text-primary));
+}
+.participant-health-chip.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color, var(--text-primary));
+}
+.participant-health-chip.provider-tencent {
+  color: var(--provider-tencent-color, var(--text-primary));
+}
+.participant-health-chip.provider-inception {
+  color: var(--provider-inception-color, var(--text-primary));
+}
+.participant-health-chip.provider-nexagi {
+  color: var(--provider-nexagi-color, var(--text-primary));
+}
+.participant-health-chip.provider-sakana {
+  color: var(--provider-sakana-color, var(--text-primary));
+}
+.participant-health-chip.provider-stealth {
+  color: var(--provider-stealth-color, var(--text-primary));
+}
+.participant-health-chip.provider-unbiased {
+  color: var(--provider-unbiased-color, var(--text-primary));
+}
+.participant-health-chip.provider-typesafe {
+  color: var(--provider-typesafe-color, var(--text-primary));
+}
 .participant-health-chip.provider-qwen {
   color: var(--provider-qwen-color, var(--text-primary));
 }
@@ -6485,12 +7476,18 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .participant-health-chip.provider-muse {
   color: var(--provider-muse-color, var(--text-primary));
 }
+.participant-health-chip.provider-devin {
+  color: var(--provider-devin-color, var(--text-primary));
+}
 
 .participant-health-chip.provider-groq {
   color: var(--provider-groq-color, var(--text-primary));
 }
 .participant-health-chip.provider-cerebras {
   color: var(--provider-cerebras-color, var(--text-primary));
+}
+.participant-health-chip.provider-xiaomi {
+  color: var(--provider-xiaomi-color, var(--text-primary));
 }
 
 /* Context-compaction transcript row — the durable record of a provider (or
@@ -6594,7 +7591,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   border-radius: 12px;
   border: 1px solid var(--provider-run-failure-rim);
   background:
-    linear-gradient(160deg, color-mix(in srgb, var(--danger, #e54d4d) 10%, transparent), transparent 62%),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--danger, #e54d4d) 10%, transparent),
+      transparent 62%
+    ),
     color-mix(in srgb, var(--surface-elevated) 52%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--danger, #e54d4d) 12%, transparent),
@@ -6694,6 +7695,180 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   background: color-mix(in srgb, #f0a93f 9%, transparent);
   font-size: var(--font-size-xs);
   color: color-mix(in srgb, var(--text-primary) 88%, #f0a93f 12%);
+}
+
+/* Run execution error card — the calm successor to the bare red pill for
+ * `role: 'error'` transcript rows, and to the bare "Seat failed." coda for
+ * failed ensemble participants. The pill styling stays for any legacy
+ * consumer, but when the card renders inside the bubble the pill shell is
+ * neutralised so the card reads as its own surface (the shape of the
+ * usage-credit notice: quiet panel, plain title, actions, disclosure). */
+.message-bubble.has-error-card {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: min(100%, 620px);
+  max-width: 100%;
+  color: var(--text-primary);
+}
+
+.run-error-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* One unified width whether the card mounts inside a neutralised bubble
+   * or directly as a row child — min() keeps it fluid under a narrow column. */
+  width: min(100%, 620px);
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
+  /* Solid neutral gray: the card surface stays calm — the danger tint is
+   * reserved for the expanded raw-output block, where the error text
+   * actually lives. */
+  background: color-mix(in srgb, var(--surface-elevated, rgb(255 255 255 / 0.05)) 78%, transparent);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
+}
+
+.run-error-card-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.run-error-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.run-error-card-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  white-space: nowrap;
+}
+
+.run-error-card-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+}
+
+.run-error-card-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.run-error-card-body {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.run-error-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.run-error-card-question {
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.run-error-card-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-error-card-copy {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.run-error-card-copy:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 34%, var(--panel-border));
+  color: var(--text-primary);
+}
+
+.run-error-card-copy:focus-visible {
+  outline: 2px solid var(--accent, #8b7cf6);
+  outline-offset: 1px;
+}
+
+/* The restart button reuses `.host-lifecycle-toggle` from the approvals
+ * popover; these overrides only size it up from the popover's 10px context
+ * to the card's reading size. */
+.run-error-card-restart {
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: var(--font-size-xs);
+}
+
+.run-error-card-details {
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 55%, transparent);
+  padding-top: 8px;
+}
+
+.run-error-card-details > summary {
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  user-select: none;
+}
+
+.run-error-card-details > summary:hover {
+  color: var(--text-primary);
+}
+
+.run-error-card-note {
+  margin: 8px 0 0;
+  font-size: var(--font-size-xs);
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+}
+
+.run-error-card-raw {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger, #e54d4d) 22%, var(--panel-border));
+  /* The red-gray gradient lives here, and only here — the verbose dump is
+   * the one place the danger tint is honestly descriptive. */
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--danger, #e54d4d) 10%, transparent),
+      transparent 62%
+    ),
+    color-mix(in srgb, var(--panel-bg) 40%, transparent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--text-primary) 82%, var(--danger, #e54d4d) 18%);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow: auto;
 }
 
 .subthread-return-card {
@@ -6813,6 +7988,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .subthread-return-body-inner {
   min-width: 0;
   color: var(--text-primary);
+}
+
+/* Minimal renders the body with no LiveActivityViewport around it, so the
+   12px inset that .subthread-return-viewport carries would be lost and the
+   text would sit flush against the card edge. The child combinator matches
+   ONLY the unwrapped case: when a viewport is present the inner div sits
+   inside its scroll container and is not a direct child. */
+.subthread-return-body > .subthread-return-body-inner {
+  padding-left: 12px;
 }
 
 .subthread-return-preview,
@@ -7051,9 +8235,40 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   .ensemble-fanout-result-viewport.is-collapsed
   > .live-activity-viewport-scroll {
   height: var(--live-activity-collapsed-height);
-  /* The reveal replaces the growth, so it must not ALSO inherit the shared
-     `transition: max-height` — the cap never changes here. */
-  animation: fanout-lane-viewport-reveal 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* ------------------------------------------------------------
+ * The reveal, layered on top of a band that is already there
+ * ------------------------------------------------------------
+ * THE BAND IS NEVER PRODUCED BY THE ANIMATION. These were one rule, and the
+ * height came from `animation: … both`. `both` includes `backwards`, so the 0%
+ * keyframe — `height: 0` — is what the element uses for the animation's BEFORE
+ * phase, the phase an animation sits in until the document produces a frame to
+ * start it on. An occluded or unfocused window produces none, so a lane that
+ * appeared while the user was in another app stayed at height 0 and the card
+ * read as empty until the window was refocused. The idle-pause exemption in
+ * 32-window-idle-pause.css resumes a PAUSED reveal; nothing can resume one that
+ * never started. Without the fill, the before phase contributes nothing and the
+ * reservation above is simply in effect — which is also what reduce-motion and
+ * a browser that drops the animation entirely now get.
+ *
+ * `.is-revealing` IS A ONE-SHOT MARKER, NOT STATE. A CSS animation restarts
+ * every time its rule starts matching, so the old selector replayed the reveal
+ * on every `.is-working` flip (it is re-supplied per render from the
+ * working-indicator presentation), on every expand/collapse round trip, and on
+ * every remount — and transcript rows remount constantly, because `rowKey`
+ * embeds the list index and a fan-out wave relocates to its anchor the moment
+ * its second lane card lands. LiveActivityViewport raises the marker at most
+ * once per owning message (`viewportRevealLedger`) and retires it on
+ * animationend, so neither a re-applied class nor a rebuilt row can replay it.
+ *
+ * The reveal replaces the growth, so it must not ALSO inherit the shared
+ * `transition: max-height` — the cap never changes here.
+ * ------------------------------------------------------------ */
+.ensemble-fanout-result-card.is-working
+  .ensemble-fanout-result-viewport.is-collapsed.is-revealing
+  > .live-activity-viewport-scroll {
+  animation: fanout-lane-viewport-reveal 260ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 @keyframes fanout-lane-viewport-reveal {
@@ -7067,10 +8282,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* Both reduce-motion signals. The RESERVATION survives — it is the fix, not the
  * decoration; only the reveal is dropped, so the band simply exists at full
- * height from the first frame. */
+ * height from the first frame. Now that the two live in separate rules, these
+ * only have to reach the reveal: the reservation is not theirs to cancel. */
 @media (prefers-reduced-motion: reduce) {
   .ensemble-fanout-result-card.is-working
-    .ensemble-fanout-result-viewport.is-collapsed
+    .ensemble-fanout-result-viewport.is-collapsed.is-revealing
     > .live-activity-viewport-scroll {
     animation: none;
   }
@@ -7078,7 +8294,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 :root[data-reduce-motion='true']
   .ensemble-fanout-result-card.is-working
-  .ensemble-fanout-result-viewport.is-collapsed
+  .ensemble-fanout-result-viewport.is-collapsed.is-revealing
   > .live-activity-viewport-scroll {
   animation: none;
 }
@@ -7119,9 +8335,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 /* Settled nested tool groups use the transcript's ordinary one-line fold.
    Align its summary with the full timeline it replaces; when re-expanded,
    ActivityStack keeps owning the existing 14px body inset above. */
-.ensemble-fanout-result-tools
-  > .collapsed-activity-stack
-  > .collapsed-activity-stack-summary {
+.ensemble-fanout-result-tools > .collapsed-activity-stack > .collapsed-activity-stack-summary {
   padding-left: 14px;
 }
 
@@ -7153,13 +8367,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   border: 2px solid color-mix(in srgb, var(--agent-rim, rgb(255 255 255 / 0.18)) 55%, transparent);
   border-radius: 10px;
   background:
-    linear-gradient(135deg, rgb(255 255 255 / 0.04), transparent 60%),
-    rgb(255 255 255 / 0.025);
+    linear-gradient(135deg, rgb(255 255 255 / 0.04), transparent 60%), rgb(255 255 255 / 0.025);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.02);
   color: var(--text-primary);
   padding: 0.7rem 0.85rem;
   position: relative;
-  transition: border-color 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    transform 80ms ease,
+    box-shadow 120ms ease;
 }
 
 .subthread-delegation-card.clickable {
@@ -7167,7 +8383,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .subthread-delegation-card.clickable:hover {
-  border-color: color-mix(in srgb, var(--agent-rim, rgb(255 255 255 / 0.30)) 78%, transparent);
+  border-color: color-mix(in srgb, var(--agent-rim, rgb(255 255 255 / 0.3)) 78%, transparent);
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.22);
 }
 
@@ -7293,8 +8509,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 @keyframes subthreadDelegationPulse {
-  0%, 100% { opacity: 1; transform: translateX(0); }
-  50% { opacity: 0.5; transform: translateX(2px); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 0.5;
+    transform: translateX(2px);
+  }
 }
 
 .subthread-delegation-body {
@@ -7704,11 +8927,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--danger);
 }
 
+/* The unified error card rows align left with assistant/tool rows; the
+ * centering above is the bare-pill era's and stays only for any legacy
+ * consumer that renders `.message-bubble.error` without the card. Placed
+ * after it so equal specificity resolves this way. */
+.message-bubble.has-error-card {
+  align-self: flex-start;
+}
+
 .plan-choice-card {
   margin-top: 4px;
   border-radius: calc(var(--radius-sm) * 2);
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
   padding: var(--space-sm);
   max-width: 100%;
   display: flex;
@@ -7730,7 +8961,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .plan-choice-action-btn {
   appearance: none;
   -webkit-appearance: none;
-  border: 1px solid rgba(255,255,255,0.16);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
@@ -7742,7 +8973,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .plan-choice-action-btn:hover {
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .plan-choice-action-btn:disabled {
@@ -8467,6 +9698,22 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   font-weight: 600;
 }
 
+/* Parent-run activities that a pre-guard reducer collapsed onto the return
+ * card (2026-08-26 frozen-transcript incident). Only damaged records render
+ * this section; the note keeps the attribution honest — these are the
+ * PARENT's tools, not the child's. */
+.subthread-return-recovered-activity {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.subthread-return-recovered-note {
+  font-size: 11px;
+  opacity: 0.62;
+  margin-bottom: 6px;
+}
+
 /* Authority / stage glyph beside a seat's role name. Inherits `color` from the
  * role span, which is the seat's provider accent, so the mark and the name are
  * the same colour without either declaring it twice. */
@@ -8567,7 +9814,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .daily-heatmap-cell {
   border-radius: 2px;
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  transition: opacity 180ms ease;
+  opacity: var(--usage-heatmap-cell-opacity, 1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
+}
+.daily-heatmap-cell:not([data-empty='true']) {
+  background-color: var(--usage-heatmap-cell-color, var(--accent));
 }
 .daily-heatmap-cell[data-outside='true'] {
   /* Padding that squares off the first and last weeks. Invisible, but it must
@@ -8598,10 +9853,256 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   aspect-ratio: 62 / 7;
 }
 
+.daily-heatmap--welcome-standalone .daily-heatmap-title {
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: transparent;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell:not([data-empty='true']) {
+  border-color: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-rim),
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-strength),
+    transparent
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 28%, transparent),
+    0 0 6px
+      color-mix(
+        in srgb,
+        var(--usage-heatmap-cell-color) var(--usage-heatmap-cell-glow),
+        transparent
+      );
+  opacity: 1;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell[data-empty='true'] {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-cell[data-outside='true'] {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.daily-heatmap--welcome-standalone .daily-heatmap-month-axis {
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+}
+
 /* Settings instance: sits in the Model Usage activity stack beside the 90-day
  * panels, which pin `min-height: 92px`. The year grid is shorter per row (7
  * rows, not 12), so give it a floor rather than letting it collapse next to
  * its siblings. */
 .daily-heatmap--settings-activity .daily-heatmap-grid {
   min-height: 72px;
+}
+
+/* Ensemble poll card (bossman polls) — interactive vote buttons with live
+ * vote-% meters. Extends .agent-question-card; only adds the divergent bits:
+ *   - Per-option meter rows (fill bar + % + count) replacing the flat
+ *     "Seat: choice" response list.
+ *   - Selected-state check + pending/error feedback so clicks are never
+ *     silently swallowed. */
+.ensemble-poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ensemble-poll-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ensemble-poll-option-button {
+  position: relative;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 18%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ensemble-poll-option-button:hover:not(:disabled),
+.ensemble-poll-option-button:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 42%, transparent);
+  background: color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 7%, transparent);
+}
+
+.ensemble-poll-option-button:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-accent-rgb, 255 255 255) 14%, transparent);
+}
+
+.ensemble-poll-option-button:disabled {
+  cursor: default;
+}
+
+.ensemble-poll-option-button.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.ensemble-poll-option-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--ensemble-poll-share, 0%);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  transition: width 240ms ease;
+  pointer-events: none;
+}
+
+.ensemble-poll-option-label,
+.ensemble-poll-option-meter,
+.ensemble-poll-option-count {
+  position: relative;
+  z-index: 1;
+}
+
+.ensemble-poll-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.ensemble-poll-option-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ensemble-poll-option-bar {
+  width: 64px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  overflow: hidden;
+}
+
+.ensemble-poll-option-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+  transition: width 240ms ease;
+}
+
+.ensemble-poll-option-pct {
+  min-width: 32px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ensemble-poll-option-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-primary));
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.ensemble-poll-option-voters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ensemble-poll-voter-more {
+  font-weight: 800;
+}
+
+.ensemble-poll-status {
+  margin-top: 2px;
+}
+
+.ensemble-poll-error {
+  color: var(--danger, #ff6b6b);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* Transcript stall notice — says out loud that the transcript is behind.
+   Sits above the transcript rather than inside it so it cannot be scrolled
+   away from at the exact moment it matters. Hidden entirely while current. */
+.transcript-stall-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 0;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  border: 1px solid color-mix(in srgb, var(--accent-warning, #d08a3a) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-warning, #d08a3a) 12%, transparent);
+  color: var(--text-secondary, #b9b9b9);
+}
+
+.transcript-stall-notice--stalled {
+  border-color: color-mix(in srgb, var(--accent-danger, #d05a5a) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-danger, #d05a5a) 14%, transparent);
+  color: var(--text-primary, #ededed);
+}
+
+.transcript-stall-notice__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--accent-warning, #d08a3a);
+}
+
+.transcript-stall-notice--stalled .transcript-stall-notice__dot {
+  background: var(--accent-danger, #d05a5a);
+  animation: transcript-stall-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes transcript-stall-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-stall-notice--stalled .transcript-stall-notice__dot {
+    animation: none;
+  }
 }

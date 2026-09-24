@@ -66,6 +66,13 @@ import {
   CanvasBrowserProfile,
   type CanvasBrowserProfileController
 } from './CanvasBrowserProfile'
+import {
+  isNavigationAllowedForOrigins,
+  normalizeWebSiteOrigin as webSiteOriginOf,
+  partitionForWebSiteLogin,
+  webSiteNavigationRefusal,
+  type WebSiteBinding
+} from '../../shared/webSiteLogin'
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
@@ -488,6 +495,9 @@ export function actScript(action: CanvasActionInput): string {
     x: typeof action.x === 'number' ? action.x : null,
     y: typeof action.y === 'number' ? action.y : null,
     value: typeof action.value === 'string' ? action.value : null,
+    key: typeof action.key === 'string' ? action.key : null,
+    deltaX: typeof action.deltaX === 'number' ? action.deltaX : null,
+    deltaY: typeof action.deltaY === 'number' ? action.deltaY : null,
     expectedInputEpoch:
       typeof action.expectedInputEpoch === 'number' ? action.expectedInputEpoch : null
   })
@@ -518,6 +528,7 @@ export function actScript(action: CanvasActionInput): string {
     }
     if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
     if (!el && a.x != null && a.y != null) el = document.elementFromPoint(a.x, a.y);
+    if (!el && a.kind === 'scroll') el = document.scrollingElement || document.documentElement;
     if (!el) return refuse('not_found', 'Element not found.', false);
 
     // 1. Still attached? A detached node accepts clicks silently.
@@ -531,12 +542,18 @@ export function actScript(action: CanvasActionInput): string {
         return refuse('stale_target', 'Target changed since the snapshot that produced this ref; re-run canvas_snapshot.', false);
       }
     }
+    if (a.kind === 'wait_for') {
+      return {
+        ok: true, found: true, action: a.kind, executed: false,
+        verified: 'unchanged', message: 'Target condition is present.'
+      };
+    }
 
     const inView = () => {
       const r = el.getBoundingClientRect();
       return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth;
     };
-    if (!inView() && typeof el.scrollIntoView === 'function') {
+    if (a.kind !== 'scroll' && !inView() && typeof el.scrollIntoView === 'function') {
       try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
     }
 
@@ -544,7 +561,7 @@ export function actScript(action: CanvasActionInput): string {
     //    click in a real browser, so refuse rather than pretend it landed.
     const rect = el.getBoundingClientRect();
     const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    if (rect.width > 0 && rect.height > 0 && cx >= 0 && cy >= 0 &&
+    if (a.kind !== 'scroll' && rect.width > 0 && rect.height > 0 && cx >= 0 && cy >= 0 &&
         cx <= window.innerWidth && cy <= window.innerHeight) {
       let hit = null;
       try { hit = document.elementFromPoint(cx, cy); } catch (e) { hit = null; }
@@ -566,6 +583,7 @@ export function actScript(action: CanvasActionInput): string {
             el.childElementCount + ':' +
             (typeof el.value === 'string' ? el.value.length : -1) + ':' +
             (el.checked === true ? 1 : 0) + ':' +
+            Number(el.scrollLeft || 0) + ':' + Number(el.scrollTop || 0) + ':' +
             (el.getAttribute('aria-expanded') || '') + ':' +
             String(el.className || '').length;
       } catch (e) { target = 'err'; }
@@ -614,6 +632,56 @@ export function actScript(action: CanvasActionInput): string {
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return settle(true);
+    }
+    if (a.kind === 'select') {
+      if (el.tagName !== 'SELECT') {
+        return refuse('not_fillable', 'Target is not a select element.', true);
+      }
+      const next = a.value == null ? '' : String(a.value);
+      const option = Array.from(el.options || []).find((candidate) =>
+        String(candidate.value) === next || String(candidate.textContent || '').trim() === next);
+      if (!option) return refuse('not_found', 'No matching select option was found.', true);
+      el.value = option.value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return settle(true, 'selected=' + String(option.value));
+    }
+    if (a.kind === 'scroll') {
+      const dx = Number.isFinite(a.deltaX) ? a.deltaX : 0;
+      const dy = Number.isFinite(a.deltaY) ? a.deltaY : 0;
+      if (dx === 0 && dy === 0) return refuse('not_found', 'Scroll requires a non-zero delta.', true);
+      if (el === document.scrollingElement || el === document.documentElement || el === document.body) {
+        try { window.scrollBy({ left: dx, top: dy, behavior: 'auto' }); }
+        catch (e) { window.scrollBy(dx, dy); }
+      } else if (typeof el.scrollBy === 'function') {
+        try { el.scrollBy({ left: dx, top: dy, behavior: 'auto' }); }
+        catch (e) { el.scrollLeft += dx; el.scrollTop += dy; }
+      } else {
+        el.scrollLeft += dx; el.scrollTop += dy;
+      }
+      return settle(true, 'scrolled');
+    }
+    if (a.kind === 'hover') {
+      const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      el.dispatchEvent(new MouseEvent('mouseover', opts));
+      el.dispatchEvent(new MouseEvent('mouseenter', opts));
+      el.dispatchEvent(new MouseEvent('mousemove', opts));
+      return settle(true, 'hovered');
+    }
+    if (a.kind === 'key') {
+      const allowed = new Set(['Enter','Escape','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+        'Home','End','PageUp','PageDown','Backspace','Delete',' ']);
+      if (!allowed.has(a.key)) {
+        return refuse('unsupported_action', 'Key is not in the structured non-text allowlist.', true);
+      }
+      try { el.focus(); } catch (e) {}
+      const opts = { key: a.key, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent('keydown', opts));
+      el.dispatchEvent(new KeyboardEvent('keyup', opts));
+      return settle(true, 'key=' + a.key);
+    }
+    if (a.kind !== 'click') {
+      return refuse('unsupported_action', 'Structured Canvas action is unsupported.', true);
     }
     try { el.focus(); } catch (e) {}
     const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
@@ -689,8 +757,36 @@ export interface CanvasWebDriverDeps {
   onNavState?: (state: CanvasNavState) => void
   /** Fired once per committed main-frame / in-page navigation (url settled). */
   onNavigationCommitted?: (state: CanvasNavState) => void
+  /** Human floating-window chrome route (service-owned for audit/serialization). */
+  onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+  /** Human asks to move this standalone surface into the app dock. */
+  onDockRequest?: () => void | Promise<void>
+  /** Human asks for another Browser tab in the same floating host. */
+  onNewTabRequest?: () => void | Promise<void>
+  /** Host window/tab was closed outside the service teardown path. */
+  onSurfaceClosed?: () => void
   /** Shared in production; injectable so driver tests stay session-local. */
   browserProfile?: CanvasBrowserProfileController
+  /**
+   * Bind this surface to ONE authorized site
+   * (docs/appdrive/authorized-site-sessions.md).
+   *
+   * Present: main-frame document navigation is fenced to the site's origins,
+   * and the profile handed in above is that site's own partition.
+   * Absent: the pre-existing unbound surface on the shared app-wide profile,
+   * with no fence - every already-shipped canvas keeps its exact behaviour.
+   *
+   * Fixed at construction and never re-assigned. Re-binding a live surface
+   * would let one canvas carry two sites' cookies in sequence, which is the
+   * state the per-site split exists to prevent.
+   */
+  siteBinding?: WebSiteBinding
+  /**
+   * A cross-origin sub-frame this bound surface refused to load. Advisory: it
+   * lets the product explain a broken embed instead of leaving the user with an
+   * inexplicably blank box. Never an allowance.
+   */
+  onEmbedBlocked?: (origin: string) => void
 }
 
 type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
@@ -709,7 +805,6 @@ export class CanvasWebDriver implements CanvasDriver {
 
   private surface: CanvasHostSurface | null = null
   private readonly partition: string
-  private allowlist: string[] = []
   private readonly networkBuffer: CanvasNetworkEntry[] = []
   private readonly networkById = new Map<number, CanvasNetworkEntry>()
   private readonly consoleEntries: CanvasConsoleEntry[] = []
@@ -734,7 +829,18 @@ export class CanvasWebDriver implements CanvasDriver {
   private userActiveUntil = 0
   private readonly onNavState?: (state: CanvasNavState) => void
   private readonly onNavigationCommitted?: (state: CanvasNavState) => void
+  private readonly onHumanNavigate?: (input: CanvasNavigateInput) => Promise<CanvasNavState>
+  private readonly onDockRequest?: () => void | Promise<void>
+  private readonly onNewTabRequest?: () => void | Promise<void>
+  private readonly onSurfaceClosed?: () => void
   private readonly browserProfile: CanvasBrowserProfileController
+  private readonly siteBinding: WebSiteBinding | null
+  private readonly onEmbedBlocked?: (origin: string) => void
+  /** De-duped for this surface, so a frame retrying in a loop reports once. */
+  private readonly reportedBlockedEmbeds = new Set<string>()
+  /** Set by the request-layer fence so a cancelled main-frame hop can be
+   *  reported by name instead of as a bare network failure. */
+  private fenceBlockedUrl: string | null = null
   private releaseProfileRegistration: (() => void) | null = null
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
@@ -743,10 +849,46 @@ export class CanvasWebDriver implements CanvasDriver {
     this.browserProfile =
       deps.browserProfile ?? new CanvasBrowserProfile({ partition: `canvas-${sessionId}` })
     this.partition = this.browserProfile.partition
+    this.siteBinding = deps.siteBinding ?? null
+    this.onEmbedBlocked = deps.onEmbedBlocked
+    // A binding and its partition are ONE invariant, not two arguments. Passing
+    // a binding alongside the shared app-wide profile yields a surface that
+    // looks fenced, passes every fence test, and still carries every other
+    // site's cookies - precisely the state the per-site split removes. Refuse
+    // the mismatch here, where both halves are in scope.
+    if (this.siteBinding && this.partition !== partitionForWebSiteLogin(this.siteBinding.siteId)) {
+      throw new Error(
+        `Canvas site binding "${this.siteBinding.siteId}" does not match the profile partition ` +
+          `"${this.partition}". A bound canvas must use that site's own partition.`
+      )
+    }
     this.createSurface = deps.createSurface ?? createBrowserWindowSurface
     this.resolveHost = deps.resolveHost
     this.onNavState = deps.onNavState
     this.onNavigationCommitted = deps.onNavigationCommitted
+    this.onHumanNavigate = deps.onHumanNavigate
+    this.onDockRequest = deps.onDockRequest
+    this.onNewTabRequest = deps.onNewTabRequest
+    this.onSurfaceClosed = deps.onSurfaceClosed
+  }
+
+  /**
+   * THE FENCE. True when this surface may commit a document navigation to `url`.
+   *
+   * Always true for an unbound surface, so nothing that shipped before site
+   * binding changes behaviour. Sub-resources never reach here: fencing them
+   * would break every site that uses a CDN, and a control that breaks the
+   * product gets switched off, which protects nothing.
+   */
+  private allowsDocumentNavigation(url: string): boolean {
+    if (!this.siteBinding) return true
+    return isNavigationAllowedForOrigins(this.siteBinding.authorizedOrigins, url)
+  }
+
+  /** Throwing form, for the paths that owe the caller a reason. */
+  private assertDocumentNavigationAllowed(url: string): void {
+    if (!this.siteBinding || this.allowsDocumentNavigation(url)) return
+    throw new Error(webSiteNavigationRefusal(this.siteBinding, url))
   }
 
   private requireSurface(): CanvasHostSurface {
@@ -784,20 +926,21 @@ export class CanvasWebDriver implements CanvasDriver {
     }
     const lifecycleGeneration = this.lifecycleGeneration
     const assertOpenStillLive = (): void => {
-      if (
-        this.closeRequested ||
-        lifecycleGeneration !== this.lifecycleGeneration
-      ) {
+      if (this.closeRequested || lifecycleGeneration !== this.lifecycleGeneration) {
         throw new Error('Canvas open was cancelled because the driver was closed.')
       }
     }
     const rawUrl = (input.url || '').trim()
-    this.allowlist = Array.isArray(input.originAllowlist) ? input.originAllowlist : []
-    const verdict = validateCanvasUrl(rawUrl, this.allowlist)
-    if (!verdict.ok || !verdict.normalizedUrl) {
-      throw new Error(verdict.reason || 'Canvas URL was rejected.')
+    let initialUrl: string | null = null
+    if (rawUrl) {
+      const verdict = validateCanvasUrl(rawUrl)
+      if (!verdict.ok || !verdict.normalizedUrl) {
+        throw new Error(verdict.reason || 'Canvas URL was rejected.')
+      }
+      this.assertDocumentNavigationAllowed(verdict.normalizedUrl)
+      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
+      initialUrl = verdict.normalizedUrl
     }
-    await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
     assertOpenStillLive()
     const viewport = resolveViewport({
       width: input.viewport?.width,
@@ -806,19 +949,33 @@ export class CanvasWebDriver implements CanvasDriver {
 
     const surface = this.createSurface({
       partition: this.partition,
+      kind: 'web',
       width: viewport.width,
       height: viewport.height
     })
     this.surface = surface
     const wc = surface.webContents
+    surface.onNavigateRequest?.((input) =>
+      this.onHumanNavigate ? this.onHumanNavigate(input) : this.navigate(input)
+    )
+    if (this.onDockRequest) surface.onDockRequest?.(this.onDockRequest)
+    if (this.onNewTabRequest) surface.onNewTabRequest?.(this.onNewTabRequest)
 
     // Single-page-browser popup policy: no new window EVER escapes the canvas,
     // but a target=_blank / window.open link navigates THIS surface in place
     // (when the URL passes the same open-gate policy), matching what a user
     // expects from a one-pane browser. A rejected URL is simply dropped.
     wc.setWindowOpenHandler((details) => {
-      const verdict = validateCanvasUrl(details.url || '', this.allowlist)
-      if (verdict.ok && verdict.normalizedUrl && !this.closeRequested) {
+      const verdict = validateCanvasUrl(details.url || '')
+      // A bound surface drops an out-of-fence popup exactly like a rejected
+      // URL. Loading it in place would be the fence's widest hole: the page
+      // chooses the target and nothing else on this path asks.
+      if (
+        verdict.ok &&
+        verdict.normalizedUrl &&
+        !this.closeRequested &&
+        this.allowsDocumentNavigation(verdict.normalizedUrl)
+      ) {
         void wc.loadURL(verdict.normalizedUrl).catch(() => {
           // Load failures surface through did-fail-load / nav-state; never throw here.
         })
@@ -830,12 +987,39 @@ export class CanvasWebDriver implements CanvasDriver {
     // http(s) requests, but only will-navigate can refuse a scheme change
     // (file:, chrome:, custom protocols) before Chromium commits it.
     wc.on('will-navigate', (event, url) => {
-      if (!validateCanvasUrl(url || '', this.allowlist).ok) event.preventDefault()
+      if (!validateCanvasUrl(url || '').ok) {
+        event.preventDefault()
+        return
+      }
+      // In-page causes on a bound surface: a link, a script, a meta refresh.
+      if (!this.allowsDocumentNavigation(url || '')) event.preventDefault()
+    })
+    // SUB-FRAME documents. `will-navigate` never fires for these, so without
+    // this an authorized page could embed any origin it liked and that document
+    // would render inside a bound surface - and its pixels would reach
+    // canvas_screenshot, which page script could never read.
+    //
+    // Default-closed, like every other widening here: the refused origin is
+    // reported so the user can allow it in Work > Logins if the site genuinely
+    // needs it (payment frames, captchas, SSO frames). The main frame is left
+    // to will-navigate and the request layer rather than handled twice.
+    wc.on('will-frame-navigate', (details) => {
+      const framed = details as unknown as {
+        url?: string
+        isMainFrame?: boolean
+        preventDefault: () => void
+      }
+      if (framed.isMainFrame) return
+      const target = framed.url || ''
+      if (this.allowsDocumentNavigation(target)) return
+      framed.preventDefault()
+      const origin = webSiteOriginOf(target)
+      if (!origin || this.reportedBlockedEmbeds.has(origin)) return
+      this.reportedBlockedEmbeds.add(origin)
+      this.onEmbedBlocked?.(origin)
     })
     this.hardenWebContents(wc)
-    // The origin allowlist is enforced per-request in attachNetwork via
-    // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
-    // and websockets — the navigation events only see the main frame).
+    // The fixed metadata deny rule is enforced per request in attachNetwork.
     wc.on('console-message', (details) => {
       this.pushConsole({
         level: normalizeConsoleLevel((details as { level?: unknown }).level),
@@ -851,18 +1035,21 @@ export class CanvasWebDriver implements CanvasDriver {
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
       this.releaseBrowserProfile()
+      this.onSurfaceClosed?.()
     })
 
-    await this.loadUrl(wc, verdict.normalizedUrl)
+    if (initialUrl) await this.loadUrl(wc, initialUrl)
     assertOpenStillLive()
+    surface.setNavigationState?.(this.navState())
     return {
-      url: wc.getURL() || verdict.normalizedUrl,
+      url: wc.getURL() || initialUrl || 'about:blank',
       title: surface.getTitle(),
       viewport
     }
   }
 
   private loadUrl(wc: WebContents, url: string): Promise<void> {
+    this.fenceBlockedUrl = null
     return new Promise<void>((resolvePromise, reject) => {
       let settled = false
       const finish = (err?: Error): void => {
@@ -886,6 +1073,11 @@ export class CanvasWebDriver implements CanvasDriver {
         // browser path, which only logs did-fail-load) and let did-finish-load
         // or the timeout settle.
         if (isMainFrame && errorCode !== -3) {
+          const fenced = this.fenceBlockedUrl
+          if (fenced && this.siteBinding) {
+            finish(new Error(webSiteNavigationRefusal(this.siteBinding, fenced)))
+            return
+          }
           finish(new Error(`Navigation failed (${errorCode}): ${errorDescription} [${validatedURL}]`))
         }
       }
@@ -945,11 +1137,13 @@ export class CanvasWebDriver implements CanvasDriver {
    * committed callback's consumer redacts before any durable write).
    */
   private attachNavigationWatch(wc: WebContents): void {
-    if (!this.onNavState && !this.onNavigationCommitted) return
+    if (!this.onNavState && !this.onNavigationCommitted && !this.surface?.setNavigationState) return
     const emitState = (): void => {
       if (this.closeRequested || !this.surface || this.surface.isDestroyed()) return
       try {
-        this.onNavState?.(this.navState())
+        const state = this.navState()
+        this.surface.setNavigationState?.(state)
+        this.onNavState?.(state)
       } catch {
         // A chrome listener must never break the page lifecycle.
       }
@@ -981,7 +1175,7 @@ export class CanvasWebDriver implements CanvasDriver {
       // Teardown tolerance: report a chrome-safe default.
     }
     return {
-      url: wc.getURL() || '',
+      url: wc.getURL() || 'about:blank',
       title: surface.getTitle(),
       isLoading,
       canGoBack: history.canGoBack,
@@ -1031,13 +1225,14 @@ export class CanvasWebDriver implements CanvasDriver {
       throw new Error('Provide exactly one of `url` or `action` to navigate.')
     }
     if (rawUrl) {
-      // Same open-gate + DNS policy as the initial load: http(s) only,
-      // link-local/metadata blocked, private hosts only via the allowlist.
-      const verdict = validateCanvasUrl(rawUrl, this.allowlist)
+      // Same open gate + DNS policy as the initial load: http(s) only, with a
+      // fixed link-local/metadata deny rule and no host allowlist.
+      const verdict = validateCanvasUrl(rawUrl)
       if (!verdict.ok || !verdict.normalizedUrl) {
         throw new Error(verdict.reason || 'Canvas URL was rejected.')
       }
-      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
+      this.assertDocumentNavigationAllowed(verdict.normalizedUrl)
+      await assertCanvasDnsAllowed(verdict.normalizedUrl, this.resolveHost)
       if (this.closeRequested) {
         throw new Error('Canvas navigation was cancelled because the driver was closed.')
       }
@@ -1123,9 +1318,22 @@ export class CanvasWebDriver implements CanvasDriver {
     this.releaseBrowserProfile()
     this.releaseProfileRegistration = this.browserProfile.register(wc, {
       shouldBlock: (details) => {
-        // Egress-cut during eval takes precedence over per-host SSRF policy:
+        // Egress-cut during eval takes precedence over the metadata deny rule:
         // while a script is running, NOTHING leaves this canvas.
-        if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url, this.allowlist)) {
+        if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url)) {
+          return true
+        }
+        // The site fence, at the request layer. This is the backstop that
+        // catches what will-navigate cannot see: a 30x from an authorized
+        // origin to an unauthorized one issues a fresh main-frame request and
+        // never fires will-navigate. Sub-resources are deliberately exempt.
+        if (details.resourceType === 'mainFrame' && !this.allowsDocumentNavigation(details.url)) {
+          // Remember it: a cancelled request surfaces as ERR_BLOCKED_BY_CLIENT,
+          // and the one gate that exists BECAUSE will-navigate cannot see it
+          // would otherwise be the only gate that cannot explain itself. An
+          // agent given a bare network error retries; one given the refusal
+          // does not.
+          this.fenceBlockedUrl = details.url
           return true
         }
         return this.dnsBlocked(details.url).catch(() => true)
@@ -1172,10 +1380,10 @@ export class CanvasWebDriver implements CanvasDriver {
       return Promise.resolve(false)
     }
     if (!parsed.hostname) return Promise.resolve(false)
-    const key = `${parsed.protocol}//${parsed.hostname}|${this.allowlist.join(',')}`
+    const key = `${parsed.protocol}//${parsed.hostname}`
     let cached = this.dnsBlockCache.get(key)
     if (!cached) {
-      cached = isCanvasDnsBlocked(url, this.allowlist, this.resolveHost)
+      cached = isCanvasDnsBlocked(url, this.resolveHost)
       this.dnsBlockCache.set(key, cached)
       if (this.dnsBlockCache.size > 256) {
         const first = this.dnsBlockCache.keys().next().value
@@ -1332,7 +1540,7 @@ export class CanvasWebDriver implements CanvasDriver {
     // the same task as dispatch, while the main input-event epoch remains an
     // independent defence against input the isolated listener could not observe.
     const refuse = (
-      refusalReason: 'user_active' | 'stale_input_epoch',
+      refusalReason: 'user_active' | 'stale_input_epoch' | 'site_read_only',
       message: string
     ): CanvasActResult => ({
       ok: false,
@@ -1347,7 +1555,24 @@ export class CanvasWebDriver implements CanvasDriver {
       url: wc.getURL(),
       title: surface.getTitle()
     })
-    if (Date.now() < this.userActiveUntil) {
+    // A site the user granted READ access to is not actuable, whatever the
+    // run's permission tier says. This is enforced here rather than at the
+    // executor because act() is the single entry every actuation verb passes
+    // through, so one check covers click/fill/key/scroll/hover/select and any
+    // verb added later. `wait_for` is bounded read-only and stays allowed.
+    if (
+      action.kind !== 'wait_for' &&
+      this.siteBinding &&
+      this.siteBinding.agentAccess === 'read'
+    ) {
+      return refuse(
+        'site_read_only',
+        `The saved login "${this.siteBinding.siteId}" is set to read-only, so this canvas can be ` +
+          `read but not acted in. Do not retry. If this action is needed, ask the user to change ` +
+          `that site to "Agents can act as me" in Work > Logins.`
+      )
+    }
+    if (action.kind !== 'wait_for' && Date.now() < this.userActiveUntil) {
       return refuse(
         'user_active',
         'The user is interacting with this canvas. Wait for them to finish, then re-snapshot.'
@@ -1365,15 +1590,39 @@ export class CanvasWebDriver implements CanvasDriver {
       // input can arrive after this main-process check and before injection.
     }
 
-    const result = await this.executeCanvasScript<{
+    type InjectedActResult = {
       ok: boolean
       found: boolean
-      action: 'click' | 'fill'
+      action: CanvasActionInput['kind']
       executed?: boolean
       verified?: CanvasActVerification
       refusalReason?: CanvasActRefusalReason
       message?: string
-    }>(wc, actScript(action))
+    }
+    let result: InjectedActResult
+    if (action.kind === 'wait_for') {
+      const timeoutMs = Math.max(0, Math.min(30_000, Math.trunc(action.timeoutMs ?? 5_000)))
+      const deadline = Date.now() + timeoutMs
+      while (true) {
+        result = await this.executeCanvasScript<InjectedActResult>(wc, actScript(action))
+        if (result.ok && result.found) break
+        if (Date.now() >= deadline) {
+          result = {
+            ok: false,
+            found: false,
+            action: 'wait_for',
+            executed: false,
+            verified: 'unknown',
+            refusalReason: 'wait_timeout',
+            message: `Target did not appear within ${timeoutMs}ms.`
+          }
+          break
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
+      }
+    } else {
+      result = await this.executeCanvasScript<InjectedActResult>(wc, actScript(action))
+    }
     return {
       ...result,
       // Fail honest: an injected result missing these is treated as "we cannot

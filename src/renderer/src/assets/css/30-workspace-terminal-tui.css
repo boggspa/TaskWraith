@@ -9,20 +9,36 @@
  * ============================================================ */
 
 /* -------------------------------------------------------------------------
- * Pane outer shell — replace glass gradient + agent chase with flat TUI box
+ * Pane outer shell — replace glass gradient + agent chase with a flat,
+ * contained card that feels at home in both the composer dock and the
+ * Terminal-tab workbench grid.
  * ---------------------------------------------------------------------- */
 
 .workspace-terminal-split.terminal-panel--pane {
   background: #0a0e14;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* A static accent edge keeps the terminal legible without making it an
+   * animated surface. */
+  border: 1px solid rgb(var(--agent-accent-rgb) / 0.34);
+  border-radius: var(--radius-md, 8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 .workspace-terminal-split.terminal-panel--pane::after {
+  /* Defeat the legacy `.workspace-terminal-split::after` chase declared in
+   * 02-transcript-messages-fx.css as well as any future pane-local rim. */
+  content: none;
   display: none;
+}
+
+/* Light themes: the terminal bed stays dark (xterm palette), but the static
+ * border needs a little more contrast next to bright transcript shells. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])
+  .workspace-terminal-split.terminal-panel--pane {
+  border-color: rgb(var(--agent-accent-rgb) / 0.44);
 }
 
 /* Reduce-transparency / high-contrast fallback stays honest: opaque bed. */
@@ -31,21 +47,62 @@
   border-color: rgba(255, 255, 255, 0.12);
 }
 
+/* Focus-within ring so the active terminal announces itself without glowing
+ * chrome everywhere. */
+.workspace-terminal-split.terminal-panel--pane:focus-within {
+  border-color: rgb(var(--agent-accent-rgb) / 0.62);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgb(var(--agent-accent-rgb) / 0.12);
+}
+
+/* native_glass restyles `.workspace-terminal-split` as frosted vibrancy
+ * chrome in 06 (0,3,0) and 08 light themes (0,4,0). That beats the pane
+ * card (0,2,0) and turns the opaque terminal back into a glass surface.
+ * (0,4,0) here is intentional — late + tied-or-higher, still requiring
+ * `.terminal-panel--pane` so Gemini / right-dock / inspector splits keep
+ * their glass. */
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .workspace-terminal-split.terminal-panel--pane {
+  background: #0a0e14;
+  border-color: rgb(var(--agent-accent-rgb) / 0.34);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'], [data-theme='alabaster'])[data-appearance='native_glass'][data-reduce-transparency='false']
+  .workspace-terminal-split.terminal-panel--pane {
+  border-color: rgb(var(--agent-accent-rgb) / 0.44);
+}
+
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .workspace-terminal-split.terminal-panel--pane:focus-within {
+  border-color: rgb(var(--agent-accent-rgb) / 0.62);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgb(var(--agent-accent-rgb) / 0.12);
+}
+
 /* -------------------------------------------------------------------------
  * Compact mono HUD header
  * ---------------------------------------------------------------------- */
 
 .terminal-panel--pane .terminal-panel-header {
   flex: 0 0 auto;
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: 500;
@@ -61,6 +118,11 @@
 .terminal-panel--pane .terminal-panel-close {
   appearance: none;
   -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  min-height: 22px;
   margin: 0;
   padding: 0 4px;
   border: 0;
@@ -77,6 +139,11 @@
 .terminal-panel--pane .terminal-panel-close:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-primary);
+}
+
+.terminal-panel--pane .terminal-panel-close:focus-visible {
+  outline: 2px solid rgb(var(--agent-accent-rgb) / 0.5);
+  outline-offset: 1px;
 }
 
 /* -------------------------------------------------------------------------
@@ -123,4 +190,248 @@
 .is-resizing-workspace-terminal .workspace-terminal-resize-divider::before {
   background: rgba(255, 255, 255, 0.35);
   box-shadow: none;
+}
+
+/* -------------------------------------------------------------------------
+ * Workbench multiview — contained cards inside an outer gutter
+ *
+ * The Terminal tab used to be a full-bleed overlay with 1px grid gaps as
+ * separators. We keep the overlay geometry but pad the root so the panes
+ * read as floating cards, and we give each pane its own border so the grid
+ * can drop the full-bleed separator hack.
+ * ---------------------------------------------------------------------- */
+
+.terminal-workbench-root {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-md);
+  background: #05080d;
+}
+
+.terminal-workbench-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: #05080d;
+  gap: var(--space-md);
+}
+
+.terminal-workbench-empty-icon {
+  opacity: 0.5;
+}
+
+.terminal-workbench-empty-icon svg {
+  width: 64px;
+  height: 64px;
+}
+
+.terminal-workbench-new-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.terminal-workbench-new-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.terminal-workbench-grid {
+  flex: 1;
+  display: grid;
+  gap: var(--space-sm);
+  background: transparent;
+  overflow: hidden;
+}
+
+/* 1 pane */
+.terminal-workbench-grid[data-count="1"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+/* 2 panes: stacked split */
+.terminal-workbench-grid[data-count="2"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* 3 panes: two stacked left + one tall right */
+.terminal-workbench-grid[data-count="3"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.terminal-workbench-grid[data-count="3"] > :nth-child(3) {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+/* 4 panes: quad */
+.terminal-workbench-grid[data-count="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Workbench panes reuse the composer `.workspace-terminal-split` class, which
+ * carries absolute composer-dock geometry (left/right/bottom/height). Reset
+ * those here so the grid owns sizing; otherwise each pane would float out of
+ * the grid and lock to a fixed 260px height. */
+.terminal-workbench-pane-wrapper.workspace-terminal-split.terminal-panel--pane {
+  position: relative;
+  inset: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  max-width: none;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Slightly quieter border inside the dense grid so adjacent cards read as
+   * siblings, not one thick continuous frame. */
+  border-color: rgb(var(--agent-accent-rgb) / 0.24);
+  isolation: isolate;
+}
+
+.terminal-workbench-pane-wrapper.workspace-terminal-split.terminal-panel--pane:focus-within {
+  border-color: rgb(var(--agent-accent-rgb) / 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgb(var(--agent-accent-rgb) / 0.12);
+}
+
+/* The native_glass pane restore above is (0,4,0) and would thicken this
+ * grid's quieter 0.24/0.72 edge; keep the extra class so density stays. */
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .terminal-workbench-pane-wrapper.workspace-terminal-split.terminal-panel--pane {
+  border-color: rgb(var(--agent-accent-rgb) / 0.24);
+}
+
+[data-appearance='native_glass'][data-reduce-transparency='false']
+  .terminal-workbench-pane-wrapper.workspace-terminal-split.terminal-panel--pane:focus-within {
+  border-color: rgb(var(--agent-accent-rgb) / 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgb(var(--agent-accent-rgb) / 0.12);
+}
+
+.terminal-workbench-pane-wrapper .terminal-panel-body {
+  height: 100%;
+}
+
+/* Terminal tab sidebar: use the same stacked hierarchy as Chat and Code.
+ * Row copy owns one compact column so long commands and workspace paths never
+ * become the oversized second column produced by the generic flex row. */
+.sidebar-terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.terminal-sidebar-section {
+  gap: var(--sidebar-section-body-gap, 4px);
+}
+
+.terminal-sidebar-section .sidebar-section-header {
+  margin-bottom: 0;
+}
+
+.terminal-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-sidebar .terminal-sidebar-row {
+  min-height: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  gap: 6px;
+}
+
+.terminal-sidebar-row-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.terminal-sidebar-row-title,
+.terminal-sidebar-row-detail {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-sidebar-row-title {
+  color: color-mix(in srgb, var(--sidebar-text) 92%, transparent);
+  font-size: var(--sidebar-row-font-size);
+  font-weight: 550;
+}
+
+.terminal-sidebar-row-detail {
+  color: var(--sidebar-text-secondary);
+  font-size: calc(var(--sidebar-row-font-size) * 0.82);
+}
+
+.terminal-sidebar-running-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--success, #34d399);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success, #34d399) 16%, transparent);
+}
+
+.app-sidebar .terminal-sidebar-row-action {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sidebar-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.app-sidebar .terminal-sidebar-row-action:hover,
+.app-sidebar .terminal-sidebar-row-action:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent) !important;
+  color: var(--text-primary);
+  opacity: 1;
+  outline: none;
+}
+
+.app-sidebar .terminal-sidebar-row-action-kill:hover,
+.app-sidebar .terminal-sidebar-row-action-kill:focus-visible {
+  color: var(--danger, #e2554f);
 }

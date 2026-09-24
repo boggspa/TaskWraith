@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CANVAS_FILL_RESULT_REDACTED,
+  COMPUTER_USE_RESULT_REDACTED,
   OLLAMA_COMPRESSION_PRESSURE_SHARE,
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
@@ -106,6 +107,7 @@ describe('OllamaRunMemory', () => {
     const limits = resolveOllamaWorkingMemoryLimits('ornith:35b')
     expect(limits.toolResultMaxChars).toBeGreaterThanOrEqual(1000)
     expect(limits.workingMemoryMaxChars).toBeGreaterThan(10_000)
+    expect(resolveOllamaWorkingMemoryLimits('ornith-1.5:35b')).toEqual(limits)
     expect(resolveOllamaWorkingMemoryLimits('lfm2.5:8b').workingMemoryMaxChars).toBeGreaterThan(
       resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
     )
@@ -141,6 +143,15 @@ describe('OllamaRunMemory', () => {
       resolveOllamaWorkingMemoryLimits('nemotron-3.5-lightning:30b-mlx').toolResultMaxChars
     ).toBe(1200)
     expect(resolveOllamaWorkingMemoryLimits('qwen3.8:27b-mlx').toolResultMaxChars).toBe(1200)
+    expect(
+      resolveOllamaWorkingMemoryLimits('qwen3.8-flash-next:125b-mlx').toolResultMaxChars
+    ).toBe(1200)
+    expect(resolveOllamaWorkingMemoryLimits('mistral-medium-3.5:128b').toolResultMaxChars).toBe(
+      1200
+    )
+    expect(resolveOllamaWorkingMemoryLimits('granite4.2:3b').toolResultMaxChars).toBe(420)
+    expect(resolveOllamaWorkingMemoryLimits('granite4.2:8b').toolResultMaxChars).toBe(760)
+    expect(resolveOllamaWorkingMemoryLimits('granite4.2:30b').toolResultMaxChars).toBe(1200)
     for (const modelId of [
       'ministral-3:3b',
       'granite4:3b',
@@ -175,6 +186,36 @@ describe('OllamaRunMemory', () => {
     const pruned = pruneOllamaSessionMemoryForPersist(memory)
 
     expect(pruned.workingMemory).toHaveLength(6000)
+  })
+
+  it('never retains opaque permission-opportunity ids in live or legacy trajectory memory', () => {
+    const permissionOpportunityId = `twp_${'p'.repeat(43)}`
+    const memory = appendOllamaTrajectoryEntry(
+      createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      {
+        toolName: 'redeem_permission_opportunity',
+        args: { permissionOpportunityId },
+        ok: false,
+        resultSummary: `redemption failed for ${permissionOpportunityId}`
+      }
+    )
+    expect(JSON.stringify(memory)).not.toContain(permissionOpportunityId)
+
+    const persisted = pruneOllamaSessionMemoryForPersist({
+      ...createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      workingMemory: `prior native echo ${permissionOpportunityId}`,
+      toolTurnCount: 1,
+      trajectory: [
+        {
+          toolName: 'redeem_permission_opportunity',
+          argsSummary: `permissionOpportunityId=${permissionOpportunityId}`,
+          ok: false,
+          resultSummary: `embedded output ${permissionOpportunityId}`
+        }
+      ]
+    })
+    expect(JSON.stringify(persisted)).not.toContain(permissionOpportunityId)
+    expect(JSON.stringify(persisted)).toContain('[redacted permission opportunity]')
   })
 
   it('retains only an approval-bound receipt for direct canvas_eval trajectory', () => {
@@ -327,6 +368,171 @@ describe('OllamaRunMemory', () => {
 
     expect(JSON.stringify(persisted)).not.toContain(secret)
     expect(persisted.trajectory?.[0]?.resultSummary).toBe(CANVAS_FILL_RESULT_REDACTED)
+  })
+
+  it('retains only computer_use metadata across direct, gateway and permission-retry routes', () => {
+    const secret = '__COMPUTER_USE_INPUT_SECRET__'
+    const observation = '__COMPUTER_USE_OBSERVATION_SECRET__'
+    const args = { action: 'fill', fill: { ref: 'field-1', text: secret } }
+    const retry = { toolName: 'computer_use', arguments: args, failure: observation }
+    const routes = [
+      { toolName: 'computer_use', args },
+      { toolName: 'mcp__taskwraith__computer_use', args },
+      { toolName: 'capability_invoke', args: { name: 'computer_use', arguments: args } },
+      { toolName: 'request_tool_permission', args: retry },
+      {
+        toolName: 'capability_invoke',
+        args: { name: 'request_tool_permission', arguments: retry }
+      },
+      { toolName: 'computer_use', args: { action: 'observe' } }
+    ]
+    let memory = createEmptyOllamaSessionMemory('ornith:35b')
+    for (const [index, route] of routes.entries()) {
+      memory = appendOllamaTrajectoryEntry(memory, {
+        ...route,
+        ok: index % 2 === 0,
+        resultSummary: JSON.stringify({ text: observation, permissionRetry: retry })
+      })
+    }
+    const persisted = pruneOllamaSessionMemoryForPersist(memory)
+    for (const projected of [memory, persisted]) {
+      expect(JSON.stringify(projected)).not.toContain(secret)
+      expect(JSON.stringify(projected)).not.toContain(observation)
+      expect(projected.trajectory).toHaveLength(routes.length)
+      for (const [index, entry] of projected.trajectory!.entries()) {
+        expect(entry).toEqual({
+          toolName: routes[index].toolName,
+          effectiveToolName: 'computer_use',
+          argsSummary: expect.stringContaining('arguments=[redacted]'),
+          ok: index % 2 === 0,
+          resultSummary: COMPUTER_USE_RESULT_REDACTED
+        })
+      }
+    }
+    expect(args.fill.text).toBe(secret)
+  })
+
+  it('re-sanitizes legacy computer_use memory on load and at persistence', () => {
+    const secret = '__LEGACY_COMPUTER_USE_SECRET__'
+    const trajectory = [
+      { toolName: 'computer_use', argsSummary: `computer_use fill.text=${secret}` },
+      {
+        toolName: 'capability_invoke',
+        argsSummary: `capability_invoke name=computer_use text=${secret}`
+      },
+      {
+        toolName: 'request_tool_permission',
+        argsSummary: `request_tool_permission target=computer_use text=${secret}`
+      },
+      {
+        toolName: 'capability_invoke',
+        argsSummary: `capability_invoke name=request_tool_permission target=computer_use text=${secret}`
+      },
+      {
+        toolName: 'capability_invoke',
+        effectiveToolName: 'computer_use',
+        argsSummary: secret
+      }
+    ].map((entry) => ({ ...entry, ok: false, resultSummary: secret, rawResult: secret }))
+    const legacy = {
+      ...createEmptyOllamaSessionMemory('ornith:35b'),
+      workingMemory: secret,
+      trajectory
+    }
+    const loaded = normalizeOllamaSessionMemoryMap({ 'chat-1': legacy })['chat-1']
+    for (const memory of [loaded, pruneOllamaSessionMemoryForPersist(legacy)]) {
+      expect(JSON.stringify(memory)).not.toContain(secret)
+      expect(memory.trajectory).toHaveLength(trajectory.length)
+      expect(memory.workingMemory).toContain(COMPUTER_USE_RESULT_REDACTED)
+      for (const entry of memory.trajectory!) {
+        expect(entry.effectiveToolName).toBe('computer_use')
+        expect(entry.resultSummary).toBe(COMPUTER_USE_RESULT_REDACTED)
+        expect(entry).not.toHaveProperty('rawResult')
+      }
+    }
+  })
+
+  it.each([
+    { target: 'computer_use', redactedResult: COMPUTER_USE_RESULT_REDACTED },
+    { target: 'canvas_fill', redactedResult: CANVAS_FILL_RESULT_REDACTED }
+  ])('re-sanitizes malformed prefixed $target call summaries', ({ target, redactedResult }) => {
+    const argumentSecret = '__MALFORMED_ARGUMENT_SECRET__'
+    const resultSecret = '__MALFORMED_RESULT_SECRET__'
+    const prefixed = (name: string): string => `mcp__TaskWraith__${name}`
+    const routes = [
+      {
+        toolName: prefixed(target),
+        argsSummary: `${prefixed(target)} malformed=${argumentSecret}`,
+        safeSummary: `${prefixed(target)}`
+      },
+      {
+        toolName: prefixed('capability_invoke'),
+        argsSummary: `${prefixed('capability_invoke')} name=${prefixed(target)} malformed=${argumentSecret}`,
+        safeSummary: `${prefixed('capability_invoke')} name=${target}`
+      },
+      {
+        toolName: prefixed('request_tool_permission'),
+        argsSummary: `${prefixed('request_tool_permission')} target=${prefixed(target)} malformed=${argumentSecret}`,
+        safeSummary: `${prefixed('request_tool_permission')} target=${target}`
+      },
+      {
+        toolName: prefixed('capability_invoke'),
+        argsSummary: `${prefixed('capability_invoke')} name=${prefixed('request_tool_permission')} target=${prefixed(target)} malformed=${argumentSecret}`,
+        safeSummary: `${prefixed('capability_invoke')} name=request_tool_permission target=${target}`
+      }
+    ]
+    const legacy = {
+      ...createEmptyOllamaSessionMemory('ornith:35b'),
+      workingMemory: `${argumentSecret} ${resultSecret}`,
+      // No effectiveToolName survives malformed argument parsing. Only the
+      // prefixed identities in the old text summary identify the protected call.
+      trajectory: routes.map(({ toolName, argsSummary }) => ({
+        toolName,
+        argsSummary,
+        ok: false,
+        resultSummary: resultSecret
+      }))
+    }
+    const loaded = normalizeOllamaSessionMemoryMap({ 'chat-1': legacy })['chat-1']
+    for (const projected of [loaded, pruneOllamaSessionMemoryForPersist(legacy)]) {
+      expect(JSON.stringify(projected)).not.toContain(argumentSecret)
+      expect(JSON.stringify(projected)).not.toContain(resultSecret)
+      for (const [index, entry] of projected.trajectory!.entries()) {
+        expect(entry).toEqual({
+          toolName: routes[index].toolName,
+          effectiveToolName: target,
+          argsSummary: `${routes[index].safeSummary} ${target === 'canvas_fill' ? 'value' : 'arguments'}=[redacted]`,
+          ok: false,
+          resultSummary: redactedResult
+        })
+      }
+    }
+  })
+
+  it('rebuilds working memory when a sensitive computer_use entry is pruned out', () => {
+    const secret = '__PRUNED_COMPUTER_USE_SECRET__'
+    const recentEntries = Array.from({ length: 8 }, (_, index) => ({
+      toolName: 'read_file',
+      argsSummary: `read_file path=file-${index}.txt`,
+      ok: true,
+      resultSummary: `Safe result ${index}`
+    }))
+    const persisted = pruneOllamaSessionMemoryForPersist({
+      ...createEmptyOllamaSessionMemory('ornith:35b'),
+      workingMemory: secret,
+      trajectory: [
+        {
+          toolName: 'computer_use',
+          argsSummary: secret,
+          ok: true,
+          resultSummary: secret
+        },
+        ...recentEntries
+      ]
+    })
+    expect(JSON.stringify(persisted)).not.toContain(secret)
+    expect(persisted.trajectory).toEqual(recentEntries)
+    expect(persisted.workingMemory).toContain('Safe result 7')
   })
 
   it('keeps ensemble Ollama memory buckets isolated by safe seat key', () => {

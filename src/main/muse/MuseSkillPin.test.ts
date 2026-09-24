@@ -82,6 +82,22 @@ describe('MuseSkillPin', () => {
     }
   })
 
+  it('enables Muse-native delegation only for signed UltraTask consent', () => {
+    const ordinary = buildMuseSkillPinSettings('off')
+    expect(ordinary.run).toBeUndefined()
+    expect(serializeMuseSkillPinSettings(ordinary)).not.toContain('subagent_delegation_mode')
+
+    const ultraTask = buildMuseSkillPinSettings('off', {
+      ultraTaskDelegationAutoAllow: true
+    })
+    expect(ultraTask.run).toEqual({ subagent_delegation_mode: 'auto' })
+    expect(JSON.parse(serializeMuseSkillPinSettings(ultraTask))).toMatchObject({
+      schema_version: 1,
+      run: { subagent_delegation_mode: 'auto' },
+      skills: ordinary.skills
+    })
+  })
+
   it('expects on-disk inventory to include listable skills plus create-plugin', () => {
     const dirs = expectedMuseBundledSkillDirectoryNames()
     expect(dirs).toContain('create-plugin')

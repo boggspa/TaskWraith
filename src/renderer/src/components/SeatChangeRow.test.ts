@@ -33,6 +33,13 @@ describe('SeatChangeRow composer-parity contract', () => {
     expect(rowSource).toContain('`var(--provider-${view.hue}-color, var(--accent))`')
   })
 
+  it('forwards Muse and Ollama return-seat effort into the shared formatter', () => {
+    const start = rowSource.indexOf('function seatSideView(')
+    const region = rowSource.slice(start, rowSource.indexOf('function formatSeatChangeTime('))
+    expect(region).toContain('museReasoningEffort: state.reasoningEffort')
+    expect(region).toContain('ollamaReasoningEffort: state.reasoningEffort')
+  })
+
   it('renders the role right-aligned in the provider accent, with the #N seat number', () => {
     expect(rowSource).toContain('className="seat-change-role"')
     // The tint lives in `seatRoleLabel`, the one function every seat surface
@@ -233,7 +240,7 @@ describe('seat-change chrome strip CSS', () => {
     // "first selector only" regex would miss Muse `ultra` / `max` siblings.
     const sweptTiers = new Set<string>()
     const triggerRule =
-      /\.composer-combined-picker-trigger(?:\.seat-change-chip)?\[data-selected-reasoning="[a-z]+"\][\s\S]*?\{([^}]*)\}/g
+      /\.composer-combined-picker-trigger(?:\.seat-change-chip)?\[data-selected-reasoning="[a-zA-Z]+"\][\s\S]*?\{([^}]*)\}/g
     for (const match of cssSource.matchAll(triggerRule)) {
       const body = match[1] ?? ''
       if (!body.includes('background-clip')) continue
@@ -242,14 +249,14 @@ describe('seat-change chrome strip CSS', () => {
       // the swept set; seat-change rules are checked as the repaint set below.
       if (block.includes('.digit-odometer__cell')) continue
       if (!block.includes('.composer-combined-picker-trigger-suffix')) continue
-      for (const tier of block.matchAll(/data-selected-reasoning="([a-z]+)"/g)) {
+      for (const tier of block.matchAll(/data-selected-reasoning="([a-zA-Z]+)"/g)) {
         sweptTiers.add(tier[1]!)
       }
     }
     const repainted = new Set(
       [
         ...cssSource.matchAll(
-          /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
+          /\.composer-combined-picker-trigger\.seat-change-chip\[data-selected-reasoning="([a-zA-Z]+)"\]\s*\n\s*\.composer-combined-picker-trigger-suffix\s*\n\s*\.digit-odometer__cell/g
         )
       ].map(([, tier]) => tier)
     )
@@ -480,5 +487,48 @@ describe('SeatRosterStack — the agent built a roster mid-round', () => {
     // The strip must never set `color`: permission/hue tints flow into the
     // reused composer classes and a colour here kills them.
     expect(block).not.toContain('color:')
+  })
+})
+
+describe('SeatParticipantAddedRow — user added a participant mid-round', () => {
+  const start = rowSource.indexOf('function SeatParticipantAddedRow(')
+  const region = start >= 0 ? rowSource.slice(start) : ''
+
+  it('exists and is reached by narrowing the SHARED carrier', () => {
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(rowSource).toContain('isSeatParticipantAddedPayload')
+    expect(rowSource).toContain('SeatParticipantAddedPayload')
+  })
+
+  it('renders a single static seat strip — no roll, no before, no expand button', () => {
+    expect(region).toContain('<SeatClusterChip')
+    expect(region).toContain('<SeatPermissionChip')
+    expect(region).toContain('animate={false}')
+    expect(region).not.toContain('animate />')
+    expect(region).not.toContain('<button')
+    expect(region).not.toContain('onClick')
+    expect(region).not.toContain('seat-change-was')
+  })
+
+  it('shows the chair glyph and an "(Added)" note like seat-change chrome', () => {
+    expect(region).toContain('<SeatChairIcon />')
+    expect(region).toContain('(Added)')
+    expect(region).toContain('className="seat-change-added-note"')
+  })
+
+  it('keeps the timestamp as the row’s last element, after the added note', () => {
+    const noteAt = region.indexOf('className="seat-change-added-note"')
+    const timeAt = region.indexOf('className="seat-change-time"')
+    expect(noteAt).toBeGreaterThanOrEqual(0)
+    expect(timeAt).toBeGreaterThan(noteAt)
+  })
+
+  it('styles the added note as row chrome, not as a chip', () => {
+    const cssStart = cssSource.indexOf('.seat-change-added-note {')
+    expect(cssStart).toBeGreaterThanOrEqual(0)
+    const block = cssSource.slice(cssStart, cssSource.indexOf('}', cssStart))
+    expect(block).toContain('var(--font-size-xs)')
+    expect(block).not.toContain('background:')
+    expect(block).not.toContain('border:')
   })
 })

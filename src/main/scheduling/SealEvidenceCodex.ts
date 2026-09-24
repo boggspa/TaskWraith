@@ -6,7 +6,7 @@ import {
   requireAbsoluteCodexHome
 } from '../codex/CodexHome'
 import { buildCodexAppServerThreadLaunchPlan } from '../codex/CodexAppServerThreadLaunchPlan'
-import { codexSandboxForMode } from '../codex/CodexRunPolicy'
+import { resolveDesktopCodexSandboxControls } from '../codex/CodexRunPolicy'
 import { isFullShellAccessGranted } from '../EffectiveRunPermissions'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type {
@@ -38,8 +38,8 @@ import {
  * The app-server daemon process plan is shared directly with
  * CodexAppServerClient.start. The per-run thread/start-or-resume request is
  * built by the same immutable request-plan helper intended for the dispatch
- * site. Index-owned approval/sandbox closures remain injected so a host policy
- * change is automatically an evidence change here.
+ * site. The index-owned approval closure remains injected; sandbox mode and
+ * per-turn policy come from the same shared controls resolver as live dispatch.
  *
  * This producer is deliberately not production-wired yet. The live adapter
  * can rewrite private-home continuity and MCP prompt claims after the
@@ -55,8 +55,7 @@ export const CODEX_SCHEDULED_SEAL_READINESS = {
     'post-seal-private-home-continuity-rewrite',
     'post-seal-mcp-prompt-rewrite',
     'reusable-daemon-launch-generation-not-bound',
-    'runtime-profile-posture-applied-after-seal',
-    'full-access-native-sandbox-verifier-mismatch'
+    'runtime-profile-posture-applied-after-seal'
   ]
 } as const
 
@@ -66,13 +65,6 @@ export interface CodexSealEvidenceDispatchPolicy {
     approvalMode: string | undefined,
     settings: AppSettings
   ): 'never' | 'on-request'
-  /** index.ts codexSandboxPolicyForMode — the exact dispatch closure. */
-  sandboxPolicyForMode(
-    approvalMode: string | undefined,
-    workspace: string,
-    settings: AppSettings,
-    fullAccessGranted: boolean
-  ): CanonicalEvidenceValue
 }
 
 export interface CodexSealEvidenceFacts {
@@ -105,13 +97,15 @@ export async function buildCodexSealEvidence(
   await ensureTaskWraithCodexHomeForProtectedRead(codexHome, ['auth.json', 'config.toml'])
   const fullAccessGranted = isFullShellAccessGranted(facts.effectivePermissions)
   const approvalPolicy = facts.policy.approvalPolicyForMode(facts.approvalMode, facts.settings)
-  const sandboxMode = codexSandboxForMode(facts.approvalMode, fullAccessGranted)
-  const sandboxPolicy = facts.policy.sandboxPolicyForMode(
-    facts.approvalMode,
-    facts.workspacePath,
-    facts.settings,
-    fullAccessGranted
-  )
+  const sandboxControls = resolveDesktopCodexSandboxControls({
+    approvalMode: facts.approvalMode,
+    workspace: facts.workspacePath,
+    scope: 'workspace',
+    fullAccessGranted,
+    networkAccess: facts.settings.agenticServices?.networkAccess !== 'deny'
+  })
+  const sandboxMode = sandboxControls.sandbox
+  const sandboxPolicy = sandboxControls.sandboxPolicy
   const threadLaunchPlan = buildCodexAppServerThreadLaunchPlan({
     model: facts.model,
     reasoningEffort: facts.reasoningEffort,

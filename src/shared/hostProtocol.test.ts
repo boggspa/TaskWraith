@@ -7,8 +7,14 @@ import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
   HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
+  HOST_PROTOCOL_MAX_WARNING,
+  hostRunFailureNotice,
+  hostRunFailureReason,
+  isBootEpoch,
   HOST_QUESTION_ANSWER_MAX_CHARS,
+  HOST_QUEUED_START_PHASES,
   HOST_RECEIPT_STATUSES,
+  HOST_THREAD_RECORD_TRANSFER_MAX_BYTES,
   applyHostDeltaCursor,
   assertHostSnapshotFamilies,
   buildHostBootstrapWelcome,
@@ -22,6 +28,8 @@ import {
   decodeHostDeltasSinceResult,
   decodeHostHealthFrame,
   decodeHostHealthProjection,
+  decodeHostStatusProjection,
+  HOST_STATUS_MAX_CLIENTS,
   decodeHostSnapshot,
   decodeHostSnapshotFrame,
   evaluateHostIdempotencyFingerprints,
@@ -34,7 +42,8 @@ import {
   type HostCommand,
   type HostCommandReceipt,
   type HostCapability,
-  type HostDeltaEnvelope
+  type HostDeltaEnvelope,
+  type HostStatusProjection
 } from './hostProtocol'
 
 const client = {
@@ -349,6 +358,47 @@ describe('Host protocol Wave 2A contract', () => {
     }
   })
 
+  it('accepts only strict discriminated setup result references', () => {
+    expect(
+      decodeHostCommandReceipt(
+        sampleReceipt({
+          name: 'workspace.register',
+          resultRef: { kind: 'workspace', workspaceId: 'workspace-1' }
+        })
+      )
+    ).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'workspace', workspaceId: 'workspace-1' } }
+    })
+    expect(
+      decodeHostCommandReceipt(
+        sampleReceipt({
+          name: 'provider.auth.cancel',
+          resultRef: {
+            kind: 'provider-auth',
+            providerId: 'provider-1',
+            operationId: 'operation-1'
+          }
+        })
+      )
+    ).toMatchObject({
+      ok: true,
+      value: { resultRef: { kind: 'provider-auth', operationId: 'operation-1' } }
+    })
+    expect(
+      decodeHostCommandReceipt({
+        ...sampleReceipt(),
+        resultRef: { kind: 'workspace', id: 'workspace-1' }
+      })
+    ).toMatchObject({ ok: false, error: 'resultRef is invalid' })
+    expect(
+      decodeHostCommandReceipt({
+        ...sampleReceipt({ status: 'failed' }),
+        resultRef: { kind: 'thread', threadId: 'thread-1' }
+      })
+    ).toMatchObject({ ok: false, error: 'resultRef requires a succeeded receipt' })
+  })
+
   it('requires lowercase SHA-256 hex commandFingerprint on receipts', () => {
     expect(isHostCommandFingerprint(FP_EMPTY_SHA256)).toBe(true)
     expect(normalizeHostCommandFingerprint(` ${FP_A.toUpperCase()} `)).toBe(FP_A)
@@ -393,6 +443,39 @@ describe('Host protocol Wave 2A contract', () => {
       ok: false,
       error: 'commandFingerprint must be lowercase SHA-256 hex'
     })
+  })
+
+  it('round-trips the M2 queued-start receipt phase and rejects invalid markers', () => {
+    // Exact-set pin first so the round-trip loop below cannot go vacuous if
+    // the phase allowlist is ever emptied or widened silently.
+    expect(HOST_QUEUED_START_PHASES).toEqual(['queued', 'starting', 'started'])
+
+    // Known phases ride the wire unchanged (Amendment A1.3): queued/starting
+    // are pending-status markers; started is a phase marker separate from
+    // receipt status.
+    for (const phase of HOST_QUEUED_START_PHASES) {
+      const decoded = decodeHostCommandReceipt(sampleReceipt({ status: 'pending', phase }))
+      if (!decoded.ok) throw new Error(`expected phase ${phase} to decode`)
+      expect(decoded.value.phase).toBe(phase)
+    }
+
+    // Absent stays absent — never defaulted, never invented
+    // (exactOptionalPropertyTypes discipline).
+    const absent = decodeHostCommandReceipt(sampleReceipt())
+    if (!absent.ok) throw new Error('expected receipt without phase to decode')
+    expect('phase' in absent.value).toBe(false)
+
+    // Unknown, empty, non-string and null markers are rejected: seat
+    // decoders are allowlists, and a foreign phase must not slip through as
+    // pseudo-absent.
+    for (const phase of ['launching', '', 42, null] as unknown[]) {
+      expect(
+        decodeHostCommandReceipt({
+          ...sampleReceipt({ status: 'pending' }),
+          phase
+        })
+      ).toEqual({ ok: false, error: 'receipt phase is invalid' })
+    }
   })
 
   it('detects same-idempotency-key / different-fingerprint conflicts', () => {
@@ -502,6 +585,201 @@ describe('Host protocol Wave 2A contract', () => {
       generation: 3,
       cursor: 10
     })
+  })
+
+  it('accepts only bounded descriptor-only thread.record.persist commands', () => {
+    const descriptor = {
+      transferId: '11111111-1111-4111-8111-111111111111',
+      sha256: 'a'.repeat(64),
+      byteLength: 512 * 1024,
+      expectedRevision: 7
+    }
+    const decoded = decodeHostCommand(
+      sampleCommand({
+        name: 'thread.record.persist',
+        target: { threadId: 'thread-1' },
+        arguments: descriptor
+      })
+    )
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.persist',
+        target: { threadId: 'thread-1' },
+        arguments: descriptor
+      }
+    })
+    expect(descriptor.byteLength).toBeGreaterThan(256 * 1024)
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: 'a'.repeat(128) }
+        })
+      ).ok
+    ).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: 'a'.repeat(129) }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'thread.record.persist transferId is invalid'
+    })
+
+    for (const smuggled of [
+      { ...descriptor, record: { appChatId: 'thread-1' } },
+      { ...descriptor, path: '/tmp/record.json' }
+    ]) {
+      expect(
+        decodeHostCommand(
+          sampleCommand({
+            name: 'thread.record.persist',
+            target: { threadId: 'thread-1' },
+            arguments: smuggled
+          })
+        )
+      ).toMatchObject({
+        ok: false,
+        error: 'thread.record.persist has unknown argument keys'
+      })
+    }
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, transferId: '../escape' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist transferId is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, sha256: 'A'.repeat(64) }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'thread.record.persist sha256 must be lowercase SHA-256 hex'
+    })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, byteLength: HOST_THREAD_RECORD_TRANSFER_MAX_BYTES + 1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist byteLength is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.persist',
+          target: { threadId: 'thread-1' },
+          arguments: { ...descriptor, expectedRevision: -1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.persist expectedRevision is invalid' })
+  })
+
+  it('accepts only an exact revision-bound thread.record.delete command', () => {
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: 7 }
+        })
+      )
+    ).toMatchObject({
+      ok: true,
+      value: {
+        name: 'thread.record.delete',
+        target: { threadId: 'thread-1' },
+        arguments: { expectedRevision: 7 }
+      }
+    })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: -1 }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.delete expectedRevision is invalid' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'thread.record.delete',
+          target: { threadId: 'thread-1' },
+          arguments: { expectedRevision: 7, path: '/tmp/chat.json' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'thread.record.delete has unknown argument keys' })
+  })
+
+  it('accepts bounded Desktop workspace record commands without caller-asserted realPath', () => {
+    const upsert = decodeHostCommand(
+      sampleCommand({
+        name: 'workspace.record.upsert',
+        target: { workspaceId: 'workspace-1' },
+        arguments: {
+          path: '/workspace',
+          displayName: 'Workspace',
+          createdAt: 10,
+          lastOpenedAt: 20,
+          pinned: false,
+          branch: 'main',
+          geminiWorktree: { enabled: true, name: 'agy' }
+        }
+      })
+    )
+    expect(upsert.ok).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.record.upsert',
+          target: { workspaceId: 'workspace-1' },
+          arguments: {
+            path: '/workspace',
+            realPath: '/caller-asserted',
+            displayName: 'Workspace',
+            createdAt: 10,
+            lastOpenedAt: 20,
+            pinned: false
+          }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'workspace.record.upsert has unknown argument keys' })
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.record.remove',
+          target: { workspaceId: 'workspace-1' },
+          arguments: {}
+        })
+      ).ok
+    ).toBe(true)
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'workspace.records.clear',
+          target: {},
+          arguments: {}
+        })
+      ).ok
+    ).toBe(true)
   })
 
   it('requires typed question.answer and approval.decide arguments', () => {
@@ -615,6 +893,11 @@ describe('Host protocol Wave 2A contract', () => {
   })
 
   it('intersects capabilities in stable host order without inventing entries', () => {
+    expect(HOST_CAPABILITY_ORDER).toContain('workspace-git')
+    expect(
+      intersectHostCapabilities(HOST_CAPABILITY_ORDER, ['workspace-git' as HostCapability])
+    ).toEqual(['workspace-git'])
+
     expect(
       intersectHostCapabilities(
         ['snapshot', 'deltas', 'commands', 'receipts', 'health'],
@@ -808,6 +1091,9 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       latestPreview: 'progress',
       previewTruncated: false,
       providerId: 'codex',
+      modelId: 'gpt-5.6',
+      reasoningEffort: 'high',
+      permissionPresetId: 'workspace_write',
       missionOutcome: 'active',
       activeRoundId: 'round-1'
     })
@@ -844,6 +1130,9 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       providerId: 'cursor',
       role: 'CursorWork3',
       modelId: 'grok-4.5',
+      reasoningEffort: 'xhigh',
+      thinkingEnabled: false,
+      permissionPresetId: 'workspace_write',
       stage: 'worker',
       order: 4,
       enabled: true,
@@ -924,6 +1213,13 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       ok: false,
       error: expect.stringContaining('participants[0].threadId is required')
     })
+
+    const invalidParticipantPosture = JSON.parse(JSON.stringify(populated))
+    invalidParticipantPosture.participants[0].thinkingEnabled = 'yes'
+    expect(decodeHostSnapshot(invalidParticipantPosture)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('participants[0].thinkingEnabled is invalid')
+    })
   })
 
   it('rejects adversarial snapshot values without inventing families', () => {
@@ -938,10 +1234,10 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       })
     ).toMatchObject({ ok: false, error: 'unsupported protocol version' })
 
-    const missingHealth = createEmptyHostSnapshot({ generation: 1, cursor: 0 }) as Record<
-      string,
-      unknown
-    >
+    const missingHealth = createEmptyHostSnapshot({
+      generation: 1,
+      cursor: 0
+    }) as unknown as Record<string, unknown>
     delete missingHealth.health
     expect(decodeHostSnapshot(missingHealth)).toMatchObject({
       ok: false,
@@ -1237,6 +1533,110 @@ describe('Host protocol Wave 2D-1 read frames', () => {
     ).toMatchObject({ ok: false, error: 'hostId is required' })
   })
 
+  it('carries an optional bootEpoch through mint and decode, and rejects malformed epochs', () => {
+    const BOOT_EPOCH = '0123456789abcdef'.repeat(4)
+    const mintInput = {
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-epoch-1',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: client,
+      hostCapabilityOffer: ['bootstrap', 'snapshot'] as readonly HostCapability[],
+      clientCapabilityRequest: ['snapshot'] as readonly HostCapability[],
+      freshness: 'live' as const
+    }
+
+    // With an epoch: mint → wire → decode round-trip preserves it exactly.
+    const minted = buildHostBootstrapWelcome({ ...mintInput, bootEpoch: BOOT_EPOCH })
+    expect(minted.ok).toBe(true)
+    if (minted.ok) {
+      expect(minted.value.bootEpoch).toBe(BOOT_EPOCH)
+      const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(minted.value)))
+      expect(decoded).toEqual(minted)
+    }
+
+    // Without an epoch: the legacy wire shape is preserved — no new key.
+    const legacy = buildHostBootstrapWelcome(mintInput)
+    expect(legacy.ok).toBe(true)
+    if (legacy.ok) {
+      expect(Object.prototype.hasOwnProperty.call(legacy.value, 'bootEpoch')).toBe(false)
+      const decoded = decodeHostBootstrapWelcome(JSON.parse(JSON.stringify(legacy.value)))
+      expect(decoded).toEqual(legacy)
+    }
+
+    // Malformed epochs are refused at decode, and therefore at mint.
+    const valid = legacy.ok ? legacy.value : undefined
+    for (const bootEpoch of [
+      '0123456789ABCDEF'.repeat(4), // uppercase hex
+      BOOT_EPOCH.slice(0, 63), // 63 characters
+      BOOT_EPOCH + '0', // 65 characters
+      'g' + '0'.repeat(63), // non-hex
+      '', // empty
+      42,
+      null
+    ]) {
+      expect(decodeHostBootstrapWelcome({ ...valid, bootEpoch })).toMatchObject({
+        ok: false,
+        error: 'bootEpoch must be 64 lowercase hex characters when present'
+      })
+      expect(buildHostBootstrapWelcome({ ...mintInput, bootEpoch: bootEpoch as string }).ok).toBe(
+        false
+      )
+    }
+  })
+
+  it('exports isBootEpoch as the shared rule, matching what the codec enforces', () => {
+    const BOOT_EPOCH = '0123456789abcdef'.repeat(4)
+    const mintInput = {
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-epoch-guard',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: client,
+      hostCapabilityOffer: ['bootstrap', 'snapshot'] as readonly HostCapability[],
+      clientCapabilityRequest: ['snapshot'] as readonly HostCapability[],
+      freshness: 'live' as const
+    }
+
+    // The standalone mint and the local server import this guard instead of
+    // re-deriving the pattern, so its contract is load-bearing OUTSIDE this
+    // module. Everything above reaches the rule only THROUGH decode/mint: if
+    // the guard were weakened while decode kept a private check of its own,
+    // this file would stay green while both Host modules silently began
+    // accepting epochs the collector will later refuse. Pin it directly.
+    expect(isBootEpoch(BOOT_EPOCH)).toBe(true)
+    expect(isBootEpoch('a'.repeat(64))).toBe(true)
+
+    for (const rejected of [
+      '0123456789ABCDEF'.repeat(4), // uppercase hex
+      BOOT_EPOCH.slice(0, 63), // 63 characters
+      BOOT_EPOCH + '0', // 65 characters
+      'g' + '0'.repeat(63), // non-hex
+      ` ${BOOT_EPOCH}`, // leading space — the anchors, not a bare .test
+      `${BOOT_EPOCH}\n`, // trailing newline — $ alone would accept this
+      '', // empty
+      42,
+      null,
+      undefined
+    ]) {
+      expect(isBootEpoch(rejected)).toBe(false)
+    }
+
+    // The guard and the decoder must agree, or the wire and the Host modules
+    // would enforce different rules from the same source file.
+    const valid = buildHostBootstrapWelcome(mintInput)
+    expect(valid.ok).toBe(true)
+    for (const candidate of [BOOT_EPOCH, 'A'.repeat(64), 'zz', '']) {
+      const decoded = decodeHostBootstrapWelcome({
+        ...(valid.ok ? valid.value : {}),
+        bootEpoch: candidate
+      })
+      expect(decoded.ok).toBe(isBootEpoch(candidate))
+    }
+  })
+
   it('keeps read-shaped HostCommandName values wire-compatible', () => {
     for (const name of ['snapshot.get', 'deltas.since', 'receipt.lookup', 'ping'] as const) {
       const decoded = decodeHostCommand(
@@ -1249,5 +1649,190 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       )
       expect(decoded.ok).toBe(true)
     }
+  })
+
+  describe('run failure legibility', () => {
+    // The Host always knew why a run failed; the reason stopped at this wire,
+    // so clients could only render a bare `provider:failed`.
+    it('composes one reason from the summaries a run actually carried', () => {
+      expect(hostRunFailureReason(['model not advertised'])).toBe('model not advertised')
+      expect(hostRunFailureReason(['first', 'second'])).toBe('first · second')
+    })
+
+    it('returns undefined rather than an empty string when there is nothing to say', () => {
+      // '' would concatenate into a dangling `Run failed · ` — the bug in
+      // miniature, and the reason this returns undefined instead.
+      expect(hostRunFailureReason(undefined)).toBeUndefined()
+      expect(hostRunFailureReason([])).toBeUndefined()
+      expect(hostRunFailureReason([''])).toBeUndefined()
+      expect(hostRunFailureReason(['   ', '\t'])).toBeUndefined()
+      expect(hostRunFailureNotice([''])).toBeUndefined()
+    })
+
+    it('drops blank entries instead of joining them into empty separators', () => {
+      expect(hostRunFailureReason(['alpha', '  ', 'beta'])).toBe('alpha · beta')
+    })
+
+    it('bounds an over-long reason without ending mid-separator', () => {
+      const reason = hostRunFailureReason(['x'.repeat(50), 'y'.repeat(50)], 20)
+      expect(reason).toBeDefined()
+      expect((reason as string).length).toBeLessThanOrEqual(20)
+      expect(reason?.endsWith('…')).toBe(true)
+      expect(reason?.endsWith('· ')).toBe(false)
+    })
+
+    it('prefixes the transcript notice once, in one place', () => {
+      expect(hostRunFailureNotice(['provider exited with code 1'])).toBe(
+        'Run failed · provider exited with code 1'
+      )
+    })
+
+    it('carries errorCode and failureReason across the wire', () => {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 1 })
+      snapshot.runs.push({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        providerId: 'claude',
+        providerOutcome: 'failed',
+        errorCode: 'provider_failed',
+        failureReason: 'Provider running state recovered after Host restart.'
+      })
+      const decoded = decodeHostSnapshot(JSON.parse(JSON.stringify(snapshot)))
+      expect(decoded.ok).toBe(true)
+      if (decoded.ok) {
+        expect(decoded.value.runs[0]).toMatchObject({
+          errorCode: 'provider_failed',
+          failureReason: 'Provider running state recovered after Host restart.'
+        })
+      }
+    })
+
+    it('rejects an unbounded failureReason rather than trusting the sender', () => {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 1 })
+      snapshot.runs.push({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        providerId: 'claude',
+        providerOutcome: 'failed',
+        failureReason: 'z'.repeat(HOST_PROTOCOL_MAX_WARNING + 1)
+      })
+      expect(decodeHostSnapshot(JSON.parse(JSON.stringify(snapshot))).ok).toBe(false)
+    })
+  })
+})
+
+describe('decodeHostStatusProjection (Host-lifetime programme)', () => {
+  const EPOCH = 'e'.repeat(64)
+  const valid = (): HostStatusProjection => ({
+    pid: 4242,
+    startedAt: '2026-09-23T00:00:00.000Z',
+    uptimeMs: 123_456,
+    hostId: 'host-1',
+    bootEpoch: EPOCH,
+    payloadVersion: `sha256:${'a'.repeat(64)}`,
+    profilePath: '/profiles/one',
+    persist: false,
+    lifetime: {
+      phase: 'grace',
+      graceRemainingMs: 30_000,
+      holders: 0,
+      implicitHolders: 0,
+      declined: 1
+    },
+    liveWork: { runs: 0 },
+    clients: [
+      {
+        clientClass: 'tui',
+        clientId: 'tui-1',
+        displayName: 'Terminal',
+        connectedForMs: 1_000,
+        lease: 'explicit',
+        capabilities: ['bootstrap', 'health']
+      },
+      { clientClass: 'ios', connectedForMs: 5, lease: 'declined', capabilities: ['bootstrap'] }
+    ]
+  })
+
+  it('decodes a full projection and drops unknown keys at every level', () => {
+    const padded = {
+      ...valid(),
+      secret: 'nope',
+      lifetime: { ...valid().lifetime, token: 'nope' },
+      liveWork: { runs: 2, threads: ['t'] },
+      clients: [{ ...valid().clients[0], subjectId: 'device-key' }]
+    }
+    const decoded = decodeHostStatusProjection(padded)
+    expect(decoded).toEqual({
+      ok: true,
+      value: { ...valid(), liveWork: { runs: 2 }, clients: [valid().clients[0]] }
+    })
+    expect(JSON.stringify(decoded)).not.toContain('nope')
+    expect(JSON.stringify(decoded)).not.toContain('device-key')
+  })
+
+  it('keeps optional fields absent, not undefined, when the wire omits them', () => {
+    const minimal = valid()
+    delete minimal.bootEpoch
+    delete minimal.payloadVersion
+    minimal.lifetime = { phase: 'held', holders: 1, implicitHolders: 1, declined: 0 }
+    const decoded = decodeHostStatusProjection(minimal)
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    for (const key of ['bootEpoch', 'payloadVersion']) {
+      expect(Object.prototype.hasOwnProperty.call(decoded.value, key)).toBe(false)
+    }
+    expect(Object.prototype.hasOwnProperty.call(decoded.value.lifetime, 'graceRemainingMs')).toBe(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(decoded.value.clients[1], 'clientId')).toBe(false)
+  })
+
+  it('fails closed on every out-of-bounds field', () => {
+    const cases: Array<[string, (value: ReturnType<typeof valid>) => unknown]> = [
+      ['pid zero', (v) => ({ ...v, pid: 0 })],
+      ['pid fractional', (v) => ({ ...v, pid: 1.5 })],
+      ['startedAt not a date', (v) => ({ ...v, startedAt: 'yesterday' })],
+      ['uptime negative', (v) => ({ ...v, uptimeMs: -1 })],
+      ['hostId empty', (v) => ({ ...v, hostId: '' })],
+      ['bootEpoch uppercase', (v) => ({ ...v, bootEpoch: 'E'.repeat(64) })],
+      ['payloadVersion unprefixed', (v) => ({ ...v, payloadVersion: 'a'.repeat(64) })],
+      ['profilePath empty', (v) => ({ ...v, profilePath: '' })],
+      ['profilePath oversized', (v) => ({ ...v, profilePath: `/${'p'.repeat(4_096)}` })],
+      ['startedAt oversized', (v) => ({ ...v, startedAt: `${v.startedAt}${' '.repeat(64)}` })],
+      ['persist string', (v) => ({ ...v, persist: 'yes' })],
+      ['phase unknown', (v) => ({ ...v, lifetime: { ...v.lifetime, phase: 'zombie' } })],
+      ['holders negative', (v) => ({ ...v, lifetime: { ...v.lifetime, holders: -1 } })],
+      ['grace fractional', (v) => ({ ...v, lifetime: { ...v.lifetime, graceRemainingMs: 0.5 } })],
+      ['liveWork missing', (v) => ({ ...v, liveWork: {} })],
+      ['client lease unknown', (v) => ({ ...v, clients: [{ ...v.clients[0], lease: 'maybe' }] })],
+      [
+        'client class unknown',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], clientClass: 'web' }] })
+      ],
+      [
+        'client id oversized',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], clientId: 'c'.repeat(513) }] })
+      ],
+      [
+        'client capability unknown',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], capabilities: ['teleport'] }] })
+      ],
+      [
+        'client displayName oversized',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], displayName: 'x'.repeat(201) }] })
+      ],
+      [
+        'too many clients',
+        (v) => ({
+          ...v,
+          clients: Array.from({ length: HOST_STATUS_MAX_CLIENTS + 1 }, () => v.clients[1])
+        })
+      ]
+    ]
+    for (const [label, mutate] of cases) {
+      const decoded = decodeHostStatusProjection(mutate(valid()))
+      expect(decoded.ok, label).toBe(false)
+    }
+    expect(decodeHostStatusProjection(null).ok).toBe(false)
   })
 })

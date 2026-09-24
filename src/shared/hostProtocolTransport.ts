@@ -1,3 +1,12 @@
+import {
+  decodeThreadCatalogueReadQuery,
+  decodeThreadCatalogueMaintenanceQuery,
+  type ThreadCatalogueMaintenanceQuery,
+  decodeThreadCatalogueWireReply,
+  THREAD_CATALOGUE_WIRE_MAX_BYTES,
+  type ThreadCatalogueReadQuery,
+  type ThreadCatalogueWireReply
+} from './threadCatalogueProtocol'
 /**
  * Host local transport envelope (Wave 3.2).
  *
@@ -23,9 +32,33 @@ import type {
   HostCursorPosition,
   HostDeltasFrame,
   HostHealthFrame,
-  HostSnapshotFrame
+  HostSnapshotFrame,
+  HostStatusProjection
 } from './hostProtocol'
+import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from './providerModelCatalogLimits'
 import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
+import {
+  decodeHostHistoryDeltasFrame,
+  decodeHostHistorySinceRequest,
+  decodeHostHistorySinceResult,
+  decodeHostThreadHistoryPage,
+  decodeHostThreadHistoryRequest,
+  type HostHistoryDeltasFrame,
+  type HostHistorySinceRequest,
+  type HostHistorySinceResult,
+  type HostThreadHistoryPage,
+  type HostThreadHistoryRequest
+} from './hostHistoryProtocol'
+import {
+  decodeHostProviderAuthFlows,
+  decodeHostProviderAuthStatusProjection,
+  decodeHostProviderOffersProjection,
+  decodeHostProviderStatuses,
+  type HostProviderAuthFlowProjection,
+  type HostProviderAuthStatusProjection,
+  type HostProviderOffersProjection,
+  type HostProviderStatusProjection
+} from './hostSetupProtocol'
 
 /** Local Host transport envelope version — distinct from HOST_PROTOCOL_VERSION. */
 export const HOST_LOCAL_TRANSPORT_VERSION = 1 as const
@@ -37,6 +70,68 @@ export const HOST_LOCAL_TRANSPORT_MAX_ID = 512
 
 /** Bounded auth token length on the hello frame (opaque; never logged here). */
 export const HOST_LOCAL_TRANSPORT_MAX_TOKEN = 512
+
+/** Maximum serialized workspace Git success-result size (including JSON escaping). */
+export const HOST_WORKSPACE_GIT_RESULT_MAX_BYTES = 128 * 1024
+
+/** Bounded workspace-relative path carried by a Git read request or status row. */
+export const HOST_WORKSPACE_GIT_MAX_PATH = 4_096
+
+export const HOST_WORKSPACE_GIT_READ_SCOPES = ['status', 'diff', 'log'] as const
+
+export type HostWorkspaceGitReadScope = (typeof HOST_WORKSPACE_GIT_READ_SCOPES)[number]
+
+export const HOST_WORKSPACE_GIT_FILE_KINDS = [
+  'created',
+  'modified',
+  'deleted',
+  'renamed',
+  'untracked',
+  'conflicted',
+  'ignored'
+] as const
+
+export type HostWorkspaceGitFileKind = (typeof HOST_WORKSPACE_GIT_FILE_KINDS)[number]
+
+export type HostWorkspaceGitReadParams =
+  | {
+      workspaceId: string
+      threadId?: undefined
+      scope: HostWorkspaceGitReadScope
+      path?: string
+    }
+  | {
+      threadId: string
+      workspaceId?: undefined
+      scope: HostWorkspaceGitReadScope
+      path?: string
+    }
+
+export interface HostWorkspaceGitStatusFile {
+  path: string
+  originalPath?: string
+  index: string
+  workingTree: string
+  kind: HostWorkspaceGitFileKind
+  staged: boolean
+  unstaged: boolean
+}
+
+interface HostWorkspaceGitReadResultBase {
+  branch: string | null
+  head: string | null
+  truncated: boolean
+}
+
+export type HostWorkspaceGitReadResult =
+  | (HostWorkspaceGitReadResultBase & {
+      scope: 'status'
+      files: readonly HostWorkspaceGitStatusFile[]
+    })
+  | (HostWorkspaceGitReadResultBase & {
+      scope: 'diff' | 'log'
+      text: string
+    })
 
 /**
  * Closed body-free error codes. Never attach message/prose/args — callers map
@@ -52,7 +147,8 @@ export const HOST_LOCAL_TRANSPORT_ERROR_CODES = [
   'invalid_token',
   'invalid_payload',
   'unauthorized',
-  'host_unavailable'
+  'host_unavailable',
+  'shutting_down'
 ] as const
 
 export type HostLocalTransportErrorCode = (typeof HOST_LOCAL_TRANSPORT_ERROR_CODES)[number]
@@ -65,15 +161,43 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'snapshot.get',
   'deltas.since',
   'thread.offers',
+  'provider.status',
+  'provider.offers',
+  'provider.auth.flows',
+  'provider.auth.status',
+  'thread.history',
+  'thread.catalogue',
+  'thread.catalogue.maintenance',
+  'workspace.git.read',
+  'history.since',
   'receipt.lookup',
   'health.get',
+  'host.shutdown',
   'command.submit',
-  'twmission.export'
+  'twmission.export',
+  // Host-lifetime programme: request kinds only. An old Host answers both with
+  // `unknown_request_kind` on a connection it keeps, the one additive change
+  // this wire tolerates in both directions; a new capability name would break
+  // every old client's welcome decode, and a new event would just be skipped.
+  'host.lease',
+  'host.status'
 ] as const
 
 export type HostLocalTransportRequestKind = (typeof HOST_LOCAL_TRANSPORT_REQUEST_KINDS)[number]
 
-export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = ['deltas', 'health', 'host.closing'] as const
+/** Closed `host.lease` params; anything else is `invalid_payload`. */
+export type HostLocalTransportLeaseParams =
+  | { action: 'acquire' }
+  | { action: 'renew'; leaseId: string }
+  | { action: 'release'; leaseId: string }
+  | { action: 'decline' }
+
+export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = [
+  'deltas',
+  'history',
+  'health',
+  'host.closing'
+] as const
 
 export type HostLocalTransportEventKind = (typeof HOST_LOCAL_TRANSPORT_EVENT_KINDS)[number]
 
@@ -88,6 +212,10 @@ export interface HostLocalTransportHello {
 export type HostLocalTransportReceiptLookupParams =
   | { commandId: string; idempotencyKey?: undefined }
   | { idempotencyKey: string; commandId?: undefined }
+
+export interface HostLocalTransportProviderIdParams {
+  providerId: string
+}
 
 export type HostLocalTransportRequest =
   | {
@@ -115,6 +243,57 @@ export type HostLocalTransportRequest =
       type: 'request'
       transportVersion: HostLocalTransportVersion
       id: string
+      kind: 'provider.status'
+      params: Record<string, never>
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'provider.offers' | 'provider.auth.flows' | 'provider.auth.status'
+      params: HostLocalTransportProviderIdParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.history'
+      params: HostThreadHistoryRequest
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.catalogue'
+      params: ThreadCatalogueReadQuery
+      /** Omitted foreground stays byte-compatible with older Host decoders. */
+      priority?: 'background'
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'thread.catalogue.maintenance'
+      params: ThreadCatalogueMaintenanceQuery
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'workspace.git.read'
+      params: HostWorkspaceGitReadParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'history.since'
+      params: HostHistorySinceRequest
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
       kind: 'receipt.lookup'
       params: HostLocalTransportReceiptLookupParams
     }
@@ -123,6 +302,13 @@ export type HostLocalTransportRequest =
       transportVersion: HostLocalTransportVersion
       id: string
       kind: 'health.get'
+      params: Record<string, never>
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'host.shutdown'
       params: Record<string, never>
     }
   | {
@@ -139,6 +325,20 @@ export type HostLocalTransportRequest =
       kind: 'twmission.export'
       params: Record<string, never>
     }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'host.lease'
+      params: HostLocalTransportLeaseParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'host.status'
+      params: Record<string, never>
+    }
 
 export type HostLocalTransportClientFrame = HostLocalTransportHello | HostLocalTransportRequest
 
@@ -153,10 +353,38 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'snapshot.get'; frame: HostSnapshotFrame }
   | { kind: 'deltas.since'; frame: HostDeltasFrame }
   | { kind: 'thread.offers'; offers: TaskWraithControlThreadOffers }
+  | { kind: 'provider.status'; statuses: readonly HostProviderStatusProjection[] }
+  | { kind: 'provider.offers'; offers: HostProviderOffersProjection }
+  | { kind: 'provider.auth.flows'; flows: readonly HostProviderAuthFlowProjection[] }
+  | { kind: 'provider.auth.status'; status: HostProviderAuthStatusProjection }
+  | { kind: 'thread.history'; page: HostThreadHistoryPage }
+  | { kind: 'thread.catalogue'; reply: ThreadCatalogueWireReply }
+  | { kind: 'thread.catalogue.maintenance'; reply: ThreadCatalogueWireReply }
+  | { kind: 'workspace.git.read'; result: HostWorkspaceGitReadResult }
+  | { kind: 'history.since'; result: HostHistorySinceResult }
   | { kind: 'receipt.lookup'; receipt: HostCommandReceipt }
   | { kind: 'health.get'; frame: HostHealthFrame }
+  | { kind: 'host.shutdown'; state: 'stopping' | 'already_stopping' }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
   | { kind: 'twmission.export'; result: Record<string, unknown> }
+  | {
+      kind: 'host.lease'
+      action: 'acquire'
+      leaseId: string
+      heartbeatMs: number
+      ttlMs: number
+      /** Host monotonic ms, display only — never compared with a client clock. */
+      hostNowMs: number
+    }
+  | { kind: 'host.lease'; action: 'renew'; leaseId: string; expiresInMs: number; hostNowMs: number }
+  | { kind: 'host.lease'; action: 'release'; released: true }
+  | { kind: 'host.lease'; action: 'decline'; declined: true }
+  /**
+   * Shape-checked here; the consumer applies hostProtocol's strict
+   * `decodeHostStatusProjection`, exactly as snapshot and health frames are
+   * deep-decoded past this layer.
+   */
+  | { kind: 'host.status'; status: HostStatusProjection }
 
 export type HostLocalTransportResponse =
   | {
@@ -185,6 +413,13 @@ export type HostLocalTransportEvent =
       event: 'deltas'
       sequence: number
       payload: HostDeltasFrame
+    }
+  | {
+      type: 'event'
+      transportVersion: HostLocalTransportVersion
+      event: 'history'
+      sequence: number
+      payload: HostHistoryDeltasFrame
     }
   | {
       type: 'event'
@@ -267,11 +502,79 @@ function isOptionalBoundedString(value: unknown, max: number): boolean {
   )
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed)
+  return Object.keys(value).every((key) => allowedSet.has(key))
+}
+
+function isWorkspaceGitReadScope(value: unknown): value is HostWorkspaceGitReadScope {
+  return (
+    typeof value === 'string' &&
+    (HOST_WORKSPACE_GIT_READ_SCOPES as readonly string[]).includes(value)
+  )
+}
+
+function isWorkspaceGitFileKind(value: unknown): value is HostWorkspaceGitFileKind {
+  return (
+    typeof value === 'string' &&
+    (HOST_WORKSPACE_GIT_FILE_KINDS as readonly string[]).includes(value)
+  )
+}
+
+function isSafeWorkspaceGitPath(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > HOST_WORKSPACE_GIT_MAX_PATH ||
+    value.includes('\0')
+  ) {
+    return false
+  }
+  if (value.startsWith('/') || value.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(value)) {
+    return false
+  }
+  const segments = value.split(/[\\/]/)
+  return segments.every((segment) => segment.length > 0 && segment !== '..')
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x7f) {
+      bytes += 1
+    } else if (code <= 0x7ff) {
+      bytes += 2
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4
+        index += 1
+      } else {
+        bytes += 3
+      }
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
+}
+
+function serializedJsonByteLength(value: unknown): number | null {
+  try {
+    const encoded = JSON.stringify(value)
+    return typeof encoded === 'string' ? utf8ByteLength(encoded) : null
+  } catch {
+    return null
+  }
+}
+
 function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadOffers {
   if (!isRecord(value)) return false
   if (!isBoundedId(value.threadId) || value.source !== 'curated') return false
   if (!isOptionalBoundedString(value.currentModel, 200)) return false
   if (!isOptionalBoundedString(value.currentReasoningEffort, 80)) return false
+  if (!isOptionalBoundedString(value.currentPostureId, 80)) return false
   if (!isOptionalBoundedString(value.locked, 1_000)) return false
   if (!isRecord(value.provider)) return false
   for (const key of [
@@ -287,7 +590,30 @@ function hasThreadOffersShape(value: unknown): value is TaskWraithControlThreadO
   }
   if (!isOptionalBoundedString(value.provider.model, 200)) return false
   if (!isOptionalBoundedString(value.provider.modelLabel, 200)) return false
-  if (!Array.isArray(value.models) || value.models.length > 40) return false
+  if (
+    !Array.isArray(value.models) ||
+    value.models.length > PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER
+  ) {
+    return false
+  }
+  if (value.postures !== undefined) {
+    if (!Array.isArray(value.postures) || value.postures.length > 16) return false
+    if (
+      !value.postures.every(
+        (posture) =>
+          isRecord(posture) &&
+          isOptionalBoundedString(posture.id, 80) &&
+          posture.id !== undefined &&
+          isOptionalBoundedString(posture.label, 200) &&
+          posture.label !== undefined &&
+          isOptionalBoundedString(posture.disabledReason, 1_000) &&
+          (posture.disabled === undefined || typeof posture.disabled === 'boolean') &&
+          typeof posture.requiresExplicitConsent === 'boolean'
+      )
+    ) {
+      return false
+    }
+  }
   return value.models.every((model) => {
     if (!isRecord(model) || !isOptionalBoundedString(model.id, 200) || model.id === undefined) {
       return false
@@ -397,6 +723,201 @@ function decodeThreadOffersParams(
   return { ok: true, value: { threadId: value.threadId } }
 }
 
+function decodeProviderIdParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostLocalTransportProviderIdParams> {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || !isBoundedId(value.providerId)) {
+    return fail('invalid_payload')
+  }
+  return { ok: true, value: { providerId: value.providerId } }
+}
+
+function isPositiveInt(value: unknown): value is number {
+  return isNonNegativeInt(value) && value > 0
+}
+
+function decodeLeaseParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostLocalTransportLeaseParams> {
+  if (!isRecord(value)) return fail('invalid_payload')
+  switch (value.action) {
+    case 'acquire':
+    case 'decline':
+      if (Object.keys(value).length !== 1) return fail('invalid_payload')
+      return { ok: true, value: { action: value.action } }
+    case 'renew':
+    case 'release':
+      if (Object.keys(value).length !== 2 || !isBoundedId(value.leaseId)) {
+        return fail('invalid_payload')
+      }
+      return { ok: true, value: { action: value.action, leaseId: value.leaseId } }
+    default:
+      return fail('invalid_payload')
+  }
+}
+
+export function decodeHostWorkspaceGitReadParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitReadParams> {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['workspaceId', 'threadId', 'scope', 'path']) ||
+    !isWorkspaceGitReadScope(value.scope)
+  ) {
+    return fail('invalid_payload')
+  }
+  const hasWorkspaceId = Object.prototype.hasOwnProperty.call(value, 'workspaceId')
+  const hasThreadId = Object.prototype.hasOwnProperty.call(value, 'threadId')
+  if (hasWorkspaceId === hasThreadId) return fail('invalid_payload')
+  if (hasWorkspaceId && !isBoundedId(value.workspaceId)) return fail('invalid_payload')
+  if (hasThreadId && !isBoundedId(value.threadId)) return fail('invalid_payload')
+
+  const hasPath = Object.prototype.hasOwnProperty.call(value, 'path')
+  if (hasPath && !isSafeWorkspaceGitPath(value.path)) return fail('invalid_payload')
+
+  if (hasWorkspaceId) {
+    return {
+      ok: true,
+      value: {
+        workspaceId: value.workspaceId as string,
+        scope: value.scope,
+        ...(hasPath ? { path: value.path as string } : {})
+      }
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      threadId: value.threadId as string,
+      scope: value.scope,
+      ...(hasPath ? { path: value.path as string } : {})
+    }
+  }
+}
+
+function isWorkspaceGitBranch(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 1_024 &&
+      !value.includes('\0') &&
+      !value.includes('\n') &&
+      !value.includes('\r'))
+  )
+}
+
+function isWorkspaceGitHead(value: unknown): value is string | null {
+  return (
+    value === null || (typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value))
+  )
+}
+
+function decodeWorkspaceGitStatusFile(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitStatusFile> {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      'path',
+      'originalPath',
+      'index',
+      'workingTree',
+      'kind',
+      'staged',
+      'unstaged'
+    ]) ||
+    !isSafeWorkspaceGitPath(value.path) ||
+    typeof value.index !== 'string' ||
+    value.index.length !== 1 ||
+    typeof value.workingTree !== 'string' ||
+    value.workingTree.length !== 1 ||
+    !isWorkspaceGitFileKind(value.kind) ||
+    typeof value.staged !== 'boolean' ||
+    typeof value.unstaged !== 'boolean'
+  ) {
+    return fail('invalid_payload')
+  }
+  const hasOriginalPath = Object.prototype.hasOwnProperty.call(value, 'originalPath')
+  if (hasOriginalPath && !isSafeWorkspaceGitPath(value.originalPath)) {
+    return fail('invalid_payload')
+  }
+  return {
+    ok: true,
+    value: {
+      path: value.path,
+      ...(hasOriginalPath ? { originalPath: value.originalPath as string } : {}),
+      index: value.index,
+      workingTree: value.workingTree,
+      kind: value.kind,
+      staged: value.staged,
+      unstaged: value.unstaged
+    }
+  }
+}
+
+export function decodeHostWorkspaceGitReadResult(
+  value: unknown
+): HostLocalTransportDecodeResult<HostWorkspaceGitReadResult> {
+  const serializedBytes = serializedJsonByteLength(value)
+  if (
+    !isRecord(value) ||
+    serializedBytes === null ||
+    serializedBytes > HOST_WORKSPACE_GIT_RESULT_MAX_BYTES ||
+    !isWorkspaceGitReadScope(value.scope) ||
+    !isWorkspaceGitBranch(value.branch) ||
+    !isWorkspaceGitHead(value.head) ||
+    typeof value.truncated !== 'boolean'
+  ) {
+    return fail('invalid_payload')
+  }
+
+  if (value.scope === 'status') {
+    if (
+      Object.keys(value).length !== 5 ||
+      !hasOnlyKeys(value, ['scope', 'branch', 'head', 'files', 'truncated']) ||
+      !Array.isArray(value.files) ||
+      value.files.length > 4_096
+    ) {
+      return fail('invalid_payload')
+    }
+    const files: HostWorkspaceGitStatusFile[] = []
+    for (const file of value.files) {
+      const decoded = decodeWorkspaceGitStatusFile(file)
+      if (!decoded.ok) return decoded
+      files.push(decoded.value)
+    }
+    return {
+      ok: true,
+      value: {
+        scope: 'status',
+        branch: value.branch,
+        head: value.head,
+        files,
+        truncated: value.truncated
+      }
+    }
+  }
+
+  if (
+    Object.keys(value).length !== 5 ||
+    !hasOnlyKeys(value, ['scope', 'branch', 'head', 'text', 'truncated']) ||
+    typeof value.text !== 'string'
+  ) {
+    return fail('invalid_payload')
+  }
+  return {
+    ok: true,
+    value: {
+      scope: value.scope,
+      branch: value.branch,
+      head: value.head,
+      text: value.text,
+      truncated: value.truncated
+    }
+  }
+}
+
 function decodeSuccessResult(
   value: unknown
 ): HostLocalTransportDecodeResult<HostLocalTransportSuccessResult> {
@@ -411,18 +932,139 @@ function decodeSuccessResult(
     case 'thread.offers':
       if (!hasThreadOffersShape(value.offers)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'thread.offers', offers: value.offers } }
+    case 'provider.status': {
+      const statuses = decodeHostProviderStatuses(value.statuses)
+      if (!statuses.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.status', statuses: statuses.value } }
+    }
+    case 'provider.offers': {
+      const offers = decodeHostProviderOffersProjection(value.offers)
+      if (!offers.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.offers', offers: offers.value } }
+    }
+    case 'provider.auth.flows': {
+      const flows = decodeHostProviderAuthFlows(value.flows)
+      if (!flows.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.auth.flows', flows: flows.value } }
+    }
+    case 'provider.auth.status': {
+      const status = decodeHostProviderAuthStatusProjection(value.status)
+      if (!status.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'provider.auth.status', status: status.value } }
+    }
+    case 'thread.catalogue.maintenance':
+    case 'thread.catalogue': {
+      const bytes = serializedJsonByteLength(value)
+      const reply = decodeThreadCatalogueWireReply(value.reply)
+      if (!reply || bytes === null || bytes > THREAD_CATALOGUE_WIRE_MAX_BYTES)
+        return fail('invalid_payload')
+      return { ok: true, value: { kind: value.kind, reply } }
+    }
+    case 'thread.history': {
+      const page = decodeHostThreadHistoryPage(value.page)
+      if (!page.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'thread.history', page: page.value } }
+    }
+    case 'workspace.git.read': {
+      const serializedBytes = serializedJsonByteLength(value)
+      if (
+        Object.keys(value).length !== 2 ||
+        serializedBytes === null ||
+        serializedBytes > HOST_WORKSPACE_GIT_RESULT_MAX_BYTES
+      ) {
+        return fail('invalid_payload')
+      }
+      const result = decodeHostWorkspaceGitReadResult(value.result)
+      if (!result.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'workspace.git.read', result: result.value } }
+    }
+    case 'history.since': {
+      const result = decodeHostHistorySinceResult(value.result)
+      if (!result.ok) return fail('invalid_payload')
+      return { ok: true, value: { kind: 'history.since', result: result.value } }
+    }
     case 'receipt.lookup':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'receipt.lookup', receipt: value.receipt } }
     case 'health.get':
       if (!hasHealthFrameShape(value.frame)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'health.get', frame: value.frame } }
+    case 'host.shutdown':
+      if (
+        Object.keys(value).length !== 2 ||
+        (value.state !== 'stopping' && value.state !== 'already_stopping')
+      )
+        return fail('invalid_payload')
+      return { ok: true, value: { kind: 'host.shutdown', state: value.state } }
     case 'command.submit':
       if (!hasHostReceiptShape(value.receipt)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'command.submit', receipt: value.receipt } }
     case 'twmission.export':
       if (!isRecord(value.result)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'twmission.export', result: value.result } }
+    case 'host.lease':
+      switch (value.action) {
+        case 'acquire':
+          if (
+            Object.keys(value).length !== 6 ||
+            !isBoundedId(value.leaseId) ||
+            !isPositiveInt(value.heartbeatMs) ||
+            !isPositiveInt(value.ttlMs) ||
+            !isNonNegativeInt(value.hostNowMs)
+          ) {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: {
+              kind: 'host.lease',
+              action: 'acquire',
+              leaseId: value.leaseId,
+              heartbeatMs: value.heartbeatMs,
+              ttlMs: value.ttlMs,
+              hostNowMs: value.hostNowMs
+            }
+          }
+        case 'renew':
+          if (
+            Object.keys(value).length !== 5 ||
+            !isBoundedId(value.leaseId) ||
+            !isNonNegativeInt(value.expiresInMs) ||
+            !isNonNegativeInt(value.hostNowMs)
+          ) {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: {
+              kind: 'host.lease',
+              action: 'renew',
+              leaseId: value.leaseId,
+              expiresInMs: value.expiresInMs,
+              hostNowMs: value.hostNowMs
+            }
+          }
+        case 'release':
+          if (Object.keys(value).length !== 3 || value.released !== true) {
+            return fail('invalid_payload')
+          }
+          return { ok: true, value: { kind: 'host.lease', action: 'release', released: true } }
+        case 'decline':
+          if (Object.keys(value).length !== 3 || value.declined !== true) {
+            return fail('invalid_payload')
+          }
+          return { ok: true, value: { kind: 'host.lease', action: 'decline', declined: true } }
+        default:
+          return fail('invalid_payload')
+      }
+    case 'host.status':
+      if (Object.keys(value).length !== 2 || !isRecord(value.status)) {
+        return fail('invalid_payload')
+      }
+      return {
+        ok: true,
+        value: { kind: 'host.status', status: value.status as unknown as HostStatusProjection }
+      }
     default:
       return fail('invalid_payload')
   }
@@ -509,6 +1151,107 @@ export function decodeHostLocalTransportClientFrame(
           }
         }
       }
+      case 'provider.status': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'provider.status',
+            params: {}
+          }
+        }
+      }
+      case 'provider.offers':
+      case 'provider.auth.flows':
+      case 'provider.auth.status': {
+        const params = decodeProviderIdParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: value.kind,
+            params: params.value
+          }
+        }
+      }
+      case 'thread.catalogue.maintenance': {
+        const params = decodeThreadCatalogueMaintenanceQuery(value.params)
+        if (!params) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.catalogue.maintenance',
+            params
+          }
+        }
+      }
+      case 'thread.catalogue': {
+        const params = decodeThreadCatalogueReadQuery(value.params)
+        if (!params || (value.priority !== undefined && value.priority !== 'background'))
+          return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.catalogue',
+            params,
+            ...(value.priority === 'background' ? { priority: 'background' as const } : {})
+          }
+        }
+      }
+      case 'thread.history': {
+        const params = decodeHostThreadHistoryRequest(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'thread.history',
+            params: params.value
+          }
+        }
+      }
+      case 'workspace.git.read': {
+        const params = decodeHostWorkspaceGitReadParams(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'workspace.git.read',
+            params: params.value
+          }
+        }
+      }
+      case 'history.since': {
+        const params = decodeHostHistorySinceRequest(value.params)
+        if (!params.ok) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'history.since',
+            params: params.value
+          }
+        }
+      }
       case 'receipt.lookup': {
         const params = decodeReceiptLookupParams(value.params)
         if (!params.ok) return params
@@ -536,6 +1279,19 @@ export function decodeHostLocalTransportClientFrame(
           }
         }
       }
+      case 'host.shutdown': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.shutdown',
+            params: {}
+          }
+        }
+      }
       case 'command.submit': {
         if (!hasHostCommandShape(value.params)) return fail('invalid_payload')
         return {
@@ -558,6 +1314,33 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'twmission.export',
+            params: {}
+          }
+        }
+      }
+      case 'host.lease': {
+        const params = decodeLeaseParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.lease',
+            params: params.value
+          }
+        }
+      }
+      case 'host.status': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.status',
             params: {}
           }
         }
@@ -642,6 +1425,20 @@ export function decodeHostLocalTransportHostFrame(
           event: 'deltas',
           sequence: value.sequence,
           payload: value.payload
+        }
+      }
+    }
+    if (value.event === 'history') {
+      const payload = decodeHostHistoryDeltasFrame(value.payload)
+      if (!payload.ok) return failHost('invalid_payload')
+      return {
+        ok: true,
+        value: {
+          type: 'event',
+          transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+          event: 'history',
+          sequence: value.sequence,
+          payload: payload.value
         }
       }
     }

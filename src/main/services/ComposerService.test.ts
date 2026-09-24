@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
+import {
+  TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID
+} from '../mcp/McpSessionProfileFence'
 import {
   ComposerService,
   type ComposerRunPayload,
@@ -20,6 +24,7 @@ import {
   verifyRunPermissionPosture
 } from '../RunPermissionPosture'
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
+import { TASKWRAITH_WORK_INVARIANTS_VERSION } from '../AgentWorkContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
@@ -31,6 +36,10 @@ import {
   resetAntigravityAgyOptInEnabledProbeForTests,
   setAntigravityAgyOptInEnabledProbe
 } from '../antigravity/AntigravityAgyOptInEnabledSignal'
+import {
+  digestSessionStartContext,
+  digestSkillDiscoveryPrompt
+} from '../skillsHooks/resolveRunSkillHookContext'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -101,7 +110,8 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
         antigravity: 120_000,
         pi: 120_000,
         mistral: 120_000,
-        muse: 120_000
+        muse: 120_000,
+        devin: 120_000
       },
       mainAuthorityMs: 30_000
     },
@@ -238,7 +248,13 @@ describe('ComposerService', () => {
 
     expect(payload.prompt).not.toContain('Secret prior-thread instruction.')
     expect(payload.ollamaRunProfile).toBeUndefined()
-    expect(payload.composer.providerMetadataPatch).toBeUndefined()
+    // Execution-graph isolation drops root-chat memory and run-profile
+    // inheritance, but the runtime preamble stamp is session bookkeeping,
+    // not memory: a stale chat-supplied version is still refreshed.
+    expect(payload.composer.providerMetadataPatch).toEqual({
+      taskWraithRuntimePreambleProvider: 'ollama',
+      taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION
+    })
   })
 
   it('composes a main-owned Channel agent turn with exact posture and no chat inheritance', async () => {
@@ -315,18 +331,23 @@ describe('ComposerService', () => {
     ).rejects.toThrow('Channel agent composer authority is invalid.')
   })
 
-  it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', async () => {
+  it('defaults fresh single-provider Claude sessions to the lean gateway profile', async () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
       const payload = await compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
-      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_CORE_MCP_PROFILE
       else process.env.TASKWRAITH_CORE_MCP_PROFILE = previous
     }
+  })
+
+  it('keeps fresh Ensemble turns on the full current gateway generation', async () => {
+    const payload = await compose({ provider: 'codex', chatKind: 'ensemble' }, {})
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
   })
 
   it('projects live chat-scoped Browser Canvas presence into the outgoing prompt', async () => {
@@ -445,7 +466,7 @@ describe('ComposerService', () => {
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
-      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
       expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
@@ -509,6 +530,223 @@ describe('ComposerService', () => {
         approvalMode: 'plan'
       })
     ).rejects.toThrow('gemini is unavailable for new runs.')
+  })
+
+  it('injects UltraTask delegation enforcement for pi/muse/claude from raw metadata tokens', async () => {
+    for (const [provider, key] of [
+      ['pi', 'piReasoningEffort'],
+      ['muse', 'museReasoningEffort'],
+      ['claude', 'claudeReasoningEffort']
+    ] as const) {
+      const payload = await compose(
+        {
+          provider,
+          providerMetadata: { [key]: 'ultraTask' }
+        },
+        {},
+        {}
+      )
+      expect(payload.prompt, `${provider} should carry the ULTRA-TASK block`).toContain(
+        'ULTRA-TASK MODE ACTIVE'
+      )
+    }
+  })
+
+  it('injects UltraTask delegation enforcement for AntiGravity via the presentation marker', async () => {
+    // AntiGravity persists UltraTask as antigravityUltraTaskSelected=true with
+    // a real -high wire effort — the marker is the only ultra signal.
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const payload = await compose(
+        {
+          provider: 'antigravity',
+          providerMetadata: {
+            antigravityUltraTaskSelected: true,
+            antigravityReasoningEffort: 'high'
+          }
+        },
+        {},
+        {}
+      )
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it.each([
+    ['codex', 'codexReasoningEffort'],
+    ['claude', 'claudeReasoningEffort'],
+    ['kimi', 'kimiReasoningEffort'],
+    ['grok', 'grokReasoningEffort'],
+    ['cursor', 'cursorReasoningEffort'],
+    ['ollama', 'ollamaReasoningEffort'],
+    ['pi', 'piReasoningEffort'],
+    ['mistral', 'mistralReasoningEffort'],
+    ['muse', 'museReasoningEffort']
+  ] as const)(
+    'stamps exact persisted UltraTask consent for %s under an Ask posture',
+    async (provider, metadataKey) => {
+      const payload = await compose(
+        {
+          provider,
+          providerMetadata: { [metadataKey]: 'ultraTask' }
+        },
+        { approvalMode: 'plan', workflowMode: 'normal' }
+      )
+
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+      if (provider === 'pi' || provider === 'mistral') {
+        expect(payload.reasoningEffort).toBe('ultraTask')
+      }
+      if (provider === 'muse') {
+        expect(payload.taskWraithMcpAdvertised).toBe(false)
+        expect(payload.prompt).toContain('subagent_spawn')
+        expect(payload.prompt).not.toContain('TaskWraith__delegate_wave')
+      }
+    }
+  )
+
+  it('stamps AntiGravity consent only from its persisted current-provider marker', async () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const payload = await compose(
+        {
+          provider: 'antigravity',
+          providerMetadata: {
+            antigravityUltraTaskSelected: true,
+            antigravityReasoningEffort: 'high'
+          }
+        },
+        { approvalMode: 'plan', workflowMode: 'normal' }
+      )
+
+      expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+      expect(payload.reasoningEffort).toBe('high')
+      expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('never mints consent from stale foreign-provider metadata or raw input', async () => {
+    const staleForeign = await compose(
+      {
+        provider: 'codex',
+        providerMetadata: {
+          codexReasoningEffort: 'medium',
+          claudeReasoningEffort: 'ultraTask',
+          museReasoningEffort: 'ultraTask'
+        }
+      },
+      {}
+    )
+    expect(staleForeign.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+    expect(staleForeign.prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
+
+    const rawInputOnly = await compose(
+      {
+        provider: 'codex',
+        providerMetadata: { codexReasoningEffort: 'medium' }
+      },
+      { codexReasoningEffort: 'ultraTask' }
+    )
+    expect(rawInputOnly.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(rawInputOnly.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+  })
+
+  it('never mints consent from an untrusted chatSnapshot', async () => {
+    const storedChat = makeChat({
+      provider: 'codex',
+      providerMetadata: { codexReasoningEffort: 'medium' }
+    })
+    const { deps } = makeDeps(storedChat)
+    const service = new ComposerService(deps)
+    const payload = await service.composeRun({
+      chatId: storedChat.appChatId,
+      provider: 'codex',
+      workspace: storedChat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'gpt-5.5',
+      approvalMode: 'default',
+      chatSnapshot: {
+        ...storedChat,
+        providerMetadata: { codexReasoningEffort: 'ultraTask' }
+      }
+    })
+
+    expect(payload.prompt).toContain('ULTRA-TASK MODE ACTIVE')
+    expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBeUndefined()
+  })
+
+  it.each(['taskwraith-core-v1', 'taskwraith-gateway-v12'] as const)(
+    'rotates an exact UltraTask session pinned to wave-less profile %s',
+    async (profileId) => {
+      const payload = await compose(
+        {
+          provider: 'claude',
+          linkedProviderSessionId: 'claude-session-pre-wave',
+          providerMetadata: { claudeReasoningEffort: 'ultraTask' },
+          taskWraithMcpProfileReceipt: {
+            schemaVersion: 1,
+            profileId,
+            provider: 'claude',
+            providerSessionId: 'claude-session-pre-wave',
+            pinnedAt: '2026-08-01T10:00:00.000Z'
+          }
+        },
+        {},
+        { geminiMcpBridgeEnabled: true }
+      )
+
+      expect(payload.providerSessionId).toBeNull()
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
+      expect(payload.prompt).toContain('mcp__TaskWraith__delegate_wave')
+    }
+  )
+
+  it('retains an exact UltraTask session already pinned to a wave-capable profile', async () => {
+    const payload = await compose(
+      {
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-session-v13',
+        providerMetadata: { claudeReasoningEffort: 'ultraTask' },
+        taskWraithMcpProfileReceipt: {
+          schemaVersion: 1,
+          profileId: TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID,
+          provider: 'claude',
+          providerSessionId: 'claude-session-v13',
+          pinnedAt: '2026-08-01T10:00:00.000Z'
+        }
+      },
+      {},
+      { geminiMcpBridgeEnabled: true }
+    )
+
+    expect(payload.providerSessionId).toBe('claude-session-v13')
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID)
+  })
+
+  it('keeps exact UltraTask consent and enforcement in a global chat', async () => {
+    // v11 -> v12: the ULTRA-TASK enforcement note is posture- and
+    // scope-aware — it ships per-turn into WORKSPACE chats immediately
+    // before the current request, but global chats keep only the consent
+    // side effect (subThreadDelegationAutoAllowSource) and the runtime
+    // preamble's delegation guidance.
+    const payload = await compose(
+      {
+        provider: 'codex',
+        scope: 'global',
+        workspaceId: undefined,
+        workspacePath: undefined,
+        providerMetadata: { codexReasoningEffort: 'ultraTask' }
+      },
+      { scope: 'global', workspace: undefined }
+    )
+
+    expect(payload.effectivePermissions?.subThreadDelegationAutoAllowSource).toBe('ultratask')
+    expect(payload.prompt).not.toContain('ULTRA-TASK MODE ACTIVE')
   })
 
   it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', async () => {
@@ -622,7 +860,7 @@ describe('ComposerService', () => {
     })
     // Composer resolves the persisted-session receipt before permissions; the
     // normalized main launch reselects v15-mesh from this signed posture.
-    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
+    expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID)
   })
 
   it('builds Kimi prompts with conversation context even when resuming a provider session', async () => {
@@ -675,7 +913,9 @@ describe('ComposerService', () => {
 
   it('defaults Kimi thinking to true from provider metadata defaults', async () => {
     const payload = await compose({ provider: 'kimi' }, { selectedModelType: undefined })
-    expect(payload.model).toBe('kimi-k2.7-code')
+    // A model-less run seeds main's own default, which must be the same row the
+    // picker marks isDefault — providerFallthroughGuards pins the pair.
+    expect(payload.model).toBe('kimi-k2.8-preview')
     expect(payload.kimiThinking).toBe(true)
     expect(payload.serviceTier).toBe('standard')
   })
@@ -696,6 +936,22 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
+  it('threads fixed-256K K3 effort while rejecting a stale Fast selection', async () => {
+    const payload = await compose(
+      { provider: 'kimi' },
+      {
+        selectedModelType: 'kimi-k3-256k',
+        kimiReasoningEffort: 'low',
+        kimiFastMode: true,
+        kimiThinkingEnabled: false
+      }
+    )
+    expect(payload.model).toBe('kimi-k3-256k')
+    expect(payload.reasoningEffort).toBe('low')
+    expect(payload.serviceTier).toBe('standard')
+    expect(payload.kimiThinking).toBe(true)
+  })
+
   it('threads Muse Meta /effort onto payload.reasoningEffort', async () => {
     const payload = await compose(
       { provider: 'muse' },
@@ -709,6 +965,23 @@ describe('ComposerService', () => {
     expect(payload.reasoningEffort).toBe('xhigh')
   })
 
+  it('threads Ollama reasoning from the picker and persisted chat metadata', async () => {
+    const selected = await compose(
+      { provider: 'ollama' },
+      {
+        selectedModelType: 'gpt-oss:20b',
+        ollamaReasoningEffort: 'low'
+      }
+    )
+    expect(selected.reasoningEffort).toBe('low')
+
+    const persisted = await compose(
+      { provider: 'ollama', providerMetadata: { ollamaReasoningEffort: 'off' } },
+      { selectedModelType: 'ornith-1.5:35b' }
+    )
+    expect(persisted.reasoningEffort).toBe('off')
+  })
+
   it('defaults K3 effort to Max and ignores unsupported Off', async () => {
     const payload = await compose(
       { provider: 'kimi' },
@@ -718,18 +991,29 @@ describe('ComposerService', () => {
     expect(payload.kimiThinking).toBe(true)
   })
 
-  it('maps the Kimi Fast selection to the HighSpeed service tier', async () => {
+  it('ignores a retired Kimi Fast flag now that Highspeed is its own row', async () => {
+    // The Fast toggle retired on 2026-09-11 when K2.7 Code Highspeed became a
+    // picker row. A seat or chat still carrying `kimiFastMode` must NOT move
+    // the run off the row the composer is showing — which is what a surviving
+    // `fast` tier did, because the alias resolver honours it ahead of the id.
     const selected = await compose(
       { provider: 'kimi' },
-      { selectedModelType: 'kimi-k2.7-code', kimiFastMode: true }
+      { selectedModelType: 'kimi-k2.8-preview', kimiFastMode: true }
     )
     const persisted = await compose(
       { provider: 'kimi', providerMetadata: { kimiFastMode: true } },
-      { selectedModelType: 'kimi-k2.7-code' }
+      { selectedModelType: 'kimi-k2.8-preview' }
+    )
+    const highspeed = await compose(
+      { provider: 'kimi' },
+      { selectedModelType: 'kimi-k2.7-code-highspeed' }
     )
 
-    expect(selected.serviceTier).toBe('fast')
-    expect(persisted.serviceTier).toBe('fast')
+    expect(selected.serviceTier).toBe('standard')
+    expect(persisted.serviceTier).toBe('standard')
+    // Highspeed is reached by its model id now, not by a tier.
+    expect(highspeed.serviceTier).toBe('standard')
+    expect(highspeed.model).toBe('kimi-k2.7-code-highspeed')
     expect(selected.kimiThinking).toBe(true)
   })
 
@@ -742,12 +1026,12 @@ describe('ComposerService', () => {
       { userInput: 'Use a subagent to review this and delegate a pass.' }
     )
     expect(payload.prompt).toContain('TaskWraith MCP server')
-    expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(payload.prompt).toContain('TaskWraith__delegate_wave')
+    expect(payload.prompt).toContain('mcp__taskwraith__delegate_to_subthread')
+    expect(payload.prompt).toContain('mcp__taskwraith__delegate_wave')
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
@@ -921,7 +1205,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     // Recall guidance — observed bug: Codex spawning a fresh sub-thread
     // on every status check, getting "first turn, no prior actions"
     // back from sub-agents with legitimately no history.
@@ -1060,7 +1344,7 @@ describe('ComposerService', () => {
     ])
   })
 
-  it('uses Grok 4.6 as the Grok fallback instead of Gemini defaults', async () => {
+  it('uses Grok 4.7 as the Grok fallback instead of Gemini defaults', async () => {
     const payload = await compose(
       {
         provider: 'grok',
@@ -1075,7 +1359,7 @@ describe('ComposerService', () => {
     )
 
     expect(payload.provider).toBe('grok')
-    expect(payload.model).toBe('grok-4.6')
+    expect(payload.model).toBe('grok-4.7')
   })
 
   it('carries Grok 4.6 Extra High reasoning through direct and Cursor runs', async () => {
@@ -1150,6 +1434,9 @@ describe('ComposerService', () => {
   })
 
   it('injects active goals using the provider that will handle the next run', async () => {
+    // 7be1d4493 replaced the <taskwraith_active_goal> prompt block with the
+    // canonical work contract: a native-mode goal is referenced, never
+    // duplicated, and no "Provider mode:" line is composed anymore.
     const payload = await compose(
       {
         provider: 'ollama',
@@ -1166,8 +1453,21 @@ describe('ComposerService', () => {
       {}
     )
 
-    expect(payload.prompt).toContain('Provider mode: Ollama managed')
-    expect(payload.prompt).not.toContain('Provider mode: Native Codex goal')
+    // An Ollama run rewrites the codex-native goal into Ollama-managed state
+    // (resolveActiveGoalForProvider) and carries it as structured run state —
+    // the goal is never duplicated as prompt prose, and no "Provider mode:"
+    // steering line is composed anymore.
+    expect(payload.activeGoal).toEqual({
+      id: 'goal-1',
+      objective: 'Keep the portable goal mode honest',
+      status: 'active',
+      mode: 'ollama_harness',
+      provider: 'ollama',
+      createdAt: '2026-06-13T12:00:00Z',
+      updatedAt: '2026-06-13T12:00:00Z'
+    })
+    expect(payload.prompt).not.toContain('Provider mode:')
+    expect(payload.prompt).not.toContain('provider-native Goal state (codex_native)')
   })
 
   it('carries Grok native goals as structured run state without prompt steering', async () => {
@@ -1277,7 +1577,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('workers')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'codex'")
-    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
+    expect(payload.prompt).toContain('Do not use provider-native multi-agent orchestration paths.')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
@@ -2397,5 +2697,109 @@ describe('composeRun prompt envelope', () => {
     expect(envelope?.layers.find((layer) => layer.id === 'instructions_global')?.content).toBe(
       'Be terse.'
     )
+  })
+})
+
+describe('composeRun admitted prompt-delivery candidates', () => {
+  const doctrineContext = {
+    layers: [],
+    digest: 'none',
+    enabled: true,
+    workspaceDoctrine: {
+      source: 'AGENTS.md' as const,
+      status: 'applied' as const,
+      sha256: 'doctrine-sha',
+      bytes: 24,
+      content: 'Inspect status before editing.'
+    },
+    workspaceDoctrineDigest: 'doctrine-sha'
+  }
+
+  it('returns cold candidates separately from the pre-dispatch metadata patch', async () => {
+    const chat = makeChat({ provider: 'claude' })
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => doctrineContext,
+      resolveSkillDiscoverySkills: () => [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      resolveSessionStartContext: () => 'branch=main'
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+
+    expect(payload.composer.promptDeliveryReceipts?.workInvariants).toEqual({
+      provider: 'claude',
+      value: TASKWRAITH_WORK_INVARIANTS_VERSION
+    })
+    expect(payload.composer.promptDeliveryReceipts?.skillDiscovery?.value).toMatch(/^[a-f0-9]{64}$/)
+    expect(payload.composer.promptDeliveryReceipts?.sessionStartContext?.value).toMatch(
+      /^[a-f0-9]{64}$/
+    )
+    expect(payload.composer.promptDeliveryReceipts?.workspaceDoctrine).toEqual({
+      provider: 'claude',
+      value: 'doctrine-sha'
+    })
+    expect(payload.composer.providerMetadataPatch ?? {}).not.toHaveProperty(
+      'taskWraithWorkInvariantsVersion'
+    )
+    expect(payload.composer.providerMetadataPatch ?? {}).not.toHaveProperty(
+      'taskWraithWorkspaceDoctrineDigest'
+    )
+  })
+
+  it('keeps a healthy resume slim while its cold fallback restores every stable block', async () => {
+    const skillDigest = digestSkillDiscoveryPrompt([
+      { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+    ])
+    const hookDigest = digestSessionStartContext('branch=main')
+    const chat = makeChat({
+      provider: 'claude',
+      linkedProviderSessionId: 'session-1',
+      providerMetadata: {
+        taskWraithWorkInvariantsVersion: TASKWRAITH_WORK_INVARIANTS_VERSION,
+        taskWraithWorkInvariantsProvider: 'claude',
+        taskWraithSkillDiscoveryDigest: skillDigest,
+        taskWraithSkillDiscoveryProvider: 'claude',
+        taskWraithSessionStartContextDigest: hookDigest,
+        taskWraithSessionStartContextProvider: 'claude',
+        taskWraithWorkspaceDoctrineDigest: 'doctrine-sha',
+        taskWraithWorkspaceDoctrineProvider: 'claude'
+      }
+    })
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      resolveInstructionContext: () => doctrineContext,
+      resolveSkillDiscoverySkills: () => [
+        { id: 'deploy', name: 'Deploy', description: 'Ship the build.' }
+      ],
+      resolveSessionStartContext: () => 'branch=main'
+    })
+    const payload = await service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'claude',
+      workspace: chat.workspacePath,
+      userInput: 'Continue.',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default'
+    })
+
+    expect(payload.prompt).not.toContain('<taskwraith_work_invariants')
+    expect(payload.prompt).not.toContain('## Available skills')
+    expect(payload.prompt).not.toContain('branch=main')
+    expect(payload.prompt).not.toContain('## Workspace doctrine')
+    expect(payload.resumeFallbackPrompt).toContain('<taskwraith_work_invariants')
+    expect(payload.resumeFallbackPrompt).toContain('## Available skills')
+    expect(payload.resumeFallbackPrompt).toContain('branch=main')
+    expect(payload.resumeFallbackPrompt).toContain('## Workspace doctrine')
+    expect(payload.composer.promptDeliveryReceipts).toBeUndefined()
   })
 })

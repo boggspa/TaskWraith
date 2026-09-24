@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-The Keyboard shortcuts tab lists every app command TaskWraith currently dispatches and lets you rebind, reset, or unassign each one. It is one of the **App** group tabs in Settings, alongside General and Appearance.
+The Keyboard shortcuts tab lists every app command TaskWraith currently dispatches and lets you rebind, reset, or unassign each one. It is one of the **App** group tabs in Settings, alongside General, Appearance, and About & Licenses.
 
 ## Where to find it
 Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail.

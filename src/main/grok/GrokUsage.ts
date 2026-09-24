@@ -10,7 +10,7 @@ import {
   TOKEN_COUNT_CONFIDENCE_KEY,
   TOKEN_COUNT_ESTIMATED
 } from '../../shared/tokenEstimate'
-import { GROK_46_MODEL_ID, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { GROK_46_MODEL_ID, isGrok45ReasoningModelId, isGrok47ReasoningModelId } from '../../shared/grok45Models'
 // Grok SUBSCRIPTION-LIMIT usage — distinct from token/cost usage.
 //
 // SuperGrok/grok.com CLI auth bills against a subscription pool (a percent +
@@ -33,7 +33,7 @@ import { GROK_46_MODEL_ID, isGrok45ReasoningModelId } from '../../shared/grok45M
 
 export interface GrokUsageSnapshot {
   provider: 'grok'
-  source: 'grok-cli-usage'
+  source: 'grok-cli-usage' | 'grok-cli-billing-log'
   usageKind: 'subscription_credits' | 'weekly_limit'
   /** Parsed USED percent (0–100). null when only a coarse band like "<1%" is known. */
   creditsUsedPercent: number | null
@@ -45,6 +45,9 @@ export interface GrokUsageSnapshot {
   resetAt: string | null
   /** Monthly credit window (legacy) or 7-day weekly window when parseable. */
   limitWindowSeconds: number | null
+  /** Billing-period boundaries when the CLI log exposes them. */
+  periodStartAt?: string | null
+  periodEndAt?: string | null
   /** Plan label when shown (e.g. "Free credits with SuperGrok"). */
   planLabel: string | null
   payAsYouGoEnabled: boolean | null
@@ -386,18 +389,22 @@ export function estimateProjectedTokenUsage(
   const usesGrok46LongContextRates =
     normalizedModelId === GROK_46_MODEL_ID &&
     input_tokens >= GROK_PROJECTED_LONG_CONTEXT_THRESHOLD_TOKENS
-  // The 200K long-context tier belongs only to Grok 4.6. Retained Grok 4.5
-  // aliases keep their flat xAI rate, while Composer 2.5 Fast (and omitted or
-  // unknown legacy callers) keep the pre-4.6 projected Composer rate.
+  // The 200K long-context tier belongs to Grok 4.6 and the 4.7 pair (which
+  // carries its rates forward). Retained Grok 4.5 aliases keep their flat xAI
+  // rate, while Composer 2.5 Fast (and omitted or unknown legacy callers) keep
+  // the pre-4.6 projected Composer rate.
   const usesGrok45Rates = isGrok45ReasoningModelId(normalizedModelId)
   const usesGrok46Rates = normalizedModelId === GROK_46_MODEL_ID
+  const usesGrok47Rates = isGrok47ReasoningModelId(normalizedModelId)
+  const usesGrok47LongContextRates =
+    usesGrok47Rates && input_tokens >= GROK_PROJECTED_LONG_CONTEXT_THRESHOLD_TOKENS
   let inputUsdPerMillion = GROK_COMPOSER_25_FAST_INPUT_USD_PER_MILLION
   let outputUsdPerMillion = GROK_COMPOSER_25_FAST_OUTPUT_USD_PER_MILLION
-  if (usesGrok45Rates || usesGrok46Rates) {
+  if (usesGrok45Rates || usesGrok46Rates || usesGrok47Rates) {
     inputUsdPerMillion = GROK_PROJECTED_SHORT_INPUT_USD_PER_MILLION
     outputUsdPerMillion = GROK_PROJECTED_SHORT_OUTPUT_USD_PER_MILLION
   }
-  if (usesGrok46LongContextRates) {
+  if (usesGrok46LongContextRates || usesGrok47LongContextRates) {
     inputUsdPerMillion = GROK_PROJECTED_LONG_INPUT_USD_PER_MILLION
     outputUsdPerMillion = GROK_PROJECTED_LONG_OUTPUT_USD_PER_MILLION
   }

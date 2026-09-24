@@ -1,6 +1,11 @@
 import type { ProviderId } from '../main/store/types'
 
-export const WORK_LOCK_PROJECTION_SCHEMA_VERSION = 1 as const
+/**
+ * v2 adds the optional renderer-safe `holder` block. A v1 snapshot is still a
+ * valid input everywhere; only the producer moved.
+ */
+export const WORK_LOCK_PROJECTION_SCHEMA_VERSION = 2 as const
+export type WorkLockProjectionSchemaVersion = 1 | typeof WORK_LOCK_PROJECTION_SCHEMA_VERSION
 
 export type WorkLockProjectionStatus = 'held' | 'orphan_live' | 'recovery_blocked' | 'recovered'
 
@@ -57,6 +62,28 @@ export interface WorkLockOwnerProjection {
   participantId?: string
 }
 
+export type WorkLockHolderLiveness = 'live' | 'lapsed' | 'dead' | 'unknown'
+
+/**
+ * Renderer-safe liveness of the process behind a lease, as last observed by
+ * main's periodic reclaim pass. Pids, birth identities and heartbeat file
+ * paths deliberately never reach this shape.
+ */
+export interface WorkLockHolderProjection {
+  /**
+   * `this` when the running app process issued the lease; `other` for any
+   * other process, including an earlier launch of the same profile.
+   */
+  instanceScope: 'this' | 'other'
+  liveness: WorkLockHolderLiveness
+  /**
+   * Wall age of the holder's last heartbeat at main's last scan; absent for
+   * the running app's own leases and for a holder that never wrote one.
+   */
+  heartbeatAgeMs?: number
+  generation: number
+}
+
 export interface WorkLockWorkspaceProjection {
   /** Canonical workspace selected by the user. */
   basePath: string
@@ -68,7 +95,7 @@ export interface WorkLockWorkspaceProjection {
 }
 
 export interface WorkLockProjection {
-  schemaVersion: typeof WORK_LOCK_PROJECTION_SCHEMA_VERSION
+  schemaVersion: WorkLockProjectionSchemaVersion
   lockId: string
   status: WorkLockProjectionStatus
   owner: WorkLockOwnerProjection
@@ -77,10 +104,11 @@ export interface WorkLockProjection {
   acquiredAt: string
   statusChangedAt: string
   recoveredAt?: string
+  holder?: WorkLockHolderProjection
 }
 
 export interface WorkLockProjectionSnapshot {
-  schemaVersion: typeof WORK_LOCK_PROJECTION_SCHEMA_VERSION
+  schemaVersion: WorkLockProjectionSchemaVersion
   generation: number
   sampledAt: string
   locks: WorkLockProjection[]
@@ -185,10 +213,14 @@ export type WorkLockProjectionSourceTarget =
       isInsertion?: boolean
     }
 
-export type WorkLockProjectionSource = Omit<WorkLockProjection, 'schemaVersion' | 'target'> & {
+export type WorkLockProjectionSource = Omit<
+  WorkLockProjection,
+  'schemaVersion' | 'target' | 'holder'
+> & {
   owner: WorkLockOwnerProjection & Record<string, unknown>
   workspace: WorkLockWorkspaceProjection & Record<string, unknown>
   target: WorkLockProjectionSourceTarget & Record<string, unknown>
+  holder?: WorkLockHolderProjection & Record<string, unknown>
   [key: string]: unknown
 }
 
@@ -227,7 +259,27 @@ export function projectWorkLock(
     target,
     acquiredAt: source.acquiredAt,
     statusChangedAt: source.statusChangedAt,
-    ...(source.recoveredAt ? { recoveredAt: source.recoveredAt } : {})
+    ...(source.recoveredAt ? { recoveredAt: source.recoveredAt } : {}),
+    ...(source.holder ? { holder: projectHolder(source.holder) } : {})
+  }
+}
+
+const HOLDER_LIVENESS: readonly WorkLockHolderLiveness[] = ['live', 'lapsed', 'dead', 'unknown']
+
+/** Copies only the declared holder fields; anything else a source carries is dropped. */
+function projectHolder(holder: WorkLockHolderProjection): WorkLockHolderProjection {
+  // Sources are untyped at runtime (IPC, older producers): read every field as unknown.
+  const raw: Record<string, unknown> = { ...holder }
+  const heartbeatAgeMs =
+    typeof raw.heartbeatAgeMs === 'number' && Number.isFinite(raw.heartbeatAgeMs)
+      ? Math.max(0, Math.round(raw.heartbeatAgeMs))
+      : undefined
+  const liveness = HOLDER_LIVENESS.find((candidate) => candidate === raw.liveness) ?? 'unknown'
+  return {
+    instanceScope: raw.instanceScope === 'this' ? 'this' : 'other',
+    liveness,
+    ...(heartbeatAgeMs !== undefined ? { heartbeatAgeMs } : {}),
+    generation: Number.isSafeInteger(raw.generation) ? (raw.generation as number) : 0
   }
 }
 
@@ -236,6 +288,7 @@ function projectHunkTarget(
 ): Extract<WorkLockProjectionTarget, { kind: 'hunk' }> {
   const hunk = source.target as Extract<WorkLockProjectionSourceTarget, { kind: 'hunk' }>
   const alreadyPublic =
+    source.schemaVersion === 1 ||
     source.schemaVersion === WORK_LOCK_PROJECTION_SCHEMA_VERSION ||
     hunk.coordinateSystem === 'one-based-inclusive'
   const insertion = hunk.isInsertion === true || (!alreadyPublic && hunk.startLine === hunk.endLine)

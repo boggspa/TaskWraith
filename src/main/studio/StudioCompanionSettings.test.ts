@@ -2,17 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { resolveStudioCompanionShouldRun } from './StudioCompanionSettings'
 
 describe('resolveStudioCompanionShouldRun', () => {
-  it('defaults on for the supported macOS product', () => {
+  it('defaults off even on the supported macOS platform', () => {
     expect(resolveStudioCompanionShouldRun(undefined, undefined, 'darwin')).toEqual({
-      shouldRun: true,
+      shouldRun: false,
       supported: true,
-      settingEnabled: true,
+      settingEnabled: false,
       envOverride: null,
       source: 'settings'
     })
   })
 
   it('honours the persisted setting and explicit environment overrides', () => {
+    expect(resolveStudioCompanionShouldRun(true, undefined, 'darwin').shouldRun).toBe(true)
     expect(resolveStudioCompanionShouldRun(false, undefined, 'darwin').shouldRun).toBe(false)
     expect(resolveStudioCompanionShouldRun(false, ' true ', 'darwin')).toMatchObject({
       shouldRun: true,

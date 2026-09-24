@@ -212,8 +212,26 @@ describe('ProviderPreflightService', () => {
     expect(result.state).toBe('ready')
   })
 
-  it('keeps GPT-5.4 and GPT-5.4 mini runnable without an official sunset', () => {
-    for (const model of ['gpt-5.4', 'gpt-5.4-mini']) {
+  it('blocks the 5.4 pair and Spark at the boundary once the user retired them', () => {
+    // Retired 2026-09-18 by product decision. The preflight gate is what stops
+    // a persisted seat or a saved preset from launching one regardless of what
+    // the picker shows, so it must name the date rather than fail vaguely.
+    for (const model of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      const result = service.evaluate(
+        { provider: 'codex', workspacePath: '/repo', model },
+        contract(),
+        defaultProviderDescriptor('codex')
+      )
+
+      expect(result.state).toBe('blocked')
+      expect(result.reason).toContain('2026-09-18')
+    }
+  })
+
+  it('leaves the undated Codex models runnable', () => {
+    // The control for the block above: retiring the 5.4 family must not have
+    // swept up its neighbours.
+    for (const model of ['gpt-5.5', 'gpt-6-astra']) {
       const result = service.evaluate(
         { provider: 'codex', workspacePath: '/repo', model },
         contract(),

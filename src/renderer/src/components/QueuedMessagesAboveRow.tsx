@@ -36,7 +36,8 @@
  * Max 5 visible before scroll (overflow: auto on the inner list).
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { useSharedNowTick } from '../hooks/useSharedNowTick'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { getProviderName } from './Sidebar'
 import { MentionHighlightedText } from './MentionHighlightedText'
@@ -127,15 +128,10 @@ function QueuedMessagesAboveRowImpl({
 }: QueuedMessagesAboveRowProps): React.JSX.Element | null {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
-  const [nowMs, setNowMs] = useState(() => Date.now())
   const listRef = useRef<HTMLUListElement | null>(null)
   const hasScheduledEntries = entries.some((entry) => Boolean(entry.scheduledRunAt))
-
-  useEffect(() => {
-    if (!hasScheduledEntries) return
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1_000)
-    return () => window.clearInterval(interval)
-  }, [hasScheduledEntries])
+  const nowTick = useSharedNowTick(hasScheduledEntries)
+  const nowMs = useMemo(() => Date.now(), [nowTick, hasScheduledEntries])
 
   const handleReorder = useCallback(
     (sourceId: string, targetId: string | null) => {

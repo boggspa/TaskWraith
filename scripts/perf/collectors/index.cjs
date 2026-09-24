@@ -10,6 +10,7 @@ const osProcessSampler = require('./osProcessSampler.cjs')
 const eventIngestion = require('./eventIngestion.cjs')
 const perfProbeJsonl = require('./perfProbeJsonl.cjs')
 const mainPersistenceStatsCollector = require('./mainPersistenceStatsCollector.cjs')
+const hostSpans = require('./hostSpans.cjs')
 
 module.exports = {
   ...cdpRendererCollector,
@@ -17,5 +18,6 @@ module.exports = {
   ...osProcessSampler,
   ...eventIngestion,
   ...perfProbeJsonl,
-  ...mainPersistenceStatsCollector
+  ...mainPersistenceStatsCollector,
+  ...hostSpans
 }

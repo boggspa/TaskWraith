@@ -1,0 +1,824 @@
+/**
+ * Canonical Node-safe provider catalog for the pure-Node Host.
+ *
+ * Adapted from src/main/providers/StaticProviderModels.ts (staticRowsForProvider
+ * at 1159-1190, model rows at 375-468, 529-590, 593-617, 659-803, 884-905,
+ * 919-1008, 1021-1028, 1030-1050). Desktop reuse is a named follow-up.
+ *
+ * This module is imported by the pure-Node Host and MUST NOT import from
+ * src/main/** or src/renderer/**. It is the single source of truth for the
+ * static model/reasoning/offer-revision data every live provider serves.
+ */
+
+import { createHash } from 'node:crypto'
+import { MISTRAL_REASONING_EFFORTS } from '../shared/mistralModels'
+
+import { isPiModelRetired } from '../shared/piModelLifecycle'
+import { resolveOllamaReasoningSupport } from '../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../shared/piReasoning'
+import {
+  MUSE_META_REASONING_EFFORT_LABELS,
+  museReasoningEffortsForModel
+} from '../shared/museReasoning'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  DEVIN_REASONING_EFFORT_LABELS,
+  devinModelDescription,
+  devinReasoningEfforts
+} from '../shared/devinModelCatalog'
+import {
+  isDevinFreePlanGated,
+  isDevinModelAllowedForPlan,
+  type DevinPlanAccess
+} from '../shared/devinPlanAccess'
+import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from './pi/PiModels'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL
+} from '../shared/kimiModels'
+import type { KimiManagedModelRow } from './kimi/KimiManagedModelCatalog'
+import type {
+  HostProviderAuthFlowProjection,
+  HostProviderModelOffer,
+  HostProviderOffersProjection,
+  HostProviderStatusProjection,
+  HostPermissionPostureOffer
+} from '../shared/hostSetupProtocol'
+
+export interface HostProviderCatalogEntry {
+  readonly providerId: string
+  readonly displayProvider: string
+  readonly shortCode: string
+  readonly models: readonly HostProviderModelOffer[]
+  readonly postures: readonly HostPermissionPostureOffer[]
+  readonly authFlows: readonly HostProviderAuthFlowProjection[]
+}
+
+const STANDARD_REASONING = [
+  { reasoningId: 'low', label: 'Low', available: true },
+  { reasoningId: 'medium', label: 'Medium', available: true },
+  { reasoningId: 'high', label: 'High', available: true },
+  { reasoningId: 'xhigh', label: 'Extra High', available: true }
+] as const
+
+const CLAUDE_REASONING = [
+  ...STANDARD_REASONING,
+  { reasoningId: 'max', label: 'Max', available: true },
+  { reasoningId: 'ultracode', label: 'Ultracode', available: true }
+] as const
+
+const KIMI_REASONING = [
+  { reasoningId: 'low', label: 'Low', available: true },
+  { reasoningId: 'high', label: 'High', available: true },
+  { reasoningId: 'max', label: 'Max', available: true }
+] as const
+
+function museReasoning(modelId: string) {
+  return museReasoningEffortsForModel(modelId).map((reasoningId) => ({
+    reasoningId,
+    label: MUSE_META_REASONING_EFFORT_LABELS[reasoningId],
+    available: true
+  }))
+}
+
+const POSTURES: readonly HostPermissionPostureOffer[] = [
+  {
+    postureId: 'plan',
+    label: 'Plan',
+    available: true,
+    requiresExplicitConsent: false,
+    ceiling: 'read'
+  },
+  {
+    postureId: 'read_only',
+    label: 'Ask',
+    available: true,
+    requiresExplicitConsent: false,
+    ceiling: 'read'
+  },
+  {
+    postureId: 'default',
+    label: 'Accept Edits',
+    available: true,
+    requiresExplicitConsent: false,
+    ceiling: 'workspace_write'
+  },
+  {
+    postureId: 'workspace_write',
+    label: 'Full WS Access',
+    available: true,
+    requiresExplicitConsent: true,
+    ceiling: 'workspace_write'
+  },
+  {
+    postureId: 'full_access',
+    label: 'Full Access (YOLO)',
+    available: false,
+    requiresExplicitConsent: true,
+    ceiling: 'full_access',
+    detail:
+      'Unavailable in the standalone Host because no provider transport proves an unrestricted Full Access boundary.'
+  }
+]
+
+const FULL_ACCESS_TRANSPORT_DETAIL: Readonly<Record<string, string>> = {
+  codex:
+    'Codex Full Access uses the app-server danger-full-access sandbox with provider approvals disabled after signed consent verification.',
+  claude:
+    'Claude Full Access uses the CLI dangerous permission bypass only after signed consent verification.'
+}
+
+export interface HostProviderCatalogCapabilities {
+  /** True only while this Host owns process-local proof, signing, and live-grant authority. */
+  readonly fullAccessConsentAuthority?: boolean
+}
+
+/**
+ * Providers whose standalone transport cannot honour an editing posture.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The base POSTURES list is written for a provider that can edit, so every
+ * provider inherited `Accept Edits` and `Full WS Access` as available. For two
+ * of them that is the Host lying about itself:
+ *
+ *   pi     — HostNodePiProvider pins `writeCapable: false`; a Host Pi run is
+ *            read-only by construction, so an editing tier can never apply.
+ *   cursor — the run path is a typed hard stop until a Host-side containment
+ *            attestation exists, so NO posture can currently run at all.
+ *
+ * A user could therefore pick one, choose an editing tier the picker showed as
+ * available, ask for a change, and get only a failure. AntiGravity already
+ * solved this the honest way (see HostStandaloneAntigravityAdmission): withhold
+ * the tier and say why. This applies that same pattern at the one place
+ * per-provider postures are built.
+ *
+ * DISCLOSE, NEVER HIDE. Neither provider is removed from the catalogue — a
+ * missing provider reads as a missing feature and generates a bug report,
+ * while a withheld tier with a reason is an informed choice. `detail` is the
+ * existing carrier for that reason and already crosses the wire, so this needs
+ * no new protocol state: a client that renders posture availability plus detail
+ * gets the whole story for free.
+ */
+const WITHHELD_EDITING_POSTURES: Readonly<
+  Record<string, { readonly detail: string; readonly withholdAll: boolean }>
+> = {
+  pi: {
+    detail: 'Host Pi runs are read-only by construction; no editing tier can apply.',
+    withholdAll: false
+  },
+  cursor: {
+    detail:
+      'Standalone Cursor runs are not supported yet: the Node Host cannot produce the containment attestation a write-capable Cursor argv requires.',
+    withholdAll: true
+  }
+}
+
+function posturesForProvider(
+  providerId: string,
+  capabilities: HostProviderCatalogCapabilities
+): readonly HostPermissionPostureOffer[] {
+  const withheld = WITHHELD_EDITING_POSTURES[providerId]
+  return POSTURES.map((posture) => {
+    // A provider that cannot honour a tier must not advertise it. `withholdAll`
+    // separates "cannot edit" (pi keeps its read tiers, which genuinely work)
+    // from "cannot run at all" (cursor, where offering any tier would promise a
+    // turn that is hard-stopped before it starts).
+    if (withheld && (withheld.withholdAll || posture.ceiling !== 'read')) {
+      return { ...posture, available: false, detail: withheld.detail }
+    }
+    if (posture.postureId !== 'full_access') return { ...posture }
+    const detail = FULL_ACCESS_TRANSPORT_DETAIL[providerId]
+    return detail && capabilities.fullAccessConsentAuthority === true
+      ? { ...posture, available: true, detail }
+      : { ...posture }
+  })
+}
+
+const EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  on: 'On',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max'
+}
+
+/**
+ * Ollama and Pi reasoning offers are DERIVED, not restated.
+ *
+ * Both were hand-listed as `STANDARD_REASONING` — low/medium/high/xhigh for
+ * every model — which offered four levels to models that cannot think at all,
+ * and offered `xhigh`, which Ollama's `think` validator rejects outright. This
+ * surface feeds the Host and the iOS remote picker, so the drift was invisible
+ * to the desktop tests. Deriving keeps the three surfaces in lockstep by
+ * construction.
+ */
+function derivedReasoning(
+  efforts: readonly string[]
+): readonly { reasoningId: string; label: string; available: boolean }[] {
+  return efforts.map((reasoningId) => ({
+    reasoningId,
+    label: EFFORT_LABELS[reasoningId] || reasoningId,
+    available: true
+  }))
+}
+
+function mistralNativeReasoning(): HostProviderModelOffer['reasoning'] {
+  const native = derivedReasoning(MISTRAL_REASONING_EFFORTS.map((entry) => entry.reasoningEffort))
+  // Existing Host threads may have selected xhigh; Vibe normalizes that alias to max.
+  return [
+    ...native,
+    ...STANDARD_REASONING.filter(
+      (entry) => !native.some((option) => option.reasoningId === entry.reasoningId)
+    )
+  ]
+}
+
+function ollamaModel(modelId: string, label: string, isDefault = false): HostProviderModelOffer {
+  return model(
+    modelId,
+    label,
+    derivedReasoning(resolveOllamaReasoningSupport({ modelId }).efforts),
+    isDefault
+  )
+}
+
+function piModel(wireId: string, label: string, isDefault = false): HostProviderModelOffer {
+  return model(
+    wireId,
+    label,
+    derivedReasoning(resolvePiReasoningSupport(wireId).efforts),
+    isDefault
+  )
+}
+
+function model(
+  modelId: string,
+  label: string,
+  reasoning: readonly {
+    reasoningId: string
+    label: string
+    available: boolean
+  }[] = STANDARD_REASONING,
+  isDefault = false
+): HostProviderModelOffer {
+  return {
+    modelId,
+    label,
+    available: true,
+    ...(isDefault ? { default: true } : {}),
+    reasoning: reasoning.map((r) => ({ ...r }))
+  }
+}
+
+const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerId' | 'postures'>>> =
+  {
+    codex: {
+      displayProvider: 'Codex',
+      shortCode: 'CODEX',
+      models: [
+        // GPT-6 Sol and Luna (rolling out from 2026-09-22) lead the offers on
+        // the standard Host ladder; Terra keeps the requested default flag
+        // until that default is moved on purpose.
+        model('gpt-6-sol', 'GPT-6-Sol'),
+        model('gpt-6-luna', 'GPT-6-Luna'),
+        model('gpt-5.6-sol', 'GPT-5.6-Sol'),
+        model('gpt-5.6-terra', 'GPT-5.6-Terra', STANDARD_REASONING, true),
+        model('gpt-5.6-luna', 'GPT-5.6-Luna'),
+        model('gpt-5.5', 'GPT-5.5'),
+        model('gpt-5.4', 'GPT-5.4'),
+        model('gpt-5.4-mini', 'GPT-5.4 Mini'),
+        model('gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark')
+      ],
+      authFlows: [{ flowId: 'codex:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    claude: {
+      displayProvider: 'Claude',
+      shortCode: 'CL',
+      models: [
+        // Opus 5.5 (released 2026-09-22) leads the Claude offers; Opus 5 keeps
+        // the requested default flag until that default is moved on purpose.
+        model('claude-opus-5-5', 'Opus 5.5', CLAUDE_REASONING),
+        model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
+        model('claude-fable-5-1', 'Fable 5.1', CLAUDE_REASONING),
+        model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),
+        model('claude-fable-5', 'Fable 5 Legacy', CLAUDE_REASONING),
+        model('claude-sonnet-4-6', 'Sonnet 4.6 Legacy', CLAUDE_REASONING),
+        model('claude-opus-4-8-1m', 'Opus 4.8 1M Legacy', CLAUDE_REASONING),
+        model('claude-opus-4-7-1m', 'Opus 4.7 1M Legacy', CLAUDE_REASONING),
+        model('claude-haiku-4-5', 'Haiku 4.5', [
+          { reasoningId: 'low', label: 'Low', available: true },
+          { reasoningId: 'medium', label: 'Medium', available: true },
+          { reasoningId: 'high', label: 'High', available: true }
+        ])
+      ],
+      authFlows: [{ flowId: 'claude:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    kimi: {
+      displayProvider: 'Kimi',
+      shortCode: 'KIMI',
+      models: [
+        model(KIMI_K28_MODEL_ID, KIMI_K28_MODEL_LABEL, KIMI_REASONING, true),
+        model(KIMI_K27_HIGHSPEED_MODEL_ID, KIMI_K27_HIGHSPEED_MODEL_LABEL, [
+          { reasoningId: 'on', label: 'On', available: true }
+        ]),
+        model(KIMI_K3_MODEL_ID, KIMI_K3_MODEL_LABEL, KIMI_REASONING),
+        model(KIMI_K3_256K_MODEL_ID, KIMI_K3_256K_MODEL_LABEL, KIMI_REASONING)
+      ],
+      authFlows: [{ flowId: 'kimi:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    cursor: {
+      displayProvider: 'Cursor',
+      shortCode: 'CURSOR',
+      models: [
+        model('composer-2.5-fast', 'Composer 2.5 Fast', STANDARD_REASONING, true),
+        model('composer-2.5', 'Composer 2.5', STANDARD_REASONING),
+        // Cursor retired the Grok 4.5 family upstream — its CLI rejects every
+        // grok-4.5 wire id outright, so the catalogue must not advertise one.
+        model('cursor-grok-4.6', 'Cursor Grok 4.6', STANDARD_REASONING)
+      ],
+      authFlows: [{ flowId: 'cursor:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    grok: {
+      displayProvider: 'Grok',
+      shortCode: 'GROK',
+      models: [
+        // Grok 4.7 ships as a standard/Fast pair (two wire ids); standard is
+        // the seat default. Window/ladder carried forward from 4.6.
+        model('grok-4.7', 'Grok 4.7', STANDARD_REASONING, true),
+        model('grok-4.7-fast', 'Grok 4.7 Fast', STANDARD_REASONING),
+        model('grok-4.6', 'Grok 4.6 Fast', STANDARD_REASONING),
+        // Grok Composer 2.5 Fast retired from the lineup 2026-09-18. Cursor's
+        // own composer-2.5 pair above is a different provider and unaffected.
+        model('grok-4.5', 'Grok 4.5 Fast', STANDARD_REASONING)
+      ],
+      authFlows: [
+        {
+          flowId: 'grok:login',
+          kind: 'manual',
+          label: 'Sign in',
+          available: true,
+          detail:
+            'Interactive `grok login`, or set XAI_API_KEY / GROK_API_KEY in the Host environment.'
+        }
+      ]
+    },
+    ollama: {
+      displayProvider: 'Ollama',
+      shortCode: 'OLLAMA',
+      models: [
+        ollamaModel('qwen3:4b-instruct', 'Qwen 3 (4B Param)', true),
+        ollamaModel('qwen3.5:2b', 'Qwen 3.5 (2B Param)'),
+        ollamaModel('qwen3.5:4b', 'Qwen 3.5 (4B Param)'),
+        ollamaModel('qwen3.5:9b', 'Qwen 3.5 (9B Param)'),
+        ollamaModel('qwen3.6:35b', 'Qwen 3.6 (35B-A3B)'),
+        ollamaModel('qwen3.8:27b-mlx', 'Qwen 3.8 (27B-MLX)'),
+        ollamaModel('qwen3.8-flash-next:125b-mlx', 'Qwen 3.8 Flash Next (125B-MLX)'),
+        ollamaModel('gemma3:4b', 'Gemma 3 (4B Param)'),
+        ollamaModel('gemma4:12b', 'Gemma 4 (12B Param)'),
+        ollamaModel('gemma4:31b-mlx', 'Gemma 4 (31B-MLX)'),
+        ollamaModel('ornith:9b', 'Ornith 1.0 (9B Param)'),
+        ollamaModel('ornith:35b', 'Ornith 1.0 (35B Param)'),
+        ollamaModel('ornith-1.5:9b', 'Ornith 1.5 (9B Param)'),
+        ollamaModel('ornith-1.5:35b', 'Ornith 1.5 (35B Param)'),
+        ollamaModel('laguna-xs-2.1:q8_0', 'Laguna XS 2.1 (33B-A3B Q8)'),
+        ollamaModel('gpt-oss:20b', 'GPT OSS (20B Param)'),
+        ollamaModel('lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'),
+        ollamaModel('lfm2.5:8b', 'LFM 2.5 (8B-A1B)'),
+        ollamaModel('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)'),
+        ollamaModel('granite4:3b', 'Granite 4.0 (3B Param)'),
+        ollamaModel('granite4.1:3b', 'Granite 4.1 (3B Param)'),
+        ollamaModel('granite4.1:30b', 'Granite 4.1 (30B Param)'),
+        ollamaModel('granite4.2:3b', 'Granite 4.2 (3B Param)'),
+        ollamaModel('granite4.2:8b', 'Granite 4.2 (8B Param)'),
+        ollamaModel('granite4.2:30b', 'Granite 4.2 (30B Param)'),
+        ollamaModel('mistral-medium-3.5:128b', 'Mistral Medium 3.5 (128B Param)')
+      ],
+      authFlows: []
+    },
+    pi: {
+      displayProvider: 'Pi',
+      shortCode: 'PI',
+      // Keep Host/TUI/iOS offers on the same complete Pi catalog as Electron.
+      // The old hand-maintained list had already dropped Nemotron and would
+      // silently miss every new OpenRouter route added to PI_STATIC_MODELS.
+      models: PI_STATIC_MODELS.map((entry) =>
+        piModel(entry.wireId, entry.label, entry.wireId === PI_DEFAULT_MODEL_WIRE_ID)
+      ),
+      authFlows: []
+    },
+    mistral: {
+      displayProvider: 'Mistral',
+      shortCode: 'MISTRAL',
+      models: [
+        model('mistral-medium-3.5', 'Mistral Medium 3.5', mistralNativeReasoning(), true),
+        model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', mistralNativeReasoning()),
+        // Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring `glm-5-2`.
+        model('glm-5-3', 'GLM-5.3 (Mistral Hosted)', mistralNativeReasoning()),
+        // API-key lane, so STANDARD_REASONING like zai-glm-5-2 rather than the
+        // Vibe thinking ladder its 5.2 namesake gets.
+        model('zai-glm-5-3', 'GLM-5.3 (via Mistral)', STANDARD_REASONING),
+        model('mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
+        model('zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
+        model('codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),
+        model('mistral-small-2603', 'Mistral Small 4', mistralNativeReasoning()),
+        model('labs-leanstral-1-5', 'Leanstral 1.5 (Labs)', STANDARD_REASONING),
+        model('mistral-medium-latest', 'Mistral Medium (Latest)', mistralNativeReasoning()),
+        model('mistral-medium-2508', 'Mistral Medium 3.1', STANDARD_REASONING),
+        model('mistral-medium-2505', 'Mistral Medium 3', STANDARD_REASONING),
+        model('ministral-14b-2512', 'Ministral 3 (14B)', STANDARD_REASONING),
+        model('ministral-8b-2512', 'Ministral 3 (8B)', STANDARD_REASONING),
+        model('ministral-3b-2512', 'Ministral 3 (3B)', STANDARD_REASONING)
+      ],
+      authFlows: [{ flowId: 'mistral:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    muse: {
+      displayProvider: 'Muse',
+      shortCode: 'MUSE',
+      // Newest first, mirroring the CLI's own picker; Spark 1.2 stays the
+      // default (the on-disk catalogue still flags it `is_current`).
+      models: [
+        model('muse-spark-1.3', 'Muse Spark 1.3', museReasoning('muse-spark-1.3')),
+        {
+          ...model(
+            'muse-spark-1.3-contributor',
+            'Muse Contributor Spark 1.3',
+            museReasoning('muse-spark-1.3-contributor')
+          ),
+          detail:
+            'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
+        },
+        model('muse-spark-1.2', 'Muse Spark 1.2', museReasoning('muse-spark-1.2'), true),
+        {
+          ...model(
+            'muse-spark-1.2-contributor',
+            'Muse Contributor Spark 1.2',
+            museReasoning('muse-spark-1.2-contributor')
+          ),
+          detail:
+            'Discounted tokens; content, including inter-session messages, may be used for product improvement.'
+        }
+      ],
+      authFlows: [{ flowId: 'muse:login', kind: 'manual', label: 'Sign in', available: true }]
+    },
+    devin: {
+      displayProvider: 'Devin',
+      shortCode: 'DEVIN',
+      // One row per CLI model family (shared devinModelCatalog.ts); the
+      // reasoning offer is the family's variant ladder, and the run folds the
+      // chosen level into `devin acp --model <family>-<level>`.
+      models: DEVIN_MODEL_CATALOG.map((family) => ({
+        ...model(
+          family.id,
+          family.label,
+          devinReasoningEfforts(family.id).map((reasoningId) => ({
+            reasoningId,
+            label: DEVIN_REASONING_EFFORT_LABELS[reasoningId],
+            available: true
+          })),
+          family.id === DEVIN_DEFAULT_MODEL_ID
+        ),
+        detail: devinModelDescription(family)
+      })),
+      authFlows: [
+        {
+          flowId: 'devin:login',
+          kind: 'manual',
+          label: 'Sign in',
+          available: true,
+          detail:
+            'Interactive `devin auth login`, or set WINDSURF_API_KEY / DEVIN_API_KEY in the Host environment.'
+        }
+      ]
+    }
+  }
+
+function hashEntry(entry: Omit<HostProviderCatalogEntry, 'providerId'>): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        models: entry.models.map((m) => ({
+          modelId: m.modelId,
+          label: m.label,
+          available: m.available,
+          default: m.default === true,
+          detail: m.detail,
+          reasoning: m.reasoning.map((r) => ({
+            reasoningId: r.reasoningId,
+            label: r.label,
+            available: r.available
+          }))
+        })),
+        postures: entry.postures.map((p) => ({
+          postureId: p.postureId,
+          label: p.label,
+          available: p.available,
+          requiresExplicitConsent: p.requiresExplicitConsent,
+          ceiling: p.ceiling
+        }))
+      })
+    )
+    .digest('hex')
+}
+
+/** Full static catalog entry for one live provider. */
+export function hostProviderCatalogEntry(
+  providerId: string,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderCatalogEntry | null {
+  const entry = CATALOG[providerId]
+  if (!entry) return null
+  const activeModels =
+    providerId === 'pi'
+      ? entry.models.filter((model) => !isPiModelRetired(model.modelId))
+      : entry.models
+  return {
+    providerId,
+    displayProvider: entry.displayProvider,
+    shortCode: entry.shortCode,
+    models: activeModels.map((m) => ({
+      modelId: m.modelId,
+      label: m.label,
+      available: m.available,
+      ...(m.default === true ? { default: true } : {}),
+      ...(m.detail ? { detail: m.detail } : {}),
+      reasoning: m.reasoning.map((r) => ({ ...r }))
+    })),
+    postures: posturesForProvider(providerId, capabilities),
+    authFlows: entry.authFlows.map((f) => ({ ...f }))
+  }
+}
+
+/** Offers projection for one provider, derived from the static catalog. */
+export function hostProviderOffers(
+  providerId: string,
+  available: boolean,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection | null {
+  const entry = hostProviderCatalogEntry(providerId, capabilities)
+  if (!entry) return null
+  return {
+    providerId,
+    offerRevision: hashEntry(entry),
+    models: entry.models.map((m) => ({
+      modelId: m.modelId,
+      label: m.label,
+      available: m.available && available,
+      ...(m.default === true ? { default: true } : {}),
+      ...(m.detail ? { detail: m.detail } : {}),
+      reasoning: m.reasoning.map((r) => ({
+        reasoningId: r.reasoningId,
+        label: r.label,
+        available: r.available && available
+      }))
+    })),
+    postures: entry.postures.map((p) => ({ ...p, available: p.available && available }))
+  }
+}
+
+/** Overlay Host-owned capability onto the exact registry offer without rebuilding it. */
+export function projectHostProviderOfferCapabilities(
+  base: HostProviderOffersProjection,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection {
+  const detail = FULL_ACCESS_TRANSPORT_DETAIL[base.providerId]
+  const baseAvailable =
+    base.models.some((model) => model.available) &&
+    base.postures.some((posture) => posture.postureId !== 'full_access' && posture.available)
+  const fullAccessAvailable = Boolean(
+    detail && baseAvailable && capabilities.fullAccessConsentAuthority === true
+  )
+  const currentFullAccess = base.postures.find((posture) => posture.postureId === 'full_access')
+  if (!currentFullAccess || currentFullAccess.available === fullAccessAvailable) {
+    return {
+      ...base,
+      models: base.models.map((model) => ({
+        ...model,
+        reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+      })),
+      postures: base.postures.map((posture) => ({ ...posture }))
+    }
+  }
+  return {
+    ...base,
+    offerRevision: createHash('sha256')
+      .update(`${base.offerRevision}:full-access-consent-authority:${fullAccessAvailable}`)
+      .digest('hex'),
+    models: base.models.map((model) => ({
+      ...model,
+      reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+    })),
+    postures: base.postures.map((posture) =>
+      posture.postureId === 'full_access'
+        ? {
+            ...posture,
+            available: fullAccessAvailable,
+            ...(detail ? { detail } : {})
+          }
+        : { ...posture }
+    )
+  }
+}
+
+/** Status projection for one provider. */
+export function hostProviderStatus(
+  providerId: string,
+  available: boolean,
+  configured: boolean
+): HostProviderStatusProjection | null {
+  const entry = hostProviderCatalogEntry(providerId)
+  if (!entry) return null
+  return {
+    providerId,
+    status: !available ? 'unavailable' : configured ? 'ready' : 'auth_required',
+    label: entry.displayProvider
+  }
+}
+
+/** Auth-flow projections for one provider. */
+export function hostProviderAuthFlows(
+  providerId: string
+): readonly HostProviderAuthFlowProjection[] {
+  const entry = hostProviderCatalogEntry(providerId)
+  return entry ? entry.authFlows.map((f) => ({ ...f })) : []
+}
+
+/** All live provider ids in canonical order. */
+export function hostProviderCatalogIds(): readonly string[] {
+  return [...LIVE_SELECTABLE_PROVIDER_IDS]
+}
+
+/** True when the catalog has a static entry for this provider. */
+export function hasHostProviderCatalogEntry(providerId: string): boolean {
+  return providerId in CATALOG
+}
+
+const KIMI_REASONING_LABELS: Readonly<Record<string, string>> = {
+  on: 'On',
+  low: 'Low',
+  high: 'High',
+  max: 'Max'
+}
+
+/** Static Host Kimi rows used as discovery fallback and projector input. */
+export function hostKimiManagedFallbackRows(): KimiManagedModelRow[] {
+  return (CATALOG.kimi?.models ?? []).map((model) => ({
+    id: model.modelId,
+    label: model.label,
+    isDefault: model.default === true,
+    supportedReasoningEfforts: model.reasoning.map((option) => ({
+      reasoningEffort: option.reasoningId
+    })),
+    // Highspeed is the one managed route with no effort axis; K2.8 defaults to
+    // Max upstream and both K3 routes to High.
+    defaultReasoningEffort:
+      model.modelId === KIMI_K27_HIGHSPEED_MODEL_ID
+        ? 'on'
+        : model.modelId === KIMI_K28_MODEL_ID
+          ? 'max'
+          : 'high'
+  }))
+}
+
+function kimiReasoningOffers(
+  fallback: HostProviderModelOffer,
+  row: KimiManagedModelRow
+): readonly HostProviderModelOffer['reasoning'][number][] {
+  const known = new Map(fallback.reasoning.map((option) => [option.reasoningId, option]))
+  const enabled = (row.supportedReasoningEfforts ?? [])
+    .filter((effort) => !effort.disabled && known.has(effort.reasoningEffort))
+    .map((effort) => effort.reasoningEffort)
+  if (enabled.length === 0) return fallback.reasoning.map((option) => ({ ...option }))
+  return enabled.map((reasoningId) => {
+    const existing = known.get(reasoningId)!
+    return {
+      reasoningId: existing.reasoningId,
+      label: existing.label || KIMI_REASONING_LABELS[reasoningId] || reasoningId,
+      available: existing.available
+    }
+  })
+}
+
+function withSingleDefault(
+  models: readonly HostProviderModelOffer[]
+): readonly HostProviderModelOffer[] {
+  if (models.length === 0) return models
+  let seenDefault = false
+  const normalized = models.map((model) => {
+    if (model.default !== true) {
+      const { default: _ignored, ...rest } = model
+      void _ignored
+      return rest
+    }
+    if (seenDefault) {
+      const { default: _ignored, ...rest } = model
+      void _ignored
+      return rest
+    }
+    seenDefault = true
+    return { ...model, default: true as const }
+  })
+  if (seenDefault) return normalized
+  const [first, ...rest] = normalized
+  return [{ ...first, default: true }, ...rest]
+}
+
+/**
+ * Kimi-only live catalog gate. Discovery unavailable (`null`) keeps the static
+ * Host fallback. Verified managed rows replace the picker; omitted, disabled,
+ * or mismatched aliases are not selectable and never remap onto another model.
+ */
+export function hostProviderKimiOffers(
+  available: boolean,
+  discovered: readonly KimiManagedModelRow[] | null,
+  capabilities: HostProviderCatalogCapabilities = {}
+): HostProviderOffersProjection | null {
+  const base = hostProviderOffers('kimi', available, capabilities)
+  if (!base) return null
+  if (discovered == null) return base
+
+  const byId = new Map(discovered.map((row) => [row.id, row]))
+  const models = base.models.flatMap((model) => {
+    const row = byId.get(model.modelId)
+    if (!row || row.disabled) return []
+    return [
+      {
+        modelId: model.modelId,
+        label: row.label || model.label,
+        available: model.available && available,
+        ...(row.isDefault === true ? { default: true as const } : {}),
+        reasoning: kimiReasoningOffers(model, row).map((option) => ({
+          ...option,
+          available: option.available && available
+        })),
+        ...(row.description ? { detail: row.description } : {})
+      }
+    ]
+  })
+  if (models.length === 0) return base
+
+  const gatedModels = withSingleDefault(models)
+  const entry = CATALOG.kimi
+  if (!entry) return base
+  return {
+    providerId: 'kimi',
+    offerRevision: hashEntry({
+      displayProvider: entry.displayProvider,
+      shortCode: entry.shortCode,
+      models: gatedModels,
+      postures: base.postures,
+      authFlows: entry.authFlows
+    }),
+    models: gatedModels,
+    postures: base.postures.map((posture) => ({ ...posture }))
+  }
+}
+
+/**
+ * Devin-only subscription-plan gate. A free plan may run exactly one family, so
+ * the Host offers that single row instead of advertising two dozen the account
+ * cannot dispatch — the same narrowing the desktop picker applies, applied here
+ * so a client that talks to the Host directly sees the same catalogue.
+ *
+ * Fail-open like the rest of devinPlanAccess: only a positively observed free
+ * plan removes anything, and a gate that would leave no row at all (a catalogue
+ * that no longer carries the free family) returns the projection untouched
+ * rather than presenting Devin as offering nothing. The revision is rehashed
+ * over the surviving rows, so a client caching by `offerRevision` cannot keep
+ * serving the full catalogue after a plan lapses.
+ */
+export function projectDevinOffersForPlan(
+  base: HostProviderOffersProjection,
+  access?: DevinPlanAccess | null
+): HostProviderOffersProjection {
+  const entry = CATALOG.devin
+  if (base.providerId !== 'devin' || !entry || !isDevinFreePlanGated(access)) return base
+  const models = base.models.filter((model) => isDevinModelAllowedForPlan(model.modelId, access))
+  if (models.length === 0) return base
+  return {
+    providerId: 'devin',
+    offerRevision: hashEntry({
+      displayProvider: entry.displayProvider,
+      shortCode: entry.shortCode,
+      models,
+      postures: base.postures,
+      authFlows: entry.authFlows
+    }),
+    models: models.map((model) => ({
+      ...model,
+      reasoning: model.reasoning.map((reasoning) => ({ ...reasoning }))
+    })),
+    postures: base.postures.map((posture) => ({ ...posture }))
+  }
+}

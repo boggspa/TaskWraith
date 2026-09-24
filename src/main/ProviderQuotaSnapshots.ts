@@ -139,6 +139,28 @@ function codexUsageWindowSuffix(windowKind: CodexUsageWindowKind): string {
   return windowKind === 'session' ? '5h' : 'weekly'
 }
 
+function isCodexSparkLimit(rawName: string): boolean {
+  const normalized = rawName.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return normalized.includes('53codexspark')
+}
+
+function isCodexLunaReserveLimit(rawName: string): boolean {
+  const normalized = rawName.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return normalized === 'gptreserve' || normalized.includes('lunareserve')
+}
+
+function codexSparkDisplayName(rawName: string, windowKind: CodexUsageWindowKind): string {
+  if (isCodexSparkLimit(rawName)) {
+    return `Spark ${windowKind === 'session' ? '5h' : 'Weekly'}`
+  }
+  if (isCodexLunaReserveLimit(rawName)) {
+    // wham/usage names this allowance by its hidden `gpt-reserve` model slug;
+    // the ChatGPT app brands the same bucket "Luna Reserve" — use that name.
+    return `Luna Reserve ${windowKind === 'session' ? '5h' : 'Weekly'}`
+  }
+  return `${rawName} ${windowKind === 'session' ? '5h' : 'Weekly'}`
+}
+
 function codexUsageWindowIdentity(windowEntry: any): string {
   const label = String(windowEntry?.label || '')
     .trim()
@@ -313,7 +335,7 @@ export function normalizeCodexUsagePayload(
       additionalWindows.push(
         normalizeCodexUsageWindow(
           `additional-${index}-${codexUsageWindowSuffix(windowKind)}`,
-          `${rawName} ${windowKind === 'session' ? '5h' : 'Weekly'}`,
+          codexSparkDisplayName(rawName, windowKind),
           windowKind,
           nestedPrimary
         )
@@ -324,7 +346,7 @@ export function normalizeCodexUsagePayload(
       additionalWindows.push(
         normalizeCodexUsageWindow(
           `additional-${index}-${codexUsageWindowSuffix(windowKind)}`,
-          `${rawName} ${windowKind === 'session' ? '5h' : 'Weekly'}`,
+          codexSparkDisplayName(rawName, windowKind),
           windowKind,
           nestedSecondary
         )

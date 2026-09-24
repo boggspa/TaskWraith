@@ -3,21 +3,22 @@
 **Platform:** Electron
 
 ## What it is
-The Canvas composer button is a one-click way to open a running web app (e.g. a local dev server) in a standalone, movable Canvas window — separate from embedding a Canvas in a multiview pane or asking an agent to open one for you.
+A one-click way to open a Canvas for the current task — a browser, a sketch pad, a 3D scene, a simulator, or the Homebrew emulator. It opens in the right dock, and you can move it into its own window later.
 
 ## Where to find it
-It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. Hovering or focusing it shows a "Web canvas" hint label; clicking it opens a small popover with a URL field.
+An icon-only button in the composer's telemetry row, next to the Multiview layout picker. Hover it and the hint reads **Canvas**.
 
 ![Canvas composer button in the telemetry row](../images/canvas-and-previews__canvas-composer-button.png)
 
 ## How to use it
-1. Click the canvas icon in the composer's telemetry row to open the URL popover.
-2. Enter the address of a running app (it defaults to `http://localhost:3000`).
-3. Press Enter or click **Open web canvas** to launch it.
-4. TaskWraith opens the page in its own floating Canvas window, which you can move and close independently of the chat.
-5. If the URL can't be reached, the popover shows an inline error (e.g. "Couldn't load that URL — is a dev server running there?") so you can fix the address and try again.
+1. Click the canvas icon to open the picker.
+2. Choose what to open: **Open browser**, **Open sketch canvas**, **Open Mesh Canvas**, **Open Simulator Canvas**, or **Open Emulator Canvas**.
+3. For the browser, type the address in the browser's own address bar once it opens — it starts blank on purpose.
+4. Use the placement button in the Canvas tab strip to move the surface into its own window; it keeps the same tabs and controls.
+5. Click **Dock** in that window's header to send it back to the task.
 
 ## Tips & related
-- [Canvas multiview pane](./canvas-multiview-pane.md) — embed a Canvas inside a split pane instead of a floating window.
+- If a page cannot be reached, the browser shows the error in its own chrome so you can fix the address and retry.
+- [Canvas multiview pane](./canvas-multiview-pane.md) — embed a Canvas inside a split pane instead of the right dock.
 - [Plus tools menu](../composer/plus-tools-menu.md) — other composer-row tools and pickers.
 - [iOS canvas preview](./ios-canvas-preview.md) — the companion view for Canvas content on iOS.

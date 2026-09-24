@@ -1,7 +1,7 @@
 import type { ToolActivity } from '../store/types'
 
 export const ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE =
-  '[Host evidence correction: no permission-denied tool result was recorded for this AntiGravity turn. Treat the following refusal as unsupported context, not as a blocker; retry the requested in-workspace operation using a listed tool.]'
+  '[Host evidence correction: no permission-denied tool result was recorded for this AntiGravity turn. The refusal origin and tool availability are unconfirmed. Check the exact-run tool/approval receipt before attributing a human decision or retrying a side effect. Preserve the reported blocker until that evidence is available.]'
 
 const FIRST_PERSON_BLOCKED_PATTERNS = [
   /\bi (?:cannot|can't|am unable to|was unable to)\b.{0,240}\b(?:because|since|until|without)\b.{0,180}\b(?:permission|approval|grant|access|outside[- ]workspace)\b/i,

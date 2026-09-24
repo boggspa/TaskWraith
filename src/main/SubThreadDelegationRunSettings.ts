@@ -1,5 +1,33 @@
 import type { ChatRecord, ProviderId } from './store/types'
-import { getStaticProviderModels } from './providers/StaticProviderModels'
+import {
+  DEVIN_REASONING_EFFORT_LADDER,
+  normalizeDevinReasoningEffort
+} from '../shared/devinModelCatalog'
+import {
+  getStaticProviderModels,
+  kimiModelSupportsReasoningEfforts,
+  normalizeCliProviderModel,
+  normalizeKimiReasoningEffort
+} from './providers/StaticProviderModels'
+import { normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
+import {
+  isCursorGrokModelId,
+  isGrok45ReasoningModelId,
+  isGrokReasoningModelId,
+  normalizeGrok45ReasoningEffort,
+  normalizeGrok46ReasoningEffort
+} from '../shared/grok45Models'
+import {
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../shared/piReasoning'
+import { isMistralThinkingCapableModel } from '../shared/mistralModels'
+import { normalizeMistralThinkingLevel } from './mistral/MistralCliArgs'
+import { findPiStaticModel } from './pi/PiModels'
+import { piThinkingLevelForEffort } from './pi/PiCliArgs'
+import { MUSE_REASONING_EFFORTS, normalizeMuseReasoningEffort } from './muse/MuseCliArgs'
+import { normalizeAgyReasoningEffort } from './antigravity/AntigravityCli'
 
 export interface DelegatedSubThreadRunPayloadSettings {
   model: string
@@ -38,11 +66,41 @@ const CODEX_REASONING_EFFORTS = new Set([
   'ultracode'
 ])
 const CLAUDE_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
-const KIMI_REASONING_EFFORTS = new Set(['low', 'high', 'max'])
-const GROK_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh'])
+const KIMI_K3_REASONING_EFFORTS = new Set(['low', 'high', 'max'])
+const KIMI_FIXED_THINKING_EFFORTS = new Set([
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+  'ultracode',
+  'ultratask',
+  'on'
+])
+const GROK_REASONING_INPUTS = new Set([
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+  'ultracode',
+  'ultratask'
+])
+const TOP_TIER_REASONING_EFFORTS = new Set([
+  'xhigh',
+  'max',
+  'maximum',
+  'ultra',
+  'ultracode',
+  'ultratask'
+])
 
 const CODEX_EFFORT_ALIASES: Readonly<Record<string, string>> = {
   light: 'low',
+  extra: 'xhigh',
   ultra: 'ultracode'
 }
 const CLAUDE_EFFORT_ALIASES: Readonly<Record<string, string>> = {
@@ -55,9 +113,79 @@ function reasoningMetadataKey(provider: ProviderId): string | undefined {
   if (provider === 'claude') return 'claudeReasoningEffort'
   if (provider === 'kimi') return 'kimiReasoningEffort'
   if (provider === 'grok') return 'grokReasoningEffort'
+  if (provider === 'mistral') return 'mistralReasoningEffort'
+  if (provider === 'devin') return 'devinReasoningEffort'
+  if (provider === 'pi') return 'piReasoningEffort'
   if (provider === 'muse') return 'museReasoningEffort'
+  if (provider === 'ollama') return 'ollamaReasoningEffort'
   if (provider === 'cursor') return 'cursorReasoningEffort'
+  if (provider === 'antigravity') return 'antigravityReasoningEffort'
   return undefined
+}
+
+interface DelegationModelMetadata {
+  id: string
+  isDefault?: boolean
+  ultraTaskSupported?: boolean
+  supportedReasoningEfforts?: Array<{ reasoningEffort: string; disabled?: boolean }>
+}
+
+function staticModelMetadata(
+  provider: ProviderId,
+  requestedModel: string
+): DelegationModelMetadata | undefined {
+  const catalog = getStaticProviderModels(provider, {
+    includePreviewModels: true
+  }) as DelegationModelMetadata[]
+  const requestedKey = requestedModel.trim().toLowerCase()
+  if (requestedKey === 'cli-default' || requestedKey === 'default') {
+    return catalog.find((model) => model.isDefault) || catalog[0]
+  }
+  const exact = catalog.find((model) => model.id.toLowerCase() === requestedKey)
+  if (exact) return exact
+  const normalizedModel = normalizeCliProviderModel(provider, requestedModel).toLowerCase()
+  return catalog.find((model) => model.id.toLowerCase() === normalizedModel)
+}
+
+function enabledModelReasoningEfforts(model: DelegationModelMetadata | undefined): string[] {
+  return (model?.supportedReasoningEfforts || [])
+    .filter((option) => !option.disabled)
+    .map((option) => option.reasoningEffort.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function invalidReasoningEffort(
+  provider: ProviderId,
+  normalized: string,
+  supported?: readonly string[]
+): { ok: false; message: string } {
+  return {
+    ok: false,
+    message:
+      `delegate_to_subthread: reasoningEffort="${normalized}" is not valid for ${provider}.` +
+      (supported?.length ? ` Supported values: ${supported.join(', ')}.` : '')
+  }
+}
+
+function modelHasNoReasoningAxis(
+  provider: ProviderId,
+  requestedModel: string,
+  model: DelegationModelMetadata | undefined
+): boolean {
+  if (provider === 'grok') return !isGrokReasoningModelId(requestedModel)
+  if (provider === 'cursor') return !isCursorGrokModelId(requestedModel)
+  // Devin families fold the effort into the dispatched variant; a catalogued
+  // family with a single variant (Adaptive, SWE-1.6 Fast / Slow) has no axis.
+  if (provider === 'devin')
+    return Boolean(model) && enabledModelReasoningEfforts(model).length === 0
+  if (provider === 'mistral') {
+    return Boolean(model) && !isMistralThinkingCapableModel(requestedModel)
+  }
+  if (provider === 'pi') {
+    const piModel = findPiStaticModel(requestedModel)
+    return Boolean(piModel) && !piModel?.thinking
+  }
+  return false
 }
 
 function normalizeReasoningEffort(
@@ -72,72 +200,166 @@ function normalizeReasoningEffort(
       message: 'delegate_to_subthread: reasoningEffort must be a non-empty string when provided.'
     }
   }
-  let normalized = value.trim().toLowerCase()
-  if (provider === 'codex') normalized = CODEX_EFFORT_ALIASES[normalized] || normalized
-  if (provider === 'claude') normalized = CLAUDE_EFFORT_ALIASES[normalized] || normalized
+  const raw = value.trim().toLowerCase()
+  const modelId = requestedModel || 'cli-default'
+  const model = staticModelMetadata(provider, modelId)
+  const modelEfforts = enabledModelReasoningEfforts(model)
 
-  const allowed =
-    provider === 'codex'
-      ? CODEX_REASONING_EFFORTS
-      : provider === 'claude'
-        ? CLAUDE_REASONING_EFFORTS
-        : provider === 'kimi'
-          ? KIMI_REASONING_EFFORTS
-        : provider === 'grok' || provider === 'cursor'
-          ? GROK_REASONING_EFFORTS
-          : null
-  if (!allowed) {
+  // Grok/Cursor's Composer rows and known non-thinking Mistral/Pi rows have no
+  // effort axis. Delegation remains useful; omit the irrelevant control rather
+  // than rejecting the whole worker or forwarding a provider-invalid flag.
+  if (modelHasNoReasoningAxis(provider, modelId, model)) return { ok: true }
+
+  if (provider === 'codex') {
+    let normalized = CODEX_EFFORT_ALIASES[raw] || raw
+    if (raw === 'ultratask') {
+      normalized = modelEfforts.at(-1) || 'xhigh'
+    }
+    if (!CODEX_REASONING_EFFORTS.has(normalized)) {
+      return invalidReasoningEffort(provider, raw, [...CODEX_REASONING_EFFORTS])
+    }
+    if (
+      model &&
+      model.id !== 'custom' &&
+      modelEfforts.length > 0 &&
+      !modelEfforts.includes(normalized)
+    ) {
+      return invalidReasoningEffort(provider, normalized, modelEfforts)
+    }
+    return { ok: true, value: normalized }
+  }
+
+  if (provider === 'claude') {
+    const alias = CLAUDE_EFFORT_ALIASES[raw] || raw
+    const normalized = normalizeClaudeEffortFlagForModel(alias, modelId)
+    if (!normalized || !CLAUDE_REASONING_EFFORTS.has(normalized)) {
+      return invalidReasoningEffort(provider, raw, modelEfforts)
+    }
+    if (
+      model &&
+      model.id !== 'custom' &&
+      modelEfforts.length > 0 &&
+      !modelEfforts.includes(normalized)
+    ) {
+      return invalidReasoningEffort(provider, normalized, modelEfforts)
+    }
+    return { ok: true, value: normalized }
+  }
+
+  if (provider === 'kimi') {
+    // Keyed on the ladder, not on "is K3": K2.8 Preview took the Low/High/Max
+    // axis with it when it replaced K2.7 on the standard route.
+    if (!kimiModelSupportsReasoningEfforts(modelId)) {
+      return KIMI_FIXED_THINKING_EFFORTS.has(raw)
+        ? { ok: true, value: 'on' }
+        : invalidReasoningEffort(provider, raw, [...KIMI_FIXED_THINKING_EFFORTS])
+    }
+    const candidate = TOP_TIER_REASONING_EFFORTS.has(raw) ? 'max' : raw
+    if (!KIMI_K3_REASONING_EFFORTS.has(candidate)) {
+      return invalidReasoningEffort(provider, raw, [...KIMI_K3_REASONING_EFFORTS])
+    }
     return {
-      ok: false,
-      message: `delegate_to_subthread: reasoningEffort is not supported for ${provider}.`
+      ok: true,
+      value: normalizeKimiReasoningEffort(modelId, candidate) || 'max'
     }
   }
-  if (!allowed.has(normalized)) {
+
+  if (provider === 'grok' || provider === 'cursor') {
+    if (!GROK_REASONING_INPUTS.has(raw)) {
+      return invalidReasoningEffort(provider, raw, [...GROK_REASONING_INPUTS])
+    }
+    // Only the standalone xAI provider still has a Grok 4.5 ladder; Cursor's
+    // resale of that family is retired, so every Cursor Grok seat is 4.6.
+    const grok45 = provider === 'grok' && isGrok45ReasoningModelId(modelId)
     return {
-      ok: false,
-      message:
-        `delegate_to_subthread: reasoningEffort="${normalized}" is not valid for ${provider}. ` +
-        `Supported values: ${[...allowed].join(', ')}.`
+      ok: true,
+      value: grok45 ? normalizeGrok45ReasoningEffort(raw) : normalizeGrok46ReasoningEffort(raw)
     }
   }
-  if (requestedModel) {
-    const catalog = getStaticProviderModels(provider, { includePreviewModels: true }) as Array<{
-      id: string
-      isDefault?: boolean
-      supportedReasoningEfforts?: Array<{ reasoningEffort: string; disabled?: boolean }>
-    }>
-    const requestedKey = requestedModel.trim().toLowerCase()
-    const knownModel =
-      requestedKey === 'cli-default'
-        ? catalog.find((model) => model.isDefault)
-        : catalog.find((model) => model.id.toLowerCase() === requestedKey)
-    if (knownModel && knownModel.id !== 'custom') {
-      const modelEfforts = new Set(
-        (knownModel.supportedReasoningEfforts || [])
-          .filter((option) => !option.disabled)
-          .map((option) => option.reasoningEffort.toLowerCase())
+
+  if (provider === 'mistral') {
+    const normalized = normalizeMistralThinkingLevel(raw === 'ultracode' ? 'ultratask' : raw)
+    return normalized
+      ? { ok: true, value: normalized }
+      : invalidReasoningEffort(provider, raw, ['off', 'low', 'medium', 'high', 'max'])
+  }
+
+  if (provider === 'pi') {
+    // Validate against the MODEL's ladder, not pi's whole vocabulary. Without
+    // this a delegation could send `--thinking off` to an upstream that always
+    // reasons, or `minimal` to one where it means nothing.
+    const support = resolvePiReasoningSupport(modelId)
+    if (support.efforts.length === 0) return { ok: true }
+    const valid = new Set<string>([...support.efforts, ...TOP_TIER_REASONING_EFFORTS])
+    if (!valid.has(raw)) return invalidReasoningEffort(provider, raw, [...support.efforts])
+    const normalized = piThinkingLevelForEffort(
+      TOP_TIER_REASONING_EFFORTS.has(raw) ? support.efforts[support.efforts.length - 1] : raw
+    )
+    return normalized ? { ok: true, value: normalized } : { ok: true }
+  }
+
+  if (provider === 'muse') {
+    const valid = new Set<string>([
+      ...MUSE_REASONING_EFFORTS,
+      'none',
+      'off',
+      'max',
+      'ultracode',
+      'ultratask'
+    ])
+    return valid.has(raw)
+      ? { ok: true, value: normalizeMuseReasoningEffort(raw, modelId) }
+      : invalidReasoningEffort(provider, raw, [...valid])
+  }
+
+  if (provider === 'antigravity') {
+    const normalized = TOP_TIER_REASONING_EFFORTS.has(raw)
+      ? 'high'
+      : normalizeAgyReasoningEffort(raw)
+    return normalized
+      ? { ok: true, value: normalized }
+      : invalidReasoningEffort(provider, raw, ['low', 'medium', 'high'])
+  }
+
+  if (provider === 'ollama') {
+    const support = resolveOllamaReasoningSupport({ modelId })
+    if (support.kind === 'unsupported' || support.kind === 'unknown') return { ok: true }
+    // Derived from the model's OWN ladder. Keying this on `kind` was correct
+    // while GPT-OSS was the only `levels` model and genuinely could not be
+    // disabled; now DeepSeek V4, GLM 5.2 and Mistral Medium 3.5 are `levels`
+    // WITH a real Off, and this rejected the very stop their picker offers.
+    const valid = new Set<string>([
+      ...support.efforts,
+      ...TOP_TIER_REASONING_EFFORTS,
+      ...(support.canDisable ? ['false'] : []),
+      ...(support.kind === 'toggle' ? ['true', 'low', 'medium', 'high'] : [])
+    ])
+    if (!valid.has(raw)) return invalidReasoningEffort(provider, raw, [...valid])
+    const normalized = normalizeOllamaReasoningEffort(raw, support)
+    return normalized ? { ok: true, value: normalized } : { ok: true }
+  }
+
+  if (provider === 'devin') {
+    // Ladder tokens only; a catalogued family additionally pins the set its
+    // variants offer, and the run folds the token into `--model <variant>`.
+    const normalized = normalizeDevinReasoningEffort(raw)
+    if (!normalized || (modelEfforts.length > 0 && !modelEfforts.includes(normalized))) {
+      return invalidReasoningEffort(
+        provider,
+        raw,
+        modelEfforts.length > 0 ? modelEfforts : [...DEVIN_REASONING_EFFORT_LADDER]
       )
-      if (!modelEfforts.has(normalized)) {
-        const modelLabel =
-          requestedKey === 'cli-default'
-            ? `default (${knownModel.id})`
-            : `"${knownModel.id}"`
-        return {
-          ok: false,
-          message:
-            `delegate_to_subthread: ${provider} model ${modelLabel} does not expose ` +
-            `reasoningEffort="${normalized}".`
-        }
-      }
     }
+    return { ok: true, value: normalized }
   }
-  return { ok: true, value: normalized }
+  return {
+    ok: false,
+    message: `delegate_to_subthread: reasoningEffort is not supported for ${provider}.`
+  }
 }
 
 function latestRunForProvider(chat: ChatRecord, provider: ProviderId) {
-  return [...(chat.runs || [])]
-    .reverse()
-    .find((run) => !run.provider || run.provider === provider)
+  return [...(chat.runs || [])].reverse().find((run) => !run.provider || run.provider === provider)
 }
 
 function inheritedReasoningEffort(
@@ -248,11 +470,7 @@ export function resolveSubThreadDelegationRunSettings(
     }
   }
 
-  const effort = normalizeReasoningEffort(
-    request.provider,
-    request.reasoningEffort,
-    requestedModel
-  )
+  const effort = normalizeReasoningEffort(request.provider, request.reasoningEffort, requestedModel)
   if (!effort.ok) return effort
   if (request.kimiThinking !== undefined) {
     if (request.provider !== 'kimi') {
@@ -278,7 +496,6 @@ export function resolveSubThreadDelegationRunSettings(
     provider: request.provider,
     requestedModel,
     reasoningEffort: effort.value,
-    kimiThinking:
-      request.provider === 'kimi' ? true : undefined
+    kimiThinking: request.provider === 'kimi' ? true : undefined
   })
 }

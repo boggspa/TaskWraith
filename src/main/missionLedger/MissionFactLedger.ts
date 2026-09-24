@@ -33,6 +33,8 @@ export type MissionFactActor = 'user' | 'agent' | 'system'
 export interface MissionFactProvenance {
   readonly surface: MissionFactSurface
   readonly actor: MissionFactActor
+  /** Exact untruncated user prompt that specified the Goal, when retained. */
+  readonly sourcePromptMessageId?: string
   readonly sourceId?: string
   readonly chatId?: string
   readonly workspaceId?: string
@@ -260,6 +262,7 @@ function normalizeProvenance(value: MissionFactProvenance): MissionFactProvenanc
   if (!actors.includes(value.actor)) throw new Error('Mission fact actor is invalid.')
   const normalized: MissionFactProvenance = { surface: value.surface, actor: value.actor }
   for (const key of [
+    'sourcePromptMessageId',
     'sourceId',
     'chatId',
     'workspaceId',

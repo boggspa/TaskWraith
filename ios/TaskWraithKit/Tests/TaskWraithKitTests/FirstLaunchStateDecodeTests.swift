@@ -67,7 +67,7 @@ struct FirstLaunchStateDecodeTests {
             {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
           ]},
           {"provider":"ollama","label":"Ollama","models":[
-            {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding.","accentProvider":"deep-reinforce"},
+            {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Models with published weights for agentic coding.","accentProvider":"deep-reinforce"},
             {"name":"Liquid - LFM 2.5 8B-A1B","blurb":"Local tool/thinking model.","accentProvider":"liquid"},
             {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"Local coding model with tool use and thinking.","accentProvider":"poolside"}
           ]}

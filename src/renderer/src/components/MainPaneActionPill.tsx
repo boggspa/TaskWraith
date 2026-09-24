@@ -1,9 +1,12 @@
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
+  type ForwardedRef,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
@@ -16,7 +19,8 @@ import {
   InfoCircleIcon,
   PreviewSymbolIcon,
   SidebarCornerIcon,
-  WorkspaceStatsSymbolIcon
+  WorkspaceStatsSymbolIcon,
+  XSymbolIcon
 } from './AppChromeSymbols'
 import { WorkspaceStatsPopover } from './WorkspaceStatsPopover'
 import type { WorkspaceStatsContext } from './workspaceStatsContext'
@@ -33,7 +37,8 @@ export const MAIN_PANE_PRIMARY_ACTION_IDS = [
   'workspace-stats',
   'popout',
   'run',
-  'home'
+  'home',
+  'close'
 ] as const
 export const FX_MENU_ITEMS = [
   { id: 'sky', label: 'Weather/Sky' },
@@ -74,6 +79,7 @@ export interface MainPaneActionPillProps {
   onOpenDiffStudio: () => void
   onOpenFileEditor: () => void
   onOpenChatPopout: () => void
+  onOpenCompactCompanion: () => void
   runTitle: string
   runMenuOpen: boolean
   runHasMenu: boolean
@@ -83,44 +89,60 @@ export interface MainPaneActionPillProps {
   onRun: () => void
   homeOpen: boolean
   onToggleHome: () => void
+  /** Non-destructive view close. The owning surface decides whether that means
+   * closing a Multiview cell or revealing Thread Home in the single pane. */
+  onCloseThread?: () => void
+  closeThreadLabel?: string
+  closeThreadDisabled?: boolean
 }
 
-/** Workspace panes expose six primary actions; global panes omit Workspace Stats. */
-export function MainPaneActionPill({
-  idScope = 'chat-corner',
-  className,
-  fxEnabled,
-  skyEnabled,
-  ghostEnabled,
-  weatherDescription,
-  onToggleSky,
-  onToggleGhost,
-  changelogOpen,
-  firstLaunchOpen,
-  bugReportOpen,
-  onToggleChangelog,
-  onToggleFirstLaunch,
-  onToggleBugReport,
-  workspaceStats,
-  popoutMenuOpen,
-  setPopoutMenuOpen,
-  popoutMenuRef,
-  canOpenWorkspacePopout,
-  hasCurrentChat,
-  onOpenWorkbench,
-  onOpenDiffStudio,
-  onOpenFileEditor,
-  onOpenChatPopout,
-  runTitle,
-  runMenuOpen,
-  runHasMenu,
-  runDisabled,
-  runMenu,
-  runError,
-  onRun,
-  homeOpen,
-  onToggleHome
-}: MainPaneActionPillProps) {
+export interface MainPaneActionPillHandle {
+  openWorkspaceStats: () => void
+}
+
+/** Workspace panes expose seven primary actions; global panes omit Workspace Stats. */
+function MainPaneActionPillInner(
+  {
+    idScope = 'chat-corner',
+    className,
+    fxEnabled,
+    skyEnabled,
+    ghostEnabled,
+    weatherDescription,
+    onToggleSky,
+    onToggleGhost,
+    changelogOpen,
+    firstLaunchOpen,
+    bugReportOpen,
+    onToggleChangelog,
+    onToggleFirstLaunch,
+    onToggleBugReport,
+    workspaceStats,
+    popoutMenuOpen,
+    setPopoutMenuOpen,
+    popoutMenuRef,
+    canOpenWorkspacePopout,
+    hasCurrentChat,
+    onOpenWorkbench,
+    onOpenDiffStudio,
+    onOpenFileEditor,
+    onOpenChatPopout,
+    onOpenCompactCompanion,
+    runTitle,
+    runMenuOpen,
+    runHasMenu,
+    runDisabled,
+    runMenu,
+    runError,
+    onRun,
+    homeOpen,
+    onToggleHome,
+    onCloseThread,
+    closeThreadLabel = 'Close thread view',
+    closeThreadDisabled = false
+  }: MainPaneActionPillProps,
+  ref: ForwardedRef<MainPaneActionPillHandle>
+) {
   const [menu, setMenu] = useState<MainPaneMenu>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -181,6 +203,18 @@ export function MainPaneActionPill({
     const timeout = window.setTimeout(() => setMenu(null), 0)
     return () => window.clearTimeout(timeout)
   }, [menu, workspaceStats])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openWorkspaceStats: () => {
+        if (!workspaceStats) return
+        setPopoutMenuOpen(false)
+        setMenu('workspace-stats')
+      }
+    }),
+    [setPopoutMenuOpen, workspaceStats]
+  )
 
   useLayoutEffect(() => {
     if (menu !== 'workspace-stats') return
@@ -476,6 +510,15 @@ export function MainPaneActionPill({
               <span>Pop-Out Chat</span>
               <small>Open this thread in a separate window</small>
             </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={onOpenCompactCompanion}
+              disabled={!hasCurrentChat}
+            >
+              <span>Compact Companion</span>
+              <small>Open the transcript with a minimal composer</small>
+            </button>
           </div>
         )}
       </div>
@@ -518,6 +561,24 @@ export function MainPaneActionPill({
       >
         <SidebarCornerIcon direction="right" isOpen={homeOpen} />
       </button>
+
+      {onCloseThread && (
+        <button
+          data-main-pane-action="close"
+          className="chat-corner-btn chat-corner-btn-close-thread"
+          type="button"
+          onClick={() => {
+            setMenu(null)
+            setPopoutMenuOpen(false)
+            onCloseThread()
+          }}
+          title={closeThreadLabel}
+          aria-label={closeThreadLabel}
+          disabled={closeThreadDisabled}
+        >
+          <XSymbolIcon />
+        </button>
+      )}
     </div>
   )
 
@@ -530,3 +591,5 @@ export function MainPaneActionPill({
     </>
   )
 }
+
+export const MainPaneActionPill = forwardRef(MainPaneActionPillInner)

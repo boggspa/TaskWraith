@@ -1,18 +1,22 @@
 import {
+  advanceChatTranscriptHash,
   computeChatSubRevisions,
+  computeChatTranscriptHash,
   estimateChatMessageBytes,
   estimateChatRecordBytes,
   type ChatUpdateProducerDelta,
   type ChatUpdateProducerState,
   type ChatUpdateRecord
 } from '../../shared/chatUpdateTransport'
-import type { DerivedChatRecordMutation } from './ChatRecordMutation'
+import type { ChatRecordMutationOperation, DerivedChatRecordMutation } from './ChatRecordMutation'
 import type { ChatRecord } from './types'
 
 interface TrackedProjection {
   state: ChatUpdateProducerState
   messageIds: string[]
   messageBytesById: Map<string, number>
+  /** Duplicate/blank ids can exist in legacy or imported transcripts. */
+  transcriptIdsUnique: boolean
   runCount: number
   hasEnsemble: boolean
   lastTouched: number
@@ -55,6 +59,34 @@ function cloneState(state: ChatUpdateProducerState): ChatUpdateProducerState {
   return { ...state }
 }
 
+/** Every durable operation must declare its transport metadata family too. */
+function mutationProjectionFamily(
+  operation: ChatRecordMutationOperation
+): 'record' | 'runs' | 'ensemble' | 'messages' {
+  switch (operation.type) {
+    case 'record_patch':
+      return 'record'
+    case 'run_put':
+    case 'runs_splice':
+      return 'runs'
+    case 'ensemble_patch':
+    case 'ensemble_participant_patch':
+      return 'ensemble'
+    case 'messages_splice':
+    case 'message_content_append':
+    case 'message_put':
+    case 'message_patch':
+    case 'tool_activities_presence':
+    case 'tool_activities_splice':
+    case 'tool_activity_put':
+      return 'messages'
+    default: {
+      const unsupported: never = operation
+      throw new Error(`Unsupported projection operation: ${String(unsupported)}`)
+    }
+  }
+}
+
 function recordDeltaFromMutation(
   after: ChatRecord,
   derived: DerivedChatRecordMutation
@@ -83,10 +115,16 @@ function recordDeltaFromMutation(
       }
       continue
     }
-    if (operation.type === 'runs_splice' || operation.type === 'run_put') {
+    const family = mutationProjectionFamily(operation)
+    if (family === 'runs') {
       touch('runs')
       recordDelta.runs = after.runs
       recordCleared.delete('runs')
+    }
+    if (family === 'ensemble') {
+      touch('ensemble')
+      recordDelta.ensemble = after.ensemble
+      recordCleared.delete('ensemble')
     }
   }
 
@@ -119,23 +157,28 @@ export class ChatUpdateProjectionTracker {
     const sub = computeChatSubRevisions(chat)
     const messageIds: string[] = []
     const messageBytesById = new Map<string, number>()
+    let transcriptIdsUnique = true
     for (const message of chat.messages) {
-      if (!message.id || messageBytesById.has(message.id)) {
-        throw new Error(`Chat update projection requires unique message ids for ${chat.appChatId}`)
-      }
       messageIds.push(message.id)
+      if (!message.id || messageBytesById.has(message.id)) {
+        transcriptIdsUnique = false
+        continue
+      }
       messageBytesById.set(message.id, estimateChatMessageBytes(message))
     }
     const state: ChatUpdateProducerState = {
       chatId: chat.appChatId,
       persistenceRevision: persistenceRevision(chat),
       retainedBytes: estimateChatRecordBytes(chat),
+      transcriptHash: computeChatTranscriptHash(chat.messages),
+      transcriptIdsUnique,
       ...sub
     }
     this.projections.set(chat.appChatId, {
       state,
       messageIds,
       messageBytesById,
+      transcriptIdsUnique,
       runCount: chat.runs.length,
       hasEnsemble: chat.ensemble != null,
       lastTouched: this.now()
@@ -164,8 +207,24 @@ export class ChatUpdateProjectionTracker {
     }
     if (!tracked) throw new Error(`Chat update projection seed failed for ${after.appChatId}`)
 
+    // ID-based transcript deltas cannot be applied safely to a legacy/imported
+    // transcript with duplicate or blank ids. Keep the chat usable and let the
+    // delivery coordinator recover from its canonical baseline instead.
+    if (!tracked.transcriptIdsUnique) {
+      return { state: this.seed(after), delta: null }
+    }
+
+    // A non-expressible transcript edit must be sent through the regular
+    // snapshot/recovery path. Re-root the digest from the exact saved content
+    // instead of pretending an opaque mutation is a safe chain link.
+    if (derived.transcriptOps === null) {
+      return { state: this.seed(after), delta: null }
+    }
+
     try {
       const priorState = tracked.state
+      const priorTranscriptHash =
+        priorState.transcriptHash ?? computeChatTranscriptHash(before.messages)
       this.applyMutation(tracked, derived)
       if (
         tracked.messageIds.length !== after.messages.length ||
@@ -176,24 +235,23 @@ export class ChatUpdateProjectionTracker {
       }
 
       const recordOperations = derived.batch.operations.filter(
-        (operation) =>
-          operation.type === 'record_patch' ||
-          operation.type === 'runs_splice' ||
-          operation.type === 'run_put'
+        (operation) => mutationProjectionFamily(operation) !== 'messages'
       )
       const runOperations = derived.batch.operations.filter(
-        (operation) => operation.type === 'runs_splice' || operation.type === 'run_put'
+        (operation) => mutationProjectionFamily(operation) === 'runs'
       )
       const ensembleOperations = derived.batch.operations.filter(
         (operation) =>
-          operation.type === 'record_patch' &&
-          (Object.prototype.hasOwnProperty.call(operation.set, 'ensemble') ||
-            operation.clear.includes('ensemble'))
+          mutationProjectionFamily(operation) === 'ensemble' ||
+          (operation.type === 'record_patch' &&
+            (Object.prototype.hasOwnProperty.call(operation.set, 'ensemble') ||
+              operation.clear.includes('ensemble')))
       )
       const state: ChatUpdateProducerState = {
         chatId: after.appChatId,
         persistenceRevision: derived.batch.revision,
         retainedBytes: tracked.state.retainedBytes,
+        transcriptIdsUnique: tracked.transcriptIdsUnique,
         recordHash: rollHash(priorState.recordHash, 'record', {
           revision: derived.batch.revision,
           operations: recordOperations
@@ -205,7 +263,12 @@ export class ChatUpdateProjectionTracker {
         ensembleRevision:
           ensembleOperations.length > 0
             ? hashNumber(priorState.ensembleRevision, 'ensemble', ensembleOperations)
-            : priorState.ensembleRevision
+            : priorState.ensembleRevision,
+        transcriptHash: advanceChatTranscriptHash(priorTranscriptHash, {
+          kind: 'ops',
+          persistenceRevision: derived.batch.revision,
+          operations: derived.transcriptOps
+        })
       }
       tracked.state = state
       tracked.lastTouched = this.now()
@@ -213,6 +276,7 @@ export class ChatUpdateProjectionTracker {
       const delta: ChatUpdateProducerDelta = {
         ...state,
         basePersistenceRevision: derived.batch.baseRevision,
+        baseTranscriptHash: priorTranscriptHash,
         ...record,
         transcriptOps: derived.transcriptOps,
         changedMessageCount: derived.changedMessageCount
@@ -245,7 +309,24 @@ export class ChatUpdateProjectionTracker {
           ) {
             throw new Error('Tracked message splice is out of bounds')
           }
-          const removedIds = tracked.messageIds.splice(
+          const removedIds = tracked.messageIds.slice(
+            operation.index,
+            operation.index + operation.deleteCount
+          )
+          const removedIdSet = new Set(removedIds)
+          const insertedIds = new Set<string>()
+          for (const message of operation.messages) {
+            const id = message?.id
+            if (
+              !id ||
+              insertedIds.has(id) ||
+              (tracked.messageBytesById.has(id) && !removedIdSet.has(id))
+            ) {
+              throw new Error('Tracked message splice introduced an ambiguous id')
+            }
+            insertedIds.add(id)
+          }
+          tracked.messageIds.splice(
             operation.index,
             operation.deleteCount,
             ...operation.messages.map((message) => message.id)
@@ -309,8 +390,19 @@ export class ChatUpdateProjectionTracker {
           }
           break
         }
-        default:
+        // These operations preserve the tracked identities/counts and the
+        // coarse per-run/ensemble estimate. Their hashes are handled above.
+        case 'run_put':
+        case 'ensemble_patch':
+        case 'ensemble_participant_patch':
+        case 'tool_activities_presence':
+        case 'tool_activities_splice':
+        case 'tool_activity_put':
           break
+        default: {
+          const unsupported: never = operation
+          throw new Error(`Unsupported tracked operation: ${String(unsupported)}`)
+        }
       }
     }
   }

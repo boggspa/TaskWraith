@@ -1,15 +1,16 @@
-import type { CSSProperties, ReactElement } from 'react'
-import type { ChatMessage, ProviderId } from '../../../main/store/types'
+import type { ReactElement } from 'react'
+import type { ChatMessage } from '../../../main/store/types'
 import {
   ensembleFanoutViewportStageLabel,
   readEnsembleFanoutViewportHeader
 } from '../lib/ensembleFanoutViewportGroups'
-import { getProviderLabel } from '../lib/providerLabels'
-import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { CollapsedTranscriptRow } from './CollapsedTranscriptRow'
+import {
+  EnsembleFanoutProviderStrip,
+  ensembleFanoutProviderAccessibleLabels,
+  resolveEnsembleFanoutProviderPresentations
+} from './EnsembleFanoutProviderStrip'
 import { ToolFamilyIcon } from './icons/ToolFamilyIcon'
-
-const MAX_VISIBLE_PROVIDER_STRINGS = 8
 
 interface EnsembleFanoutViewportHeaderProps {
   message: ChatMessage
@@ -28,20 +29,8 @@ export function EnsembleFanoutViewportHeader({
     data.category === 'user' || data.dispatchLabel?.trim().toLowerCase() === 'user fan-out'
   const metaLabel = isUserFanout ? 'User Fan-Out' : 'Fan-Out'
   const laneLabel = `${data.laneCount} ${data.laneCount === 1 ? 'lane' : 'lanes'}`
-  const providers = data.attributions.map((attribution) => {
-    const provider = attribution.provider as ProviderId
-    const hueClass = resolveProviderHueClass(provider, attribution.model) || provider || 'unknown'
-    const providerLabel =
-      resolveProviderBrandLabel(provider, attribution.model) || getProviderLabel(provider)
-    return { ...attribution, hueClass, providerLabel }
-  })
-  const visibleProviders = providers.slice(0, MAX_VISIBLE_PROVIDER_STRINGS)
-  const hiddenProviderCount = providers.length - visibleProviders.length
-  const accessibleProviderLabels = providers
-    .map((provider) =>
-      provider.role ? `${provider.providerLabel} / ${provider.role}` : provider.providerLabel
-    )
-    .join(', ')
+  const providers = resolveEnsembleFanoutProviderPresentations(data.attributions)
+  const accessibleProviderLabels = ensembleFanoutProviderAccessibleLabels(providers)
   const accessibleLabel = [isUserFanout ? null : stageLabel, laneLabel, accessibleProviderLabels]
     .filter(Boolean)
     .join(' · ')
@@ -69,39 +58,7 @@ export function EnsembleFanoutViewportHeader({
             <span className="ensemble-fanout-viewport-count">
               {isUserFanout ? laneLabel : ` · ${laneLabel}`}
             </span>
-            {visibleProviders.length > 0 ? (
-              <span className="ensemble-fanout-viewport-providers">
-                <span aria-hidden="true"> · </span>
-                {visibleProviders.map((provider, index) => (
-                  <span key={provider.participantId || `${provider.provider}:${index}`}>
-                    {index > 0 ? <span aria-hidden="true"> / </span> : null}
-                    <span
-                      className={`ensemble-fanout-viewport-provider provider-${provider.hueClass}`}
-                      data-provider={provider.provider}
-                      data-provider-hue={provider.hueClass}
-                      data-model={provider.model || undefined}
-                      style={
-                        {
-                          '--ensemble-fanout-viewport-provider-accent': `var(--provider-${provider.hueClass}-color, var(--accent))`
-                        } as CSSProperties
-                      }
-                      title={[provider.providerLabel, provider.role, provider.model]
-                        .filter(Boolean)
-                        .join(' / ')}
-                    >
-                      {provider.providerLabel}
-                      {provider.role ? ` / ${provider.role}` : ''}
-                    </span>
-                  </span>
-                ))}
-                {hiddenProviderCount > 0 ? (
-                  <span className="ensemble-fanout-viewport-provider-overflow">
-                    {' '}
-                    +{hiddenProviderCount}
-                  </span>
-                ) : null}
-              </span>
-            ) : null}
+            <EnsembleFanoutProviderStrip providers={providers} />
           </>
         }
         compact

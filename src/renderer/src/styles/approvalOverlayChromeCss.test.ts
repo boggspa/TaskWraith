@@ -27,7 +27,9 @@ describe('approval overlay chrome', () => {
 
     const hideListFor = (rail: string): RegExp =>
       new RegExp(
-        `html:has\\(:is\\([^)]*\\.composer-permission-card--overlay[^)]*\\)\\)\\s*${rail}\\s*\\{\\s*display:\\s*none\\s*!important`
+        // Whitespace-tolerant: prettier wraps the `html:has(` / `:is(` lists
+        // across lines, and the pin must survive formatting, not enforce it.
+        `html:has\\(\\s*:is\\([^)]*\\.composer-permission-card--overlay[^)]*\\)\\s*\\)\\s*${rail}\\s*\\{\\s*display:\\s*none\\s*!important`
       )
     expect(css).toMatch(hideListFor('\\.transcript-participant-filter-rail'))
     expect(css).toMatch(hideListFor('\\.transcript-user-gutter'))
@@ -48,5 +50,18 @@ describe('approval overlay chrome', () => {
     expect(css).not.toContain('.composer-permission-card.provider-codex')
     expect(css).not.toContain('.composer-permission-card.provider-claude')
     expect(css).not.toContain('.composer-permission-card.provider-kimi')
+  })
+
+  it('paints the overlay without sampling the live transcript through backdrop blur', () => {
+    const css = readCss('03-composer-welcome-activity.css')
+    const start = css.indexOf('.composer-permission-card--overlay {')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const overlay = css.slice(start, css.indexOf('}', start) + 1)
+
+    expect(overlay).toContain('backdrop-filter: none')
+    expect(overlay).toContain('-webkit-backdrop-filter: none')
+    expect(overlay).toContain('background: var(--tw-glass-solid)')
+    expect(overlay).toContain('contain: layout style paint')
+    expect(overlay).not.toContain('blur(26px)')
   })
 })

@@ -100,6 +100,11 @@ function makeContextSummary(
 function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore {
   return {
     getChats: vi.fn(() => [makeChat()]),
+    getAbandonedReapCandidates: vi.fn(() => ({
+      chats: [makeChat()],
+      parentChatIds: new Set<string>()
+    })),
+    getWorkspaceCommitAttributionProjections: vi.fn(() => [makeChat()]),
     getChatList: vi.fn(() => [
       {
         ...makeChat(),
@@ -205,6 +210,10 @@ function makeStore(overrides: Partial<ChatServiceStore> = {}): ChatServiceStore 
       })
     ]),
     saveChat: vi.fn((chat: ChatRecord) => chat),
+    persistChatComposerSelection: vi.fn(async (request) => ({
+      chat: makeChat({ appChatId: request.chatId }),
+      changed: true
+    })),
     deleteChat: vi.fn(),
     clearChats: vi.fn(),
     ...overrides
@@ -238,6 +247,150 @@ function makeDeps(overrides: Partial<ChatServiceDeps> = {}): {
   }
   return { deps, store: deps.appStore }
 }
+
+describe('ChatService Host setup methods', () => {
+  it('creates only canonical global or registered-workspace single threads', () => {
+    const { deps, store } = makeDeps()
+    const service = new ChatService(deps)
+
+    expect(service.createSingleThread({ scope: 'global' }).scope).toBe('global')
+    expect(
+      service.createSingleThread({
+        scope: 'workspace',
+        workspaceId: 'workspace-1',
+        workspacePath: '/repo'
+      }).workspacePath
+    ).toBe('/canonical/repo')
+    expect(store.createGlobalChat).toHaveBeenCalledTimes(1)
+    expect(store.createChat).toHaveBeenCalledWith('workspace-1', '/canonical/repo')
+  })
+
+  it('configures a canonical idle thread through offer validation and provider-change hygiene', () => {
+    const current = makeChat({
+      provider: 'gemini',
+      linkedProviderSessionId: 'old-provider-session',
+      linkedGeminiSessionId: 'old-gemini-session'
+    })
+    const store = makeStatefulStore(current)
+    const assertProviderOfferedForThread = vi.fn()
+    const { deps } = makeDeps({ appStore: store, assertProviderOfferedForThread })
+    const result = new ChatService(deps).configureThread({
+      chatId: 'chat-1',
+      provider: 'claude',
+      selectedModelType: ' claude-sonnet '
+    })
+
+    expect(assertProviderOfferedForThread).toHaveBeenCalledWith('claude', current)
+    expect(result).toMatchObject({ provider: 'claude' })
+    expect(result.providerMetadata).toMatchObject({ selectedModelType: 'claude-sonnet' })
+    expect(result.linkedProviderSessionId).toBeUndefined()
+    expect(result.linkedGeminiSessionId).toBeUndefined()
+  })
+
+  it('persists bounded Host title/reasoning/posture and permits explicit unarchive while idle', () => {
+    const store = makeStatefulStore(makeChat({ archived: true, provider: 'codex' }))
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+    const restored = service.archiveThread({ chatId: 'chat-1', archived: false })
+    expect(restored.archived).toBe(false)
+    const configured = service.configureThread({
+      chatId: 'chat-1',
+      provider: 'codex',
+      selectedModelType: 'gpt-5.6',
+      reasoningId: 'high',
+      postureId: 'workspace_write',
+      title: 'Configured thread'
+    })
+    expect(configured).toMatchObject({
+      title: 'Configured thread',
+      workflowMode: 'normal',
+      providerMetadata: {
+        selectedModelType: 'gpt-5.6',
+        reasoningEffort: 'high',
+        approvalMode: 'default',
+        permissionPresetId: 'workspace_write'
+      }
+    })
+  })
+
+  it('routes exact Host chat-kind configuration through the guarded setChatKind mutation', () => {
+    const current = makeChat({
+      provider: 'codex',
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 18,
+        orchestrationMode: 'turn_bound',
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'kimi-seat',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Kimi',
+            instructions: '',
+            order: 1
+          }
+        ],
+        updatedAt: '2026-08-27T00:00:00.000Z'
+      }
+    })
+    const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+      makeChat({ appChatId: chatId, provider: 'kimi', chatKind: targetKind })
+    )
+    const store = makeStore({ getChat: vi.fn(() => current), setChatKind })
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    expect(
+      service.configureThread({
+        chatId: 'chat-1',
+        chatKind: 'single',
+        canonicalProvider: 'kimi'
+      })
+    ).toMatchObject({ chatKind: 'single', provider: 'kimi' })
+    expect(setChatKind).toHaveBeenCalledWith('chat-1', 'single', {
+      seedParticipant: undefined,
+      canonicalProvider: 'kimi',
+      canonicalProviderMetadata: undefined
+    })
+
+    vi.mocked(store.getChat).mockReturnValue(makeChat({ provider: 'codex', chatKind: 'single' }))
+    service.configureThread({ chatId: 'chat-1', chatKind: 'ensemble' })
+    expect(setChatKind).toHaveBeenLastCalledWith(
+      'chat-1',
+      'ensemble',
+      expect.objectContaining({
+        seedParticipant: expect.objectContaining({ provider: 'codex', enabled: true })
+      })
+    )
+  })
+
+  it('refuses configure/archive while a run or round is active', () => {
+    const active = makeChat({
+      runs: [{ runId: 'run-1', status: 'running' }] as ChatRecord['runs'],
+      ensemble: { activeRound: { roundId: 'round-1' } } as ChatRecord['ensemble']
+    })
+    const store = makeStatefulStore(active)
+    const { deps } = makeDeps({ appStore: store })
+    const service = new ChatService(deps)
+
+    expect(() => service.configureThread({ chatId: 'chat-1', provider: 'claude' })).toThrow(
+      /run or round is active/i
+    )
+    expect(() => service.archiveThread({ chatId: 'chat-1' })).toThrow(/run or round is active/i)
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('archives only the canonical thread record', () => {
+    const store = makeStatefulStore(makeChat())
+    const { deps } = makeDeps({ appStore: store })
+    const result = new ChatService(deps).archiveThread({ chatId: 'chat-1' })
+
+    expect(result.archived).toBe(true)
+    expect(store.saveChat).toHaveBeenCalledWith(expect.objectContaining({ archived: true }))
+  })
+})
 
 describe('ChatService.clearChats external history', () => {
   it('prepares and releases the matching global or workspace history-clear scope', async () => {
@@ -354,6 +507,120 @@ describe('ChatService', () => {
     service.saveChat(makeChat({ title: '  Needs trim  ' }))
     expect(deps.sanitizeChatForSave).toHaveBeenCalledTimes(1)
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
+  })
+
+  it('forwards an exact authored transcript mutation when sanitization preserves messages', () => {
+    const { deps, store } = makeDeps()
+    const service = new ChatService(deps)
+    const record = makeChat({ title: ' Chat ' })
+    const authoredTranscript = {
+      operations: [],
+      transcriptOps: [],
+      changedMessageCount: 0
+    }
+
+    service.saveChat(record, { authoredTranscript })
+
+    expect(store.saveChat).toHaveBeenCalledWith(
+      makeChat({ title: 'Chat' }),
+      { authoredTranscript }
+    )
+  })
+
+  it('preserves imported transcript provenance across renderer whole-record saves', () => {
+    const importedMetadata = {
+      schemaVersion: 1 as const,
+      provider: 'claude' as const,
+      trust: 'external_untrusted' as const,
+      sourceFileName: 'thread.jsonl',
+      sourceFingerprintSha256: 'a'.repeat(64),
+      sourceMessageCount: 1,
+      importedMessageCount: 1,
+      omittedRecordCount: 0,
+      invalidRecordCount: 0,
+      importedAt: '2026-08-20T00:00:00.000Z',
+      truncated: false,
+      promptBridgeEnabled: false as const,
+      nativeResumeAllowed: false as const
+    }
+    const importedMessage = {
+      id: 'imported-1',
+      role: 'assistant' as const,
+      content: 'external imported answer',
+      timestamp: '2026-08-20T00:00:00.000Z',
+      metadata: {
+        kind: 'externalProviderThreadImport',
+        sourceTrust: 'external_untrusted'
+      }
+    }
+    const current = makeChat({
+      externalProviderThreadImport: importedMetadata,
+      messages: [importedMessage]
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      externalProviderThreadImport: undefined,
+      linkedProviderSessionId: 'forged-source-session',
+      linkedGeminiSessionId: 'forged-gemini-session',
+      taskWraithMcpProfileReceipt: { sessionId: 'forged-source-session' } as never,
+      forkContext: {
+        kind: 'native',
+        createdAt: 1,
+        sourceProviderThreadId: 'forged-source-thread'
+      },
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          {
+            id: 'forged-seat',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: '',
+            order: 0,
+            linkedProviderSessionId: 'forged-seat-session',
+            kimiAcpNativeSession: true,
+            kimiAcpPostureVersion: 'forged-posture',
+            promptShellVersion: 'forged-shell',
+            promptDynamicStateVersion: 'forged-dynamic'
+          }
+        ]
+      } as never,
+      runs: [
+        {
+          runId: 'run-forged',
+          providerThreadId: 'forged-provider-thread',
+          startedAt: '2026-08-20T00:00:00.000Z'
+        }
+      ],
+      messages: [
+        { ...importedMessage, content: 'metadata-stripped rewrite', metadata: undefined },
+        {
+          id: 'new-host-row',
+          role: 'user',
+          content: 'new host prompt',
+          timestamp: '2026-08-20T00:01:00.000Z'
+        }
+      ]
+    })
+
+    expect(saved.externalProviderThreadImport).toEqual(importedMetadata)
+    expect(saved.messages).toEqual([
+      importedMessage,
+      expect.objectContaining({ id: 'new-host-row', content: 'new host prompt' })
+    ])
+    expect(JSON.stringify(saved)).not.toContain('metadata-stripped rewrite')
+    expect(JSON.stringify(saved)).not.toContain('forged-source-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-gemini-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-source-thread')
+    expect(JSON.stringify(saved)).not.toContain('forged-provider-thread')
+    expect(JSON.stringify(saved)).not.toContain('forged-seat-session')
+    expect(JSON.stringify(saved)).not.toContain('forged-posture')
+    expect(JSON.stringify(saved)).not.toContain('forged-shell')
+    expect(JSON.stringify(saved)).not.toContain('forged-dynamic')
   })
 
   it('allows changing a live chat to Cursor through saveChat', () => {
@@ -694,13 +961,7 @@ describe('ChatService', () => {
     expect(saved.providerMetadata).toEqual({ rendererSetting: 'next' })
   })
 
-  /**
-   * The refusal used to live only in the desktop `set-chat-kind` IPC handler,
-   * under a comment claiming it was "the gate every surface goes through". It
-   * was not: the bridge/iOS action calls this method directly. It lives here
-   * now, which is the one thing every door has in common.
-   */
-  describe('a shared chat cannot be switched out of panel mode', () => {
+  describe('explicit chat mode remains the host choice during collaboration', () => {
     function makeSharedDeps(
       chat: ChatRecord,
       shares: Array<{ enabled: boolean; participants?: Array<{ status: string }> }>
@@ -717,19 +978,18 @@ describe('ChatService', () => {
       return { deps, setChatKind }
     }
 
-    it('refuses the collapse and never reaches the destructive store mutation', () => {
-      // AppStore.setChatKind strips the roster into providerMetadata.stashedEnsemble
-      // before anything else can object, and a later preset-apply consumes that
-      // stash — so a seat removed by a collapse can RESURRECT. With externals in
-      // seats that is a kicked person coming back.
+    it('allows a collapse while external seats remain active in the collaboration store', () => {
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
         { enabled: true, participants: [{ status: 'active' }] }
       ])
 
-      expect(() =>
-        new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
-      ).toThrow(/shared/i)
-      expect(setChatKind).not.toHaveBeenCalled()
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalledWith('chat-1', 'single', {
+        seedParticipant: undefined,
+        canonicalProvider: undefined,
+        canonicalProviderMetadata: undefined
+      })
+      expect(deps.humanCollaborationStore?.listShares).not.toHaveBeenCalled()
     })
 
     it('allows the collapse when the share record survives but nobody is admitted', () => {
@@ -2290,6 +2550,91 @@ describe('ChatService', () => {
       content: 'Prepared answer',
       metadata: { mediaRefs: [expect.objectContaining({ status: 'denied' })] }
     })
+    expect(parent).toEqual(parentBefore)
+  })
+
+  it('shares the parent transcript by reference when the v2 fork-prefix gate is on', () => {
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      provider: 'codex',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'No deep copy on the v2 prefix path',
+          timestamp: '2026-09-01T00:00:00.000Z'
+        }
+      ]
+    })
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const store = makeStore({
+      getChat: vi.fn((chatId) => (chatId === parent.appChatId ? parent : sideChat)),
+      createSideChat: vi.fn(() => sideChat),
+      saveChat: vi.fn((chat: ChatRecord) => chat)
+    })
+    // Mirror the production seam: transferTranscriptMediaMessagesBatch is pure
+    // and returns a fresh array of shallow-copied messages.
+    const prepareForkMessages = vi.fn(({ copiedMessages }) =>
+      (copiedMessages as ChatRecord['messages']).map((entry) => ({ ...entry }))
+    )
+    const canShareForkTranscript = vi.fn(() => true)
+    const { deps } = makeDeps({ appStore: store, prepareForkMessages, canShareForkTranscript })
+
+    const fork = new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+
+    expect(canShareForkTranscript).toHaveBeenCalledWith(parent.appChatId)
+    // The pure preparation seam received the live parent array (no clone) and
+    // the fork still gets its own array container.
+    expect(prepareForkMessages.mock.calls[0][0].copiedMessages).toBe(parent.messages)
+    expect(fork.messages).not.toBe(parent.messages)
+    expect(fork.messages).toEqual(parent.messages)
+  })
+
+  it('keeps the defensive structuredClone when the v2 fork-prefix gate is off or absent', () => {
+    const parent = makeChat({
+      appChatId: 'chat-1',
+      provider: 'codex',
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'user',
+          content: 'Clone me',
+          timestamp: '2026-09-01T00:00:00.000Z'
+        }
+      ]
+    })
+    const parentBefore = structuredClone(parent)
+    const sideChat = makeChat({
+      appChatId: 'side-chat-1',
+      parentChatId: parent.appChatId,
+      parentChatRelation: 'sideChat',
+      messages: []
+    })
+    const store = makeStore({
+      getChat: vi.fn((chatId) => (chatId === parent.appChatId ? parent : sideChat)),
+      createSideChat: vi.fn(() => sideChat),
+      saveChat: vi.fn((chat: ChatRecord) => chat)
+    })
+    const prepareForkMessages = vi.fn(({ copiedMessages }) => {
+      copiedMessages[0].content = 'Mutated copy'
+      return copiedMessages
+    })
+    const { deps } = makeDeps({
+      appStore: store,
+      prepareForkMessages,
+      canShareForkTranscript: vi.fn(() => false)
+    })
+
+    const fork = new ChatService(deps).createForkChat({ parentChatId: parent.appChatId })
+
+    expect(prepareForkMessages.mock.calls[0][0].copiedMessages).not.toBe(parent.messages)
+    expect(fork.messages[0].content).toBe('Mutated copy')
+    // The parent record is untouched by preparation-side mutation of the copy.
     expect(parent).toEqual(parentBefore)
   })
 

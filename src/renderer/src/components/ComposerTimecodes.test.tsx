@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ComposerTimecode,
+  ComposerThreadTimecodeBar,
   computeComposerTimecodePopoverPosition,
   getComposerTimecodePresentation
 } from './ComposerTimecodes'
@@ -34,6 +35,37 @@ describe('ComposerTimecode presentation', () => {
     expect(presentation.totalLabel).toBe('00:00:02:05')
     expect(presentation.visibleMode).toBe('total')
     expect(presentation.visibleLabel).toBe('00:00:02:05')
+  })
+
+  it('adds live whole-round progress to completed-round thread time', () => {
+    const presentation = getComposerTimecodePresentation({
+      running: true,
+      startedAt: '2026-09-12T10:02:00.000Z',
+      cumulativeBaseMs: 30_000,
+      nowMs: Date.parse('2026-09-12T10:02:12.000Z')
+    })
+
+    expect(presentation.turnLabel).toBe('00:00:00:12')
+    expect(presentation.totalLabel).toBe('00:00:00:42')
+  })
+
+  it('keeps a round clock live across a between-seat running-flag gap', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-12T10:02:12.000Z'))
+    try {
+      const html = renderToStaticMarkup(
+        <ComposerThreadTimecodeBar
+          running={false}
+          startedAt="2026-09-12T10:02:00.000Z"
+          cumulativeBaseMs={30_000}
+        />
+      )
+
+      expect(html).toContain('data-running="true"')
+      expect(html).toContain('Current turn elapsed time 00:00:00:12')
+      expect(html).toContain('Total thread wall time 00:00:00:42')
+    } finally {
+      now.mockRestore()
+    }
   })
 
   it('renders only the visible idle readout when the popover is closed', () => {

@@ -12,7 +12,14 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { resolveHostRegistryRoot } from '../../src/host-runtime/HostRegistry'
+import { createHostPerfInstrumentation } from '../../src/host-runtime/HostPerfSnapshot'
+import {
+  createHostPerfSnapshotFileWriter,
+  type HostPerfSnapshotFileIdentity
+} from '../../src/host-runtime/HostPerfSnapshotFile'
+import { createWorkSpanRecorder } from '../../src/host-shared/perf/WorkSpanRecorder'
 
 /* eslint-disable @typescript-eslint/no-empty-function -- adapter fakes intentionally expose no-op lifecycle methods. */
 
@@ -53,6 +60,26 @@ const {
 } = require('./replayDriver.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
 const { dirtyTreeFingerprint, collectRepoProvenance } = require('./repoProvenance.cjs')
+const {
+  MATRIX_SAMPLING,
+  PROVIDER_MIXES,
+  SATURATION_MODES,
+  PAIRING_ROLES,
+  validateMatrixCell,
+  cellName,
+  parseCellName,
+  enumerateMatrixCells,
+  pairedRunNames,
+  assertPairedRunCompatibility
+} = require('./interferenceMatrix.cjs')
+const {
+  CROSS_THREAD_SCHEMA_VERSION,
+  normalizeWorkSpanSection,
+  validateCrossThreadBlock,
+  sampleWorkSpanSections,
+  applyCrossThreadToMetrics
+} = require('./collectors/hostSpans.cjs')
+const { PERF_GATE_THRESHOLDS, PROPOSED_CROSS_THREAD_BOUNDS } = require('./perfGateThresholds.cjs')
 
 function baseEnv(overrides = {}) {
   return {
@@ -80,11 +107,75 @@ function baseEnv(overrides = {}) {
   }
 }
 
+/**
+ * Wave-8: the host bundle freshness preflight reads the real repo's
+ * out/host + src mtimes by default. Launch simulations decouple from that
+ * with this DI fs: the virtual bundle is always newer than the single
+ * virtual source file per compiled tree, so the preflight passes and the
+ * tests keep exercising the attach/teardown behaviour they were written for.
+ */
+function freshHostBundleFs() {
+  const bundleSuffix = ['out', 'host', 'host-runtime', 'cli.js'].join(path.sep)
+  return {
+    statSync(target: string) {
+      return {
+        isFile: () => true,
+        mtimeMs: String(target).endsWith(bundleSuffix) ? 1e12 : 1
+      }
+    },
+    readdirSync(_target: string, _options?: unknown) {
+      return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    },
+    // The walk yields no `.js`, so no sourcemap is ever read. This exists only
+    // to satisfy the fs contract, so the test exercises the freshness
+    // comparison rather than short-circuiting on fs_contract.
+    readFileSync(target: string, _encoding?: unknown) {
+      throw Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
+    }
+  }
+}
+
+/**
+ * Wave-8: the STALE counterpart of freshHostBundleFs for the launch-blocking
+ * test — suffix-matched against the REAL repoRoot, every virtual source
+ * newer than the bundle. The first version of that test reused the
+ * '/repo'-rooted memFs and passed for the WRONG reason under mutation
+ * (host_bundle_missing matches the same regex as host_bundle_stale); the
+ * red-check caught it, and the assertion now names the stale source.
+ */
+function staleHostBundleFs() {
+  const bundleSuffix = ['out', 'host', 'host-runtime', 'cli.js'].join(path.sep)
+  return {
+    statSync(target: string) {
+      return {
+        isFile: () => true,
+        mtimeMs: String(target).endsWith(bundleSuffix) ? 1 : 1e12
+      }
+    },
+    readdirSync(_target: string, _options?: unknown) {
+      return [{ name: 'Fresh.ts', isFile: () => true, isDirectory: () => false }]
+    },
+    // As above: no `.js` in the walk, so this is never called. Without it the
+    // preflight would refuse on fs_contract and the test would pass for the
+    // WRONG reason — the same trap this stub's own comment already records.
+    readFileSync(target: string, _encoding?: unknown) {
+      throw Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
+    }
+  }
+}
+
 describe('perf schema (ADR §7 hardened)', () => {
   it('exports workloads, reduce_motion posture, and schema version', () => {
     expect(SCHEMA_VERSION).toBe(1)
     expect(WORKLOADS).toEqual(
-      expect.arrayContaining(['30seat', '50seat', 'dual_run', '455_soak', '50_chat_switch'])
+      expect.arrayContaining([
+        '30seat',
+        '50seat',
+        'dual_run',
+        '455_soak',
+        '50_chat_switch',
+        'light_beside_large'
+      ])
     )
     expect(FX_POSTURES).toContain('reduce_motion')
   })
@@ -1339,6 +1430,77 @@ describe('T2 runner (no Electron launch)', () => {
     expect(plan.safety.coreFoundationHomePropagated).toBe(true)
   })
 
+  it.each(['darwin', 'linux', 'win32'])(
+    'shadows an inherited host registry override in the isolated %s child',
+    (platform) => {
+      const home = path.resolve('/virtual/repo/perf-homes/perfHostRegistry01')
+      const registryRoot = path.join(home, '.taskwraith', 'hosts')
+      const previousRoot = process.env.TASKWRAITH_HOST_REGISTRY_ROOT
+      let childEnv: NodeJS.ProcessEnv = {}
+      try {
+        process.env.TASKWRAITH_HOST_REGISTRY_ROOT = path.resolve('/foreign/host-registry')
+        const plan = buildElectronSpawnPlan({
+          instanceId: 'perfHostRegistry01',
+          repoRoot: '/virtual/repo',
+          home,
+          platform,
+          adapters: { resolveElectronPath: () => '/virtual/Electron' }
+        })
+        spawnExactElectronChild({
+          spawnPlan: plan,
+          adapters: {
+            spawn: (_command, _args, options) => {
+              childEnv = options.env
+              return Object.assign(new EventEmitter(), {
+                pid: 4242,
+                stdout: new EventEmitter(),
+                stderr: new EventEmitter(),
+                kill: () => true
+              })
+            }
+          }
+        })
+
+        expect(childEnv.HOME).toBe(home)
+        expect(resolveHostRegistryRoot(childEnv, home)).toBe(registryRoot)
+        expect(plan.shellCommand).toContain('TASKWRAITH_HOST_REGISTRY_ROOT=')
+        expect(plan.shellCommand).toContain(registryRoot)
+      } finally {
+        if (previousRoot === undefined) delete process.env.TASKWRAITH_HOST_REGISTRY_ROOT
+        else process.env.TASKWRAITH_HOST_REGISTRY_ROOT = previousRoot
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'passes the isolated host registry to LaunchServices as one explicit environment value',
+    () => {
+      const { buildStudioWatchdogLaunchSpec } = require('../studio-acceptance-harness.cjs')
+      const home = path.resolve('/virtual/repo/perf-homes/studio registry')
+      const registryRoot = path.join(home, '.taskwraith', 'hosts')
+      const spawnPlan = buildElectronSpawnPlan({
+        instanceId: 'studioRegistry01',
+        repoRoot: '/virtual/repo',
+        home,
+        platform: 'darwin',
+        packagedExecutablePath:
+          '/virtual/repo/dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+      })
+      const launch = buildStudioWatchdogLaunchSpec(
+        { repoRoot: '/virtual/repo', spawnPlan },
+        { timeoutMs: 1_000 },
+        { platform: 'darwin' }
+      )
+
+      // @portability-ok: This Darwin-gated LaunchServices fixture must use macOS's exact launcher.
+      expect(launch.command).toBe('/usr/bin/open')
+      expect(resolveHostRegistryRoot(launch.env, home)).toBe(registryRoot)
+      const registryArgument = launch.args.indexOf(`TASKWRAITH_HOST_REGISTRY_ROOT=${registryRoot}`)
+      expect(registryArgument).toBeGreaterThan(0)
+      expect(launch.args[registryArgument - 1]).toBe('--env')
+    }
+  )
+
   it('waits boundedly for the exact-child main inspector HTTP endpoint', async () => {
     let attempts = 0
     let elapsedMs = 0
@@ -1927,6 +2089,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -1953,6 +2116,10 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -1981,7 +2148,18 @@ describe('T2 runner (no Electron launch)', () => {
               },
               timeoutMs: 0
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/staged attach failure/)
@@ -2130,6 +2308,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2156,6 +2335,10 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -2194,7 +2377,18 @@ describe('T2 runner (no Electron launch)', () => {
                 }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/not in owned Electron tree|Refuse attach/i)
@@ -2385,6 +2579,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2417,6 +2612,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2475,6 +2671,34 @@ describe('T2 runner (no Electron launch)', () => {
     expect(match.ok).toBe(true)
     expect(probeExpression).toContain("process.getBuiltinModule('module').createRequire")
     expect(probeExpression).not.toMatch(/(^|[^A-Za-z])require\s*\(/)
+
+    // Evidence-v1 2026-09-10: --home=/private/tmp/... , Electron userData /tmp/...
+    const privateHome = '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1'
+    const tmpUserData =
+      '/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1/Library/Application Support/TaskWraith Dev ev1-small-2-cold'
+    const privateUserData =
+      '/private/tmp/tw-evidence-v1/8ec2ed74d/perf-homes/ev1/Library/Application Support/TaskWraith Dev ev1-small-2-cold'
+    const alias = await verifyIsolatedHomeAndUserDataViaMainInspector(
+      {
+        post: async () => ({
+          result: {
+            value: {
+              home: privateHome,
+              userData: tmpUserData,
+              homeRealpath: privateHome,
+              userDataRealpath: privateUserData
+            }
+          }
+        })
+      },
+      {
+        home: privateHome,
+        userDataPath: privateUserData,
+        homeRealpath: privateHome,
+        userDataRealpath: privateUserData
+      }
+    )
+    expect(alias.ok).toBe(true)
 
     await expect(
       verifyIsolatedHomeAndUserDataViaMainInspector(
@@ -2552,6 +2776,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2579,6 +2804,10 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -2651,7 +2880,18 @@ describe('T2 runner (no Electron launch)', () => {
                 return { ok: true }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/userData.*mismatch|Refuse replay/i)
@@ -2859,6 +3099,7 @@ describe('T2 runner (no Electron launch)', () => {
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -2886,6 +3127,10 @@ describe('T2 runner (no Electron launch)', () => {
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: (cmd, _args, opts) => {
@@ -2960,7 +3205,18 @@ describe('T2 runner (no Electron launch)', () => {
                 return { ok: true }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/HOME realpath mismatch|Refuse replay/i)
@@ -3063,6 +3319,7 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
           [
             '--workload=dual_run',
             '--launch',
+            '--accept-unfolded-cross-thread',
             '--i-accept-isolated-launch',
             '--materialize-instance-userdata',
             '--lean',
@@ -3091,6 +3348,10 @@ describe('T2 harness amendment — disk preflight, windowed rate, capture deadli
             buildAdapters: {
               build: async () => ({ code: 0 })
             },
+            // Wave-8: decouple the host bundle preflight from real out/host mtimes.
+            hostBundleAdapters: { fs: freshHostBundleFs() },
+            // Not a host-lane test: the dev Node precondition is assumed present.
+            externalHostAdapters: { exists: () => true },
             spawnAdapters: {
               resolveElectronPath: () => '/virtual/Electron',
               spawn: () => {
@@ -3300,6 +3561,59 @@ describe('T9a main persistence stats collector', () => {
     expect(noSession.ok).toBe(false)
   })
 
+  it('names WHICH side is wedged, and never reaches the handle when main is', async () => {
+    // Attempt 6 spent 298,503 ms of a 300,000 ms capture budget in this sample
+    // and reported one undifferentiated timeout, which cannot distinguish a
+    // main thread that answers nothing from a perf handle that is itself
+    // expensive. The two have different fixes, so the sample has to say which.
+    const attempted: string[] = []
+    const wedgedMain = await sampleMainPersistenceStats(
+      {
+        post: async (_m: string, params: { expression: string }) => {
+          attempted.push(params.expression)
+          throw new Error('CDP Runtime.evaluate timed out after 5000ms')
+        }
+      },
+      { livenessTimeoutMs: 5000 }
+    )
+    expect(wedgedMain.ok).toBe(false)
+    expect(wedgedMain.reason).toMatch(/liveness probe/i)
+    expect(wedgedMain.reason).toMatch(/not the perf handle/i)
+    // The trivial probe is the ONLY thing attempted: a wedged main must not also
+    // spend the handle's bound before reporting.
+    expect(attempted).toEqual(['1'])
+
+    // Inverse: main answers trivia, the handle does not. Same failure class to a
+    // reader of `persistenceStatsFailure`, opposite fix.
+    const wedgedHandle = await sampleMainPersistenceStats({
+      post: async (_m: string, params: { expression: string }) => {
+        if (params.expression === '1') return { result: { value: 1 } }
+        throw new Error('CDP Runtime.evaluate timed out after 30000ms')
+      }
+    })
+    expect(wedgedHandle.ok).toBe(false)
+    expect(wedgedHandle.reason).toContain(PERF_STATS_GLOBAL)
+    expect(wedgedHandle.reason).toMatch(/this is the handle, not the transport/i)
+  })
+
+  it('asks the transport to bound every call it makes', async () => {
+    // The websocket transport resolves a pending request only on reply or on
+    // socket close, so an unanswered evaluate settles NEVER. The outer capture
+    // budget is the backstop; this is the bound that makes a wedge cost seconds
+    // and carry a name.
+    const bounds: unknown[] = []
+    await sampleMainPersistenceStats(
+      {
+        post: async (_m: string, _params: unknown, sendOptions: unknown) => {
+          bounds.push(sendOptions)
+          return { result: { value: validPayload() } }
+        }
+      },
+      { livenessTimeoutMs: 111, evaluateTimeoutMs: 222 }
+    )
+    expect(bounds).toEqual([{ timeoutMs: 111 }, { timeoutMs: 222 }])
+  })
+
   it('rejects a partial payload instead of reporting it as measured', () => {
     const missingReason = validPayload()
     delete (missingReason.coalescing.coalescer.reasonMix as Record<string, unknown>)['approval']
@@ -3381,8 +3695,10 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
     // Anchored to statement form, not a bare substring: a plain indexOf also
     // matches the call sitting in a trailing `// comment`, which let a
     // disabled producer keep the suite green when this guard was first written.
+    // The statement spans two lines since the call became bounded; `^\s*const`
+    // still refuses a commented-out producer.
     const sampleAt = src.search(
-      /^\s*const statsResult = await sampleMainPersistenceStats\(mainInspector\)\s*$/m
+      /^\s*const statsResult = await withinCaptureBudget\(\s*\n\s*sampleMainPersistenceStats\(mainInspector\),\s*$/m
     )
     const applyAt = src.search(/^\s*applyPersistenceStatsToMetrics\(report\.metrics, /m)
     const closeAt = src.search(/^\s*mainInspector\.close\(\)\s*$/m)
@@ -3394,6 +3710,21 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
 
     // A failed sample must be recorded, never silently dropped.
     expect(src).toContain('persistenceStatsFailure')
+    // The capture budget is a checkpoint, not a deadline: an await that neither
+    // asks hasCaptureDeadlineExpired() nor threads remainingCaptureBudgetMs()
+    // sits outside it. Attempt 4 died on this one, unbounded, at 18m44s.
+    expect(src).toContain('withinCaptureBudget')
+    expect(src).toContain("'capture:persistence_stats'")
+    // ...and the cost of that await must reach the artifact. The record is
+    // first written before the sample runs, so it is re-stamped after it:
+    // attempt 5 reported captureElapsedMs 1554 for a 298,446 ms capture.
+    const firstWrite = src.search(/^\s*report\.captureDeadline = \{/m)
+    const sampleAt2 = src.search(/^\s*const statsResult = await withinCaptureBudget\(/m)
+    const reStamp = src.search(/^\s*report\.captureDeadline\.captureElapsedMs = /m)
+    expect(firstWrite).toBeGreaterThan(-1)
+    expect(sampleAt2).toBeGreaterThan(firstWrite)
+    expect(reStamp).toBeGreaterThan(sampleAt2)
+    expect(src).toContain('const captureOverran = hasCaptureDeadlineExpired()')
   })
 
   it('derives claimMetricsCollected instead of hardcoding false', () => {
@@ -3409,5 +3740,2079 @@ describe('T9a runner wiring (the producer must actually be invoked)', () => {
     // fail-closed with "not installed" — correct, but permanently unpassable.
     const src = readPerf('isolatedLaunch.cjs')
     expect(src).toContain("PERF_PRELOAD_PROBE: '1'")
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* M1 — cross-thread interference matrix, span collector, G-X bounds   */
+/* ------------------------------------------------------------------ */
+
+function spanAggregate(overrides: Record<string, unknown> = {}) {
+  return {
+    count: 1,
+    totalMs: 12,
+    p50Ms: 12,
+    p95Ms: 12,
+    maxMs: 12,
+    bytes: 0,
+    fallbackCount: 0,
+    ...overrides
+  }
+}
+
+function spanSection(process: string = 'main', overrides: Record<string, unknown> = {}) {
+  return {
+    process,
+    byKind: { admission_wait: spanAggregate() },
+    byResource: { host_chain: spanAggregate() },
+    recorded: 1,
+    dropped: 0,
+    sampledOut: 0,
+    rejected: 0,
+    ...overrides
+  }
+}
+
+const MATRIX_CELL = {
+  history: 'small',
+  chats: 2,
+  path: 'warm',
+  mix: 'codex_profiles_solo_ensemble_mesh',
+  saturation: 'none'
+}
+
+describe('M1 interference matrix (programme Appendix A)', () => {
+  it('names cells <history>/<chats>/<path>/<mix>/<saturation> and round-trips them', () => {
+    const name = cellName(MATRIX_CELL)
+    expect(name).toBe('small/2/warm/codex_profiles_solo_ensemble_mesh/none')
+    expect(parseCellName(name)).toEqual(MATRIX_CELL)
+    expect(parseCellName('small/2/warm')).toBeNull()
+    expect(parseCellName('small/3/warm/codex_bridge_disabled/none')).toBeNull()
+    expect(parseCellName('not-a-cell')).toBeNull()
+  })
+
+  it('enumerates the full Appendix A cross product with every cell valid', () => {
+    const cells = enumerateMatrixCells()
+    expect(cells.length).toBe(2 * 4 * 2 * PROVIDER_MIXES.length * SATURATION_MODES.length)
+    for (const cell of cells) {
+      expect(validateMatrixCell(cell).ok).toBe(true)
+    }
+    expect(PROVIDER_MIXES).toContain('ollama_distinct_beyond_ceiling')
+    expect(SATURATION_MODES).toContain('host_queue_16_active_1_queued')
+  })
+
+  it('pins the fixed sampling window: 120 s, three repetitions, p50/p95/p99', () => {
+    expect(MATRIX_SAMPLING.windowMs).toBe(120_000)
+    expect(MATRIX_SAMPLING.repetitions).toBe(3)
+    expect(MATRIX_SAMPLING.percentiles).toEqual(['p50', 'p95', 'p99'])
+  })
+
+  it('carries the pairing role on the run name, never the cell name', () => {
+    const names = pairedRunNames(MATRIX_CELL)
+    expect(names.alone).toBe(`${cellName(MATRIX_CELL)}::light-alone`)
+    expect(names.beside).toBe(`${cellName(MATRIX_CELL)}::light-beside`)
+    expect(PAIRING_ROLES).toEqual(['light-alone', 'light-beside'])
+  })
+
+  it('keeps the proposed §1.1 bounds out of the enforced gate thresholds', () => {
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxRoundStartLatencyOverLightAloneP95Ms).toBe(250)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxPersistenceBarrierOverLightAloneP95Ms).toBe(300)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxControlResponseEndToEndP95Ms).toBe(300)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxHostQueueWaitUnrelatedCommandP95Ms).toBe(50)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxHostEventLoopLagP95Ms).toBe(25)
+    expect(PROPOSED_CROSS_THREAD_BOUNDS.maxAsyncWriterFallbackCount).toBe(0)
+    // Unratified numbers must never gate a run: nothing §1.1 leaks into the
+    // map evaluatePerfGates consumes.
+    for (const key of Object.keys(PROPOSED_CROSS_THREAD_BOUNDS)) {
+      expect(Object.keys(PERF_GATE_THRESHOLDS)).not.toContain(key)
+    }
+  })
+})
+
+describe('M1 paired-run fixture/window self-test (G-X pairing rule)', () => {
+  function runDescriptor(role: string, overrides: Record<string, unknown> = {}) {
+    const fixture = generatePerfFixture({ workload: 'dual_run', seed: 4242 })
+    return {
+      cellName: cellName(MATRIX_CELL),
+      role,
+      fixtureFingerprint: fixtureFingerprint(fixture),
+      workload: 'dual_run',
+      seed: 4242,
+      windowMs: MATRIX_SAMPLING.windowMs,
+      ...overrides
+    }
+  }
+
+  it('accepts paired runs with identical fixtures, windows, workload and seed', () => {
+    // Same seed twice → identical fingerprints; the pairing is comparable.
+    const alone = runDescriptor('light-alone')
+    const beside = runDescriptor('light-beside')
+    expect(alone.fixtureFingerprint).toBe(beside.fixtureFingerprint)
+    expect(assertPairedRunCompatibility(alone, beside)).toEqual({ ok: true })
+  })
+
+  it('refuses paired runs whose fixtures differ', () => {
+    const alone = runDescriptor('light-alone')
+    const otherFixture = generatePerfFixture({ workload: 'dual_run', seed: 9999 })
+    const beside = runDescriptor('light-beside', {
+      fixtureFingerprint: fixtureFingerprint(otherFixture),
+      seed: 9999
+    })
+    const check = assertPairedRunCompatibility(alone, beside)
+    expect(check.ok).toBe(false)
+    expect(check.reasons!.some((r: string) => r.includes('fixture fingerprints differ'))).toBe(true)
+  })
+
+  it('refuses a wrong-window or role-swapped pairing', () => {
+    const alone = runDescriptor('light-alone')
+    const shortWindow = runDescriptor('light-beside', { windowMs: 60_000 })
+    const windowCheck = assertPairedRunCompatibility(alone, shortWindow)
+    expect(windowCheck.ok).toBe(false)
+    expect(windowCheck.reasons!.some((r: string) => r.includes('windowMs'))).toBe(true)
+
+    const swapped = assertPairedRunCompatibility(
+      runDescriptor('light-beside'),
+      runDescriptor('light-alone')
+    )
+    expect(swapped.ok).toBe(false)
+    expect(swapped.reasons!.some((r: string) => r.includes('role'))).toBe(true)
+  })
+})
+
+describe('M1 crossThread report block (schema seam)', () => {
+  function crossThreadBlock(sections: Record<string, unknown>) {
+    return {
+      schemaVersion: CROSS_THREAD_SCHEMA_VERSION,
+      cells: {
+        [cellName(MATRIX_CELL)]: { capturedAt: '2026-09-08T13:00:00.000Z', processes: sections }
+      }
+    }
+  }
+
+  it('keeps pre-M1 reports valid: the block is optional-when-absent', () => {
+    const metrics = createEmptyPerfMetrics()
+    expect(metrics.crossThread).toBeUndefined()
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('accepts a well-formed block, including per-process { error } degradation', () => {
+    const metrics = createEmptyPerfMetrics()
+    metrics.crossThread = crossThreadBlock({
+      main: spanSection('main'),
+      host: { error: 'host snapshot unavailable' }
+    })
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('rejects present-but-malformed blocks loudly', () => {
+    const withBadCellName = createEmptyPerfMetrics()
+    withBadCellName.crossThread = {
+      schemaVersion: CROSS_THREAD_SCHEMA_VERSION,
+      cells: { 'not/a/real/cell/name/at/all': { processes: { main: spanSection('main') } } }
+    }
+    expect(validatePerfMetrics(withBadCellName).ok).toBe(false)
+
+    const withUnknownKind = createEmptyPerfMetrics()
+    withUnknownKind.crossThread = crossThreadBlock({
+      main: spanSection('main', { byKind: { invented_kind: spanAggregate() } })
+    })
+    const kindCheck = validatePerfMetrics(withUnknownKind)
+    expect(kindCheck.ok).toBe(false)
+    expect(kindCheck.errors!.some((e: string) => e.includes('invented_kind'))).toBe(true)
+
+    const withBrokenAggregate = createEmptyPerfMetrics()
+    withBrokenAggregate.crossThread = crossThreadBlock({
+      main: spanSection('main', {
+        byKind: { admission_wait: spanAggregate({ p95Ms: Number.NaN }) }
+      })
+    })
+    expect(validatePerfMetrics(withBrokenAggregate).ok).toBe(false)
+
+    const withBadVersion = createEmptyPerfMetrics()
+    withBadVersion.crossThread = { schemaVersion: 999, cells: {} }
+    expect(validatePerfMetrics(withBadVersion).ok).toBe(false)
+  })
+})
+
+describe('M1 hostSpans collector', () => {
+  it('normalizes a WorkSpanRecorder section and refuses malformed payloads', () => {
+    expect(normalizeWorkSpanSection(spanSection('main'), 'main').ok).toBe(true)
+    expect(normalizeWorkSpanSection(null, 'main').ok).toBe(false)
+    expect(normalizeWorkSpanSection(spanSection('main'), 'host').ok).toBe(false)
+    expect(normalizeWorkSpanSection(spanSection('main', { recorded: Number.NaN }), 'main').ok).toBe(
+      false
+    )
+    expect(
+      normalizeWorkSpanSection(
+        spanSection('main', { byResource: { mars: spanAggregate() } }),
+        'main'
+      ).ok
+    ).toBe(false)
+  })
+
+  it('degrades one sick process without erasing the others, and refuses when none are valid', async () => {
+    const sample = await sampleWorkSpanSections({
+      main: () => spanSection('main'),
+      host: () => {
+        throw new Error('host meter exploded')
+      }
+    })
+    expect(sample.ok).toBe(true)
+    expect(Object.keys(sample.sections!)).toEqual(['main'])
+    expect(sample.errors!.host).toContain('host meter exploded')
+
+    const empty = await sampleWorkSpanSections({
+      host: () => null,
+      renderer: () => spanSection('renderer', { recorded: 'lots' })
+    })
+    expect(empty.ok).toBe(false)
+    expect(empty.reason).toContain('no process yielded a valid span section')
+
+    const unknown = await sampleWorkSpanSections({ renderer2: () => spanSection('renderer') })
+    expect(unknown.ok).toBe(false)
+  })
+
+  it('folds sampled sections into metrics.crossThread keyed by cell', () => {
+    const metrics = createEmptyPerfMetrics()
+    const name = cellName(MATRIX_CELL)
+    applyCrossThreadToMetrics(metrics, MATRIX_CELL, { main: spanSection('main') })
+    expect(metrics.crossThread.cells[name].processes.main.recorded).toBe(1)
+    expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+
+    // A second cell merges beside the first instead of replacing it.
+    const otherCell = { ...MATRIX_CELL, saturation: 'ensemble_pool_30_join' }
+    applyCrossThreadToMetrics(metrics, otherCell, { host: spanSection('host') })
+    expect(Object.keys(metrics.crossThread.cells).length).toBe(2)
+
+    expect(() => applyCrossThreadToMetrics(metrics, { ...MATRIX_CELL, chats: 3 }, {})).toThrow()
+    expect(() => applyCrossThreadToMetrics(metrics, MATRIX_CELL, {})).toThrow()
+  })
+})
+
+describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding (M1)', () => {
+  const {
+    checkHostBundleFreshness,
+    collectT2HostSpanEvidence,
+    runT2BaselineCli,
+    parseArgs,
+    captureChildStdio,
+    checkExternalHostNodeExecutable,
+    resolveObservedHostLane,
+    HOST_BUNDLE_REBUILD_COMMAND,
+    HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS
+  } = require('./runT2Baseline.cjs')
+  const { buildElectronSpawnPlan } = require('./electronChildSession.cjs')
+  const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
+  const { EventEmitter } = require('events')
+
+  const EPOCH = 'cd'.repeat(32)
+  const OTHER_EPOCH = 'ef'.repeat(32)
+  const WRITE_AT = new Date('2026-09-09T04:00:00.000Z')
+  const FRESH_AT = new Date('2026-09-09T04:00:01.000Z')
+  const TOKEN_BAIT = 'tok3nBAIT0123456789abcdef'
+  const CELL_NAME = cellName(MATRIX_CELL)
+  const HOST_IDENTITY = {
+    process: 'host',
+    instanceId: 'host-abc',
+    generation: 2,
+    pid: 777
+  } as const satisfies HostPerfSnapshotFileIdentity
+
+  const tempDirs: string[] = []
+  afterAll(() => {
+    while (tempDirs.length) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(path.join(tmpdir(), prefix))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  /** One REAL writer-produced snapshot file (transport-test pattern). */
+  function writeRealHostSnapshot(identity: HostPerfSnapshotFileIdentity): string {
+    const file = path.join(tempDir('tw-t2-w8-snapshot-'), 'host-perf-snapshot.json')
+    const instrumentation = createHostPerfInstrumentation()
+    instrumentation.spans.record({
+      chatId: 'chat-heavy',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 5,
+      durationMs: 120
+    })
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path: file,
+      intervalMs: 1000,
+      maxBytes: 256 * 1024,
+      identity,
+      now: () => WRITE_AT
+    })
+    expect(writer.writeOnce()).toBe(true)
+    return file
+  }
+
+  function tickingClock(start = 1000, stepMs = 10): () => number {
+    let at = start - stepMs
+    return () => (at += stepMs)
+  }
+
+  /** A REAL main-process recorder section served through the preload IPC seam. */
+  function realMainSection(): Record<string, unknown> {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 64,
+      now: tickingClock()
+    })
+    for (const [chatId, durationMs] of [
+      ['chat-light', 10],
+      ['chat-heavy', 90]
+    ] as const) {
+      recorder.record({
+        chatId,
+        runId: `run-${chatId}`,
+        kind: 'admission_wait',
+        resource: 'ensemble_pool',
+        startedAt: 0,
+        durationMs
+      })
+    }
+    return recorder.section() as unknown as Record<string, unknown>
+  }
+
+  function rendererServing(section: Record<string, unknown>) {
+    return {
+      post: async (_method: string, _params: unknown) => ({
+        result: { value: { sections: { workSpans: section } } }
+      })
+    }
+  }
+
+  /** The probe contract from hostWelcomeProbe.cjs, as DI. */
+  function okProbe(epoch?: string) {
+    return async () => ({
+      ok: true,
+      expectedIdentity: {
+        instanceId: 'host-abc',
+        generation: 2,
+        pid: 777,
+        ...(epoch === undefined ? {} : { bootEpoch: epoch })
+      },
+      welcome: {
+        hostId: 'host-abc',
+        generation: 2,
+        ...(epoch === undefined ? {} : { bootEpoch: epoch })
+      },
+      discovery: { pid: 777, startedAt: '2026-09-09T03:59:58.000Z' }
+    })
+  }
+
+  // -------------------------------------------------------------------------
+  // Spawn-plan extraEnv (electronChildSession.cjs)
+  // -------------------------------------------------------------------------
+
+  it('extraEnv is inert when unset and only ever injects TASKWRAITH_PERF_* keys', () => {
+    const base = {
+      instanceId: 'perfW8Env01',
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      workload: 'dual_run',
+      fxPosture: 'reduce_motion',
+      platform: 'darwin',
+      remoteDebuggingPort: 9451,
+      mainInspectorPort: 9851,
+      adapters: { resolveElectronPath: () => '/virtual/electron-bin' }
+    } as Record<string, unknown>
+
+    const plain = buildElectronSpawnPlan(base)
+    // The base plan already carries TASKWRAITH_PERF_WORKLOAD/FX_POSTURE from
+    // buildIsolatedLaunchPlan; "inert when unset" means NO snapshot-path key.
+    expect(plain.env.TASKWRAITH_PERF_WORKLOAD).toBe('dual_run')
+    expect(plain.env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH).toBeUndefined()
+    expect(plain.shellCommand).not.toContain('TASKWRAITH_PERF_HOST_SNAPSHOT_PATH')
+    // WORKLOAD is not an injection — the child receives it either way, so the
+    // recorded command has to show it. This assertion used to require its
+    // ABSENCE, which pinned the omission: the command carried five of nine
+    // variables while presenting itself as the command that ran.
+    expect(plain.shellCommand).toContain('TASKWRAITH_PERF_WORKLOAD=')
+    for (const key of Object.keys(plain.env)) {
+      expect(plain.shellCommand).toContain(`${key}=`)
+    }
+
+    const snapshotPath = '/virtual/artifacts/host-perf-snapshot.json'
+    const armed = buildElectronSpawnPlan({
+      ...base,
+      extraEnv: { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: snapshotPath }
+    })
+    expect(armed.env.TASKWRAITH_PERF_HOST_SNAPSHOT_PATH).toBe(snapshotPath)
+    expect(armed.shellCommand).toContain('TASKWRAITH_PERF_HOST_SNAPSHOT_PATH=')
+    expect(armed.shellCommand).toContain(snapshotPath)
+    // Isolation-critical env and argv shape are untouched by the injection.
+    expect(armed.env.HOME).toBeUndefined()
+    expect(armed.argv).toEqual(plain.argv)
+
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: { HOME: '/evil' } })).toThrow(
+      /TASKWRAITH_PERF_\*/
+    )
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: { TASKWRAITH_PERF_X: '' } })).toThrow(
+      /non-empty string/
+    )
+    expect(() =>
+      buildElectronSpawnPlan({ ...base, extraEnv: { TASKWRAITH_PERF_BAD$key: 'v' } })
+    ).toThrow(/TASKWRAITH_PERF_\*/)
+    expect(() => buildElectronSpawnPlan({ ...base, extraEnv: 'nope' })).toThrow(/plain object/)
+  })
+
+  // -------------------------------------------------------------------------
+  // Host bundle freshness preflight (ruling P2)
+  // -------------------------------------------------------------------------
+
+  type FsNode = {
+    mtimeMs?: number
+    content?: string
+    children?: Record<string, FsNode>
+    symlink?: true
+  }
+  /** A file carrying bytes as well as an mtime — a sourcemap needs both. */
+  type FileSpec = { mtimeMs: number; content: string }
+
+  /** Flat repo-relative path -> mtime (or mtime + bytes), expanded into a tree. */
+  function treeOf(files: Record<string, number | FileSpec>): Record<string, FsNode> {
+    const root: Record<string, FsNode> = {}
+    for (const [relPath, spec] of Object.entries(files)) {
+      const leaf: FsNode =
+        typeof spec === 'number'
+          ? { mtimeMs: spec }
+          : { mtimeMs: spec.mtimeMs, content: spec.content }
+      const segments = relPath.split('/')
+      let level = root
+      segments.forEach((segment, index) => {
+        if (index === segments.length - 1) {
+          level[segment] = leaf
+          return
+        }
+        if (!level[segment]) level[segment] = { children: {} }
+        level = level[segment].children as Record<string, FsNode>
+      })
+    }
+    return root
+  }
+
+  /** The children map of a directory inside a built tree, for surgical removal. */
+  function nodeAt(tree: Record<string, FsNode>, relPath: string): Record<string, FsNode> {
+    let level = tree
+    for (const segment of relPath.split('/')) {
+      level = level[segment].children as Record<string, FsNode>
+    }
+    return level
+  }
+
+  function memFs(root: Record<string, FsNode>, repoRoot = '/repo') {
+    // Anchor on the resolved form: the preflight resolves its repo root, so a
+    // '/repo' fixture root is 'D:\\repo' on win32 and the lookups must agree.
+    const absoluteRoot = path.resolve(repoRoot)
+    const prefix = `${absoluteRoot}${path.sep}`
+    const resolveNode = (rawTarget: string): FsNode | null => {
+      const target = path.resolve(rawTarget)
+      if (target === absoluteRoot) return { children: root }
+      if (!target.startsWith(prefix)) return null
+      let node: FsNode = { children: root }
+      for (const seg of target.slice(prefix.length).split(path.sep)) {
+        if (!seg) continue
+        if (!node.children || !node.children[seg]) return null
+        node = node.children[seg]
+      }
+      return node
+    }
+    const enoent = (target: string) =>
+      Object.assign(new Error(`ENOENT: ${target}`), { code: 'ENOENT' })
+    return {
+      statSync(target: string) {
+        const node = resolveNode(String(target))
+        if (!node) throw enoent(String(target))
+        // statSync FOLLOWS symlinks, so a symlinked directory still resolves.
+        return { isFile: () => node.children === undefined, mtimeMs: node.mtimeMs ?? 0 }
+      },
+      readdirSync(target: string, _opts?: unknown) {
+        const node = resolveNode(String(target))
+        if (!node || !node.children) throw enoent(String(target))
+        return Object.entries(node.children).map(([name, child]) => ({
+          name,
+          // A real Dirent reports a symlink as NEITHER file nor directory, so
+          // neither walk ever descends through one.
+          isFile: () => child.children === undefined && child.symlink !== true,
+          isDirectory: () => child.children !== undefined && child.symlink !== true
+        }))
+      },
+      // Sourcemaps are read, not walked: a `.js` with no readable map cannot
+      // have its provenance proven, so this throwing IS a tested outcome.
+      readFileSync(target: string, _encoding?: unknown) {
+        const node = resolveNode(String(target))
+        if (!node || node.children || node.content === undefined) throw enoent(String(target))
+        return node.content
+      }
+    }
+  }
+
+  /**
+   * An emitted `.js` paired with the `.js.map` that records what produced it.
+   * Sources are stored relative to the MAP, exactly as a real map stores them,
+   * so the preflight has to resolve them rather than being handed absolutes.
+   */
+  function emitted(
+    jsRel: string,
+    sourceRels: string[],
+    mtimeMs: number
+  ): Record<string, number | FileSpec> {
+    const mapDir = path.posix.dirname(jsRel)
+    return {
+      [jsRel]: mtimeMs,
+      [`${jsRel}.map`]: {
+        mtimeMs,
+        content: JSON.stringify({
+          version: 3,
+          sources: sourceRels.map((source) => path.posix.relative(mapDir, source))
+        })
+      }
+    }
+  }
+
+  const BUNDLE_REL = 'out/host/host-runtime/cli.js'
+
+  /**
+   * A repo shaped like the real one: SIX trees are compiled into out/host, and
+   * a much larger remainder of src/main and src/shared is not. `overrides`
+   * adds or re-stamps individual repo-relative paths.
+   */
+  function bundleTree(
+    bundleMtime: number,
+    sourceMtime: number,
+    overrides: Record<string, number | FileSpec> = {}
+  ): Record<string, FsNode> {
+    return treeOf({
+      // Stage two of `host:build`: tsc, one source per output.
+      ...emitted(BUNDLE_REL, ['src/host-runtime/cli.ts'], bundleMtime),
+      ...emitted(
+        'out/host/host-runtime/HostStandaloneComposition.js',
+        ['src/host-runtime/HostStandaloneComposition.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-node/HostNodeProductionServer.js',
+        ['src/host-node/HostNodeProductionServer.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-shared/perf/WorkSpanRecorder.js',
+        ['src/host-shared/perf/WorkSpanRecorder.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/host-client/HostClient.js',
+        ['src/host-client/HostClient.ts'],
+        bundleMtime
+      ),
+      ...emitted(
+        'out/host/main/perf/hostPerfSnapshot.js',
+        ['src/main/perf/hostPerfSnapshot.ts'],
+        bundleMtime
+      ),
+      ...emitted('out/host/shared/hostProtocol.js', ['src/shared/hostProtocol.ts'], bundleMtime),
+      // STAGE THREE, AND THE REGRESSION FOR THIS DEFECT. `host:build` also
+      // esbuild-bundles worker entrypoints into this same tree under RENAMED
+      // outputs. Inverting the output NAME declares this an orphan of a
+      // src/host-node/ThreadCatalogueWorkerEntry.ts that has never existed and
+      // refuses a valid bundle — the live failure this fixture reproduces. Its
+      // own map names the real inputs instead: one shared with no other
+      // output, one reachable through NO other output at all, and a
+      // node_modules entry that is not this repo's to make stale.
+      ...emitted(
+        'out/host/host-node/ThreadCatalogueWorkerEntry.js',
+        [
+          'src/main/workers/threadCatalogueWorker.ts',
+          'src/main/workers/threadCatalogueCodec.ts',
+          'src/main/workers/threadCatalogueWorker.test.ts',
+          'node_modules/better-sqlite3/lib/index.ts'
+        ],
+        bundleMtime
+      ),
+      // The second renamed bundle, one first-party input of its own. BOTH
+      // declared entries must be present: a partial build (tsc without the
+      // esbuild stage) is the fourth-defect fixture below.
+      ...emitted(
+        'out/host/host-node/ThreadCatalogueDecoderEntry.js',
+        ['src/main/workers/threadCatalogueDecoder.ts'],
+        bundleMtime
+      ),
+      'src/main/workers/threadCatalogueWorker.ts': sourceMtime - 800,
+      'src/main/workers/threadCatalogueCodec.ts': sourceMtime - 850,
+      'src/main/workers/threadCatalogueDecoder.ts': sourceMtime - 950,
+      // Both deliberately far newer than the bundle: if either exclusion ever
+      // stopped applying, this fixture would read STALE and the freshness
+      // assertions below would fail. Neither exclusion is vacuous.
+      // A test file is never a build input whatever names it — the same rule
+      // the tsconfig's exclude states, applied to mapped sources too.
+      'src/main/workers/threadCatalogueWorker.test.ts': 9e9,
+      // Third-party code is not this repo's to make stale.
+      'node_modules/better-sqlite3/lib/index.ts': 9e9,
+      'src/host-runtime/cli.ts': sourceMtime - 300,
+      'src/host-runtime/HostStandaloneComposition.ts': sourceMtime,
+      'src/host-node/HostNodeProductionServer.ts': sourceMtime - 100,
+      'src/host-shared/perf/WorkSpanRecorder.ts': sourceMtime - 400,
+      'src/host-client/HostClient.ts': sourceMtime - 500,
+      'src/main/perf/hostPerfSnapshot.ts': sourceMtime - 600,
+      'src/shared/hostProtocol.ts': sourceMtime - 200,
+      // Never compiled into the Host bundle — the import graph does not reach
+      // them. Watching these would fire on every unrelated main edit.
+      'src/main/index.ts': sourceMtime - 700,
+      'src/main/chat/ChatStore.ts': sourceMtime - 700,
+      'src/shared/rendererOnlyTypes.ts': sourceMtime - 700,
+      ...overrides
+    })
+  }
+
+  /**
+   * Seven tsc sources plus the three first-party inputs the two bundled
+   * entries' maps name; the node_modules entry is excluded and the include
+   * root, whose two files are already derived, adds nothing new.
+   */
+  const BUNDLE_TREE_INPUT_COUNT = 10
+
+  it('P2: bundle freshness watches the whole compilation closure and fails closed', () => {
+    expect(HOST_BUNDLE_REBUILD_COMMAND).toBe('npm run host:build')
+
+    const fresh = checkHostBundleFreshness('/repo', { fs: memFs(bundleTree(1000, 900)) })
+    expect(fresh.ok).toBe(true)
+    expect(fresh.reason).toBe(null)
+    expect(fresh.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
+    expect(fresh.newestSourcePath).toBe(
+      path.join('src', 'host-runtime', 'HostStandaloneComposition.ts')
+    )
+
+    const stale = checkHostBundleFreshness('/repo', { fs: memFs(bundleTree(1000, 1100)) })
+    expect(stale.ok).toBe(false)
+    expect(stale.reason).toBe('host_bundle_stale')
+    expect(stale.newestSourcePath).toBe(
+      path.join('src', 'host-runtime', 'HostStandaloneComposition.ts')
+    )
+    expect(stale.rebuildCommand).toBe('npm run host:build')
+
+    // THE DEFECT THIS CLOSES. Every one of these is compiled into the bundle,
+    // but the preflight used to watch a hand-kept list of three directories
+    // that named none of their trees, so a genuinely stale bundle read FRESH.
+    for (const relPath of [
+      'src/host-shared/perf/WorkSpanRecorder.ts',
+      'src/host-client/HostClient.ts',
+      'src/main/perf/hostPerfSnapshot.ts'
+    ]) {
+      const result = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 5000 }))
+      })
+      expect(result.ok, `${relPath} is a compiled input`).toBe(false)
+      expect(result.reason).toBe('host_bundle_stale')
+      expect(result.newestSourcePath).toBe(relPath.split('/').join(path.sep))
+      expect(result.newestSourceMtimeMs).toBe(5000)
+    }
+
+    // ...and the converse, which is why the fix is not "watch src/main too":
+    // the Host compiles 24 of that tree's ~1500 files. A newer UNCOMPILED file
+    // must stay green, or the preflight cries wolf and the team mutes it.
+    for (const relPath of [
+      'src/main/index.ts',
+      'src/main/chat/ChatStore.ts',
+      'src/shared/rendererOnlyTypes.ts'
+    ]) {
+      const quiet = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 9e9 }))
+      })
+      expect(quiet.ok, `${relPath} is not a build input`).toBe(true)
+      expect(quiet.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
+    }
+
+    // THE SECOND DEFECT THIS CLOSES, and the one that refused every launch:
+    // `host:build` stage three emits RENAMED bundles, so inverting an output
+    // NAME is structurally wrong for them. Both of these are build inputs only
+    // because that bundle's map says so — the codec through no other output at
+    // all — and a name inversion reached neither.
+    for (const relPath of [
+      'src/main/workers/threadCatalogueWorker.ts',
+      'src/main/workers/threadCatalogueCodec.ts'
+    ]) {
+      const bundled = checkHostBundleFreshness('/repo', {
+        fs: memFs(bundleTree(1000, 900, { [relPath]: 5000 }))
+      })
+      expect(bundled.ok, `${relPath} is a bundled input`).toBe(false)
+      expect(bundled.reason).toBe('host_bundle_stale')
+      expect(bundled.newestSourcePath).toBe(relPath.split('/').join(path.sep))
+      expect(bundled.newestSourceMtimeMs).toBe(5000)
+    }
+
+    // THE FOURTH DEFECT, and the A/B that proves it: a DECLARED entry
+    // artifact that was never emitted (a partial build — tsc without the
+    // esbuild worker stage) removes its own bundled closure from the derived
+    // set, because the inputs appear in no surviving map. The codec is
+    // reachable through NO other artifact, so with the worker bundle absent
+    // its edit is invisible: the same tree WITH the artifact reds STALE above
+    // and WITHOUT it used to read FRESH. Now it must refuse, naming the
+    // missing artifact. (Reproduced against the real exported function before
+    // fixing: ok:true with the codec at mtime 5000 against a bundle at 1000.)
+    const partial = bundleTree(1000, 900, {
+      'src/main/workers/threadCatalogueCodec.ts': 5000
+    })
+    delete nodeAt(partial, 'out/host/host-node')['ThreadCatalogueWorkerEntry.js']
+    delete nodeAt(partial, 'out/host/host-node')['ThreadCatalogueWorkerEntry.js.map']
+    const incomplete = checkHostBundleFreshness('/repo', { fs: memFs(partial) })
+    expect(incomplete.ok).toBe(false)
+    expect(incomplete.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueWorkerEntry.js'
+      )}`
+    )
+    expect(incomplete.rebuildCommand).toBe('npm run host:build')
+
+    // Either declared entry triggers it...
+    const missingDecoder = bundleTree(1000, 900)
+    delete nodeAt(missingDecoder, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js']
+    delete nodeAt(missingDecoder, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js.map']
+    const incompleteDecoder = checkHostBundleFreshness('/repo', { fs: memFs(missingDecoder) })
+    expect(incompleteDecoder.ok).toBe(false)
+    expect(incompleteDecoder.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueDecoderEntry.js'
+      )}`
+    )
+
+    // ...and anything that is not a regular file where a declared entry
+    // belongs — a directory left by a half-finished bundling step — is the
+    // same incomplete build, not an artifact whose mtime means something.
+    const entryNotAFile = bundleTree(1000, 900)
+    nodeAt(entryNotAFile, 'out/host/host-node')['ThreadCatalogueDecoderEntry.js'] = {
+      children: {}
+    }
+    const incompleteNonRegular = checkHostBundleFreshness('/repo', { fs: memFs(entryNotAFile) })
+    expect(incompleteNonRegular.ok).toBe(false)
+    expect(incompleteNonRegular.reason).toBe(
+      `host_bundle_incomplete_output: ${path.join(
+        'out',
+        'host',
+        'host-node',
+        'ThreadCatalogueDecoderEntry.js'
+      )}`
+    )
+
+    // A source ADDED to the tsconfig include root is a build input with no
+    // importer, so it has no emitted output to invert and is walked directly.
+    const added = checkHostBundleFreshness('/repo', {
+      fs: memFs(bundleTree(1000, 900, { 'src/host-runtime/NeverCompiled.ts': 5000 }))
+    })
+    expect(added.ok).toBe(false)
+    expect(added.reason).toBe('host_bundle_stale')
+    expect(added.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT + 1)
+    expect(added.newestSourcePath).toBe(path.join('src', 'host-runtime', 'NeverCompiled.ts'))
+
+    // The gap a derived set cannot close on its own: a source added OUTSIDE
+    // the include root has no emitted output either. It is not yet a build
+    // input, and it becomes one only when something imports it — which edits
+    // a file that IS derived and bumps its mtime. The addition is caught
+    // through its importer, so the preflight does not fail OPEN on it.
+    const importer = 'src/host-shared/perf/WorkSpanRecorder.ts'
+    const addedViaImporter = checkHostBundleFreshness('/repo', {
+      fs: memFs(
+        bundleTree(1000, 900, { 'src/host-shared/NeverCompiled.ts': 5000, [importer]: 5001 })
+      )
+    })
+    expect(addedViaImporter.ok).toBe(false)
+    expect(addedViaImporter.reason).toBe('host_bundle_stale')
+    expect(addedViaImporter.newestSourcePath).toBe(importer.split('/').join(path.sep))
+    expect(addedViaImporter.newestSourceMtimeMs).toBe(5001)
+
+    // A NEWER TEST FILE must not fail the preflight: the host tsconfig
+    // excludes ./**/*.test.ts, so tests are not build inputs.
+    const testOnlyNewer = checkHostBundleFreshness('/repo', {
+      fs: memFs(bundleTree(1000, 900, { 'src/host-runtime/NeverCompiled.test.ts': 5000 }))
+    })
+    expect(testOnlyNewer.ok).toBe(true)
+    expect(testOnlyNewer.checkedFileCount).toBe(BUNDLE_TREE_INPUT_COUNT)
+
+    // An emitted output whose source is GONE means the bundle cannot
+    // correspond to this working tree — fail closed rather than skip it.
+    const deleted = bundleTree(1000, 900)
+    delete (deleted.src.children as Record<string, FsNode>).shared
+    const orphan = checkHostBundleFreshness('/repo', { fs: memFs(deleted) })
+    expect(orphan.ok).toBe(false)
+    expect(orphan.reason).toBe(
+      `host_bundle_orphan_output: ${path.join('src', 'shared', 'hostProtocol.ts')}`
+    )
+
+    // Provenance that cannot be READ is never assumed. Each of these is an
+    // emitted artifact whose map yields no usable source list, and each must
+    // REFUSE rather than fall back to guessing the source from the output
+    // name — that guess is exactly what this derivation replaced.
+    const unprovenArtifact = 'out/host/host-client/HostClient.js'
+    const unprovenCases: Array<[string, Record<string, number | FileSpec> | null]> = [
+      ['map absent', null],
+      [
+        'map unparseable',
+        { [`${unprovenArtifact}.map`]: { mtimeMs: 1000, content: '{ not json' } }
+      ],
+      [
+        'map without a sources array',
+        { [`${unprovenArtifact}.map`]: { mtimeMs: 1000, content: '{"version":3}' } }
+      ],
+      [
+        'map with a non-string source',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content: '{"version":3,"sources":[17]}'
+          }
+        }
+      ],
+      // A sourceRoot prefixes every entry in sources. The derivation resolves
+      // relative to the map and never honours it, so rather than misresolve
+      // every entry — each silently skipped as outside src/ — the artifact is
+      // refused. The sources below DO resolve without the prefix, so only the
+      // sourceRoot refusal itself keeps this case red.
+      [
+        'map with a non-empty sourceRoot',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content:
+              '{"version":3,"sourceRoot":"../../..","sources":["../../../src/host-client/HostClient.ts"]}'
+          }
+        }
+      ],
+      // A present-but-EMPTY sources array passes Array.isArray and then
+      // contributes nothing — the artifact looks fine while watching zero
+      // inputs. No provenance is unproven provenance.
+      [
+        'map with an empty sources array',
+        {
+          [`${unprovenArtifact}.map`]: {
+            mtimeMs: 1000,
+            content: '{"version":3,"sources":[]}'
+          }
+        }
+      ]
+    ]
+    for (const [label, override] of unprovenCases) {
+      const unprovenTree = bundleTree(1000, 900, override ?? {})
+      if (override === null)
+        delete nodeAt(unprovenTree, 'out/host/host-client')['HostClient.js.map']
+      const unproven = checkHostBundleFreshness('/repo', { fs: memFs(unprovenTree) })
+      expect(unproven.ok, label).toBe(false)
+      expect(unproven.reason, label).toBe(
+        `host_bundle_preflight_unproven_output: ${path.join(...unprovenArtifact.split('/'))}`
+      )
+    }
+
+    // A never-built or deleted out/host derives an EMPTY input set, so it must
+    // fail on the bundle itself rather than pass vacuously on zero inputs.
+    const tree = bundleTree(1000, 900)
+    delete tree.out
+    const missing = checkHostBundleFreshness('/repo', { fs: memFs(tree) })
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toBe('host_bundle_missing')
+    expect(missing.checkedFileCount).toBe(0)
+
+    // The bundle PATH existing is not enough. Anything that is not a regular
+    // file where cli.js belongs — a directory left by a half-finished build —
+    // has an mtime that means nothing, so it must refuse rather than compare
+    // it. Found by a surviving mutant: this branch had no test at all.
+    const notAFile = bundleTree(1000, 900)
+    nodeAt(notAFile, 'out/host/host-runtime')['cli.js'] = { children: {} }
+    const nonRegular = checkHostBundleFreshness('/repo', { fs: memFs(notAFile) })
+    expect(nonRegular.ok).toBe(false)
+    expect(nonRegular.reason).toBe('host_bundle_missing')
+    expect(nonRegular.checkedFileCount).toBe(0)
+
+    // A symlinked directory among the outputs refuses as unproven output
+    // naming the path — never followed, and never silently skipped into a
+    // "fresh by vacuity" pass (fifth member: the skip this replaced).
+    const symlinked = treeOf({ [BUNDLE_REL]: 1, 'src/host-runtime/README.md': 1 })
+    const hostOut = (symlinked.out.children as Record<string, FsNode>).host
+    ;((hostOut.children as Record<string, FsNode>)['host-runtime'] as FsNode).symlink = true
+    const emptySources = checkHostBundleFreshness('/repo', { fs: memFs(symlinked) })
+    expect(emptySources.ok).toBe(false)
+    expect(emptySources.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('out', 'host', 'host-runtime')}`
+    )
+    expect(emptySources.checkedFileCount).toBe(0)
+
+    // A walk failure that is not a missing source → fail closed.
+    const walkFailure = checkHostBundleFreshness('/repo', {
+      fs: {
+        statSync: () => ({ isFile: () => true, mtimeMs: 1 }),
+        readdirSync: () => {
+          throw Object.assign(new Error('nope'), { code: 'EACCES' })
+        },
+        readFileSync: () => '{"version":3,"sources":[]}'
+      }
+    })
+    expect(walkFailure.ok).toBe(false)
+    expect(walkFailure.reason).toBe('host_bundle_preflight_io: EACCES')
+
+    // fs contract failure → fail closed.
+    const noFs = checkHostBundleFreshness('/repo', { fs: {} })
+    expect(noFs.ok).toBe(false)
+    expect(noFs.reason).toBe('host_bundle_preflight_io: fs_contract')
+  })
+
+  it('P2: non-regular preflight entries refuse as unproven output (fifth member)', () => {
+    // ONE symlinked artifact among regular ones: pre-fix the walk skipped it
+    // and reported fresh; now the closure it hides makes the bundle unproven.
+    const symlinkedArtifact = bundleTree(1000, 900)
+    nodeAt(symlinkedArtifact, 'out/host/host-client')['HostClient.js'].symlink = true
+    const symlinked = checkHostBundleFreshness('/repo', { fs: memFs(symlinkedArtifact) })
+    expect(symlinked.ok).toBe(false)
+    expect(symlinked.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('out', 'host', 'host-client', 'HostClient.js')}`
+    )
+
+    // Same for the include root: a symlink where a source should be watched.
+    const symlinkedSource = bundleTree(1000, 900)
+    nodeAt(symlinkedSource, 'src/host-runtime')['cli.ts'].symlink = true
+    const symlinkedSrc = checkHostBundleFreshness('/repo', { fs: memFs(symlinkedSource) })
+    expect(symlinkedSrc.ok).toBe(false)
+    expect(symlinkedSrc.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('src', 'host-runtime', 'cli.ts')}`
+    )
+
+    // A directory where a derived input should be a file: the stat loop must
+    // refuse rather than skip it out of the watched set.
+    const dirAsInput = bundleTree(1000, 900)
+    nodeAt(dirAsInput, 'src/host-runtime')['cli.ts'] = { children: {} }
+    const nonRegular = checkHostBundleFreshness('/repo', { fs: memFs(dirAsInput) })
+    expect(nonRegular.ok).toBe(false)
+    expect(nonRegular.reason).toBe(
+      `host_bundle_preflight_unproven_output: ${path.join('src', 'host-runtime', 'cli.ts')}`
+    )
+
+    // The vacuity guard survives the new refusal: zero derived inputs with no
+    // other defect still refuses as no_sources rather than passing fresh.
+    const hollowTree = treeOf({
+      ...emitted('out/host/host-runtime/cli.js', ['node_modules/only/index.ts'], 1000),
+      'src/host-runtime/README.md': 1
+    })
+    const hollow = checkHostBundleFreshness('/repo', { fs: memFs(hollowTree) })
+    expect(hollow.ok).toBe(false)
+    expect(hollow.reason).toBe('host_bundle_preflight_no_sources')
+    expect(hollow.checkedFileCount).toBe(0)
+  })
+
+  it('P2: the input set is derived from the REAL host tsconfig, not a hand-kept list', () => {
+    // Everything this test expects is computed from src/host-runtime/tsconfig.json
+    // — the actual build contract — and never from a constant in runT2Baseline.cjs.
+    // A preflight that silently narrows back to a directory list reds here.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const tsconfigDir = path.join(repoRoot, 'src', 'host-runtime')
+    const tsconfig = JSON.parse(readFileSync(path.join(tsconfigDir, 'tsconfig.json'), 'utf8'))
+    const rootDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.rootDir)
+    const outDirAbs = path.resolve(tsconfigDir, tsconfig.compilerOptions.outDir)
+
+    // rootDir/outDir fix WHICH tree is walked and which sources are in scope;
+    // `sourceMap` is now a hard dependency, because provenance is read from
+    // each artifact's own map. Turning it off strips every map and the
+    // preflight then refuses every launch — the safe direction, loudly — but
+    // this assertion is what says WHY rather than leaving a bare refusal.
+    expect(rootDirAbs).toBe(path.join(repoRoot, 'src'))
+    expect(outDirAbs).toBe(path.join(repoRoot, 'out', 'host'))
+    expect(tsconfig.compilerOptions.sourceMap).toBe(true)
+    expect(tsconfig.compilerOptions.declaration).toBe(false)
+    expect(tsconfig.compilerOptions.noEmit).toBe(false)
+    // A sourceRoot would prefix every mapped source; the derivation refuses
+    // such maps rather than misresolve them, so the build must never emit one.
+    expect(tsconfig.compilerOptions.sourceRoot).toBeUndefined()
+    // The include root: where a file is an input with nothing importing it.
+    expect(tsconfig.include).toEqual(['./**/*.ts'])
+    expect(tsconfig.exclude).toEqual(['./**/*.test.ts'])
+
+    const rel = (abs: string) => path.relative(repoRoot, abs).split(path.sep).join('/')
+    const emittedFor = (source: string) =>
+      rel(
+        path.join(
+          outDirAbs,
+          `${path.relative(rootDirAbs, path.join(repoRoot, source)).slice(0, -'.ts'.length)}.js`
+        )
+      )
+    const includeRootRel = rel(tsconfigDir)
+    const entrySource = `${includeRootRel}/cli.ts`
+    // A compiled input that lives OUTSIDE the include root and outside every
+    // directory the old list named: reachable only through the import graph.
+    const graphSource = 'src/host-shared/perf/WorkSpanRecorder.ts'
+    // The declared worker entries must exist or the preflight refuses the
+    // build as incomplete; each map names its one real first-party input.
+    const declaredEntries = HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS.map((segments) =>
+      segments.join('/')
+    )
+    expect(declaredEntries.length).toBe(2)
+    const workerSources = [
+      'src/main/workers/threadCatalogueWorker.ts',
+      'src/main/workers/threadCatalogueDecoder.ts'
+    ]
+    const baseFiles: Record<string, number | FileSpec> = {
+      ...emitted(emittedFor(entrySource), [entrySource], 1000),
+      ...emitted(emittedFor(graphSource), [graphSource], 1000),
+      ...emitted(declaredEntries[0], [workerSources[0]], 1000),
+      ...emitted(declaredEntries[1], [workerSources[1]], 1000),
+      [entrySource]: 900,
+      [graphSource]: 900,
+      [workerSources[0]]: 900,
+      [workerSources[1]]: 900
+    }
+    // The preflight's own bundle path must be one of the emitted outputs.
+    expect(Object.keys(baseFiles)).toContain(rel(path.join(outDirAbs, 'host-runtime', 'cli.js')))
+
+    const clean = checkHostBundleFreshness(repoRoot, { fs: memFs(treeOf(baseFiles), repoRoot) })
+    expect(clean.ok).toBe(true)
+    expect(clean.checkedFileCount).toBe(4)
+
+    const graphStale = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(treeOf({ ...baseFiles, [graphSource]: 5000 }), repoRoot)
+    })
+    expect(graphStale.ok).toBe(false)
+    expect(graphStale.reason).toBe('host_bundle_stale')
+    expect(graphStale.newestSourcePath).toBe(graphSource.split('/').join(path.sep))
+
+    // The include side, asserted against the tsconfig's own LOCATION and its
+    // include/exclude globs rather than against any watched-directory list.
+    const addedInIncludeRoot = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(treeOf({ ...baseFiles, [`${includeRootRel}/NeverCompiled.ts`]: 5000 }), repoRoot)
+    })
+    expect(addedInIncludeRoot.ok).toBe(false)
+    expect(addedInIncludeRoot.newestSourcePath).toBe(
+      path.join(...includeRootRel.split('/'), 'NeverCompiled.ts')
+    )
+
+    const addedTestInIncludeRoot = checkHostBundleFreshness(repoRoot, {
+      fs: memFs(
+        treeOf({ ...baseFiles, [`${includeRootRel}/NeverCompiled.test.ts`]: 5000 }),
+        repoRoot
+      )
+    })
+    expect(addedTestInIncludeRoot.ok).toBe(true)
+    expect(addedTestInIncludeRoot.checkedFileCount).toBe(4)
+  })
+
+  it('P2: the preflight is pinned to the REAL host:build pipeline, not just its tsc stage', () => {
+    // THE LESSON OF THIS DEFECT, made mechanical. The first derivation read
+    // the host tsconfig, verified it, and treated it as THE BUILD. It is stage
+    // two of four: a later stage esbuild-bundles worker entrypoints into the
+    // SAME out/host tree under RENAMED outputs, so no output-name inversion
+    // could ever be sound. The implementation, its fixtures and two
+    // independent reviews all shared that single blind spot, because none of
+    // them read the build script. Pin the pipeline itself, so a stage that
+    // emits differently reds HERE rather than passing.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    const stages = String(pkg.scripts['host:build'])
+      .split('&&')
+      .map((stage) => stage.trim())
+
+    // A change here is not necessarily a break — it is a signal that the
+    // derivation's assumptions must be re-checked against the new pipeline.
+    expect(stages, 'host:build changed — re-check the freshness derivation').toEqual([
+      // Re-checked 2026-09-23: the stop-all hook writes nothing under out/host
+      // (the hooked build's out/host is byte-identical), so no derivation input moves.
+      'node scripts/host-stop-all.cjs --payload-root out/host --sweep',
+      'node scripts/clean-host-output.cjs',
+      'tsc -p src/host-runtime/tsconfig.json',
+      'node scripts/build-history-workers.cjs',
+      `node -e "require('node:fs').chmodSync('out/host/host-runtime/cli.js', 0o755)"`
+    ])
+
+    const bundler = readFileSync(
+      path.join(repoRoot, 'scripts', 'build-history-workers.cjs'),
+      'utf8'
+    )
+    // Stage three emits INTO out/host, which is why the walk meets artifacts
+    // tsc never wrote. `outdir` is a ternary; pin the DEFAULT branch, because
+    // host:build invokes the script with no --outdir override, so the default
+    // is the only path T2 ever runs against.
+    expect(bundler).toContain(": 'out/host/host-node'")
+    // ...under names that are NOT derivable from their sources, which is the
+    // entire reason provenance is read rather than inferred...
+    expect(bundler).toContain(
+      "ThreadCatalogueWorkerEntry: 'src/main/workers/threadCatalogueWorker.ts'"
+    )
+    expect(bundler).toContain(
+      "ThreadCatalogueDecoderEntry: 'src/main/workers/threadCatalogueDecoder.ts'"
+    )
+    // ...and it must keep emitting maps, or its artifacts become unprovable
+    // and the preflight refuses every launch.
+    expect(bundler).toContain('sourcemap: true')
+    // It must also never SET a sourceRoot (esbuild honours it): the derivation
+    // resolves sources relative to the map and refuses any map that declares
+    // one, so a sourceRoot here would refuse every launch. Non-vacuous: the
+    // toContain assertions above prove `bundler` is the real script's content.
+    expect(bundler).not.toContain('sourceRoot')
+
+    // DECLARED vs EMITTED, reconciled against the real producer. The
+    // preflight refuses when a DECLARED entry artifact is absent (a partial
+    // build leaves its bundled closure invisible), so the declared list must
+    // be exactly what this script emits: its `entryPoints` keys under its
+    // default outdir, one renamed `<Key>.js` each. Derive both from the
+    // script's own text — never from a copy of the values here — so a renamed
+    // or added entry point reds this test instead of drifting the preflight.
+    const entryPointsBlock = bundler.match(/entryPoints:\s*\{([\s\S]*?)\}/)
+    expect(
+      entryPointsBlock,
+      'build-history-workers entryPoints block not found — re-check the declared-entry list'
+    ).not.toBe(null)
+    const declaredKeys = [...entryPointsBlock![1].matchAll(/([A-Za-z_$][\w$]*)\s*:/g)].map(
+      (match) => match[1]
+    )
+    expect(declaredKeys.length).toBeGreaterThan(0)
+    const outdirDefault = bundler.match(/outdir:[\s\S]*?:\s*'([^']+)'/)
+    expect(
+      outdirDefault,
+      'build-history-workers outdir default branch not found — re-check the declared-entry list'
+    ).not.toBe(null)
+    const expectedDeclared = declaredKeys.map((key) => `${outdirDefault![1]}/${key}.js`)
+    expect(HOST_BUNDLE_DECLARED_ENTRY_SEGMENTS.map((segments) => segments.join('/'))).toEqual(
+      expectedDeclared
+    )
+  })
+
+  it('P2: the preflight derives cleanly from the REAL emitted tree (skipped with no host build)', () => {
+    // Every other assertion in this file injects a fake fs, so the suite is
+    // structurally unable to observe the tree this function actually runs
+    // against in production. That is why a defect which refused EVERY launch
+    // still left the whole suite green. This is the one check that looks at
+    // reality, and it is the cheapest of the three layers.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    if (!existsSync(path.join(repoRoot, ...['out', 'host', 'host-runtime', 'cli.js']))) {
+      // No host build present (fresh clone, or CI that does not run
+      // host:build): there is nothing for a bundle to be fresh AGAINST, so a
+      // skip is the correct answer rather than a build-order landmine.
+      return
+    }
+
+    const real = checkHostBundleFreshness(repoRoot)
+    // `host_bundle_stale` is a TRUE answer about a legitimate local state —
+    // edit a Host source, do not rebuild — so asserting ok:true here would red
+    // on an ordinary working tree. `host_bundle_incomplete_output` is the same
+    // category: a partial build (tsc without the esbuild stage) is a tree that
+    // is not currently launchable, not a defect in the derivation logic, and
+    // redding the whole perf suite on it would be the build-order landmine
+    // this test exists to avoid. What must never happen is a failure to
+    // DERIVE: an unprovable artifact, an orphan, zero sources or an I/O
+    // refusal all mean the preflight cannot read this repo's own build output.
+    // The live defect this slice repairs was `host_bundle_orphan_output`, so
+    // this discrimination keeps every bit of the detection and none of the
+    // false positives.
+    expect(
+      real.reason === null ||
+        real.reason === 'host_bundle_stale' ||
+        real.reason.startsWith('host_bundle_incomplete_output:'),
+      `real out/host: ${real.reason} (newest ${real.newestSourcePath})`
+    ).toBe(true)
+    expect(real.checkedFileCount).toBeGreaterThan(0)
+  })
+
+  it('P2: a stale Host bundle hard-fails --launch BEFORE spawn, naming the rebuild command', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-stale-'))
+    tempDirs.push(home)
+    let spawned = false
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--accept-unfolded-cross-thread',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Stl01',
+          `--home=${home}`,
+          '--port=9451',
+          '--inspect-port=9851',
+          '--max-replay-events=1'
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: staleHostBundleFs() },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('preflight must run before any spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9451, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+    ).rejects.toThrow(/is older than .*Fresh\.ts.*npm run host:build/)
+    expect(spawned).toBe(false)
+  })
+
+  it('resolves the dev Node from env first, then the vendored runtime', () => {
+    const seen: string[] = []
+    const exists = (at: string) => {
+      seen.push(at)
+      return true
+    }
+    // The resolver returns path.resolve'd executables, which are
+    // drive-qualified on win32; compare against the same shape.
+    expect(
+      checkExternalHostNodeExecutable('/repo', { env: { NODE: '/usr/bin/node' }, exists })
+    ).toMatchObject({ ok: true, source: 'NODE', nodeExecutable: path.resolve('/usr/bin/node') })
+    expect(
+      checkExternalHostNodeExecutable('/repo', {
+        env: { npm_node_execpath: '/n/bin/node', NODE: '/usr/bin/node' },
+        exists
+      })
+    ).toMatchObject({ source: 'npm_node_execpath', nodeExecutable: path.resolve('/n/bin/node') })
+    // A relative value is not a resolution; fall through to the vendored copy.
+    expect(
+      checkExternalHostNodeExecutable('/repo', {
+        env: { NODE: 'node' },
+        platform: 'darwin',
+        arch: 'arm64',
+        exists
+      })
+    ).toMatchObject({
+      source: 'vendored',
+      nodeExecutable: path.resolve('/repo', 'build', 'tui-runtime', 'darwin-arm64', 'node')
+    })
+  })
+
+  it('refuses the launch when the dev Node is absent, unless told to accept it', () => {
+    // The attempt-1-to-5 condition: build/tui-runtime/** is gitignored, so a
+    // worktree has the README and nothing else.
+    const missing = checkExternalHostNodeExecutable('/repo', {
+      env: {},
+      platform: 'darwin',
+      arch: 'arm64',
+      exists: () => false
+    })
+    expect(missing.ok).toBe(false)
+    expect(missing.reason).toBe('development_node_missing')
+  })
+
+  it('reads the observed host lane from positive evidence only', () => {
+    // The app saying it fell back is proof.
+    expect(
+      resolveObservedHostLane({
+        fallbackLine: '[main-bootstrap] external Host unavailable; using in-process Host: x',
+        discoveryPid: 1,
+        childPid: 1
+      })
+    ).toMatchObject({ observed: 'in_process', evidence: 'child_stderr_bootstrap_marker' })
+    // A separate Host process is proof of the external lane.
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: 99, childPid: 1 })
+    ).toMatchObject({ observed: 'external', evidence: 'discovery_pid_differs_from_child' })
+    // Pid EQUALITY is corroboration, never proof — attempt 5's inference.
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: 1, childPid: 1 })
+    ).toMatchObject({ observed: 'unknown', evidence: null })
+    expect(
+      resolveObservedHostLane({ fallbackLine: null, discoveryPid: null, childPid: null })
+    ).toMatchObject({ observed: 'unknown' })
+  })
+
+  it('drains both child pipes and records what it kept', () => {
+    // Five attempts measured the wrong architecture because the app printed
+    // `[main-bootstrap] external Host unavailable; using in-process Host` into
+    // a pipe nobody read.
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const written: Array<[string, string]> = []
+    const record = captureChildStdio(session, {
+      write: (name: string, chunk: Buffer) => written.push([name, chunk.toString()])
+    })
+    expect(record.streams).toEqual(['stdout', 'stderr'])
+    const line = '[main-bootstrap] external Host unavailable; using in-process Host: x'
+    session.stdout.emit('data', Buffer.from('booting '))
+    session.stderr.emit('data', Buffer.from(line))
+    expect(written).toEqual([
+      ['stdout', 'booting '],
+      ['stderr', line]
+    ])
+    expect(record.bytes).toBe(Buffer.byteLength('booting ') + Buffer.byteLength(line))
+    expect(record.truncated).toBe(false)
+    expect(record.droppedBytes).toBe(0)
+  })
+
+  it('holds the lane marker in memory, so detection never depends on a flushed file', () => {
+    // The lane record used to be read with readFileSync over child.stderr.log
+    // while the write stream was still open. Node buffers, so an undrained
+    // marker would have read as `observed: 'unknown'` — an absence of evidence
+    // presenting as evidence, on the single field the run is launched to
+    // establish. The head is fed from the same chunk the sink gets, before the
+    // sink runs, so a sink that is slow, buffered or outright broken cannot
+    // change what the lane record says.
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, {
+      write: () => {
+        throw new Error('sink not flushed')
+      }
+    })
+    const line = '[main-bootstrap] external Host unavailable; using in-process Host: x'
+    session.stdout.emit('data', Buffer.from('stdout noise\n'))
+    session.stderr.emit('data', Buffer.from(`preamble\n${line}\ntail\n`))
+
+    expect(record.stderrHead).toContain(line)
+    // stdout is not lane evidence and must not dilute the bounded head.
+    expect(record.stderrHead).not.toContain('stdout noise')
+    expect(
+      resolveObservedHostLane({
+        fallbackLine:
+          record.stderrHead.split('\n').find((l: string) => l.includes('[main-bootstrap]')) ?? null,
+        discoveryPid: 1,
+        childPid: 1
+      })
+    ).toMatchObject({ observed: 'in_process', evidence: 'child_stderr_bootstrap_marker' })
+  })
+
+  it('bounds the in-memory stderr head', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, { write: () => {} })
+    session.stderr.emit('data', Buffer.alloc(300 * 1024, 0x61))
+    expect(record.stderrHead.length).toBe(256 * 1024)
+  })
+
+  it('resolves the host lane from the in-memory head, never from the open log file', () => {
+    // Source pin. A readFileSync on childStderrPath at this point reads a file
+    // whose write stream is still open; the whole point of the head is that the
+    // lane record cannot be decided by flush timing.
+    const src = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')
+    const detectAt = src.search(/^\s*const fallbackLine =\s*$/m)
+    expect(detectAt).toBeGreaterThan(-1)
+    expect(src.slice(detectAt, detectAt + 400)).toContain('childStdio.stderrHead')
+    expect(src).not.toContain('fs.readFileSync(childStderrPath')
+  })
+
+  it('keeps draining past its cap instead of leaving data in the pipe', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const written: string[] = []
+    const record = captureChildStdio(session, {
+      maxBytes: 4,
+      write: (_name: string, chunk: Buffer) => written.push(chunk.toString())
+    })
+    session.stdout.emit('data', Buffer.from('abcdefgh'))
+    session.stdout.emit('data', Buffer.from('ijkl'))
+    expect(written).toEqual(['abcd'])
+    expect(record.bytes).toBe(4)
+    expect(record.droppedBytes).toBe(8)
+    expect(record.truncated).toBe(true)
+    // Still attached: a full pipe blocks the child, which is the defect itself.
+    expect(session.stdout.listenerCount('data')).toBe(1)
+  })
+
+  it('never lets a failing sink or a pipeless session take down the run', () => {
+    const session = { stdout: new EventEmitter(), stderr: new EventEmitter() }
+    const record = captureChildStdio(session, {
+      write: () => {
+        throw new Error('disk full')
+      }
+    })
+    expect(() => session.stderr.emit('data', Buffer.from('x'))).not.toThrow()
+    expect(record.bytes).toBe(1)
+    expect(captureChildStdio({}, { write: () => {} }).streams).toEqual([])
+  })
+
+  it('P2c: a missing dev Node refuses the launch BEFORE spawning the wrong architecture', async () => {
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-lane-'))
+    tempDirs.push(home)
+    let spawned = false
+    const launch = (extra: string[], accept: boolean) =>
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--accept-unfolded-cross-thread',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Lane01',
+          `--home=${home}`,
+          '--port=9455',
+          '--inspect-port=9855',
+          '--max-replay-events=1',
+          ...extra
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          // The worktree condition: build/tui-runtime/** is gitignored.
+          externalHostAdapters: { exists: () => false, env: {} },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('reached the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9455, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} },
+          ...(accept ? {} : {})
+        }
+      )
+    await expect(launch([], false)).rejects.toThrow(
+      /external Host cannot resolve from this checkout/
+    )
+    expect(spawned).toBe(false)
+    // Deliberate is allowed; accidental is not. With the opt-in it gets past
+    // the gate and fails at the spawn instead.
+    await expect(launch(['--accept-in-process-host'], true)).rejects.toThrow(/reached the spawn/)
+    expect(spawned).toBe(true)
+  })
+
+  it('P2d: a launch that cannot fold refuses at preflight, behind the lane refusal', async () => {
+    // `--cell` was checked for CANONICALITY when present and never for
+    // PRESENCE, so a single-role launch without one spent its whole length,
+    // recorded host evidence and reported `metrics.crossThread: null` — a
+    // fifteen-minute way to learn a launch-argument mistake. The run that first
+    // folded carried a cell only because the operator kept it "for provenance"
+    // after dropping --paired-runs.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-cell-'))
+    tempDirs.push(home)
+    let spawned = false
+    const launch = (extra: string[], hostNodePresent: boolean) =>
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Cell01',
+          `--home=${home}`,
+          '--port=9457',
+          '--inspect-port=9857',
+          '--max-replay-events=1',
+          ...extra
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          externalHostAdapters: { exists: () => hostNodePresent, env: {} },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('reached the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9457, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+
+    // No cell, host Node present: refused before anything is spawned.
+    await expect(launch([], true)).rejects.toThrow(/no --cell was given/)
+    expect(spawned).toBe(false)
+
+    // ORDERING. With BOTH faults the LANE refusal wins: measuring the wrong
+    // architecture is the more fundamental failure, and this check must not
+    // reorder the one that was already there.
+    await expect(launch([], false)).rejects.toThrow(
+      /external Host cannot resolve from this checkout/
+    )
+    expect(spawned).toBe(false)
+
+    // Deliberate is allowed; accidental is not — the same shape as
+    // --accept-in-process-host. Past the gate, it fails at the spawn instead.
+    await expect(launch(['--accept-unfolded-cross-thread'], true)).rejects.toThrow(
+      /reached the spawn/
+    )
+    expect(spawned).toBe(true)
+
+    // ...and so does a canonical cell, which is the path that actually folds.
+    spawned = false
+    await expect(
+      launch(['--cell=small/2/cold/codex_profiles_solo_ensemble_mesh/none'], true)
+    ).rejects.toThrow(/reached the spawn/)
+    expect(spawned).toBe(true)
+  })
+
+  it('P2e: a cell whose history the fixture cannot support refuses, at every entry point', async () => {
+    const {
+      checkFixtureSatisfiesHistory,
+      HISTORY_SIZE_PINS,
+      HISTORY_PIN_MIN_FRACTION
+    } = require('./interferenceMatrix.cjs')
+    const { generatePerfFixture } = require('./fixtureGenerator.cjs')
+    const shapeOf = (workload: string, scaleDown: number) => {
+      const fixture = generatePerfFixture({ workload, seed: 42, scaleDown })
+      return {
+        messages: fixture.chats.reduce(
+          (total: number, chat: { messages: unknown[] }) => total + chat.messages.length,
+          0
+        ),
+        bytes: Buffer.byteLength(JSON.stringify(fixture.chats))
+      }
+    }
+
+    // `--scale-down` decides this, not the workload name. light_beside_large
+    // meets the large pin at 1 and misses it by 40x at the default 40, so a
+    // check keyed on the workload would pass the mislabelled run.
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('light_beside_large', 1)).ok).toBe(true)
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('light_beside_large', 40)).ok).toBe(false)
+    expect(checkFixtureSatisfiesHistory('large', shapeOf('dual_run', 40)).ok).toBe(false)
+
+    // The configuration every attempt so far has run stays legal. `small`
+    // declares a hard maxBytes and is gated on THAT; giving it a message floor
+    // too would invent a gate the schema deliberately withholds and refuse the
+    // whole programme's history.
+    expect(checkFixtureSatisfiesHistory('small', shapeOf('dual_run', 40)).ok).toBe(true)
+    expect(HISTORY_SIZE_PINS.small.maxBytes).toBe(1024 * 1024)
+    expect(HISTORY_SIZE_PINS.large.maxBytes).toBeUndefined()
+    // ...and the other direction of the same mismatch is caught: too BIG to be
+    // small is a hard-bound violation, never an approximation.
+    expect(checkFixtureSatisfiesHistory('small', shapeOf('dual_run', 1))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('hard maxBytes')
+    })
+
+    // The light_alone launch gate (fence-final Ruling 2): the baseline cell
+    // is small/1 because the light HALF of light_beside_large is small-shaped
+    // by construction — measured here on the same non-lean generated shape
+    // the evidentiary launch must use. If the light half ever breaches the
+    // hard bound this pin reds and the cell/pin tier re-opens; small's
+    // maxBytes is never relaxed to fit.
+    const lightHalfShapeOf = (scaleDown: number) => {
+      const fixture = generatePerfFixture({
+        workload: 'light_beside_large',
+        seed: 42,
+        lean: false,
+        scaleDown
+      })
+      const lightChat = fixture.chats[0]
+      return {
+        messages: lightChat.messages.length,
+        bytes: Buffer.byteLength(JSON.stringify([lightChat]))
+      }
+    }
+    expect(checkFixtureSatisfiesHistory('small', lightHalfShapeOf(1)).ok).toBe(true)
+    expect(checkFixtureSatisfiesHistory('large', lightHalfShapeOf(1)).ok).toBe(false)
+    expect(HISTORY_PIN_MIN_FRACTION).toBeGreaterThan(0)
+    expect(HISTORY_PIN_MIN_FRACTION).toBeLessThan(1)
+
+    // End to end on the real CLI path, which is where it returned ok before.
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--cell=large/2/cold/claude_models_repeated_and_distinct/none',
+          '--dry-run',
+          '--lean',
+          '--scale-down=40'
+        ],
+        { repoRoot: path.resolve(__dirname, '..', '..') }
+      )
+    ).rejects.toThrow(/Refusing --cell=large/)
+
+    // --smoke-plan validates the cell it prints. It used to return before the
+    // check, so the one mode whose entire purpose is to show what a run would
+    // do exited 0 on a cell parseCellName rejects.
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--smoke-plan', '--cell=enormous/2/cold/x/none'], {
+        repoRoot: path.resolve(__dirname, '..', '..')
+      })
+    ).rejects.toThrow(/--cell must be a canonical matrix cell name/)
+  })
+
+  it('derives the light-half fixture on a standalone light-alone run (red-first wiring)', async () => {
+    // The wave-3 reachability wiring (fence-final Ruling 2): --role=light-alone
+    // on a paired workload must PRODUCE the derived fixture, carry its
+    // provenance, and declare the replay basis. Every assertion below reds if
+    // the launcher stops calling deriveLightAloneFixture — the failure class
+    // that kept light_beside_large correct-but-unrunnable.
+    const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.cjs')
+    const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
+    const flags = { workload: 'light_beside_large', seed: 42, lean: false, scaleDown: 1 }
+    const full = generatePerfFixture(flags)
+    const derived = deriveLightAloneFixture(full)
+    const result = await runT2BaselineCli(
+      [
+        '--workload=light_beside_large',
+        '--role=light-alone',
+        '--cell=small/1/warm/codex_profiles_solo_ensemble_mesh/none',
+        '--scale-down=1',
+        '--dry-run',
+        '--instance-id=perfT2LightAlone',
+        `--home=${path.join(tmpdir(), 'tw-t2-light-alone')}`
+      ],
+      { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+    )
+    expect(result.ok).toBe(true)
+    // The fingerprint is of the fixture that ACTUALLY replays — the derived
+    // light half, never the whole generated fixture.
+    expect(result.fingerprint).toBe(fixtureFingerprint(derived))
+    expect(result.fingerprint).not.toBe(fixtureFingerprint(full))
+
+    const report = result.report
+    // Work1's acceptance block: provenance present and exact.
+    expect(report.fixture.lightAloneDerivation).toMatchObject({
+      basis: 'light_half_of_paired_fixture',
+      sourceWorkload: 'light_beside_large',
+      sourceChatCount: 2,
+      lightChatId: full.chats[0].appChatId
+    })
+    expect(report.fixture.totals.messageCount).toBe(41)
+    expect(report.fixture.totals.chatCount).toBe(1)
+    expect(report.fixture.totals.toolActivityCount).toBeNull()
+    expect(report.fixture.shape).toBeNull()
+    expect(report.fixture.replayEventCount).toBe(86)
+    // The descriptor declares one light population with a truthful basis.
+    const populations = report.runEvidence.evidence.populations
+    expect(populations).toHaveLength(1)
+    expect(populations[0]).toMatchObject({
+      role: 'light',
+      chatId: full.chats[0].appChatId,
+      replay: { basis: 'whole_schedule' }
+    })
+  })
+
+  it('refuses a light-alone run against a large cell (the derived shape is small)', async () => {
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=light_beside_large',
+          '--role=light-alone',
+          '--cell=large/2/warm/codex_profiles_solo_ensemble_mesh/none',
+          '--scale-down=1',
+          '--dry-run',
+          '--instance-id=perfT2LightAloneLarge',
+          `--home=${path.join(tmpdir(), 'tw-t2-light-alone-large')}`
+        ],
+        { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+      )
+    ).rejects.toThrow(/under the large pin's floor/)
+  })
+
+  it('keeps the full fixture and a null derivation on a light-beside run', async () => {
+    const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.cjs')
+    const full = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 42,
+      lean: false,
+      scaleDown: 1
+    })
+    const result = await runT2BaselineCli(
+      [
+        '--workload=light_beside_large',
+        '--role=light-beside',
+        '--cell=large/2/warm/codex_profiles_solo_ensemble_mesh/none',
+        '--scale-down=1',
+        '--dry-run',
+        '--instance-id=perfT2LightBeside',
+        `--home=${path.join(tmpdir(), 'tw-t2-light-beside')}`
+      ],
+      { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+    )
+    expect(result.ok).toBe(true)
+    expect(result.fingerprint).toBe(fixtureFingerprint(full))
+    expect(result.report.fixture.lightAloneDerivation).toBeNull()
+    expect(result.report.runEvidence.evidence.populations).toHaveLength(2)
+  })
+
+  it('refuses the run when the derivation diverges from the light half (live element 2)', async () => {
+    // A guard only the suite can trip does not protect the measurement: a
+    // deriver that stops producing the light half must refuse the launch.
+    const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=light_beside_large',
+          '--role=light-alone',
+          '--cell=small/1/warm/codex_profiles_solo_ensemble_mesh/none',
+          '--scale-down=1',
+          '--dry-run',
+          '--instance-id=perfT2LightAloneDiverged',
+          `--home=${path.join(tmpdir(), 'tw-t2-light-alone-diverged')}`
+        ],
+        {
+          repoRoot: path.resolve(__dirname, '..', '..'),
+          forceIsolated: true,
+          platform: 'darwin',
+          lightAloneFixtureDeriver: (fixture: Parameters<typeof deriveLightAloneFixture>[0]) => {
+            const derived = deriveLightAloneFixture(fixture)
+            derived.replaySchedule = derived.replaySchedule.slice(1)
+            return derived
+          }
+        }
+      )
+    ).rejects.toThrow(/not the light half of the generated fixture/)
+  })
+
+  it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
+    // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
+    // `{ once: true }` abort listener meant a signal during fixture build or
+    // preflight fired the handler while there was no child to kill, consumed
+    // the listener, and let the launch proceed — so the operator's second
+    // Ctrl-C reached the default handler and stranded the Electron instance.
+    const repoRoot = path.resolve(__dirname, '..', '..')
+    const homesRoot = path.join(repoRoot, 'perf-homes')
+    mkdirSync(homesRoot, { recursive: true })
+    const home = mkdtempSync(path.join(homesRoot, 'tw-t2-w8-abort-'))
+    tempDirs.push(home)
+    let spawned = false
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=dual_run',
+          '--launch',
+          '--accept-unfolded-cross-thread',
+          '--i-accept-isolated-launch',
+          '--materialize-instance-userdata',
+          '--lean',
+          '--scale-down=40',
+          '--instance-id=perfW8Abrt01',
+          `--home=${home}`,
+          '--port=9453',
+          '--inspect-port=9853',
+          '--max-replay-events=1'
+        ],
+        {
+          repoRoot,
+          forceIsolated: true,
+          allowDirtyLaunch: true,
+          allowNonIsolatedLaunch: true,
+          platform: 'darwin',
+          signal: aborted.signal,
+          provenance: {
+            gitSha: 'a'.repeat(40),
+            dirty: false,
+            dirtyTreeFingerprint: 'b'.repeat(64),
+            dirtyPaths: [],
+            isolatedWorktree: true,
+            authoritativeBaseline: true
+          },
+          buildAdapters: { build: async () => ({ code: 0 }) },
+          // Fresh, so the bundle preflight cannot be what refuses the launch.
+          hostBundleAdapters: { fs: freshHostBundleFs() },
+          // Not a host-lane test: the dev Node precondition is assumed present.
+          externalHostAdapters: { exists: () => true },
+          spawnAdapters: {
+            resolveElectronPath: () => '/virtual/Electron',
+            spawn: () => {
+              spawned = true
+              throw new Error('an aborted launch must never reach the spawn')
+            }
+          },
+          portAdapters: {
+            probePort: async (port: number) => ({ port, occupied: false }),
+            probeCdp: async () => ({ port: 9453, reachable: false }),
+            listInstancePids: () => []
+          },
+          terminateOptions: { waitMs: 20, sleep: async () => {} }
+        }
+      )
+    ).rejects.toThrow(/Refusing --launch: aborted before spawn/)
+    expect(spawned).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // T9b host span binding + qualification call (ruling P4)
+  // -------------------------------------------------------------------------
+
+  function evidenceOptions(overrides: Record<string, unknown> = {}) {
+    return {
+      userDataPath: '/virtual/userdata',
+      requiredChatIds: ['chat-heavy'],
+      cell: CELL_NAME,
+      metrics: createEmptyPerfMetrics(),
+      now: () => FRESH_AT,
+      ...overrides
+    } as Record<string, unknown>
+  }
+
+  it('qualifies and folds ONLY a boot-epoch-verified read: real writer file, real collector, live pin', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(EPOCH),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(true)
+    const record = result.record
+    expect(record.marker).toBe(null)
+    expect(record.qualified).toBe(true)
+    expect(record.folded).toBe(true)
+    expect(record.cell).toBe(CELL_NAME)
+    expect(record.discoveryPid).toBe(777)
+    expect(record.welcome).toEqual({ hostId: 'host-abc', generation: 2, bootEpoch: EPOCH })
+    expect(record.expectedIdentity).toEqual({
+      instanceId: 'host-abc',
+      generation: 2,
+      pid: 777,
+      bootEpoch: EPOCH
+    })
+    expect(record.identity).toEqual({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    expect(record.attribution.status).toBe('available')
+    expect(record.ageMs).toBe(1000)
+    expect(record.sequence).toBe(1)
+
+    const metrics = options.metrics as Record<string, any>
+    const cell = metrics.crossThread.cells[CELL_NAME]
+    expect(cell.processes.host.hostSnapshot.identity.bootEpoch).toBe(EPOCH)
+    expect(cell.processes.host.hostSnapshot.identityVerified).toBe(true)
+    expect(cell.processes.main.process).toBe('main')
+    expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
+    expect(validatePerfMetrics(metrics).ok).toBe(true)
+  })
+
+  it('P4: a legacy epoch-free run is recorded and left UNQUALIFIED — never green', async () => {
+    const snapshotPath = writeRealHostSnapshot(HOST_IDENTITY)
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_evidence_unqualified: boot_epoch_absent')
+    expect(result.record.qualified).toBe(false)
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+    // The read itself stayed legacy-valid: identity pinned, attribution available.
+    expect(result.record.identity).toEqual({ ...HOST_IDENTITY })
+    expect(result.record.attribution.status).toBe('available')
+  })
+
+  it('P4: a stale incarnation (pinned epoch missing from the file) refuses the whole read', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: OTHER_EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(EPOCH),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_snapshot_refused: host_perf_snapshot_identity_mismatch')
+    expect(result.record.qualified).toBe(false)
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+  })
+
+  it('P4: a file epoch the pin lacks degrades to unverified — diagnostics valid, strict attribution not', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: okProbe(),
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(false)
+    expect(result.record.marker).toBe('host_evidence_unqualified: identity_unverified')
+    expect(result.record.attribution.status).toBe('unsupported')
+    expect(result.record.attribution.reason).toBe('boot_epoch_unpinned')
+    expect((options.metrics as Record<string, any>).crossThread).toBeUndefined()
+  })
+
+  it('names host-unsupported (no discovery) and welcome-refusal markers without sampling', async () => {
+    let sampled = false
+    const tripwireSampler = async () => {
+      sampled = true
+      return {
+        workSpans: { unsupported: 'must_not_run' },
+        hostPerf: { unsupported: 'must_not_run' }
+      }
+    }
+    const absent = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: '/virtual/none.json',
+        sampler: tripwireSampler,
+        probe: async () => ({ ok: false, stage: 'discovery', reason: 'host_discovery_absent' })
+      })
+    )
+    expect(absent.record.marker).toBe('host_discovery_unavailable: host_discovery_absent')
+    expect(absent.record.qualified).toBe(false)
+
+    const refused = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: '/virtual/none.json',
+        sampler: tripwireSampler,
+        probe: async () => ({ ok: false, stage: 'welcome', reason: 'host_welcome_timeout' })
+      })
+    )
+    expect(refused.record.marker).toBe('host_welcome_unavailable: host_welcome_timeout')
+    expect(sampled).toBe(false)
+  })
+
+  it('never folds one-sided evidence: degraded main section or unspecified cell disqualify', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+
+    // Renderer session present but without .post → main side unavailable; the
+    // host file read still rides along (session-independence) and is recorded.
+    const noMain = await collectT2HostSpanEvidence(
+      evidenceOptions({ hostPerfSnapshotPath: snapshotPath, probe: okProbe(EPOCH), renderer: {} })
+    )
+    expect(noMain.record.marker).toBe(
+      'main_perf_section_unavailable: renderer_runtime_session_required'
+    )
+    expect(noMain.record.qualified).toBe(false)
+    expect(noMain.record.identity.bootEpoch).toBe(EPOCH)
+
+    // Fully qualified evidence but no canonical cell → recorded, not folded.
+    const noCell = await collectT2HostSpanEvidence(
+      evidenceOptions({
+        hostPerfSnapshotPath: snapshotPath,
+        probe: okProbe(EPOCH),
+        renderer: rendererServing(realMainSection()),
+        cell: null
+      })
+    )
+    expect(noCell.record.marker).toBe('cross_thread_cell_unspecified')
+    expect(noCell.record.qualified).toBe(false)
+    expect(noCell.record.cell as string | null).toBe(null)
+  })
+
+  it('TOKEN CONTAINMENT: the record and folded report copy bounded identity fields only', async () => {
+    const snapshotPath = writeRealHostSnapshot({ ...HOST_IDENTITY, bootEpoch: EPOCH })
+    // A probe result deliberately carrying bait beyond the bounded contract:
+    // the runner's copies must drop it structurally, not by convention.
+    const leakyProbe = async () => ({
+      ok: true,
+      expectedIdentity: { instanceId: 'host-abc', generation: 2, pid: 777, bootEpoch: EPOCH },
+      welcome: {
+        hostId: 'host-abc',
+        generation: 2,
+        bootEpoch: EPOCH,
+        token: TOKEN_BAIT,
+        tokenPath: '/bait/token'
+      },
+      discovery: {
+        pid: 777,
+        startedAt: '2026-09-09T03:59:58.000Z',
+        tokenPath: '/bait/token',
+        socketPath: '/bait/socket'
+      }
+    })
+    const options = evidenceOptions({
+      hostPerfSnapshotPath: snapshotPath,
+      probe: leakyProbe,
+      renderer: rendererServing(realMainSection())
+    })
+    const result = await collectT2HostSpanEvidence(options)
+    expect(result.ok).toBe(true)
+    expect(result.record.welcome).toEqual({ hostId: 'host-abc', generation: 2, bootEpoch: EPOCH })
+    const serialized = JSON.stringify({
+      hostSpans: result.record,
+      crossThread: (options.metrics as Record<string, any>).crossThread
+    })
+    expect(serialized).not.toContain(TOKEN_BAIT)
+    expect(serialized).not.toContain('/bait/token')
+    expect(serialized).not.toContain('/bait/socket')
+    expect(serialized).not.toContain('tokenPath')
+  })
+
+  it('validates --cell at parse time and refuses a non-canonical cell before any I/O', async () => {
+    expect(parseArgs(['--cell=small/2/warm/codex_bridge_disabled/none']).cell).toBe(
+      'small/2/warm/codex_bridge_disabled/none'
+    )
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--dry-run', '--cell=bogus'])
+    ).rejects.toThrow(/canonical matrix cell/)
+  })
+
+  it('T9b producer + preflight + env arming are wired in the runner (source-region guards)', () => {
+    // Same discipline as the T9a wiring guards: a seam built and never invoked
+    // is the failure these anchors exist to catch. Comment-only lines are
+    // stripped first so commented-out code cannot satisfy a guard.
+    const src = readFileSync(path.join(__dirname, 'runT2Baseline.cjs'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+      .join('\n')
+
+    // 1. The spawn env arms the writer only for a real launch.
+    expect(src).toContain(
+      'extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined'
+    )
+
+    // 2. The bundle preflight runs BEFORE any spawn.
+    const preflightAt = src.search(
+      /^\s*const hostBundleCheck = checkHostBundleFreshness\(repoRoot, options\.hostBundleAdapters \|\| \{\}\)\s*$/m
+    )
+    const spawnAt = src.search(/^\s*childSession = spawnExactElectronChild\(\{\s*$/m)
+    expect(preflightAt).toBeGreaterThan(-1)
+    expect(spawnAt).toBeGreaterThan(preflightAt)
+
+    // 3. The T9b producer is invoked and recorded BEFORE the renderer closes.
+    const collectAt = src.search(
+      /^\s*const hostSpanEvidence = await collectT2HostSpanEvidence\(\{\s*$/m
+    )
+    const assignAt = src.search(/^\s*report\.hostSpans = hostSpanEvidence\.record\s*$/m)
+    const rendererCloseAt = src.search(/^\s*renderer\.close\(\)\s*$/m)
+    expect(collectAt).toBeGreaterThan(-1)
+    expect(assignAt).toBeGreaterThan(collectAt)
+    expect(rendererCloseAt).toBeGreaterThan(assignAt)
   })
 })

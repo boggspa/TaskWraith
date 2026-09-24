@@ -5,10 +5,17 @@
  */
 import { WebContentsView, type BrowserWindow } from 'electron'
 import type { EmbeddedViewHandle, EmbedParentWindow } from './CanvasEmbedController'
+import type { CanvasSurfaceKind } from './CanvasHostSurface'
 
 /** A sandboxed WebContentsView on TaskWraith's dedicated Canvas profile
- * partition (mirrors the standalone BrowserWindow webPreferences). */
-export function createElectronEmbedView(partition: string): EmbeddedViewHandle {
+ * partition (mirrors the standalone BrowserWindow webPreferences). Emulator
+ * surfaces additionally disable Electron's background throttling: their WASM
+ * core must keep producing frames while the view is occluded or the app
+ * window is backgrounded (same policy as the offscreen MCP renderers). */
+export function createElectronEmbedView(
+  partition: string,
+  kind?: CanvasSurfaceKind
+): EmbeddedViewHandle {
   const view = new WebContentsView({
     webPreferences: {
       partition,
@@ -16,7 +23,8 @@ export function createElectronEmbedView(partition: string): EmbeddedViewHandle {
       nodeIntegration: false,
       sandbox: true,
       allowRunningInsecureContent: false,
-      experimentalFeatures: false
+      experimentalFeatures: false,
+      backgroundThrottling: kind !== 'emulator'
     }
   })
   return view as unknown as EmbeddedViewHandle

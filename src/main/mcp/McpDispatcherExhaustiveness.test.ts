@@ -11,6 +11,8 @@ import { TASKWRAITH_MCP_TOOLS } from '../../shared/taskWraithMcpCatalog'
 import { AUDIO_MCP_TOOL_NAMES } from './AudioToolExecutors'
 import { AUDIT_MCP_TOOL_NAMES } from './AuditToolExecutors'
 import { CANVAS_MCP_TOOL_NAMES } from './CanvasToolExecutors'
+import { EMULATOR_MCP_TOOL_NAMES } from './EmulatorToolExecutors'
+import { WEB_LOGIN_MCP_TOOL_NAMES } from './WebLoginToolExecutors'
 import { DESKTOP_MCP_TOOL_NAMES } from './DesktopToolExecutors'
 import { APPSHOTS_MCP_TOOL_NAMES } from './AppshotsToolExecutors'
 import { DOCUMENT_MCP_TOOL_NAMES } from './DocumentToolExecutors'
@@ -27,9 +29,13 @@ import { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
 import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
 import { PROJECT_REFERENCE_MCP_TOOL_NAMES } from './ProjectReferenceToolExecutors'
 import { RECALL_MCP_TOOL_NAMES } from './RecallToolExecutors'
+import { THREAD_CONTINUITY_TOOL_NAMES } from './ThreadContinuityToolExecutors'
 import { THEME_TOKEN_MCP_TOOL_NAMES } from './ThemeTokenToolExecutors'
 import { THREAD_MESSAGE_MCP_TOOL_NAMES } from './ThreadMessageToolExecutors'
-import { TOOL_PERMISSION_RETRY_TOOL_NAME } from './ToolPermissionRetry'
+import {
+  PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME,
+  TOOL_PERMISSION_RETRY_TOOL_NAME
+} from './ToolPermissionRetry'
 import { VT_MCP_TOOL_NAMES } from './VtToolExecutors'
 import { WORKSPACE_BOARD_MCP_TOOL_NAMES } from './WorkspaceBoardToolExecutors'
 import { WORKSPACE_MCP_TOOL_NAMES } from './WorkspaceToolExecutors'
@@ -47,9 +53,10 @@ const branch = (
 ): DispatcherBranchContract => ({ condition, toolNames, owners })
 
 const DISPATCHER_BRANCH_CONTRACTS = [
+  branch("toolName === 'computer_use'", ['computer_use'], 'computer-use'),
   branch(
-    'toolName === TOOL_PERMISSION_RETRY_TOOL_NAME',
-    [TOOL_PERMISSION_RETRY_TOOL_NAME],
+    'toolName === TOOL_PERMISSION_RETRY_TOOL_NAME || toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME',
+    [TOOL_PERMISSION_RETRY_TOOL_NAME, PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME],
     'user-question'
   ),
   branch("toolName === 'run_shell_command'", ['run_shell_command'], 'workspace-tools'),
@@ -84,11 +91,14 @@ const DISPATCHER_BRANCH_CONTRACTS = [
     ['browser_open', 'browser_click', 'browser_screenshot', 'browser_console'],
     'browser-tools'
   ),
+  branch('isWebLoginMcpToolName(toolName)', WEB_LOGIN_MCP_TOOL_NAMES, 'web-login'),
   branch('isCanvasMcpToolName(toolName)', CANVAS_MCP_TOOL_NAMES, 'canvas'),
+  branch('isEmulatorMcpToolName(toolName)', EMULATOR_MCP_TOOL_NAMES, 'emulator'),
   branch('isMeshMcpToolName(toolName)', MESH_MCP_TOOL_NAMES, 'mesh-canvas'),
   branch('isSimulatorMcpToolName(toolName)', SIMULATOR_MCP_TOOL_NAMES, 'simulator-canvas'),
   branch('isLaunchMcpToolName(toolName)', LAUNCH_MCP_TOOL_NAMES, 'launch-control'),
   branch('isRecallMcpToolName(toolName)', RECALL_MCP_TOOL_NAMES, 'cross-thread-recall'),
+  branch('isThreadContinuityToolName(toolName)', THREAD_CONTINUITY_TOOL_NAMES, 'thread-continuity'),
   branch('isThreadMessageMcpToolName(toolName)', THREAD_MESSAGE_MCP_TOOL_NAMES, 'ensemble-control'),
   branch('isIntrospectionMcpToolName(toolName)', INTROSPECTION_MCP_TOOL_NAMES, 'introspection'),
   branch('isSkillMcpToolName(toolName)', SKILL_MCP_TOOL_NAMES, 'skills'),
@@ -157,6 +167,7 @@ const DISPATCHER_BRANCH_CONTRACTS = [
   branch("toolName === 'write_file'", ['write_file'], 'workspace-tools'),
   branch("toolName === 'replace'", ['replace'], 'workspace-tools'),
   branch("toolName === 'delegate_to_subthread'", ['delegate_to_subthread'], 'subthread-control'),
+  branch("toolName === 'ultra_task'", ['ultra_task'], 'subthread-control'),
   branch("toolName === 'delegate_wave'", ['delegate_wave'], 'subthread-control')
 ] as const satisfies readonly DispatcherBranchContract[]
 
@@ -171,14 +182,16 @@ function normalizeSource(value: string): string {
 function executeDispatcherFunction(): ts.FunctionDeclaration {
   let found: ts.FunctionDeclaration | undefined
   const visit = (node: ts.Node): void => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === 'executeGeminiMcpTool') {
+    // 30db8a4d5 wrapped the dispatcher: executeGeminiMcpTool is now a const
+    // alias and the marked branches live in executeUnscopedGeminiMcpTool.
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'executeUnscopedGeminiMcpTool') {
       found = node
       return
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
-  if (!found) throw new Error('executeGeminiMcpTool was not found in src/main/index.ts')
+  if (!found) throw new Error('executeUnscopedGeminiMcpTool was not found in src/main/index.ts')
   return found
 }
 

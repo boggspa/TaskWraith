@@ -28,7 +28,8 @@ export const COMPOSER_SURFACE_IDS = [
   'blackboard',
   'canvas',
   'multiview',
-  'schedule'
+  'schedule',
+  'view'
 ] as const
 
 export type ComposerSurfaceId = (typeof COMPOSER_SURFACE_IDS)[number]

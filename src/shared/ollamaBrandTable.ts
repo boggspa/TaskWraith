@@ -42,7 +42,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'DeepSeek',
     providerClass: 'deepseek',
     needles: ['deepseek-r1', 'deepseek r1', 'deepseek'],
-    fallbackModelLabel: 'DeepSeek R1 (8B Param)'
+    fallbackModelLabel: 'R1 (8B Param)'
   },
   {
     id: 'deep-reinforce',
@@ -77,7 +77,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'Kimi',
     providerClass: 'kimi',
     needles: ['kimi-'],
-    fallbackModelLabel: 'Kimi K3'
+    fallbackModelLabel: 'K3'
   },
   {
     id: 'liquid',
@@ -98,7 +98,7 @@ export const OLLAMA_DISPLAY_BRANDS: readonly OllamaDisplayBrandDefinition[] = [
     providerLabel: 'MiniMax',
     providerClass: 'minimax',
     needles: ['minimax-', 'minimax '],
-    fallbackModelLabel: 'MiniMax M3'
+    fallbackModelLabel: 'M3'
   },
   {
     // The `mistral` hue class + label already exist for the first-class Mistral
@@ -168,9 +168,13 @@ export function matchOllamaBrand(
 ): OllamaBrandMatch | null {
   const id = String(modelId || '').trim()
   const label = String(modelLabel || '').trim()
-  const key = `${id} ${label}`.trim().toLowerCase()
-  if (!key) return null
-  const definition = OLLAMA_DISPLAY_BRANDS.find((brand) => includesAny(key, brand.needles))
+  const match = (value: string): OllamaDisplayBrandDefinition | undefined =>
+    value ? OLLAMA_DISPLAY_BRANDS.find((brand) => includesAny(value, brand.needles)) : undefined
+  // Provider events may arrive with a stale human label while their wire model
+  // id is current. The id is the authoritative identity; considering the
+  // concatenated label first let an earlier table entry (e.g. Qwen) hijack a
+  // later DeepSeek run mid-stream.
+  const definition = match(id.toLowerCase()) || match(label.toLowerCase())
   if (!definition) return null
   return {
     providerLabel: definition.providerLabel,

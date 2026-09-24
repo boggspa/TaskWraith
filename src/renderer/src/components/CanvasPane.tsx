@@ -118,11 +118,11 @@ export function CanvasPane({
     let intersecting = true
     let occluded = false
     const applyVisibility = (): void => {
-      void api.setVisible(canvasId, intersecting && !occluded)
+      void api.setVisible(canvasId, intersecting && !occluded).catch(() => undefined)
     }
     const report = (): void => {
       const r = host.getBoundingClientRect()
-      void api.setBounds(canvasId, canvasPaneRect(r))
+      void api.setBounds(canvasId, canvasPaneRect(r)).catch(() => undefined)
     }
     report()
     const ro = new ResizeObserver(report)
@@ -178,7 +178,7 @@ export function CanvasPane({
       window.removeEventListener('resize', report)
       window.removeEventListener('scroll', report, true)
       // Hide on unmount (layout change); the host calls canvas.close on removal.
-      void api.setVisible(canvasId, false)
+      void api.setVisible(canvasId, false).catch(() => undefined)
     }
   }, [canvasId, overlayGuard])
 

@@ -52,6 +52,7 @@ describe('agent pool icon assets', () => {
       'pi',
       'mistral',
       'muse',
+      'devin',
       'ensemble'
     ] as const
     const providerAssets = POOL_ICON_ASSETS.filter((asset) => asset.group === 'Providers')
@@ -68,11 +69,9 @@ describe('agent pool icon assets', () => {
       if (provider === 'ensemble') {
         expect(asset?.raw).toContain('<svg')
         expect(asset?.providerLogo).toBeUndefined()
-      } else if (provider === 'muse') {
-        expect(asset?.providerLogo).toBe(provider)
-        expect(asset?.raw).toBeUndefined()
-        expect(resolveProviderBrandLogoSource(provider)).toBeUndefined()
       } else {
+        // Muse included: it resolves the vendored Meta mark since 2026-09-19
+        // (47d0da5fc), so every provider identity carries a brand logo source.
         expect(asset?.providerLogo).toBe(provider)
         expect(asset?.raw).toBeUndefined()
         expect(resolveProviderBrandLogoSource(provider)).toBeDefined()

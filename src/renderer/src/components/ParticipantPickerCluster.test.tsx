@@ -1,10 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   ParticipantPickerCluster,
   buildParticipantProviderModelPatch,
-  buildParticipantPickerProviderGroups
+  buildParticipantPickerProviderGroups,
+  buildParticipantReasoningSelectionPatch
 } from './ParticipantPickerCluster'
 
 function participant(
@@ -104,27 +106,86 @@ describe('buildParticipantProviderModelPatch', () => {
     ).toMatchObject({ model: 'composer-2.5-fast', fastModeEnabled: true })
   })
 
-  it('preserves a selected Kimi HighSpeed tier across its K2.7 model row', () => {
+  it('reaches Kimi Highspeed by its row and clears the retired Fast tier', () => {
+    // Highspeed became its own picker row on 2026-09-11. A seat saved before
+    // that still carries fastModeEnabled/serviceTier; both must clear, or the
+    // stale tier would re-route a run off whichever row the picker is showing.
     const source = participant({
       provider: 'kimi',
-      model: 'kimi-k2.7-code',
+      model: 'kimi-k2.8-preview',
       fastModeEnabled: true,
       serviceTier: 'fast',
       thinkingEnabled: true
     })
 
-    const patch = buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.7-code')
+    expect(
+      buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.7-code-highspeed')
+    ).toMatchObject({
+      model: 'kimi-k2.7-code-highspeed',
+      reasoningEffort: 'on',
+      fastModeEnabled: false,
+      serviceTier: 'standard',
+      thinkingEnabled: true
+    })
+
+    // Staying put clears the stale flag too, and keeps K2.8's own ladder.
+    expect(
+      buildParticipantProviderModelPatch(source, 'kimi', 'kimi-k2.8-preview')
+    ).toMatchObject({
+      model: 'kimi-k2.8-preview',
+      reasoningEffort: 'max',
+      fastModeEnabled: false,
+      serviceTier: 'standard'
+    })
+  })
+
+  it('maps an existing AntiGravity participant to High when UltraTask is selected', () => {
+    const source = participant({
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash-medium'
+    })
+    const patch = buildParticipantReasoningSelectionPatch(
+      source,
+      'gemini-3.6-flash-medium',
+      'ultraTask',
+      [
+        { id: 'gemini-3.6-flash-low', label: 'gemini-3.6-flash-low' },
+        { id: 'gemini-3.6-flash-medium', label: 'gemini-3.6-flash-medium' },
+        { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' }
+      ]
+    )
 
     expect(patch).toMatchObject({
-      model: 'kimi-k2.7-code',
-      fastModeEnabled: true,
-      serviceTier: 'fast',
-      thinkingEnabled: true
+      provider: 'antigravity',
+      model: 'gemini-3.6-flash-high',
+      reasoningEffort: 'ultraTask'
     })
+  })
+
+  it('clears Highspeed UltraTask when the fixed Thinking stop is selected', () => {
+    // Highspeed is the one Kimi route whose thinking is a flag rather than an
+    // effort, so its `on` stop carries no reasoningEffort at all.
+    expect(
+      buildParticipantReasoningSelectionPatch(
+        participant({
+          provider: 'kimi',
+          model: 'kimi-k2.7-code-highspeed',
+          reasoningEffort: 'ultraTask',
+          thinkingEnabled: true
+        }),
+        'kimi-k2.7-code-highspeed',
+        'on'
+      )
+    ).toEqual({ reasoningEffort: undefined, thinkingEnabled: true })
   })
 })
 
 describe('ParticipantPickerCluster', () => {
+  it('forwards one nested-layer class to both body-portaled pickers', () => {
+    const source = readFileSync(new URL('./ParticipantPickerCluster.tsx', import.meta.url), 'utf8')
+    expect(source.match(/popoverClassName=\{nestedPopoverClassName\}/g) || []).toHaveLength(2)
+  })
+
   it('always offers live-selectable providers even when discovery omits them', () => {
     expect(
       buildParticipantPickerProviderGroups(
@@ -133,7 +194,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -165,7 +226,8 @@ describe('ParticipantPickerCluster', () => {
       { provider: 'ollama' },
       { provider: 'pi' },
       { provider: 'mistral' },
-      { provider: 'muse' }
+      { provider: 'muse' },
+      { provider: 'devin' }
     ])
   })
 
@@ -201,7 +263,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('never leaks retired or flag-gated providers through the configured snapshot', () => {
@@ -217,7 +279,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral', 'muse', 'devin'])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {
@@ -226,7 +288,7 @@ describe('ParticipantPickerCluster', () => {
         participant={
           participant({
             provider: 'kimi',
-            model: 'kimi-k2.7-code',
+            model: 'kimi-k2.8-preview',
             thinkingEnabled: true
           })
         }
@@ -239,7 +301,7 @@ describe('ParticipantPickerCluster', () => {
     )
 
     expect(html).toContain('Kimi')
-    expect(html).toContain('K2.7 Coding')
+    expect(html).toContain('K2.8 Preview')
     expect(html).toContain('data-composer-control="permission"')
   })
 
@@ -265,13 +327,72 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('data-composer-control="permission"')
   })
 
-  it('marks a HighSpeed Kimi participant as Fast while retaining the K2.7 model row', () => {
+  it.each([
+    ['openrouter/cohere/north-mini-code:free', 'North Mini Code'],
+    ['openrouter/minimax/minimax-m3:free', 'M3 (OpenRouter)'],
+    ['openrouter/thinkingmachines/inkling:free', 'Inkling'],
+    ['openrouter/thinkingmachines/inkling-small:free', 'Inkling Small']
+  ])('humanises the Pi Add Participant row for %s and starts it at High', (model, label) => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'pi',
+            model,
+            reasoningEffort: undefined,
+            permissionPresetId: 'default'
+          })
+        }
+        configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain('data-selected-reasoning="high"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">High</span>')
+  })
+
+  it.each([
+    ['openrouter/inception/mercury-2.5', 'Mercury 2.5'],
+    ['openrouter/nex-agi/nex-n2.5-mini:free', 'Nex-N2.5-Mini'],
+    ['openrouter/nex-agi/nex-n2.5-pro:free', 'Nex-N2.5-Pro']
+  ])('humanises the Pi Add Participant row for %s and starts it at Medium', (model, label) => {
+    // Separate from the High block above on purpose: these three routes
+    // advertise `reasoning_effort` with no enumerated supported_efforts, so
+    // their ladder default is Medium rather than Inkling's High.
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={participant({
+          provider: 'pi',
+          model,
+          reasoningEffort: undefined,
+          permissionPresetId: 'default'
+        })}
+        configuredProviderSnapshot={{ ready: true, providerIds: ['pi'] }}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain(`composer-combined-picker-trigger-primary">${label}</span>`)
+    expect(html).toContain('data-selected-reasoning="medium"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">Medium</span>')
+  })
+
+  it('renders the Kimi Highspeed row without a Fast pill', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster
         participant={
           participant({
             provider: 'kimi',
-            model: 'kimi-k2.7-code',
+            model: 'kimi-k2.7-code-highspeed',
+            // A seat saved before the split still carries the retired flag.
             fastModeEnabled: true,
             serviceTier: 'fast',
             thinkingEnabled: true
@@ -284,8 +405,28 @@ describe('ParticipantPickerCluster', () => {
       />
     )
 
-    expect(html).toContain('data-fast-mode-active="true"')
-    expect(html).toContain('K2.7 Coding')
+    // No Kimi row is Fast-capable since Highspeed became a row of its own, so
+    // the pill must stay dark even for a seat still holding the stale flag —
+    // otherwise it advertises a tier that no longer changes the dispatch.
+    expect(html).toContain('K2.7 Code Highspeed')
+    expect(html).not.toContain('data-fast-mode-active="true"')
+    // Guard against a vacuous pass: a Fast-capable provider still lights it.
+    const cursorHtml = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'cursor',
+            model: 'composer-2.5-fast',
+            fastModeEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+    expect(cursorHtml).toContain('data-fast-mode-active="true"')
   })
 
   it('passes K3 Max to the reasoning ladder instead of its legacy thinking flag', () => {
@@ -310,6 +451,48 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('K3')
     expect(html).toContain('>Max<')
     expect(html).not.toContain('data-selected-reasoning="on"')
+  })
+
+  it('keeps a K2.7 UltraTask selection above its fixed thinking stop', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'ultraTask',
+            thinkingEnabled: true
+          })
+        }
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="ultraTask"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">UltraTask')
+  })
+
+  it('surfaces an Ollama participant boolean thinking selection', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={participant({
+          provider: 'ollama',
+          model: 'ornith:35b',
+          reasoningEffort: 'on'
+        })}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('data-selected-reasoning="on"')
+    expect(html).toContain('composer-combined-picker-trigger-suffix">Thinking</span>')
+    expect(html).toContain('Ornith 1.0 (35B Param)')
   })
 
   it('uses AntiGravity model variants as its selected reasoning tier', () => {

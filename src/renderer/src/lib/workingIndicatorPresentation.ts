@@ -93,12 +93,6 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
   const baseModelName = shortModelName(participant.provider, '', model)
   if (!baseModelName) return null
 
-  const brand =
-    participant.provider === 'ollama'
-      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
-      : null
-  if (brand?.modelLabel) return brand.modelLabel
-
   const reasoningSuffix = reasoningDisplayLabel({
     provider: participant.provider,
     composerStyle: 'default',
@@ -110,10 +104,23 @@ function modelBadgeForParticipant(participant: ParticipantModelDisplay): string 
       participant.provider === 'claude' ? participant.reasoningEffort : undefined,
     mistralReasoningEffort:
       participant.provider === 'mistral' ? participant.reasoningEffort : undefined,
+    devinReasoningEffort:
+      participant.provider === 'devin' ? participant.reasoningEffort : undefined,
+    ollamaReasoningEffort:
+      participant.provider === 'ollama' ? participant.reasoningEffort : undefined,
+    antigravityReasoningEffort:
+      participant.provider === 'antigravity' ? participant.reasoningEffort : undefined,
     kimiReasoningEffort:
       participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
     kimiThinkingEnabled: participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
   })
+  const brand =
+    participant.provider === 'ollama'
+      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
+      : null
+  if (brand?.modelLabel) {
+    return reasoningSuffix ? `${brand.modelLabel} ${reasoningSuffix}` : brand.modelLabel
+  }
   return reasoningSuffix ? `${baseModelName} ${reasoningSuffix}` : baseModelName
 }
 
@@ -137,7 +144,9 @@ function activeParticipantId(chat: ChatRecord): string | undefined {
   // of painting that not-yet-seeded seat as Working.
   if (round.turnTransition) return undefined
 
-  return round.participants.find((participant) => isLiveRoundParticipantStatus(participant.status))
+  return (round.participants || []).find((participant) =>
+    isLiveRoundParticipantStatus(participant.status)
+  )
     ?.participantId
 }
 
@@ -160,7 +169,7 @@ export const ENSEMBLE_NEUTRAL_HUE_CLASS = 'ensemble'
 function participantHueClass(chat: ChatRecord, participantId: string | undefined): string | null {
   if (!participantId) return null
   const roundParticipant = roundParticipantForId(chat, participantId)
-  const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
+  const participant = (chat.ensemble?.participants || []).find((item) => item.id === participantId)
   const provider = roundParticipant?.provider || participant?.provider || null
   if (!provider) return null
   const model = modelDisplayForParticipant(provider, roundParticipant, participant)?.model || ''
@@ -174,10 +183,10 @@ function turnTransitionPresentation(chat: ChatRecord): WorkingIndicatorPresentat
   const transition = round?.turnTransition
   if (!round || round.status !== 'running' || !transition) return null
   const target = transition.targetParticipantId
-    ? chat.ensemble?.participants.find(
+    ? (chat.ensemble?.participants || []).find(
         (participant) => participant.id === transition.targetParticipantId
       ) ||
-      round.participants.find(
+      (round.participants || []).find(
         (participant) => participant.participantId === transition.targetParticipantId
       )
     : undefined
@@ -240,7 +249,7 @@ function compactingParticipantIds(
 }
 
 function participantOrder(chat: ChatRecord, participantId: string): number {
-  const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
+  const participant = (chat.ensemble?.participants || []).find((item) => item.id === participantId)
   if (typeof participant?.order === 'number') return participant.order
   const roundParticipant = roundParticipantForId(chat, participantId)
   if (typeof roundParticipant?.order === 'number') return roundParticipant.order
@@ -251,7 +260,7 @@ function roundParticipantForId(
   chat: ChatRecord,
   participantId: string
 ): EnsembleRoundParticipantState | undefined {
-  return chat.ensemble?.activeRound?.participants.find(
+  return (chat.ensemble?.activeRound?.participants || []).find(
     (participant) => participant.participantId === participantId
   )
 }
@@ -341,7 +350,7 @@ function workingPresentationForParticipant(
   participantId: string,
   contextCompactionProgress: readonly ContextCompactionProgressEvent[]
 ): WorkingIndicatorPresentation | null {
-  const participant = chat.ensemble?.participants.find((item) => item.id === participantId)
+  const participant = (chat.ensemble?.participants || []).find((item) => item.id === participantId)
   const roundParticipant = roundParticipantForId(chat, participantId)
   const lane = latestLiveLaneForParticipant(chat, participantId)
   const run = activeRunForParticipant(chat, participantId, lane?.runId || roundParticipant?.runId)

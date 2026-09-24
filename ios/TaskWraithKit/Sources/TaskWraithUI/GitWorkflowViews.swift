@@ -12,6 +12,33 @@
 import SwiftUI
 import TaskWraithKit
 
+/// Fail-closed visibility gate for the destructive merge control. The button is
+/// HIDDEN unless every input is affirmative — a control that appears and is
+/// then refused by the Mac is the spawn defect inverted, and a permanently
+/// disabled button is the outcome the user explicitly rejected. The model
+/// repeats the host-projection half before sending, so a capability that flips
+/// between render and tap still cannot reach the wire.
+public enum GithubMergePrGate {
+    /// Host/workspace half: the Mac projects real merge support AND the
+    /// workspace grants external publishing (the router's `githubMergePr`
+    /// requirement).
+    public static func isAvailable(hostProjected: Bool?, externalPublish: Bool?) -> Bool {
+        hostProjected == true && externalPublish == true
+    }
+
+    /// Full surface rule: availability plus an open, non-draft, identified PR.
+    /// Anything less hides the control rather than offering a merge that the
+    /// Mac would refuse.
+    public static func isOfferable(
+        pr: GitPullRequestSummary?, hostProjected: Bool?, externalPublish: Bool?
+    ) -> Bool {
+        guard isAvailable(hostProjected: hostProjected, externalPublish: externalPublish),
+            let pr, pr.url != nil || pr.number != nil
+        else { return false }
+        return pr.state?.lowercased() == "open" && pr.isDraft != true
+    }
+}
+
 public struct GitWorkflowPanel: View {
     @ObservedObject var model: RemoteSessionModel
     let workspaceId: String
@@ -25,8 +52,9 @@ public struct GitWorkflowPanel: View {
     @State private var prTitle = ""
     @State private var prDraft = false
     @State private var feedback: Feedback?
+    @State private var mergeConfirmPresented = false
 
-    private enum BusyAction { case commit, push, createPr }
+    private enum BusyAction { case commit, push, createPr, merge }
     private struct Feedback: Equatable {
         let success: Bool
         let text: String
@@ -82,6 +110,16 @@ public struct GitWorkflowPanel: View {
         .padding(12)
         .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 12))
         .task(id: workspaceId) { await refresh() }
+        // The destructive alert tap IS the elevation acknowledgement. The Mac
+        // then runs its own host-verified approval before merging — confirming
+        // here is necessary, never sufficient.
+        .alert("Merge this pull request?", isPresented: $mergeConfirmPresented) {
+            Button("Merge pull request", role: .destructive) { runMerge() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This merges the current branch's pull request on GitHub and can't be undone from this app. Your Mac must independently authorize the merge before it runs.")
+        }
     }
 
     // ── Sections ────────────────────────────────────────────────────────
@@ -328,6 +366,27 @@ public struct GitWorkflowPanel: View {
                     }
                 }
                 checksSummary(pr)
+                if GithubMergePrGate.isOfferable(
+                    pr: pr,
+                    hostProjected: model.isGithubMergePrHostWired(forWorkspaceId: workspaceId),
+                    externalPublish: canPublish
+                ) {
+                    Button(role: .destructive) {
+                        mergeConfirmPresented = true
+                    } label: {
+                        if busy == .merge {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Merge pull request", systemImage: "arrow.triangle.merge")
+                                .font(.footnote.weight(.semibold))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(busy != nil)
+                    .accessibilityHint(
+                        "Merges the pull request on GitHub. Cannot be undone; the Mac must independently authorize it first.")
+                }
             }
         } else if canPublish {
             VStack(alignment: .leading, spacing: 6) {
@@ -473,6 +532,18 @@ public struct GitWorkflowPanel: View {
                 feedback = Feedback(success: false, text: error.localizedDescription)
             }
             busy = nil
+        }
+    }
+
+    /// Tapping the destructive alert action is the elevation acknowledgement;
+    /// the model refuses to send without it, and a refusal from the Mac
+    /// (no approval, no open PR, draft) surfaces through `feedback` verbatim.
+    private func runMerge() {
+        runAction(.merge) {
+            let pr = try await model.mergeGithubPr(
+                workspaceId: workspaceId, elevationAcknowledged: true)
+            self.feedback = Feedback(success: true, text: "Pull request merged.", url: pr.url)
+            await self.refresh()
         }
     }
 

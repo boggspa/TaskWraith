@@ -132,6 +132,12 @@ export interface SimulatorInteractionStatus {
    * Absent/null when no lease is held.
    */
   controllerKind?: SimulatorControllerKind | null
+  /** Agent controller lease expiry; null for human control/no lease. */
+  controllerExpiresAt?: number | null
+  /** Remaining agent actions in the current bounded lease. */
+  controllerStepsRemaining?: number | null
+  /** Display-only exact Simulator target; never an authority token. */
+  controllerTarget?: { udid?: string; bundleId?: string } | null
   /**
    * Last absolute orientation stored on the chat session after a successful
    * IPC/MCP rotate. Absent until the first successful rotate in-process.

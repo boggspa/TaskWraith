@@ -29,6 +29,37 @@ function status(over: Partial<AppDriveDockStatus> = {}): AppDriveDockStatus {
 }
 
 describe('AppDriveDockPanel', () => {
+  it('offers browser and window entry points before any attachment exists', () => {
+    const attach = vi.fn()
+    const browser = vi.fn()
+    const html = renderToStaticMarkup(
+      <AppDriveDockPanel status={null} onAttach={attach} onOpenBrowser={browser} />
+    )
+    expect(html).toContain('Pick a window')
+    expect(html).toContain('Open browser')
+    expect(html).toContain('Other windows remain view-only')
+    expect(html).not.toContain('data-testid="appdrive-stop"')
+    expect(attach).not.toHaveBeenCalled()
+    expect(browser).not.toHaveBeenCalled()
+  })
+
+  it('keeps the browser entry available when native window sharing is unavailable', () => {
+    const html = renderToStaticMarkup(
+      <AppDriveDockPanel
+        status={null}
+        onAttach={vi.fn()}
+        onOpenBrowser={vi.fn()}
+        attachUnavailableReason="Window capture requires macOS."
+        controlUnavailableReason="Native control requires macOS 15.2."
+      />
+    )
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-testid="appdrive-attach"/)
+    expect(html).toContain('Window capture requires macOS.')
+    expect(html).toContain('Native control requires macOS 15.2.')
+    expect(html).toMatch(/data-testid="appdrive-browser">Open browser/)
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*data-testid="appdrive-browser"/)
+  })
+
   it('renders Foreground Drive chrome with target, steps, verbs, and controls', () => {
     const html = renderToStaticMarkup(
       <AppDriveDockPanel
@@ -39,7 +70,7 @@ describe('AppDriveDockPanel', () => {
         onStop={vi.fn()}
       />
     )
-    expect(html).toContain('App Drive')
+    expect(html).toContain('Computer Use')
     expect(html).toContain('Foreground Drive')
     expect(html).toContain('View &amp; Control · current launch')
     expect(html).toContain('Driving')

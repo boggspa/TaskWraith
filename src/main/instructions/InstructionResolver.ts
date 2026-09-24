@@ -8,6 +8,7 @@ import {
   type ResolvedInstructionContext,
   type ResolvedInstructionLayer
 } from '../../shared/instructions/InstructionTypes'
+import { resolveWorkspaceDoctrine } from './WorkspaceDoctrineReader'
 
 export const GLOBAL_INSTRUCTIONS_SOURCE_LABEL = 'Settings → Custom Instructions'
 
@@ -173,6 +174,11 @@ export function resolveInstructionContext(
     typeof input.workspacePath === 'string' && input.workspacePath.trim()
       ? input.workspacePath
       : null
+  const workspaceDoctrine = workspacePath ? resolveWorkspaceDoctrine(workspacePath) : undefined
+  const workspaceDoctrineDigest =
+    workspaceDoctrine?.status === 'applied' && workspaceDoctrine.sha256
+      ? workspaceDoctrine.sha256
+      : 'none'
 
   if (!input.enabled) {
     const layers: ResolvedInstructionLayer[] = [
@@ -187,7 +193,13 @@ export function resolveInstructionContext(
           ]
         : [])
     ]
-    return { layers, digest: 'none', enabled: false }
+    return {
+      layers,
+      digest: 'none',
+      enabled: false,
+      ...(workspaceDoctrine ? { workspaceDoctrine } : {}),
+      workspaceDoctrineDigest
+    }
   }
 
   const layers: ResolvedInstructionLayer[] = [resolveGlobalLayer(input.globalContent)]
@@ -199,5 +211,11 @@ export function resolveInstructionContext(
       ? 'none'
       : sha256Hex(applied.map((layer) => `${layer.scope}:${layer.sha256}`).join('\n'))
 
-  return { layers, digest, enabled: true }
+  return {
+    layers,
+    digest,
+    enabled: true,
+    ...(workspaceDoctrine ? { workspaceDoctrine } : {}),
+    workspaceDoctrineDigest
+  }
 }

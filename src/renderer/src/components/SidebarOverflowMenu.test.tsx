@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { scrollDismissesMenu } from './SidebarOverflowMenu'
+import { SIDEBAR_CONTEXT_MENU_HOST_SELECTOR, scrollDismissesMenu } from './SidebarOverflowMenu'
 
 /**
  * The renderer has no DOM under vitest, so these stand in for the real nodes.
@@ -56,5 +56,13 @@ describe('SidebarOverflowMenu scroll dismissal wiring', () => {
     // closed the menu on each transcript delta.
     expect(source).not.toMatch(/const handleScroll = \(\)\s*=>\s*setOpen\(false\)/)
     expect(source).toMatch(/scrollDismissesMenu\(/)
+  })
+})
+
+describe('SidebarOverflowMenu context-menu hosts', () => {
+  it('covers ordinary, Work-project, and Active Runs thread rows', () => {
+    expect(SIDEBAR_CONTEXT_MENU_HOST_SELECTOR).toContain('.sidebar-item')
+    expect(SIDEBAR_CONTEXT_MENU_HOST_SELECTOR).toContain('.sidebar-project-member')
+    expect(SIDEBAR_CONTEXT_MENU_HOST_SELECTOR).toContain('.sidebar-active-run-entry')
   })
 })

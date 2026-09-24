@@ -12,10 +12,16 @@ import {
   isPortableEnsembleControlToolName,
   MESH_SCENE_MCP_TOOL_NAMES,
   MESH_TOPOLOGY_MCP_TOOL_NAMES,
-  normalizePortableEnsembleControlArguments,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
+// Permitted downward main -> shared edge (see the TaskWraithMcpTools re-export
+// shim). The shim has not been widened for this name yet; import the shared
+// convention directly so the broker path cannot drift from the stdio path.
+import {
+  isEnsembleControlToolName,
+  normalizeEnsembleMcpToolArguments
+} from '../../shared/taskWraithMcpCatalog'
 import {
   isPlanAdvertisedTool,
   isReadOnlyAdvertisedTool
@@ -31,6 +37,9 @@ import {
   compactGatewayV13ToolDefinitionsForTransport,
   compactGatewayV15MeshToolDefinitionsForTransport,
   compactGatewayV17ToolDefinitionsForTransport,
+  stripGatewaySchemaExamplesForTransport,
+  GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS,
+  GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS,
   GATEWAY_V8_ADDED_TOOL_NAMES,
   GATEWAY_V13_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
@@ -41,6 +50,7 @@ import { MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE } from './McpInternalError'
 import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
+import type { LiveSteerReservation } from '../RunManager'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   isPiTaskWraithToolName,
@@ -63,6 +73,7 @@ import {
   type McpBridgeProfileEnvironment,
   type McpBridgeRouteEnvironmentVariables
 } from './McpBridgeRoute'
+import { resolveCursorBrokerParentRouteFromAncestors } from '../cursor/CursorBrokerParentRouteLookup'
 import { isValidInstanceResourceEpoch } from '../InstanceResourceIdentity'
 import { PROVIDER_RUN_MANAGEMENT_IDS } from '../run/ProviderRunManagementMatrix'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
@@ -128,6 +139,10 @@ export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // gateway tools. Hidden first-party tools remain reachable only through the
 // gateway and retain their underlying host-side approval and routing policy.
 export const GEMINI_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
+// Solo direct-discovery profile flag. This only narrows the direct gateway
+// catalogue; demoted tools remain discoverable and callable through the
+// capability gateway under their existing policy and approval boundaries.
+export const GEMINI_MCP_SOLO_SUBSET_ARG = '--solo-subset'
 // Portable Bossman-control profile flag. The compact `ensemble_control` tool
 // is deliberately gated independently from the generic gateway flag so a
 // receipted v1–v5 session cannot gain a new visible tool mid-session.
@@ -148,6 +163,11 @@ export const GEMINI_MCP_SKETCH_DIRECT_ARG = '--sketch-direct'
 // it and keep scout_brief / ensemble_await / ensemble_lane_result / delegate_wave
 // behind capability discovery. Also gates v13 transport compaction.
 export const GEMINI_MCP_ORCHESTRATION_DIRECT_ARG = '--orchestration-direct'
+// Gateway-v18 direct redemption selector. Absent means every older immutable
+// profile retains its exact direct catalogue, including solo-v1.
+export const GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG = '--permission-opportunity-direct'
+// Full-v4 only. Older full-profile bridge receipts omit this selector.
+export const GEMINI_MCP_COMPUTER_USE_DIRECT_ARG = '--computer-use-direct'
 // Audit scope flag. Direct bridge children carry this in argv; static helpers
 // carry the complete profile receipt in their route environment. Unlike
 // safe-subset this does NOT restrict tools/call — audit tools route through the
@@ -179,6 +199,7 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_GATEWAY_SUBSET_ARG)) env.TASKWRAITH_MCP_GATEWAY_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_SOLO_SUBSET_ARG)) env.TASKWRAITH_MCP_SOLO_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)) {
     env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
   }
@@ -189,6 +210,12 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_SKETCH_DIRECT_ARG)) env.TASKWRAITH_MCP_SKETCH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)) {
     env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT = '1'
+  }
+  if (argv.includes(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT = '1'
+  }
+  if (argv.includes(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT = '1'
   }
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
@@ -377,12 +404,15 @@ export interface McpBridgeRuntimeDeps {
     payload: unknown,
     route?: McpBridgeAgentRunRoute | null
   ) => void
-  /**
-   * Strategy B (broker-injection): drain pending mid-turn steering text for a
-   * run so it can be injected into the next tool-call result. Returns null
-   * when no steering is pending — the broker handler continues normally.
-   */
+  /** @deprecated A drain cannot prove the provider child received its response. */
   drainPendingSteerText?: (appRunId: string) => string | null
+  /**
+   * Strategy B (broker-injection): reserve pending steering for a successful
+   * tool result. The child bridge settles the reservation only after its MCP
+   * response write succeeds; known pre-write refusals roll it back and
+   * uncertain writes mark it ambiguous.
+   */
+  reservePendingSteerText?: (appRunId: string) => LiveSteerReservation | null
   /**
    * Called when the client transport disappears while an exact broker request
    * is still executing. The owner can cancel and join run-scoped host work;
@@ -461,6 +491,9 @@ export interface GeminiMcpBridgeProcessDeps {
   exit?: (code?: number) => void
   cwd?: () => string
   pid?: () => number
+  /** Test seam for Path-B parent-pid route lookup. Production walks OS ancestry. */
+  readParentPid?: (pid: number) => number | null
+  isPidAlive?: (pid: number) => boolean
 }
 
 // Recognition preserves the exact run identity through the broker; it does not
@@ -960,7 +993,8 @@ function isGatewayMcpAdvertisedForSeat(
   meshDirect = false,
   meshTopologyDirect = false,
   sketchDirect = false,
-  orchestrationDirect = false
+  orchestrationDirect = false,
+  permissionOpportunityDirect = false
 ): boolean {
   return (
     (isGatewayMcpAdvertisedTool(name) &&
@@ -969,7 +1003,8 @@ function isGatewayMcpAdvertisedForSeat(
     (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
     (meshTopologyDirect && (MESH_TOPOLOGY_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
     (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
-    (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name))
+    (orchestrationDirect && (GATEWAY_V13_ADDED_TOOL_NAMES as readonly string[]).includes(name)) ||
+    (permissionOpportunityDirect && name === 'redeem_permission_opportunity')
   )
 }
 
@@ -1200,11 +1235,14 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
+  GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG,
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1398,6 +1436,15 @@ type SafeWritable = {
   write(chunk: string, callback?: (error?: Error | null) => void): unknown
 }
 
+export type McpStreamWriteEvidence = 'written' | 'refused' | 'ambiguous'
+
+const MCP_STEER_RECEIPT_FIELD = 'taskwraithSteerReceiptId'
+const MCP_STEER_SETTLEMENT_CONTROL = 'taskwraith/settle-steer-delivery'
+const MCP_STEER_SETTLEMENT_TIMEOUT_MS = 30_000
+const MCP_STREAM_WRITE_EVIDENCE_TIMEOUT_MS = 5_000
+
+type McpSteerSettlementOutcome = 'commit' | 'rollback' | 'ambiguous'
+
 function isWritableClosed(stream: unknown): boolean {
   const record = stream && typeof stream === 'object' ? (stream as Record<string, unknown>) : {}
   return (
@@ -1418,6 +1465,52 @@ export function safeMcpStreamWrite(stream: SafeWritable | null | undefined, chun
   } catch {
     // Best-effort: the peer has gone away or the stream is already terminal.
   }
+}
+
+/**
+ * Write one protocol payload and retain the only evidence the child process
+ * can honestly provide. A closed stream is a known pre-write refusal. Once
+ * `write()` has been attempted, any throw, callback error, or missing callback
+ * is ambiguous because a prefix may already have reached the provider.
+ */
+export function safeMcpStreamWriteWithEvidence(
+  stream: SafeWritable | null | undefined,
+  chunk: string
+): Promise<McpStreamWriteEvidence> {
+  if (!stream || isWritableClosed(stream)) return Promise.resolve('refused')
+  return new Promise((resolveWrite) => {
+    let settled = false
+    const finish = (evidence: McpStreamWriteEvidence): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolveWrite(evidence)
+    }
+    const timeout = setTimeout(() => finish('ambiguous'), MCP_STREAM_WRITE_EVIDENCE_TIMEOUT_MS)
+    timeout.unref?.()
+    try {
+      stream.write(chunk, (error?: Error | null) => finish(error ? 'ambiguous' : 'written'))
+    } catch {
+      finish('ambiguous')
+    }
+  })
+}
+
+function writeMcpResponseWithEvidence(
+  id: unknown,
+  result: unknown,
+  transport: McpResponseTransport,
+  stdout: NodeJS.WriteStream
+): Promise<McpStreamWriteEvidence> {
+  const payload = { jsonrpc: '2.0', id, result }
+  if (transport === 'line') {
+    return safeMcpStreamWriteWithEvidence(stdout, `${JSON.stringify(payload)}\n`)
+  }
+  const body = JSON.stringify(payload)
+  return safeMcpStreamWriteWithEvidence(
+    stdout,
+    `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`
+  )
 }
 
 export function writeMcpFrame(payload: unknown, stdout: NodeJS.WriteStream = process.stdout): void {
@@ -1710,9 +1803,14 @@ export function handleMcpJsonRpcMessage(
     // Progressive-disclosure profile. The direct catalogue stays fixed while
     // hidden first-party tools are discovered/invoked through the two virtual
     // gateway tools appended below.
-    const gatewaySubsetOnly =
-      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
-        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const gatewaySubsetSelected =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ?? process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const soloSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_SOLO_SUBSET ?? process.env.TASKWRAITH_MCP_SOLO_SUBSET) === '1'
+    // Solo is a gateway subtype. Treat its immutable selector as sufficient to
+    // activate the gateway boundary so a malformed solo-only launch narrows
+    // safely instead of falling through to the full direct catalogue.
+    const gatewaySubsetOnly = gatewaySubsetSelected || soloSubsetOnly
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
@@ -1727,6 +1825,15 @@ export function handleMcpJsonRpcMessage(
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
+    const permissionOpportunityDirect =
+      (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
+        process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const computerUseDirect =
+      (deps.env?.TASKWRAITH_MCP_COMPUTER_USE_DIRECT ??
+        process.env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT) === '1'
+    const soloDirectTools = permissionOpportunityDirect
+      ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+      : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -1736,8 +1843,12 @@ export function handleMcpJsonRpcMessage(
     const allTools = deps.getMcpToolDefinitions().filter(
       (tool) =>
         // Permission retry is a gateway-v9 hidden capability. It must never
-        // widen a pre-existing full/core/direct tools/list snapshot.
+        // widen a pre-existing full/core/direct tools/list snapshot. The fresh
+        // opaque redemption sibling is direct only when its v18 selector is
+        // carried in the immutable bridge argv.
         tool.name !== 'request_tool_permission' &&
+        (tool.name !== 'computer_use' || computerUseDirect) &&
+        (tool.name !== 'redeem_permission_opportunity' || permissionOpportunityDirect) &&
         (portableEnsembleControl
           ? tool.name !== 'ensemble_bossman_control'
           : tool.name !== 'ensemble_control')
@@ -1749,14 +1860,17 @@ export function handleMcpJsonRpcMessage(
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
               (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
               (!gatewaySubsetOnly ||
-                isGatewayMcpAdvertisedForSeat(
-                  tool.name,
-                  portableEnsembleControl,
-                  meshDirect,
-                  meshTopologyDirect,
-                  sketchDirect,
-                  orchestrationDirect
-                ))
+                (soloSubsetOnly
+                  ? (soloDirectTools as readonly string[]).includes(tool.name)
+                  : isGatewayMcpAdvertisedForSeat(
+                      tool.name,
+                      portableEnsembleControl,
+                      meshDirect,
+                      meshTopologyDirect,
+                      sketchDirect,
+                      orchestrationDirect,
+                      permissionOpportunityDirect
+                    )))
           )
         : allTools
     const meshCompacted =
@@ -1767,7 +1881,7 @@ export function handleMcpJsonRpcMessage(
     // orchestration tools so tools/list stays under the 40k ceiling. Pre-v13
     // gateway seats must keep canonical prose — compaction is receipt-gated.
     const transportDirectTools =
-      gatewaySubsetOnly && orchestrationDirect
+      gatewaySubsetOnly && (orchestrationDirect || soloSubsetOnly)
         ? compactGatewayV13ToolDefinitionsForTransport(meshCompacted)
         : meshCompacted
     const profileCompactedTools =
@@ -1781,9 +1895,17 @@ export function handleMcpJsonRpcMessage(
       gatewaySubsetOnly && directTools.some((tool) => tool.name === 'image_view')
         ? compactGatewayV17ToolDefinitionsForTransport(profileCompactedTools)
         : profileCompactedTools
-    const baseTools = gatewaySubsetOnly
-      ? [...imageViewCompactedTools, ...gatewayToolDefinitions()]
+    // Schema examples exist for the pre-approval repair message, which reads the
+    // canonical catalogue — not this wire. Gateway transports are the ones with
+    // a 40,000-char ceiling, so they ship without them. Applies to frozen
+    // receipts too: none of the stripped tools carried an example before, so
+    // every existing gateway transport stays byte-identical.
+    const exampleStrippedTools = gatewaySubsetOnly
+      ? stripGatewaySchemaExamplesForTransport(imageViewCompactedTools)
       : imageViewCompactedTools
+    const baseTools = gatewaySubsetOnly
+      ? [...exampleStrippedTools, ...gatewayToolDefinitions()]
+      : exampleStrippedTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return
@@ -1818,26 +1940,30 @@ export function handleMcpJsonRpcMessage(
       return
     }
     const name = rawDispatchContract.toolName
+    // Argument SHAPING only — deliberately the wide predicate so a gateway
+    // caller reaching the canonical `ensemble_bossman_control` through
+    // capability_invoke gets the same envelope handling as the portable name.
+    // The narrow `isPortableEnsembleControlToolName` below stays narrow because
+    // it FENCES an unadvertised alias off legacy profiles.
     const args =
       name === 'capability_invoke' &&
       isRecord(rawArgs) &&
-      isPortableEnsembleControlToolName(String(rawArgs.name || ''))
+      isEnsembleControlToolName(String(rawArgs.name || ''))
         ? {
             ...rawArgs,
-            arguments: normalizePortableEnsembleControlArguments(
-              String(rawArgs.name),
-              rawArgs.arguments
-            )
+            arguments: normalizeEnsembleMcpToolArguments(String(rawArgs.name), rawArgs.arguments)
           }
-        : normalizePortableEnsembleControlArguments(String(rawName || ''), rawArgs)
+        : normalizeEnsembleMcpToolArguments(String(rawName || ''), rawArgs)
     const portableEnsembleControlRequested =
       isPortableEnsembleControlToolName(String(rawName || '')) ||
       (name === 'capability_invoke' &&
         isRecord(rawArgs) &&
         isPortableEnsembleControlToolName(String(rawArgs.name || '')))
-    const gatewaySubsetOnly =
-      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
-        process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const gatewaySubsetSelected =
+      (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ?? process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const soloSubsetOnly =
+      (deps.env?.TASKWRAITH_MCP_SOLO_SUBSET ?? process.env.TASKWRAITH_MCP_SOLO_SUBSET) === '1'
+    const gatewaySubsetOnly = gatewaySubsetSelected || soloSubsetOnly
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
@@ -1852,6 +1978,15 @@ export function handleMcpJsonRpcMessage(
     const orchestrationDirect =
       (deps.env?.TASKWRAITH_MCP_ORCHESTRATION_DIRECT ??
         process.env.TASKWRAITH_MCP_ORCHESTRATION_DIRECT) === '1'
+    const permissionOpportunityDirect =
+      (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
+        process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const computerUseDirect =
+      (deps.env?.TASKWRAITH_MCP_COMPUTER_USE_DIRECT ??
+        process.env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT) === '1'
+    const soloDirectTools = permissionOpportunityDirect
+      ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
+      : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
     if (portableEnsembleControlRequested && !portableEnsembleControl) {
       writeMcpError(
         id,
@@ -1864,6 +1999,7 @@ export function handleMcpJsonRpcMessage(
     }
     const advertisedToolName = portableEnsembleControlRequested ? 'ensemble_control' : String(name)
     const gatewayToolRequested = isCapabilityGatewayToolName(name)
+    const permissionOpportunityRequested = name === 'redeem_permission_opportunity'
     const gatewayInvocationTarget =
       name === 'capability_invoke' ? resolveBridgeGatewayInvocationTarget(args) : null
     if (gatewayInvocationTarget && !gatewayInvocationTarget.ok) {
@@ -1882,6 +2018,26 @@ export function handleMcpJsonRpcMessage(
         id,
         -32601,
         `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is available only in the TaskWraith gateway MCP profile.`,
+        transport,
+        stdout
+      )
+      return
+    }
+    if (permissionOpportunityRequested && !permissionOpportunityDirect) {
+      writeMcpError(
+        id,
+        -32601,
+        'Tool redeem_permission_opportunity is available only in a fresh TaskWraith MCP profile.',
+        transport,
+        stdout
+      )
+      return
+    }
+    if (name === 'computer_use' && !computerUseDirect) {
+      writeMcpError(
+        id,
+        -32601,
+        'Tool computer_use is available directly only in the full-v4 TaskWraith MCP profile.',
         transport,
         stdout
       )
@@ -1949,21 +2105,26 @@ export function handleMcpJsonRpcMessage(
     if (
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
-      !isGatewayMcpAdvertisedForSeat(
-        advertisedToolName,
-        portableEnsembleControl,
-        meshDirect,
-        meshTopologyDirect,
-        sketchDirect,
-        orchestrationDirect
-      ) &&
+      !(soloSubsetOnly
+        ? (soloDirectTools as readonly string[]).includes(advertisedToolName)
+        : isGatewayMcpAdvertisedForSeat(
+            advertisedToolName,
+            portableEnsembleControl,
+            meshDirect,
+            meshTopologyDirect,
+            sketchDirect,
+            orchestrationDirect,
+            permissionOpportunityDirect
+          )) &&
       !auditToolRequested
     ) {
-      bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
+      bridgeLog(
+        `tools/call rejected scope=${soloSubsetOnly ? 'gateway-solo' : 'gateway'} tool=${safeLogName}`
+      )
       writeMcpError(
         id,
         -32601,
-        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not directly available in the TaskWraith gateway MCP profile. Use capability_search and capability_invoke.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not directly available in the TaskWraith${soloSubsetOnly ? ' solo' : ''} gateway MCP profile. Use capability_search and capability_invoke.`,
         transport,
         stdout
       )
@@ -1991,13 +2152,14 @@ export function handleMcpJsonRpcMessage(
     }
     bridgeLog(`tools/call started tool=${safeLogName} ${bridgeToolArgumentsMetadata(args)}`)
     const requestBroker = deps.brokerRequest || brokerRequest
+    const appRunId = deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID
     requestBroker(socketPath, {
       id: id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       token: brokerToken,
       instanceEpoch,
       tool: name,
       arguments: args,
-      appRunId: deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID,
+      appRunId,
       appChatId: deps.env?.TASKWRAITH_CHAT_ID ?? process.env.TASKWRAITH_CHAT_ID,
       callerCwd: deps.cwd?.() || process.cwd(),
       callerWorkspacePath:
@@ -2005,10 +2167,33 @@ export function handleMcpJsonRpcMessage(
       parentProvider:
         deps.env?.TASKWRAITH_PARENT_PROVIDER || process.env.TASKWRAITH_PARENT_PROVIDER || 'gemini'
     })
-      .then((result) => {
+      .then(async (result) => {
         const responseFromResult =
           deps.mcpToolCallResponseFromBrokerResult || mcpToolCallResponseFromBrokerResult
         const resultRecord = isRecord(result) ? result : {}
+        const steerReceiptId =
+          typeof resultRecord[MCP_STEER_RECEIPT_FIELD] === 'string' &&
+          String(resultRecord[MCP_STEER_RECEIPT_FIELD]).trim()
+            ? String(resultRecord[MCP_STEER_RECEIPT_FIELD])
+            : null
+        const settleSteerReceipt = async (settlement: McpSteerSettlementOutcome): Promise<void> => {
+          if (!steerReceiptId || !appRunId) return
+          try {
+            await requestBroker(socketPath, {
+              id: `steer-settlement-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              token: brokerToken,
+              instanceEpoch,
+              control: MCP_STEER_SETTLEMENT_CONTROL,
+              appRunId,
+              steerReceiptId,
+              settlement
+            })
+          } catch (settlementError) {
+            bridgeLog(
+              `tools/call steer-settlement-failed outcome=${settlement} ${bridgeFailureMetadata(settlementError)}`
+            )
+          }
+        }
         const outcome =
           resultRecord.ok === true ? 'ok' : resultRecord.ok === false ? 'error' : 'unknown'
         const resultText =
@@ -2017,18 +2202,45 @@ export function handleMcpJsonRpcMessage(
             : typeof resultRecord.error === 'string'
               ? resultRecord.error
               : ''
-        const contentBlocks = Array.isArray(resultRecord.content)
-          ? resultRecord.content.length
-          : 0
+        const contentBlocks = Array.isArray(resultRecord.content) ? resultRecord.content.length : 0
         bridgeLog(
           `tools/call completed tool=${safeLogName} outcome=${outcome} ` +
             `result.bytes=${Buffer.byteLength(resultText, 'utf8')} content.blocks=${contentBlocks}`
         )
+        let providerResponse: ReturnType<typeof mcpToolCallResponseFromBrokerResult>
         try {
-          writeMcpResponse(id, responseFromResult(result), transport, stdout)
+          providerResponse = responseFromResult(result)
         } catch (writeError) {
-          bridgeLog(`tools/call response-write-failed ${bridgeFailureMetadata(writeError)}`)
+          await settleSteerReceipt('rollback')
+          throw writeError
         }
+        if (!steerReceiptId) {
+          writeMcpResponse(id, providerResponse, transport, stdout)
+          return
+        }
+        let writeEvidence: McpStreamWriteEvidence
+        try {
+          writeEvidence = await writeMcpResponseWithEvidence(
+            id,
+            providerResponse,
+            transport,
+            stdout
+          )
+        } catch (serializationError) {
+          await settleSteerReceipt('rollback')
+          throw serializationError
+        }
+        if (writeEvidence === 'written') {
+          await settleSteerReceipt('commit')
+          return
+        }
+        if (writeEvidence === 'refused') {
+          bridgeLog('tools/call response-write-refused-before-write')
+          await settleSteerReceipt('rollback')
+          return
+        }
+        bridgeLog('tools/call response-write-ambiguous')
+        await settleSteerReceipt('ambiguous')
       })
       .catch((rejection) => {
         bridgeLog(`tools/call broker-rejected ${bridgeFailureMetadata(rejection)}`)
@@ -2067,6 +2279,7 @@ function profileEnvironmentForBridgeRoute(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: profile.planSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: profile.coreSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: profile.gatewaySubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: profile.soloSubset ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: profile.portableEnsembleControl
       ? '1'
       : '0',
@@ -2074,6 +2287,10 @@ function profileEnvironmentForBridgeRoute(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: profile.meshTopologyDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: profile.sketchDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: profile.orchestrationDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
+      ? '1'
+      : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]: profile.computerUseDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
   }
 }
@@ -2087,7 +2304,12 @@ function profileEnvironmentForBridgeRoute(
 function resolveMcpBridgeProcessLaunch(
   argv: string[],
   env: NodeJS.ProcessEnv,
-  getDefaultSocketPath: () => string
+  getDefaultSocketPath: () => string,
+  parentRoute?: {
+    readonly startPid: number
+    readonly readParentPid?: (pid: number) => number | null
+    readonly isPidAlive?: (pid: number) => boolean
+  }
 ): ResolvedMcpBridgeProcessLaunch | null {
   if (argv.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)) {
     if (
@@ -2097,15 +2319,37 @@ function resolveMcpBridgeProcessLaunch(
       return null
     }
     const parsed = parseMcpBridgeRouteFromEnv(env)
-    if (!parsed.ok) return null
-    const { endpoint, profile } = parsed.value
     let expectedSocketPath = ''
-    try {
-      expectedSocketPath = normalizeMcpSocketPathForBridgeLog(getDefaultSocketPath())
-    } catch {
-      return null
+    const defaultSocketPath = (): string | null => {
+      if (expectedSocketPath) return expectedSocketPath
+      try {
+        expectedSocketPath = normalizeMcpSocketPathForBridgeLog(getDefaultSocketPath())
+        return expectedSocketPath
+      } catch {
+        return null
+      }
     }
-    if (endpoint.socketPath !== expectedSocketPath) return null
+    let route = parsed.ok ? parsed.value : null
+    let recordedEnv: Record<string, string> | null = null
+    if (!parsed.ok && parsed.reason === 'missing-endpoint-authority') {
+      const socketPath = defaultSocketPath()
+      if (socketPath && parentRoute) {
+        const fromParent = resolveCursorBrokerParentRouteFromAncestors({
+          startPid: parentRoute.startPid,
+          socketPath,
+          ...(parentRoute.readParentPid ? { readParentPid: parentRoute.readParentPid } : {}),
+          ...(parentRoute.isPidAlive ? { isPidAlive: parentRoute.isPidAlive } : {})
+        })
+        if (fromParent?.ok) {
+          route = fromParent.value
+          recordedEnv = fromParent.env
+        }
+      }
+    }
+    if (!route) return null
+    const { endpoint, profile } = route
+    const expected = defaultSocketPath()
+    if (!expected || endpoint.socketPath !== expected) return null
     return {
       socketPath: endpoint.socketPath,
       brokerToken: endpoint.brokerToken,
@@ -2113,6 +2357,7 @@ function resolveMcpBridgeProcessLaunch(
       bridgeLogEpoch: endpoint.bridgeLogEpoch,
       env: {
         ...env,
+        ...(recordedEnv || {}),
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: endpoint.socketPath,
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]: endpoint.brokerToken,
         [MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]: endpoint.instanceEpoch,
@@ -2139,7 +2384,11 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
   const stdin = deps.stdin || process.stdin
   const stdout = deps.stdout || process.stdout
   const exit = deps.exit || ((code?: number) => process.exit(code))
-  const launch = resolveMcpBridgeProcessLaunch(argv, env, deps.getDefaultSocketPath)
+  const launch = resolveMcpBridgeProcessLaunch(argv, env, deps.getDefaultSocketPath, {
+    startPid: deps.pid?.() || process.pid,
+    ...(deps.readParentPid ? { readParentPid: deps.readParentPid } : {}),
+    ...(deps.isPidAlive ? { isPidAlive: deps.isPidAlive } : {})
+  })
   // Do not install event/stdio handlers or emit endpoint-bearing diagnostics
   // for a stale static registration. The caller gets a generic non-zero exit.
   if (!launch) {
@@ -2302,8 +2551,65 @@ export class McpBridgeRuntime {
     string,
     { route: McpBridgeAgentRunRoute; allowedTools: ReadonlySet<PiTaskWraithToolName> }
   >()
+  private readonly pendingBrokerSteerReservations = new Map<
+    string,
+    {
+      appRunId: string
+      reservation: LiveSteerReservation
+      timeout: ReturnType<typeof setTimeout>
+    }
+  >()
 
   constructor(private readonly deps: McpBridgeRuntimeDeps) {}
+
+  private registerBrokerSteerReservation(
+    appRunId: string,
+    reservation: LiveSteerReservation
+  ): string {
+    const receiptId = randomBytes(24).toString('hex')
+    const timeout = setTimeout(() => {
+      this.settleBrokerSteerReservation(
+        appRunId,
+        receiptId,
+        'ambiguous',
+        'MCP provider response write was not acknowledged before its delivery receipt expired.'
+      )
+    }, MCP_STEER_SETTLEMENT_TIMEOUT_MS)
+    timeout.unref?.()
+    this.pendingBrokerSteerReservations.set(receiptId, {
+      appRunId,
+      reservation,
+      timeout
+    })
+    return receiptId
+  }
+
+  private settleBrokerSteerReservation(
+    appRunId: string,
+    receiptId: string,
+    settlement: McpSteerSettlementOutcome,
+    ambiguousReason = 'MCP provider response write completed with ambiguous delivery evidence.'
+  ): boolean {
+    const pending = this.pendingBrokerSteerReservations.get(receiptId)
+    if (!pending || pending.appRunId !== appRunId) return false
+    this.pendingBrokerSteerReservations.delete(receiptId)
+    clearTimeout(pending.timeout)
+    try {
+      if (settlement === 'commit') pending.reservation.commit()
+      else if (settlement === 'rollback') pending.reservation.rollback()
+      else pending.reservation.ambiguous(ambiguousReason)
+    } catch {
+      // The exact reservation is already terminal. A receipt callback failure
+      // cannot safely make it replayable or change its settlement class.
+    }
+    return true
+  }
+
+  private settleAllBrokerSteerReservationsAmbiguous(reason: string): void {
+    for (const [receiptId, pending] of [...this.pendingBrokerSteerReservations]) {
+      this.settleBrokerSteerReservation(pending.appRunId, receiptId, 'ambiguous', reason)
+    }
+  }
 
   issuePiEnsembleCoordinationCredential(route: McpBridgeAgentRunRoute): string {
     return this.issuePiTaskWraithCredential(route, PI_ENSEMBLE_COORDINATION_TOOL_NAMES)
@@ -2437,7 +2743,9 @@ export class McpBridgeRuntime {
     meshTopologyDirect = false,
     sketchDirect = false,
     orchestrationDirect = false,
-    auditSubset = false
+    auditSubset = false,
+    soloSubset = false,
+    permissionOpportunityDirect = false
   ): string[] {
     const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
     const logEpochPath = bridgeSubprocessLogEpochPathForSocket(normalizedSocketPath)
@@ -2493,6 +2801,12 @@ export class McpBridgeRuntime {
       ...(sketchDirect ? [GEMINI_MCP_SKETCH_DIRECT_ARG] : []),
       ...(orchestrationDirect ? [GEMINI_MCP_ORCHESTRATION_DIRECT_ARG] : []),
       ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),
+      // Appended after every legacy positional profile control. This remains
+      // independently receipted so old callers keep their exact interpretation.
+      ...(soloSubset ? [GEMINI_MCP_SOLO_SUBSET_ARG] : []),
+      // v18-only selector appended after all legacy controls. Its default false
+      // leaves every existing argv byte-for-byte unchanged.
+      ...(permissionOpportunityDirect ? [GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG] : []),
       ...bootstrapArgs
     ]
   }
@@ -2536,9 +2850,50 @@ export class McpBridgeRuntime {
     ) {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
+    if (brokerRequestRecord.control === MCP_STEER_SETTLEMENT_CONTROL) {
+      if (
+        !this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token) ||
+        !this.isValidGeminiMcpBrokerInstanceEpoch(brokerRequestRecord.instanceEpoch)
+      ) {
+        return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
+      }
+      const appRunId =
+        typeof brokerRequestRecord.appRunId === 'string' ? brokerRequestRecord.appRunId.trim() : ''
+      const receiptId =
+        typeof brokerRequestRecord.steerReceiptId === 'string'
+          ? brokerRequestRecord.steerReceiptId.trim()
+          : ''
+      const settlement = brokerRequestRecord.settlement
+      if (
+        !appRunId ||
+        !receiptId ||
+        (settlement !== 'commit' && settlement !== 'rollback' && settlement !== 'ambiguous')
+      ) {
+        return { ok: false, error: 'Invalid TaskWraith steering delivery settlement.' }
+      }
+      return {
+        ok: this.settleBrokerSteerReservation(appRunId, receiptId, settlement)
+      }
+    }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
-    const toolArguments =
+    let toolArguments =
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input
+
+    // ONE envelope convention, both control names. This used to fire only for
+    // the literal `ensemble_control` string and to REPLACE the arguments with
+    // `params` — so `ensemble_bossman_control` silently dropped every enveloped
+    // field, and a `params` block that did not repeat `action` dropped the
+    // action itself. The shared normalizer merges instead (flat wins, absent
+    // never erases) and covers both spellings.
+    if (
+      toolArguments === undefined &&
+      brokerRequestRecord.params !== undefined &&
+      isEnsembleControlToolName(String(rawToolName || ''))
+    ) {
+      toolArguments = brokerRequestRecord.params
+    }
+    toolArguments = normalizeEnsembleMcpToolArguments(String(rawToolName || ''), toolArguments)
+
     const dispatchContract = resolveToolDispatchContractStrict(
       String(rawToolName || ''),
       toolArguments
@@ -2624,32 +2979,42 @@ export class McpBridgeRuntime {
     // ── Strategy B (broker-injection) ──────────────────────────────────
     // When a user sends a steering message mid-turn, the
     // SteeringOrchestrator stores it on the RunSession as
-    // `pendingSteerText`. On the NEXT successful `tools/call` through this
-    // broker, we drain it and prepend a `[TaskWraith Steering]` text block
-    // to the tool result's content. The model sees the interjection at its
-    // next tool boundary without a kill/restart cycle.
-    //
-    // We only inject on SUCCESSFUL tool calls (result.isError is falsy).
-    // A failed tool means the provider is already in an error state, and
-    // the ordinary boundary-delivery fallback path will still deliver the
-    // message when the run exits or recovers.
+    // `pendingSteerText`. On the NEXT completed `tools/call` through this
+    // broker, we reserve it and prepend a `[TaskWraith Steering]` text block
+    // to the tool result's content. Error results count: they are complete
+    // responses the provider reads at the same tool boundary.
     //
     // Content block type `text` is the standard MCP content block type;
     // the `[TaskWraith Steering]` prefix makes it distinguishable from the
     // tool's native output regardless of provider transport.
-    if (!result.isError && this.deps.drainPendingSteerText && route.appRunId) {
-      const steerText = this.deps.drainPendingSteerText(route.appRunId)
-      if (steerText) {
+    let steerReceiptId: string | null = null
+    if (this.deps.reservePendingSteerText && route.appRunId) {
+      const steerReservation = this.deps.reservePendingSteerText(route.appRunId)
+      if (steerReservation?.text) {
         const steerBlock: McpToolContentBlock = {
           type: 'text',
-          text: `[TaskWraith Steering] The user sent the following message while you were working:\n\n${steerText}\n\n--- end steering ---`
+          text: `[TaskWraith Steering] A steering envelope arrived while you were working. Preserve the authority stated inside the envelope:\n\n${steerReservation.text}\n\n--- end steering ---`
         }
-        result.content = [steerBlock, ...(result.content ?? [])]
-        result.text = `${steerBlock.text}\n\n${result.text}`
+        const originalContent = result.content?.length
+          ? result.content
+          : result.text
+            ? [{ type: 'text' as const, text: result.text }]
+            : []
+        result.content = [steerBlock, ...originalContent]
+        result.text = result.text ? `${steerBlock.text}\n\n${result.text}` : steerBlock.text
+        steerReceiptId = this.registerBrokerSteerReservation(route.appRunId, steerReservation)
+      } else {
+        steerReservation?.rollback()
       }
     }
 
-    return { ok: !result.isError, ...result }
+    return {
+      ok: !result.isError,
+      ...result,
+      // This transport-private receipt can only be minted by the runtime;
+      // never forward a same-named property from an executor result.
+      [MCP_STEER_RECEIPT_FIELD]: steerReceiptId || undefined
+    }
   }
 
   async startGeminiMcpBroker(): Promise<void> {
@@ -2730,14 +3095,39 @@ export class McpBridgeRuntime {
               continue
             }
             const parsedRecord = isRecord(parsed) ? parsed : {}
-            inFlightRequests.add(parsedRecord)
+            const tracksExecutionAbandonment =
+              parsedRecord.control !== MCP_STEER_SETTLEMENT_CONTROL
+            if (tracksExecutionAbandonment) inFlightRequests.add(parsedRecord)
             this.handleGeminiMcpBrokerRequest(parsed)
-              .then((result) =>
-                safeMcpStreamWrite(
-                  socket,
-                  `${JSON.stringify({ id: parsedRecord.id, ...coerceRecord(result) })}\n`
-                )
-              )
+              .then(async (result) => {
+                const resultRecord = coerceRecord(result)
+                const steerReceiptId =
+                  typeof resultRecord[MCP_STEER_RECEIPT_FIELD] === 'string'
+                    ? String(resultRecord[MCP_STEER_RECEIPT_FIELD])
+                    : ''
+                const appRunId =
+                  typeof parsedRecord.appRunId === 'string' ? parsedRecord.appRunId : ''
+                let payload: string
+                try {
+                  payload = `${JSON.stringify({ id: parsedRecord.id, ...resultRecord })}\n`
+                } catch (error) {
+                  if (steerReceiptId && appRunId) {
+                    this.settleBrokerSteerReservation(appRunId, steerReceiptId, 'rollback')
+                  }
+                  throw error
+                }
+                const writeEvidence = await safeMcpStreamWriteWithEvidence(socket, payload)
+                if (steerReceiptId && appRunId && writeEvidence === 'refused') {
+                  this.settleBrokerSteerReservation(appRunId, steerReceiptId, 'rollback')
+                } else if (steerReceiptId && appRunId && writeEvidence === 'ambiguous') {
+                  this.settleBrokerSteerReservation(
+                    appRunId,
+                    steerReceiptId,
+                    'ambiguous',
+                    'MCP broker response write to the provider child was ambiguous.'
+                  )
+                }
+              })
               .catch((error) => {
                 bridgeLog(`broker execution-rejected ${bridgeFailureMetadata(error)}`)
                 safeMcpStreamWrite(
@@ -2745,7 +3135,9 @@ export class McpBridgeRuntime {
                   `${JSON.stringify({ id: parsedRecord.id, ok: false, error: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE })}\n`
                 )
               })
-              .finally(() => inFlightRequests.delete(parsedRecord))
+              .finally(() => {
+                if (tracksExecutionAbandonment) inFlightRequests.delete(parsedRecord)
+              })
           }
         })
       })
@@ -2787,9 +3179,13 @@ export class McpBridgeRuntime {
   }
 
   closeGeminiMcpBroker(): void {
-    if (!this.geminiMcpBroker) return
-    this.geminiMcpBroker.close()
-    this.geminiMcpBroker = null
+    this.settleAllBrokerSteerReservationsAmbiguous(
+      'MCP broker closed before the provider child acknowledged its steering response write.'
+    )
+    if (this.geminiMcpBroker) {
+      this.geminiMcpBroker.close()
+      this.geminiMcpBroker = null
+    }
   }
 
   async selfTestGeminiMcpBridgeProcess(

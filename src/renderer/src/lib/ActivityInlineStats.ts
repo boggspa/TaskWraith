@@ -1,5 +1,12 @@
 import type { ToolActivity, ToolActivityStatus, ToolDiffSummary } from '../../../main/store/types'
-import { deriveToolDiffSummary, estimateLineChanges, isErroredToolStatus } from './ToolParser'
+import {
+  deriveShellCommandDiffSummary,
+  deriveToolDiffSummary,
+  estimateLineChanges,
+  getToolCategory,
+  isErroredToolStatus,
+  mayDeriveToolDiffStats
+} from './ToolParser'
 
 /**
  * Pure helper that decides what (if anything) the per-row inline odometer
@@ -24,6 +31,9 @@ export type InlineStatStatus = ToolActivityStatus
 export interface InlineStatInputs {
   toolName: string
   status: InlineStatStatus
+  /** Activity classification when known — 'write' admits estimation for rows
+   * whose freeform titles can't be name-resolved (ACP `tool_kind: 'edit'`). */
+  category?: ToolActivity['category']
   parameters?: Record<string, unknown>
   resultText?: string
   diffSummary?: ToolDiffSummary
@@ -103,9 +113,43 @@ function lineChangesFromContent(
   toolName: string,
   parameters: Record<string, unknown>
 ): { additions?: number; deletions?: number } {
-  if (typeof parameters.content !== 'string') return {}
+  const content =
+    typeof parameters.content === 'string'
+      ? parameters.content
+      : typeof parameters.contents === 'string'
+        ? parameters.contents
+        : undefined
+  if (content === undefined) return {}
   if (!looksWriteLike(toolName)) return {}
-  return { additions: (parameters.content as string).split('\n').length, deletions: 0 }
+  return { additions: content.split('\n').length, deletions: 0 }
+}
+
+/**
+ * Estimator-sourced summaries persisted by the era when estimation ran
+ * un-gated on every tool (a read's result `content` counted as `+N -0`).
+ * On a non-edit row these are the bug's fossils, not evidence — while
+ * measured (`git_numstat`) and provider-declared sources always render.
+ */
+const ESTIMATOR_ONLY_SOURCES: ReadonlySet<ToolDiffSummary['source']> = new Set([
+  'content',
+  'string_replace',
+  'patch_preview'
+])
+
+/** Sources a SHELL row may display from a provided summary: workspace-measured
+ * churn and provider-declared change counts. Everything else on a shell row is
+ * result-derived guesswork (`result_diff` = the result text merely contained
+ * diff markers, e.g. `git diff` output) — the command text is the only honest
+ * evidence, and `deriveShellCommandDiffSummary` reads exactly that. */
+const SHELL_TRUSTED_SOURCES: ReadonlySet<ToolDiffSummary['source']> = new Set([
+  'git_numstat',
+  'codex_changes'
+])
+
+function isShellStatRow(toolName: string, category?: ToolActivity['category']): boolean {
+  const nameCategory = getToolCategory(toolName)
+  if (nameCategory === 'shell') return true
+  return nameCategory === 'unknown' && category === 'shell'
 }
 
 export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {
@@ -116,9 +160,51 @@ export function computeInlineStats(inputs: InlineStatInputs): InlineStatResult {
     return { visible: false, additions: 0, deletions: 0 }
   }
   const parameters = inputs.parameters || {}
+  // Estimation is for edit-like rows only — result-merged parameters carry
+  // arbitrary tool output (a read's file body under `content`), so counting
+  // them on read/search/shell/MCP rows invents a diff for a call that
+  // changed nothing. `looksWriteLike` keeps the historical `__`-suffix MCP
+  // spellings this module always accepted.
+  const editLike =
+    looksWriteLike(inputs.toolName) ||
+    mayDeriveToolDiffStats(inputs.toolName, parameters, inputs.category)
+  // Shell rows take a dedicated path: a measured/declared provided summary
+  // renders as-is, otherwise the odometer comes from the COMMAND TEXT alone
+  // (heredoc writes, inline patches — how shell-only model families edit).
+  // The generic estimators below never run for them; merged result output on
+  // a shell row is arbitrary and counting it invents a diff.
+  if (!editLike && isShellStatRow(inputs.toolName, inputs.category)) {
+    const trusted =
+      inputs.diffSummary && SHELL_TRUSTED_SOURCES.has(inputs.diffSummary.source)
+        ? inputs.diffSummary
+        : undefined
+    const shellSummary = trusted || deriveShellCommandDiffSummary(parameters)
+    const additions = shellSummary?.additions
+    const deletions = shellSummary?.deletions
+    const anyDefined = additions !== undefined || deletions !== undefined
+    const bothZero = (additions || 0) === 0 && (deletions || 0) === 0
+    if (!anyDefined || bothZero) {
+      return { visible: false, additions: 0, deletions: 0, confidence: shellSummary?.confidence }
+    }
+    return {
+      visible: true,
+      additions: additions || 0,
+      deletions: deletions || 0,
+      confidence: shellSummary?.confidence
+    }
+  }
+  const providedSummary =
+    inputs.diffSummary && (editLike || !ESTIMATOR_ONLY_SOURCES.has(inputs.diffSummary.source))
+      ? inputs.diffSummary
+      : undefined
   const diffSummary =
-    inputs.diffSummary || deriveToolDiffSummary(inputs.toolName, parameters, inputs.resultText)
-  const paramChanges = estimateLineChanges(parameters)
+    providedSummary ||
+    (editLike
+      ? deriveToolDiffSummary(inputs.toolName, parameters, inputs.resultText, {
+          category: inputs.category
+        })
+      : undefined)
+  const paramChanges = editLike ? estimateLineChanges(parameters) : {}
   const multiEdit = multiEditLineChanges(parameters)
   const fromContent = lineChangesFromContent(inputs.toolName, parameters)
 
@@ -155,6 +241,7 @@ export function inlineStatsForActivity(activity: ToolActivity): InlineStatResult
   return computeInlineStats({
     toolName: activity.toolName,
     status: activity.status,
+    category: activity.category,
     parameters: activity.parameters,
     resultText: activity.resultSummary || activity.outputPreview,
     diffSummary: activity.diffSummary

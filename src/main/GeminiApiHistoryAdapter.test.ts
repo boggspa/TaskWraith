@@ -177,6 +177,20 @@ describe('chatMessagesToGeminiContents', () => {
     expect(JSON.stringify(out)).not.toContain('ignore all previous instructions')
   })
 
+  it('never replays imported provider transcript rows as Gemini history', () => {
+    const out = chatMessagesToGeminiContents([
+      msg('user', 'ordinary host row'),
+      msg('assistant', 'imported provider answer', {
+        metadata: {
+          kind: 'externalProviderThreadImport',
+          sourceTrust: 'external_untrusted'
+        }
+      })
+    ])
+
+    expect(out.map(textOf)).toEqual(['ordinary host row'])
+  })
+
   it('skips tool messages', () => {
     const out = chatMessagesToGeminiContents([
       msg('user', 'q'),
@@ -281,6 +295,24 @@ describe('chatMessagesToGeminiContents', () => {
     expect(out).toHaveLength(2)
     expect(out[0].role).toBe('user')
     expect(out[1].role).toBe('model')
+  })
+
+  it('does not replay durable execution-attempt evidence as user or model history', () => {
+    const result = chatMessagesToGeminiContents([
+      msg('user', 'ordinary user'),
+      msg('user', 'INTERNAL_GRAPH_PROMPT', {
+        metadata: { kind: 'executionGraphAttempt' }
+      }),
+      msg('assistant', 'INTERNAL_SCOUT_OUTPUT', {
+        metadata: { kind: 'executionGraphAttemptOutput' }
+      }),
+      msg('assistant', 'ordinary assistant')
+    ])
+
+    expect(result).toEqual([
+      { role: 'user', parts: [{ text: 'ordinary user' }] },
+      { role: 'model', parts: [{ text: 'ordinary assistant' }] }
+    ])
   })
 
   it('skips messages with empty / whitespace-only content', () => {

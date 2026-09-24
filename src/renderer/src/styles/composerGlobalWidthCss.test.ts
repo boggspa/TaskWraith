@@ -53,10 +53,38 @@ describe('General Chat composer width CSS', () => {
     const tuckedWidth = 'min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px))'
     const staleFallback = 'calc(var(--composer-content-max-width, 980px) - 80px)'
 
-    expect(literalMatchCount(codexCss, tuckedWidth)).toBe(4)
+    // Codex dropped to 2: the merged ensemble/roster/queued frame no longer
+    // carries the hardcoded 80px tucked width — it derives from the
+    // workspace/branch telemetry strip's `--codex-cc-strip-inset` token so
+    // both tucked tabs always share one width (the wider strip width). The
+    // two remaining literals are the solo CX1 `.composer-above-bar` rule's
+    // width + max-width. Grok still owns 4 (solo row + merged stack, each
+    // width + max-width).
+    expect(literalMatchCount(codexCss, tuckedWidth)).toBe(2)
     expect(literalMatchCount(grokCss, tuckedWidth)).toBe(4)
     expect(codexCss).not.toContain(staleFallback)
     expect(grokCss).not.toContain(staleFallback)
+    // The merged frame's width + max-width both derive from the strip inset
+    // token (14px fallback), so the frame and the telemetry strip can never
+    // drift apart again. The defaults live in shard 08 at the transcript
+    // level (the frame renders outside `.composer-surface`), with a
+    // side-chat-pane override tracking the strip's halved inset.
+    expect(
+      literalMatchCount(codexCss, 'calc(100% - (2 * var(--codex-cc-strip-inset, 14px)))')
+    ).toBe(2)
+    expect(codexCss).toContain(
+      '[data-composer-style="codex"] .app-transcript {\n  --codex-cc-strip-inset: 14px;\n}'
+    )
+    expect(codexCss).toContain('.side-chat-pane.app-transcript')
+    // Welcome join: with the merged frame rendering directly above the
+    // tucked strip, the frame drops its 14px tuck-under padding band in
+    // welcome mode (it read as a dead gap between the frame's rows and the
+    // strip) so the pair forms one continuous stacked tab; shard 10
+    // flattens the strip's top corners to match. The started-thread
+    // tuck-under keeps the band, as does any frame-less surface.
+    expect(codexCss).toContain(
+      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {\n  padding-bottom: 0;'
+    )
   })
 
   it('keeps the legacy narrower General Chat reading column scoped to transcript content', () => {
@@ -66,6 +94,37 @@ describe('General Chat composer width CSS', () => {
       '.app-transcript.chat-scope-global:not(.welcome-mode) .transcript-inner {'
     )
 
-    expect(transcriptBlock).toContain('max-width: min(100%, 760px)')
+    // 760px still, and still scoped to transcript content rather than to the
+    // shared composer token — but expressed as the PANE TERM of
+    // `.transcript-inner`'s single `max-width` instead of as a second
+    // `max-width` declaration.
+    //
+    // That rewrite is the point of the assertion, not incidental to it. As a
+    // declaration this rule outranked the base rule on specificity, so the
+    // Transcript Width terms added to the base rule would have been inert in
+    // General Chat — a shipped control doing nothing in one of the four scopes
+    // a transcript renders in, with this suite green because 760px was still
+    // there. The negative below is what fails if anyone restores the old shape.
+    expect(literalMatchCount(transcriptBlock, '--transcript-pane-max-width: 760px')).toBe(1)
+    // Comments STRIPPED before the negative. This rule's comment explains the
+    // shape it is NOT allowed to use, and names it — a negative asserted over
+    // the raw block is defeated by its own rationale.
+    const declarations = transcriptBlock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '')
+    // Anchored to a declaration boundary, not a bare substring: the term this
+    // rule is SUPPOSED to set, `--transcript-pane-max-width`, ends in the very
+    // text a `toContain('max-width:')` looks for, so the loose form can never
+    // distinguish the shape it wants from the shape it forbids.
+    const declaresMaxWidth = /(^|[;{])max-width:/
+    expect(
+      declaresMaxWidth.test(declarations),
+      'the narrow reading column must be a TERM, never a second max-width'
+    ).toBe(false)
+    // Positive control for that negative, in two parts: the matcher really does
+    // fire on the exact shape being refused (and is not merely fooled by the
+    // custom property), and the stripped slice really is the rule's
+    // declarations rather than an empty read that satisfies any negative.
+    expect(declaresMaxWidth.test('.x{max-width:min(100%,760px);}')).toBe(true)
+    expect(declaresMaxWidth.test('.x{--transcript-pane-max-width:760px;}')).toBe(false)
+    expect(declarations).toContain('760px')
   })
 })

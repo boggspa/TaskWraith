@@ -95,6 +95,69 @@
   flex-shrink: 0;
 }
 
+.canvas-dock-placement {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.68;
+  font:
+    550 10.5px/1 system-ui,
+    sans-serif;
+}
+
+.canvas-dock-placement:hover {
+  opacity: 1;
+  border-color: var(--border-subtle, rgba(127, 127, 127, 0.2));
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-popout-root {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  background: var(--app-bg, #171719);
+}
+
+.canvas-popout-root > .canvas-dock-panel {
+  background: var(--app-bg, #171719);
+}
+
+:root[data-platform='darwin'] .canvas-popout-root .canvas-dock-toolbar {
+  min-height: 42px;
+  padding-left: 78px;
+  -webkit-app-region: drag;
+}
+
+:root[data-platform='darwin'] .canvas-popout-root .canvas-dock-toolbar button,
+:root[data-platform='darwin'] .canvas-popout-root .canvas-dock-toolbar input {
+  -webkit-app-region: no-drag;
+}
+
+.canvas-popout-media > .right-dock-media-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.right-dock-panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .canvas-dock-new,
 .canvas-dock-more {
   flex-shrink: 0;
@@ -167,26 +230,7 @@
 
 .canvas-dock-browser-launcher .canvas-pane-launcher {
   width: 100%;
-}
-
-.canvas-dock-browser-launcher .canvas-pane-launcher-url {
-  height: 34px;
-  min-width: 0;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
-  border-radius: 10px;
-  outline: none;
-  background: color-mix(in srgb, var(--surface-2, rgba(127, 127, 127, 0.09)) 68%, transparent);
-  color: inherit;
-  font:
-    11.5px/1.3 system-ui,
-    sans-serif;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
-}
-
-.canvas-dock-browser-launcher .canvas-pane-launcher-url:focus {
-  border-color: var(--border-strong, rgba(127, 127, 127, 0.54));
-  background: color-mix(in srgb, var(--surface-2, rgba(127, 127, 127, 0.09)) 82%, transparent);
+  justify-content: center;
 }
 
 .canvas-dock-browser-launcher .canvas-pane-launcher-open {
@@ -473,7 +517,7 @@
 }
 
 .canvas-dock-popout,
-.canvas-dock-panel .canvas-pane-close {
+.canvas-pane-close {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -489,7 +533,7 @@
 }
 
 .canvas-dock-popout:hover,
-.canvas-dock-panel .canvas-pane-close:hover {
+.canvas-pane-close:hover {
   opacity: 1;
   background: var(--button-bg, rgba(127, 127, 127, 0.12));
 }

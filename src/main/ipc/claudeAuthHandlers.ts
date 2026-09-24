@@ -2,7 +2,10 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChildProcess, SpawnOptions } from 'child_process'
 import type { ProviderApiKeyStatus } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
-import { rendererSafeProviderApiKeyStatus } from '../RendererProviderProjection'
+import {
+  createCliProviderAuthStatusHandler,
+  createProviderApiKeyHandlers
+} from './providerSecretHandlerFactory'
 
 interface ClaudeAuthStateReader {
   (resolved: ResolvedProviderBinary): Promise<string>
@@ -33,63 +36,44 @@ export interface ClaudeAuthHandlersDeps {
 }
 
 export function registerClaudeAuthHandlers(deps: ClaudeAuthHandlersDeps): void {
-  ipcMain.handle('get-claude-auth-status', async (event): Promise<ProviderApiKeyStatus> => {
-    const encryptionAvailable = deps.isEncryptionAvailable()
-    const apiKeyConfigured = Boolean(deps.getSettings().claudeApiKey)
-    const resolved = await deps.resolveCliProviderBinary('claude')
-    if (!resolved.binaryPath) {
+  const statusHandler = createCliProviderAuthStatusHandler({
+    providerNameForCli: 'claude',
+    getSettings: () => ({ apiKey: deps.getSettings().claudeApiKey }),
+    isEncryptionAvailable: deps.isEncryptionAvailable,
+    resolveCliProviderBinary: deps.resolveCliProviderBinary,
+    isMainRendererSender: deps.isMainRendererSender,
+    readStatus: async (resolved) => {
+      const apiKeyConfigured = Boolean(deps.getSettings().claudeApiKey)
+      const encryptionAvailable = deps.isEncryptionAvailable()
+      const [authState, version] = await Promise.all([
+        deps.readClaudeAuthState(resolved),
+        deps.readResolvedCliVersion(resolved)
+      ])
       const status: ProviderApiKeyStatus = {
-        available: false,
-        authState: 'missing',
+        available: true,
+        authState,
         apiKeyConfigured,
         encryptionAvailable,
-        binaryPath: null
+        version,
+        binaryPath: resolved.binaryPath
       }
-      return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
-    }
-    const [authState, version] = await Promise.all([
-      deps.readClaudeAuthState(resolved),
-      deps.readResolvedCliVersion(resolved)
-    ])
-    const status: ProviderApiKeyStatus = {
-      available: true,
-      authState,
-      apiKeyConfigured,
-      encryptionAvailable,
-      version,
-      binaryPath: resolved.binaryPath
-    }
-    return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
-  })
-
-  ipcMain.handle('store-claude-api-key', async (_, rawKey: string) => {
-    const key = String(rawKey || '').trim()
-    if (!key) {
-      deps.updateSettings({ claudeApiKey: undefined })
-      return {
-        stored: false,
-        encryptionAvailable: deps.isEncryptionAvailable()
-      }
-    }
-    if (!deps.isEncryptionAvailable()) {
-      return {
-        stored: false,
-        encryptionAvailable: false,
-        error: 'Secure storage is unavailable, so the Claude API key was not saved.'
-      }
-    }
-    const encrypted = deps.encryptApiKey(key)
-    deps.updateSettings({ claudeApiKey: encrypted || undefined })
-    return {
-      stored: Boolean(encrypted),
-      encryptionAvailable: deps.isEncryptionAvailable()
+      return status
     }
   })
 
-  ipcMain.handle('clear-claude-api-key', async () => {
-    deps.updateSettings({ claudeApiKey: undefined })
-    return true
+  const apiKeyHandlers = createProviderApiKeyHandlers({
+    providerName: 'claude',
+    settingsKey: 'claudeApiKey',
+    getSettings: () => ({ apiKey: deps.getSettings().claudeApiKey }),
+    updateSettings: (patch) => deps.updateSettings({ claudeApiKey: patch.apiKey }),
+    isEncryptionAvailable: deps.isEncryptionAvailable,
+    encryptApiKey: deps.encryptApiKey,
+    secureStorageUnavailableError: 'Secure storage is unavailable, so the Claude API key was not saved.'
   })
+
+  ipcMain.handle('get-claude-auth-status', statusHandler)
+  ipcMain.handle('store-claude-api-key', apiKeyHandlers.storeKey)
+  ipcMain.handle('clear-claude-api-key', apiKeyHandlers.clearKey)
 
   ipcMain.handle('trigger-claude-login', async () => {
     const resolved = await deps.resolveCliProviderBinary('claude')

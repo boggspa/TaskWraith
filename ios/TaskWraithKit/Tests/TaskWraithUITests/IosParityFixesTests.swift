@@ -11,6 +11,15 @@ struct IosParityFixesTests {
         #expect(!twModelUsesFastToggle("claude-fable-5"))
         #expect(!twModelUsesFastToggle("claude-fable-5-1m"))
         #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
+        #expect(twModelUsesFastToggle("claude-opus-5-5"))
+    }
+
+    @Test func gpt6SolAndLunaExposeTheCodexFastToggle() {
+        // Both sit on OpenAI's Fast-mode pricing table (2026-09-22); the id
+        // set is matched case-insensitively.
+        #expect(twModelUsesFastToggle("gpt-6-sol"))
+        #expect(twModelUsesFastToggle("gpt-6-luna"))
+        #expect(twModelUsesFastToggle("GPT-6-Luna"))
     }
 
     @MainActor
@@ -31,7 +40,7 @@ struct IosParityFixesTests {
 
         let cursor = model.providerModels["cursor"] ?? []
         #expect(cursor.map(\.id) == [
-            "composer-2.5-fast", "composer-2.5", "grok-4.6", "grok-4.5",
+            "composer-2.5-fast", "composer-2.5", "grok-4.6",
         ])
         #expect(cursor.first(where: { $0.isDefault == true })?.id == "composer-2.5-fast")
         #expect(cursor.first(where: { $0.id == "grok-4.6" })?.label == "Cursor Grok 4.6")
@@ -39,7 +48,8 @@ struct IosParityFixesTests {
             cursor.first(where: { $0.id == "grok-4.6" })?
                 .supportedReasoningEfforts?.map(\.reasoningEffort)
                 == ["low", "medium", "high", "xhigh"])
-        #expect(cursor.first(where: { $0.id == "grok-4.5" })?.label == "Cursor Grok 4.5")
+        // Retired upstream — Cursor offers no Grok 4.5 row any more.
+        #expect(cursor.first(where: { $0.id == "grok-4.5" }) == nil)
 
         let grok = model.providerModels["grok"] ?? []
         #expect(grok.map(\.id) == ["grok-4.6", "grok-4.5", "grok-composer-2.5-fast"])
@@ -55,6 +65,45 @@ struct IosParityFixesTests {
                 .supportedReasoningEfforts?.map(\.reasoningEffort)
                 == ["low", "medium", "high"])
         #expect(!grok.contains(where: { $0.id == "grok-4.5-mini" }))
+    }
+
+    @MainActor
+    @Test func offlineDemoClaudeCatalogLeadsWithOpus55() {
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+
+        let claude = model.providerModels["claude"] ?? []
+        #expect(claude.first?.id == "claude-opus-5-5")
+        #expect(claude.first(where: { $0.id == "claude-opus-5-5" })?.label == "Opus 5.5")
+        #expect(
+            claude.first(where: { $0.id == "claude-opus-5-5" })?
+                .supportedReasoningEfforts?.map(\.reasoningEffort)
+                == ["low", "medium", "high", "xhigh", "max"])
+        #expect(
+            claude.first(where: { $0.id == "claude-opus-5-5" })?.defaultReasoningEffort
+                == "medium")
+        // Opus 5 stays its own row beside it.
+        #expect(claude.contains(where: { $0.id == "claude-opus-5" }))
+    }
+
+    @MainActor
+    @Test func offlineDemoCodexCatalogLeadsWithGpt6SolAndLuna() {
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+
+        let codex = model.providerModels["codex"] ?? []
+        #expect(Array(codex.map(\.id).prefix(3)) == ["gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
+        for (id, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+            let row = codex.first(where: { $0.id == id })
+            #expect(row?.label == label)
+            #expect(
+                row?.supportedReasoningEfforts?.map(\.reasoningEffort)
+                    == ["low", "medium", "high", "xhigh", "max"])
+            #expect(row?.defaultReasoningEffort == "medium")
+            #expect(row?.isDefault != true)
+        }
+        // GPT-5.5 keeps the demo default flag.
+        #expect(codex.first(where: { $0.id == "gpt-5.5" })?.isDefault == true)
     }
 
     @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {
@@ -389,6 +438,59 @@ struct IosParityFixesTests {
         #expect(Set(model.taskCards.map(\.id)) == Set(["thread-1", "thread-2"]))
         #expect(model.threadSnapshots["thread-1"] != nil)
         #expect(model.approvals.map(\.toolCallId) == ["approval-1"])
+    }
+
+    @MainActor
+    @Test func workspaceRevocationDropsOnlyTheRevokedThreadsInlineSideChatSelection() throws {
+        let model = makeRemoteSessionModel()
+        let granted = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":true},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(granted)
+
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {"projections":[
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-1","workspaceId":"ws-1","threadId":"thread-1",
+                "payload":{"id":"thread-1","threadId":"thread-1","title":"One","provider":"codex","workspaceId":"ws-1"}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-2","workspaceId":"ws-2","threadId":"thread-2",
+                "payload":{"id":"thread-2","threadId":"thread-2","title":"Two","provider":"claude","workspaceId":"ws-2"}
+              }
+            ]}
+            """)
+        model.applySnapshot(snapshot)
+
+        // Each thread has a side chat open inline in its inspector.
+        model.selectedSideChatByThread["thread-1"] = "side-1"
+        model.selectedSideChatByThread["thread-2"] = "side-2"
+
+        let revoked = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":false},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(revoked)
+
+        #expect(model.selectedSideChatByThread["thread-1"] == nil)
+        // The load-bearing half. Now that the selection outlives the view,
+        // clearing the whole map would also satisfy the assertion above while
+        // closing every other thread's open side chat on an unrelated
+        // revocation — a regression no other test here would catch.
+        #expect(model.selectedSideChatByThread["thread-2"] == "side-2")
     }
 
     @MainActor
@@ -1912,8 +2014,16 @@ struct IosParityFixesTests {
     @MainActor
     @Test func stalenessBoundRespected() async throws {
         let model = makeRemoteSessionModel()
+        // The coalesce window is 80 ms; 500 ms is six windows of headroom and
+        // what a quiet machine measures at ~90 ms. The hosted runner drives
+        // every @MainActor test through one actor while 183 suites run in
+        // parallel and measured 0.61 s with the token landing in the next
+        // slice (run 34976881086). Scheduling starvation is not staleness,
+        // so CI gets a wider bound; the pin stays tight everywhere else.
+        let bound: Duration =
+            ProcessInfo.processInfo.environment["CI"] == nil ? .milliseconds(500) : .seconds(5)
         let start = ContinuousClock.now
-        let deadline = start.advanced(by: .milliseconds(500))
+        let deadline = start.advanced(by: bound)
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("z"), runId: "run-1")
         model.appendStreamingDeltasForTesting(
@@ -1926,7 +2036,7 @@ struct IosParityFixesTests {
         // Poll only until the publish arrives or the bound expires. A fixed
         // post-coalesce sleep measured unrelated CI scheduling delay after the
         // value was already available and made this staleness guard flaky.
-        #expect(elapsed <= .milliseconds(500))
+        #expect(elapsed <= bound)
     }
 
     private func remoteTaskCard(_ json: String) throws -> RemoteTaskCard {

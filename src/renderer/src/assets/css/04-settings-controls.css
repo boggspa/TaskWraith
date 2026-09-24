@@ -721,6 +721,16 @@
   color: var(--provider-qwen-color);
 }
 
+.settings-model-comparison-dot.provider-openrouter,
+.settings-model-comparison-fill.provider-openrouter {
+  color: var(--provider-openrouter-color);
+}
+
+.settings-model-comparison-dot.provider-thinkingmachines,
+.settings-model-comparison-fill.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color);
+}
+
 .settings-model-comparison-dot.provider-deepseek,
 .settings-model-comparison-fill.provider-deepseek {
   color: var(--provider-deepseek-color);
@@ -744,6 +754,11 @@
 .settings-model-comparison-dot.provider-muse,
 .settings-model-comparison-fill.provider-muse {
   color: var(--provider-muse-color);
+}
+
+.settings-model-comparison-dot.provider-devin,
+.settings-model-comparison-fill.provider-devin {
+  color: var(--provider-devin-color);
 }
 
 
@@ -1494,6 +1509,10 @@
 
 .settings-provider-auth-card.provider-muse {
   color: var(--provider-muse-color);
+}
+
+.settings-provider-auth-card.provider-devin {
+  color: var(--provider-devin-color);
 }
 
 .settings-provider-auth-card.provider-antigravity {
@@ -4509,6 +4528,12 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-pi {
   --run-card-provider-tint: var(--provider-pi-color);
 }
+.run-card-provider.provider-openrouter {
+  --run-card-provider-tint: var(--provider-openrouter-color);
+}
+.run-card-provider.provider-thinkingmachines {
+  --run-card-provider-tint: var(--provider-thinkingmachines-color);
+}
 .run-card-provider.provider-meta {
   --run-card-provider-tint: var(--provider-meta-color);
 }
@@ -4533,6 +4558,9 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-muse {
   --run-card-provider-tint: var(--provider-muse-color);
 }
+.run-card-provider.provider-devin {
+  --run-card-provider-tint: var(--provider-devin-color);
+}
 
 .run-card-provider.provider-groq {
   --run-card-provider-tint: var(--provider-groq-color);
@@ -4542,6 +4570,8 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .run-card-provider:is(
     .provider-pi,
+    .provider-openrouter,
+    .provider-thinkingmachines,
     .provider-meta,
     .provider-cohere,
     .provider-essential,
@@ -4550,6 +4580,7 @@ input:disabled, select:disabled, textarea:disabled {
     .provider-minimax,
     .provider-mistral,
     .provider-muse,
+    .provider-devin,
     .provider-groq,
     .provider-cerebras
   ) {
@@ -4562,6 +4593,8 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .run-card-provider:is(
     .provider-pi,
+    .provider-openrouter,
+    .provider-thinkingmachines,
     .provider-meta,
     .provider-cohere,
     .provider-essential,
@@ -4569,6 +4602,7 @@ input:disabled, select:disabled, textarea:disabled {
     .provider-zai,
     .provider-minimax,
     .provider-muse,
+    .provider-devin,
     .provider-groq,
     .provider-cerebras
   ) {
@@ -5855,6 +5889,9 @@ input:disabled, select:disabled, textarea:disabled {
   min-width: max-content;
   min-height: 19px;
   white-space: pre;
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  tab-size: 4;
 }
 
 .diff-hover-preview-gutter {
@@ -5878,13 +5915,21 @@ input:disabled, select:disabled, textarea:disabled {
 .diff-hover-preview-line.add .diff-hover-preview-code,
 .diff-hover-preview-line.add .diff-hover-preview-gutter {
   background: var(--diff-add-bg);
-  color: var(--diff-add-text);
+  color: inherit;
 }
 
 .diff-hover-preview-line.del .diff-hover-preview-code,
 .diff-hover-preview-line.del .diff-hover-preview-gutter {
   background: var(--diff-del-bg);
-  color: var(--diff-del-text);
+  color: inherit;
+}
+
+.diff-hover-preview-line.add {
+  box-shadow: inset 3px 0 0 var(--diff-stat-add-color, var(--success));
+}
+
+.diff-hover-preview-line.del {
+  box-shadow: inset 3px 0 0 var(--diff-stat-del-color, var(--danger));
 }
 
 .diff-hover-preview-empty,
@@ -8361,6 +8406,18 @@ input:disabled, select:disabled, textarea:disabled {
   min-width: 120px;
   max-width: 240px;
 }
+/* Xiaomi Token Plan region picker — lives beneath the key entry field. */
+.settings-pi-upstream-controls.settings-pi-xiaomi-region {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+.settings-pi-xiaomi-region select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+.settings-pi-xiaomi-region .settings-pi-upstream-hint {
+  flex: 1 1 auto;
+}
 
 /* ── Notification banner settings ─────────────────────────────────────────
    The preview approximates an iOS notification card so preset differences are
@@ -8457,4 +8514,33 @@ input:disabled, select:disabled, textarea:disabled {
 
 .shares-panel-full-history span {
   line-height: 1.35;
+}
+
+.settings-antigravity-transport-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-antigravity-transport-section h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-antigravity-transport-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.settings-antigravity-transport-switch input {
+  margin-top: 3px;
 }

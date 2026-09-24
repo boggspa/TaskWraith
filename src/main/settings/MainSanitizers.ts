@@ -1,10 +1,17 @@
-import { resolve } from 'node:path'
+// Namespace import (not `{ resolve }`): this module sat in the renderer
+// bundle's import graph on 2026-08-26 and a named `node:path` import fails
+// the client rollup at bind time. A namespace binding resolves the member
+// only at call time, which only ever happens in the main process.
+import * as nodePath from 'node:path'
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
+import { MIN_INSPECTOR_PANEL_WIDTH, MAX_INSPECTOR_PANEL_WIDTH } from '../../shared/panelWidthLimits'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { sanitizeCustomProviderModels } from '../../shared/customProviderModels'
 import { normalizeThemeAccentColor } from '../../shared/themeAccentColor'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
+import { clampEnsembleIngestOverrideChars } from '../../shared/ensembleSeatIngest'
 import { ACTIVITY_ARCHETYPES, sanitizeBannerTemplate } from '../../shared/bannerTemplate'
 import type { ActivityArchetype } from '../../shared/bannerTemplate'
 import type {
@@ -53,6 +60,7 @@ import { normalizeProviderHarnessPostureMap } from '../../shared/providerHarness
 import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
 import { normalizeApiUsageBillingSettings } from '../../shared/apiUsageBilling'
+import { sanitizeCommandRules } from '../command-rules/CommandRuleSchema'
 import {
   APPROVAL_TIMEOUT_DEFAULTS_VERSION,
   APPROVAL_TIMEOUT_MAX_MS,
@@ -92,7 +100,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 const AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS = new Set<AgenticWorkspaceGrantProviderId>([
   ...PROVIDER_IDS,
@@ -134,6 +143,27 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mediaEditing',
   'webBrowsing'
 ])
+/**
+ * Renderer-writable per-model ingest overrides (`provider:modelId` → chars).
+ * Normalize on WRITE: bounded entry count, sane keys, clamped finite values —
+ * an arbitrary object must never reach disk through the generic patch lane.
+ */
+function normalizeEnsembleModelIngestChars(value: unknown): Record<string, number> | undefined {
+  if (value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, number> = {}
+  let kept = 0
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (kept >= 200) break
+    if (!/^[a-z0-9_-]+:.{1,200}$/i.test(key)) continue
+    const num = typeof raw === 'number' ? raw : Number(raw)
+    if (!Number.isFinite(num) || num <= 0) continue
+    out[key] = clampEnsembleIngestOverrideChars(num)
+    kept += 1
+  }
+  return kept > 0 ? out : undefined
+}
+
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'activeProvider',
   'midRunInputBehavior',
@@ -145,12 +175,16 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'simulatorControlEnabled',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'customProviderModels',
+  'devinApiServerUrl',
   'piCerebrasMaxCompletionTokens',
+  'ensembleModelIngestChars',
   'apiUsageBilling',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
   'antigravityGeminiApiMonthlySpendCapUsd',
+  'antigravityUseAcp',
   'museMonthlySpendCapUsd',
   'codexUsageCredential',
   'storeLocalChatHistory',
@@ -177,6 +211,22 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'agentThemeTokens',
   'promptSurfaceStyle',
   'fanoutLaneLayout',
+  // Absent here and the Appearance default applies live and is dropped on the
+  // very next persist — the "works until I restart the app" shape recorded for
+  // diffStatColors above. The renderer's `useAppearance.update()` sends this
+  // key in every appearance patch, so the allowlist is the only gate.
+  'defaultTranscriptView',
+  // Same gate, same failure shape: unlisted, the chosen text size applies live
+  // and is dropped on the very next appearance patch. `useAppearance.update()`
+  // sends this key every time, so this allowlist is the only thing standing
+  // between the choice and settings.json.
+  'transcriptTextSize',
+  // Same gate again. Unlisted, the chosen column width applies live and is
+  // dropped on the very next appearance patch, because `useAppearance.update()`
+  // sends this key every time. For a WIDTH that also silently un-calibrates the
+  // virtualiser on relaunch: the transcript re-measures the restored column and
+  // the reader sees a layout they did not choose.
+  'transcriptWidth',
   'composerStyle',
   'transcriptFontFamily',
   'composerFontFamily',
@@ -198,8 +248,10 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'currencyOverestimatePercent',
   'showRunCompleteSummary',
   'closeoutAiSummaryEnabled',
+  'composerContinuationAiEnabled',
   'hostAutoCompactEnabled',
   'ensembleCollapseOlderRounds',
+  'keepAwakeWhileWorking',
   'maxWaveAgents',
   'modelUsagePanelView',
   'modelUsageExternalUsage',
@@ -214,6 +266,10 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // dropped. Renderer `update-settings` still rejects the key (IpcValidation);
   // only the dedicated grant IPCs + main-side PermissionService write it.
   'agenticWorkspaceGrants',
+  // Exact command rules are likewise main-owned. The renderer's generic
+  // settings IPC rejects this field; CommandRuleService persists it through
+  // SettingsService after an approval-bound main-side revalidation.
+  'commandRules',
   // The main renderer records the one-per-workspace Accept Edits notice here.
   // Omitting this key makes the acknowledgement renderer-local: it appears to
   // work, then vanishes on the next settings reload/resumed chat.
@@ -246,8 +302,12 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'appIconVariant'
 ])
 
-export const MIN_INSPECTOR_WIDTH = 300
-export const MAX_INSPECTOR_WIDTH = 720
+// Single-sourced from shared/panelWidthLimits: a sanitizer-local ceiling
+// below the renderer's resize max (previously 720 here) silently snapped
+// every wide dock drag back on the next settings round-trip, capping canvas
+// surfaces in the dock however far the user dragged.
+export const MIN_INSPECTOR_WIDTH = MIN_INSPECTOR_PANEL_WIDTH
+export const MAX_INSPECTOR_WIDTH = MAX_INSPECTOR_PANEL_WIDTH
 export const MIN_SIDEBAR_WIDTH = 220
 export const MAX_SIDEBAR_WIDTH = 440
 export const DEFAULT_WINDOW_WIDTH = 1400
@@ -299,7 +359,8 @@ export function availableProviderIds(): ProviderId[] {
     'antigravity',
     'pi',
     'mistral',
-    'muse'
+    'muse',
+    'devin'
   ]
 }
 
@@ -685,7 +746,7 @@ function workspaceGrantConsolidationKey(grant: AgenticWorkspaceGrant): string | 
   ) {
     return null
   }
-  return `${resolve(grant.workspacePath)}\u0000${grant.service}`
+  return `${nodePath.resolve(grant.workspacePath)}\u0000${grant.service}`
 }
 
 /**
@@ -724,7 +785,7 @@ export function consolidateAgenticWorkspaceGrants(
     const alreadyNormalized =
       group.length === 1 &&
       group[0].provider === 'agents' &&
-      resolve(group[0].workspacePath) === group[0].workspacePath
+      nodePath.resolve(group[0].workspacePath) === group[0].workspacePath
     if (alreadyNormalized) {
       result.push(group[0])
       continue
@@ -758,7 +819,7 @@ export function consolidateAgenticWorkspaceGrants(
     }
     const merged: AgenticWorkspaceGrant = {
       id: base.id,
-      workspacePath: resolve(base.workspacePath),
+      workspacePath: nodePath.resolve(base.workspacePath),
       provider: 'agents',
       service: base.service,
       createdAt,
@@ -792,7 +853,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the
@@ -1162,6 +1224,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
       grokReasoningEffort: optionalString(input.grokReasoningEffort),
       museReasoningEffort: optionalString(input.museReasoningEffort),
+      ollamaReasoningEffort: optionalString(input.ollamaReasoningEffort),
       cursorReasoningEffort: optionalString(input.cursorReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
@@ -1731,6 +1794,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
     }
+    if ('customProviderModels' in sanitized) {
+      // Free text the user typed into the composer. Normalizing on WRITE keeps
+      // an unusable id (whitespace, control bytes, the `custom` sentinel) out
+      // of the persisted list, where it would otherwise show up as a picker row
+      // that can be selected but never runs.
+      sanitized.customProviderModels = sanitizeCustomProviderModels(sanitized.customProviderModels)
+    }
     if ('cliPathDirectories' in sanitized) {
       // These directories are searched FIRST for every external CLI, so a
       // forged patch here would be a binary-planting primitive. Normalizing on
@@ -1757,6 +1827,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('apiUsageBilling' in sanitized) {
       sanitized.apiUsageBilling = normalizeApiUsageBillingSettings(sanitized.apiUsageBilling)
+    }
+    if ('ensembleModelIngestChars' in sanitized) {
+      sanitized.ensembleModelIngestChars = normalizeEnsembleModelIngestChars(
+        sanitized.ensembleModelIngestChars
+      )
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)
@@ -1888,6 +1963,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       if (grants) sanitized.agenticWorkspaceGrants = grants
       else delete sanitized.agenticWorkspaceGrants
     }
+    if ('commandRules' in sanitized) {
+      const rules = sanitizeCommandRules(sanitized.commandRules, {
+        resolvePath: (value) => nodePath.resolve(value)
+      })
+      if (rules) sanitized.commandRules = rules
+      else delete sanitized.commandRules
+    }
     if ('approvalModeElevationAcknowledgements' in sanitized) {
       if (!isRecord(sanitized.approvalModeElevationAcknowledgements)) {
         delete sanitized.approvalModeElevationAcknowledgements
@@ -1919,6 +2001,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const value = sanitized.closeoutAiSummaryEnabled
       sanitized.closeoutAiSummaryEnabled = typeof value === 'boolean' ? value : Boolean(value)
     }
+    if ('composerContinuationAiEnabled' in sanitized) {
+      const value = sanitized.composerContinuationAiEnabled
+      sanitized.composerContinuationAiEnabled = typeof value === 'boolean' ? value : Boolean(value)
+    }
     if ('hostAutoCompactEnabled' in sanitized) {
       const value = sanitized.hostAutoCompactEnabled
       sanitized.hostAutoCompactEnabled = typeof value === 'boolean' ? value : Boolean(value)
@@ -1926,6 +2012,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('ensembleCollapseOlderRounds' in sanitized) {
       const value = sanitized.ensembleCollapseOlderRounds
       sanitized.ensembleCollapseOlderRounds = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('keepAwakeWhileWorking' in sanitized) {
+      const value = sanitized.keepAwakeWhileWorking
+      sanitized.keepAwakeWhileWorking = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('maxWaveAgents' in sanitized) {
       // Settings → General: cap delegate_wave batch size (default 8, clamp 2–64).
@@ -2228,6 +2318,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1_000_000
           ? value
           : null
+    }
+    if ('antigravityUseAcp' in sanitized) {
+      const value = sanitized.antigravityUseAcp
+      sanitized.antigravityUseAcp = typeof value === 'boolean' ? value : Boolean(value)
     }
     return sanitized as Partial<AppSettings>
   }

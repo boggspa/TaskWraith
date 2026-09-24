@@ -7,16 +7,22 @@ import {
   MUSE_DEFAULT_REASONING_EFFORT,
   MUSE_DEFAULT_SANDBOX_NETWORK,
   MUSE_META_API_KEY_ENV,
+  MUSE_NATIVE_SERVE_TOOL_POLICY,
   MUSE_NATIVE_TOOL_POLICY,
   MUSE_REASONING_EFFORTS,
   MUSE_TOOL_SURFACE_VERSION_PIN,
+  MUSE_ULTRATASK_REVIEWER_AGENT_ID,
+  MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY,
+  MUSE_ULTRATASK_REVIEWER_TOOLS,
   buildMuseExecArgv,
+  buildMuseServeArgv,
   buildMuseSeatEnv,
   isMuseSessionUuid,
   museMetaApiKeyScrubbed,
   museWriteCapable,
   normalizeMuseReasoningEffort
 } from './MuseCliArgs'
+import { MUSE_META_REASONING_EFFORTS } from './MuseTypes'
 
 const homes = {
   xdgConfigHome: '/tmp/muse-seat/config',
@@ -40,18 +46,24 @@ describe('muse constants + policy', () => {
     expect(MUSE_DEFAULT_PROVIDER).toBe('meta')
     expect(MUSE_DEFAULT_MODEL).toBe('muse-spark-1.2')
     expect(MUSE_TOOL_SURFACE_VERSION_PIN).toBe('2')
-    expect(MUSE_BUILD_SHA_PIN).toBe('427a430436')
+    // 1.1.1-R2514.1 (`runtime.session.metadata` -> record.build.sha).
+    expect(MUSE_BUILD_SHA_PIN).toBe('b934305d21')
+    // The stale value it replaced — it named no build on any qualified
+    // machine, so a reader could not tell a real drift from the pin rotting.
+    expect(MUSE_BUILD_SHA_PIN).not.toBe('427a430436')
     expect(MUSE_DEFAULT_SANDBOX_NETWORK).toBe('proxy-only')
   })
 
   it('excludes none from the meta-compatible effort ladder', () => {
     expect(MUSE_REASONING_EFFORTS).not.toContain('none')
+    expect(MUSE_REASONING_EFFORTS).toBe(MUSE_META_REASONING_EFFORTS)
     expect([...MUSE_REASONING_EFFORTS]).toEqual([
       'minimal',
       'low',
       'medium',
       'high',
       'xhigh',
+      'max',
       'ultra'
     ])
   })
@@ -95,11 +107,22 @@ describe('normalizeMuseReasoningEffort', () => {
     expect(normalizeMuseReasoningEffort('off')).toBe('minimal')
   })
 
-  it('passes the meta ladder through', () => {
+  it('passes the meta ladder through for the Max-capable model', () => {
     for (const effort of MUSE_REASONING_EFFORTS) {
-      expect(normalizeMuseReasoningEffort(effort)).toBe(effort)
-      expect(normalizeMuseReasoningEffort(` ${effort.toUpperCase()} `)).toBe(effort)
+      expect(normalizeMuseReasoningEffort(effort, 'muse-spark-1.3')).toBe(effort)
+      expect(normalizeMuseReasoningEffort(` ${effort.toUpperCase()} `, 'muse-spark-1.3')).toBe(
+        effort
+      )
     }
+  })
+
+  it('keeps Max distinct on Spark 1.3 and clamps it elsewhere', () => {
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3')).toBe('max')
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.3-contributor')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('max', 'muse-spark-1.2')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('max')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('ultracode')).toBe('ultra')
+    expect(normalizeMuseReasoningEffort('ultratask')).toBe('ultra')
   })
 
   it('defaults unknown / empty to high rather than forwarding', () => {
@@ -126,6 +149,18 @@ describe('buildMuseExecArgv', () => {
     expect(args.join(' ')).toContain('--sandbox-network proxy-only')
     expect(args).toContain('--disable-web-tools')
     expect(args[args.length - 1]).toBe('summarize the repo')
+  })
+
+  it('emits Max only for regular Spark 1.3 and clamps stale Max elsewhere', () => {
+    const wireEffort = (model: string): string => {
+      const args = buildMuseExecArgv({ ...base, model, reasoningEffort: 'max' })
+      const effortIndex = args.indexOf('--reasoning-effort')
+      return args[effortIndex + 1]!
+    }
+
+    expect(wireEffort('muse-spark-1.3')).toBe('max')
+    expect(wireEffort('muse-spark-1.3-contributor')).toBe('ultra')
+    expect(wireEffort('muse-spark-1.2')).toBe('ultra')
   })
 
   it('NEVER emits --yolo, --disable-sandbox, or --no-session-log', () => {
@@ -215,6 +250,34 @@ describe('buildMuseExecArgv', () => {
     expect(args).not.toContain('--disable-web-tools')
   })
 
+  it('adds only the read/search Muse reviewer for signed UltraTask delegation consent', () => {
+    const ordinary = buildMuseExecArgv(base)
+    expect(ordinary).not.toContain('--agents')
+
+    const args = buildMuseExecArgv({
+      ...base,
+      ultraTaskDelegationAutoAllow: true
+    })
+    const agentsIndex = args.indexOf('--agents')
+    expect(agentsIndex).toBeGreaterThan(-1)
+    expect(args[agentsIndex + 1]).toBe(MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY)
+
+    const overlay = JSON.parse(MUSE_ULTRATASK_REVIEWER_AGENT_OVERLAY) as Record<
+      string,
+      { tools?: string[]; prompt?: string }
+    >
+    expect(Object.keys(overlay)).toEqual([MUSE_ULTRATASK_REVIEWER_AGENT_ID])
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.tools).toEqual([
+      ...MUSE_ULTRATASK_REVIEWER_TOOLS
+    ])
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.tools).not.toEqual(
+      expect.arrayContaining(['write_file', 'edit_file', 'bash', 'bash_input'])
+    )
+    expect(overlay[MUSE_ULTRATASK_REVIEWER_AGENT_ID]?.prompt).toMatch(/read_file and search only/i)
+    expect(args).toContain('--disable-write')
+    expect(args).toContain('--disable-shell')
+  })
+
   it('rejects empty workspace or sessionId', () => {
     expect(() => buildMuseExecArgv({ ...base, workspace: '  ' })).toThrow(/workspace/)
     expect(() => buildMuseExecArgv({ ...base, sessionId: '' })).toThrow(/sessionId/)
@@ -263,5 +326,93 @@ describe('buildMuseSeatEnv', () => {
       museNoAutoUpdate: false
     })
     expect(env.MUSE_NO_AUTO_UPDATE).toBe('0')
+  })
+})
+
+describe('buildMuseServeArgv — MSP host posture', () => {
+  it('always pins the sandbox network mode', () => {
+    expect(buildMuseServeArgv()).toContain('--sandbox-network')
+    expect(buildMuseServeArgv()).toContain(MUSE_DEFAULT_SANDBOX_NETWORK)
+    expect(buildMuseServeArgv({ sandboxNetwork: 'restricted' })).toContain('restricted')
+  })
+
+  it('starts with the serve subcommand', () => {
+    expect(buildMuseServeArgv({ approvalMode: 'default' })[0]).toBe('serve')
+  })
+
+  it('adds the read-only pair for a plan seat and omits it for a write seat', () => {
+    const readOnly = buildMuseServeArgv({ approvalMode: 'plan' })
+    expect(readOnly).toContain('--disable-write')
+    expect(readOnly).toContain('--disable-shell')
+    const write = buildMuseServeArgv({ approvalMode: 'default' })
+    expect(write).not.toContain('--disable-write')
+    expect(write).not.toContain('--disable-shell')
+  })
+
+  it('treats a missing approval mode as read-only', () => {
+    // museWriteCapable('') is false; a seat whose mode never arrived must not
+    // come up write-capable.
+    expect(buildMuseServeArgv()).toContain('--disable-write')
+  })
+
+  it('never emits a forbidden flag', () => {
+    const every = [
+      buildMuseServeArgv(),
+      buildMuseServeArgv({ approvalMode: 'default' }),
+      buildMuseServeArgv({ approvalMode: 'plan', trustWorkspace: true }),
+      buildMuseServeArgv({ approvalMode: 'default', sandboxNetwork: 'enabled' })
+    ]
+    for (const args of every) {
+      for (const forbidden of MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags) {
+        expect(args, `forbidden ${forbidden}`).not.toContain(forbidden)
+      }
+    }
+    // Guard against the assertion above going vacuous if the policy is emptied.
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags.length).toBeGreaterThan(0)
+  })
+
+  it('omits flags that `muse serve` does not accept', () => {
+    // Model, effort, session id, workspace and the prompt are all protocol
+    // level under MSP. An argv carrying them is IGNORED, not rejected, so a
+    // copy-paste from buildMuseExecArgv would silently run the wrong model.
+    const args = buildMuseServeArgv({ approvalMode: 'default' })
+    for (const flag of [
+      '--workspace',
+      '--model',
+      '--provider',
+      '--reasoning-effort',
+      '--session-id',
+      '--api-key-stdin',
+      '--json',
+      '--disable-approval',
+      '--user-input-auto-resolve'
+    ]) {
+      expect(args, `serve must not carry ${flag}`).not.toContain(flag)
+    }
+  })
+
+  it('only trusts the workspace on an explicit true', () => {
+    expect(buildMuseServeArgv({ trustWorkspace: true })).toContain('--trust-workspace')
+    expect(buildMuseServeArgv({})).not.toContain('--trust-workspace')
+    expect(buildMuseServeArgv({ trustWorkspace: false })).not.toContain('--trust-workspace')
+  })
+})
+
+describe('MUSE_NATIVE_SERVE_TOOL_POLICY', () => {
+  it('is a DISTINCT hashed document from the exec policy', () => {
+    // The seal hashes the policy; if serve reused the exec document, a
+    // containment change would not move the digest.
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.kind).not.toBe(MUSE_NATIVE_TOOL_POLICY.kind)
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.containment).not.toBe(MUSE_NATIVE_TOOL_POLICY.containment)
+  })
+
+  it('drops the headless pair because MSP answers approvals on the wire', () => {
+    expect(MUSE_NATIVE_TOOL_POLICY.headlessFlags).toContain('--disable-approval')
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.headlessFlags).toEqual([])
+  })
+
+  it('keeps metering coupled to the durable session log', () => {
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.meteringRequiresSessionLog).toBe(true)
+    expect(MUSE_NATIVE_SERVE_TOOL_POLICY.forbiddenFlags).toContain('--no-session-log')
   })
 })

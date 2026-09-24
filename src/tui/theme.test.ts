@@ -3,9 +3,11 @@ import { visibleWidth } from './ansi'
 import {
   detectTuiUnicode,
   resolveTuiDensity,
+  resolveTuiGlyphs,
   TUI_GLYPHS_ASCII,
   TUI_GLYPHS_UNICODE,
   TUI_MIN_COLUMNS,
+  tuiGlyphsAreUnicode,
   tuiStatusGlyph,
   tuiStatusTone,
   type TuiRunStatus
@@ -32,6 +34,17 @@ describe('TaskWraith TUI design tokens', () => {
 
   it('provides every Unicode glyph slot in the ASCII fallback', () => {
     expect(Object.keys(TUI_GLYPHS_ASCII).sort()).toEqual(Object.keys(TUI_GLYPHS_UNICODE).sort())
+  })
+
+  it('reports which vocabulary a resolved glyph set belongs to', () => {
+    // Multi-line art (the home banner) needs the answer `resolveTuiGlyphs` was
+    // given, but only ever receives the resolved set. The answer must not be a
+    // member of TuiGlyphSet: every value in that map is asserted above to be a
+    // one-column glyph, which a boolean is not.
+    expect(tuiGlyphsAreUnicode(TUI_GLYPHS_UNICODE)).toBe(true)
+    expect(tuiGlyphsAreUnicode(TUI_GLYPHS_ASCII)).toBe(false)
+    expect(tuiGlyphsAreUnicode(resolveTuiGlyphs(true))).toBe(true)
+    expect(tuiGlyphsAreUnicode(resolveTuiGlyphs(false))).toBe(false)
   })
 
   it('uses a distinct glyph for every run status in both glyph sets', () => {

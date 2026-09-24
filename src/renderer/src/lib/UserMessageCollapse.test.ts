@@ -94,6 +94,48 @@ describe('truncateUserMessagePreview', () => {
     expect(preview.split('\n').length).toBeLessThanOrEqual(T.previewLines)
   })
 
+  it('closes a leading backtick fence inside the preview instead of returning a blank or dangling block', () => {
+    const preview = truncateUserMessagePreview(
+      ['```ts', 'const first = "a long code example"', 'const second = "keeps going"'].join('\n'),
+      { maxLines: 20, maxChars: 1_000, previewLines: 3, previewChars: 36 }
+    )
+
+    expect(preview).not.toBe('')
+    expect(preview).toMatch(/^```ts/)
+    expect(preview).toMatch(/\n```$/)
+    expect(preview.match(/```/g) || []).toHaveLength(2)
+    expect(preview.length).toBeLessThanOrEqual(36)
+    expect(preview.split('\n').length).toBeLessThanOrEqual(3)
+  })
+
+  it('recognizes tilde fences and removes a trailing partial block from prose-led previews', () => {
+    const preview = truncateUserMessagePreview(
+      ['A short introduction.', '~~~python', 'print("a long example")', 'print("still going")'].join(
+        '\n'
+      ),
+      { maxLines: 20, maxChars: 1_000, previewLines: 3, previewChars: 80 }
+    )
+
+    expect(preview).toBe('A short introduction.')
+    expect(preview).not.toContain('~~~')
+  })
+
+  it('closes a leading tilde fence with the matching marker', () => {
+    const preview = truncateUserMessagePreview(
+      [
+        '~~~~sql',
+        'select a_really_long_column_name from example_table',
+        'where enabled = true'
+      ].join('\n'),
+      { maxLines: 20, maxChars: 1_000, previewLines: 3, previewChars: 42 }
+    )
+
+    expect(preview).toMatch(/^~~~~sql/)
+    expect(preview).toMatch(/\n~~~~$/)
+    expect(preview.match(/~~~~/g) || []).toHaveLength(2)
+    expect(preview.length).toBeLessThanOrEqual(42)
+  })
+
   it('returns an empty string for empty input', () => {
     expect(truncateUserMessagePreview('')).toBe('')
   })

@@ -60,10 +60,15 @@ export interface BackgroundSubThreadTranscriptState {
   content: string
   mediaRefs?: TranscriptMediaRef[]
   actualModel?: string
+  /** Provider-reported human model name; persisted to `ChatRun.modelLabel`. */
+  modelLabel?: string
   providerSessionId?: string
   stats?: unknown
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed' | 'cancelled'
+  lastActivityAt?: number
   errorMessage?: string
+  /** Set before an exact child cancellation request so a deferred dispatcher cannot launch it. */
+  cancellationRequested?: { reason: string; at: number }
   flushTimer?: ReturnType<typeof setTimeout>
   flushedOnce?: boolean
   finalized?: boolean

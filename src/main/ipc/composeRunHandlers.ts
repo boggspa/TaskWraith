@@ -61,12 +61,26 @@ export function registerComposeRunHandlers(deps: ComposeRunHandlersDeps): void {
               typeof attachment?.path === 'string' ? attachment.path.trim() : ''
             )
             .filter(Boolean)
-          const resolvedPaths = deps.resolveSenderAttachmentPaths(event, paths)
-          let resolvedIndex = 0
-          authorizedInput[field] = attachments.map((attachment) => {
-            if (typeof attachment?.path !== 'string' || !attachment.path.trim()) return attachment
-            return { ...attachment, path: resolvedPaths[resolvedIndex++] }
+          let resolvedPaths: string[]
+          try {
+            resolvedPaths = deps.resolveSenderAttachmentPaths(event, paths)
+          } catch {
+            // Ambiguous attachment — drop it rather than fail the run.
+            resolvedPaths = []
+          }
+          const resolvedByPath = new Map<string, string>()
+          paths.forEach((path, index) => {
+            if (index < resolvedPaths.length) resolvedByPath.set(path, resolvedPaths[index])
           })
+          authorizedInput[field] = attachments
+            .map((attachment) => {
+              if (typeof attachment?.path !== 'string' || !attachment.path.trim()) {
+                return attachment
+              }
+              const canonical = resolvedByPath.get(attachment.path.trim())
+              return canonical ? { ...attachment, path: canonical } : null
+            })
+            .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null)
         }
       }
 

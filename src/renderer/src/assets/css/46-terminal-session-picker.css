@@ -1,0 +1,46 @@
+/* Shared persistent-terminal launcher as hosted by the full Terminal tab. */
+.terminal-workbench-picker {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--content-bg, #05080d);
+}
+
+.terminal-workbench-picker-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(18px, 4vw, 42px);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.terminal-workbench-picker-body > .thread-home-terminal-picker {
+  width: min(960px, 100%);
+}
+
+.terminal-workbench-picker-error {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(420px, calc(100% - 24px));
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--status-failed, #e5484d);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 32%);
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .terminal-workbench-picker-body > .thread-home-terminal-picker {
+    grid-template-columns: 1fr;
+  }
+}

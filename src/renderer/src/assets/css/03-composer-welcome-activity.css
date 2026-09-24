@@ -21,7 +21,10 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(
+    var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) +
+      env(safe-area-inset-bottom, 0px)
+  );
   z-index: 4;
   box-sizing: border-box;
   padding: var(--space-sm) var(--chat-side-gutter) 0;
@@ -85,7 +88,7 @@
 }
 
 .workspace-terminal-open .composer-area {
-  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + var(--participant-filter-dock-reserve, 0px) + env(safe-area-inset-bottom, 0px));
 }
 
 .welcome-mode .composer-area {
@@ -546,11 +549,24 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-muted);
+  /* Resting contrast is an affordance, not decoration. At --text-muted these
+     read as greyed-out — Rename and Delete cannot be disabled at all, and Save
+     is live in any ensemble chat, so a muted rest state told the user the row
+     was dead. --disabled below stays the only "you cannot click this" tone. */
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-size-xs);
   padding: 6px 8px;
+}
+.ensemble-roster-preset-popover-error {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f08080 12%, transparent);
+  color: #f08080;
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
 }
 .ensemble-roster-preset-popover-row-action:hover {
   color: var(--text-primary);
@@ -1343,25 +1359,6 @@
   --welcome-provider-color: var(--provider-ensemble-color);
 }
 
-.welcome-hero p {
-  margin: 7px 0 0;
-  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
-  font-size: var(--font-size-sm);
-}
-
-/* Slice F follow-up (1.0.3) — ensemble welcome variant. Renders the
- * orchestration order as a chevron-arrow chain (Claude → Codex →
- * Gemini → Kimi) so the user sees the speaking sequence at a glance.
- * Tiles inherit per-provider theming via the standard `provider-*`
- * class hooks the rest of the app uses. */
-.welcome-hero-ensemble code {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  font-size: 0.85em;
-  font-family: var(--font-mono);
-}
-
 /* TaskWraith 1.0.3 polish — provider-theme-aware ensemble welcome shell.
  *
  * The ensemble welcome screen receives a subtle hue gradient built
@@ -1512,11 +1509,6 @@
     0 0 13px rgba(255, 255, 255, 0.36),
     0 0 22px color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
-.welcome-hero-ensemble-empty {
-  margin-top: 18px !important;
-  color: color-mix(in srgb, var(--danger, #c44a4a) 60%, var(--text-secondary)) !important;
-}
-
 .welcome-suggestions {
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
@@ -2393,6 +2385,14 @@
   background: var(--provider-pi-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-pi-color) 50%, transparent);
 }
+.welcome-usage-provider-card-dot.provider-openrouter {
+  background: var(--provider-openrouter-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-openrouter-color) 50%, transparent);
+}
+.welcome-usage-provider-card-dot.provider-thinkingmachines {
+  background: var(--provider-thinkingmachines-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-thinkingmachines-color) 50%, transparent);
+}
 .welcome-usage-provider-card-dot.provider-mistral {
   background: var(--provider-mistral-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-mistral-color) 50%, transparent);
@@ -2400,6 +2400,10 @@
 .welcome-usage-provider-card-dot.provider-muse {
   background: var(--provider-muse-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-muse-color) 50%, transparent);
+}
+.welcome-usage-provider-card-dot.provider-devin {
+  background: var(--provider-devin-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-devin-color) 50%, transparent);
 }
 
 .welcome-usage-provider-card-totals {
@@ -2465,11 +2469,20 @@
 .welcome-usage-provider-card-fill.provider-pi {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-pi-color) 70%, transparent), var(--provider-pi-color));
 }
+.welcome-usage-provider-card-fill.provider-openrouter {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-openrouter-color) 70%, transparent), var(--provider-openrouter-color));
+}
+.welcome-usage-provider-card-fill.provider-thinkingmachines {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-thinkingmachines-color) 70%, transparent), var(--provider-thinkingmachines-color));
+}
 .welcome-usage-provider-card-fill.provider-mistral {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-mistral-color) 70%, transparent), var(--provider-mistral-color));
 }
 .welcome-usage-provider-card-fill.provider-muse {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-muse-color) 70%, transparent), var(--provider-muse-color));
+}
+.welcome-usage-provider-card-fill.provider-devin {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-devin-color) 70%, transparent), var(--provider-devin-color));
 }
 
 
@@ -3079,8 +3092,8 @@
 /* Ollama-backed display brands. Runtime provider stays `ollama`, but the
  * Model Comparisons rows wear their spoofed upstream brand hue (mirrors the
  * transcript meta, run cards, and CombinedModelPicker provider column) so a
- * Qwen / Gemma / Nemotron row reads as Alibaba / Google / NVIDIA, not generic
- * Ollama green. Brand tokens live in styles/theme.css. */
+ * Qwen / Gemma / Nemotron row reads as Alibaba / Google / NVIDIA, not the
+ * generic Ollama seat hue. Brand tokens live in styles/theme.css. */
 .welcome-usage-model-dot.provider-alibaba,
 .welcome-usage-model-meter-fill.provider-alibaba,
 .welcome-usage-bar-segment.provider-alibaba { color: var(--provider-alibaba-color); }
@@ -3121,6 +3134,12 @@
 .welcome-usage-model-dot.provider-qwen,
 .welcome-usage-model-meter-fill.provider-qwen,
 .welcome-usage-bar-segment.provider-qwen { color: var(--provider-qwen-color); }
+.welcome-usage-model-dot.provider-openrouter,
+.welcome-usage-model-meter-fill.provider-openrouter,
+.welcome-usage-bar-segment.provider-openrouter { color: var(--provider-openrouter-color); }
+.welcome-usage-model-dot.provider-thinkingmachines,
+.welcome-usage-model-meter-fill.provider-thinkingmachines,
+.welcome-usage-bar-segment.provider-thinkingmachines { color: var(--provider-thinkingmachines-color); }
 .welcome-usage-model-dot.provider-deepseek,
 .welcome-usage-model-meter-fill.provider-deepseek,
 .welcome-usage-bar-segment.provider-deepseek { color: var(--provider-deepseek-color); }
@@ -3136,6 +3155,9 @@
 .welcome-usage-model-dot.provider-muse,
 .welcome-usage-model-meter-fill.provider-muse,
 .welcome-usage-bar-segment.provider-muse { color: var(--provider-muse-color); }
+.welcome-usage-model-dot.provider-devin,
+.welcome-usage-model-meter-fill.provider-devin,
+.welcome-usage-bar-segment.provider-devin { color: var(--provider-devin-color); }
 
 .welcome-usage-model-dot.provider-groq,
 .welcome-usage-model-meter-fill.provider-groq,
@@ -3143,6 +3165,34 @@
 .welcome-usage-model-dot.provider-cerebras,
 .welcome-usage-model-meter-fill.provider-cerebras,
 .welcome-usage-bar-segment.provider-cerebras { color: var(--provider-cerebras-color); }
+.welcome-usage-model-dot.provider-xiaomi,
+.welcome-usage-model-meter-fill.provider-xiaomi,
+.welcome-usage-bar-segment.provider-xiaomi { color: var(--provider-xiaomi-color); }
+/* Pi sub-provider brands. This block is a hand-maintained allowlist that
+ * WelcomeUsageDashboard.test derives from PI_UPSTREAM_BRANDS, so a sub-provider
+ * added without its triplet here reds that test and, until then, paints its
+ * dot the default blue and its meter near-white. */
+.welcome-usage-model-dot.provider-tencent,
+.welcome-usage-model-meter-fill.provider-tencent,
+.welcome-usage-bar-segment.provider-tencent { color: var(--provider-tencent-color); }
+.welcome-usage-model-dot.provider-inception,
+.welcome-usage-model-meter-fill.provider-inception,
+.welcome-usage-bar-segment.provider-inception { color: var(--provider-inception-color); }
+.welcome-usage-model-dot.provider-nexagi,
+.welcome-usage-model-meter-fill.provider-nexagi,
+.welcome-usage-bar-segment.provider-nexagi { color: var(--provider-nexagi-color); }
+.welcome-usage-model-dot.provider-sakana,
+.welcome-usage-model-meter-fill.provider-sakana,
+.welcome-usage-bar-segment.provider-sakana { color: var(--provider-sakana-color); }
+.welcome-usage-model-dot.provider-stealth,
+.welcome-usage-model-meter-fill.provider-stealth,
+.welcome-usage-bar-segment.provider-stealth { color: var(--provider-stealth-color); }
+.welcome-usage-model-dot.provider-unbiased,
+.welcome-usage-model-meter-fill.provider-unbiased,
+.welcome-usage-bar-segment.provider-unbiased { color: var(--provider-unbiased-color); }
+.welcome-usage-model-dot.provider-typesafe,
+.welcome-usage-model-meter-fill.provider-typesafe,
+.welcome-usage-bar-segment.provider-typesafe { color: var(--provider-typesafe-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -3936,9 +3986,17 @@
   -webkit-backdrop-filter: none;
 }
 /* Each above-row → flush, chrome-less segment (inherits the frame tone). */
+/* `.composer-area--has-above-stack` carries `:has(.composer-above-bar-stack)`
+ * as a plain class at identical specificity (0,2,0). A `:has()` condition in
+ * front of a FEATURELESS subject (`> *`, `> * + *`, `> *:first-child`) forces
+ * Blink to build a whole-subtree invalidation set anchored at the document
+ * root, so every unrelated transcript insert/delete restyled the whole page.
+ * See src/renderer/src/lib/ComposerAboveBarStyleState.ts for the trace.
+ * `:has()` rules whose subject carries a class stay as they are — Blink keys
+ * those narrowly and they were not in the measured set. */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * {
   margin: 0;
@@ -3950,7 +4008,7 @@
 /* Hairline divider between adjacent segments (never above the first). */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > * + * {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
@@ -4017,7 +4075,7 @@
  * participant / queued / Create-PR popovers. */
 [data-composer-style="default"]
   .app-transcript
-  .composer-area:has(.composer-above-bar-stack)
+  .composer-area.composer-area--has-above-stack
   .composer-above-bar-stack
   > *:first-child {
   border-top-left-radius: calc(var(--radius-lg) * 2.45);
@@ -4316,6 +4374,15 @@
 .composer-textarea-highlight .composer-ghost-suggestion {
   color: var(--text-tertiary, var(--text-secondary));
   opacity: 0.72;
+}
+
+/* Contextual AutoDraft uses the native placeholder so Chromium's
+ * `field-sizing: content` includes every wrapped/newline-preserved line in the
+ * textarea's intrinsic height. It remains a placeholder, never draft value. */
+[data-composer-style] .composer-textarea.has-ghost-suggestion::placeholder {
+  color: var(--text-tertiary, var(--text-secondary)) !important;
+  -webkit-text-fill-color: var(--text-tertiary, var(--text-secondary)) !important;
+  opacity: 0.72 !important;
 }
 
 .composer-textarea-highlight .composer-mention-token {
@@ -5242,6 +5309,36 @@
   order: 3;
   justify-content: flex-end;
 }
+
+/* ── Welcome-screen branch / worktree picker ────────────────────────────────
+ * The right zone's tenant is the token / cost / RAM tally, which does not exist
+ * on the welcome screen (nothing has run, so there is nothing to estimate). The
+ * branch picker borrows the vacant slot there, giving a new thread a way to
+ * pick its branch or an isolated worktree BEFORE the first turn — previously
+ * only reachable from the workspace above-row, which the welcome state hides.
+ * Placement is decided in `shouldShowComposerWelcomeBranchPicker`, so this only
+ * has to match the tally's alignment: same zone, same right edge, and the same
+ * `max-width` ceiling so a long branch name truncates instead of shoving the
+ * centre icon cluster off true centre. */
+.composer-welcome-branch-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(360px, 48vw);
+}
+.composer-welcome-branch-picker svg {
+  flex: 0 0 auto;
+  opacity: 0.78;
+}
+/* The popover trigger carries the branch label; keep it on one truncating line
+ * so the zone can never outgrow the ceiling above. */
+.composer-welcome-branch-picker .composer-branch-trigger {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The workspace pill is alone in its zone — keep it hard-left there even if a
  * shell override tried to re-apply an auto margin. */
 .composer-telemetry-side--left .composer-workspace-button {
@@ -6093,7 +6190,12 @@
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
-  max-height: min(360px, calc(100vh - 16px));
+  /* Grow into the whole window so a long goal reads in full. The popover is
+     anchored above the goal pill, so the 96px reserve is the chrome below that
+     pill (pill row + turn row + composer padding + the 8px edge margin/gap the
+     positioner in App.tsx keeps) -- that keeps a tall popover from spilling
+     back down over the composer. */
+  max-height: calc(100vh - 96px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -6246,8 +6348,10 @@
 .composer-goal-textarea {
   width: 100%;
   resize: vertical;
-  min-height: 72px;
-  max-height: 180px;
+  /* ~6 rows at var(--font-size-sm)/1.35 plus padding and border, so composing a
+     goal does not feel cramped. Keep in sync with rows={6} in Composer.tsx. */
+  min-height: 124px;
+  max-height: min(360px, calc(100vh - 260px));
   padding: 7px 8px;
   border-radius: 7px;
   border: 1px solid color-mix(in srgb, var(--text-primary) 13%, transparent);
@@ -6315,6 +6419,263 @@
   transform: translate(-50%, 0);
 }
 
+/* The Ensemble trigger graduates from a two-choice toggle into the roster's
+ * spacious working surface. It is allowed to rise all the way to the viewport
+ * edge, like Blackboard, rather than compressing a multi-seat roster into a
+ * footer-sized menu. The scroll region deliberately owns both axes: when a
+ * narrow pane cannot preserve the four-column read order, it scrolls instead
+ * of wrapping model/posture text into an ambiguous stack. */
+.composer-ensemble-toggle-popover.has-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  max-height: none;
+  box-sizing: border-box;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-popover-header {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  padding: 0 2px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+}
+
+.composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
+  flex: 0 0 auto;
+  width: min(240px, 100%);
+  margin: 10px 2px 0 auto;
+}
+
+.composer-ensemble-roster-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.composer-ensemble-roster-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 12px 2px 9px;
+}
+
+.composer-ensemble-roster-eyebrow {
+  display: block;
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
+  font-size: var(--font-size-sm);
+  font-weight: 750;
+}
+
+.composer-ensemble-roster-summary p {
+  max-width: 620px;
+  margin: 3px 0 0;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.composer-ensemble-roster-count {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
+  color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 82%, var(--text-primary));
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.composer-ensemble-roster-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px;
+  scrollbar-gutter: stable;
+}
+
+.composer-ensemble-roster-list-inner {
+  min-width: 780px;
+}
+
+.composer-ensemble-roster-columns,
+.composer-ensemble-roster-seat {
+  display: grid;
+  grid-template-columns: 52px minmax(160px, 0.78fr) minmax(300px, 1.35fr) minmax(250px, 0.95fr);
+  column-gap: 14px;
+}
+
+.composer-ensemble-roster-columns {
+  align-items: end;
+  padding: 0 9px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.composer-ensemble-roster-list ol {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 7px 0 2px;
+  list-style: none;
+}
+
+.composer-ensemble-roster-list li {
+  margin: 0;
+  padding: 0;
+}
+
+.composer-ensemble-roster-seat {
+  width: 100%;
+  align-items: center;
+  min-height: 68px;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
+.composer-ensemble-roster-seat:hover,
+.composer-ensemble-roster-seat:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--panel-border) 88%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.composer-ensemble-roster-seat:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-selected {
+  border-color: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 48%, transparent);
+  background: color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-ensemble-color, var(--accent)) 12%, transparent);
+}
+
+.composer-ensemble-roster-seat.is-disabled {
+  opacity: 0.58;
+}
+
+.composer-ensemble-roster-seat-order {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.composer-ensemble-roster-seat-order > span {
+  color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  font-size: calc(var(--font-size-xs) + 2px);
+  line-height: 1;
+}
+
+.composer-ensemble-roster-seat-role {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 2px;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 700;
+}
+
+.composer-ensemble-roster-seat-role > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-ensemble-roster-seat-role small {
+  flex: 0 0 auto;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--warning, #e0a43a) 34%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--warning, #e0a43a) 80%, var(--text-primary));
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.composer-ensemble-roster-seat-state.seat-state-chips {
+  min-width: 0;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.composer-ensemble-roster-seat-goal {
+  min-width: 0;
+  max-height: 3.9em;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+.composer-ensemble-roster-footnote {
+  flex: 0 0 auto;
+  margin: 9px 2px 0;
+  padding: 8px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 44%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.composer-ensemble-roster-empty {
+  padding: 15px 3px 3px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+@media (max-height: 540px) {
+  .composer-ensemble-toggle-popover.has-roster {
+    padding: 9px;
+  }
+
+  .composer-ensemble-roster-summary {
+    padding-block: 8px 6px;
+  }
+
+  .composer-ensemble-roster-seat {
+    min-height: 56px;
+    padding-block: 7px;
+  }
+}
+
+@media (max-width: 720px) {
+  .composer-ensemble-toggle-popover.has-roster .composer-ensemble-toggle-segmented {
+    width: 100%;
+    margin-inline: 0;
+  }
+
+  .composer-ensemble-roster-list-inner {
+    min-width: 680px;
+  }
+}
+
 .composer-ensemble-toggle-popover-header {
   display: flex;
   align-items: center;
@@ -6379,8 +6740,11 @@
   position: fixed;
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
-  max-height: min(400px, calc(100vh - 16px));
+  /* See .composer-goal-popover for the 96px reserve. */
+  max-height: calc(100vh - 96px);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   padding: 11px 12px 12px;
   transform: translateY(-100%);
@@ -6401,6 +6765,7 @@
 }
 
 .composer-plan-popover-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -6443,7 +6808,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 350px;
+  /* The popover's max-height is the ceiling now; min-height:0 lets this be the
+     flex child that scrolls rather than overflowing the popover. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
@@ -6814,15 +7182,14 @@ button.composer-run-timecode.is-open {
   box-sizing: border-box;
 }
 
-/* Every Canvas action is a shared rim pill (PillButton), and the three line up
+/* Every Canvas action is a shared rim pill (PillButton), and the four line up
    as one right-hand column. Each section is a two-column grid (text | action),
    so the pill sits on the title/description row instead of claiming its own;
    `justify-self: end` keeps it trailing whichever container it lands in, and the
-   shared min-width makes the three differing labels ("Open Mesh Canvas", "Open
-   web canvas", "Open sketch canvas") resolve to the same box. The web-canvas
-   pill is the odd one out — it lives in a flex row beside its URL field, where
-   it is already trailing — so it takes the width and ignores the justify-self,
-   which is what lines its right edge up with the other two.
+   shared min-width makes the differing labels ("Open Mesh Canvas", "Open
+   Simulator Canvas", "Open browser", "Open sketch canvas") resolve to the same
+   box. The blank-browser action owns no URL field; navigation lives in the
+   browser rail after the surface opens.
 
    `ch`, not px: --font-size-xs is rem-derived and each CSS shard re-scales it,
    so a fixed pixel width would stop clearing the longest label as soon as the
@@ -6838,7 +7205,7 @@ button.composer-run-timecode.is-open {
   /* The web-canvas pill is `compact` so it sits neatly beside its URL field
      everywhere else; in this column that would leave it 2px shorter than its
      neighbours. Re-assert the regular metrics here (higher specificity than
-     --compact) so the three read as one set. */
+     --compact) so the four read as one set. */
   --segmented-action-height: 24px;
   --segmented-action-padding: 0 10px;
 }
@@ -8933,8 +9300,13 @@ button.composer-run-timecode.is-open {
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
     0 10px 26px rgba(0, 0, 0, 0.3),
     0 30px 80px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(26px) saturate(160%);
-  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  /* Solid fill: sampling the live transcript through a backdrop blur
+   * re-composited the overlay on every streaming paint and starved
+   * Allow/Deny hit-testing. */
+  background: var(--tw-glass-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  contain: layout style paint;
 }
 
 .composer-permission-card--overlay .composer-permission-title {
@@ -11797,7 +12169,18 @@ button.composer-run-timecode.is-open {
 }
 
 .popout-chat-transcript .transcript-inner {
-  max-width: min(100%, var(--composer-content-max-width));
+  /* Was a second `max-width` declaration, byte-identical to the base rule it
+   * shadowed — inert while the base rule said the same thing, and a silent veto
+   * on the transcript-width terms the moment the base rule stopped. Restated as
+   * the pane TERM at its existing value, so this scope composes exactly like
+   * every other one and Medium is unchanged.
+   *
+   * Left in place rather than deleted: `.popout-chat-transcript` has no producer
+   * in any tracked .ts/.tsx (the chat popout window is `.chat-popout-window`),
+   * so it is either dead or emitted from a shell this repo does not track, and a
+   * grep cannot tell those apart. A no-op declaration is the safe answer to
+   * that ambiguity; deleting it is a separate decision. */
+  --transcript-pane-max-width: var(--composer-content-max-width);
 }
 
 /* 1.0.5-EW33 — File Editor popout: sidebar+main layout.
@@ -12922,55 +13305,6 @@ button.diff-file-row {
   opacity: 1;
 }
 
-.callmcp-tool-easter-egg {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 1.35em;
-  color: var(--accent);
-  vertical-align: -0.2em;
-}
-
-.callmcp-tool-easter-egg-icon {
-  --callmcp-delay: 0s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.86;
-  animation:
-    callmcpToolDance 1.45s ease-in-out infinite,
-    callmcpToolSpin 2.2s linear infinite;
-  animation-delay: var(--callmcp-delay);
-  transform-origin: 50% 58%;
-}
-
-.callmcp-tool-easter-egg-icon:nth-child(2n) {
-  color: color-mix(in srgb, var(--text-primary) 72%, var(--accent) 28%);
-  animation-direction: alternate, reverse;
-}
-
-.callmcp-tool-easter-egg-icon:nth-child(3n) {
-  opacity: 0.72;
-  animation-duration: 1.25s, 1.95s;
-}
-
-@keyframes callmcpToolDance {
-  0%, 100% { translate: 0 1px; scale: 0.95; }
-  35% { translate: 0 -3px; scale: 1.08; }
-  70% { translate: 0 2px; scale: 0.98; }
-}
-
-@keyframes callmcpToolSpin {
-  to { rotate: 360deg; }
-}
-
-[data-reduce-motion="true"] .callmcp-tool-easter-egg-icon {
-  animation: none;
-  translate: 0;
-  rotate: 0deg;
-  scale: 1;
-}
-
 /* Compact-group icon array. When a group contains tools from
  * multiple families, we render them side-by-side in a small row
  * (a la Codex's "Edited X, ran Y" status lines). Single-family
@@ -13039,6 +13373,19 @@ button.diff-file-row {
 }
 .collapsed-activity-stack-summary:hover .collapsed-activity-stack-label {
   color: var(--text-primary);
+}
+/* Minimal's one-liner is the surface, not a door to one. The base block above
+ * is written for a <button> — on the inert <div> its `cursor: pointer` is the
+ * one declaration that actively lies, and the hover lift is an affordance cue
+ * for an interaction that no longer exists. Everything else in that block
+ * (border/background/font/text-align resets) is a harmless no-op on a div. */
+.collapsed-activity-stack.is-inert .collapsed-activity-stack-summary {
+  cursor: default;
+}
+.collapsed-activity-stack.is-inert
+  .collapsed-activity-stack-summary:hover
+  .collapsed-activity-stack-label {
+  color: inherit;
 }
 .collapsed-activity-stack-chevron {
   flex-shrink: 0;
@@ -13124,20 +13471,6 @@ button.diff-file-row {
 }
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
   margin-bottom: 2px;
-}
-/* Folded context-compaction record: the compaction glyph rides the one-liner
- * where tool-family icons ride stack summaries — teal for a completed
- * maintenance event, amber for a failed one. */
-.collapsed-context-compaction-glyph {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.collapsed-context-compaction-glyph.is-completed {
-  color: #2aa8a0;
-}
-.collapsed-context-compaction-glyph.is-failed {
-  color: #f0a93f;
 }
 /* Context-pressure hint on the working indicator: quiet caption disclosing
  * occupancy at ≥80%, escalating to the "likely compacting" presumption when
@@ -13479,6 +13812,8 @@ button.diff-file-row {
 .activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
 .activity-yield-target.provider-poolside { --provider-tint: var(--provider-poolside-color); }
 .activity-yield-target.provider-pi { --provider-tint: var(--provider-pi-color); }
+.activity-yield-target.provider-openrouter { --provider-tint: var(--provider-openrouter-color); }
+.activity-yield-target.provider-thinkingmachines { --provider-tint: var(--provider-thinkingmachines-color); }
 .activity-yield-target.provider-qwen { --provider-tint: var(--provider-qwen-color); }
 .activity-yield-target.provider-deepseek { --provider-tint: var(--provider-deepseek-color); }
 .activity-yield-target.provider-zai { --provider-tint: var(--provider-zai-color); }
@@ -13593,6 +13928,51 @@ button.diff-file-row {
     border-color 120ms ease,
     box-shadow 120ms ease;
   animation: transcript-jump-pill-fade-in 180ms ease-out;
+}
+
+/*
+ * Transcript width -> WIDE: the pill has to FIT the gutter lane, not float on
+ * its inner edge.
+ *
+ * `right: var(--chat-side-gutter)` above puts the pill's RIGHT edge exactly
+ * where the reading column's right edge is — which is empty space at Narrow and
+ * Medium, where the column is capped well inside the pane, and is text at Wide,
+ * where `--transcript-column-max-width: 100%` makes the column the whole of
+ * `.transcript-scroll`'s content box. Measured on a 2300px pane: the two edges
+ * coincide and the pill covers ~67px of the line the reader is on, in the main
+ * pane, in a Multiview pane and in a popout alike. There is no horizontal escape
+ * at Wide — the gutter IS the column's — so the affordance has to become one
+ * that fits the lane instead of one that sits over the column.
+ *
+ * 34px, and that number is the `TranscriptUserMessageGutter` rail's. The rail is
+ * the other overlay that lives in this lane, it is 34px, and the Wide rule's own
+ * note in `02-transcript-messages-fx.css` is written around the claim that
+ * `clamp(24px, 4.4vw, 72px)` leaves room for a 34px overlay wherever the rail is
+ * eligible — plus `scrollbar-gutter: stable` on `.transcript-scroll`, which
+ * reserves its own lane outside the content box on top of that. Centring the
+ * 34px square in the gutter (floored at 2px, so a hard-clamped 24px gutter on a
+ * tiny window pushes the pill flush rather than off the pane edge) keeps it
+ * clear of the column at every width the rail is.
+ *
+ * The count goes with the label, and that is the cost. `aria-label` and `title`
+ * still carry "Jump to latest — N new messages", so the number is available to
+ * a screen reader and on hover; it is not on screen. Covering the sentence the
+ * reader is mid-way through is the worse of the two.
+ */
+.app-transcript:has(.transcript-inner[data-transcript-width='wide'])
+  .transcript-jump-to-latest-pill {
+  right: max(2px, calc((var(--chat-side-gutter, 24px) - 34px) / 2));
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.app-transcript:has(.transcript-inner[data-transcript-width='wide'])
+  .transcript-jump-to-latest-pill
+  .transcript-jump-to-latest-text {
+  display: none;
 }
 
 .transcript-jump-to-latest-pill .transcript-jump-to-latest-arrow {
@@ -13716,7 +14096,7 @@ button.diff-file-row {
 .activity-row-inline .activity-label-main {
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 .activity-row-inline .activity-inline-command {
   display: inline-block;
@@ -13733,6 +14113,7 @@ button.diff-file-row {
 
 .activity-row-inline .activity-line-stats {
   margin-left: 4px;
+  flex: 0 0 auto;
 }
 
 .activity-diff-preview-bubble {
@@ -14410,12 +14791,54 @@ button.diff-file-row {
     inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.55)),
     inset 0 10px 22px -16px var(--tw-glass-rim-light, rgba(255, 255, 255, 0.42));
 }
-/* Red variant — deprecation/sunset only. */
+/* Red variant — deprecation/sunset and unresolved errors (damaged Stack history). */
 .notification-card--danger {
   --notification-accent: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
   background: color-mix(in srgb, var(--danger) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+/* Amber variant — a condition that wants an action (a Stack whose startup
+   recovery paused), not an alarm. Same chassis as the red card on --warning. */
+.notification-card--warning {
+  --notification-accent: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent);
+}
+/* Action row under a notice's copy (Open stack / Retry recovery / Archive
+   stack). Pills on the card's accent so they read as part of the notice; the
+   danger action borrows --danger for its rim and label only. */
+.notification-card-copy {
+  margin: 0;
+}
+.notification-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  position: relative;
+  z-index: 3;
+}
+.notification-card-action {
+  appearance: none;
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--notification-accent) 45%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--notification-accent) 10%, transparent);
+  color: var(--text-primary, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.notification-card-action:hover {
+  background: color-mix(in srgb, var(--notification-accent) 18%, transparent);
+}
+.notification-card-action--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--panel-border));
+  color: var(--danger);
 }
 .notification-card--accent-claude:not(.notification-card--danger) {
   --notification-accent: var(--provider-claude-color, #b16105);
@@ -14602,7 +15025,7 @@ button.diff-file-row {
 }
 .notification-newadditions-provider.provider-ollama,
 .notification-newadditions-model.provider-ollama {
-  color: var(--provider-ollama-color, #1a8562);
+  color: var(--provider-ollama-color, #976c52);
 }
 .notification-newadditions-provider.provider-mistral {
   color: var(--provider-mistral-color, #d44404);
@@ -14611,9 +15034,14 @@ button.diff-file-row {
 .notification-newadditions-model.provider-muse {
   color: var(--provider-muse-color, #1671ea);
 }
+.notification-newadditions-provider.provider-devin,
+.notification-newadditions-model.provider-devin {
+  color: var(--provider-devin-color, #4878ae);
+}
 /* Ollama-backed models wear their spoofed upstream brand hue (set per-model via
  * `accentProvider`) — so a model name reads in its brand colour instead of
- * generic Ollama green. The "Ollama" group heading stays green above. */
+ * the generic Ollama seat hue. The "Ollama" group heading keeps that seat
+ * hue above. */
 .notification-newadditions-model.provider-deep-reinforce {
   color: var(--provider-deep-reinforce-color, #be5809);
 }
@@ -14658,6 +15086,37 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-qwen {
   color: var(--provider-qwen-color, #615ced);
+}
+.notification-newadditions-model.provider-xiaomi {
+  color: var(--provider-xiaomi-color, #008844);
+}
+.notification-newadditions-model.provider-openrouter {
+  color: var(--provider-openrouter-color, #e02948);
+}
+.notification-newadditions-model.provider-thinkingmachines {
+  color: var(--provider-thinkingmachines-color, #c24e68);
+}
+.notification-newadditions-model.provider-tencent {
+  color: var(--provider-tencent-color, #4e73ca);
+}
+
+.notification-newadditions-model.provider-inception {
+  color: var(--provider-inception-color, #7c5be9);
+}
+.notification-newadditions-model.provider-nexagi {
+  color: var(--provider-nexagi-color, #747a42);
+}
+.notification-newadditions-model.provider-sakana {
+  color: var(--provider-sakana-color, #ea0c2d);
+}
+.notification-newadditions-model.provider-stealth {
+  color: var(--provider-stealth-color, #9e6c00);
+}
+.notification-newadditions-model.provider-unbiased {
+  color: var(--provider-unbiased-color, #b85a35);
+}
+.notification-newadditions-model.provider-typesafe {
+  color: var(--provider-typesafe-color, #c700e4);
 }
 
 .notification-newadditions-model.provider-groq {

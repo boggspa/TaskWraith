@@ -28,6 +28,17 @@ export interface RunningChatRecordLike {
     endedAt?: string
     status?: string
   }>
+  /**
+   * Terminal facts survive here when `runs` does not. A paged shell and a
+   * catalogue projection both carry `runs: []` BY CONSTRUCTION while keeping
+   * the last run's outcome on this field, so a tail-only read of `runs` is
+   * structurally blind on exactly the rows the sidebar renders most.
+   */
+  lastRun?: {
+    runId?: string
+    endedAt?: string
+    status?: string
+  }
 }
 
 export interface RunningRunQueueJobLike {
@@ -176,8 +187,14 @@ function isRunQueueJobSupersededByTerminalRun(
  */
 export function hasTerminalLastRun(chat: RunningChatRecordLike): boolean {
   const runs = chat.runs
-  if (!runs || runs.length === 0) return false
-  const last = runs[runs.length - 1]
+  // Canonical runs win whenever they exist, so this stays a pure widening of
+  // the previous tail read. Falling back to `lastRun` only matters for a row
+  // whose transcript was projected away -- and that row is precisely where the
+  // old `runs.length === 0` early return made this filter structurally dead,
+  // so an orphaned runningChatIds entry could never retire and the chip stayed
+  // lit over a run that had already ended.
+  const last = runs && runs.length > 0 ? runs[runs.length - 1] : chat.lastRun
+  if (!last) return false
   return isTerminalRunSnapshot(last)
 }
 

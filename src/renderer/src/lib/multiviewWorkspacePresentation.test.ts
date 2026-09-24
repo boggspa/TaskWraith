@@ -4,6 +4,10 @@ import { updatePathKeyedWorkspaceSnapshot } from './multiviewWorkspacePresentati
 
 const source = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const layoutSource = readFileSync(new URL('../app/views/MainAppLayout.tsx', import.meta.url), 'utf8')
+const windowAttachmentSource = readFileSync(
+  new URL('../app/windowAttachmentState.ts', import.meta.url),
+  'utf8'
+)
 
 function slice(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -11,6 +15,12 @@ function slice(start: string, end: string): string {
   expect(startIndex, `missing source marker: ${start}`).toBeGreaterThanOrEqual(0)
   expect(endIndex, `missing source marker: ${end}`).toBeGreaterThan(startIndex)
   return source.slice(startIndex, endIndex)
+}
+
+function sliceToEnd(start: string, haystack: string): string {
+  const startIndex = haystack.indexOf(start)
+  expect(startIndex, `missing source marker: ${start}`).toBeGreaterThanOrEqual(0)
+  return haystack.slice(startIndex)
 }
 
 describe('Multiview focused workspace presentation', () => {
@@ -47,11 +57,15 @@ describe('Multiview focused workspace presentation', () => {
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(primaryCiOwnerPathRef.current')
     expect(focusedSnapshot).toContain('normalizeWorkspacePath(snapshot.requestedPath)')
 
-    const diffStats = slice('const workspaceDiffStats =', 'const liveGitInvalidationKey =')
+    const diffStats = slice('const workspaceDiffStats =', '// Welcome / search still read React chat messages.')
     expect(diffStats).toContain('if (focusedPrimaryGitSnapshot)')
     expect(diffStats).not.toContain('if (primaryGitSnapshot)')
 
-    const composer = slice('const composerCtx: ComposerProps =', 'const activeWorkspaceBoard =')
+    // Re-anchored after 5873079b5 gave composerCtx an intersection type.
+    const composer = slice(
+      'const composerCtx: ComposerProps & { onOpenCompactChat: () => void } =',
+      'const activeWorkspaceBoard ='
+    )
     expect(composer).toContain('currentWorkspace: focusedCurrentWorkspace')
     expect(composer).toContain('primaryGitSnapshot: focusedPrimaryGitSnapshot')
     expect(composer).toContain('setPrimaryGitSnapshot: setFocusedPrimaryGitSnapshot')
@@ -115,9 +129,9 @@ describe('Multiview focused workspace presentation', () => {
     expect(layoutSource).toContain('{!focusedHostOverlayRequired && channelMemberControl}')
     expect(layoutSource).toContain('showFocusedHostOverlay={focusedHostOverlayRequired}')
     expect(layoutSource).not.toContain('(!isChatPopoutWindow && !showWorkspaceSidebar)')
-    expect(source).toContain(
-      'viewerOwnsHostProjection ? composerCtx : resolveRestingPaneComposerCtx()'
-    )
+    expect(source).toContain('const effectivePaneComposerCtx = viewerOwnsHostProjection')
+    expect(source).toContain('? composerCtx')
+    expect(source).toContain(': resolveRestingPaneComposerCtx()')
   })
 
   it('guards workspace trust refreshes against late ownership changes', () => {
@@ -155,7 +169,7 @@ describe('Multiview focused workspace presentation', () => {
     )
     expect(paneComposer).toContain('resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot')
     expect(paneComposer).toContain(
-      'paneCtxHelpers.handleReviewDiffForChat(\n            viewerChat,\n            viewerProvider,\n            viewerWorkspace'
+      'paneCtxHelpers.handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)'
     )
     expect(paneComposer).toContain(
       'paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning)'
@@ -208,7 +222,10 @@ describe('Multiview focused workspace presentation', () => {
     expect(attachmentStatus).toContain('reconcileAttachedWindowStatus(chatId, status)')
     expect(attachmentStatus).toContain('currentChatIdRef.current !== chatId')
 
-    const stickyProjection = slice('function stickyAppWatchStashInput(', 'function App()')
+    const stickyProjection = sliceToEnd(
+      'function stickyAppWatchStashInput(',
+      windowAttachmentSource
+    )
     expect(stickyProjection).toContain('title: attachment.windowMeta.title')
     expect(stickyProjection).toContain('bundleID: attachment.windowMeta.bundleID')
     expect(stickyProjection).toContain('applicationName: attachment.windowMeta.applicationName')

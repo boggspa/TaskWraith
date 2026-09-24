@@ -1,5 +1,5 @@
 /* ============================================================
-   Multiview — split the central chat pane into 1-4 panes.
+   Multiview — split the central chat pane into 1-8 panes.
 
    Distinct from side-chats; the grid lives INSIDE .chat-split-main
    and never touches either sidebar. Single layout renders the
@@ -311,11 +311,16 @@
 
 /* Composer layout-picker trigger — container-less to match the Goal /
    Screen Watch / Copy buttons in the telemetry row (no "+" bubble). */
-/* The canvas-opener trigger shares the multiview trigger's bare footer-icon style
-   (no container, dimmed icon, accent-tint on hover/open) so the telemetry row stays
-   visually uniform — see CanvasComposerButton. */
+/* The canvas-opener and transcript-view triggers share the multiview
+   trigger's bare footer-icon style (no container, dimmed icon, accent-tint
+   on hover/open) so the telemetry row stays visually uniform — see
+   CanvasComposerButton and TranscriptViewPicker. The transcript-view
+   trigger MUST stay in this group: it shipped with only the hint-pill
+   classes, and with no root color-scheme the unstyled <button> fell back
+   to the UA light ButtonFace — the white block bug. */
 .composer-multiview-trigger,
-.composer-canvas-trigger {
+.composer-canvas-trigger,
+.composer-transcript-view-trigger {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -335,19 +340,23 @@
 .composer-multiview-trigger:hover:not(:disabled),
 .composer-multiview-trigger[aria-expanded='true'],
 .composer-canvas-trigger:hover:not(:disabled),
-.composer-canvas-trigger[aria-expanded='true'] {
+.composer-canvas-trigger[aria-expanded='true'],
+.composer-transcript-view-trigger:hover:not(:disabled),
+.composer-transcript-view-trigger[aria-expanded='true'] {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .composer-multiview-trigger:disabled,
-.composer-canvas-trigger:disabled {
+.composer-canvas-trigger:disabled,
+.composer-transcript-view-trigger:disabled {
   cursor: default;
   opacity: 0.45;
 }
 
 .composer-multiview-trigger .composer-control-icon,
-.composer-canvas-trigger .composer-control-icon {
+.composer-canvas-trigger .composer-control-icon,
+.composer-transcript-view-trigger .composer-control-icon {
   width: 14px;
   height: 14px;
 }

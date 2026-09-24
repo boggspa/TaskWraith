@@ -2,15 +2,35 @@ import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
 import { activeCodexModelRows } from '../../../shared/codexModelLifecycle'
 import type { ProviderId } from '../../../main/store/types'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
   GROK_45_REASONING_EFFORTS,
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
-  GROK_46_REASONING_EFFORTS
+  GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS
 } from '../../../shared/grok45Models'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
+  KIMI_K3_REASONING_EFFORTS
+} from '../../../shared/kimiModels'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  devinModelDescription,
+  devinReasoningEfforts
+} from '../../../shared/devinModelCatalog'
 
 interface CodexModelOption {
   id: string
@@ -26,7 +46,12 @@ interface CodexModelOption {
     disabledReason?: string
   }>
   defaultReasoningEffort?: string | null
+  /** Ollama `/api/show` capability names retained for model-aware controls. */
+  capabilities?: string[]
   additionalSpeedTiers?: string[]
+  /** Provider-discovered effective context window for the current account. */
+  contextWindow?: number
+  ultraTaskSupported?: boolean
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when this model is retired by the
    * provider. When set, the model picker renders a small clock + ordinal-
    * date pill on the row (red, !important-styled so theme/shell rules can't
@@ -37,13 +62,75 @@ interface CodexModelOption {
   retiresAt?: string
 }
 
-const CODEX_DEFAULT_MODELS = activeCodexModelRows([
+/** Curated fallback rows are executable UltraTask candidates unless an exact
+ * row opts out. Custom ids stay unclassified until live discovery proves
+ * them; an explicit false (currently Claude Haiku) always wins. */
+function withCuratedUltraTaskSupport<T extends CodexModelOption>(
+  models: readonly T[]
+): Array<T & { ultraTaskSupported?: boolean }> {
+  return models.map((model) =>
+    model.id === 'custom' ? { ...model } : { ultraTaskSupported: true, ...model }
+  )
+}
+
+const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
   // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
   // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
   // developers.openai.com): hyphenated display names, Sol defaults to LOW,
   // `max` on all three, top `ultra` tier (internal token 'ultracode') on
   // Sol + Terra only. This is the pre-IPC fallback list — the authoritative
   // rows come from the main process (CODEX_STATIC_MODELS + live model/list).
+  {
+    // GPT-6 Astra (2026-09-03). Offered ahead of live discovery — the CLI
+    // bundles the catalog entry but withholds the row from `model/list` while
+    // rollout is per-organisation, and `thread/start` accepts the id anyway.
+    // Not the default: upstream shipped it without moving the default model.
+    id: 'gpt-6-astra',
+    label: 'GPT-6-Astra',
+    description: 'Our most capable model for complex, demanding work.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' },
+      { reasoningEffort: 'ultracode' }
+    ],
+    defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    // GPT-6 Sol and Luna (2026-09-22). The official model pages document a
+    // none..max ladder with a Medium default and Fast mode on the pricing
+    // page; no `ultra` is documented, so ultracode waits for the live catalog.
+    // Neither takes the default.
+    id: 'gpt-6-sol',
+    label: 'GPT-6-Sol',
+    description: 'Built to power complex coding and agentic workflows.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-6-luna',
+    label: 'GPT-6-Luna',
+    description: 'Our most efficient model for focused, high-volume tasks.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
   {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',
@@ -141,6 +228,7 @@ const CODEX_DEFAULT_MODELS = activeCodexModelRows([
   // renderer fallback as well as the main-process catalog; this list is only
   // shown on mount before IPC resolves / on IPC failure.
 ] satisfies CodexModelOption[])
+const CODEX_DEFAULT_MODELS = withCuratedUltraTaskSupport(CODEX_DEFAULT_MODEL_ROWS)
 // The 5.6 trio now leads CODEX_DEFAULT_MODELS, so the default can't be [0] any
 // more — pin it to GPT-5.5 (falling back to the first row only if 5.5 is gone).
 const CODEX_DEFAULT_MODEL =
@@ -172,7 +260,15 @@ const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 // Labels omit the "Claude " prefix (provider header/chip already carries it —
 // see StaticProviderModels.ts); Legacy cluster sits below the current models.
-const CLAUDE_DEFAULT_MODELS = [
+const CLAUDE_DEFAULT_MODEL_ROWS = [
+  {
+    id: 'claude-opus-5-5',
+    label: 'Opus 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
   {
     id: 'claude-opus-5',
     label: 'Opus 5',
@@ -182,8 +278,8 @@ const CLAUDE_DEFAULT_MODELS = [
     additionalSpeedTiers: ['fast']
   },
   {
-    id: 'claude-fable-5',
-    label: 'Fable 5',
+    id: 'claude-fable-5-1',
+    label: 'Fable 5.1',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
@@ -193,6 +289,13 @@ const CLAUDE_DEFAULT_MODELS = [
     label: 'Sonnet 5',
     description: '1M context window — extended thinking',
     isDefault: true,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5 Legacy',
+    description: '1M context window — legacy Fable',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
@@ -223,58 +326,95 @@ const CLAUDE_DEFAULT_MODELS = [
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5',
     description: 'Fast & efficient',
-    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS,
+    ultraTaskSupported: false
   }
 ] satisfies CodexModelOption[]
-const KIMI_DEFAULT_MODELS = [
+const CLAUDE_DEFAULT_MODELS = withCuratedUltraTaskSupport(CLAUDE_DEFAULT_MODEL_ROWS)
+const KIMI_DEFAULT_MODEL_ROWS = [
   {
-    id: 'kimi-k2.7-code',
-    label: 'K2.7 Coding',
-    description: 'Standard and Highspeed tiers with always-on thinking',
+    // Managed `kimi-code/kimi-for-coding` alias: K2.8 Preview since 2026-09-11,
+    // on the same wire id K2.7 Coding used. 1M context, Low/High/Max thinking.
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    description: "Moonshot's newest coding model - 1M context - Low, High, or Max thinking",
     isDefault: true,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    // Managed `kimi-code/kimi-for-coding-highspeed` alias. Its own row rather
+    // than K2.8's Fast tier: Highspeed stayed on K2.7, so it keeps a 256K
+    // window and always-on thinking with no effort axis.
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
+    description: 'Low-latency K2.7 route - 256K context - always-on thinking, no effort axis',
     supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-    defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    defaultReasoningEffort: 'on'
   },
   {
     // Managed `kimi-code/k3` alias: 256K on Moderato and up to 1M on
-    // Allegretto+, with Low/High/Max effort choices. No Highspeed tier — Fast
-    // stays a K2.7 Coding capability — and K2.7 Coding remains the default.
-    id: 'kimi-k3',
-    label: 'K3',
+    // Allegretto+, with Low/High/Max effort choices.
+    id: KIMI_K3_MODEL_ID,
+    label: KIMI_K3_MODEL_LABEL,
     description:
       "Moonshot's flagship K3 - 256K on Moderato, up to 1M on Allegretto+ - Low, High, or Max thinking",
-    supportedReasoningEfforts: [
-      { reasoningEffort: 'low' },
-      { reasoningEffort: 'high' },
-      { reasoningEffort: 'max' }
-    ],
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    id: KIMI_K3_256K_MODEL_ID,
+    label: KIMI_K3_256K_MODEL_LABEL,
+    description: 'Quota-efficient K3 route - fixed 256K context - Low, High, or Max thinking',
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
     defaultReasoningEffort: 'max'
   }
 ] satisfies CodexModelOption[]
+const KIMI_DEFAULT_MODELS = withCuratedUltraTaskSupport(KIMI_DEFAULT_MODEL_ROWS)
 const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id
 // Single source of truth for Gemini's composer model list. Mirrors the
 // claude/kimi constants above so `getProviderModelOptions` returns the
 // same `CodexModelOption[]` shape for every provider and the composer's
 // `<option>` rendering no longer needs a Gemini-only inline branch.
-const GEMINI_DEFAULT_MODELS = [
+const GEMINI_DEFAULT_MODEL_ROWS = [
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ] satisfies CodexModelOption[]
+const GEMINI_DEFAULT_MODELS = withCuratedUltraTaskSupport(GEMINI_DEFAULT_MODEL_ROWS)
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-// Grok - the live Grok Build CLI now defaults to Grok 4.6. Grok 4.5 and
-// Composer 2.5 Fast remain selectable for historical/specialized runs.
-const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
-const GROK_DEFAULT_MODELS = [
+// Grok - the live Grok Build CLI now defaults to Grok 4.7 (standard/Fast pair).
+// Grok 4.6 and 4.5 remain selectable for historical/specialized runs.
+const GROK_DEFAULT_MODEL = GROK_47_MODEL_ID
+const GROK_DEFAULT_MODEL_ROWS = [
   {
     id: GROK_DEFAULT_MODEL,
+    label: 'Grok 4.7',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_46_MODEL_ID,
     // Direct Grok CLI models run permanently in Fast mode, so the label
     // distinguishes them from Cursor's separately toggled resale rows.
     label: 'Grok 4.6 Fast',
     description: '500K context - low/medium/high/extra-high reasoning',
-    isDefault: true,
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
   },
@@ -284,29 +424,45 @@ const GROK_DEFAULT_MODELS = [
     description: '500K context - low/medium/high reasoning',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+  }
+  // grok-composer-2.5-fast retired 2026-09-18. This renderer copy must track
+  // main's GROK_STATIC_MODELS exactly — providerFallthroughGuards compares the
+  // two, because the composer picker reads THIS list, not main's.
 ] satisfies CodexModelOption[]
+const GROK_DEFAULT_MODELS = withCuratedUltraTaskSupport(GROK_DEFAULT_MODEL_ROWS)
 // Mistral Vibe seat catalog. BARE ids only — a `mistral/<model>` id belongs to
 // Pi's BYOK upstream, a DIFFERENT provider that shares the brand word, and is
 // served through the `pi` group in this same picker.
 //
-// devstral-small leads and is the default: graded head-to-head it was ~26x
-// cheaper and more accurate on lane work. Note the two are NOT equivalent —
-// only mistral-medium-3.5 has thinking + vision; the seat's provider-level
-// `imageAttachments` is false because the default model has none.
-const MISTRAL_DEFAULT_MODEL = 'devstral-small'
-const MISTRAL_DEFAULT_MODELS = [
+// Medium 3.5 leads and is the default (Vibe 2.25). Hosted Devstral Small /
+// Devstral 2 are sunset and omitted; glm-5-2 is the GrowthBook-injected hosted
+// extra Vibe still shows. Medium 3.5 has thinking + vision.
+const MISTRAL_DEFAULT_MODEL = 'mistral-medium-3.5'
+const MISTRAL_DEFAULT_MODEL_ROWS = [
   {
     id: MISTRAL_DEFAULT_MODEL,
-    label: 'Devstral Small',
-    description: '256K context - coding-tuned',
+    label: 'Mistral Medium 3.5',
+    description: '256K context - flagship',
     isDefault: true
   },
   {
-    id: 'mistral-medium-3.5',
-    label: 'Mistral Medium 3.5',
-    description: '256K context - flagship'
+    id: 'glm-5-2',
+    label: 'GLM-5.2 (Mistral Hosted)',
+    description: '1M context - coding model'
+  },
+  {
+    // Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring `glm-5-2`.
+    id: 'glm-5-3',
+    label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - coding model'
+  },
+  {
+    // API-key lane, unlike the `glm-5-3` subscription row above. Mirrors
+    // main's MISTRAL_STATIC_MODELS; renamed `via Mistral` 2026-09-21 to match
+    // the 5.2 pair. The `zai-` prefix keeps it off Devin's `glm-5-3`.
+    id: 'zai-glm-5-3',
+    label: 'GLM-5.3 (via Mistral)',
+    description: '1M context - $1.40/$4.40 per Mtok'
   },
   {
     id: 'mistral-large-2512',
@@ -327,11 +483,6 @@ const MISTRAL_DEFAULT_MODELS = [
     id: 'mistral-small-2603',
     label: 'Mistral Small 4',
     description: '256K context - reasoning'
-  },
-  {
-    id: 'devstral-2512',
-    label: 'Devstral 2',
-    description: '262K context'
   },
   {
     id: 'labs-leanstral-1-5',
@@ -369,20 +520,67 @@ const MISTRAL_DEFAULT_MODELS = [
     description: '262K context'
   }
 ] satisfies CodexModelOption[]
-// Muse Code CLI seat catalog (opaque exec). Decode-ready; not live-selectable yet.
+const MISTRAL_DEFAULT_MODELS = withCuratedUltraTaskSupport(MISTRAL_DEFAULT_MODEL_ROWS)
+// Muse Code CLI seat catalog (opaque exec). Spark 1.3 leads in the CLI's own
+// order while 1.2 stays the default (the catalogue still flags it `is_current`).
+// Contributor Spark stays opt-in: its discount carries the provider catalogue's
+// product-improvement data-use notice.
 const MUSE_DEFAULT_MODEL = 'muse-spark-1.2'
-const MUSE_DEFAULT_MODELS = [
+const MUSE_DEFAULT_MODEL_ROWS = [
+  {
+    id: 'muse-spark-1.3',
+    label: 'Muse Spark 1.3',
+    description: 'Muse Code CLI newest model'
+  },
+  {
+    id: 'muse-spark-1.3-contributor',
+    label: 'Muse Contributor Spark 1.3',
+    description:
+      'Discounted tokens; content, including inter-session messages, may be used for product improvement'
+  },
   {
     id: MUSE_DEFAULT_MODEL,
     label: 'Muse Spark 1.2',
     description: 'Muse Code CLI default model',
     isDefault: true
+  },
+  {
+    id: 'muse-spark-1.2-contributor',
+    label: 'Muse Contributor Spark 1.2',
+    description:
+      'Discounted tokens; content, including inter-session messages, may be used for product improvement'
   }
 ] satisfies CodexModelOption[]
+const MUSE_DEFAULT_MODELS = withCuratedUltraTaskSupport(MUSE_DEFAULT_MODEL_ROWS)
+// Devin CLI seat (`devin acp`). One row per model family the CLI itself
+// enumerates, curated once in the shared devinModelCatalog.ts and read here,
+// by main's StaticProviderModels.ts, and by the Host catalogue —
+// providerFallthroughGuards compares main and renderer and a divergence means
+// the picker and the run disagree. The family's variant ladder is its
+// reasoning axis (the ordinary effort slider); the run folds the chosen level
+// into `--model <family>-<level>`. Every id is a real target, so the rows take
+// the curated UltraTask default exactly like Mistral's and Muse's.
+const DEVIN_DEFAULT_MODEL = DEVIN_DEFAULT_MODEL_ID
+const DEVIN_DEFAULT_MODEL_ROWS = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    description: devinModelDescription(family),
+    ...(family.id === DEVIN_DEFAULT_MODEL_ID ? { isDefault: true } : {}),
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
+  }
+}) satisfies CodexModelOption[]
+const DEVIN_DEFAULT_MODELS = withCuratedUltraTaskSupport(DEVIN_DEFAULT_MODEL_ROWS)
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
 const CURSOR_DEFAULT_MODEL = 'composer-2.5-fast'
-const CURSOR_DEFAULT_MODELS = [
+const CURSOR_DEFAULT_MODEL_ROWS = [
   { id: CURSOR_DEFAULT_MODEL, label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
@@ -392,17 +590,12 @@ const CURSOR_DEFAULT_MODELS = [
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
     additionalSpeedTiers: ['fast']
-  },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    description: 'First-party Cursor model pool - 500K context',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
   }
+  // Cursor Grok 4.5 is RETIRED — Cursor's catalogue no longer carries the
+  // family and rejects its wire ids outright.
 ] satisfies CodexModelOption[]
-const OLLAMA_DEFAULT_MODELS = [
+const CURSOR_DEFAULT_MODELS = withCuratedUltraTaskSupport(CURSOR_DEFAULT_MODEL_ROWS)
+const OLLAMA_DEFAULT_MODEL_ROWS = [
   {
     id: 'qwen3:4b-instruct',
     label: 'Qwen 3 (4B Param)',
@@ -435,6 +628,12 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Alibaba Qwen 3.8 27B-MLX via Ollama · 262k context · vision/tools/thinking'
   },
   {
+    id: 'qwen3.8-flash-next:125b-mlx',
+    label: 'Qwen 3.8 Flash Next (125B-MLX)',
+    description:
+      'Alibaba Qwen 3.8 Flash Next 125B-MLX (6B active) via Ollama · 262k context · vision/tools/thinking'
+  },
+  {
     id: 'gemma3:4b',
     label: 'Gemma 3 (4B Param)',
     description: 'Google Gemma 3 4B via Ollama · 131k context · vision'
@@ -458,6 +657,16 @@ const OLLAMA_DEFAULT_MODELS = [
     id: 'ornith:35b',
     label: 'Ornith 1.0 (35B Param)',
     description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
+  },
+  {
+    id: 'ornith-1.5:9b',
+    label: 'Ornith 1.5 (9B Param)',
+    description: 'Ornith 1.5 9B via Ollama · 262k context · agentic coding'
+  },
+  {
+    id: 'ornith-1.5:35b',
+    label: 'Ornith 1.5 (35B Param)',
+    description: 'Ornith 1.5 35B via Ollama · 262k context · agentic coding'
   },
   {
     id: 'laguna-xs-2.1:q8_0',
@@ -500,6 +709,21 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools'
   },
   {
+    id: 'granite4.2:3b',
+    label: 'Granite 4.2 (3B Param)',
+    description: 'IBM Granite 4.2 3B via Ollama · 131k context · tools/thinking'
+  },
+  {
+    id: 'granite4.2:8b',
+    label: 'Granite 4.2 (8B Param)',
+    description: 'IBM Granite 4.2 8B via Ollama · 131k context · tools/thinking'
+  },
+  {
+    id: 'granite4.2:30b',
+    label: 'Granite 4.2 (30B Param)',
+    description: 'IBM Granite 4.2 30B via Ollama · 131k context · tools/thinking'
+  },
+  {
     id: 'nemotron-3-nano:4b',
     label: 'Nemotron 3 Nano (4B Param)',
     description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'
@@ -520,6 +744,12 @@ const OLLAMA_DEFAULT_MODELS = [
     label: 'Devstral Small 2 (24B Param)',
     description:
       'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
+  },
+  {
+    id: 'mistral-medium-3.5:128b',
+    label: 'Mistral Medium 3.5 (128B Param)',
+    description:
+      'Mistral Medium 3.5 128B via Ollama · 262k context · vision/tools/thinking · agentic coding'
   },
   {
     id: 'ministral-3:3b',
@@ -544,12 +774,12 @@ const OLLAMA_DEFAULT_MODELS = [
   },
   {
     id: 'deepseek-r1:1.5b',
-    label: 'DeepSeek R1 (1.5B Param)',
+    label: 'R1 (1.5B Param)',
     description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking'
   },
   {
     id: 'deepseek-r1:8b',
-    label: 'DeepSeek R1 (8B Param)',
+    label: 'R1 (8B Param)',
     description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking'
   },
   {
@@ -574,6 +804,7 @@ const OLLAMA_DEFAULT_MODELS = [
   },
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]
+const OLLAMA_DEFAULT_MODELS = withCuratedUltraTaskSupport(OLLAMA_DEFAULT_MODEL_ROWS)
 const OLLAMA_DEFAULT_MODEL = OLLAMA_DEFAULT_MODELS[0].id
 
 // ---------------------------------------------------------------------------
@@ -660,6 +891,8 @@ function getStaticProviderModelOptions(provider: StaticCatalogueProviderId): Cod
       return MISTRAL_DEFAULT_MODELS
     case 'muse':
       return MUSE_DEFAULT_MODELS
+    case 'devin':
+      return DEVIN_DEFAULT_MODELS
     default:
       // NOTE the semantics: `[]` here means "this provider has no catalogue at
       // all", which is NOT the claim Pi's `[]` makes in App.tsx ("no upstream
@@ -687,6 +920,8 @@ function getStaticProviderDefaultModel(provider: StaticCatalogueProviderId): str
       return MISTRAL_DEFAULT_MODEL
     case 'muse':
       return MUSE_DEFAULT_MODEL
+    case 'devin':
+      return DEVIN_DEFAULT_MODEL
     default:
       // '' — never another provider's id, which is the precise damage this
       // whole block exists to prevent. An empty string is falsy at every
@@ -706,8 +941,10 @@ const CLAUDE_MODEL_IDS = new Set([
   'fable',
   'mythos',
   'custom',
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8-1m',
+  'claude-fable-5-1',
   'claude-fable-5',
   'claude-fable-5-1m',
   'claude-mythos-5',
@@ -774,6 +1011,9 @@ export {
   GROK_DEFAULT_MODELS,
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_DEFAULT_MODELS,
+  MUSE_DEFAULT_MODELS,
+  DEVIN_DEFAULT_MODEL,
+  DEVIN_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,

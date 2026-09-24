@@ -274,6 +274,33 @@ export interface ExecutionTenantRef {
   readonly tenantId?: string
 }
 
+/**
+ * The thread and seat answerable for a durable execution.
+ *
+ * Distinct from both neighbours it is easily confused with. `tenant`/`rootChatId`
+ * ASSOCIATE an execution with a thread; they never make that thread responsible
+ * for it. `anchorRunRef` points the other way down the dependency — the graph
+ * WAITS on that run — so it cannot express "this run answers for the graph".
+ *
+ * Ownership is mandatory: an execution with no live owner may not dispatch. See
+ * the owner-liveness gate in ExecutionGraphCoordinator.drainOne.
+ */
+export interface ExecutionOwnerRef {
+  /**
+   * Top-level chat that asked for the work and receives the result. This is
+   * the identity liveness is judged on: the thread outlives any single turn.
+   */
+  readonly threadId: string
+  /** Seat identity (`provider` or `provider:model`) accountable for the task. */
+  readonly seatId: string
+  /**
+   * The provider run whose turn invoked the tool, when an agent invoked it.
+   * Absent for user-authored graphs, which have an owning thread but no
+   * initiating agent turn. Its terminalization is never an ownership loss.
+   */
+  readonly initiatingRunId?: string
+}
+
 export type StepActivationState =
   | 'dormant'
   | 'ready'

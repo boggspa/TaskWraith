@@ -64,9 +64,12 @@ describe('main process bootstrap', () => {
         notifySecondInstance = listener
         return () => order.push('unsubscribe')
       }),
+      prepareMainProcess: vi.fn(async () => {
+        order.push('prepare')
+        notifySecondInstance?.(...earlyEvent)
+      }),
       loadMainProcess: vi.fn(async () => {
         order.push('load')
-        notifySecondInstance?.(...earlyEvent)
       }),
       replaySecondInstance: vi.fn((args) => {
         order.push('replay')
@@ -76,9 +79,63 @@ describe('main process bootstrap', () => {
 
     await expect(bootstrapMainProcess(deps)).resolves.toBe('primary')
 
-    expect(order).toEqual(['lock', 'subscribe', 'load', 'unsubscribe', 'replay'])
+    expect(order).toEqual(['lock', 'subscribe', 'prepare', 'load', 'unsubscribe', 'replay'])
     expect(deps.replaySecondInstance).toHaveBeenCalledOnce()
     expect(deps.quit).not.toHaveBeenCalled()
+  })
+
+  it('never prepares helper or losing-secondary processes', async () => {
+    const prepare = vi.fn()
+    const cleanup = vi.fn()
+    await bootstrapMainProcess(
+      dependencies({
+        isHelperProcess: true,
+        prepareMainProcess: prepare,
+        cleanupPreparedMainProcess: cleanup
+      })
+    )
+    await bootstrapMainProcess(
+      dependencies({
+        requestSingleInstanceLock: () => false,
+        prepareMainProcess: prepare,
+        cleanupPreparedMainProcess: cleanup
+      })
+    )
+    expect(prepare).not.toHaveBeenCalled()
+    expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it('cleans preparation failure without importing or replaying', async () => {
+    const error = new Error('prepare failed')
+    const cleanup = vi.fn()
+    const deps = dependencies({
+      prepareMainProcess: async () => {
+        throw error
+      },
+      cleanupPreparedMainProcess: cleanup
+    })
+    await expect(bootstrapMainProcess(deps)).rejects.toBe(error)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(deps.loadMainProcess).not.toHaveBeenCalled()
+    expect(deps.replaySecondInstance).not.toHaveBeenCalled()
+  })
+
+  it('cleans after load failure while preserving the original failure', async () => {
+    const error = new Error('load failed')
+    const cleanup = vi.fn(async () => {
+      throw new Error('cleanup\nfailed')
+    })
+    const deps = dependencies({
+      prepareMainProcess: vi.fn(),
+      cleanupPreparedMainProcess: cleanup,
+      loadMainProcess: async () => {
+        throw error
+      }
+    })
+    await expect(bootstrapMainProcess(deps)).rejects.toBe(error)
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('preparation cleanup failed'))
+    expect(deps.log).not.toHaveBeenCalledWith(expect.stringContaining('\n'))
   })
 
   it('removes the temporary listener when the main graph fails to load', async () => {
@@ -103,12 +160,35 @@ describe('main process bootstrap', () => {
       new URL('../../electron.vite.config.ts', import.meta.url),
       'utf8'
     )
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
+    )
 
     expect(entrySource.indexOf("import './devAppName'")).toBeLessThan(
       entrySource.indexOf("from 'electron'")
     )
+    expect(entrySource).toContain('createHostExternalPreparation')
+    expect(entrySource).toContain('migrateLegacyUserDataSync({')
+    expect(entrySource).toContain("migration.state === 'failed'")
+    expect(entrySource).toContain('new HostExternalSupervisor')
+    expect(entrySource).toContain('resolveHostExternalLaunch({')
+    expect(entrySource.indexOf('prepareMainProcess:')).toBeLessThan(
+      entrySource.indexOf("loadMainProcess: () => import('./index')")
+    )
+    expect(entrySource).toContain('cleanupPreparedMainProcess:')
+    expect(entrySource).toContain('const packaged = app.isPackaged')
+    expect(entrySource).toContain('resourcesPath: process.resourcesPath')
+    expect(entrySource).toContain('app.getAppPath() || process.cwd()')
+    expect(entrySource).toContain('process.env.npm_node_execpath')
+    expect(entrySource).toContain('process.env.NODE')
+    expect(entrySource).toContain("'tui-runtime'")
+    expect(entrySource).not.toContain('process.execPath')
+    expect(entrySource).not.toContain('ELECTRON_RUN_AS_NODE')
+    expect(entrySource).not.toMatch(/from ['"]\.\/index['"]|AppStore/)
     expect(entrySource).toContain("loadMainProcess: () => import('./index')")
     expect(viteConfigSource).toContain("index: resolve('src/main/bootstrap.ts')")
     expect(viteConfigSource).toContain("chunkFileNames: '[name]-[hash].js'")
+    expect(packageJson.scripts.dev).toContain('host:build')
+    expect(packageJson.scripts.dev).toContain('electron-vite dev')
   })
 })

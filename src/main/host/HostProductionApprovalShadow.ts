@@ -22,7 +22,7 @@
  */
 
 import type { HostApprovalProjection } from '../../shared/hostProtocol'
-import type { HostProductionApprovalListPort } from './HostProductionSuppliers'
+import type { HostProductionApprovalListPort } from '../../host-runtime/HostProductionSuppliers'
 
 /**
  * Sentinel commandId prefix for AppStore-shadow rows.

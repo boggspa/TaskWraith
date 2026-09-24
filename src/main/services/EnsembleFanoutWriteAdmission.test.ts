@@ -1,5 +1,48 @@
 import { describe, expect, it } from 'vitest'
-import { evaluateEnsembleFanoutWriteAdmission } from './EnsembleFanoutWriteAdmission'
+import {
+  evaluateEnsembleFanoutWriteAdmission,
+  resolveEnsembleFanoutLaneIntent
+} from './EnsembleFanoutWriteAdmission'
+
+describe('resolveEnsembleFanoutLaneIntent', () => {
+  it('keeps ordinary read-only passes reader-intent without demoting seat permissions', () => {
+    expect(
+      resolveEnsembleFanoutLaneIntent({
+        mode: 'read_only',
+        permissionReadOnly: false
+      })
+    ).toBe('read')
+  })
+
+  it('derives write intent only for an explicitly authorized own-posture route', () => {
+    expect(
+      resolveEnsembleFanoutLaneIntent({
+        mode: 'read_only',
+        permissionReadOnly: false,
+        deriveLaneIntentFromPermissions: true
+      })
+    ).toBe('write')
+  })
+
+  it('keeps read-only seats reader-intent in every mode', () => {
+    expect(
+      resolveEnsembleFanoutLaneIntent({
+        mode: 'locked_writers',
+        permissionReadOnly: true,
+        deriveLaneIntentFromPermissions: true
+      })
+    ).toBe('read')
+  })
+
+  it('derives writer intent for writable seats in locked-writer mode', () => {
+    expect(
+      resolveEnsembleFanoutLaneIntent({
+        mode: 'locked_writers',
+        permissionReadOnly: false
+      })
+    ).toBe('write')
+  })
+})
 
 describe('evaluateEnsembleFanoutWriteAdmission', () => {
   it('admits reader lanes and scoped writer lanes', () => {

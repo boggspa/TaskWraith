@@ -26,22 +26,27 @@ import {
 } from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V4_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isMeshTopologyDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from './mcp/McpSessionProfileFence'
 import {
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
+  GEMINI_MCP_SOLO_SUBSET_ARG,
   GEMINI_MCP_SKETCH_DIRECT_ARG
 } from './mcp/McpBridgeRuntime'
-import type { TaskWraithMcpProfileId } from './store/types'
+import { hasUltraTaskDelegationAutoAllow } from './UltraTaskDelegationConsent'
+import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from './store/types'
 
 /**
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
@@ -65,6 +70,10 @@ export const CLAUDE_TASKWRAITH_SERVER_NAME = 'TaskWraith'
 
 export interface ClaudeTaskWraithMcpInput {
   enabled: boolean
+  /** Main-verified bridge command availability; consent cannot manufacture transport. */
+  bridgeAvailable?: boolean
+  /** Main-resolved, signature-verified run posture. */
+  effectivePermissions?: EffectiveRunPermissions | null
   /** Exact main-resolved catalog pinned to this Claude native session. */
   profileId?: TaskWraithMcpProfileId
   /** Absolute path of the TaskWraith binary that hosts the MCP bridge. */
@@ -77,6 +86,18 @@ export interface ClaudeTaskWraithMcpInput {
   appRunId?: string
   appChatId?: string
   workspacePath?: string
+}
+
+/**
+ * UltraTask is an explicit run-scoped opt-in to TaskWraith delegation. It may
+ * attach only the app-owned broker; user-managed MCP servers retain their
+ * ordinary Claude permission behavior.
+ */
+export function claudeTaskWraithMcpEnabled(input: ClaudeTaskWraithMcpInput): boolean {
+  return (
+    input.enabled ||
+    (input.bridgeAvailable === true && hasUltraTaskDelegationAutoAllow(input.effectivePermissions))
+  )
 }
 
 /**
@@ -141,7 +162,7 @@ export function buildClaudeTaskWraithMcpServers(
   input: ClaudeTaskWraithMcpInput
 ): ClaudeTaskWraithMcpServers | null {
   const servers: ClaudeTaskWraithMcpServers = {}
-  if (input.enabled) {
+  if (claudeTaskWraithMcpEnabled(input)) {
     servers[CLAUDE_TASKWRAITH_SERVER_NAME] = {
       type: 'stdio',
       command: input.bridgeBinaryPath,
@@ -182,14 +203,17 @@ function claudeTaskWraithBridgeArgsForProfile(
     (arg) =>
       arg !== TASKWRAITH_MCP_CORE_SUBSET_ARG &&
       arg !== TASKWRAITH_MCP_GATEWAY_SUBSET_ARG &&
+      arg !== GEMINI_MCP_SOLO_SUBSET_ARG &&
       arg !== GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG &&
       arg !== GEMINI_MCP_MESH_DIRECT_ARG &&
       arg !== GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG &&
       arg !== GEMINI_MCP_SKETCH_DIRECT_ARG &&
-      arg !== GEMINI_MCP_ORCHESTRATION_DIRECT_ARG
+      arg !== GEMINI_MCP_ORCHESTRATION_DIRECT_ARG &&
+      arg !== GEMINI_MCP_COMPUTER_USE_DIRECT_ARG
   )
   if (isCoreTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_CORE_SUBSET_ARG)
   if (isGatewayTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+  if (isSoloTaskWraithMcpProfile(profileId)) args.push(GEMINI_MCP_SOLO_SUBSET_ARG)
   if (isPortableEnsembleControlMcpProfile(profileId)) {
     args.push(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
   }
@@ -205,15 +229,16 @@ function claudeTaskWraithBridgeArgsForProfile(
   if (isGatewayV13DirectTaskWraithMcpProfile(profileId)) {
     args.push(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
   }
+  if (profileId === TASKWRAITH_FULL_V4_MCP_PROFILE_ID) {
+    args.push(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
+  }
   return args
 }
 
 function claudeTaskWraithToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
-  return taskWraithMcpAdvertisedToolNamesForProfile(
-    profileId ?? TASKWRAITH_FULL_MCP_PROFILE_ID
-  )
+  return taskWraithMcpAdvertisedToolNamesForProfile(profileId ?? TASKWRAITH_FULL_MCP_PROFILE_ID)
 }
 
 function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<string, string> {
@@ -277,9 +302,10 @@ export function extendClaudeCliArgsWithTaskWraithMcp(
   baseArgs: string[],
   input: ClaudeTaskWraithCliArgsInput
 ): string[] {
-  if (!input.enabled && (input.userMcpServers?.length ?? 0) === 0) return [...baseArgs]
+  const taskWraithEnabled = claudeTaskWraithMcpEnabled(input)
+  if (!taskWraithEnabled && (input.userMcpServers?.length ?? 0) === 0) return [...baseArgs]
   const extended = [...baseArgs, '--mcp-config', input.configFilePath]
-  const allowed = input.enabled
+  const allowed = taskWraithEnabled
     ? buildClaudeTaskWraithAllowedToolNames(input.profileId ?? TASKWRAITH_FULL_MCP_PROFILE_ID)
     : []
   if (allowed.length > 0) {

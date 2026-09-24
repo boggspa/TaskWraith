@@ -1,7 +1,8 @@
 import os from 'os'
-import type { ChatMessage, ChatRecord } from '../store/types'
+import type { ChatMessage, ChatRecord, ToolActivity } from '../store/types'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { isEnsembleParticipantAuthoredMessage } from '../../shared/ensembleParticipantMessage'
+import { isMcpTransportWrapperActivity } from '../../shared/toolInvocationPresentation'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import {
   humanCollaboratorMetadata,
@@ -216,11 +217,31 @@ function buildProjectableRows(
   const historyFloor =
     share.fullHistory === true ? 0 : typeof share.createdAt === 'number' ? share.createdAt : 0
   return (chat.messages || []).filter((message) => {
-    if (!message?.id || isRetiredExternalChannelInboundMessage(message)) return false
+    if (
+      !message?.id ||
+      isRetiredExternalChannelInboundMessage(message) ||
+      isMcpWrapperOnlyToolMessage(message)
+    ) {
+      return false
+    }
     if (historyFloor <= 0) return true
     const at = Date.parse(message.timestamp ?? '')
     return Number.isFinite(at) && at >= historyFloor
   })
+}
+
+function presentableToolActivities(message: ChatMessage): ToolActivity[] {
+  const activities = Array.isArray(message.toolActivities) ? message.toolActivities : []
+  return activities.filter((activity) => !isMcpTransportWrapperActivity(activity))
+}
+
+function isMcpWrapperOnlyToolMessage(message: ChatMessage): boolean {
+  const rawActivities = Array.isArray(message.toolActivities) ? message.toolActivities : []
+  return (
+    message.role === 'tool' &&
+    rawActivities.length > 0 &&
+    rawActivities.every(isMcpTransportWrapperActivity)
+  )
 }
 
 export function buildHumanShareProjection(
@@ -410,10 +431,9 @@ function byteLength(value: unknown): number {
  * later cannot leak through this function by default.
  */
 function projectToolActivities(
-  message: ChatMessage,
+  activities: readonly ToolActivity[],
   workspacePath?: string
 ): HumanShareProjectionToolRow[] {
-  const activities = Array.isArray(message.toolActivities) ? message.toolActivities : []
   return activities.slice(0, 24).map((activity) => {
     const diff = activity.diffSummary
     const failed = activity.status === 'error'
@@ -563,8 +583,8 @@ function projectRow(
     // faded, italic, EMPTY box per tool call, which reads as a broken or
     // censored row. `tools` is the structured form for a client that knows the
     // v2 vocabulary; this is the same facts as text, for everyone else.
-    const activities = Array.isArray(message.toolActivities) ? message.toolActivities : []
-    const tools = projectToolActivities(message, opts.workspacePath)
+    const activities = presentableToolActivities(message)
+    const tools = projectToolActivities(activities, opts.workspacePath)
     return {
       id: message.id,
       role: 'placeholder',

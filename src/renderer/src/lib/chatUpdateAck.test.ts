@@ -31,17 +31,19 @@ describe('buildChatUpdateAck', () => {
     ).toEqual({ deliveryId: 'd1', applied: false })
   })
 
-  it('enriches successful ACKs with revision + recordHash from the delivery', () => {
+  it('does not echo the delivery producer hash', () => {
+    const appliedChat = chat(['hello'])
     expect(
       buildChatUpdateAck({
         delivery: { deliveryId: 'd2', revision: 7, recordHash: 'deadbeef' },
-        applied: true
+        applied: true,
+        appliedChat
       })
     ).toEqual({
       deliveryId: 'd2',
       applied: true,
       revision: 7,
-      recordHash: 'deadbeef'
+      recordHash: computeChatSubRevisions(appliedChat).recordHash
     })
   })
 
@@ -57,6 +59,50 @@ describe('buildChatUpdateAck', () => {
       applied: true,
       revision: 4,
       recordHash: computeChatSubRevisions(appliedChat).recordHash
+    })
+  })
+
+  it('prefers an explicit appliedRecordHash over the applied chat', () => {
+    expect(
+      buildChatUpdateAck({
+        delivery: { deliveryId: 'd4', revision: 8, recordHash: 'deadbeef' },
+        applied: true,
+        appliedChat: chat(['hello']),
+        appliedRecordHash: 'applied-hash'
+      })
+    ).toEqual({
+      deliveryId: 'd4',
+      applied: true,
+      revision: 8,
+      recordHash: 'applied-hash'
+    })
+  })
+
+  it('echoes delivery and renderer epochs with the applied transcript digest', () => {
+    expect(
+      buildChatUpdateAck({
+        delivery: {
+          deliveryId: 'd5',
+          revision: 9,
+          chatId: 'chat-1',
+          deliveryEpoch: 12
+        },
+        applied: true,
+        phase: 'accepted',
+        rendererEpoch: 'renderer-1',
+        appliedRecordHash: 'record-1',
+        appliedTranscriptHash: 'transcript-1'
+      })
+    ).toEqual({
+      deliveryId: 'd5',
+      applied: true,
+      phase: 'accepted',
+      chatId: 'chat-1',
+      deliveryEpoch: 12,
+      rendererEpoch: 'renderer-1',
+      revision: 9,
+      recordHash: 'record-1',
+      transcriptHash: 'transcript-1'
     })
   })
 })

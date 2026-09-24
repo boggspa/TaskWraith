@@ -400,4 +400,59 @@ describe('RunManager', () => {
     )
     expect(manager.get('run-1')?.status).toBe('running')
   })
+
+  it('retains every queued steer waiting for the same next tool boundary', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'active-1', provider: 'claude', status: 'running' })
+
+    expect(manager.armKillAfterToolResult('active-1', 'queued-1')).toBe(true)
+    expect(manager.armKillAfterToolResult('active-1', 'queued-2')).toBe(true)
+    expect(manager.armKillAfterToolResult('active-1', 'queued-1')).toBe(true)
+
+    expect(manager.getInterruptState('active-1')).toMatchObject({
+      killAfterToolResult: true,
+      pendingBoundarySteerRunIds: ['queued-1', 'queued-2']
+    })
+    expect(manager.consumeKillAfterToolResult('active-1')).toEqual({
+      armed: true,
+      queuedRunIds: ['queued-1', 'queued-2']
+    })
+    expect(manager.getInterruptState('active-1')).toEqual({
+      interruptRequestedAt: undefined,
+      killAfterToolResult: undefined,
+      pendingBoundarySteerRunIds: undefined
+    })
+  })
+
+  it('disarms only the failed queued steer while another boundary steer remains', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'active-1', provider: 'codex', status: 'running' })
+    manager.armKillAfterToolResult('active-1', 'queued-1')
+    manager.armKillAfterToolResult('active-1', 'queued-2')
+
+    expect(manager.disarmKillAfterToolResult('active-1', 'queued-1')).toBe(true)
+    expect(manager.getInterruptState('active-1')).toMatchObject({
+      killAfterToolResult: true,
+      pendingBoundarySteerRunIds: ['queued-2']
+    })
+    expect(manager.disarmKillAfterToolResult('active-1', 'queued-2')).toBe(true)
+    expect(manager.consumeKillAfterToolResult('active-1')).toEqual({
+      armed: false,
+      queuedRunIds: []
+    })
+  })
+
+  it('clears pending boundary steers when their active run terminalizes', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'active-1', provider: 'muse', status: 'running' })
+    manager.armKillAfterToolResult('active-1', 'queued-1')
+
+    manager.finish('active-1', 'completed')
+
+    expect(manager.get('active-1')?.pendingBoundarySteerRunIds).toBeUndefined()
+    expect(manager.consumeKillAfterToolResult('active-1')).toEqual({
+      armed: false,
+      queuedRunIds: []
+    })
+  })
 })

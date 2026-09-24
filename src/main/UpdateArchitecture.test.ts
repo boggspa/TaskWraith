@@ -88,6 +88,9 @@ describe('UpdateArchitecture', () => {
   it('uses arch-specific Windows update channels', () => {
     expect(windowsUpdateChannelForHost('stable', 'x64')).toBe('latest-win-x64')
     expect(windowsUpdateChannelForHost('nightly', 'arm64')).toBe('beta-win-arm64')
+    expect(windowsUpdateChannelForHost('stable', 'arm64', 'release')).toBe(
+      'release-win-arm64'
+    )
   })
 
   it('rejects arm64 Windows artifacts on x64 hosts', () => {

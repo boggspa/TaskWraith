@@ -8,7 +8,7 @@ import type {
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
-import { resolvePaneOpacityFactor } from './useAppearance'
+import { resolveAccentTokens, resolvePaneOpacityFactor } from './useAppearance'
 import { DEFAULT_THEME_ACCENT_COLOR } from '../../../shared/themeAccentColor'
 
 describe('Appearance settings validation', () => {
@@ -58,5 +58,59 @@ describe('Appearance settings validation', () => {
     expect(resolvePaneOpacityFactor(42, true)).toBe(1)
     expect(resolvePaneOpacityFactor(140, false)).toBe(1)
     expect(resolvePaneOpacityFactor(-10, false)).toBe(0)
+  })
+})
+
+describe('resolveAccentTokens', () => {
+  it('sends the OS accent to --accent and the picked colour to the bubble', () => {
+    const tokens = resolveAccentTokens({
+      systemAccentColor: '1e90ffff',
+      messageBubbleColor: '#2F6B4F'
+    })
+
+    expect(tokens.accent).toBe('#1E90FF')
+    expect(tokens.messageBubbleAccent).toBe('#2F6B4F')
+  })
+
+  it('keeps the two colours independent', () => {
+    // The whole point of the split: the bubble must not follow the desktop's
+    // accent, and the desktop's accent must not follow the bubble.
+    const green = resolveAccentTokens({
+      systemAccentColor: '#1E90FF',
+      messageBubbleColor: '#2F6B4F'
+    })
+    const red = resolveAccentTokens({
+      systemAccentColor: '#1E90FF',
+      messageBubbleColor: '#8B1E3F'
+    })
+
+    expect(green.accent).toBe(red.accent)
+    expect(green.messageBubbleAccent).not.toBe(red.messageBubbleAccent)
+    expect(green.accent).not.toBe(green.messageBubbleAccent)
+  })
+
+  it('derives the accent hover from the OS accent, not the bubble', () => {
+    const tokens = resolveAccentTokens({
+      systemAccentColor: '#1E90FF',
+      messageBubbleColor: '#2F6B4F'
+    })
+
+    expect(tokens.accentHover).toBe('color-mix(in srgb, #1E90FF 78%, white)')
+    expect(tokens.accentHover).not.toContain('#2F6B4F')
+  })
+
+  it('yields no accent at all when the host reports none', () => {
+    // null means "apply nothing", so the active theme's own --accent stands.
+    // A stand-in colour here would outrank every [data-theme] block forever.
+    for (const missing of [null, undefined, '', 'not-a-color']) {
+      const tokens = resolveAccentTokens({
+        systemAccentColor: missing,
+        messageBubbleColor: '#2F6B4F'
+      })
+      expect(tokens.accent).toBeNull()
+      expect(tokens.accentHover).toBeNull()
+      // The bubble still gets its colour — it has no OS source to lose.
+      expect(tokens.messageBubbleAccent).toBe('#2F6B4F')
+    }
   })
 })

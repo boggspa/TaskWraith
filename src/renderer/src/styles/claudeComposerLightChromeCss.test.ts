@@ -34,15 +34,32 @@ describe('Claude composer light chrome', () => {
     expect(section).toContain('backdrop-filter: none !important;')
   })
 
-  it('gives the textarea/send frame a light-mode rim and subtle shadow', () => {
+  it('gives the textarea/send frame the Claude Desktop light palette: white fill, black 10% inset ring, 25% on focus', () => {
     const section = readClaudeLightSection()
 
-    expect(section).toContain('background: #ffffff !important;')
-    expect(section).toContain('border-color: rgba(29, 29, 31, 0.14) !important;')
-    expect(section).toContain('0 1px 2px rgba(18, 21, 27, 0.06),')
-    expect(section).toContain('0 4px 14px rgba(18, 21, 27, 0.05) !important;')
+    // The light frame is the light palette block of the Claude Desktop parity
+    // section (same shard, below the above-row family), consumed by the
+    // shared box rule through Claude-local custom properties.
+    const lightPalette = section.slice(section.indexOf('/* Palette — light family */'))
+    expect(lightPalette).toContain(
+      ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]\n  .app-transcript\n  .composer-surface {'
+    )
+    expect(lightPalette).toContain('--claude-cc-box-bg: #ffffff;')
+    expect(lightPalette).toContain('--claude-cc-box-ring: rgba(0, 0, 0, 0.1);')
+    expect(lightPalette).toContain('--claude-cc-box-ring-focus: rgba(0, 0, 0, 0.25);')
+    expect(lightPalette).toContain('--claude-cc-box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);')
+    expect(lightPalette).toContain('--claude-cc-text: #0b0b0b;')
+    expect(lightPalette).toContain('--claude-cc-text-secondary: #52514e;')
+    expect(lightPalette).toContain('--claude-cc-text-muted: #898781;')
+
+    expect(section).toContain('background: var(--claude-cc-box-bg) !important;')
+    expect(section).toContain('inset 0 0 0 1px var(--claude-cc-box-ring),')
     expect(section).toContain('.composer-surface:focus-within\n  .composer-textarea {')
-    expect(section).toContain('border-color: rgba(29, 29, 31, 0.25) !important;')
+    expect(section).toContain('inset 0 0 0 1px var(--claude-cc-box-ring-focus),')
+
+    // The pre-parity light frame (rimmed border + two-layer drop shadow) is gone.
+    expect(section).not.toContain('border-color: rgba(29, 29, 31, 0.14) !important;')
+    expect(section).not.toContain('0 4px 14px rgba(18, 21, 27, 0.05) !important;')
   })
 
   it('darkens orchestration labels across light composer shells', () => {

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
+import { editorHighlightStyleRules } from './highlightCodeLines'
 import {
   DiffDetail,
   diffDetailHeaderSummary,
@@ -192,6 +193,8 @@ afterEach(() => {
   }
 })
 
+const visibleDiffText = (html: string): string => html.replace(/<[^>]+>/g, '')
+
 describe('DiffViewer large diff safety', () => {
   it('server-renders only the initial virtual window and shows truncation controls', () => {
     const html = renderToStaticMarkup(
@@ -210,13 +213,16 @@ describe('DiffViewer large diff safety', () => {
     expect(html).toContain('class="diff-lines-truncated"')
     expect(html).toContain('role="note"')
     expect(html).toContain('class="diff-lines-virtualization-note" role="note"')
-    expect(html).toContain('Windowing 60 of 2,501 rows')
+    expect(html).toContain('Windowing 60 of 2,497 rows')
     expect(html).toContain('showing 1-60')
     expect(html).toContain('Showing first 2,500 lines')
     expect(html).toContain('504 more omitted')
     expect(html).toContain('Show 504 more')
     expect(html).not.toContain('+line 2499')
     expect(html).not.toContain('+line 2999')
+    expect(html).not.toContain('diff --git')
+    expect(html).toContain('class="diff-line-marker"')
+    expect(visibleDiffText(html)).toContain('line 0000')
   })
 
   it('does not show renderer truncation for a complete small diff', () => {
@@ -263,6 +269,47 @@ describe('DiffViewer large diff safety', () => {
     expect(html).toContain('Preview capped before rendering.')
     expect(html).toContain('42 source lines were omitted.')
     expect(html).not.toContain('Showing first')
+  })
+})
+
+describe('DiffViewer editor-style presentation', () => {
+  it('hides unified-diff chrome and syntax-highlights TypeScript source', () => {
+    const rules = editorHighlightStyleRules()
+    const keywordClass = rules.match(
+      /\.([\w\u0370-\u03ff]+)\s*\{[^}]*color:\s*var\(--cm-keyword\)/
+    )?.[1]
+    expect(keywordClass).toBeTruthy()
+
+    const html = renderToStaticMarkup(
+      <DiffViewer
+        diff={{
+          type: 'changes',
+          summaries: [
+            makeSummary(
+              [
+                'diff --git a/src/example.ts b/src/example.ts',
+                'index 1111111..2222222 100644',
+                '--- a/src/example.ts',
+                '+++ b/src/example.ts',
+                '@@ -1,1 +1,2 @@',
+                ' const keep = true',
+                '+const added = "ok"'
+              ].join('\n'),
+              { path: 'src/example.ts', additions: 1, deletions: 0 }
+            )
+          ]
+        }}
+      />
+    )
+
+    expect(html).not.toContain('diff --git')
+    expect(html).not.toContain('index 1111111')
+    expect(html).not.toContain('+const added')
+    expect(visibleDiffText(html)).toContain('const added')
+    expect(html).toContain('class="diff-line-marker"')
+    expect(html).not.toContain('class="diff-lines-column-header inline"')
+    expect(html).not.toContain('class="diff-line-gutter old"')
+    expect(html).toContain(`class="${keywordClass}">const</span>`)
   })
 })
 
@@ -650,7 +697,7 @@ describe('DiffDetail', () => {
     expect(html).toContain('Original')
     expect(html).toContain('Modified')
     expect(html).toContain('class="diff-line-split')
-    expect(html).toContain('detail line')
+    expect(visibleDiffText(html)).toContain('detail line')
   })
 
   it('widens diff gutters for high line numbers', () => {
@@ -676,6 +723,7 @@ describe('DiffDetail', () => {
       />
     )
 
+    expect(html).toContain('--diff-gutter-width:8ch')
     expect(html).toContain('--diff-old-gutter-width:8ch')
     expect(html).toContain('--diff-new-gutter-width:8ch')
     expect(html).toContain('100000')
@@ -736,7 +784,8 @@ describe('DiffViewer changed-file rail virtualization', () => {
     expect(railMarkup).toContain('<span>Unstaged</span><small>450</small>')
     expect(html).toContain('class="diff-detail"')
     expect(html).toContain('src/unstaged/file-000.ts')
-    expect(html).toContain('+selected rail detail')
+    expect(visibleDiffText(html)).toContain('selected rail detail')
+    expect(html).not.toContain('+selected rail detail')
     expect(html).not.toContain('src/unstaged/file-449.ts')
     expect(html).not.toContain('src/staged/file-249.ts')
   })

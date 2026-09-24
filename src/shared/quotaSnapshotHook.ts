@@ -5,7 +5,16 @@
  * cross the main-process boundary.
  */
 
-export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = ['deepseek', 'cerebras', 'meta'] as const
+export const QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS = [
+  'deepseek',
+  'cerebras',
+  'meta',
+  'muse',
+  'mimo',
+  'qwen',
+  'openrouter',
+  'devin'
+] as const
 
 export type QuotaSnapshotHookProviderId = (typeof QUOTA_SNAPSHOT_HOOK_PROVIDER_IDS)[number]
 

@@ -1,0 +1,16 @@
+extends: electron-builder.yml
+appId: com.taskwraith.desktop
+generateUpdatesFilesForAllChannels: false
+directories:
+  output: dist-debut
+extraMetadata:
+  version: 0.1.0
+  taskwraithDistributionIdentity: release
+  taskwraithAppId: com.taskwraith.desktop
+  taskwraithUpdateFeedChannel: release
+publish:
+  provider: github
+  owner: boggspa
+  repo: TaskWraith
+  releaseType: release
+  channel: release

@@ -153,6 +153,7 @@ export function providerLabel(provider: ProviderId): string {
   if (provider === 'pi') return 'Pi'
   if (provider === 'mistral') return 'Mistral'
   if (provider === 'muse') return 'Muse'
+  if (provider === 'devin') return 'Devin'
   return 'Gemini'
 }
 
@@ -277,7 +278,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan', 'default'],
         reasoningEffort: true,
         speedTiers: [],
-        imageAttachments: false,
+        // The neutral ACP client negotiates promptCapabilities.image against
+        // this exact runtime before forwarding any main-authorized image.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,
@@ -358,7 +361,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan'],
         reasoningEffort: false,
         speedTiers: [],
-        imageAttachments: false,
+        // The exact model's /api/show capabilities negotiate vision before
+        // TaskWraith adds an ordered REST messages[].images array.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,
@@ -392,7 +397,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         // effort picker.
         reasoningEffort: false,
         speedTiers: [],
-        imageAttachments: false,
+        // RPC carries image content blocks. The dispatch gate additionally
+        // requires the selected Pi catalog row to declare image input.
+        imageAttachments: true,
         contextInjection: false,
         sessionResumption: true,
         perThreadMcp: true,
@@ -411,21 +418,25 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'muse') {
-    // Opaque muse exec --json seat. No TaskWraith MCP broker in v1; containment
-    // is argv + isolated HOME/XDG + skill pin (src/main/muse/*). Keep this
-    // branch honest — falling through to the Claude default mis-labels transport.
+    // Opaque muse exec --json seat. Its TaskWraith broker is injected into the
+    // disposable HOME/XDG settings document, while native Muse tools retain
+    // their provider-owned containment.
     return {
       provider,
       label: providerLabel(provider),
       transport: 'muse-exec-json',
       runChannel: 'run-agent',
-      capabilitySource: 'provider',
+      capabilitySource: 'mixed',
       features: {
         persistentSessions: true,
-        appManagedApprovals: false,
+        // MSP seats ask TaskWraith per tool (`onRequest` -> requestApproval ->
+        // ApprovalOrchestration). The exec fallback has no wire-approval plane
+        // and relies on the host sandbox, so a seat pinned to
+        // TASKWRAITH_MUSE_MSP=0 is sandbox-governed rather than card-governed.
+        appManagedApprovals: true,
         workspaceGrants: false,
-        agentBenchMcpBridge: false,
-        providerManagedMcp: false,
+        agentBenchMcpBridge: true,
+        providerManagedMcp: true,
         nativeThreadTools: true,
         hostCommandFallback: false
       },
@@ -433,20 +444,23 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['plan', 'default'],
         reasoningEffort: true,
         speedTiers: [],
-        imageAttachments: false,
+        // MSP `TurnInputPart` image parts. Gated on the transport in
+        // ProviderImageAttachmentSupport, which is what actually decides
+        // delivery; the exec fallback cannot carry images and warns instead.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: true,
-        perThreadMcp: false,
+        perThreadMcp: true,
         assistantTextStreaming: 'token'
       },
       capabilityCaveats: [
         {
-          id: 'muse-opaque-cli-no-tw-mcp',
+          id: 'muse-opaque-cli-brokered-mcp',
           severity: 'info',
           capability: 'approvalModes',
-          title: 'Muse is an opaque CLI seat',
+          title: 'Muse uses an isolated, brokered MCP bridge',
           message:
-            'Muse runs via `muse exec --json` under an isolated home. Native tool calls are projected into the transcript ActivityStack from durable session.jsonl for display. TaskWraith does not attach an MCP broker in v1 and does not show host per-tool approval cards for Muse-native effects — containment remains argv/sandbox + isolated home.'
+            'Muse runs a `muse serve` MSP session host under an isolated per-chat home. TaskWraith writes its route-bound stdio MCP broker into that home before launch, and the home is reduced to session continuity at both ends of every turn, so a broker credential never outlives the run that minted it. Native Muse tool calls are raised as TaskWraith approval cards on this transport. On a Muse CLI older than 1.0.3 the turn falls back to `muse exec --json`, which has no wire-approval plane and is governed by the provider sandbox instead.'
         }
       ]
     }
@@ -471,16 +485,63 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         approvalModes: ['default', 'plan'],
         reasoningEffort: true,
         speedTiers: [],
-        // Per-model: mistral-medium-3.5 supports vision, devstral-small (the
-        // default) does not. Keep provider-level false until the contract
-        // becomes per-model; flipping true would advertise an affordance the
-        // default model cannot deliver. See StaticProviderModels.ts.
-        imageAttachments: false,
+        // Capability is negotiated from the exact Vibe ACP initialize result;
+        // non-vision models reject visibly before session/prompt.
+        imageAttachments: true,
         contextInjection: true,
         sessionResumption: false,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       }
+    }
+  }
+  if (provider === 'devin') {
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'devin-acp',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: false,
+        // TRUE on the Synara-verified evidence that `devin acp` surfaces every
+        // tool execution as an ACP session/request_permission event, so each
+        // call is answered by TaskWraith's approval ledger rather than a
+        // provider-side allowlist. Source-verified, not yet live-measured: if
+        // a live trace ever shows a tool executing WITHOUT a permission
+        // request, this flag, the run-management declaration, and the MCP
+        // advertise gate must change together.
+        appManagedApprovals: true,
+        workspaceGrants: true,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['default', 'plan'],
+        // The CLI encodes the reasoning level in the variant uid; TaskWraith's
+        // effort control folds into `--model <family>-<level>` at dispatch
+        // (shared devinModelCatalog.ts resolveDevinVariantId).
+        reasoningEffort: true,
+        speedTiers: [],
+        imageAttachments: false,
+        contextInjection: true,
+        // Every turn opens a fresh session/new. Nothing resumes.
+        sessionResumption: false,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      },
+      capabilityCaveats: [
+        {
+          id: 'devin-broker-advertise-unmeasured',
+          severity: 'info',
+          capability: 'approvalModes',
+          title: 'Devin TaskWraith MCP advertise is gated off pending live measurement',
+          message:
+            'Devin runs `devin acp` over stdio and surfaces tool executions as ACP permission requests, which TaskWraith answers through its approval ledger. Advertising TaskWraith MCP tools to the session stays default-OFF (TASKWRAITH_DEVIN_MCP) until a live trace confirms the permission-request coverage the approval-gateway declaration is predicated on.'
+        }
+      ]
     }
   }
   if (provider === 'antigravity') {

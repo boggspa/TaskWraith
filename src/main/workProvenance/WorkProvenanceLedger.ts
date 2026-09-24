@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
@@ -19,6 +20,8 @@ const MAX_EVENT_FILE_BYTES = 1024 * 1024
 const GIT_TIMEOUT_MS = 4_000
 const GIT_MAX_BUFFER = 32 * 1024 * 1024
 export const WORK_PROVENANCE_OPERATION_TIMEOUT_MS = 1_500
+
+const workProvenanceAbortContext = new AsyncLocalStorage<AbortSignal>()
 
 export type WorkProvenanceConfidence =
   | 'exact'
@@ -203,6 +206,26 @@ interface RunGitResult {
   stdout: string
 }
 
+class WorkProvenancePersistenceQueue {
+  private tail: Promise<void> = Promise.resolve()
+
+  async run<T>(signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
+    const predecessor = this.tail.catch(() => undefined)
+    let releaseSlot!: () => void
+    const slot = new Promise<void>((resolveSlot) => {
+      releaseSlot = resolveSlot
+    })
+    this.tail = predecessor.then(() => slot)
+    try {
+      await waitForWorkProvenancePromise(predecessor, signal)
+      throwIfWorkProvenanceAborted(signal)
+      return await operation()
+    } finally {
+      releaseSlot()
+    }
+  }
+}
+
 /**
  * Best-effort, authority-free edit accountability.
  *
@@ -217,6 +240,7 @@ export class WorkProvenanceRecorder {
   private readonly logError?: (scope: string, error: unknown) => void
   private readonly maxObservedDirtyPaths: number
   private readonly activeObservedRuns = new Map<string, ActiveObservedRun>()
+  private readonly persistenceQueue = new WorkProvenancePersistenceQueue()
 
   constructor(options: WorkProvenanceRecorderOptions = {}) {
     this.now = options.now || (() => new Date())
@@ -231,37 +255,45 @@ export class WorkProvenanceRecorder {
   async beginBrokeredMutation(
     input: BeginBrokeredMutationInput
   ): Promise<WorkProvenanceOperation | null> {
+    const signal = currentWorkProvenanceAbortSignal()
     try {
-      const workspace = await resolveWorkProvenanceWorkspace(input.workspacePath)
+      throwIfWorkProvenanceAborted(signal)
+      const workspace = await resolveWorkProvenanceWorkspace(input.workspacePath, signal)
       if (!workspace) return null
       const actor = normalizeActor(input.actor)
       const targets = uniqueTargets(input.targets)
       if (targets.length > 0) {
         const planned: Array<{ target: WorkProvenanceTarget; relativePath: string }> = []
         for (const target of targets) {
-          const relativePath = await repositoryRelativePath(workspace.root, target.path)
+          throwIfWorkProvenanceAborted(signal)
+          const relativePath = await repositoryRelativePath(workspace.root, target.path, signal)
           if (!relativePath || isGitMetadataPath(relativePath)) continue
           planned.push({ target, relativePath })
         }
         if (planned.length === 0) return null
         const dirtyBefore = await captureDirtyTargetPaths(
           workspace,
-          planned.map((entry) => entry.relativePath)
+          planned.map((entry) => entry.relativePath),
+          signal
         )
         const baselines: ExactBaseline[] = []
         for (const entry of planned) {
           baselines.push({
             ...entry,
-            before: await fingerprintPath(resolve(workspace.root, entry.relativePath)),
+            before: await fingerprintPath(resolve(workspace.root, entry.relativePath), signal),
             // A failed Git sample must weaken attribution, never silently award
             // pre-existing bytes to the new exact operation.
             preexistingDirty: dirtyBefore === null || dirtyBefore.has(entry.relativePath)
           })
         }
-        return oneShotOperation(async (outcome) => {
+        return oneShotOperation(async (outcome, captureSignal) => {
           const events: WorkProvenanceOriginEvent[] = []
           for (const baseline of baselines) {
-            const after = await fingerprintPath(resolve(workspace.root, baseline.relativePath))
+            throwIfWorkProvenanceAborted(captureSignal)
+            const after = await fingerprintPath(
+              resolve(workspace.root, baseline.relativePath),
+              captureSignal
+            )
             if (sameFingerprint(baseline.before, after)) continue
             const stable = after.state !== 'unstable' && after.state !== 'unreadable'
             events.push(
@@ -288,14 +320,19 @@ export class WorkProvenanceRecorder {
               })
             )
           }
+          throwIfWorkProvenanceAborted(captureSignal)
           return events.length ? { workspace, events } : null
         }, this.logError)
       }
 
       if (!input.observeWorkspaceWhenUnscoped) return null
-      const before = await captureDirtyWorkspace(workspace, this.maxObservedDirtyPaths)
-      return oneShotOperation(async (outcome) => {
-        const after = await captureDirtyWorkspace(workspace, this.maxObservedDirtyPaths)
+      const before = await captureDirtyWorkspace(workspace, this.maxObservedDirtyPaths, signal)
+      return oneShotOperation(async (outcome, captureSignal) => {
+        const after = await captureDirtyWorkspace(
+          workspace,
+          this.maxObservedDirtyPaths,
+          captureSignal
+        )
         const events = this.observedEvents({
           workspace,
           actor,
@@ -311,10 +348,13 @@ export class WorkProvenanceRecorder {
           // path during the same interval.
           exclusive: false
         })
+        throwIfWorkProvenanceAborted(captureSignal)
         return events.length ? { workspace, events } : null
       }, this.logError)
     } catch (error) {
-      this.logError?.('begin brokered work provenance', error)
+      if (!workProvenanceWasAborted(signal, error)) {
+        this.logError?.('begin brokered work provenance', error)
+      }
       return null
     }
   }
@@ -322,9 +362,13 @@ export class WorkProvenanceRecorder {
   async beginObservedNativeRun(
     input: BeginObservedNativeRunInput
   ): Promise<WorkProvenanceObservedRunHandle | null> {
+    const signal = currentWorkProvenanceAbortSignal()
     let handle: WorkProvenanceObservedRunHandle | null = null
+    let activeRecord: ActiveObservedRun | null = null
+    let abortCleanup: (() => void) | null = null
     try {
-      const workspace = await resolveWorkProvenanceWorkspace(input.workspacePath)
+      throwIfWorkProvenanceAborted(signal)
+      const workspace = await resolveWorkProvenanceWorkspace(input.workspacePath, signal)
       if (!workspace) return null
       handle = {
         key: `${workspace.worktreeId}\0${input.runId}`,
@@ -344,13 +388,21 @@ export class WorkProvenanceRecorder {
           (active) => active.workspace.worktreeId === workspace.worktreeId
         )
       }
+      activeRecord = record
       this.activeObservedRuns.set(handle.key, record)
-      record.before = await captureDirtyWorkspace(workspace, this.maxObservedDirtyPaths)
+      abortCleanup = () => this.deleteActiveObservedRun(handle!.key, record)
+      signal?.addEventListener('abort', abortCleanup, { once: true })
+      record.before = await captureDirtyWorkspace(workspace, this.maxObservedDirtyPaths, signal)
+      throwIfWorkProvenanceAborted(signal)
       return handle
     } catch (error) {
-      if (handle) this.activeObservedRuns.delete(handle.key)
-      this.logError?.(`begin native-run provenance ${input.runId}`, error)
+      if (handle && activeRecord) this.deleteActiveObservedRun(handle.key, activeRecord)
+      if (!workProvenanceWasAborted(signal, error)) {
+        this.logError?.(`begin native-run provenance ${input.runId}`, error)
+      }
       return null
+    } finally {
+      if (abortCleanup) signal?.removeEventListener('abort', abortCleanup)
     }
   }
 
@@ -358,12 +410,20 @@ export class WorkProvenanceRecorder {
     handle: WorkProvenanceObservedRunHandle,
     outcome: string
   ): Promise<void> {
+    const signal = currentWorkProvenanceAbortSignal()
     const active = this.activeObservedRuns.get(handle.key)
     if (!active) return
     const runId = handle.runId
     if (active.workspace.worktreeId !== handle.worktreeId) return
+    const abortCleanup = () => this.deleteActiveObservedRun(handle.key, active)
+    signal?.addEventListener('abort', abortCleanup, { once: true })
     try {
-      const after = await captureDirtyWorkspace(active.workspace, this.maxObservedDirtyPaths)
+      throwIfWorkProvenanceAborted(signal)
+      const after = await captureDirtyWorkspace(
+        active.workspace,
+        this.maxObservedDirtyPaths,
+        signal
+      )
       const exclusive = !(active.contended || active.before.truncated || after.truncated)
       const events = this.observedEvents({
         workspace: active.workspace,
@@ -381,7 +441,7 @@ export class WorkProvenanceRecorder {
         // the surrounding opaque-run observation. Keep the native boundary for
         // genuinely native writes, but never duplicate/dilute an exact receipt.
         const exactAfterByPath = new Map(
-          (await readWorkProvenanceEvents(active.workspace.root))
+          (await readWorkProvenanceEvents(active.workspace.root, signal))
             .filter(
               (event): event is WorkProvenanceOriginEvent =>
                 event.kind === 'origin' &&
@@ -398,26 +458,41 @@ export class WorkProvenanceRecorder {
           return !exactAfter || !sameFingerprint(exactAfter, event.after)
         })
         if (nativeOnlyEvents.length) {
+          throwIfWorkProvenanceAborted(signal)
           await this.persist({ workspace: active.workspace, events: nativeOnlyEvents })
         }
       }
     } catch (error) {
-      this.logError?.(`finish native-run provenance ${runId}`, error)
+      if (!workProvenanceWasAborted(signal, error)) {
+        this.logError?.(`finish native-run provenance ${runId}`, error)
+      }
     } finally {
-      this.activeObservedRuns.delete(handle.key)
+      signal?.removeEventListener('abort', abortCleanup)
+      this.deleteActiveObservedRun(handle.key, active)
     }
   }
 
   async persist(captured: CapturedWorkProvenance | null): Promise<void> {
     if (!captured?.events.length) return
+    const signal = currentWorkProvenanceAbortSignal()
     try {
-      const eventsDirectory = await ensureEventsDirectory(captured.workspace.gitCommonDir)
-      for (const event of captured.events) {
-        await writeImmutableEvent(eventsDirectory, event)
-      }
+      await this.persistenceQueue.run(signal, async () => {
+        throwIfWorkProvenanceAborted(signal)
+        const eventsDirectory = await ensureEventsDirectory(captured.workspace.gitCommonDir, signal)
+        for (const event of captured.events) {
+          throwIfWorkProvenanceAborted(signal)
+          await writeImmutableEvent(eventsDirectory, event, signal)
+        }
+      })
     } catch (error) {
-      this.logError?.('persist work provenance', error)
+      if (!workProvenanceWasAborted(signal, error)) {
+        this.logError?.('persist work provenance', error)
+      }
     }
+  }
+
+  private deleteActiveObservedRun(key: string, expected: ActiveObservedRun): void {
+    if (this.activeObservedRuns.get(key) === expected) this.activeObservedRuns.delete(key)
   }
 
   private observedEvents(input: {
@@ -472,25 +547,32 @@ export class WorkProvenanceRecorder {
 }
 
 export async function resolveWorkProvenanceWorkspace(
-  workspacePath: string
+  workspacePath: string,
+  signal: AbortSignal | undefined = currentWorkProvenanceAbortSignal()
 ): Promise<WorkProvenanceWorkspaceIdentity | null> {
+  throwIfWorkProvenanceAborted(signal)
   const cwd = resolve(workspacePath)
-  const result = await runGit(cwd, [
-    'rev-parse',
-    '--path-format=absolute',
-    '--show-toplevel',
-    '--absolute-git-dir',
-    '--git-common-dir'
-  ])
+  const result = await runGit(
+    cwd,
+    [
+      'rev-parse',
+      '--path-format=absolute',
+      '--show-toplevel',
+      '--absolute-git-dir',
+      '--git-common-dir'
+    ],
+    signal
+  )
+  throwIfWorkProvenanceAborted(signal)
   if (result.code !== 0) return null
   const [rootLine, gitDirLine, commonDirLine] = result.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
   if (!rootLine || !gitDirLine || !commonDirLine) return null
-  const root = await physicalPlannedPath(resolve(rootLine))
-  const gitDir = await physicalPlannedPath(resolve(cwd, gitDirLine))
-  const gitCommonDir = await physicalPlannedPath(resolve(cwd, commonDirLine))
+  const root = await physicalPlannedPath(resolve(rootLine), signal)
+  const gitDir = await physicalPlannedPath(resolve(cwd, gitDirLine), signal)
+  const gitCommonDir = await physicalPlannedPath(resolve(cwd, commonDirLine), signal)
   return {
     root,
     gitDir,
@@ -501,9 +583,11 @@ export async function resolveWorkProvenanceWorkspace(
 }
 
 export async function readWorkProvenanceEvents(
-  workspacePath: string
+  workspacePath: string,
+  signal: AbortSignal | undefined = currentWorkProvenanceAbortSignal()
 ): Promise<WorkProvenanceEvent[]> {
-  const workspace = await resolveWorkProvenanceWorkspace(workspacePath)
+  throwIfWorkProvenanceAborted(signal)
+  const workspace = await resolveWorkProvenanceWorkspace(workspacePath, signal)
   if (!workspace) return []
   const directory = join(
     workspace.gitCommonDir,
@@ -513,16 +597,21 @@ export async function readWorkProvenanceEvents(
   let names: string[]
   try {
     names = (await fs.readdir(directory)).filter((name) => name.endsWith('.json')).sort()
+    throwIfWorkProvenanceAborted(signal)
   } catch {
+    throwIfWorkProvenanceAborted(signal)
     return []
   }
   const events: WorkProvenanceEvent[] = []
   for (const name of names) {
     try {
+      throwIfWorkProvenanceAborted(signal)
       const eventPath = join(directory, name)
       const stat = await fs.lstat(eventPath)
+      throwIfWorkProvenanceAborted(signal)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_EVENT_FILE_BYTES) continue
-      const parsed = JSON.parse(await fs.readFile(eventPath, 'utf8'))
+      const parsed = JSON.parse(await fs.readFile(eventPath, { encoding: 'utf8', signal }))
+      throwIfWorkProvenanceAborted(signal)
       if (
         parsed?.schemaVersion === WORK_PROVENANCE_SCHEMA_VERSION &&
         typeof parsed?.eventId === 'string' &&
@@ -532,6 +621,7 @@ export async function readWorkProvenanceEvents(
         events.push(parsed as WorkProvenanceEvent)
       }
     } catch {
+      throwIfWorkProvenanceAborted(signal)
       // One corrupt local receipt must not hide the remaining immutable events.
     }
   }
@@ -584,15 +674,29 @@ function safeWorkProvenanceEventPath(value: unknown): value is string {
 }
 
 function oneShotOperation(
-  capture: (outcome: string) => Promise<CapturedWorkProvenance | null>,
+  capture: (
+    outcome: string,
+    signal: AbortSignal | undefined
+  ) => Promise<CapturedWorkProvenance | null>,
   logError?: (scope: string, error: unknown) => void
 ): WorkProvenanceOperation {
   let captured: Promise<CapturedWorkProvenance | null> | null = null
   return {
     capture(outcome) {
       if (!captured) {
-        captured = capture(outcome).catch((error) => {
-          logError?.('capture work provenance', error)
+        const signal = currentWorkProvenanceAbortSignal()
+        if (signal?.aborted) {
+          captured = Promise.resolve(null)
+          return captured
+        }
+        const attempt = capture(outcome, signal).then((result) => {
+          throwIfWorkProvenanceAborted(signal)
+          return result
+        })
+        captured = waitForWorkProvenancePromise(attempt, signal).catch((error) => {
+          if (!workProvenanceWasAborted(signal, error)) {
+            logError?.('capture work provenance', error)
+          }
           return null
         })
       }
@@ -602,26 +706,77 @@ function oneShotOperation(
 }
 
 /**
- * Bound provenance work at provider/lock seams. The underlying best-effort read
- * may settle later, but the caller is released on time and late rejection is
- * observed here rather than becoming an unhandled provider failure.
+ * Bound provenance work at provider/lock seams. The deadline aborts cooperative
+ * ledger I/O before releasing the caller; any non-cancellable syscall still
+ * has its late rejection observed here rather than becoming a provider failure.
  */
 export async function settleWorkProvenanceWithin<T>(
-  operation: () => Promise<T>,
+  operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs = WORK_PROVENANCE_OPERATION_TIMEOUT_MS
 ): Promise<T | null> {
+  const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   const work = Promise.resolve()
-    .then(operation)
+    .then(() =>
+      workProvenanceAbortContext.run(controller.signal, () => operation(controller.signal))
+    )
     .catch(() => null)
   const timeout = new Promise<null>((resolveTimeout) => {
-    timer = setTimeout(() => resolveTimeout(null), Math.max(1, Math.floor(timeoutMs)))
+    timer = setTimeout(
+      () => {
+        controller.abort(new Error('Work provenance operation exceeded its deadline.'))
+        resolveTimeout(null)
+      },
+      Math.max(1, Math.floor(timeoutMs))
+    )
     timer.unref?.()
   })
   try {
     return await Promise.race([work, timeout])
   } finally {
     if (timer) clearTimeout(timer)
+  }
+}
+
+function currentWorkProvenanceAbortSignal(): AbortSignal | undefined {
+  return workProvenanceAbortContext.getStore()
+}
+
+function throwIfWorkProvenanceAborted(signal: AbortSignal | undefined): void {
+  signal?.throwIfAborted()
+}
+
+function workProvenanceWasAborted(signal: AbortSignal | undefined, error: unknown): boolean {
+  return (
+    signal?.aborted === true ||
+    (error !== null &&
+      typeof error === 'object' &&
+      'name' in error &&
+      (error as { name?: unknown }).name === 'AbortError')
+  )
+}
+
+async function waitForWorkProvenancePromise<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | undefined
+): Promise<T> {
+  if (!signal) return pending
+  if (signal.aborted) {
+    // The producer may already have started before its caller noticed the
+    // deadline. Observe its eventual rejection even though no consumer should
+    // wait for it now.
+    void pending.catch(() => undefined)
+    throwIfWorkProvenanceAborted(signal)
+  }
+  let onAbort: (() => void) | undefined
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([pending, aborted])
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort)
   }
 }
 
@@ -685,8 +840,13 @@ function boundedText(value: unknown): string | undefined {
   return normalized ? normalized.slice(0, MAX_EVENT_TEXT) : undefined
 }
 
-async function repositoryRelativePath(root: string, targetPath: string): Promise<string | null> {
-  const absoluteTarget = await physicalPlannedPath(resolve(targetPath))
+async function repositoryRelativePath(
+  root: string,
+  targetPath: string,
+  signal: AbortSignal | undefined
+): Promise<string | null> {
+  throwIfWorkProvenanceAborted(signal)
+  const absoluteTarget = await physicalPlannedPath(resolve(targetPath), signal)
   const candidate = relative(root, absoluteTarget)
   if (
     !candidate ||
@@ -700,14 +860,20 @@ async function repositoryRelativePath(root: string, targetPath: string): Promise
 }
 
 /** Resolve existing ancestors so lexical aliases such as macOS /var -> /private do not escape. */
-async function physicalPlannedPath(inputPath: string): Promise<string> {
+async function physicalPlannedPath(
+  inputPath: string,
+  signal: AbortSignal | undefined
+): Promise<string> {
   const missingSegments: string[] = []
   let cursor = resolve(inputPath)
   while (true) {
     try {
+      throwIfWorkProvenanceAborted(signal)
       const physical = await fs.realpath(cursor)
+      throwIfWorkProvenanceAborted(signal)
       return resolve(physical, ...missingSegments.reverse())
     } catch (error) {
+      throwIfWorkProvenanceAborted(signal)
       if (!isErrno(error, 'ENOENT')) throw error
       const parent = dirname(cursor)
       if (parent === cursor) return resolve(inputPath)
@@ -723,37 +889,39 @@ function isGitMetadataPath(relativePath: string): boolean {
 
 async function captureDirtyTargetPaths(
   workspace: WorkProvenanceWorkspaceIdentity,
-  relativePaths: readonly string[]
+  relativePaths: readonly string[],
+  signal: AbortSignal | undefined
 ): Promise<Set<string> | null> {
-  const result = await runGit(workspace.root, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all',
-    '--',
-    ...relativePaths
-  ])
+  const result = await runGit(
+    workspace.root,
+    ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...relativePaths],
+    signal
+  )
+  throwIfWorkProvenanceAborted(signal)
   if (result.code !== 0) return null
   return new Set(parseStatusPaths(result.stdout))
 }
 
 async function captureDirtyWorkspace(
   workspace: WorkProvenanceWorkspaceIdentity,
-  maxPaths: number
+  maxPaths: number,
+  signal: AbortSignal | undefined
 ): Promise<DirtyWorkspaceSnapshot> {
-  const result = await runGit(workspace.root, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all'
-  ])
+  const result = await runGit(
+    workspace.root,
+    ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+    signal
+  )
+  throwIfWorkProvenanceAborted(signal)
   if (result.code !== 0) throw new Error('Git status could not be sampled for provenance.')
   const paths = parseStatusPaths(result.stdout).filter((path) => !isGitMetadataPath(path))
   const selected = paths.slice(0, maxPaths)
   const entries = new Map<string, WorkProvenancePathFingerprint>()
   for (const relativePath of selected) {
-    entries.set(relativePath, await fingerprintPath(resolve(workspace.root, relativePath)))
+    throwIfWorkProvenanceAborted(signal)
+    entries.set(relativePath, await fingerprintPath(resolve(workspace.root, relativePath), signal))
   }
+  throwIfWorkProvenanceAborted(signal)
   return { entries, truncated: paths.length > selected.length }
 }
 
@@ -771,19 +939,25 @@ function parseStatusPaths(statusOutput: string): string[] {
   return [...new Set(paths)].sort()
 }
 
-async function fingerprintPath(targetPath: string): Promise<WorkProvenancePathFingerprint> {
+async function fingerprintPath(
+  targetPath: string,
+  signal: AbortSignal | undefined
+): Promise<WorkProvenancePathFingerprint> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      throwIfWorkProvenanceAborted(signal)
       const before = await fs.lstat(targetPath)
+      throwIfWorkProvenanceAborted(signal)
       let fingerprint: WorkProvenancePathFingerprint
       if (before.isFile()) {
         fingerprint = {
           state: 'file',
-          sha256: await sha256File(targetPath),
+          sha256: await sha256File(targetPath, signal),
           sizeBytes: before.size
         }
       } else if (before.isSymbolicLink()) {
         const linkTarget = await fs.readlink(targetPath)
+        throwIfWorkProvenanceAborted(signal)
         fingerprint = {
           state: 'symlink',
           linkTarget,
@@ -795,8 +969,10 @@ async function fingerprintPath(targetPath: string): Promise<WorkProvenancePathFi
         fingerprint = { state: 'other' }
       }
       const after = await fs.lstat(targetPath)
+      throwIfWorkProvenanceAborted(signal)
       if (sameStatIdentity(before, after)) return fingerprint
     } catch (error) {
+      throwIfWorkProvenanceAborted(signal)
       if (isErrno(error, 'ENOENT')) return { state: 'missing' }
       if (attempt === 1) return { state: 'unreadable' }
     }
@@ -830,89 +1006,126 @@ function sameFingerprint(
   )
 }
 
-async function sha256File(filePath: string): Promise<string> {
-  return new Promise((resolveHash, reject) => {
+async function sha256File(filePath: string, signal: AbortSignal | undefined): Promise<string> {
+  throwIfWorkProvenanceAborted(signal)
+  const digest = await new Promise<string>((resolveHash, reject) => {
     const hash = createHash('sha256')
-    const stream = createReadStream(filePath)
+    const stream = createReadStream(filePath, { signal })
     stream.on('data', (chunk) => hash.update(chunk))
     stream.on('error', reject)
     stream.on('end', () => resolveHash(hash.digest('hex')))
   })
+  throwIfWorkProvenanceAborted(signal)
+  return digest
 }
 
-function runGit(cwd: string, args: readonly string[]): Promise<RunGitResult> {
-  return new Promise((resolveResult) => {
-    execFile(
-      'git',
-      ['-c', 'core.fsmonitor=false', ...args],
-      {
-        cwd,
-        encoding: 'utf8',
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-        maxBuffer: GIT_MAX_BUFFER,
-        timeout: GIT_TIMEOUT_MS,
-        shell: false
-      },
-      (error, stdout) => {
-        resolveResult({
-          code: typeof error?.code === 'number' ? error.code : error ? -1 : 0,
-          stdout: stdout || ''
-        })
-      }
-    )
+function runGit(
+  cwd: string,
+  args: readonly string[],
+  signal: AbortSignal | undefined
+): Promise<RunGitResult> {
+  throwIfWorkProvenanceAborted(signal)
+  return new Promise((resolveResult, reject) => {
+    try {
+      execFile(
+        'git',
+        ['-c', 'core.fsmonitor=false', ...args],
+        {
+          cwd,
+          encoding: 'utf8',
+          env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+          maxBuffer: GIT_MAX_BUFFER,
+          timeout: GIT_TIMEOUT_MS,
+          shell: false,
+          signal
+        },
+        (error, stdout) => {
+          if (signal?.aborted) {
+            reject(signal.reason)
+            return
+          }
+          resolveResult({
+            code: typeof error?.code === 'number' ? error.code : error ? -1 : 0,
+            stdout: stdout || ''
+          })
+        }
+      )
+    } catch (error) {
+      reject(error)
+    }
   })
 }
 
-async function ensureEventsDirectory(gitCommonDir: string): Promise<string> {
+async function ensureEventsDirectory(
+  gitCommonDir: string,
+  signal: AbortSignal | undefined
+): Promise<string> {
   const base = resolve(gitCommonDir)
   const taskWraithDirectory = join(base, 'taskwraith')
   const provenanceDirectory = join(taskWraithDirectory, 'work-provenance-v1')
   const eventsDirectory = join(provenanceDirectory, WORK_PROVENANCE_EVENTS_DIRECTORY)
   for (const directory of [taskWraithDirectory, provenanceDirectory, eventsDirectory]) {
     try {
+      throwIfWorkProvenanceAborted(signal)
       const stat = await fs.lstat(directory)
+      throwIfWorkProvenanceAborted(signal)
       if (!stat.isDirectory() || stat.isSymbolicLink()) {
         throw new Error(`Work provenance path is not a physical directory: ${directory}`)
       }
     } catch (error) {
+      throwIfWorkProvenanceAborted(signal)
       if (!isErrno(error, 'ENOENT')) throw error
       try {
         await fs.mkdir(directory, { mode: 0o700 })
       } catch (mkdirError) {
+        throwIfWorkProvenanceAborted(signal)
         if (!isErrno(mkdirError, 'EEXIST')) throw mkdirError
       }
+      throwIfWorkProvenanceAborted(signal)
       const created = await fs.lstat(directory)
+      throwIfWorkProvenanceAborted(signal)
       if (!created.isDirectory() || created.isSymbolicLink()) {
         throw new Error(`Work provenance path is not a physical directory: ${directory}`)
       }
     }
     await fs.chmod(directory, 0o700).catch(() => undefined)
+    throwIfWorkProvenanceAborted(signal)
   }
   return eventsDirectory
 }
 
 async function writeImmutableEvent(
   eventsDirectory: string,
-  event: WorkProvenanceEvent
+  event: WorkProvenanceEvent,
+  signal: AbortSignal | undefined
 ): Promise<void> {
   const safeId = event.eventId.replace(/[^A-Za-z0-9._-]+/g, '-')
   const destination = join(eventsDirectory, `${safeId}.json`)
   const temporary = join(eventsDirectory, `.${safeId}.${process.pid}.${randomUUID()}.tmp`)
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
+  let published = false
   try {
+    throwIfWorkProvenanceAborted(signal)
     handle = await fs.open(temporary, 'wx', 0o600)
+    throwIfWorkProvenanceAborted(signal)
     await handle.writeFile(`${JSON.stringify(event, null, 2)}\n`, 'utf8')
+    throwIfWorkProvenanceAborted(signal)
     await handle.sync()
+    throwIfWorkProvenanceAborted(signal)
     await handle.close()
     handle = null
+    throwIfWorkProvenanceAborted(signal)
     try {
       // Linking a fully-fsynced temporary file publishes the receipt without
       // ever replacing an existing event with the same identity. Independent
       // writers therefore need no shared append lock or mutable sequence.
       await fs.link(temporary, destination)
+      published = true
     } catch (error) {
       if (!isErrno(error, 'EEXIST')) throw error
-      const existing = await fs.readFile(destination, 'utf8')
+      throwIfWorkProvenanceAborted(signal)
+      const existing = await fs.readFile(destination, { encoding: 'utf8', signal })
+      throwIfWorkProvenanceAborted(signal)
       const candidate = `${JSON.stringify(event, null, 2)}\n`
       let equivalent = existing === candidate
       if (!equivalent) {
@@ -928,7 +1141,11 @@ async function writeImmutableEvent(
       if (!equivalent) {
         throw new Error(`Work provenance event identity collision: ${event.eventId}`)
       }
+      published = true
     }
+    // Publication is the commit point. Once the immutable destination exists,
+    // finish its directory durability and temporary cleanup even if the caller's
+    // deadline expires while link(2) is returning.
     try {
       const directoryHandle = await fs.open(eventsDirectory, 'r')
       try {
@@ -942,6 +1159,7 @@ async function writeImmutableEvent(
   } finally {
     await handle?.close().catch(() => undefined)
     await fs.rm(temporary, { force: true }).catch(() => undefined)
+    if (!published) throwIfWorkProvenanceAborted(signal)
   }
 }
 

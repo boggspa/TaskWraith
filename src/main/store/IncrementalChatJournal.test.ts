@@ -3,7 +3,11 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { deriveChatRecordMutation } from './ChatRecordMutation'
-import { createIncrementalChatJournal, type IncrementalChatJournal } from './IncrementalChatJournal'
+import {
+  createIncrementalChatJournal,
+  MAX_PENDING_DEFERRED_FSYNCS,
+  type IncrementalChatJournal
+} from './IncrementalChatJournal'
 import type { ChatRecord } from './types'
 
 function chat(chatId = 'chat-1', revision = 1, content = 'initial'): ChatRecord {
@@ -34,7 +38,66 @@ function advance(source: ChatRecord, content: string): ChatRecord {
   return next
 }
 
+function snapshotTree(root: string): unknown[] {
+  const rows: unknown[] = []
+  const visit = (current: string): void => {
+    if (!fs.existsSync(current)) return
+    const stat = fs.lstatSync(current)
+    rows.push({
+      relative: path.relative(root, current) || '.',
+      kind: stat.isDirectory() ? 'directory' : 'file',
+      mode: stat.mode,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...(stat.isFile() ? { contents: fs.readFileSync(current).toString('base64') } : {})
+    })
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current).sort()) visit(path.join(current, entry))
+    }
+  }
+  visit(root)
+  return rows
+}
+
 describe('IncrementalChatJournal', () => {
+  it('does not create a missing directory when dynamic write authority is false', () => {
+    const baseDir = path.join(os.tmpdir(), `incremental-chat-readonly-${Date.now()}`)
+    const journal = createIncrementalChatJournal(baseDir, { canWrite: () => false })
+    expect(journal.replay('chat-1')).toMatchObject({ record: null })
+    expect(fs.existsSync(baseDir)).toBe(false)
+    expect(() => journal.clear()).toThrow('read-only')
+  })
+
+  it('replays a torn valid prefix without repair and rejects every mutator before side effects', () => {
+    const before = chat()
+    const after = advance(before, 'complete mutation')
+    const batch = deriveChatRecordMutation(before, after)
+    journal.initialize('chat-1', before)
+    journal.append(batch)
+    fs.appendFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), '{"torn":')
+    const treeBefore = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatJournal(baseDir, { canWrite: () => false })
+
+    expect(readOnly.replay('chat-1')).toMatchObject({
+      record: after,
+      recoveredTornTail: false
+    })
+    for (const mutate of [
+      () => readOnly.initialize('chat-1', before),
+      () => readOnly.append(batch),
+      () => readOnly.replaceAuthoritativeCheckpoint('chat-1', after),
+      () => readOnly.checkpoint('chat-1', 'manual'),
+      () => readOnly.checkpointIdle(),
+      () => readOnly.checkpointAll(),
+      () => readOnly.drainDeferredDurability(),
+      () => readOnly.delete('chat-1'),
+      () => readOnly.purge('chat-1'),
+      () => readOnly.clear()
+    ]) {
+      expect(mutate).toThrow('read-only')
+    }
+    expect(snapshotTree(baseDir)).toEqual(treeBefore)
+  })
   let baseDir: string
   let journal: IncrementalChatJournal
   let nowMs: number
@@ -106,6 +169,41 @@ describe('IncrementalChatJournal', () => {
       expect(deferred.stats().drainedDeferredFsyncs).toBe(1)
     })
 
+    it('acknowledges only fsyncs issued before the async durability barrier', async () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const first = advance(before, 'first')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, first), { durability: 'deferred' })
+      let settled = false
+      const barrier = deferred.awaitDeferredDurability!('chat-1').then(() => {
+        settled = true
+      })
+      const second = advance(first, 'second')
+      deferred.append(deriveChatRecordMutation(first, second), { durability: 'deferred' })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      expect(deferred.stats().drainedDeferredFsyncs).toBe(0)
+      captured[0].done(null)
+      await barrier
+      expect(settled).toBe(true)
+      captured[1].done(null)
+    })
+
+    it('rejects an async durability barrier when its fsync fails', async () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, advance(before, 'update')), {
+        durability: 'deferred'
+      })
+      const barrier = deferred.awaitDeferredDurability!('chat-1')
+      const assertion = expect(barrier).rejects.toThrow('flush failed')
+      captured[0].done(new Error('flush failed'))
+      await assertion
+      await expect(deferred.awaitDeferredDurability!('chat-1')).rejects.toThrow('flush failed')
+    })
+
     it('escalates the next append to a synchronous fsync after a deferred failure', () => {
       const { journal: deferred, captured } = deferredJournal()
       const before = chat()
@@ -125,6 +223,40 @@ describe('IncrementalChatJournal', () => {
       deferred.append(deriveChatRecordMutation(third, fourth), { durability: 'deferred' })
       expect(captured).toHaveLength(2)
       captured[1].done(null)
+    })
+
+    it('falls back to a synchronous fsync once 64 deferred flushes are pending', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      let current = chat()
+      deferred.initialize('chat-1', current)
+      for (let i = 0; i < MAX_PENDING_DEFERRED_FSYNCS; i += 1) {
+        const next = advance(current, `streamed ${i}`)
+        deferred.append(deriveChatRecordMutation(current, next), { durability: 'deferred' })
+        current = next
+      }
+      expect(captured).toHaveLength(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.stats().deferredAppends).toBe(MAX_PENDING_DEFERRED_FSYNCS)
+
+      const overflow = advance(current, 'saturated sync fallback')
+      deferred.append(deriveChatRecordMutation(current, overflow), { durability: 'deferred' })
+      expect(captured).toHaveLength(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.stats().deferredAppends).toBe(MAX_PENDING_DEFERRED_FSYNCS)
+      expect(deferred.replay('chat-1').record).toEqual(overflow)
+
+      for (const pending of captured) pending.done(null)
+    })
+
+    it('replays D1 bytes after a restart even when the deferred fsync never completed', () => {
+      const { journal: deferred, captured } = deferredJournal()
+      const before = chat()
+      const after = advance(before, 'unflushed stream')
+      deferred.initialize('chat-1', before)
+      deferred.append(deriveChatRecordMutation(before, after), { durability: 'deferred' })
+      expect(captured).toHaveLength(1)
+
+      const recovered = createIncrementalChatJournal(baseDir, { now: () => nowMs })
+      expect(recovered.replay('chat-1').record).toEqual(after)
+      captured[0].done(null)
     })
 
     it('drains deferred flushes before a shutdown checkpoint', () => {
@@ -177,6 +309,34 @@ describe('IncrementalChatJournal', () => {
     ) as { reason: string; revision: number; record: ChatRecord }
     expect(checkpoint).toMatchObject({ reason: 'terminal', revision: 2, record: after })
     expect(journal.replay('chat-1').record).toEqual(after)
+  })
+
+  it('replays a long streaming tail across duplicate revisions without changing disk or later reads', () => {
+    const before = chat('chat-1', 1, 'start')
+    const batches = [] as ReturnType<typeof deriveChatRecordMutation>[]
+    let expected = before
+    for (let i = 0; i < 160; i += 1) {
+      const next = advance(expected, `${expected.messages[0].content}.${i}`)
+      batches.push(deriveChatRecordMutation(expected, next))
+      expected = next
+    }
+    journal.initialize('chat-1', before)
+    const tail = batches.flatMap((batch, index) => (index === 50 ? [batch, batch] : [batch]))
+    fs.writeFileSync(
+      path.join(baseDir, 'chat-1.mutations.jsonl'),
+      tail.map((batch) => JSON.stringify(batch) + '\n').join('')
+    )
+    const diskBefore = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatJournal(baseDir, {
+      canWrite: () => false,
+      canRepairOnRead: () => false
+    })
+
+    const replayed = readOnly.replay('chat-1')
+    expect(replayed).toMatchObject({ record: expected, appliedBatches: 160, skippedBatches: 1 })
+    replayed.record!.messages[0].content = 'consumer edit'
+    expect(readOnly.replay('chat-1').record).toEqual(expected)
+    expect(snapshotTree(baseDir)).toEqual(diskBefore)
   })
 
   it('replays once across a crash after checkpoint rename but before tail removal', () => {
@@ -249,6 +409,43 @@ describe('IncrementalChatJournal', () => {
     expect(journal.replay('chat-1').record).toEqual(before)
   })
 
+  it('durably replays the compact ensemble operations emitted by an authored save', () => {
+    const before: ChatRecord = {
+      ...chat(),
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            order: 1,
+            instructions: ''
+          }
+        ]
+      }
+    }
+    const after = advance(before, before.messages[0].content)
+    after.ensemble!.maxContinuationHops = 12
+    after.ensemble!.participants[0].linkedProviderSessionId = 'persisted-seat-session'
+    const batch = deriveChatRecordMutation(before, after, {
+      authoredTranscript: { operations: [], transcriptOps: [], changedMessageCount: 0 }
+    })
+    expect(batch.operations.map((operation) => operation.type)).toEqual(
+      expect.arrayContaining(['ensemble_patch', 'ensemble_participant_patch'])
+    )
+    journal.initialize('chat-1', before)
+    journal.append(batch)
+
+    const reopened = createIncrementalChatJournal(baseDir, { now: () => nowMs })
+    expect(reopened.replay('chat-1').record).toEqual(after)
+    expect(reopened.checkpoint('chat-1', 'terminal')).toBe(true)
+    expect(createIncrementalChatJournal(baseDir).replay('chat-1').record).toEqual(after)
+  })
+
   it('checkpoints after a bounded idle interval', () => {
     journal = createIncrementalChatJournal(baseDir, {
       now: () => nowMs,
@@ -266,6 +463,21 @@ describe('IncrementalChatJournal', () => {
     expect(journal.checkpointIdle()).toBe(1)
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
     expect(journal.replay('chat-1').record).toEqual(after)
+  })
+
+  it('does not discover or decode cold historical journals in main maintenance mode', () => {
+    const first = chat()
+    journal.initialize('chat-1', first)
+    journal.append(deriveChatRecordMutation(first, advance(first, 'unopened tail')))
+    const cold = createIncrementalChatJournal(baseDir, {
+      maintenanceScope: 'opened',
+      now: () => nowMs + 60_000
+    })
+    const before = fs.readFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), 'utf8')
+    expect(cold.checkpointIdle()).toBe(0)
+    expect(cold.checkpointAll()).toBe(0)
+    expect(cold.stats().replayedBatches).toBe(0)
+    expect(fs.readFileSync(path.join(baseDir, 'chat-1.mutations.jsonl'), 'utf8')).toBe(before)
   })
 
   it('forces a bounded checkpoint during continuously busy mutation traffic', () => {
@@ -299,6 +511,94 @@ describe('IncrementalChatJournal', () => {
     expect(journal.checkpointAll('shutdown')).toBe(2)
     expect(journal.replay('chat-1').record).toEqual(firstNext)
     expect(journal.replay('chat-2').record).toEqual(secondNext)
+  })
+
+  describe('pendingReplayState (cheap replay probe)', () => {
+    it('reports no tail and the checkpoint revision for a freshly folded chat', () => {
+      const before = chat('chat-1', 1)
+      journal.initialize('chat-1', before)
+      // Checkpoint written, no mutations tail yet.
+      expect(journal.pendingReplayState('chat-1')).toEqual({
+        hasTail: false,
+        checkpointRevision: 1
+      })
+    })
+
+    it('reports a live tail while mutations sit unfolded, then clears once folded', () => {
+      const before = chat('chat-1', 1)
+      const after = advance(before, 'tail present')
+      journal.initialize('chat-1', before)
+      journal.append(deriveChatRecordMutation(before, after))
+      expect(journal.pendingReplayState('chat-1').hasTail).toBe(true)
+
+      expect(journal.checkpoint('chat-1', 'manual')).toBe(true)
+      // Folded: tail gone, checkpoint now at the advanced revision.
+      expect(journal.pendingReplayState('chat-1')).toEqual({
+        hasTail: false,
+        checkpointRevision: 2
+      })
+    })
+
+    it('peeks the header revision without parsing the multi-message record', () => {
+      // A record whose body carries its own `persistenceRevision` and even a
+      // nested `revision`-shaped string must not fool the header peek.
+      const before = chat('chat-1', 7)
+      before.messages[0].content = '{"revision":999999}'
+      journal.initialize('chat-1', before)
+      expect(journal.pendingReplayState('chat-1').checkpointRevision).toBe(7)
+    })
+
+    it('never throws: unknown chat and unsafe id both fall back to a real replay', () => {
+      expect(journal.pendingReplayState('unknown-chat')).toEqual({
+        hasTail: false,
+        checkpointRevision: null
+      })
+      // An unsafe id forces the replay path (hasTail true) rather than throwing.
+      expect(journal.pendingReplayState('../escape')).toEqual({
+        hasTail: true,
+        checkpointRevision: null
+      })
+    })
+  })
+
+  it('keeps compacting healthy chats when one chat throws (idle sweep)', () => {
+    // chat-bad is iterated FIRST (inserted first): under the old unguarded loop
+    // its throw aborted the whole sweep and chat-good was never folded.
+    const bad = chat('chat-bad', 1)
+    const badNext = advance(bad, 'bad tail')
+    const good = chat('chat-good', 1)
+    const goodNext = advance(good, 'good tail')
+    journal.initialize('chat-bad', bad)
+    journal.append(deriveChatRecordMutation(bad, badNext))
+    journal.initialize('chat-good', good)
+    journal.append(deriveChatRecordMutation(good, goodNext))
+    // Corrupt chat-bad's checkpoint on disk; checkpoint()'s own readCheckpoint
+    // re-reads it and throws, exactly like a revision-gap chat at boot.
+    fs.writeFileSync(path.join(baseDir, 'chat-bad.checkpoint.json'), '{ not valid json')
+
+    nowMs += 1_000_000 // both idle-eligible
+    expect(() => journal.checkpointIdle()).not.toThrow()
+    // The healthy chat still folded despite the corrupt sibling ahead of it.
+    expect(fs.existsSync(path.join(baseDir, 'chat-good.mutations.jsonl'))).toBe(false)
+    expect(journal.replay('chat-good').record).toEqual(goodNext)
+  })
+
+  it('keeps compacting healthy chats when one chat throws (shutdown sweep)', () => {
+    const bad = chat('chat-bad', 1)
+    const badNext = advance(bad, 'bad tail')
+    const good = chat('chat-good', 1)
+    const goodNext = advance(good, 'good tail')
+    journal.initialize('chat-bad', bad)
+    journal.append(deriveChatRecordMutation(bad, badNext))
+    journal.initialize('chat-good', good)
+    journal.append(deriveChatRecordMutation(good, goodNext))
+    fs.writeFileSync(path.join(baseDir, 'chat-bad.checkpoint.json'), '{ not valid json')
+
+    // The corrupt chat is skipped, so the count is the ONE healthy fold — not a
+    // thrown sweep that strands every later chat's journal.
+    expect(journal.checkpointAll('shutdown')).toBe(1)
+    expect(fs.existsSync(path.join(baseDir, 'chat-good.mutations.jsonl'))).toBe(false)
+    expect(journal.replay('chat-good').record).toEqual(goodNext)
   })
 
   it('keeps deletion tombstoned against late mutation appends', () => {

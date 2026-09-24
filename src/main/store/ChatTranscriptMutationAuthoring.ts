@@ -1,4 +1,4 @@
-import type { ChatTranscriptOp } from '../../shared/chatUpdateTransport'
+import type { ChatUpdateTranscriptOp } from '../../shared/chatUpdateTransport'
 import type {
   AuthoredChatTranscriptMutation,
   ChatTranscriptMutationOperation
@@ -18,7 +18,7 @@ function assertCount(value: number, label: string): void {
  */
 export class ChatTranscriptMutationAuthor {
   private readonly operations: ChatTranscriptMutationOperation[] = []
-  private transcriptOps: ChatTranscriptOp[] | null = []
+  private transcriptOps: ChatUpdateTranscriptOp[] | null = []
   private changedMessageCount = 0
   private length: number
 
@@ -47,10 +47,43 @@ export class ChatTranscriptMutationAuthor {
   }
 
   /**
+   * Insert rows immediately before one identity already present at `index`.
+   *
+   * Main-owned fan-out ordering computes the index and anchor together from
+   * the same live array. The durable journal keeps its exact positional splice,
+   * while renderer delivery uses the identity anchor so a middle lane slot-in
+   * remains an operation patch instead of forcing transcript recovery.
+   */
+  insertBefore(index: number, beforeId: string, messages: ChatMessage[]): void {
+    assertCount(index, 'Transcript insert index')
+    if (index >= this.length) {
+      throw new Error('Authored transcript insertBefore requires an existing anchor')
+    }
+    if (!beforeId) throw new Error('Authored transcript insertBefore requires an anchor id')
+    if (messages.length === 0) return
+
+    const insertedIds = new Set<string>()
+    for (const message of messages) {
+      const id = message?.id
+      if (!id) throw new Error('Authored transcript insertBefore requires every message id')
+      if (id === beforeId || insertedIds.has(id)) {
+        throw new Error('Authored transcript insertBefore requires unique message ids')
+      }
+      insertedIds.add(id)
+    }
+
+    this.operations.push({ type: 'messages_splice', index, deleteCount: 0, messages })
+    this.transcriptOps?.push({ op: 'insertBefore', beforeId, messages })
+    this.length += messages.length
+    this.changedMessageCount += messages.length
+  }
+
+  /**
    * Record an exact structural edit. Deletion is always representable by id;
-   * insertion is representable on the public wire only at the current tail.
-   * A middle insertion remains durable but marks renderer delivery for a
-   * one-shot recovery snapshot.
+   * this generic splice has no identity anchor, so insertion is representable
+   * on the public wire only at the current tail. Call `insertBefore` when main
+   * owns a surviving anchor; an unanchored middle insertion remains durable but
+   * marks renderer delivery for one-shot recovery.
    */
   splice(
     index: number,

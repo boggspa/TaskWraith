@@ -1,12 +1,13 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, parse, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   codexGitMetadataRootsForWorkspace,
   codexNativeAutoApprovalFromPosture,
-  codexSandboxForMode
+  codexSandboxForMode,
+  resolveDesktopCodexSandboxControls
 } from './CodexRunPolicy'
 
 const tempRoots: string[] = []
@@ -31,18 +32,102 @@ describe('codexSandboxForMode', () => {
     expect(codexSandboxForMode(undefined)).toBe('workspace-write')
   })
 
-  it('keeps a workspace sandbox even under a full-access grant', () => {
-    expect(codexSandboxForMode('auto_edit', true)).toBe('workspace-write')
-    expect(codexSandboxForMode('default', true)).toBe('workspace-write')
-    // A full-access grant does not turn a workspace run into host access.
+  it('drops the sandbox under a signed full-access grant', () => {
+    // Full Access is meant to be exactly as wide as the picker says it is:
+    // the grant drops the native sandbox so signing/archiving can reach the
+    // login keychain and ~/Library. The user is warned before granting it.
+    expect(codexSandboxForMode('auto_edit', true)).toBe('danger-full-access')
+    expect(codexSandboxForMode('default', true)).toBe('danger-full-access')
+    // Without the signed grant the run stays workspace-confined. The flag is
+    // the ONLY thing that widens it — approval mode alone never does.
     expect(codexSandboxForMode('auto_edit', false)).toBe('workspace-write')
     expect(codexSandboxForMode('default')).toBe('workspace-write')
   })
 
   it('never lets a full-access flag override the plan read-only floor', () => {
     // plan + full_access is mutually exclusive in practice, but if the flag ever
-    // leaked onto a plan run the read-only floor must still win.
+    // leaked onto a plan run the read-only floor must still win — the floor
+    // outranks the widening, not the other way round.
     expect(codexSandboxForMode('plan', true)).toBe('read-only')
+  })
+})
+
+describe('resolveDesktopCodexSandboxControls', () => {
+  it('keeps ordinary workspace runs on the exact-mutation read-only boundary', () => {
+    const workspace = makeTempRoot()
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'auto_edit',
+        workspace,
+        scope: 'workspace',
+        fullAccessGranted: false,
+        networkAccess: true
+      })
+    ).toEqual({
+      sandbox: 'read-only',
+      sandboxPolicy: {
+        type: 'readOnly',
+        readableRoots: [resolve(workspace)],
+        networkAccess: false
+      }
+    })
+  })
+
+  it.each(['workspace', 'global'] as const)(
+    'uses the exact Full Access pair for %s scope',
+    (scope) => {
+      expect(
+        resolveDesktopCodexSandboxControls({
+          approvalMode: 'auto_edit',
+          workspace: makeTempRoot(),
+          scope,
+          fullAccessGranted: true,
+          networkAccess: false
+        })
+      ).toEqual({
+        sandbox: 'danger-full-access',
+        sandboxPolicy: { type: 'dangerFullAccess' }
+      })
+    }
+  )
+
+  it('preserves the global host-root and network projection below Full Access', () => {
+    const workspace = makeTempRoot()
+    const hostRoot = parse(resolve(workspace)).root
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'default',
+        workspace,
+        scope: 'global',
+        fullAccessGranted: false,
+        networkAccess: true
+      })
+    ).toEqual({
+      sandbox: 'workspace-write',
+      sandboxPolicy: {
+        type: 'workspaceWrite',
+        readableRoots: [hostRoot],
+        writableRoots: [hostRoot],
+        networkAccess: true,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false
+      }
+    })
+  })
+
+  it('keeps Plan read-only even with a Full Access flag', () => {
+    expect(
+      resolveDesktopCodexSandboxControls({
+        approvalMode: 'plan',
+        workspace: makeTempRoot(),
+        scope: 'global',
+        fullAccessGranted: true,
+        networkAccess: true
+      })
+    ).toMatchObject({
+      sandbox: 'read-only',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false }
+    })
   })
 })
 

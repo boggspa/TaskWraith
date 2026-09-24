@@ -9,19 +9,13 @@ import type {
 /**
  * Session release lease.
  *
- * `ReleaseCommandPolicy` blocks release-class commands (git push, gh release,
- * notarytool, npm publish, ...) unless the caller presents an approval source.
- * Two of the five declared sources were ever wired: `externalPublishReceipt`
- * for the dedicated git_push/git_create_pr executors, and `approvedHostCommand`
- * for the Codex approval re-run. Every other route — the brokered MCP shell,
- * run_task, and background processes — had no way to satisfy the gate at all,
- * so an agent working to an explicit user directive with nobody at the keyboard
- * simply stalled. That is what this lease exists to fix.
+ * Historical session grant for a retired lexical release-class gate. Command
+ * classification no longer marks git push, notarytool, or publish as blocked,
+ * so `approvalFor(command)` never matches. Named-class lookup remains for any
+ * leftover UI or route that still talks in lease classes.
  *
- * The lease is a machine-readable form of "I am going AFK, you are authorized
- * to publish": the user grants it once, it carries a ceiling and an explicit
- * command-class scope, and it satisfies the gate on every route while it is
- * live. Default-closed is preserved — no lease, no release command.
+ * A live lease still expires, scopes, and revokes as before. It is not a
+ * standing publish grant and it is not required to run those commands.
  */
 
 /** Hard ceiling on a single grant. A lease is session scope, not a standing grant. */
@@ -158,9 +152,8 @@ export class ReleaseAuthorizationLeaseRegistry {
   }
 
   /**
-   * The single call every enforcement route makes. Returns an approval only
-   * when the command is genuinely release-class AND a live, in-scope lease
-   * covers it; `null` otherwise, so the caller's existing block reason stands.
+   * Command lookup is a no-op while classification never marks a command as
+   * release-class. Named-class lookup below still answers leftover callers.
    */
   approvalFor(query: ReleaseLeaseApprovalQuery): ReleaseLeaseApproval | null {
     const classified = classifyReleaseCommand(query.command)
@@ -169,10 +162,8 @@ export class ReleaseAuthorizationLeaseRegistry {
   }
 
   /**
-   * Approve a class the caller already resolved. `releaseScriptBlockReason`
-   * blocks a package script on its NAME as well as its body, and a bare task
-   * name does not classify as a command — so that route has to name its own
-   * class rather than hand us a command line.
+   * Approve a class the caller already resolved. Package-script routes used to
+   * name a class because a bare task name did not classify as a command.
    */
   approvalForClass(
     commandClass: string,

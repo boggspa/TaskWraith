@@ -12,6 +12,9 @@ describe('MCP route guards', () => {
   it('treats workspace writes and app-state mutations as mutating', () => {
     expect(isMutatingTaskWraithMcpTool('write_file')).toBe(true)
     expect(isMutatingTaskWraithMcpTool('ensemble_fanout')).toBe(true)
+    expect(isMutatingTaskWraithMcpTool('emulator_open')).toBe(false)
+    expect(isMutatingTaskWraithMcpTool('emulator_step')).toBe(true)
+    expect(isMutatingTaskWraithMcpTool('emulator_observe')).toBe(false)
     expect(isMutatingTaskWraithMcpTool('read_file')).toBe(false)
     expect(isMutatingTaskWraithMcpTool('capability_search')).toBe(false)
     expect(
@@ -32,6 +35,19 @@ describe('MCP route guards', () => {
   it('blocks unrouted mutating tools but keeps read tools eligible for fallback', () => {
     expect(validateMutatingMcpRoute('read_file', null)).toEqual({ ok: true })
     expect(validateMutatingMcpRoute('write_file', null)).toMatchObject({ ok: false })
+
+    const blockedWrite = validateMutatingMcpRoute('write_file', null)
+    expect(blockedWrite).toMatchObject({
+      ok: false,
+      directToolHint: {
+        toolNames: ['git_commit', 'write_file', 'apply_patch']
+      }
+    })
+    if (blockedWrite.ok) return
+    expect(blockedWrite).not.toHaveProperty('permissionRetry')
+    expect(blockedWrite.error).toContain('still blocked')
+    expect(blockedWrite.error).toContain('git_commit')
+    expect(blockedWrite.error).toContain('approval, and workspace checks')
     expect(validateMutatingMcpRoute('write_file', { appRunId: 'run-1' })).toEqual({ ok: true })
     expect(validateMutatingMcpRoute('ensemble_fanout', { appChatId: 'chat-1' })).toEqual({
       ok: true
@@ -99,10 +115,9 @@ describe('MCP route guards', () => {
 })
 
 describe('mcpToolAlwaysPrompts', () => {
-  it('forces a human on every third-party channel, standing grants included', () => {
+  it('holds third-party channels out of standing-grant auto-approval', () => {
     for (const toolName of [
       'image_generate',
-      'canvas_eval',
       // Reads are the INGRESS half of the same channel: a mailbox read puts a
       // stranger's words into the model's context.
       'outlook_list_messages',
@@ -114,6 +129,18 @@ describe('mcpToolAlwaysPrompts', () => {
     ]) {
       expect(mcpToolAlwaysPrompts(toolName)).toBe(true)
     }
+  })
+
+  it('holds the first canvas_eval on a surface for its dedicated window gate', () => {
+    // The approval orchestrator checks the exact-live-surface 12h window after
+    // this generic hold. A live window may auto-resolve there.
+    expect(mcpToolAlwaysPrompts('canvas_eval')).toBe(true)
+  })
+
+  it('keeps emulator observation on normal mcpTools gating, never the always-prompt hold', () => {
+    expect(mcpToolAlwaysPrompts('emulator_open')).toBe(false)
+    expect(mcpToolAlwaysPrompts('emulator_observe')).toBe(false)
+    expect(mcpToolAlwaysPrompts('emulator_step')).toBe(false)
   })
 
   it('forces a human on every appearance WRITE, so no grant can silence a restyle', () => {

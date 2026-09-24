@@ -4,6 +4,7 @@ import { reduceSoloToolEventMessages } from './soloToolEventReducer'
 import { projectRunItemToolEvents } from './runItemProjection'
 import { RunItemEventCompatMapper } from '../../../main/run/RunItemEventCompat'
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import { inlineStatsForActivity } from './ActivityInlineStats'
 
 /*
  * Dual-lane TOOL event regression suite.
@@ -195,6 +196,112 @@ describe('tool event dual-lane dedupe', () => {
     expect(activities).toHaveLength(1)
     expect(activities[0].status).toBe('success')
     expect(activities[0].outputPreview).toContain('a\nb')
+  })
+
+  it('preserves alternate argument bags through the sidecar-owned edit row', () => {
+    const harness = createToolDualLaneHarness()
+    harness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_use',
+          tool_name: 'replace',
+          tool_id: 'alternate-args',
+          arguments: { path: 'src/a.ts', old_string: 'old', new_string: 'new\nnext' }
+        },
+        new RunItemEventCompatMapper()
+      )
+    )
+
+    const activity = harness.activities()[0]
+    expect(activity.parameters).toMatchObject({ path: 'src/a.ts', old_string: 'old' })
+    expect(inlineStatsForActivity(activity)).toMatchObject({
+      visible: true,
+      additions: 2,
+      deletions: 1
+    })
+  })
+
+  it('keeps result-only changes and Codex patch envelopes after legacy suppression', () => {
+    const mapper = new RunItemEventCompatMapper()
+    const harness = createToolDualLaneHarness()
+    harness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_use',
+          tool_name: 'edit_file',
+          tool_id: 'result-evidence',
+          parameters: { path: 'src/a.ts' }
+        },
+        mapper
+      )
+    )
+    harness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_result',
+          tool_name: 'edit_file',
+          tool_id: 'result-evidence',
+          output: 'done',
+          changes: [{ path: 'src/a.ts', additions: 4, deletions: 2 }]
+        },
+        mapper
+      )
+    )
+    const changed = harness.activities()[0]
+    expect(inlineStatsForActivity(changed)).toMatchObject({ additions: 4, deletions: 2 })
+
+    const patchHarness = createToolDualLaneHarness()
+    const patchMapper = new RunItemEventCompatMapper()
+    patchHarness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_use',
+          tool_name: 'apply_patch',
+          tool_id: 'patch-evidence',
+          parameters: { path: 'src/b.ts' }
+        },
+        patchMapper
+      )
+    )
+    patchHarness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_result',
+          tool_name: 'apply_patch',
+          tool_id: 'patch-evidence',
+          output: 'done',
+          patch: '*** Begin Patch\n*** Update File: src/b.ts\n-old\n+new\n+next\n*** End Patch'
+        },
+        patchMapper
+      )
+    )
+    expect(inlineStatsForActivity(patchHarness.activities()[0])).toMatchObject({
+      visible: true,
+      additions: 2,
+      deletions: 1
+    })
+  })
+
+  it('projects a valid capability invocation as its concrete mutation target', () => {
+    const harness = createToolDualLaneHarness()
+    harness.adapter.appendChunk(
+      wireLine(
+        {
+          type: 'tool_use',
+          tool_name: 'mcp__TaskWraith__capability_invoke',
+          tool_id: 'gateway-replace',
+          parameters: {
+            name: 'replace',
+            arguments: { path: 'src/gateway.ts', old_string: 'before', new_string: 'after' }
+          }
+        },
+        new RunItemEventCompatMapper()
+      )
+    )
+
+    const activity = harness.activities()[0]
+    expect(activity).toMatchObject({ toolName: 'replace', category: 'write' })
+    expect(inlineStatsForActivity(activity)).toMatchObject({ additions: 1, deletions: 1 })
   })
 
   it('renders ONE row for a visible-progress line that carries a sidecar', () => {

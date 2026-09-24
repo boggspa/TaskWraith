@@ -96,6 +96,12 @@ function actionResult(overrides: Partial<CanvasWindowActResult> = {}): CanvasWin
     lease: LEASE,
     observationId: 'observation-1',
     actionId: 'action-1',
+    driveAction: {
+      leaseId: 'drive-lease-1',
+      reportId: 'drive-report-1',
+      actionId: 'drive-action-1',
+      independentVerificationRequired: false
+    },
     result: {
       ok: true,
       found: true,
@@ -859,6 +865,19 @@ describe('CanvasWindowDriver', () => {
       /screenshot\/observe\/inspect\/click\/fill only/
     )
     await expect(driver.reload()).rejects.toThrow(/screenshot\/observe\/inspect\/click\/fill only/)
+  })
+
+  it('returns a typed refusal for richer verbs that native Foreground Drive does not ship', async () => {
+    const { driver, bridge } = makeHarness()
+    await driver.open({ driver: 'window' })
+    await expect(driver.act({ kind: 'key', ref: 'ax2', key: 'Enter' })).resolves.toMatchObject({
+      ok: false,
+      action: 'key',
+      executed: false,
+      refusalReason: 'unsupported_action'
+    })
+    expect(bridge.click).not.toHaveBeenCalled()
+    expect(bridge.fill).not.toHaveBeenCalled()
   })
 
   it('releases the exact adopted capability once on close', async () => {

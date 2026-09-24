@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../store/types'
-import { appendContinuationHopsChangeTranscriptEvent } from './EnsembleContinuationHopsTranscript'
+import {
+  appendContinuationHopsChangeTranscriptEvent,
+  buildContinuationHopsAdvanceTranscriptEvent
+} from './EnsembleContinuationHopsTranscript'
 
 function chat(): ChatRecord {
   return {
@@ -42,6 +45,7 @@ describe('appendContinuationHopsChangeTranscriptEvent', () => {
           kind: 'ensembleContinuationHopsChange',
           ensembleRoundId: 'round-1',
           continuationHopsChange: {
+            event: 'limit',
             before: 6,
             after: 76,
             actor: 'captain',
@@ -67,5 +71,101 @@ describe('appendContinuationHopsChangeTranscriptEvent', () => {
         changedAtMs: 42
       })
     ).toBe(original)
+  })
+
+  it('does not create the first transcript row for a pre-prompt config change', () => {
+    const original = chat()
+    expect(
+      appendContinuationHopsChangeTranscriptEvent(original, {
+        id: 'hops-before-first-prompt',
+        before: 6,
+        after: 12,
+        actor: 'user',
+        changedAt: '2026-08-12T00:09:39.000Z',
+        changedAtMs: 42
+      })
+    ).toBe(original)
+  })
+
+  it('retains the idle audit row after a transcript has started', () => {
+    const original = {
+      ...chat(),
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user' as const,
+          content: 'Review the fixture.',
+          timestamp: '2026-08-12T00:00:00.000Z'
+        }
+      ]
+    }
+    const updated = appendContinuationHopsChangeTranscriptEvent(original, {
+      id: 'hops-between-rounds',
+      before: 6,
+      after: 12,
+      actor: 'user',
+      changedAt: '2026-08-12T00:09:39.000Z',
+      changedAtMs: 42
+    })
+
+    expect(updated.messages).toHaveLength(2)
+    expect(updated.messages.at(-1)?.metadata).toMatchObject({
+      kind: 'ensembleContinuationHopsChange',
+      continuationHopsChange: { before: 6, after: 12, actor: 'user' }
+    })
+  })
+
+  it('builds an advancing n/max promotion while preserving the plain status fallback', () => {
+    expect(
+      buildContinuationHopsAdvanceTranscriptEvent({
+        before: 48,
+        after: 49,
+        maxHops: 124,
+        changedAt: '2026-08-29T22:05:00.000Z',
+        roundId: 'round-49',
+        statusMessage: '@-mention: extra turn appended for Boss.',
+        targetLabel: ' Boss ',
+        sourceLabel: ' @-mention '
+      })
+    ).toEqual({
+      content: '@-mention: extra turn appended for Boss. Continuous handoff 49/124.',
+      metadata: {
+        kind: 'ensembleContinuationHopsChange',
+        ensembleRoundId: 'round-49',
+        continuationHopsChange: {
+          event: 'advance',
+          before: 48,
+          after: 49,
+          maxHops: 124,
+          changedAt: '2026-08-29T22:05:00.000Z',
+          targetLabel: 'Boss',
+          sourceLabel: '@-mention'
+        }
+      }
+    })
+  })
+
+  it('supports the first handoff and a fallback without optional presentation labels', () => {
+    expect(
+      buildContinuationHopsAdvanceTranscriptEvent({
+        before: 0,
+        after: 1,
+        maxHops: 6,
+        changedAt: '2026-08-29T22:06:00.000Z',
+        statusMessage: '  '
+      })
+    ).toEqual({
+      content: 'Continuous handoff 1/6.',
+      metadata: {
+        kind: 'ensembleContinuationHopsChange',
+        continuationHopsChange: {
+          event: 'advance',
+          before: 0,
+          after: 1,
+          maxHops: 6,
+          changedAt: '2026-08-29T22:06:00.000Z'
+        }
+      }
+    })
   })
 })

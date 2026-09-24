@@ -9,10 +9,14 @@ import type {
 import type { DiffStatColors } from '../../../shared/diffStatColors'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
+  isOllamaAccountSignedIn,
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseMistralVibeStatus,
+  summariseMuseCodeStatus,
+  summariseOllamaStatus,
   summariseProviderApiKeyStatus,
+  type ProviderAuthSummary,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
@@ -30,6 +34,7 @@ import { useUsageSummary } from '../lib/usageSummaryStore'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
+import { FirstRunEnsembleTaskCard } from './FirstRunEnsembleTaskCard'
 import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 import { ThemeAppearancePreviewStack } from './ThemeAppearancePreviewStack'
@@ -100,9 +105,22 @@ export interface FirstLaunchSheetProps {
    * read Vibe's private credential store, so this only drives truthful setup
    * guidance rather than a guessed sign-in state. */
   mistralStatus?: unknown
-  /** Ollama local mode has no sign-in; this only reflects whether
-   * TaskWraith can see a local Ollama runtime/service. */
+  /** Muse Code CLI status (binary presence + opaque Meta Model API credential
+   * state). Fail-closed like Mistral's probe — a missing status object reads
+   * as "not checked yet", never as signed in. */
+  museStatus?: unknown
+  /** Devin CLI status. The credential lane is env keys (WINDSURF_API_KEY /
+   * DEVIN_API_KEY) or the `devin auth login` credentials.toml; like Mistral
+   * and Muse the probe is fail-closed and a missing status object reads as
+   * "not checked yet", never as signed in. */
+  devinStatus?: unknown
+  /** Whether TaskWraith can see a local Ollama runtime/service. Used only as
+   * the fallback when the full `ollamaStatus` snapshot isn't wired. */
   ollamaProviderAvailable?: boolean
+  /** Full Ollama status snapshot (runtime reachability + remembered ollama.com
+   * account state). Ollama reports sign-in like every other provider now, so
+   * the card needs the account answer, not just local reachability. */
+  ollamaStatus?: unknown
   /**
    * AntiGravity stays absent until the host's authoritative conditional-offer
    * snapshot includes it. This reporting prop does not grant admission.
@@ -158,10 +176,12 @@ interface ProviderRowSpec {
   /** The provider has no bounded CLI logout command. Keep the setup action
    * visible without promising a sign-out operation TaskWraith cannot perform. */
   logoutUnsupported?: boolean
-  /** Local-first rows (Ollama) that still expose an OPTIONAL cloud sign-in
-   * button (e.g. `ollama signin` for ollama.com) without the generic sign-out
-   * (which is driven by run status, not cloud auth). */
-  cloudSignIn?: boolean
+  /** Whether an account is actually attached, when that is NOT the same
+   * question as the green dot. Ollama is green whenever its server can run
+   * something, signed in or not — so the sign-in / sign-out actions read this
+   * instead, or a signed-out user is offered a sign-out. Defaults to the
+   * variant, which is the right answer for every other provider. */
+  accountSignedIn?: boolean
   /** Set when the provider is signed in but its quota window is at
    * ~100% — drives the "out of usage" card treatment + progress bar. */
   usage?: { fraction: number; resetAt?: string }
@@ -203,6 +223,57 @@ function worstProviderUsage(
     if (!worst || used > worst.fraction) worst = { fraction: used, resetAt: w.resetAt }
   }
   return worst
+}
+
+/**
+ * Devin CLI status → the shared provider vocabulary. Local mirror of the
+ * SettingsPanel summariser (kept here to avoid a runtime import cycle with
+ * that 12k-line module): the Devin seat authenticates through env keys
+ * (WINDSURF_API_KEY canonical, DEVIN_API_KEY) or the stored credentials file
+ * written by `devin auth login`; deriveAuthState reports 'windsurf-api-key'
+ * as Devin's primary authenticated state.
+ */
+function summariseDevinStatus(status: unknown): ProviderAuthSummary {
+  const record = status && typeof status === 'object' ? (status as Record<string, unknown>) : null
+  if (!record) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin setup not checked yet',
+      hint:
+        'Install the Devin CLI (`curl -fsSL https://cli.devin.ai/install.sh | bash`), then set WINDSURF_API_KEY or run `devin auth login`.'
+    }
+  }
+  if (record.available === false) {
+    return {
+      variant: 'not-available',
+      statusText: 'Devin CLI not found',
+      hint: 'Install the Devin CLI, then set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  const authState = String(record.authState || '').trim().toLowerCase()
+  const credentialPresent = record.credentialPresent === true
+  if (
+    credentialPresent ||
+    ['authenticated', 'api-key', 'windsurf-api-key'].includes(authState)
+  ) {
+    return {
+      variant: 'signed-in',
+      statusText: 'Devin signed in',
+      hint: 'You can launch Devin runs from TaskWraith.'
+    }
+  }
+  if (['missing', 'unauthenticated', 'signed-out'].includes(authState)) {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'Devin not signed in',
+      hint: 'Set WINDSURF_API_KEY or run `devin auth login` in Terminal.'
+    }
+  }
+  return {
+    variant: 'partial',
+    statusText: 'Devin CLI ready · credential state not observed',
+    hint: 'Set WINDSURF_API_KEY or run `devin auth login` if sign-in is incomplete.'
+  }
 }
 
 /**
@@ -260,7 +331,10 @@ export function FirstLaunchSheet({
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
   mistralStatus,
+  museStatus,
+  devinStatus,
   ollamaProviderAvailable = false,
+  ollamaStatus,
   antigravityProviderOffered = false,
   usageSummary: usageSummaryFallback,
   themeAppearance = 'system',
@@ -362,6 +436,13 @@ export function FirstLaunchSheet({
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
   const mistralSummary = summariseMistralVibeStatus(mistralStatus)
+  const museSummary = summariseMuseCodeStatus(museStatus)
+  const devinSummary = summariseDevinStatus(devinStatus)
+  // Hosts that only pass the reachability boolean still get a truthful
+  // runtime answer; the account half simply stays "not signed in".
+  const ollamaSnapshot =
+    ollamaStatus ?? { available: ollamaProviderAvailable, localAvailable: ollamaProviderAvailable }
+  const ollamaSummary = summariseOllamaStatus(ollamaSnapshot)
 
   const baseProviderRows: ProviderRowSpec[] = [
     {
@@ -407,16 +488,18 @@ export function FirstLaunchSheet({
       id: 'ollama',
       label: 'Ollama',
       description:
-        'Local models running through Ollama. Best for on-device Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
-      variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
-      statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
-      hint: ollamaProviderAvailable
-        ? 'Pick Local / Ollama in the provider picker, then choose an installed model in Settings or the composer.'
-        : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, North Mini Code 1.0 needs 0.30.10+, and Qwen 3.8 needs 0.32.12+.',
+        'Local models running through Ollama. Best for Muse Glimmer, Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
+      ...ollamaSummary,
+      // Only the nothing-running case earns onboarding-specific copy: the
+      // commands are right below this grid, and the model version floors are
+      // what actually trip a first pull.
+      hint:
+        ollamaSummary.variant === 'signed-in'
+          ? ollamaSummary.hint
+          : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, North Mini Code 1.0 needs 0.30.10+, and Qwen 3.8 needs 0.32.12+.',
+      accountSignedIn: isOllamaAccountSignedIn(ollamaSnapshot),
       deemphasised: true,
-      optional: true,
-      localOnly: true,
-      cloudSignIn: true
+      optional: true
     },
     {
       id: 'mistral',
@@ -457,17 +540,21 @@ export function FirstLaunchSheet({
       localOnly: true
     },
     {
-      id: 'gemini',
-      label: 'Gemini',
+      id: 'muse',
+      label: 'Muse',
       description:
-        'Historical Gemini provider identity. Existing chats, usage, and audit records remain attributed to Gemini, but it is not offered for new runs.',
-      variant: 'partial',
-      statusText: 'Historical · not offered for new runs',
-      hint:
-        'Kept visible for honest reporting and history continuity; there is no new-run sign-in or enable action here.',
-      badge: 'Historical',
-      deemphasised: true,
-      reportingOnly: true
+        'Muse Code CLI over the Meta Model API. Sign in with `muse login` or a Meta Model API key; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
+      ...museSummary,
+      optional: true
+    },
+    {
+      id: 'devin',
+      label: 'Devin',
+      description:
+        'Devin CLI coding agent over ACP (`devin acp`) on your own paid seat. Authenticate with WINDSURF_API_KEY or `devin auth login`; TaskWraith probes the binary and credential state fail-closed rather than guessing.',
+      ...devinSummary,
+      optional: true,
+      logoutUnsupported: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the
@@ -531,7 +618,7 @@ export function FirstLaunchSheet({
 
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
-            TaskWraith is a local-first desktop workbench for AI coding agents. It brings together{' '}
+            TaskWraith brings together{' '}
             <strong>Codex</strong>,{' '}
             <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>,{' '}
             <strong>Cursor</strong>, local <strong>Ollama</strong> models, and BYOK{' '}
@@ -541,8 +628,8 @@ export function FirstLaunchSheet({
                 , plus your conditionally configured <strong>AntiGravity</strong> seat
               </>
             ) : null}{' '}
-            inside one consistent
-            UI so you can run solo chats, side chats, delegated workers, and Ensembles side by side.
+            inside one desktop UI so you can run solo chats, side chats, delegated workers, and
+            Ensembles side by side.
             Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
             Historical Gemini chats and usage stay visible for reporting even though Gemini is not
             offered for new runs.{' '}
@@ -611,9 +698,10 @@ export function FirstLaunchSheet({
             </li>
           </ul>
           <p className="first-launch-sheet-section-helper">
-            Most providers sign in through their own CLI in Terminal; Claude signs in in-app, and
-            Pi and Ollama run on keys or local models you set up in Settings. Each card shows what,
-            if anything, its provider still needs.
+            Most providers sign in through their own CLI in Terminal; Claude signs in in-app, and Pi
+            runs on keys you set up in Settings. Ollama signs in to ollama.com like the rest, and
+            additionally runs local models with no account at all. Each card shows what, if
+            anything, its provider still needs.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
@@ -630,7 +718,8 @@ export function FirstLaunchSheet({
             <summary>Don&apos;t have a CLI yet? Official install commands</summary>
             <p className="first-launch-sheet-section-helper">
               Run one in your terminal, then come back and sign in. (npm commands need Node 20+; the
-              curl installers are self-contained. Ollama is local: install it, then pull a model.)
+              curl installers are self-contained. Install Ollama, then pull a local model or sign in
+              for its Cloud catalog.)
             </p>
             <ProviderInstallCommands />
           </details>
@@ -845,10 +934,10 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-section-helper">
             <strong>Get one provider working first</strong> — Ensemble shines with two or more.
             Toggle Ensemble on an idle top-level chat to add multiple provider participants while
-            preserving its transcript. Turn mode keeps one active speaker at a time; Continuous mode
-            keeps going while actual work remains, but returns control instead of burning hops on a
-            no-work, all-yielded consensus. Queued provider/model changes close the current pass
-            before the next one starts.
+            preserving its transcript. Leave Fan-Out Off to keep one active speaker at a time;
+            rounds keep going while actual work remains, but return control instead of burning
+            hops on a no-work, all-yielded consensus. Queued provider/model changes close the
+            current pass before the next one starts.
           </p>
           <p className="first-launch-sheet-prose">
             Stage roles shape the hand-off: Scouts investigate in parallel first, Workers take
@@ -897,9 +986,10 @@ export function FirstLaunchSheet({
             </div>
             <div className="first-launch-sheet-ensemble-footer">
               <span>Toggle Ensemble while the thread is idle</span>
-              <span>Turn / Continuous in the composer</span>
+              <span>Fan-Out, Isolate and Turns in the composer</span>
             </div>
           </div>
+          <FirstRunEnsembleTaskCard />
         </section>
 
         <section className="first-launch-sheet-section">
@@ -935,14 +1025,14 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and Kimi K2.7 Coding) expose a
-              Fast choice — K2.7 Coding switches between Standard and
-              Highspeed (K3 has no Fast tier), while Grok 4.6 and the retained
-              Grok 4.5 model on the Grok CLI are always labelled Fast.
+              GPT-5.6 / 5.5 / 5.4 and supported Claude Opus models) expose a Fast choice, while Grok
+              4.6 and the retained Grok 4.5 model on the Grok CLI are always labelled Fast. Kimi
+              exposes no Fast toggle: K2.8 Preview, K2.7 Code Highspeed, and both K3 routes are
+              separate model rows.
             </li>
             <li>
-              <strong>Kimi thinking stays on.</strong> K2.7 Coding has a fixed On setting; K3 lets
-              you choose Low, High, or Max effort, but thinking cannot be disabled.
+              <strong>Kimi thinking stays on.</strong> K2.8 Preview and both K3 routes let you
+              choose Low, High, or Max effort; K2.7 Code Highspeed has a fixed On setting.
             </li>
             <li>
               <strong>Delegate a focused worker.</strong> With approval, an agent can open a
@@ -1031,29 +1121,20 @@ function ProviderCard({
     (row.id === 'cursor' || row.id === 'grok') && row.variant === 'partial'
       ? 'signed-in'
       : row.variant
+  // The green dot answers "can this run?", which for Ollama is true before any
+  // account exists. Sign-in / sign-out actions follow the account instead.
+  const accountSignedIn = row.accountSignedIn ?? row.variant === 'signed-in'
   const showSignInAction =
     !row.reportingOnly &&
     Boolean(onProviderLogin) &&
-    row.variant !== 'signed-in' &&
+    !accountSignedIn &&
     row.variant !== 'out-of-usage' &&
-    (!row.localOnly || row.cloudSignIn)
-  const signInClass = [
-    'segmented-control-action',
-    'segmented-control-action--compact',
-    row.cloudSignIn ? '' : 'segmented-control-action--primary'
-  ]
-    .filter(Boolean)
-    .join(' ')
+    !row.localOnly
   return (
     <div className={classes} data-provider={row.id}>
       <div className="first-launch-sheet-provider-card-header">
         <ProviderBrandLogo provider={row.id} className="first-launch-sheet-provider-card-logo" />
         <span className="first-launch-sheet-provider-card-label">{row.label}</span>
-        {(row.badge || row.optional) && (
-          <span className="first-launch-sheet-provider-card-optional-badge">
-            {row.badge || 'Optional'}
-          </span>
-        )}
       </div>
       <div className="first-launch-sheet-provider-card-status">
         <span
@@ -1077,37 +1158,25 @@ function ProviderCard({
           {showSignInAction && onProviderLogin && (
             <button
               type="button"
-              // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
-              // optional, so it's a ghost button, not the primary "you must sign
-              // in" CTA the cloud providers use.
-              className={signInClass}
+              className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
               onClick={() => onProviderLogin(row.id)}
-              aria-label={
-                row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`
-              }
-              title={
-                row.cloudSignIn
-                  ? `Open the ${row.label} cloud sign-in flow. Local ${row.label} runs still work without this.`
-                  : `Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`
-              }
+              aria-label={`Sign in to ${row.label}`}
+              title={`Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`}
             >
-              {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
+              Sign in
             </button>
           )}
-          {row.variant === 'signed-in' &&
-            !row.localOnly &&
-            !row.logoutUnsupported &&
-            onProviderLogout && (
-              <button
-                type="button"
-                className="segmented-control-action segmented-control-action--compact"
-                onClick={() => onProviderLogout(row.id)}
-                aria-label={`Sign out of ${row.label}`}
-                title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
-              >
-                Sign out
-              </button>
-            )}
+          {accountSignedIn && !row.localOnly && !row.logoutUnsupported && onProviderLogout && (
+            <button
+              type="button"
+              className="segmented-control-action segmented-control-action--compact"
+              onClick={() => onProviderLogout(row.id)}
+              aria-label={`Sign out of ${row.label}`}
+              title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
+            >
+              Sign out
+            </button>
+          )}
           <button
             type="button"
             className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
@@ -1115,7 +1184,7 @@ function ProviderCard({
             aria-label={`Open settings for ${row.label}`}
             title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}
           >
-            {row.variant === 'signed-in' ? 'Manage in Settings' : 'Open Settings'}
+            {accountSignedIn ? 'Manage in Settings' : 'Open Settings'}
           </button>
         </div>
       )}

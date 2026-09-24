@@ -566,3 +566,46 @@ describe('preflightNativeWorkspaceTool', () => {
     expect('checkedPaths' in result && result.checkedPaths.length).toBeGreaterThan(0)
   })
 })
+
+describe('native shell permitted without a runtime sandbox', () => {
+  // The Seatbelt is macOS-only, so on Windows and Linux this flag is the only
+  // route a native shell has. It never widens cwd containment.
+  const shell = (root: string, extra: Record<string, unknown>) =>
+    preflightNativeWorkspaceTool({
+      provider: 'mistral',
+      toolName: 'bash',
+      toolKind: 'execute',
+      rawToolCall: { rawInput: { command: 'npm test', cwd: root } },
+      workspacePath: root,
+      ...extra
+    })
+
+  it('still denies when neither the sandbox nor the permission is present', () => {
+    const root = workspace()
+    expect(shell(root, { runtimeSandboxed: false }).kind).toBe('deny')
+  })
+
+  it('allows the shell class when the seat permits it unsandboxed', () => {
+    const root = workspace()
+    const result = shell(root, { runtimeSandboxed: false, nativeShellPermittedUnsandboxed: true })
+    expect(result.kind).toBe('allow')
+    if (result.kind === 'allow') {
+      expect(result.access).toBe('shell')
+      expect(result.service).toBe('shellCommands')
+    }
+  })
+
+  it('does NOT relax cwd containment — an outside cwd still denies', () => {
+    const root = workspace()
+    const result = preflightNativeWorkspaceTool({
+      provider: 'mistral',
+      toolName: 'bash',
+      toolKind: 'execute',
+      rawToolCall: { rawInput: { command: 'npm test', cwd: '/etc' } },
+      workspacePath: root,
+      runtimeSandboxed: false,
+      nativeShellPermittedUnsandboxed: true
+    })
+    expect(result.kind).toBe('deny')
+  })
+})

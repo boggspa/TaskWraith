@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createBrokerSteerTransport,
+  drainPendingSteerTextFromSession,
   formatBrokerSteeringElement,
   formatSteeringInjection,
+  reservePendingSteerTextFromSession,
   type BrokerSteerTransport
 } from './BrokerSteerTransport'
 
@@ -83,16 +85,139 @@ describe('BrokerSteerTransport', () => {
   it('cancel clears pending text', () => {
     const { transport, readPending } = makeTransport()
     const onDelivered = vi.fn()
-    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered })
+    const onRejected = vi.fn()
+    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered, onRejected })
     transport.cancel()
     expect(readPending()).toBeNull()
     expect(transport.peek()).toBeNull()
     expect(onDelivered).not.toHaveBeenCalled()
+    expect(onRejected).toHaveBeenCalledOnce()
+  })
+
+  it('commits delivery evidence only after a reserved batch is accepted', () => {
+    const { transport, readPending } = makeTransport()
+    const onDelivered = vi.fn()
+    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered })
+
+    const reservation = transport.reserve()
+    expect(reservation?.text).toBe('hello')
+    expect(readPending()).toBeNull()
+    expect(onDelivered).not.toHaveBeenCalled()
+
+    reservation?.commit()
+    expect(onDelivered).toHaveBeenCalledOnce()
+  })
+
+  it('rolls a refused reservation back ahead of later steering text', () => {
+    const { transport, readPending } = makeTransport()
+    const firstDelivered = vi.fn()
+    const secondDelivered = vi.fn()
+    transport.sendSteer('first', { entryId: 'entry-1', onDelivered: firstDelivered })
+    const reservation = transport.reserve()
+    transport.sendSteer('second', { entryId: 'entry-2', onDelivered: secondDelivered })
+
+    reservation?.rollback()
+
+    expect(readPending()).toContain('first')
+    expect(readPending()).toContain('second')
+    expect(readPending()!.indexOf('first')).toBeLessThan(readPending()!.indexOf('second'))
+    transport.drain()
+    expect(firstDelivered).toHaveBeenCalledOnce()
+    expect(secondDelivered).toHaveBeenCalledOnce()
+  })
+
+  it('allows only one open reservation so rollback order cannot invert', () => {
+    const { transport, readPending } = makeTransport()
+    transport.sendSteer('first')
+    const firstReservation = transport.reserve()
+    transport.sendSteer('second')
+
+    expect(transport.reserve()).toBeNull()
+    expect(readPending()).toBe('second')
+
+    firstReservation?.rollback()
+    expect(readPending()).toContain('first')
+    expect(readPending()).toContain('second')
+    expect(readPending()!.indexOf('first')).toBeLessThan(readPending()!.indexOf('second'))
+  })
+
+  it('does not bypass an open transport reservation through the session fallback', () => {
+    let pendingSteerText: string | null = null
+    const transport = createBrokerSteerTransport(
+      (text) => {
+        pendingSteerText = text
+      },
+      () => pendingSteerText
+    )
+    const session = {
+      liveSteerTransport: transport,
+      get pendingSteerText(): string | null {
+        return pendingSteerText
+      },
+      set pendingSteerText(text: string | null) {
+        pendingSteerText = text
+      }
+    }
+    transport.sendSteer('first')
+    const firstReservation = reservePendingSteerTextFromSession(session)
+    transport.sendSteer('second')
+
+    expect(reservePendingSteerTextFromSession(session)).toBeNull()
+    expect(drainPendingSteerTextFromSession(session)).toBeNull()
+    expect(pendingSteerText).toBe('second')
+
+    firstReservation?.rollback()
+    expect(pendingSteerText).toContain('first')
+    expect(pendingSteerText).toContain('second')
+  })
+
+  it('marks an in-flight reservation ambiguous when cancellation overlaps admission', () => {
+    const { transport } = makeTransport()
+    const onDelivered = vi.fn()
+    const onAmbiguous = vi.fn()
+    transport.sendSteer('hello', { entryId: 'entry-1', onDelivered, onAmbiguous })
+    const reservation = transport.reserve()
+
+    transport.cancel()
+    reservation?.commit()
+
+    expect(onAmbiguous).toHaveBeenCalledOnce()
+    expect(onDelivered).not.toHaveBeenCalled()
+  })
+
+  it('does not re-arm a cancelled open reservation after late rollback', () => {
+    const { transport, readPending } = makeTransport()
+    const onAmbiguous = vi.fn()
+    transport.sendSteer('hello', {
+      entryId: 'entry-1',
+      onDelivered: vi.fn(),
+      onAmbiguous
+    })
+    const reservation = transport.reserve()
+
+    transport.cancel()
+    reservation?.rollback()
+
+    expect(readPending()).toBeNull()
+    expect(onAmbiguous).toHaveBeenCalledOnce()
   })
 
   it('cancel is a no-op when nothing is pending', () => {
     const { transport } = makeTransport()
     expect(() => transport.cancel()).not.toThrow()
+  })
+
+  it('settles a bare-session fallback reservation only once', () => {
+    const session = {
+      liveSteerTransport: undefined,
+      pendingSteerText: 'once' as string | null
+    }
+    const reservation = reservePendingSteerTextFromSession(session)
+
+    reservation?.rollback()
+    reservation?.rollback()
+
+    expect(session.pendingSteerText).toBe('once')
   })
 })
 

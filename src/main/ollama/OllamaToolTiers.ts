@@ -4,6 +4,7 @@ import {
   GATEWAY_V17_MCP_DIRECT_TOOLS,
   taskWraithGatewayDirectToolNamesForProfile
 } from '../mcp/McpToolProfiles'
+import { isOllamaSmallLocalModelDirectTool } from './OllamaSmallLocalModelProfile'
 import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
 
 export type OllamaToolName = TaskWraithMcpToolName
@@ -82,35 +83,102 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
  * fresh gateway session sees. The full catalogue remains callable through the
  * two capability gateway tools, with Ollama's legacy `tool_help` kept
  * alongside. Resumed seats pass their pinned profile id to retain older direct
- * membership. Sub-thread tools (including `delegate_wave`) are stripped below.
+ * membership. Delegation/sub-thread tools are stripped below unless the
+ * signed run posture carries the exact UltraTask auto-allow source.
  */
 export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V17_MCP_DIRECT_TOOLS
 
 /**
- * Sub-thread control is a remote/brokered seat capability. Ollama's local tool
- * loop must never advertise or execute these — including via capability_invoke —
- * even though they remain in the shared gateway direct catalog for other
- * providers. Capability UI already reports Ollama cannot spawn sub-threads.
+ * Resolve the immutable direct catalogue before Ollama's signed permission
+ * overlays are applied. Mesh variants keep using the corresponding non-Mesh
+ * grammar because the local parser reaches Mesh through capability discovery.
+ * A missing profile deliberately retains the historical v17 alias.
  */
-export const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES = Object.freeze([
+export function ollamaDirectToolNamesForProfile(
+  profileId?: TaskWraithMcpProfileId | null
+): readonly OllamaToolName[] {
+  if (profileId === 'taskwraith-gateway-v21-mesh')
+    return taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v21')
+  if (profileId === 'taskwraith-gateway-v20-mesh')
+    return taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v20')
+  const localProfileId =
+    profileId === 'taskwraith-gateway-v7-mesh'
+      ? 'taskwraith-gateway-v7'
+      : profileId === 'taskwraith-gateway-v8-mesh'
+        ? 'taskwraith-gateway-v8'
+        : profileId === 'taskwraith-gateway-v9-mesh'
+          ? 'taskwraith-gateway-v9'
+          : profileId === 'taskwraith-gateway-v10-mesh'
+            ? 'taskwraith-gateway-v10'
+            : profileId === 'taskwraith-gateway-v11-mesh'
+              ? 'taskwraith-gateway-v11'
+              : profileId === 'taskwraith-gateway-v12-mesh'
+                ? 'taskwraith-gateway-v12'
+                : profileId === 'taskwraith-gateway-v13-mesh'
+                  ? 'taskwraith-gateway-v13'
+                  : profileId === 'taskwraith-gateway-v14-mesh'
+                    ? 'taskwraith-gateway-v14'
+                    : profileId === 'taskwraith-gateway-v15-mesh'
+                      ? 'taskwraith-gateway-v15'
+                      : profileId === 'taskwraith-gateway-v16-mesh'
+                        ? 'taskwraith-gateway-v16'
+                        : profileId === 'taskwraith-gateway-v17-mesh'
+                          ? 'taskwraith-gateway-v17'
+                          : profileId === 'taskwraith-gateway-v18-mesh'
+                            ? 'taskwraith-gateway-v18'
+                            : profileId === 'taskwraith-gateway-v19-mesh'
+                              ? 'taskwraith-gateway-v19'
+                              : profileId
+  return localProfileId
+    ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
+    : OLLAMA_ADVERTISED_TOOL_NAMES
+}
+
+/**
+ * Delegation/sub-thread tools conditionally unlocked by the main-issued,
+ * HMAC-signed UltraTask run posture. This is the complete local lifecycle:
+ * spawn, wait/read, cancel, and advisory wave ownership. `ultra_task` belongs
+ * here too because it spawns provider work this thread becomes accountable
+ * for; leaving it in the ordinary surface would be a second door around the
+ * conditional grant.
+ *
+ * It does NOT lower to `delegate_wave` — that was the pre-graph design, and
+ * its wave-based executor was deleted 2026-08-29. `ultra_task` compiles its
+ * own durable execution graph, which main owns and this thread owns.
+ */
+export const OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES = Object.freeze([
   'delegate_to_subthread',
   'delegate_wave',
+  'ultra_task',
   'list_subthreads',
   'read_subthread_result',
   'cancel_subthread',
   'claim_fleet_wave'
 ] as const satisfies readonly OllamaToolName[])
 
-const OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET = new Set<string>(
-  OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAMES
+const OLLAMA_ULTRATASK_DELEGATION_TOOL_NAME_SET = new Set<string>(
+  OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES
 )
 
-export function isOllamaExcludedSubthreadTool(toolName: string): boolean {
-  return OLLAMA_EXCLUDED_SUBTHREAD_TOOL_NAME_SET.has(toolName)
+export function isOllamaUltraTaskDelegationTool(toolName: string): boolean {
+  return OLLAMA_ULTRATASK_DELEGATION_TOOL_NAME_SET.has(toolName)
 }
 
-function withoutOllamaExcludedSubthreadTools(names: readonly OllamaToolName[]): OllamaToolName[] {
-  return names.filter((toolName) => !isOllamaExcludedSubthreadTool(toolName))
+function filterOllamaUltraTaskDelegationTools(
+  names: readonly OllamaToolName[],
+  ultraTaskDelegationAutoAllow: boolean
+): OllamaToolName[] {
+  if (!ultraTaskDelegationAutoAllow) {
+    return names.filter((toolName) => !isOllamaUltraTaskDelegationTool(toolName))
+  }
+  // The immutable gateway direct profile does not include every lifecycle
+  // reader/cancel verb. UltraTask consent is an explicit run-scoped overlay,
+  // so add the fixed lifecycle set without mutating or pretending to advance
+  // the underlying provider-session profile receipt.
+  return [
+    ...names,
+    ...OLLAMA_ULTRATASK_DELEGATION_TOOL_NAMES.filter((toolName) => !names.includes(toolName))
+  ]
 }
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
@@ -123,6 +191,12 @@ const PLAN_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(PLAN_MCP_ADVERTISE_T
  * (the immutable gateway set intersected with the shared read-only or Plan
  * advertise set for a scoped run). Hidden tools stay reachable only as targets
  * of capability_invoke, not as extra top-level names in the fallback grammar.
+ *
+ * `smallLocalModel` narrows the surface further, to the compact find/read/
+ * change/verify set a 1.5B-4B local model can actually hold in its window. It
+ * intersects like every other filter here, so it can only ever remove — and it
+ * removes from the SCHEMA only, since the tail stays reachable through
+ * capability_invoke exactly as it does for a large model.
  */
 export function ollamaAdvertisedToolNames(
   options: {
@@ -130,39 +204,25 @@ export function ollamaAdvertisedToolNames(
     readOnly?: boolean
     plan?: boolean
     taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
+    /** True only for a LOCAL model at or below the small-model parameter ceiling. */
+    smallLocalModel?: boolean
   } = {}
 ): OllamaToolName[] {
-  // Ollama's local parser has one compact callable-name grammar. Keep Mesh on
-  // capability discovery as before, while retaining the corresponding profile
-  // generation for every other direct tool (including Sketch on v8-mesh).
-  const localProfileId =
-    options.taskWraithMcpProfileId === 'taskwraith-gateway-v7-mesh'
-      ? 'taskwraith-gateway-v7'
-      : options.taskWraithMcpProfileId === 'taskwraith-gateway-v8-mesh'
-        ? 'taskwraith-gateway-v8'
-        : options.taskWraithMcpProfileId === 'taskwraith-gateway-v9-mesh'
-          ? 'taskwraith-gateway-v9'
-          : options.taskWraithMcpProfileId === 'taskwraith-gateway-v10-mesh'
-            ? 'taskwraith-gateway-v10'
-            : options.taskWraithMcpProfileId === 'taskwraith-gateway-v11-mesh'
-              ? 'taskwraith-gateway-v11'
-              : options.taskWraithMcpProfileId === 'taskwraith-gateway-v12-mesh'
-                ? 'taskwraith-gateway-v12'
-                : options.taskWraithMcpProfileId === 'taskwraith-gateway-v13-mesh'
-                  ? 'taskwraith-gateway-v13'
-                  : options.taskWraithMcpProfileId === 'taskwraith-gateway-v14-mesh'
-                    ? 'taskwraith-gateway-v14'
-                    : options.taskWraithMcpProfileId === 'taskwraith-gateway-v15-mesh'
-                      ? 'taskwraith-gateway-v15'
-                      : options.taskWraithMcpProfileId === 'taskwraith-gateway-v16-mesh'
-                        ? 'taskwraith-gateway-v16'
-                        : options.taskWraithMcpProfileId === 'taskwraith-gateway-v17-mesh'
-                          ? 'taskwraith-gateway-v17'
-                          : options.taskWraithMcpProfileId
-  const directNames = localProfileId
-    ? taskWraithGatewayDirectToolNamesForProfile(localProfileId)
-    : OLLAMA_ADVERTISED_TOOL_NAMES
-  let names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(directNames)
+  const directNames = ollamaDirectToolNamesForProfile(options.taskWraithMcpProfileId)
+  // Start from the ordinary posture surface. The signed UltraTask lifecycle
+  // overlay is added only AFTER generic read-only/Plan intersection below;
+  // otherwise those generic sets would strip lifecycle readers that this exact
+  // consent intentionally enables.
+  let names: OllamaToolName[] = filterOllamaUltraTaskDelegationTools(directNames, false)
+  if (options.smallLocalModel) {
+    // Applied to the ordinary surface only. A run the user explicitly started
+    // as UltraTask still gets its delegation lifecycle back below: that consent
+    // is the user's call about their own model, and this profile does not
+    // overrule it.
+    names = names.filter((toolName) => isOllamaSmallLocalModelDirectTool(toolName))
+  }
   if (options.networkAccess === 'deny') {
     names = names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
   }
@@ -172,7 +232,7 @@ export function ollamaAdvertisedToolNames(
       : READ_ONLY_MCP_ADVERTISE_TOOL_SET
     names = names.filter((toolName) => postureNames.has(toolName))
   }
-  return names
+  return filterOllamaUltraTaskDelegationTools(names, options.ultraTaskDelegationAutoAllow === true)
 }
 
 /** Is this tool part of the immutable gateway direct set (vs the discovered tail)? */
@@ -186,9 +246,16 @@ export function isOllamaAdvertisedTool(toolName: string): boolean {
  * `name` argument of capability_invoke and do not widen the grammar.
  */
 export function ollamaCallableToolNames(
-  options: { networkAccess?: string | null } = {}
+  options: {
+    networkAccess?: string | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
+  } = {}
 ): OllamaToolName[] {
-  const names: OllamaToolName[] = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
+  const names: OllamaToolName[] = filterOllamaUltraTaskDelegationTools(
+    OLLAMA_ADVERTISED_TOOL_NAMES,
+    options.ultraTaskDelegationAutoAllow === true
+  )
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names
@@ -217,13 +284,20 @@ export function isOllamaToolControlTier(value: unknown): value is OllamaToolCont
 
 export function ollamaToolNamesForTier(
   _tier: OllamaToolControlTier | string | undefined | null,
-  options: { networkAccess?: string | null } = {}
+  options: {
+    networkAccess?: string | null
+    /** Derived only from signed `subThreadDelegationAutoAllowSource=ultratask`. */
+    ultraTaskDelegationAutoAllow?: boolean
+  } = {}
 ): OllamaToolName[] {
   // The retired tier argument no longer changes membership. Ollama shares the
-  // compact gateway direct profile (minus hard-excluded sub-thread tools);
-  // hidden capabilities are invoked through the gateway and retain their
-  // standard run-role policy at main's executor.
-  const names = withoutOllamaExcludedSubthreadTools(OLLAMA_ADVERTISED_TOOL_NAMES)
+  // compact gateway direct profile. Delegation joins it only for a signed
+  // UltraTask run; hidden capabilities are invoked through the gateway and
+  // retain their standard run-role policy at main's executor.
+  const names = filterOllamaUltraTaskDelegationTools(
+    OLLAMA_ADVERTISED_TOOL_NAMES,
+    options.ultraTaskDelegationAutoAllow === true
+  )
   return options.networkAccess === 'deny'
     ? names.filter((toolName) => !OLLAMA_NETWORK_TOOL_NAMES.has(toolName))
     : names

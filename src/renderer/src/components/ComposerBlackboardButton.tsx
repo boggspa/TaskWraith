@@ -25,7 +25,11 @@ import {
   buildBlackboardGroups,
   type BlackboardGroup
 } from './BlackboardEntryCard'
-import { BlackboardImageAttachmentPicker } from './BlackboardImageAttachmentPicker'
+import {
+  BlackboardImageAttachmentPicker,
+  useBlackboardImageDropZone
+} from './BlackboardImageAttachmentPicker'
+import { BlackboardGlyph } from './icons/BlackboardGlyph'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
@@ -67,29 +71,6 @@ export function buildComposerBlackboardColumns(entries: BlackboardEntry[]): Blac
   )
   return BLACKBOARD_CATEGORY_ORDER.map(
     (category) => populated.get(category) || { category, entries: [] }
-  )
-}
-
-/** Standing chalkboard glyph (easel legs + two chalk lines) — matches the
- * 16×16 / stroke-1.3 family used by the sibling composer-control icons. */
-function BlackboardSymbolIcon(): ReactElement {
-  return (
-    <span className="composer-control-icon">
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="2.3" y="2.5" width="11.4" height="8" rx="1.4" />
-        <path d="M4.9 5.4h6.2" />
-        <path d="M4.9 7.7h4.1" />
-        <path d="M4.2 10.5 3.3 13.3" />
-        <path d="m11.8 10.5.9 2.8" />
-      </svg>
-    </span>
   )
 }
 
@@ -167,6 +148,14 @@ export function ComposerBlackboardPostForm(
   const chatId = props.chat?.appChatId
   const canPost = Boolean(chatId && props.chat?.ensemble && !props.disabled)
   const draftValue = draft.trim()
+  // Dropping image files anywhere in the compose form attaches them — the
+  // same merge/error path as the "Attach image" button.
+  const dropZone = useBlackboardImageDropZone({
+    paths: imagePaths,
+    disabled: posting,
+    onChange: setImagePaths,
+    onError: setPostError
+  })
 
   useEffect(() => {
     setImagePaths([])
@@ -201,9 +190,10 @@ export function ComposerBlackboardPostForm(
 
   return (
     <form
-      className="composer-blackboard-compose"
+      className={`composer-blackboard-compose${dropZone.isDragOver ? ' is-drag-over' : ''}`}
       aria-label="Post to Blackboard"
       onSubmit={submitPost}
+      {...dropZone.dropHandlers}
     >
       <textarea
         value={draft}
@@ -478,7 +468,9 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
         data-hint-label="Blackboard"
         title={entryCount > 0 ? `Blackboard — ${entryCount} entries` : 'Blackboard'}
       >
-        <BlackboardSymbolIcon />
+        <span className="composer-control-icon">
+          <BlackboardGlyph />
+        </span>
         {entryCount > 0 && <span className="composer-blackboard-trigger-dot" aria-hidden="true" />}
       </button>
       {popover}

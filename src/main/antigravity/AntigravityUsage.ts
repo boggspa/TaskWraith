@@ -11,6 +11,7 @@
 import type { NormalizedProviderUsageSnapshot, NormalizedProviderUsageWindow } from '../ProviderQuotaSnapshots'
 import type { AppSettings } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
+import { isAntigravityAgyOptInEnabled } from './AntigravityAgyOptInEnabledSignal'
 import {
   createAgyCliEnv,
   resolveAgyCliBinary,
@@ -464,6 +465,13 @@ export async function fetchAuthenticatedAgyQuotaSnapshot(
     )
   }
 
+  // `settings` is the caller's snapshot, taken before the binary resolve above.
+  // Read consent again, live, with nothing awaited between here and the PTY
+  // spawn inside captureAgyUsagePanel (Chris, 2026-09-23). A withdrawal leaves
+  // the lane in its silent not-set-up state.
+  if (!isAntigravityAgyOptInEnabled()) {
+    return unavailableSnapshot(false, fetchedAt)
+  }
   const captured = await captureAgyUsagePanel(binary, deps)
   if (captured.spawnError) {
     return unavailableSnapshot(true, fetchedAt, quotaUnavailableError(captured.spawnError))

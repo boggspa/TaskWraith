@@ -12,6 +12,8 @@ const {
   writeWindowsUpdateFeeds: (options: {
     repoRoot: string
     distDir: string
+    version?: string
+    channel?: string
   }) => Array<{ arch: string; artifactName: string; feedNames: string[] }>
 } = require('./write-win-update-feeds.cjs')
 const {
@@ -19,7 +21,8 @@ const {
 }: {
   validateWindowsUpdateFeedFile: (
     filePath: string,
-    expectedVersion: string
+    expectedVersion: string,
+    expectedChannel?: string
   ) => { ok: boolean; errors: string[] }
 } = require('./validate-win-update-feed.cjs')
 
@@ -76,6 +79,38 @@ describe('write-win-update-feeds', () => {
       expect(() => writeWindowsUpdateFeeds({ repoRoot, distDir })).toThrow(
         'Missing expected Windows x64 setup installer'
       )
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('writes the public identity to release feeds without changing package.json', () => {
+    const { repoRoot, distDir } = fixture('0.1.0')
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ version: '1.9.9' }))
+    fs.writeFileSync(path.join(distDir, 'release.yml'), 'generic feed')
+    fs.writeFileSync(path.join(distDir, 'latest-win-x64.yml'), 'stale beta-identity feed')
+    try {
+      const results = writeWindowsUpdateFeeds({
+        repoRoot,
+        distDir,
+        version: '0.1.0',
+        channel: 'release'
+      })
+      expect(results.flatMap((result) => result.feedNames)).toEqual([
+        'release-win-x64.yml',
+        'release-win-arm64.yml'
+      ])
+      expect(fs.existsSync(path.join(distDir, 'release.yml'))).toBe(false)
+      expect(fs.existsSync(path.join(distDir, 'latest-win-x64.yml'))).toBe(false)
+      for (const arch of ['x64', 'arm64']) {
+        expect(
+          validateWindowsUpdateFeedFile(
+            path.join(distDir, `release-win-${arch}.yml`),
+            '0.1.0',
+            'release'
+          )
+        ).toMatchObject({ ok: true })
+      }
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true })
     }

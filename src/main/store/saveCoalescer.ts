@@ -88,7 +88,7 @@ export interface SaveCoalescer {
    * `-1` when the write was performed synchronously (barrier reason, or
    * coalescing disabled).
    */
-  schedule(chatId: string, write: () => void, reason: FlushReason): number
+  schedule(chatId: string, write: () => void, reason: FlushReason, onSettled?: () => void): number
   /** Durability barrier for one chat. True when a deferred write was performed. */
   flush(chatId: string): boolean
   /** Durability barrier for every deferred chat — shutdown and global consistency points. */
@@ -109,6 +109,7 @@ interface PendingSave {
   timer: ReturnType<typeof setTimeout> | null
   /** When this chat first went pending, for the max-latency ceiling. */
   firstQueuedAt: number
+  settle: () => void
 }
 
 /** Ceiling applied when the caller does not supply one explicitly. */
@@ -152,7 +153,7 @@ export function createSaveCoalescer(
    * attempted and is no longer pending, and reporting it as still-queued
    * would overstate what is durable.
    */
-  const runWrite = (write: () => void): void => {
+  const runWrite = (write: () => void, settle: () => void): void => {
     try {
       write()
     } catch (error) {
@@ -161,6 +162,7 @@ export function createSaveCoalescer(
       console.error('Coalesced chat save failed', error)
     } finally {
       flushed += 1
+      settle()
     }
   }
 
@@ -171,6 +173,7 @@ export function createSaveCoalescer(
     if (entry.timer) clearTimeout(entry.timer)
     pending.delete(chatId)
     coalesced += 1
+    entry.settle()
   }
 
   const flush = (chatId: string): boolean => {
@@ -178,18 +181,35 @@ export function createSaveCoalescer(
     if (!entry) return false
     if (entry.timer) clearTimeout(entry.timer)
     pending.delete(chatId)
-    runWrite(entry.write)
+    runWrite(entry.write, entry.settle)
     return true
   }
 
   return {
-    schedule(chatId: string, write: () => void, reason: FlushReason): number {
+    schedule(
+      chatId: string,
+      write: () => void,
+      reason: FlushReason,
+      onSettled?: () => void
+    ): number {
+      let settled = false
+      const settle = () => {
+        if (settled) return
+        settled = true
+        try {
+          onSettled?.()
+        } catch (error) {
+          // Settlement is lifecycle bookkeeping; it must never alter write,
+          // supersede, discard, or timer semantics.
+          console.error('Coalesced chat save settlement failed', error)
+        }
+      }
       // Counted before any early return so the mix covers every save the store
       // made, including those taken while coalescing is disabled.
       reasonMix[reason] = (reasonMix[reason] ?? 0) + 1
       // Disabled: preserve today's exact synchronous behaviour.
       if (delayMs < 0) {
-        runWrite(write)
+        runWrite(write, settle)
         return -1
       }
 
@@ -199,7 +219,7 @@ export function createSaveCoalescer(
       if (reason !== 'normal') {
         supersede(chatId)
         urgentFlushes += 1
-        runWrite(write)
+        runWrite(write, settle)
         return -1
       }
 
@@ -216,7 +236,7 @@ export function createSaveCoalescer(
       const forcedByCeiling = remainingCeiling <= delayMs
       const delay = forcedByCeiling ? Math.max(0, remainingCeiling) : delayMs
 
-      const entry: PendingSave = { write, timer: null, firstQueuedAt }
+      const entry: PendingSave = { write, timer: null, firstQueuedAt, settle }
       pending.set(chatId, entry)
       entry.timer = setTimeout(() => {
         // A barrier, a discard, or a superseding save may have replaced this
@@ -225,7 +245,7 @@ export function createSaveCoalescer(
         if (pending.get(chatId) !== entry) return
         pending.delete(chatId)
         if (forcedByCeiling) ceilingFlushes += 1
-        runWrite(entry.write)
+        runWrite(entry.write, entry.settle)
       }, delay)
       return delay
     },
@@ -242,6 +262,7 @@ export function createSaveCoalescer(
       if (entry.timer) clearTimeout(entry.timer)
       pending.delete(chatId)
       discarded += 1
+      entry.settle()
       return true
     },
 
@@ -253,6 +274,7 @@ export function createSaveCoalescer(
         if (entry.timer) clearTimeout(entry.timer)
         pending.delete(chatId)
         discarded += 1
+        entry.settle()
         dropped += 1
       }
       return dropped

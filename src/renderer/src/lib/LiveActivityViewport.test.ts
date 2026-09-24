@@ -3,7 +3,9 @@ import {
   ACTIVITY_REVEAL_EVENT,
   REVEAL_HEADER_ALLOWANCE_PX,
   VIEWPORT_STICK_PX,
+  createViewportRevealLedger,
   distanceFromBottom,
+  viewportRevealKey,
   edgeFadeState,
   isExpandRevealTransition,
   nextAutoFollow,
@@ -229,5 +231,77 @@ describe('revealScrollAdjustment', () => {
         targetBottom: 100
       })
     ).toBeNull()
+  })
+})
+
+describe('viewportRevealKey', () => {
+  it('scopes a lane id by surface so nested viewports never share a claim', () => {
+    expect(viewportRevealKey('msg-1', 'ensemble-fanout-result-viewport')).not.toBe(
+      viewportRevealKey('msg-1', 'ensemble-fanout-tools-viewport')
+    )
+  })
+
+  it('is stable for the same lane and surface across remounts', () => {
+    expect(viewportRevealKey('msg-1', 'ensemble-fanout-result-viewport')).toBe(
+      viewportRevealKey('msg-1', 'ensemble-fanout-result-viewport')
+    )
+  })
+
+  it('refuses to key an unidentifiable viewport', () => {
+    // No owning message means no way to tell a re-appearance from a first
+    // appearance. Withholding the reveal is the safe half of that trade: the
+    // band is reserved by CSS either way, so nothing can be stranded.
+    expect(viewportRevealKey(null, 'ensemble-fanout-result-viewport')).toBeNull()
+    expect(viewportRevealKey('', 'ensemble-fanout-result-viewport')).toBeNull()
+    expect(viewportRevealKey(undefined, undefined)).toBeNull()
+  })
+})
+
+describe('createViewportRevealLedger', () => {
+  it('grants the reveal once and refuses it after the animation starts', () => {
+    const ledger = createViewportRevealLedger()
+    expect(ledger.claim('lane-a')).toBe(true)
+    ledger.seal('lane-a')
+    // The row remounts constantly: its rowKey embeds the list index, so a
+    // fan-out wave relocating on its second lane, a virtualisation eviction, or
+    // a history page prepend all rebuild the node. None may replay the reveal.
+    expect(ledger.claim('lane-a')).toBe(false)
+    expect(ledger.claim('lane-a')).toBe(false)
+  })
+
+  it('re-arms when a claim is released before the animation ever started', () => {
+    // StrictMode mounts, unmounts and remounts every component once. That
+    // teardown happens before the browser dispatches animationstart, so the
+    // claim is still unsealed and must be handed back — otherwise the reveal is
+    // spent on a mount the user never saw, and dev never shows it at all.
+    const ledger = createViewportRevealLedger()
+    expect(ledger.claim('lane-a')).toBe(true)
+    ledger.release('lane-a')
+    expect(ledger.claim('lane-a')).toBe(true)
+  })
+
+  it('ignores a release once the reveal has been sealed', () => {
+    const ledger = createViewportRevealLedger()
+    ledger.claim('lane-a')
+    ledger.seal('lane-a')
+    ledger.release('lane-a')
+    expect(ledger.claim('lane-a')).toBe(false)
+  })
+
+  it('tracks lanes independently', () => {
+    const ledger = createViewportRevealLedger()
+    expect(ledger.claim('lane-a')).toBe(true)
+    ledger.seal('lane-a')
+    expect(ledger.claim('lane-b')).toBe(true)
+  })
+
+  it('seals and releases unknown keys without inventing a claim', () => {
+    const ledger = createViewportRevealLedger()
+    ledger.release('never-claimed')
+    expect(ledger.claim('never-claimed')).toBe(true)
+
+    const other = createViewportRevealLedger()
+    other.seal('never-claimed')
+    expect(other.claim('never-claimed')).toBe(false)
   })
 })

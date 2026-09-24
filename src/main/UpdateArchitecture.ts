@@ -78,9 +78,10 @@ export function classifyWindowsUpdateArtifact(name: string | undefined): UpdateA
 
 export function windowsUpdateChannelForHost(
   channel: 'stable' | 'nightly',
-  arch: string = process.arch
+  arch: string = process.arch,
+  stableChannel: 'latest' | 'release' = 'latest'
 ): string {
-  const channelPrefix = channel === 'nightly' ? 'beta' : 'latest'
+  const channelPrefix = channel === 'nightly' ? 'beta' : stableChannel
   return `${channelPrefix}-win-${normalizeWindowsUpdateArch(arch)}`
 }
 

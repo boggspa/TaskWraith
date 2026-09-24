@@ -14,6 +14,28 @@ import {
 const NOW = '2026-07-29T03:00:00.000Z'
 
 describe('mid-run queued transcript messages', () => {
+  it('clears an Ensemble steer draft before waiting for durable acknowledgement', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const start = appSource.indexOf('const handleSteer = async')
+    const end = appSource.indexOf("// Guard: if there's no active run for this chat", start)
+    const ensembleSteer = appSource.slice(start, end)
+    const consumeDraft = ensembleSteer.indexOf('beginComposerDraftSubmission({')
+    const durableAcknowledgement = ensembleSteer.indexOf('await window.api.runEnsembleRound({')
+    const acceptedResult = ensembleSteer.indexOf(
+      'if (!isAcceptedEnsembleSteerResult(result))',
+      durableAcknowledgement
+    )
+    const commitDraft = ensembleSteer.indexOf('draftSubmission?.commit()', durableAcknowledgement)
+    const restoreDraft = ensembleSteer.indexOf('draftSubmission?.restoreIfUntouched()', commitDraft)
+
+    expect(consumeDraft).toBeGreaterThanOrEqual(0)
+    expect(durableAcknowledgement).toBeGreaterThan(consumeDraft)
+    expect(acceptedResult).toBeGreaterThan(durableAcknowledgement)
+    expect(commitDraft).toBeGreaterThan(acceptedResult)
+    expect(restoreDraft).toBeGreaterThan(commitDraft)
+    expect(ensembleSteer).not.toContain("setChatPromptDraft(targetChatId, '')")
+  })
+
   it('persists a solo steer before projecting its visible transcript row', () => {
     const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     const start = appSource.indexOf('const handleSteer = async')

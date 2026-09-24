@@ -282,6 +282,39 @@ describe('one-shot provider transport history join', () => {
     expect(finished).toBeGreaterThan(terminalResult)
   })
 
+  it('seals solo Pi runs on the reducer result before the compat result line', () => {
+    const piRunEvent = between(
+      'function applyPiRunEvent(',
+      'function handlePiStreamEvent('
+    )
+    const resultBranch = piRunEvent.slice(piRunEvent.lastIndexOf("evt.type === 'result'"))
+    const completed = resultBranch.indexOf('state.completed = true')
+    const seal = resultBranch.indexOf('sealSoloPiRunOnCompletion({')
+    // Search AFTER the completion stamp: the result branch also contains an
+    // earlier `if (!state.ensembleRun)` around its solo token-telemetry report.
+    const soloGate = resultBranch.indexOf('if (!state.ensembleRun) {', completed)
+    const terminalResult = resultBranch.indexOf("type: 'result',")
+
+    // The seal is solo-gated: ensemble seats are stamped by the orchestrator
+    // at round finalization, and an early seal could pre-empt its verdict.
+    expect(soloGate).toBeGreaterThan(completed)
+    expect(seal).toBeGreaterThan(soloGate)
+    // Sealing main's copy BEFORE the compat emission means the broadcast that
+    // carries the result also carries the terminal fields — the renderer's
+    // live seal can never be clobbered by an unsealed main copy.
+    expect(seal).toBeLessThan(terminalResult)
+
+    const sealer = between(
+      'function sealSoloPiRunOnCompletion(',
+      '/**\n * Direct-seal fallback for a bridge-owned ChatRun'
+    )
+    // Fill-only via the shared reconciler seal: an already-sealed run (the
+    // renderer got there first) is never overwritten.
+    expect(sealer).toContain('sealChatRunTerminalFields(')
+    expect(sealer).toContain('historyClearAdmissionBlocked(')
+    expect(sealer).toContain("args.failed ? 'failed' : 'success'")
+  })
+
   it('issues a fresh-run Codex continuation after host rerun', () => {
     const continuation = between(
       'function continueCodexAfterHostRerun(',

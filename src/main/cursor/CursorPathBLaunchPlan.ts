@@ -1,13 +1,28 @@
-import type { TaskWraithMcpProfileId } from '../store/types'
+import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import {
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
-import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
-import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
-import { isCursorGrokModelId, resolveCursorGrokCliModelId } from '../../shared/grok45Models'
-import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import {
+  hasUltraTaskDelegationAutoAllow,
+  ULTRATASK_DELEGATION_TOOL_NAMES
+} from '../UltraTaskDelegationConsent'
+import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
+import {
+  buildProviderFileRoutingPrompt,
+  TASKWRAITH_FILE_ROUTING_PROMPT_OPEN
+} from '../ProviderFileRoutingPrompt'
+import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
+import {
+  isCursorGrokModelId,
+  migrateRetiredCursorGrokModelId,
+  resolveCursorGrokCliModelId
+} from '../../shared/grok45Models'
+import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
+import { buildCursorPathBActiveBrokerPrompt } from './CursorPathBBrokerReceipt'
+import { clearCursorMcpBridgeLastFailure } from './CursorMcpBridgeWarning'
+import {
+  buildCursorCanonicalBrokerMcpAllowRulesForProfile,
   CURSOR_BROKER_MCP_ALLOW_RULES,
   CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
   CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
@@ -37,6 +52,8 @@ export interface CursorPathBLaunchPlanInput {
   readonly brokerRequested: boolean
   readonly brokerOutcome: CursorPathBBrokerOutcome
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** Main-resolved, signature-verified run posture. */
+  readonly effectivePermissions?: EffectiveRunPermissions | null
   readonly workspaceMcpAliasesGlobalRegistry: boolean
 }
 
@@ -84,6 +101,8 @@ export function resolveCursorPathBBrokerPolicy(input: {
   readonly writeCapable: boolean
   readonly planSeat: boolean
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** Main-resolved, signature-verified run posture. */
+  readonly effectivePermissions?: EffectiveRunPermissions | null
   /** True only after broker setup failed or was not requested and no transient
    * broker policy remains installed for this process. */
   readonly nativeWriteFallback?: boolean
@@ -97,7 +116,9 @@ export function resolveCursorPathBBrokerPolicy(input: {
   if (input.writeCapable) {
     return Object.freeze({
       bridgeMode: 'full',
-      allowRules: Object.freeze([...CURSOR_BROKER_MCP_ALLOW_RULES]),
+      allowRules: Object.freeze(
+        cursorUltraTaskDelegationAllowRules(CURSOR_BROKER_MCP_ALLOW_RULES, input.effectivePermissions)
+      ),
       // While the broker is active, exact TaskWraith transactions remain the
       // only write path. A degraded launch has already released this transient
       // policy and may retain Cursor-native Shell/Write in its workspace sandbox.
@@ -106,19 +127,54 @@ export function resolveCursorPathBBrokerPolicy(input: {
     })
   }
   if (input.planSeat) {
+    const profileRules = input.taskWraithMcpProfileId
+      ? buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+          profileId: input.taskWraithMcpProfileId,
+          planSeat: true
+        })
+      : CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
     return Object.freeze({
       bridgeMode: 'plan-subset',
-      allowRules: Object.freeze([...CURSOR_BROKER_PLAN_MCP_ALLOW_RULES]),
+      allowRules: Object.freeze(
+        cursorUltraTaskDelegationAllowRules(profileRules, input.effectivePermissions)
+      ),
       denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
       ...common
     })
   }
+  const profileRules = input.taskWraithMcpProfileId
+    ? buildCursorCanonicalBrokerMcpAllowRulesForProfile({
+        profileId: input.taskWraithMcpProfileId,
+        planSeat: false
+      })
+    : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES
   return Object.freeze({
     bridgeMode: 'safe-subset',
-    allowRules: Object.freeze([...CURSOR_BROKER_READONLY_MCP_ALLOW_RULES]),
+    allowRules: Object.freeze(
+      cursorUltraTaskDelegationAllowRules(profileRules, input.effectivePermissions)
+    ),
     denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
     ...common
   })
+}
+
+/**
+ * Cursor's immutable gateway-v1 allow-rule arrays predate delegate_wave and
+ * ultra_task. A signed UltraTask selection adds only the three delegation
+ * routes to the transient run overlay; the scoped bridge still performs its
+ * own tools/list + tools/call ceiling and TaskWraith remains the host gate.
+ */
+function cursorUltraTaskDelegationAllowRules(
+  baseRules: readonly string[],
+  effectivePermissions: EffectiveRunPermissions | null | undefined
+): string[] {
+  if (!hasUltraTaskDelegationAutoAllow(effectivePermissions)) return [...baseRules]
+  const rules = new Set(baseRules)
+  for (const toolName of ULTRATASK_DELEGATION_TOOL_NAMES) {
+    rules.add(`Mcp(${CURSOR_MCP_SERVER_NAME}:${toolName})`)
+    rules.add(`Mcp(${CURSOR_MCP_SERVER_NAME}-${toolName})`)
+  }
+  return [...rules]
 }
 
 /**
@@ -131,14 +187,22 @@ export function buildCursorPathBLaunchPlan(
 ): CursorPathBLaunchPlan {
   assertBrokerOutcome(input)
   const brokerActive = input.brokerOutcome === 'active'
+  if (brokerActive) clearCursorMcpBridgeLastFailure()
   const policy = resolveCursorPathBBrokerPolicy({
     ...input,
     nativeWriteFallback: input.writeCapable && !brokerActive
   })
   const transactionalWriteSeat = input.writeCapable
+  const promptWithFileRouting =
+    brokerActive && !input.prompt.includes(TASKWRAITH_FILE_ROUTING_PROMPT_OPEN)
+      ? `${buildProviderFileRoutingPrompt({
+          provider: 'cursor',
+          effectivePermissions: input.effectivePermissions
+        })}${input.prompt}`
+      : input.prompt
   const basePrompt = brokerActive
-    ? `${input.prompt}\n\nTaskWraith Cursor broker receipt: the managed tools are ready under the exact Cursor MCP server id \`${CURSOR_MCP_SERVER_NAME}\`. Call GetMcpTools with server \`${CURSOR_MCP_SERVER_NAME}\` before concluding that TaskWraith tools are absent. Do not confuse it with user-owned \`taskwraith\` or \`agbench\` servers. Use the returned exact file and shell tools within your assigned lane.`
-    : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
+    ? buildCursorPathBActiveBrokerPrompt(promptWithFileRouting, policy, input.taskWraithMcpProfileId)
+    : sanitizeTaskWraithMcpPromptClaims(promptWithFileRouting, {
         advertised: false,
         coreProfile: false
       })
@@ -146,7 +210,12 @@ export function buildCursorPathBLaunchPlan(
     input.writeCapable && !brokerActive
       ? `${basePrompt}\n\nTaskWraith Cursor continuity receipt: the managed broker is unavailable, but the user-approved write posture remains active. Use Cursor-native Shell/Write only inside the enabled workspace sandbox and only within your assigned lane scope. Shell is not a substitute for TaskWraith sub-thread or cross-provider spawn; when the managed broker is unavailable, continue in this seat rather than launching another provider. Keep each command/path visible in your response; if the sandbox refuses an essential action, ask the user with the exact command/path and continue any remaining work instead of cancelling the turn.`
       : basePrompt
-  const requestedModel = typeof input.model === 'string' ? input.model.trim() : ''
+  const rawRequestedModel = typeof input.model === 'string' ? input.model.trim() : ''
+  // Migrate a retired Cursor Grok 4.5 seat BEFORE wire resolution, not after:
+  // resolving first would yield the bare `grok-4.6` base id and silently drop
+  // the seat's effort and Fast selections, because only the resolver turns those
+  // into a concrete `cursor-grok-4.6-<effort>[-fast]` wire id.
+  const requestedModel = migrateRetiredCursorGrokModelId(rawRequestedModel) || rawRequestedModel
   const cursorGrokModel = requestedModel
     ? resolveCursorGrokCliModelId({
         model: requestedModel,
@@ -158,9 +227,11 @@ export function buildCursorPathBLaunchPlan(
     ? cursorGrokModel || normalizeCliProviderModel('cursor', requestedModel)
     : null
   const grokControlsApplied = isCursorGrokModelId(requestedModel)
+  // No `prompt` here: the contained builders take none. runCursorProvider writes
+  // `plan.prompt` to the child's stdin instead — cursor-agent silently exits 0
+  // with no output at all once total argv passes 465,459 bytes.
   const argvInput = {
     workspace: input.workspacePath,
-    prompt,
     model: wireModel
   }
   const argv = transactionalWriteSeat

@@ -37,6 +37,40 @@ function advance(source: ChatRecord, mutate: (next: ChatRecord) => void): ChatRe
 }
 
 describe('ChatUpdateProjectionTracker', () => {
+  it('projects the compact ensemble operations used by authored streaming saves', () => {
+    const before = chat([message('a', 'A')], 1, {
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        maxContinuationHops: 6,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            order: 1,
+            instructions: ''
+          }
+        ]
+      }
+    })
+    const after = advance(before, (next) => {
+      next.ensemble!.maxContinuationHops = 12
+      next.ensemble!.participants[0].linkedProviderSessionId = 'next-session'
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+    const seeded = tracker.seed(before)
+    const derived = deriveChatRecordMutationWithProjection(before, after, {
+      authoredTranscript: { operations: [], transcriptOps: [], changedMessageCount: 0 }
+    })
+    const observed = tracker.observe(before, after, derived)
+    expect(observed.delta?.recordMask).toContain('ensemble')
+    expect(observed.delta?.recordDelta.ensemble).toEqual(after.ensemble)
+    expect(observed.state.ensembleRevision).not.toBe(seeded.ensembleRevision)
+    expect(observed.state.runsRevision).toBe(seeded.runsRevision)
+  })
+
   it('advances bytes and rolling metadata from changed operations only', () => {
     const before = chat(
       Array.from({ length: 5_000 }, (_, index) =>
@@ -63,6 +97,9 @@ describe('ChatUpdateProjectionTracker', () => {
     ])
     expect(observed.state.retainedBytes - seeded.retainedBytes).toBe(' streamed-tail'.length)
     expect(observed.state.recordHash).not.toBe(seeded.recordHash)
+    expect(observed.delta?.baseTranscriptHash).toBe(seeded.transcriptHash)
+    expect(observed.delta?.transcriptHash).toBe(observed.state.transcriptHash)
+    expect(observed.delta?.transcriptHash).not.toBe(seeded.transcriptHash)
     expect(observed.state.runsRevision).toBe(seeded.runsRevision)
     expect(observed.state.ensembleRevision).toBe(seeded.ensembleRevision)
   })
@@ -143,6 +180,74 @@ describe('ChatUpdateProjectionTracker', () => {
     )
   })
 
+  it('advances an authored middle insertion without iterating seeded history', () => {
+    const history = Array.from({ length: 5_000 }, (_, index) =>
+      message(`message-${index}`, `historical-${index}`)
+    )
+    const before = chat(history)
+    const inserted = message('inserted', 'new lane')
+    const after = advance(before, (next) => {
+      next.messages.splice(next.messages.length - 1, 0, inserted)
+    })
+    const author = new ChatTranscriptMutationAuthor(before.messages.length)
+    author.insertBefore(before.messages.length - 1, history[history.length - 1].id, [inserted])
+    const tracker = new ChatUpdateProjectionTracker()
+    tracker.seed(before)
+    const guard = (messages: ChatMessage[]): ChatMessage[] =>
+      new Proxy(messages, {
+        get(target, property, receiver) {
+          if (
+            property === Symbol.iterator ||
+            (typeof property === 'string' && /^\d+$/.test(property))
+          ) {
+            throw new Error('projection revisited historical messages')
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      })
+    const guardedBefore = { ...before, messages: guard(before.messages) }
+    const guardedAfter = { ...after, messages: guard(after.messages) }
+    const observed = tracker.observe(
+      guardedBefore,
+      guardedAfter,
+      deriveChatRecordMutationWithProjection(guardedBefore, guardedAfter, {
+        authoredTranscript: author.finish()
+      })
+    )
+
+    expect(observed.delta?.transcriptOps).toEqual([
+      {
+        op: 'insertBefore',
+        beforeId: history[history.length - 1].id,
+        messages: [inserted]
+      }
+    ])
+    expect(observed.state.transcriptIdsUnique).toBe(true)
+  })
+
+  it('fails closed when an authored insertion collides with a retained message id', () => {
+    const before = chat([message('a', 'A'), message('c', 'C')])
+    const duplicate = message('a', 'duplicate A')
+    const after = advance(before, (next) => {
+      next.messages.splice(1, 0, duplicate)
+    })
+    const author = new ChatTranscriptMutationAuthor(before.messages.length)
+    author.insertBefore(1, 'c', [duplicate])
+    const tracker = new ChatUpdateProjectionTracker()
+    tracker.seed(before)
+
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after, {
+        authoredTranscript: author.finish()
+      })
+    )
+
+    expect(observed.delta).toBeNull()
+    expect(observed.state.transcriptIdsUnique).toBe(false)
+  })
+
   it('falls back to a freshly seeded snapshot state after a discontinuous mutation', () => {
     const before = chat([message('a', 'A')], 3)
     const after = advance(before, (next) => {
@@ -154,6 +259,42 @@ describe('ChatUpdateProjectionTracker', () => {
     derived.batch.baseRevision = 99
 
     const observed = tracker.observe(before, after, derived)
+
+    expect(observed.delta).toBeNull()
+    expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)
+  })
+
+  it('treats legacy duplicate transcript ids as a recoverable snapshot condition', () => {
+    const before = chat([message('a', 'A'), message('a', 'Legacy duplicate')])
+    const after = advance(before, (next) => {
+      next.title = 'Still usable'
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+
+    expect(() => tracker.seed(before)).not.toThrow()
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after)
+    )
+
+    expect(observed.delta).toBeNull()
+    expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)
+  })
+
+  it('falls back when a new save introduces a duplicate transcript id', () => {
+    const before = chat([message('a', 'A')])
+    const after = advance(before, (next) => {
+      next.messages.push(message('a', 'Duplicate append'))
+    })
+    const tracker = new ChatUpdateProjectionTracker()
+    tracker.seed(before)
+
+    const observed = tracker.observe(
+      before,
+      after,
+      deriveChatRecordMutationWithProjection(before, after)
+    )
 
     expect(observed.delta).toBeNull()
     expect(observed.state.persistenceRevision).toBe(after.persistenceRevision)

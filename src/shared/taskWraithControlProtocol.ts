@@ -5,6 +5,8 @@
  * can compile it independently.
  */
 
+import type { HostHistoryToolCommand, HostHistoryToolDiff } from './hostHistoryProtocol'
+
 export const TASKWRAITH_CONTROL_PROTOCOL_VERSION = 1 as const
 export const TASKWRAITH_CONTROL_CLIENT_NAME = 'taskwraith-tui' as const
 export const TASKWRAITH_CONTROL_MAX_LINE_BYTES = 1_000_000
@@ -26,14 +28,17 @@ export interface TaskWraithControlWorkspace {
   updatedAt: number
 }
 
-export type TaskWraithControlThreadStatus =
-  | 'idle'
-  | 'working'
-  | 'needs-input'
-  | 'queued'
-  | 'failed'
-  | 'cancelled'
-  | 'complete'
+export const TASKWRAITH_CONTROL_THREAD_STATUSES = [
+  'idle',
+  'working',
+  'needs-input',
+  'queued',
+  'failed',
+  'cancelled',
+  'complete'
+] as const
+
+export type TaskWraithControlThreadStatus = (typeof TASKWRAITH_CONTROL_THREAD_STATUSES)[number]
 
 export interface TaskWraithControlProviderPresentation {
   runtimeProvider: string
@@ -107,6 +112,8 @@ export interface TaskWraithControlToolEntry {
   file?: string
   additions?: number
   deletions?: number
+  diff?: HostHistoryToolDiff
+  command?: HostHistoryToolCommand
 }
 
 export interface TaskWraithControlTranscriptRow {
@@ -115,6 +122,8 @@ export interface TaskWraithControlTranscriptRow {
   kind: string
   speaker: string
   provider?: TaskWraithControlProviderPresentation
+  model?: string
+  reasoning?: string
   text: string
   timestamp: string
   truncated: boolean
@@ -189,9 +198,62 @@ export interface TaskWraithControlThreadOffers {
   provider: TaskWraithControlProviderPresentation
   currentModel?: string
   currentReasoningEffort?: string
+  currentPostureId?: string
+  postures?: TaskWraithControlPostureOffer[]
   models: TaskWraithControlModelOffer[]
   source: 'curated'
   locked?: string
+}
+
+export interface TaskWraithControlPostureOffer {
+  id: string
+  label: string
+  disabled?: boolean
+  disabledReason?: string
+  requiresExplicitConsent: boolean
+}
+
+/**
+ * One row of a `thread.find` answer: enough to pick a thread and address it,
+ * and nothing that scales with the thread — no roster, no run window, no cost.
+ * A sender that only ever composes reads this instead of the whole-profile
+ * snapshot, which the transport cannot carry once a profile is large.
+ */
+export interface TaskWraithControlThreadSummary {
+  id: string
+  title: string
+  status: TaskWraithControlThreadStatus
+  chatKind: 'single' | 'ensemble'
+  workspaceId: string | null
+  workspaceName?: string
+  workspacePath?: string
+  archived: boolean
+  updatedAt: number
+  messageCount: number
+  provider: { displayProvider: string; model?: string }
+}
+
+export type TaskWraithControlThreadFindParams = {
+  /** Case-insensitive substring of the title, or an exact thread id. */
+  query?: string
+  workspaceId?: string
+  /**
+   * Any path inside a registered workspace — typically the caller's cwd —
+   * resolves to that workspace; a path inside no workspace matches nothing.
+   */
+  workspacePath?: string
+  status?: TaskWraithControlThreadStatus[]
+  /** Archived threads are omitted unless asked for. */
+  includeArchived?: boolean
+  /** 1..100, default 20. */
+  limit?: number
+}
+
+export interface TaskWraithControlThreadFindResult {
+  /** Newest first, at most `limit` rows. */
+  threads: TaskWraithControlThreadSummary[]
+  /** How many threads matched before `limit` applied. */
+  total: number
 }
 
 export type TaskWraithControlRequest =
@@ -239,6 +301,12 @@ export type TaskWraithControlRequest =
   | {
       type: 'request'
       id: string
+      method: 'thread.find'
+      params?: TaskWraithControlThreadFindParams
+    }
+  | {
+      type: 'request'
+      id: string
       method: 'ping'
       params?: Record<string, never>
     }
@@ -250,6 +318,14 @@ export interface TaskWraithControlHello {
   clientVersion: string
   token: string
   capabilities: TaskWraithControlCapability[]
+  /**
+   * The sending process and a short label it chose for itself, e.g. "Claude
+   * Code". The host stamps both onto every prompt this connection sends, so
+   * the transcript can say "Sent from PID 84536 / Claude Code" instead of
+   * "You". Optional: the TUI itself is the user at the keyboard.
+   */
+  clientPid?: number
+  clientLabel?: string
 }
 
 export type TaskWraithControlClientMessage = TaskWraithControlHello | TaskWraithControlRequest
@@ -327,6 +403,17 @@ export function decodeTaskWraithControlClientMessage(
     if (!isNonEmptyString(value.clientVersion, 80)) {
       return { ok: false, error: 'clientVersion is required' }
     }
+    if (
+      value.clientPid !== undefined &&
+      (typeof value.clientPid !== 'number' ||
+        !Number.isSafeInteger(value.clientPid) ||
+        value.clientPid <= 0)
+    ) {
+      return { ok: false, error: 'clientPid must be a positive integer' }
+    }
+    if (value.clientLabel !== undefined && !isNonEmptyString(value.clientLabel, 80)) {
+      return { ok: false, error: 'clientLabel must be a bounded string' }
+    }
     if (!isNonEmptyString(value.token, 512)) {
       return { ok: false, error: 'token is required' }
     }
@@ -350,6 +437,7 @@ export function decodeTaskWraithControlClientMessage(
       'run.cancel',
       'thread.offers',
       'ensemble.seat.toggle',
+      'thread.find',
       'ping'
     ].includes(value.method)
   ) {
@@ -368,6 +456,39 @@ export function decodeTaskWraithControlClientMessage(
         params.limit > 200)
     ) {
       return { ok: false, error: 'limit must be an integer from 1 to 200' }
+    }
+  }
+  if (value.method === 'thread.find') {
+    if (params.query !== undefined && !isNonEmptyString(params.query, 200)) {
+      return { ok: false, error: 'query must be a bounded string' }
+    }
+    if (params.workspaceId !== undefined && !isNonEmptyString(params.workspaceId, 512)) {
+      return { ok: false, error: 'workspaceId must be a bounded string' }
+    }
+    if (params.workspacePath !== undefined && !isNonEmptyString(params.workspacePath, 4_096)) {
+      return { ok: false, error: 'workspacePath must be a bounded string' }
+    }
+    if (
+      params.status !== undefined &&
+      (!Array.isArray(params.status) ||
+        params.status.length > TASKWRAITH_CONTROL_THREAD_STATUSES.length ||
+        !params.status.every((status) =>
+          (TASKWRAITH_CONTROL_THREAD_STATUSES as readonly unknown[]).includes(status)
+        ))
+    ) {
+      return { ok: false, error: 'status must list known thread statuses' }
+    }
+    if (params.includeArchived !== undefined && typeof params.includeArchived !== 'boolean') {
+      return { ok: false, error: 'includeArchived must be a boolean' }
+    }
+    if (
+      params.limit !== undefined &&
+      (typeof params.limit !== 'number' ||
+        !Number.isInteger(params.limit) ||
+        params.limit < 1 ||
+        params.limit > 100)
+    ) {
+      return { ok: false, error: 'limit must be an integer from 1 to 100' }
     }
   }
   if (value.method === 'composer.send') {

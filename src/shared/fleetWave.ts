@@ -4,6 +4,8 @@
  * Role literals are deliberately parallel to EnsembleStageRole — do NOT unify.
  */
 
+import type { SeatChangeSeatState } from './seatChange'
+
 /** Parallel to EnsembleStageRole — fleet has no `background`; do not unify. */
 export type FleetWaveRole = 'scout' | 'worker' | 'reviewer'
 
@@ -26,6 +28,13 @@ export interface FleetWaveAgentState {
   provider?: string
   /** Resolves the Ollama/Pi upstream brand hue; plain providers ignore it. */
   model?: string
+  /**
+   * Exact execution-seat presentation projected from the delegated child run.
+   * FleetWaveCard passes this to the same SeatChangeInlineStrip used by the
+   * round close-out table, so provider/model/reasoning/permission never drift
+   * into a fleet-only lookalike.
+   */
+  seat?: SeatChangeSeatState
   error?: string
   pendingApproval?: FleetWavePendingApproval
 }

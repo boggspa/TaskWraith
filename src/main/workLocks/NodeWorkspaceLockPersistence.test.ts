@@ -17,10 +17,20 @@ import {
   NodeWorkspaceLockPersistence,
   WORKSPACE_LOCK_AUTHORITY_DIRECTORY,
   WORKSPACE_LOCK_EVENTS_FILENAME,
+  WORKSPACE_LOCK_HOLDERS_DIRECTORY,
   WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME,
+  WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME,
   WORKSPACE_LOCK_RECLAIM_GUARD_FILENAME
 } from './NodeWorkspaceLockPersistence'
-import type { NodeWorkspaceLockPersistenceFs } from './NodeWorkspaceLockPersistence'
+import type {
+  NodeWorkspaceLockPersistenceAsyncFs,
+  NodeWorkspaceLockPersistenceFs
+} from './NodeWorkspaceLockPersistence'
+import {
+  WORKSPACE_LOCK_HEARTBEAT_SCHEMA,
+  workspaceLockHolderHeartbeatFilename,
+  type WorkspaceLockHolderHeartbeat
+} from './WorkspaceLockHolderHeartbeat'
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
 
 /**
@@ -94,6 +104,30 @@ describe('NodeWorkspaceLockPersistence', () => {
         'utf8'
       )
     ).toBe(`${first}${second}`)
+  })
+
+  it('does not reread a validated append-only prefix for every new frame', () => {
+    const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-lock-append-cache-'))
+    temporaryRoots.push(root)
+    const baseFs = nodeFs as unknown as NodeWorkspaceLockPersistenceFs
+    let fileReads = 0
+    const countingFs: NodeWorkspaceLockPersistenceFs = {
+      ...baseFs,
+      readFileSync: (fd) => {
+        fileReads += 1
+        return baseFs.readFileSync(fd)
+      }
+    }
+    const store = new NodeWorkspaceLockPersistence({ userDataRoot: root, fs: countingFs })
+    let byteLength = 0
+
+    for (let index = 0; index < 100; index += 1) {
+      byteLength = store.appendEvent(`${JSON.stringify({ index })}\n`, byteLength)
+    }
+
+    expect(fileReads).toBe(0)
+    expect(store.readEvents()).toMatchObject({ byteLength })
+    expect(fileReads).toBe(1)
   })
 
   it('uses a write-capable WAL handle for durable confirmation on Windows', () => {
@@ -305,7 +339,8 @@ describe('NodeWorkspaceLockPersistence', () => {
     const worktree = join(root, 'checkout')
     mkdirSync(worktree)
     const canonicalWorktree = canonicalRealpath(worktree)
-    const initialStat = lstatSync(canonicalWorktree)
+    // bigint: the store compares a bigint dev/ino identity, and NTFS file ids exceed 2^53.
+    const initialStat = lstatSync(canonicalWorktree, { bigint: true })
     const worktreeIdentity = `dev:${initialStat.dev}:ino:${initialStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'a'.repeat(64)}.md`
 
@@ -321,7 +356,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     expect(store.removeDerivedMarker(canonicalWorktree, markerName, worktreeIdentity)).toBe(false)
 
     mkdirSync(worktree)
-    const replacementStat = lstatSync(canonicalWorktree)
+    const replacementStat = lstatSync(canonicalWorktree, { bigint: true })
     const replacementIdentity = `dev:${replacementStat.dev}:ino:${replacementStat.ino}`
     store.writeDerivedMarker(canonicalWorktree, markerName, 'private', replacementIdentity)
     expectOwnerOnly(join(worktree, markerName))
@@ -335,7 +370,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     mkdirSync(worktree)
     mkdirSync(outside)
     const canonicalWorktree = canonicalRealpath(worktree)
-    const originalStat = lstatSync(canonicalWorktree)
+    const originalStat = lstatSync(canonicalWorktree, { bigint: true })
     const originalIdentity = `dev:${originalStat.dev}:ino:${originalStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'b'.repeat(64)}.md`
     store.writeDerivedMarker(canonicalWorktree, markerName, 'original', originalIdentity)
@@ -373,5 +408,184 @@ describe('NodeWorkspaceLockPersistence', () => {
     rmSync(join(authority, WORKSPACE_LOCK_EVENTS_FILENAME))
     symlinkSync(target, join(authority, WORKSPACE_LOCK_EVENTS_FILENAME))
     expect(() => store.readEvents()).toThrow(/regular file/i)
+  })
+})
+
+describe('NodeWorkspaceLockPersistence holder heartbeats', () => {
+  const holder = { instanceId: 'desktop-instance', pid: 123, processBirthIdentity: 'birth-receipt' }
+
+  function heartbeat(
+    beatSeq: number,
+    beatAt = '2026-09-23T10:00:00.000Z'
+  ): WorkspaceLockHolderHeartbeat {
+    return {
+      schema: WORKSPACE_LOCK_HEARTBEAT_SCHEMA,
+      ...holder,
+      generation: 4,
+      beatSeq,
+      monotonicMs: 1_000 * beatSeq,
+      beatAt
+    }
+  }
+
+  function recordingAsyncFs(calls: string[]): NodeWorkspaceLockPersistenceAsyncFs {
+    return {
+      mkdir: (path, options) => {
+        calls.push('mkdir')
+        return nodeFs.promises.mkdir(path, options)
+      },
+      writeFile: (path, data, options) => {
+        calls.push('writeFile')
+        return nodeFs.promises.writeFile(path, data, options)
+      },
+      rename: (oldPath, newPath) => {
+        calls.push('rename')
+        return nodeFs.promises.rename(oldPath, newPath)
+      },
+      unlink: (path) => {
+        calls.push('unlink')
+        return nodeFs.promises.unlink(path)
+      },
+      appendFile: (path, data, options) => {
+        calls.push('appendFile')
+        return nodeFs.promises.appendFile(path, data, options)
+      }
+    }
+  }
+
+  /** Boot always creates the authority root before the first beat; tests do the same. */
+  function createBootedStore(): { root: string; store: NodeWorkspaceLockPersistence } {
+    const created = createStore()
+    created.store.readEventsRevision()
+    return created
+  }
+
+  it('writes the sidecar asynchronously with private modes and never an fsync', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-locks-'))
+    temporaryRoots.push(root)
+    new NodeWorkspaceLockPersistence({ userDataRoot: root }).readEventsRevision()
+    const calls: string[] = []
+    let fsyncs = 0
+    const countingFs: NodeWorkspaceLockPersistenceFs = {
+      ...(nodeFs as unknown as NodeWorkspaceLockPersistenceFs),
+      fsyncSync: (fd) => {
+        fsyncs += 1
+        nodeFs.fsyncSync(fd)
+      }
+    }
+    const asyncFs = recordingAsyncFs(calls)
+    const store = new NodeWorkspaceLockPersistence({ userDataRoot: root, fs: countingFs, asyncFs })
+
+    await store.writeHolderHeartbeat(heartbeat(1))
+
+    expect(calls).toEqual(['mkdir', 'writeFile', 'rename'])
+    expect(fsyncs).toBe(0)
+    expect(Object.keys(asyncFs).sort()).toEqual([
+      'appendFile',
+      'mkdir',
+      'rename',
+      'unlink',
+      'writeFile'
+    ])
+    const holders = join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY, WORKSPACE_LOCK_HOLDERS_DIRECTORY)
+    const path = join(holders, workspaceLockHolderHeartbeatFilename(holder))
+    expectOwnerOnly(holders)
+    expectOwnerOnly(path)
+    expect(readFileSync(path, 'utf8').endsWith('\n')).toBe(true)
+    expect(nodeFs.readdirSync(holders)).toEqual([workspaceLockHolderHeartbeatFilename(holder)])
+    expect(store.readHolderHeartbeats()).toEqual({ heartbeats: [heartbeat(1)], errors: [] })
+
+    await store.writeHolderHeartbeat(heartbeat(2, '2026-09-23T10:00:10.000Z'))
+    expect(store.readHolderHeartbeats().heartbeats).toEqual([
+      heartbeat(2, '2026-09-23T10:00:10.000Z')
+    ])
+    expect(nodeFs.readdirSync(holders)).toEqual([workspaceLockHolderHeartbeatFilename(holder)])
+  })
+
+  it('reads nothing before the directory exists and skips malformed or foreign files with a report', async () => {
+    const { root, store } = createBootedStore()
+    expect(store.readHolderHeartbeats()).toEqual({ heartbeats: [], errors: [] })
+
+    await store.writeHolderHeartbeat(heartbeat(1))
+    const holders = join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY, WORKSPACE_LOCK_HOLDERS_DIRECTORY)
+    writeFileSync(join(holders, 'garbage.json'), '{"schema":"other"}\n')
+    writeFileSync(join(holders, 'torn.json'), '{"sche')
+    writeFileSync(join(holders, '.leftover.tmp'), 'x')
+    writeFileSync(join(holders, WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME), '{"a":1}\n')
+
+    const result = store.readHolderHeartbeats()
+    expect(result.heartbeats).toEqual([heartbeat(1)])
+    expect(result.errors).toHaveLength(2)
+    expect(result.errors.join(' ')).toContain('garbage.json')
+    expect(result.errors.join(' ')).toContain('torn.json')
+  })
+
+  it('removes exactly the holder sidecar and appends single-line reclaim audit records', async () => {
+    const { root, store } = createBootedStore()
+    await store.writeHolderHeartbeat(heartbeat(1))
+    await store.writeHolderHeartbeat({
+      ...heartbeat(1),
+      instanceId: 'other-instance',
+      pid: 456,
+      processBirthIdentity: 'other-birth'
+    })
+
+    expect(store.removeHolderHeartbeat(holder)).toBe(true)
+    expect(store.removeHolderHeartbeat(holder)).toBe(false)
+    expect(store.readHolderHeartbeats().heartbeats.map((entry) => entry.pid)).toEqual([456])
+
+    await store.appendHolderReclaimAudit('{"leaseId":"lease-1"}\n')
+    await store.appendHolderReclaimAudit('{"leaseId":"lease-2"}\n')
+    const audit = join(
+      root,
+      WORKSPACE_LOCK_AUTHORITY_DIRECTORY,
+      WORKSPACE_LOCK_HOLDERS_DIRECTORY,
+      WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME
+    )
+    expect(readFileSync(audit, 'utf8')).toBe('{"leaseId":"lease-1"}\n{"leaseId":"lease-2"}\n')
+    expectOwnerOnly(audit)
+    await expect(store.appendHolderReclaimAudit('{"a":1}\n{"b":2}\n')).rejects.toThrow(
+      /multiple lines/
+    )
+    expect(readFileSync(audit, 'utf8')).toBe('{"leaseId":"lease-1"}\n{"leaseId":"lease-2"}\n')
+  })
+
+  it('never recreates an authority root removed underneath a running holder', async () => {
+    const { root, store } = createBootedStore()
+    await store.writeHolderHeartbeat(heartbeat(1))
+    const authority = join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY)
+    rmSync(authority, { recursive: true })
+
+    await expect(store.writeHolderHeartbeat(heartbeat(2))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(store.appendHolderReclaimAudit('{"leaseId":"lease-1"}\n')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(nodeFs.existsSync(authority)).toBe(false)
+  })
+
+  it('refuses a holders directory that is a symlink as liveness evidence', async () => {
+    const { root, store } = createStore()
+    const outside = mkdtempSync(join(tmpdir(), 'taskwraith-foreign-holders-'))
+    temporaryRoots.push(outside)
+    const decoy = createBootedStore()
+    await decoy.store.writeHolderHeartbeat(heartbeat(1))
+    nodeFs.cpSync(
+      join(decoy.root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY, WORKSPACE_LOCK_HOLDERS_DIRECTORY),
+      outside,
+      { recursive: true }
+    )
+    mkdirSync(join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY), { recursive: true, mode: 0o700 })
+    symlinkSync(
+      outside,
+      join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY, WORKSPACE_LOCK_HOLDERS_DIRECTORY),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    expect(nodeFs.readdirSync(outside)).toEqual([workspaceLockHolderHeartbeatFilename(holder)])
+
+    const result = store.readHolderHeartbeats()
+    expect(result.heartbeats).toEqual([])
+    expect(result.errors.join(' ')).toMatch(/not a real directory/)
   })
 })

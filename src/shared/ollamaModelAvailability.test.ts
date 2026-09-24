@@ -21,6 +21,8 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('gpt-oss', ['openai/gpt-oss-20b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith', ['ornith:9b'])).toBe(true)
     expect(isOllamaModelInstalled('ornith:35b', ['ornith:9b'])).toBe(false)
+    expect(isOllamaModelInstalled('ornith-1.5:35b', ['ornith-1.5:35b'])).toBe(true)
+    expect(isOllamaModelInstalled('ornith-1.5:35b', ['ornith:35b'])).toBe(false)
     expect(isOllamaModelInstalled('gemma3:4b', ['gemma3:latest'])).toBe(true)
     expect(isOllamaModelInstalled('gemma3', ['gemma3:4b'])).toBe(true)
     expect(
@@ -31,6 +33,11 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('lfm2.5:latest', ['lfm2.5:8b'])).toBe(true)
     expect(isOllamaModelInstalled('rnj-1', ['rnj-1:latest'])).toBe(true)
     expect(isOllamaModelInstalled('rnj-1:8b', ['rnj-1:latest'])).toBe(true)
+    expect(isOllamaModelInstalled('mistral-medium-3.5:128b', ['mistral-medium-3.5:latest'])).toBe(
+      true
+    )
+    expect(isOllamaModelInstalled('granite4.2:8b', ['granite4.2:latest'])).toBe(true)
+    expect(isOllamaModelInstalled('granite4.2:30b', ['granite4.2:latest'])).toBe(false)
     expect(
       isOllamaModelInstalled('glm-4.7-flash:q4_K_M', ['glm-4.7-flash:q4_K_M'])
     ).toBe(true)
@@ -71,33 +78,48 @@ describe('ollama model availability helpers', () => {
   })
 
   it('resolves curated Cloud ids to display names without altering unknown ids', () => {
+    expect(ollamaCloudModelDisplayName('glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
+    // The full GLM 5.3 landed on Ollama Cloud beside its Flash sibling; without
+    // its own row it rendered as the raw `glm-5.3` tag next to a humanised one.
+    expect(ollamaCloudModelDisplayName('glm-5.3:cloud')).toBe('GLM 5.3')
     expect(ollamaCloudModelDisplayName('glm-5.2:cloud')).toBe('GLM 5.2')
-    expect(ollamaCloudModelDisplayName('minimax-m3:cloud')).toBe('MiniMax M3')
+    expect(ollamaCloudModelDisplayName('minimax-m3:cloud')).toBe('M3')
+    expect(ollamaCloudModelDisplayName('deepseek-v4-pro:cloud')).toBe('V4 Pro')
+    expect(ollamaCloudModelDisplayName('deepseek-v4-flash:cloud')).toBe('V4 Flash')
+    // Without its own entry this falls back to the raw tag, so the picker shows
+    // `deepseek-v4.1-flash` beside a row reading "V4 Flash".
+    expect(ollamaCloudModelDisplayName('deepseek-v4.1-flash:cloud')).toBe('V4.1 Flash')
+    expect(ollamaCloudModelDisplayName('gemma4:cloud')).toBe('Gemma 4')
     expect(ollamaCloudModelDisplayName('GLM-5.2')).toBe('GLM 5.2')
     expect(ollamaCloudModelDisplayName('future-model:cloud')).toBeUndefined()
   })
 
   it('humanizes every model in the current direct Cloud catalog', () => {
     const expected = new Map([
-      ['minimax-m2.7:cloud', 'MiniMax M2.7'],
+      ['glm-5.3-flash:cloud', 'GLM 5.3 Flash'],
+      ['glm-5.3:cloud', 'GLM 5.3'],
+      ['minimax-m2.7:cloud', 'M2.7'],
       ['mistral-large-3:675b:cloud', 'Mistral Large 3 (675B Param)'],
       ['nemotron-3-super:cloud', 'Nemotron 3 Super'],
-      ['deepseek-v4-flash:0731:cloud', 'DeepSeek V4 Flash (0731)'],
+      ['deepseek-v4-flash:cloud', 'V4 Flash'],
+      ['deepseek-v4-flash:0731:cloud', 'V4 Flash (0731)'],
       ['nemotron-3-ultra:cloud', 'Nemotron 3 Ultra'],
       ['glm-5.1:cloud', 'GLM 5.1'],
-      ['deepseek-v4-pro:0813:cloud', 'DeepSeek V4 Pro (0813)'],
+      ['deepseek-v4-pro:cloud', 'V4 Pro'],
+      ['deepseek-v4-pro:0813:cloud', 'V4 Pro (0813)'],
       ['gpt-oss:20b:cloud', 'GPT OSS (20B Param)'],
       ['gpt-oss:120b:cloud', 'GPT OSS (120B Param)'],
       ['qwen3.5:397b:cloud', 'Qwen 3.5 (397B Param)'],
-      ['deepseek-v4-pro:preview:cloud', 'DeepSeek V4 Pro (Preview)'],
+      ['deepseek-v4-pro:preview:cloud', 'V4 Pro (Preview)'],
       ['nemotron-3-nano:30b:cloud', 'Nemotron 3 Nano (30B Param)'],
+      ['gemma4:cloud', 'Gemma 4'],
       ['gemma4:31b:cloud', 'Gemma 4 (31B Param)'],
-      ['kimi-k2.6:cloud', 'Kimi K2.6'],
-      ['minimax-m3:cloud', 'MiniMax M3'],
+      ['kimi-k2.6:cloud', 'K2.6'],
+      ['minimax-m3:cloud', 'M3'],
       ['glm-5.2:cloud', 'GLM 5.2'],
-      ['kimi-k2.7-code:cloud', 'Kimi K2.7 Code'],
-      ['deepseek-v4-flash:preview:cloud', 'DeepSeek V4 Flash (Preview)'],
-      ['kimi-k3:cloud', 'Kimi K3']
+      ['kimi-k2.7-code:cloud', 'K2.7 Code'],
+      ['deepseek-v4-flash:preview:cloud', 'V4 Flash (Preview)'],
+      ['kimi-k3:cloud', 'K3']
     ])
     for (const [modelId, label] of expected) {
       expect(ollamaCloudModelDisplayName(modelId)).toBe(label)

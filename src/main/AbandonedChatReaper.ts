@@ -121,10 +121,19 @@ export function isReapableAbandonedChat(
   if (chat.delegationContext) return false
   if (inSet(ctx.parentChatIds, chat.appChatId)) return false
 
-  // ── Renamed from the type default ⇒ keep (defensive; a started chat is
-  //    already excluded above, this catches odd manual-rename states). ──
+  // Explicit provenance wins even when the user deliberately chose a title
+  // that spells like a factory placeholder. Automatic provenance does not
+  // protect an otherwise empty shell from normal draft cleanup.
+  if (
+    chat.threadTitle?.source &&
+    chat.threadTitle.source !== 'placeholder' &&
+    chat.threadTitle.source !== 'prompt-fallback'
+  )
+    return false
+
+  // Legacy records without provenance retain the spelling fallback.
   const title = chat.title?.trim()
-  if (title && !DEFAULT_TITLES.has(title)) return false
+  if (!chat.threadTitle && title && !DEFAULT_TITLES.has(title)) return false
 
   // ── Workflow / scheduled linkage — intentionally message-less, never reap. ──
   if (inSet(ctx.workflowChatIds, chat.appChatId)) return false
@@ -165,13 +174,24 @@ export interface RendererReapContext {
 /** Store-side dependencies, injected so the orchestration is unit-testable. */
 export interface ReapAbandonedChatsDeps {
   getChats: () => ChatRecord[]
+  /**
+   * Ids that are a parent of at least one chat in the WHOLE corpus.
+   *
+   * Required whenever `getChats` is narrowed to candidates rather than the
+   * full corpus. `reapableAbandonedChatIds` otherwise derives parentage from
+   * the list it is handed, and a narrowed list has already dropped the started
+   * children whose `parentChatId` is the only evidence that some empty shell
+   * is a parent — which would reap it. Omit only when `getChats` really does
+   * return every chat.
+   */
+  getParentChatIds?: () => Set<string>
   /** Chat ids backing a saved WorkflowDefinition (template.chatId). */
   getWorkflowChatIds: () => Set<string>
   /** Chat ids targeted by a non-terminal scheduled task. */
   getScheduledChatIds: () => Set<string>
   /** Chat ids with a live share or a contribution awaiting host review. */
   getSharedChatIds?: () => Set<string>
-  deleteChat: (chatId: string) => void
+  deleteChat: (chatId: string) => unknown
 }
 
 /**
@@ -184,13 +204,16 @@ export function reapAbandonedChats(
   deps: ReapAbandonedChatsDeps,
   renderer: RendererReapContext = {},
   limit: number = MAX_CREATE_TIME_REAP
-): string[] {
+): string[] | Promise<string[]> {
   const ids = reapableAbandonedChatIds(deps.getChats(), {
     protectedChatIds: new Set(renderer.protectedChatIds ?? []),
     draftChatIds: new Set(renderer.draftChatIds ?? []),
     workflowChatIds: deps.getWorkflowChatIds(),
     scheduledChatIds: deps.getScheduledChatIds(),
     sharedChatIds: deps.getSharedChatIds?.() ?? new Set(),
+    // undefined ⇒ reapableAbandonedChatIds derives parentage from the list, so
+    // a caller handing over the full corpus keeps its existing behaviour.
+    parentChatIds: deps.getParentChatIds?.(),
     keepChatId: renderer.keepChatId,
     // "One survivable New Chat": the just-created chat (keepChatId) plus the
     // single newest older draft survive a create-time sweep; a 2nd+ older
@@ -198,8 +221,23 @@ export function reapAbandonedChats(
     survivorCount: 1
   })
   const toReap = limit >= 0 ? ids.slice(0, limit) : ids
-  for (const id of toReap) deps.deleteChat(id)
-  return toReap
+  // Sequenced, not a fired-and-forgotten map: a Host-routed delete is an
+  // async round trip, and the store admits one durable deletion intent at a
+  // time, so concurrent deletes would self-collide. A synchronous deleter
+  // (e.g. the candidate collector) never starts the chain and the result
+  // stays synchronous, preserving the caller's in-tick selection protocol.
+  let chain: Promise<void> | null = null
+  for (const id of toReap) {
+    if (chain) {
+      chain = chain.then(() => deps.deleteChat(id) as Promise<void>)
+      continue
+    }
+    const deletion = deps.deleteChat(id)
+    if (deletion && typeof (deletion as PromiseLike<void>).then === 'function') {
+      chain = Promise.resolve(deletion as Promise<void>)
+    }
+  }
+  return chain ? chain.then(() => toReap) : toReap
 }
 
 /** Chat ids that are a parent of at least one other chat in `chats`. */

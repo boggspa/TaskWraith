@@ -20,6 +20,7 @@ import {
   worktreeActionDisabledReason
 } from '../lib/gitBranchWorktreeUi'
 import {
+  normalizeWorkspacePath,
   resolveWorktreeSelectionFromSnapshot,
   type ComposerWorktreeSelection
 } from '../lib/composerWorktreeSelection'
@@ -133,7 +134,13 @@ export function ComposerBranchPopoverBranchRow({
   disabled: boolean
   onSelect: () => void
 }): React.JSX.Element {
-  const upstream = branch.isCurrent ? gitSnapshot?.upstream || branch.upstream : branch.upstream
+  // A selected linked worktree supplies the composer's live snapshot. Do not
+  // project that snapshot onto the configured checkout's current branch row.
+  const matchingSnapshot =
+    branch.isCurrent && gitSnapshot && !gitSnapshot.detached && gitSnapshot.branch === branch.name
+      ? gitSnapshot
+      : null
+  const upstream = matchingSnapshot?.upstream || branch.upstream
   const subtitle = branch.isCurrent
     ? 'Configured checkout'
     : branch.upstream
@@ -162,16 +169,13 @@ export function ComposerBranchPopoverBranchRow({
           </i>
         </BranchPopoverFactLine>
         <BranchPopoverFactLine label="tree">
-          <BranchPopoverTreeValues
-            snapshot={branch.isCurrent ? gitSnapshot : null}
-            unavailableLabel="ref only"
-          />
+          <BranchPopoverTreeValues snapshot={matchingSnapshot} unavailableLabel="ref only" />
         </BranchPopoverFactLine>
         <BranchPopoverFactLine label="upstream" secondary>
-          {branch.isCurrent && gitSnapshot && upstream ? (
+          {matchingSnapshot && upstream ? (
             <>
-              <em className="is-ahead">↑{gitSnapshot.ahead}</em>
-              <em className="is-behind">↓{gitSnapshot.behind}</em>
+              <em className="is-ahead">↑{matchingSnapshot.ahead}</em>
+              <em className="is-behind">↓{matchingSnapshot.behind}</em>
               <i title={upstream}>{upstream}</i>
             </>
           ) : (
@@ -187,21 +191,56 @@ export function ComposerBranchPopoverWorktreeRow({
   worktree,
   gitSnapshot,
   disabled,
+  isComposerTarget = false,
+  isComposerSelectionActive = false,
   onSelect
 }: {
   worktree: GitWorktreeEntry
   gitSnapshot?: GitRepositorySnapshot | null
   disabled: boolean
+  /** This is where the composer will run, not necessarily Git's active checkout. */
+  isComposerTarget?: boolean
+  /** A linked worktree is selected, so the configured checkout becomes an escape action. */
+  isComposerSelectionActive?: boolean
   onSelect: () => void
 }): React.JSX.Element {
   const label = worktree.branch || 'detached HEAD'
+  const snapshotPath = gitSnapshot?.repoRoot || gitSnapshot?.requestedPath
+  const matchingSnapshot =
+    snapshotPath && normalizeWorkspacePath(snapshotPath) === normalizeWorkspacePath(worktree.path)
+      ? gitSnapshot
+      : null
+  const checkoutLabel = isComposerTarget
+    ? 'selected'
+    : worktree.isCurrent && isComposerSelectionActive
+      ? 'use checkout'
+      : worktree.isCurrent
+        ? 'active'
+        : 'select'
+  const checkoutClass = isComposerTarget
+    ? 'is-composer-target'
+    : worktree.isCurrent
+      ? 'is-current'
+      : 'is-action'
+  const subtitle = isComposerTarget
+    ? `Composer target · ${worktree.path}`
+    : worktree.isCurrent
+      ? 'Configured checkout'
+      : worktree.path
+  const title = isComposerTarget
+    ? `Composer runs use this worktree: ${worktree.path}`
+    : worktree.isCurrent && isComposerSelectionActive
+      ? 'Use the configured checkout for composer runs without changing Git checkout'
+      : worktree.path
   return (
     <button
       type="button"
-      className={`composer-branch-popover-item${worktree.isCurrent ? ' is-current' : ''}`}
+      className={`composer-branch-popover-item${worktree.isCurrent ? ' is-current' : ''}${
+        isComposerTarget ? ' is-composer-target' : ''
+      }`}
       disabled={disabled}
-      aria-current={worktree.isCurrent ? 'true' : undefined}
-      title={worktree.path}
+      aria-current={isComposerTarget ? 'location' : worktree.isCurrent ? 'true' : undefined}
+      title={title}
       onClick={onSelect}
     >
       <span className="composer-branch-popover-target-kind" aria-hidden="true">
@@ -209,18 +248,16 @@ export function ComposerBranchPopoverWorktreeRow({
       </span>
       <span className="composer-branch-popover-target-copy">
         <strong>{label}</strong>
-        <small>{worktree.isCurrent ? 'Configured checkout' : worktree.path}</small>
+        <small>{subtitle}</small>
       </span>
       <span className="composer-branch-popover-facts">
         <BranchPopoverFactLine label="checkout">
-          <i className={worktree.isCurrent ? 'is-current' : 'is-action'}>
-            {worktree.isCurrent ? 'active' : 'select'}
-          </i>
+          <i className={checkoutClass}>{checkoutLabel}</i>
         </BranchPopoverFactLine>
         <BranchPopoverFactLine label="tree">
           <BranchPopoverTreeValues
-            snapshot={worktree.isCurrent ? gitSnapshot : null}
-            unavailableLabel="not measured"
+            snapshot={worktree.isCurrent || isComposerTarget ? matchingSnapshot : null}
+            unavailableLabel={isComposerTarget ? 'measuring…' : 'not measured'}
           />
         </BranchPopoverFactLine>
         <BranchPopoverFactLine label="head" secondary>
@@ -264,6 +301,13 @@ export function ComposerBranchWorktreePopover({
   const dirty = isWorktreeDirty(gitSnapshot)
   const branchLabel = formatBranchLabel(gitSnapshot, fallbackBranch)
   const activeWorktreeLabel = composerWorktreeSelection?.label
+  const activeWorktreePath = composerWorktreeSelection?.effectiveWorkspacePath
+  const hasComposerWorktreeSelection = Boolean(activeWorktreePath)
+  const configuredCheckoutBranch =
+    branches.find((branch) => branch.isCurrent)?.name ||
+    worktrees.find((worktree) => worktree.isCurrent)?.branch ||
+    fallbackBranch ||
+    'this workspace'
   const triggerLabel = activeWorktreeLabel ? `worktree: ${activeWorktreeLabel}` : branchLabel
   const toneClass = `git-tone-${branchTone(detached ? undefined : branchLabel, detached)}`
 
@@ -361,7 +405,17 @@ export function ComposerBranchWorktreePopover({
       onWorktreeSelectionChange(null, snapshot)
       return
     }
-    onWorktreeSelectionChange(resolveWorktreeSelectionFromSnapshot(workspacePath, snapshot), snapshot)
+    onWorktreeSelectionChange(
+      resolveWorktreeSelectionFromSnapshot(workspacePath, snapshot),
+      snapshot
+    )
+  }
+
+  const clearComposerWorktreeSelection = (): void => {
+    // This only clears the renderer-local composer target. It deliberately
+    // does not call `git checkout`: the configured worktree is already active.
+    onWorktreeSelectionChange?.(null, null)
+    closePopover()
   }
 
   const runAction = async (
@@ -452,10 +506,18 @@ export function ComposerBranchWorktreePopover({
               </button>
             </div>
             <div className="composer-branch-popover-body">
+              {hasComposerWorktreeSelection && (
+                <div className="composer-branch-popover-selection-summary" role="status">
+                  <span>Composer target</span>
+                  <strong title={activeWorktreeLabel}>{activeWorktreeLabel}</strong>
+                  <small title={activeWorktreePath}>{activeWorktreePath}</small>
+                  <i>Configured checkout remains {configuredCheckoutBranch}</i>
+                </div>
+              )}
               <div className="composer-branch-popover-section">
                 <div className="composer-branch-popover-section-title">
                   <span>Branches</span>
-                  <small>Checkout target</small>
+                  <small>Changes configured checkout</small>
                 </div>
                 {loading ? (
                   <div className="composer-branch-popover-status">Loading branches…</div>
@@ -518,22 +580,47 @@ export function ComposerBranchWorktreePopover({
                 <div className="composer-branch-popover-section">
                   <div className="composer-branch-popover-section-title">
                     <span>Worktrees</span>
-                    <small>Isolated checkouts</small>
+                    <small>
+                      {hasComposerWorktreeSelection ? 'Composer run target' : 'Isolated checkouts'}
+                    </small>
                   </div>
-                  {worktrees.map((worktree) => (
-                    <ComposerBranchPopoverWorktreeRow
-                      key={worktree.path}
-                      disabled={working || worktree.isCurrent || Boolean(worktreeDisabledReason)}
-                      worktree={worktree}
-                      gitSnapshot={gitSnapshot}
-                      onSelect={() =>
-                        void runAction(
-                          () => selectGitWorktree(workspacePath!, worktree.path, chatId),
-                          'worktree'
-                        )
-                      }
-                    />
-                  ))}
+                  {worktrees.map((worktree) => {
+                    const isComposerTarget = Boolean(
+                      activeWorktreePath &&
+                      normalizeWorkspacePath(worktree.path) ===
+                        normalizeWorkspacePath(activeWorktreePath)
+                    )
+                    const canUseConfiguredCheckout = Boolean(
+                      worktree.isCurrent &&
+                      hasComposerWorktreeSelection &&
+                      onWorktreeSelectionChange
+                    )
+                    return (
+                      <ComposerBranchPopoverWorktreeRow
+                        key={worktree.path}
+                        disabled={
+                          working ||
+                          isComposerTarget ||
+                          (!canUseConfiguredCheckout &&
+                            (worktree.isCurrent || Boolean(worktreeDisabledReason)))
+                        }
+                        worktree={worktree}
+                        gitSnapshot={gitSnapshot}
+                        isComposerTarget={isComposerTarget}
+                        isComposerSelectionActive={hasComposerWorktreeSelection}
+                        onSelect={() => {
+                          if (canUseConfiguredCheckout) {
+                            clearComposerWorktreeSelection()
+                            return
+                          }
+                          void runAction(
+                            () => selectGitWorktree(workspacePath!, worktree.path, chatId),
+                            'worktree'
+                          )
+                        }}
+                      />
+                    )
+                  })}
                   <div className="composer-branch-popover-create">
                     <input
                       className="composer-branch-popover-input"

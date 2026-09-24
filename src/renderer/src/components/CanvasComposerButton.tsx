@@ -16,6 +16,7 @@ import { requestMeshCanvasOpen } from '../lib/meshCanvasLaunch'
 import { requestSimulatorCanvasOpen } from '../lib/simulatorCanvasLaunch'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { PillButton } from './PillButton'
+import { CanvasComposerTrigger } from './CanvasComposerTrigger'
 
 export interface CanvasComposerButtonProps {
   disabled?: boolean
@@ -50,15 +51,6 @@ export function friendlyCanvasError(raw: string | undefined): string {
   return msg
 }
 
-function CanvasGlyph() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M1.5 5.5h13" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  )
-}
-
 function sketchBridgeAvailable(): boolean {
   return typeof window === 'undefined' ? true : Boolean(window.api.canvas?.openSketchEmbedded)
 }
@@ -74,7 +66,9 @@ export function CanvasComposerButton({
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | 'mesh' | 'simulator' | null>(null)
+  const [busyMode, setBusyMode] = useState<
+    'web' | 'sketch' | 'mesh' | 'simulator' | 'emulator' | null
+  >(null)
   const canOpenSketch = sketchBridgeAvailable()
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
@@ -90,13 +84,12 @@ export function CanvasComposerButton({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSignal])
 
-  const handleOpen = async (url: string): Promise<void> => {
+  const handleOpen = async (): Promise<void> => {
     setError(null)
     setBusyMode('web')
     try {
       if (!chatId) throw new Error('Canvas requires an active chat.')
       const result = await window.api.canvas?.openEmbedded({
-        url,
         chatId,
         presentation: 'dock'
       })
@@ -180,6 +173,34 @@ export function CanvasComposerButton({
       setOpen(false)
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Simulator Canvas could not be opened.')
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
+  const handleOpenEmulator = async (): Promise<void> => {
+    setError(null)
+    const openEmulatorEmbedded = window.api.canvas?.openEmulatorEmbedded
+    if (!openEmulatorEmbedded) {
+      setError(
+        'Emulator Canvas needs the updated preload bridge. Restart TaskWraith and try again.'
+      )
+      return
+    }
+    if (!chatId) {
+      setError('Emulator Canvas requires an active chat.')
+      return
+    }
+    setBusyMode('emulator')
+    try {
+      const result = await openEmulatorEmbedded({ chatId, presentation: 'dock' })
+      if (result?.ok) {
+        setOpen(false)
+      } else {
+        setError(friendlyCanvasError(result?.error))
+      }
+    } catch (err) {
+      setError(friendlyCanvasError(err instanceof Error ? err.message : String(err)))
     } finally {
       setBusyMode(null)
     }
@@ -316,9 +337,9 @@ export function CanvasComposerButton({
                   Browser
                 </div>
                 <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  Open a website, your dev server, or a running app.
+                  Open an empty browser, then navigate from its address bar.
                 </div>
-                <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
+                <CanvasPaneLauncher onOpen={() => void handleOpen()} />
               </div>
               <div
                 style={{
@@ -342,6 +363,28 @@ export function CanvasComposerButton({
                   disabled={busyMode !== null || !canOpenSketch}
                 >
                   Open sketch canvas
+                </PillButton>
+              </div>
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle, rgba(127,127,127,0.22))'
+                }}
+              />
+              <div style={CANVAS_SECTION_ROW}>
+                <div style={CANVAS_SECTION_TEXT}>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                    Homebrew Emulator
+                  </div>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                    Play the built-in demo in Canvas.
+                  </div>
+                </div>
+                <PillButton
+                  onClick={() => void handleOpenEmulator()}
+                  disabled={busyMode !== null || !chatId}
+                >
+                  {busyMode === 'emulator' ? 'Opening Emulator Canvas…' : 'Open Emulator Canvas'}
                 </PillButton>
               </div>
             </div>
@@ -368,22 +411,12 @@ export function CanvasComposerButton({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="composer-canvas-trigger composer-hint-pill composer-hint-pill--left"
+      <CanvasComposerTrigger
+        triggerRef={triggerRef}
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
-        aria-label="Open Canvas"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        data-hint-label="Canvas"
-        data-composer-control="canvas"
-      >
-        <span className="composer-control-icon" aria-hidden="true">
-          <CanvasGlyph />
-        </span>
-      </button>
+        open={open}
+      />
       {popover}
     </>
   )

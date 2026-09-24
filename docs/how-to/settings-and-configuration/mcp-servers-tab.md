@@ -9,12 +9,9 @@ endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and
 Claude launches; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP
 bridge and tool catalog, which live on the Provider Tools tab.
 
-Managed Cursor's built-in TaskWraith tool gateway is separate from the
-user-defined servers on this tab. Cursor JSON import/export remains useful for
-configuration interchange, and Cursor may load account or project MCP under
-its own provider trust. Do not treat Read-only as proof that every
-provider-native server is mediated by TaskWraith; disable untrusted
-project-local servers or use a disposable workspace when that risk matters.
+Cursor has its own built-in TaskWraith tool gateway, separate from the servers
+on this tab, and may also load MCP servers from its own account or project
+configuration. Disable untrusted project-local servers when that risk matters.
 
 ## Where to find it
 **Settings → Integrations → MCP Servers**

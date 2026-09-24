@@ -47,6 +47,32 @@ describe('TaskWraith TUI provider presentation', () => {
     }
   })
 
+  it('uses the official Xiaomi accent for Xiaomi-backed Pi models', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('pi', 'xiaomi-token-plan-cn/mimo-v2.5-pro')
+    ).toMatchObject({
+      runtimeProvider: 'pi',
+      displayProvider: 'Xiaomi',
+      hueKey: 'xiaomi',
+      accent: '#008844'
+    })
+    expect(taskWraithProviderAccent('xiaomi')).toBe(TASKWRAITH_PROVIDER_ACCENTS.xiaomi)
+    expect(TASKWRAITH_PROVIDER_ACCENTS.xiaomi).not.toBe(TASKWRAITH_PROVIDER_ACCENTS.ensemble)
+  })
+
+  it('humanises Thinking Machines OpenRouter models with the reviewed Inkling hue', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('pi', 'openrouter/thinkingmachines/inkling-small:free')
+    ).toMatchObject({
+      runtimeProvider: 'pi',
+      displayProvider: 'Thinking Machines',
+      hueKey: 'thinkingmachines',
+      accent: '#C24E68',
+      modelLabel: 'Inkling Small',
+      shortCode: 'TML'
+    })
+  })
+
   it('falls back to the runtime seat when no spoof is known', () => {
     const ollama = resolveTaskWraithProviderPresentation('ollama', 'private/model')
     const pi = resolveTaskWraithProviderPresentation('pi', 'private/model')
@@ -56,10 +82,47 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(pi.accent).toBe(TASKWRAITH_PROVIDER_ACCENTS.pi)
   })
 
+  it('humanises both Muse Spark 1.3 routes without changing their runtime identity', () => {
+    expect(resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.3')).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Spark 1.3'
+    })
+    expect(
+      resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.3-contributor')
+    ).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Contributor Spark 1.3'
+    })
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.3')).toBe('Muse Spark 1.3')
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.3-contributor')).toBe(
+      'Muse Contributor Spark 1.3'
+    )
+  })
+
+  it('humanises the Muse contributor route without changing its runtime identity', () => {
+    expect(
+      resolveTaskWraithProviderPresentation('muse', 'muse-spark-1.2-contributor')
+    ).toMatchObject({
+      runtimeProvider: 'muse',
+      displayProvider: 'Muse',
+      modelLabel: 'Muse Contributor Spark 1.2'
+    })
+    expect(taskWraithModelLabel('muse', 'muse-spark-1.2-contributor')).toBe(
+      'Muse Contributor Spark 1.2'
+    )
+  })
+
   it('uses compact desktop-style labels instead of raw wire ids', () => {
     expect(taskWraithModelLabel('claude', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
-    expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3')
+    // GPT-6 Sol and Luna (2026-09-22): the generic GPT fallback would render
+    // "GPT-6 Sol", so the hyphenated catalog label has to be an explicit row.
+    expect(taskWraithModelLabel('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
+    expect(taskWraithModelLabel('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+    expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3 (1M)')
+    expect(taskWraithModelLabel('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
     expect(taskWraithModelLabel('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')
     expect(taskWraithModelLabel('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
     expect(taskWraithModelLabel('cursor', 'grok-4.6')).toBe('Grok 4.6')
@@ -68,8 +131,21 @@ describe('TaskWraith TUI provider presentation', () => {
     }
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(taskWraithModelLabel('ollama', 'qwen3.8:27b-mlx')).toBe('Qwen 3.8 (27B-MLX)')
+    expect(taskWraithModelLabel('ollama', 'qwen3.8-flash-next:125b-mlx')).toBe(
+      'Qwen 3.8 Flash Next (125B-MLX)'
+    )
+    expect(taskWraithModelLabel('ollama', 'mistral-medium-3.5:latest')).toBe(
+      'Mistral Medium 3.5 (128B Param)'
+    )
+    expect(taskWraithModelLabel('ollama', 'granite4.2:8b')).toBe('Granite 4.2 (8B Param)')
+    expect(taskWraithModelLabel('ollama', 'ornith-1.5:35b')).toBe('Ornith 1.5 (35B Param)')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'ornith-1.5:35b')).toMatchObject({
+      displayProvider: 'Deep Reinforce',
+      hueKey: 'deep-reinforce',
+      modelLabel: 'Ornith 1.5 (35B Param)'
+    })
     expect(taskWraithModelLabel('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
-    expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('R1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
     expect(taskWraithModelLabel('ollama', 'glm-4.7-flash:q4_K_M')).toBe(
       'GLM-4.7-Flash (30B-A3B Q4)'
@@ -77,6 +153,28 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(taskWraithModelLabel('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
+    expect(taskWraithModelLabel('ollama', 'glm-5.2:cloud')).toBe('GLM 5.2')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'glm-5.2:cloud')).toMatchObject({
+      displayProvider: 'Z.ai',
+      hueKey: 'zai',
+      modelLabel: 'GLM 5.2'
+    })
+    expect(taskWraithModelLabel('ollama', 'glm-5.3-flash:cloud')).toBe('GLM 5.3 Flash')
+    expect(resolveTaskWraithProviderPresentation('ollama', 'glm-5.3-flash:cloud')).toMatchObject({
+      displayProvider: 'Z.ai',
+      hueKey: 'zai',
+      modelLabel: 'GLM 5.3 Flash'
+    })
+    expect(resolveTaskWraithProviderPresentation('ollama', 'deepseek-v4-pro:cloud')).toMatchObject({
+      displayProvider: 'DeepSeek',
+      hueKey: 'deepseek',
+      modelLabel: 'V4 Pro'
+    })
+    expect(resolveTaskWraithProviderPresentation('ollama', 'gemma4:cloud')).toMatchObject({
+      displayProvider: 'Google',
+      hueKey: 'google',
+      modelLabel: 'Gemma 4'
+    })
     expect(taskWraithModelLabel('ollama', 'nemotron-3.5-lightning:30b-mlx')).toBe(
       'Nemotron 3.5 Lightning (30B-MLX)'
     )
@@ -86,7 +184,7 @@ describe('TaskWraith TUI provider presentation', () => {
       ['ministral-3:3b', 'Ministral 3 (3B Param)'],
       ['granite4:3b', 'Granite 4.0 (3B Param)'],
       ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
-      ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+      ['deepseek-r1:1.5b', 'R1 (1.5B Param)'],
       ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
       ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
       ['gemma3:4b', 'Gemma 3 (4B Param)']

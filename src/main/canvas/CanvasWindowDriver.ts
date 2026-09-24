@@ -109,7 +109,16 @@ export interface CanvasWindowActResult extends CanvasWindowLeaseEnvelope {
   observationId: string
   /** Opaque, one-use native action identity verified by the next observation. */
   actionId: string
+  /** Value-free TaskWraith report correlation; never sent to the native daemon. */
+  driveAction: CanvasWindowDriveActionCorrelation
   result: CanvasWindowNativeActionResult
+}
+
+export interface CanvasWindowDriveActionCorrelation {
+  readonly leaseId: string
+  readonly reportId: string
+  readonly actionId: string
+  readonly independentVerificationRequired: boolean
 }
 
 export interface CanvasWindowReleaseResult extends CanvasWindowLeaseEnvelope {
@@ -224,7 +233,8 @@ export interface CanvasWindowInspectInput {
   expectedObservationId?: string
 }
 
-export interface CanvasWindowActionInput extends CanvasActionInput {
+export interface CanvasWindowActionInput extends Omit<CanvasActionInput, 'kind'> {
+  kind: 'click' | 'fill'
   /** The observationId returned by observe/snapshot. Required for this driver. */
   expectedObservationId?: string
 }
@@ -324,6 +334,7 @@ interface CurrentObservation {
 interface PendingAction {
   /** Null means dispatch may have happened but the bridge returned no correlatable id. */
   actionId: string | null
+  driveAction: CanvasWindowDriveActionCorrelation | null
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {
@@ -700,6 +711,21 @@ export class CanvasWindowDriver implements CanvasDriver {
   }
 
   act(action: CanvasActionInput): Promise<CanvasActResult> {
+    if (action.kind !== 'click' && action.kind !== 'fill') {
+      return Promise.resolve({
+        ok: false,
+        action: action.kind,
+        ref: action.ref,
+        selector: action.selector,
+        found: false,
+        executed: false,
+        verified: 'unknown',
+        refusalReason: 'unsupported_action',
+        message: `Native Foreground Drive does not support ${action.kind}; use click or fill.`,
+        url: this.syntheticUrl,
+        title: this.title
+      })
+    }
     const result =
       action.kind === 'fill'
         ? this.fill(action as CanvasWindowActionInput)
@@ -789,7 +815,7 @@ export class CanvasWindowDriver implements CanvasDriver {
       // has been observed and verified. A transport/protocol failure therefore
       // requires close + re-adopt rather than a blind retry.
       this.currentObservation = null
-      this.pendingAction = { actionId: null }
+      this.pendingAction = { actionId: null, driveAction: null }
       const request = {
         lease: this.lease,
         observationId: observation.observationId,
@@ -826,7 +852,7 @@ export class CanvasWindowDriver implements CanvasDriver {
       if (result.refusalReason === 'secret_field') {
         this.terminalSecureRefs.add(ref)
       }
-      this.pendingAction = { actionId }
+      this.pendingAction = { actionId, driveAction: response.driveAction }
       await this.assertLeaseCurrent()
 
       const suffix =
@@ -844,6 +870,9 @@ export class CanvasWindowDriver implements CanvasDriver {
         // Immediate native dispatch is not verification. Only the mandatory next
         // observation may report changed/unchanged for this actionId.
         verified: 'unknown',
+        driveReportId: response.driveAction.reportId,
+        driveActionId: response.driveAction.actionId,
+        independentVerificationRequired: response.driveAction.independentVerificationRequired,
         ...(result.refusalReason ? { refusalReason: result.refusalReason } : {}),
         message,
         url: this.syntheticUrl,

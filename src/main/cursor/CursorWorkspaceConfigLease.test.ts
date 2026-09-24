@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createWorkSpanRecorder } from '../perf/WorkSpanRecorder'
 import {
   canonicalCursorWorkspaceConfigResource,
   CursorWorkspaceConfigLeaseAbortedError,
@@ -980,5 +981,194 @@ describe('CursorWorkspaceConfigLeaseCoordinator', () => {
       normalizationFailure = normalizationCoordinator.acquire(hostileRequest)
     }).not.toThrow()
     await expect(normalizationFailure).rejects.toThrow('Unprintable thrown value')
+  })
+})
+
+function tickingClock(start = 1_000, stepMs = 10): () => number {
+  let at = start - stepMs
+  return () => (at += stepMs)
+}
+
+function waitSpans(recorder: ReturnType<typeof createWorkSpanRecorder>) {
+  return recorder.snapshot().spans.filter((span) => span.kind === 'provider_config_wait')
+}
+
+describe('Cursor provider_config_wait spans', () => {
+  it('labels the first overlay install cold_start and skips a compatible join', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const coordinator = new CursorWorkspaceConfigLeaseCoordinator({ spans: recorder })
+    const configurationKey = cursorWorkspaceConfigurationKey('write')
+    const first = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey,
+      chatId: 'chat-a',
+      runId: 'run-1',
+      install: async () => verifiedInstallation()
+    })
+    const second = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey,
+      chatId: 'chat-b',
+      runId: 'run-2',
+      install: async () => verifiedInstallation()
+    })
+    const spans = waitSpans(recorder)
+    expect(spans).toHaveLength(1)
+    expect(spans[0]).toMatchObject({
+      kind: 'provider_config_wait',
+      resource: 'cursor_overlay',
+      reason: 'cold_start',
+      chatId: 'chat-a',
+      runId: 'run-1'
+    })
+    await first.release()
+    await second.release()
+  })
+
+  it('labels an incompatible overlay wait registration_change', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const coordinator = new CursorWorkspaceConfigLeaseCoordinator({ spans: recorder })
+    const first = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('write'),
+      chatId: 'chat-heavy',
+      runId: 'run-1',
+      install: async () => verifiedInstallation()
+    })
+    const pending = coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('read-only'),
+      chatId: 'chat-light',
+      runId: 'run-2',
+      install: async () => verifiedInstallation()
+    })
+    expect(waitSpans(recorder)).toHaveLength(1)
+    expect(waitSpans(recorder)[0]).toMatchObject({
+      reason: 'cold_start',
+      chatId: 'chat-heavy'
+    })
+    await first.release()
+    const second = await pending
+    const spans = waitSpans(recorder)
+    expect(spans).toHaveLength(2)
+    expect(spans[1]).toMatchObject({
+      kind: 'provider_config_wait',
+      resource: 'cursor_overlay',
+      reason: 'registration_change',
+      chatId: 'chat-light',
+      runId: 'run-2'
+    })
+    await second.release()
+  })
+
+  it('labels a same-posture wait behind restore cohort_drain', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const coordinator = new CursorWorkspaceConfigLeaseCoordinator({ spans: recorder })
+    const restoreStarted = deferred<void>()
+    const allowRestore = deferred<void>()
+    const configurationKey = cursorWorkspaceConfigurationKey('write')
+    const first = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey,
+      chatId: 'chat-a',
+      runId: 'run-1',
+      install: async () =>
+        verifiedInstallation(async () => {
+          restoreStarted.resolve(undefined)
+          await allowRestore.promise
+        })
+    })
+
+    const release = first.release()
+    await restoreStarted.promise
+    const next = coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey,
+      chatId: 'chat-b',
+      runId: 'run-2',
+      install: async () => verifiedInstallation()
+    })
+    allowRestore.resolve(undefined)
+    await release
+    const nextLease = await next
+    const reasons = waitSpans(recorder).map((span) => `${span.chatId}:${span.reason}`)
+    expect(reasons).toEqual(['chat-a:cold_start', 'chat-b:cohort_drain'])
+    await nextLease.release()
+  })
+
+  it('records an aborted queued wait and skips unlabeled requests', async () => {
+    const recorder = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const coordinator = new CursorWorkspaceConfigLeaseCoordinator({ spans: recorder })
+    const active = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('write'),
+      chatId: 'chat-a',
+      runId: 'run-1',
+      install: async () => verifiedInstallation()
+    })
+    const controller = new AbortController()
+    const waiting = coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('read-only'),
+      chatId: 'chat-b',
+      runId: 'run-2',
+      signal: controller.signal,
+      install: async () => verifiedInstallation()
+    })
+    controller.abort()
+    await expect(waiting).rejects.toBeInstanceOf(CursorWorkspaceConfigLeaseAbortedError)
+    expect(waitSpans(recorder).map((span) => span.chatId)).toEqual(['chat-a', 'chat-b'])
+    expect(waitSpans(recorder)[1]).toMatchObject({
+      reason: 'registration_change',
+      chatId: 'chat-b'
+    })
+    await active.release()
+
+    const unlabeled = createWorkSpanRecorder({
+      process: 'main',
+      maxRetained: 8,
+      now: tickingClock()
+    })
+    const unlabeledCoordinator = new CursorWorkspaceConfigLeaseCoordinator({ spans: unlabeled })
+    const lease = await unlabeledCoordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('plan'),
+      install: async () => verifiedInstallation()
+    })
+    await lease.release()
+    expect(waitSpans(unlabeled)).toEqual([])
+  })
+
+  it('contains a throwing sink', async () => {
+    const coordinator = new CursorWorkspaceConfigLeaseCoordinator({
+      spans: {
+        begin: () => {
+          throw new Error('recorder must not break overlay admission')
+        }
+      }
+    })
+    const lease = await coordinator.acquire({
+      resourceKey: '/workspace',
+      configurationKey: cursorWorkspaceConfigurationKey('write'),
+      chatId: 'chat-a',
+      install: async () => verifiedInstallation()
+    })
+    await lease.release()
   })
 })

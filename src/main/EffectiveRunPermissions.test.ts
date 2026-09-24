@@ -4,8 +4,13 @@ import {
   isFullShellAccessGranted,
   isPlanInstrumentGrantHold,
   isPostureApprovalOnlyService,
-  resolveEffectiveRunPermissions
+  resolveEffectiveRunPermissions,
+  shouldHoldShellApprovalWithoutTimeoutDeny
 } from './EffectiveRunPermissions'
+import {
+  applyForcedReadOnlyFanoutWriteDeny,
+  isForcedReadOnlyFanoutClampedPosture
+} from './ForcedReadOnlyFanoutPosture'
 import type { AppSettings, ExternalPathGrant } from './store/types'
 
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
@@ -76,7 +81,8 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         antigravity: 120000,
         pi: 120000,
         mistral: 120000,
-        muse: 120000
+        muse: 120000,
+        devin: 120000
       },
       mainAuthorityMs: 120000
     },
@@ -127,7 +133,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.threadMessage).toBe('ask')
     expect(resolved.agenticServices.externalPublish).toBe('ask')
     expect(resolved.agenticServices.mcpTools).toBe('ask')
-    // canvasEval remains non-grantable, so this ASK can never become automatic.
+    // The permission map keeps canvasEval gate-managed; its exact-surface window
+    // is consulted later by the approval gate.
     expect(resolved.agenticServices.canvasEval).toBe('ask')
     // The one deliberate auto-deny: there is no attended capture flow to approve.
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
@@ -470,8 +477,8 @@ describe('resolveEffectiveRunPermissions', () => {
         updatedAt: '2026-05-24T00:00:00.000Z'
       },
       {
-        // canvasEval is non-grantable — this grant must be inert in EVERY
-        // preset: it cannot lift plan's deny, and stays ask under default.
+        // A broad canvasEval workspace grant is inert: it cannot lift Plan's
+        // deny or cover every Canvas under the default posture.
         id: 'grant-eval',
         provider: 'claude' as const,
         workspacePath: '/repo',
@@ -506,7 +513,8 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(def.agenticServices.mediaEditing).toBe('allow')
     expect(def.agenticServices.meshCanvas).toBe('allow')
     expect(def.agenticServices.sketchCanvas).toBe('allow')
-    // canvasEval does NOT promote under any preset — it is non-grantable.
+    // Broad grants do not promote canvasEval; the exact-surface window is a
+    // later approval-gate decision.
     expect(def.agenticServices.canvasEval).toBe('ask')
     // Accept Edits is now the explicit run-level authorization for ordinary
     // click/fill control. The stale workspace grant remains inert (Canvas
@@ -721,15 +729,15 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
   })
 
-  it('asks canvasEval under read-only (Ask) and never auto-allows it under full access', () => {
+  it('keeps canvasEval gate-managed under Ask and Full Access', () => {
     const readOnly = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'read_only'
     })
-    // Arbitrary eval (RCE) prompts per-invocation under Ask; non-grantable,
-    // so the ask can never become automatic.
+    // The first use of a live surface asks; a live 12h surface window may then
+    // auto-resolve subsequent evals downstream.
     expect(readOnly.agenticServices.canvasEval).toBe('ask')
 
     const fullAccess = resolveEffectiveRunPermissions({
@@ -738,13 +746,13 @@ describe('resolveEffectiveRunPermissions', () => {
       settings: settings(),
       presetId: 'full_access'
     })
-    // Full access lifts every OTHER service to allow, but canvasEval must stay at
-    // the 'ask' default — eval is signed-elevated and never auto-allowed.
+    // Full Access does not become a broad all-Canvas grant. The dedicated
+    // surface window remains the auto-resolution path.
     expect(fullAccess.agenticServices.canvasInteraction).toBe('allow')
     expect(fullAccess.agenticServices.canvasEval).toBe('ask')
   })
 
-  it('treats canvasEval as non-grantable — a workspace grant cannot promote it', () => {
+  it('does not let a broad workspace grant cover every canvasEval surface', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
@@ -1159,5 +1167,141 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
     }
     expect(isPlanInstrumentGrantHold(undefined, 'canvasInteraction')).toBe(false)
     expect(isPlanInstrumentGrantHold(null, 'mediaEditing')).toBe(false)
+  })
+})
+
+describe('shouldHoldShellApprovalWithoutTimeoutDeny', () => {
+  it('holds interactive Ask shellCommands without timeout deny', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'shellCommands'
+      })
+    ).toBe(true)
+  })
+
+  it('holds interactive Plan shellCommands without timeout deny', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'plan',
+        service: 'shellCommands'
+      })
+    ).toBe(true)
+  })
+
+  it('does not hold unattended Plan shellCommands', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'plan',
+        service: 'shellCommands',
+        unattended: true
+      })
+    ).toBe(false)
+  })
+
+  it('does not hold a background fan-out lane, even though it is not scheduled', () => {
+    // The lane carries no scheduledTaskId, so `unattended` is false. Nobody is
+    // watching its modal either, so the timer must stay armed and the approval
+    // must fail closed instead of hanging on a transport backstop.
+    for (const presetId of ['read_only', 'plan'] as const) {
+      expect(
+        shouldHoldShellApprovalWithoutTimeoutDeny({
+          presetId,
+          service: 'shellCommands',
+          unattended: false,
+          backgroundFanoutLane: true
+        })
+      ).toBe(false)
+    }
+  })
+
+  it('still holds an attended interactive lane that is neither scheduled nor a fan-out lane', () => {
+    for (const presetId of ['read_only', 'plan'] as const) {
+      expect(
+        shouldHoldShellApprovalWithoutTimeoutDeny({
+          presetId,
+          service: 'shellCommands',
+          unattended: false,
+          backgroundFanoutLane: false
+        })
+      ).toBe(true)
+    }
+  })
+
+  it('does not hold Ask fileChanges / mcpTools / hostCommand rerun', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'fileChanges'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: 'mcpTools'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'read_only',
+        service: undefined
+      })
+    ).toBe(false)
+  })
+
+  it('does not hold Accept Edits / Full Access shell', () => {
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'default',
+        service: 'shellCommands'
+      })
+    ).toBe(false)
+    expect(
+      shouldHoldShellApprovalWithoutTimeoutDeny({
+        presetId: 'full_access',
+        service: 'shellCommands'
+      })
+    ).toBe(false)
+  })
+})
+
+describe('forced read-only Ensemble fan-out clamp', () => {
+  const resolveReadOnlyLane = () =>
+    resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+
+  it('leaves the read_only preset itself untouched for a non-fan-out run', () => {
+    const resolved = resolveReadOnlyLane()
+    expect(resolved.agenticServices.fileChanges).toBe('ask')
+    expect(resolved.agenticServices.shellCommands).toBe('ask')
+    expect(isForcedReadOnlyFanoutClampedPosture(resolved)).toBe(false)
+  })
+
+  it('emits fileChanges deny and shellCommands ask for a clamped fan-out lane', () => {
+    const clamped = applyForcedReadOnlyFanoutWriteDeny(resolveReadOnlyLane())
+    expect(clamped.presetId).toBe('read_only')
+    expect(clamped.readOnly).toBe(true)
+    expect(clamped.agenticServices.fileChanges).toBe('deny')
+    expect(clamped.agenticServices.shellCommands).toBe('ask')
+    expect(isForcedReadOnlyFanoutClampedPosture(clamped)).toBe(true)
+  })
+
+  it('moves no other service away from what the read_only preset resolved', () => {
+    const resolved = resolveReadOnlyLane()
+    const clamped = applyForcedReadOnlyFanoutWriteDeny(resolved)
+    for (const service of Object.keys(resolved.agenticServices) as Array<
+      keyof typeof resolved.agenticServices
+    >) {
+      if (service === 'fileChanges') continue
+      expect(clamped.agenticServices[service]).toBe(resolved.agenticServices[service])
+    }
+    expect(clamped.networkAccess).toBe(resolved.networkAccess)
+    expect(clamped.approvalMode).toBe(resolved.approvalMode)
+    expect(clamped.externalPathGrants).toEqual(resolved.externalPathGrants)
+    expect(clamped.workspaceGrantServiceIds).toEqual(resolved.workspaceGrantServiceIds)
   })
 })

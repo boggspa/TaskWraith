@@ -25,7 +25,10 @@ export function selectUnownedDockPresentations<T extends CanvasPresentationCandi
     (summary) =>
       summary.presentation === 'dock' &&
       summary.status === 'active' &&
-      (summary.driver === 'web' || summary.driver === 'sketch' || summary.driver === 'chart') &&
+      (summary.driver === 'web' ||
+        summary.driver === 'sketch' ||
+        summary.driver === 'chart' ||
+        summary.driver === 'emulator') &&
       !rendererOwnedIds.has(summary.canvasId)
   )
 }

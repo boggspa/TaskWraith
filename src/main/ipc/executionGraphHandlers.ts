@@ -57,6 +57,25 @@ export interface ExecutionGraphDiagnosticsHandlerDeps {
   getSnapshot: () => ExecutionGraphDiagnosticsSnapshot
 }
 
+export interface ExecutionGraphRecoveryRetryCommand {
+  /** One execution paused at startup; omit to retry every paused one. */
+  readonly executionId?: string
+}
+
+export interface ExecutionGraphArchiveResult {
+  readonly projection: ExecutionRunProjection
+  /** Refreshed after the archive so the renderer re-derives its notices at once. */
+  readonly diagnostics: ExecutionGraphDiagnosticsSnapshot
+}
+
+export interface ExecutionGraphRecoveryHandlerDeps {
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
+  getSnapshot: () => ExecutionGraphDiagnosticsSnapshot
+  /** Re-runs startup recovery through the coordinator's own ledger path. */
+  retryRecovery: (input: ExecutionGraphRecoveryRetryCommand) => void
+  archiveExecution: (executionId: string, reason?: string) => Promise<ExecutionRunProjection>
+}
+
 export interface ExecutionStackAppendCommand {
   readonly clientRequestId: string
   readonly executionId?: string
@@ -130,6 +149,7 @@ export interface ExecutionGraphHandlersDeps {
     | 'appendStackStep'
     | 'cancelExecution'
     | 'cancelDormantStep'
+    | 'resumeExecution'
   >
   now?: () => string
 }
@@ -600,6 +620,19 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
     return deps.coordinator.getExecution(canonicalId) ?? null
   })
 
+  ipcMain.handle('execution-runs:resume', (event, id: unknown, reason?: unknown) => {
+    deps.assertMainRendererSender(event)
+    const canonicalId = executionId(id)
+    requireOwnedExecution(deps, canonicalId)
+    // Throws with the reason when the graph is terminal, not paused, or its
+    // owner is still gone. The renderer surfaces that text rather than leaving
+    // a control that appears to do nothing.
+    return deps.coordinator.resumeExecution(
+      canonicalId,
+      optionalString(reason, 512) || 'Resumed by user.'
+    )
+  })
+
   ipcMain.handle('execution-runs:cancel-step', async (event, raw: unknown) => {
     deps.assertMainRendererSender(event)
     if (!isRecord(raw)) throw new Error('Step cancellation command is invalid.')
@@ -632,4 +665,37 @@ export function registerExecutionGraphDiagnosticsHandler(
     deps.assertMainRendererSender(event)
     return deps.getSnapshot()
   })
+}
+
+/**
+ * The two ways out of a "startup recovery paused" notice. Registered beside
+ * the diagnostics query, unconditionally, so a session whose graph service
+ * failed to initialize answers with the reason instead of a missing handler.
+ */
+export function registerExecutionGraphRecoveryHandlers(
+  deps: ExecutionGraphRecoveryHandlerDeps
+): void {
+  ipcMain.handle('execution-graphs:retry-recovery', (event, raw?: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (raw !== undefined && raw !== null && !isRecord(raw)) {
+      throw new Error('Recovery retry command is invalid.')
+    }
+    const requestedExecutionId = isRecord(raw) ? optionalString(raw.executionId, 128) : undefined
+    deps.retryRecovery(
+      requestedExecutionId ? { executionId: executionId(requestedExecutionId) } : {}
+    )
+    return deps.getSnapshot()
+  })
+
+  ipcMain.handle(
+    'execution-runs:archive',
+    async (event, id: unknown, reason?: unknown): Promise<ExecutionGraphArchiveResult> => {
+      deps.assertMainRendererSender(event)
+      const projection = await deps.archiveExecution(
+        executionId(id),
+        optionalString(reason, 512) || 'Archived by user.'
+      )
+      return { projection, diagnostics: deps.getSnapshot() }
+    }
+  )
 }

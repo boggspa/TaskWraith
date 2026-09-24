@@ -1,0 +1,882 @@
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
+
+import type {
+  HostProviderRunPort,
+  HostProviderRunThread
+} from '../host-runtime/HostProviderRunPort'
+import type { HostNodeInteractionResolver } from './HostNodeInteractionRegistry'
+import type { HostNodeProviderCreateInput } from './HostNodeProvider'
+import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
+
+class FakeChild extends EventEmitter {
+  readonly stdin = new PassThrough()
+  readonly stdout = new PassThrough()
+  readonly stderr = new PassThrough()
+  killed = false
+  kill = vi.fn(() => {
+    this.killed = true
+    return true
+  })
+}
+
+function thread(overrides: Partial<HostProviderRunThread> = {}): HostProviderRunThread {
+  return {
+    threadId: 'thread-1',
+    workspace: {
+      workspaceId: 'workspace-1',
+      canonicalPath: '/tmp/host-node-provider-test',
+      canonical: true
+    },
+    providerId: 'mistral',
+    modelId: 'devstral-small',
+    reasoningId: 'high',
+    posture: {
+      postureId: 'default',
+      approvalMode: 'workspace_write',
+      requiresExplicitConsent: false,
+      explicitConsentAcknowledged: false
+    },
+    ...overrides
+  }
+}
+
+function open(
+  input: {
+    readonly missingBinary?: boolean
+    readonly authState?: 'authenticated' | 'unauthenticated' | 'unknown'
+    readonly isConfigured?: () => boolean | Promise<boolean>
+    readonly terminalLauncher?: {
+      launchForProvider: (
+        providerId: string,
+        input: { readonly argv: readonly string[] }
+      ) => Promise<void | {
+        readonly spawned: true
+        readonly providerId: string
+      }>
+    }
+    readonly configuredThread?: HostProviderRunThread
+    readonly interactions?: HostNodeInteractionResolver
+    readonly environment?: NodeJS.ProcessEnv
+  } = {}
+) {
+  const appends: unknown[] = []
+  const finishes: unknown[] = []
+  const events: unknown[] = []
+  const cancels = new Map<string, () => void>()
+  const spawnEnvs: NodeJS.ProcessEnv[] = []
+  const child = new FakeChild()
+  const port: HostProviderRunPort = {
+    getThread: () => input.configuredThread ?? thread(),
+    appendTranscript: (value) => appends.push(value),
+    beginRun: () => ({ kind: 'started' }),
+    updateRun: () => undefined,
+    finishRun: (value) => finishes.push(value),
+    registerCancel: (runId, cancel) => {
+      cancels.set(runId, cancel)
+      return { kind: 'registered' }
+    },
+    clearCancel: (runId) => cancels.delete(runId),
+    publishRunEvent: (_target, event) => events.push(event)
+  }
+  const factory = createHostNodeMistralProvider({
+    resources: {
+      resolveBinary: async () =>
+        input.missingBinary
+          ? { binaryPath: null, source: 'missing' }
+          : { binaryPath: '/usr/local/bin/mistral', source: 'path' },
+      getAuthState: async () =>
+        input.authState ?? (input.missingBinary ? 'unauthenticated' : 'authenticated'),
+      getVersion: async () => 'test'
+    },
+    ...(input.isConfigured ? { isConfigured: input.isConfigured } : {}),
+    ...(input.terminalLauncher ? { terminalLauncher: input.terminalLauncher } : {}),
+    environment: input.environment ?? { PATH: '/usr/bin' },
+    spawn: (_command, _args, options) => {
+      spawnEnvs.push(options.env)
+      return child as never
+    }
+  })
+  const instance = factory.create({
+    runPort: port,
+    interactions:
+      input.interactions ??
+      ({
+        register: () => new Promise<never>(() => {})
+      } satisfies HostNodeInteractionResolver)
+  } satisfies HostNodeProviderCreateInput)
+  return { factory, instance, child, appends, finishes, events, cancels, spawnEnvs }
+}
+
+function frames(child: FakeChild): string[] {
+  const received: string[] = []
+  child.stdin.on('data', (chunk) => received.push(String(chunk)))
+  return received
+}
+
+function completePrompt(child: FakeChild): void {
+  child.stdout.write(
+    JSON.stringify({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } }) + '\n'
+  )
+}
+
+describe('HostNodeMistralProvider', () => {
+  it('keeps a missing binary visible as unavailable and terminalizes setup failure', async () => {
+    const { instance, finishes } = open({ missingBinary: true })
+    await expect(instance.getStatus()).resolves.toMatchObject({
+      providerId: 'mistral',
+      status: 'unavailable'
+    })
+
+    await expect(
+      instance.run({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        prompt: 'hello',
+        target: { id: 'client' }
+      })
+    ).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'failed', errorCode: 'provider_setup_unavailable' })
+    ])
+  })
+
+  it('runs a real ACP handshake, streams bounded output, and records an exact terminal receipt', async () => {
+    const { factory, instance, child, appends, finishes, events } = open()
+    const sent = frames(child)
+    // Live 2026-08-27 probe: vibe 2.24.3 ACP SDK lists elicitation/create, but vibe/acp/agent.py
+    // never emits it (only session/request_permission). Host initialize does not advertise
+    // clientCapabilities.elicitation, which ACP requires before any elicitation/create. Do not
+    // flip supportsQuestions without a proven ACP agent→client question method on this Host path.
+    expect(factory).toMatchObject({ supportsApprovals: true, supportsQuestions: false })
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-1' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { text: 'ready' }
+          }
+        }
+      }) + '\n'
+    )
+    let settled = false
+    void running.finally(() => {
+      settled = true
+    })
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('error', new Error('teardown race'))
+    expect(settled).toBe(false)
+    expect(finishes).toEqual([])
+    child.emit('close', null, 'SIGTERM')
+
+    await expect(running).resolves.toMatchObject({
+      runId: 'run-1',
+      status: 'completed',
+      sessionId: 'session-1'
+    })
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'assistant')).toEqual([
+      expect.objectContaining({ text: 'ready' })
+    ])
+    expect(events).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'run.content' })])
+    )
+    expect(finishes).toEqual([expect.objectContaining({ status: 'completed' })])
+    expect(
+      events.filter(
+        (entry) =>
+          (entry as { type?: unknown }).type === 'run.status' &&
+          (entry as { status?: unknown }).status === 'completed'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('clamps xhigh reasoning onto the vibe thinking ladder at session config time', async () => {
+    const { instance, child } = open({ configuredThread: thread({ reasoningId: 'xhigh' }) })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-1',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'glm-5-2' }, { value: 'mistral-medium-3.5' }]
+            },
+            {
+              id: 'thinking',
+              currentValue: 'high',
+              options: [
+                { value: 'off' },
+                { value: 'low' },
+                { value: 'medium' },
+                { value: 'high' },
+                { value: 'max' }
+              ]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    // Vibe has no `xhigh` tier: the desktop ladder clamps it to `max` rather
+    // than letting the CLI silently keep whatever thinking level it last used.
+    await vi.waitFor(() => expect(sent.join('')).toContain('"configId":"thinking"'))
+    const configWrites = sent
+      .join('')
+      .split('\n')
+      .filter((line) => line.includes('session/set_config_option'))
+      .map((line) => JSON.parse(line) as { params: { configId: string; value: string } })
+    expect(configWrites).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ configId: 'thinking', value: 'max' })
+      })
+    ])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', null, 'SIGTERM')
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('fails the turn instead of running the wrong model when the CLI does not offer it', async () => {
+    const { instance, child, finishes } = open({
+      configuredThread: thread({ modelId: 'mistral-medium-3.5', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-1',
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'devstral-small',
+              options: [{ value: 'devstral-small' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    expect(sent.join('')).not.toContain('"method":"session/prompt"')
+    child.emit('close', null, 'SIGTERM')
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        warningSummaries: expect.arrayContaining([expect.stringContaining('mistral-medium-3.5')])
+      })
+    ])
+  })
+
+  it('resumes the persisted Vibe session over session/load and ignores replayed history', async () => {
+    // Every turn used to open session/new, so the second prompt reached a
+    // model with no memory of the first ("I don't have a task in context
+    // yet"). Vibe advertises loadSession and replays the loaded history as
+    // session/update notifications before answering; those replays are not
+    // new output and must not be re-appended to the transcript.
+    const { instance, child, appends, finishes } = open({
+      configuredThread: thread({
+        modelId: 'mistral-medium-3.5',
+        reasoningId: undefined,
+        providerSessionId: 'session-earlier'
+      })
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-resume',
+      threadId: 'thread-1',
+      prompt: 'and the third?',
+      resumeFallbackPrompt: 'Continue the conversation.\n\nNew user message:\nand the third?',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/load"'))
+    const load = JSON.parse(sent.find((frame) => frame.includes('"method":"session/load"'))!) as {
+      id: number
+      params: Record<string, unknown>
+    }
+    expect(load.params).toEqual({
+      sessionId: 'session-earlier',
+      cwd: '/tmp/host-node-provider-test',
+      mcpServers: []
+    })
+    expect(sent.join('')).not.toContain('"method":"session/new"')
+    // Replayed history arrives before the load result.
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          sessionId: 'session-earlier',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'There are two.' }
+          }
+        }
+      }) + '\n'
+    )
+    child.stdout.write(
+      JSON.stringify({
+        id: load.id,
+        result: {
+          configOptions: [
+            {
+              id: 'model',
+              currentValue: 'mistral-medium-3.5',
+              options: [{ value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: { text: string }[] } }
+    expect(prompt.params.sessionId).toBe('session-earlier')
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: 'and the third?' }])
+    child.stdout.write(
+      JSON.stringify({
+        method: 'session/update',
+        params: {
+          sessionId: 'session-earlier',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'A third one.' }
+          }
+        }
+      }) + '\n'
+    )
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-earlier'
+    })
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'assistant')).toEqual([
+      expect.objectContaining({ text: 'A third one.' })
+    ])
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'completed', providerSessionId: 'session-earlier' })
+    ])
+  })
+
+  it('falls back to a fresh session carrying the bounded transcript when the Vibe session is gone', async () => {
+    const { instance, child, appends } = open({
+      configuredThread: thread({
+        modelId: 'mistral-medium-3.5',
+        reasoningId: undefined,
+        providerSessionId: 'session-expired'
+      })
+    })
+    const sent = frames(child)
+    const fallback =
+      'Continue the existing TaskWraith conversation using this bounded transcript context.\n\n' +
+      'User: first\n\nassistant: reply\n\nNew user message:\nsecond'
+    const running = instance.run({
+      runId: 'run-fallback',
+      threadId: 'thread-1',
+      prompt: 'second',
+      resumeFallbackPrompt: fallback,
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/load"'))
+    const load = JSON.parse(sent.find((frame) => frame.includes('"method":"session/load"'))!) as {
+      id: number
+    }
+    child.stdout.write(
+      JSON.stringify({
+        id: load.id,
+        error: { code: -32602, message: 'Session not found: session-expired' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const created = JSON.parse(sent.find((frame) => frame.includes('"method":"session/new"'))!) as {
+      id: number
+    }
+    child.stdout.write(
+      JSON.stringify({ id: created.id, result: { sessionId: 'session-fresh' } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { sessionId: string; prompt: { text: string }[] } }
+    expect(prompt.params.sessionId).toBe('session-fresh')
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: fallback }])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({
+      status: 'completed',
+      sessionId: 'session-fresh'
+    })
+    // The transcript keeps the user's own words, never the stitched fallback.
+    expect(appends.filter((entry) => (entry as { role?: unknown }).role === 'user')).toEqual([
+      expect.objectContaining({ text: 'second' })
+    ])
+  })
+
+  it('opens a fresh session with the bounded transcript when no Vibe session was persisted', async () => {
+    // A model switch starts a new native session on purpose; the thread's
+    // history still travels with the first prompt of that session.
+    const { instance, child } = open({
+      configuredThread: thread({ modelId: 'mistral-medium-3.5', reasoningId: undefined })
+    })
+    const sent = frames(child)
+    const fallback = 'Continue the existing TaskWraith conversation.\n\nNew user message:\nnext'
+    const running = instance.run({
+      runId: 'run-cold',
+      threadId: 'thread-1',
+      prompt: 'next',
+      resumeFallbackPrompt: fallback,
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(
+      JSON.stringify({ id: 1, result: { agentCapabilities: { loadSession: true } } }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    expect(sent.join('')).not.toContain('"method":"session/load"')
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-cold' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    const prompt = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/prompt"'))!
+    ) as { params: { prompt: { text: string }[] } }
+    expect(prompt.params.prompt).toEqual([{ type: 'text', text: fallback }])
+    completePrompt(child)
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('reports the protocol failure, not later stderr telemetry, when the turn fails', async () => {
+    // Vibe logs DEBUG telemetry and Sentry chatter to stderr after an error;
+    // the last stderr line used to overwrite the real reason, so a failed run
+    // was recorded as "DEBUG:vibe:telemetry …".
+    const { instance, child, finishes } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-noise',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    child.stdout.write(JSON.stringify({ id: 2, result: { sessionId: 'session-1' } }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/prompt"'))
+    child.stdout.write(
+      JSON.stringify({
+        id: 3,
+        error: { code: -32000, message: 'Rate limit exceeded for this workspace.' }
+      }) + '\n'
+    )
+    child.stderr.write(
+      "DEBUG:vibe:telemetry event=vibe.tool_call_finished properties={'agent_entrypoint': 'acp'}\n"
+    )
+    child.stderr.write(
+      'Sentry is attempting to send 2 pending events\nWaiting up to 2 seconds\nPress Ctrl-C to quit\n'
+    )
+    await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true))
+    child.emit('close', 1)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'provider_failed',
+        warningSummaries: ['Rate limit exceeded for this workspace.']
+      })
+    ])
+  })
+
+  it('keeps a meaningful stderr line as the reason when the process dies without a protocol error', async () => {
+    const { instance, child, finishes } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-crash',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stderr.write('DEBUG:vibe:telemetry event=vibe.session_started\n')
+    child.stderr.write('vibe.core.exceptions.UnauthenticatedError: Sign in with vibe --setup\n')
+    child.emit('close', 1)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        warningSummaries: ['vibe.core.exceptions.UnauthenticatedError: Sign in with vibe --setup']
+      })
+    ])
+  })
+
+  it('does not treat a clean ACP process exit without terminal prompt evidence as completion', async () => {
+    const { instance, child, finishes } = open()
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(child.stdin.readableLength).toBeGreaterThan(0))
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'failed' })
+    expect(finishes).toEqual([
+      expect.objectContaining({ status: 'failed', errorCode: 'provider_failed' })
+    ])
+  })
+
+  it('applies gated session mode and the picker after session/new', async () => {
+    const { instance, child } = open()
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-model-config',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    child.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\n')
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/new"'))
+    const sessionNew = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/new"'))!
+    ) as { params: { configOptions?: unknown } }
+    expect(sessionNew.params.configOptions).toBeUndefined()
+
+    child.stdout.write(
+      JSON.stringify({
+        id: 2,
+        result: {
+          sessionId: 'session-mistral',
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'plan',
+              options: [{ value: 'plan' }, { value: 'ask' }, { value: 'default' }]
+            },
+            {
+              id: 'model',
+              currentValue: 'glm-5-2',
+              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"session/set_config_option"'))
+    const modeConfig = JSON.parse(
+      sent.find((frame) => frame.includes('"method":"session/set_config_option"'))!
+    ) as { params: { configId: string; value: string } }
+    expect(modeConfig.params).toEqual({
+      sessionId: 'session-mistral',
+      configId: 'mode',
+      value: 'ask'
+    })
+    child.stdout.write(
+      JSON.stringify({
+        id: 1000,
+        result: {
+          configOptions: [
+            {
+              id: 'mode',
+              currentValue: 'ask',
+              options: [{ value: 'ask' }]
+            },
+            {
+              id: 'model',
+              currentValue: 'glm-5-2',
+              options: [{ value: 'devstral-small' }, { value: 'mistral-medium-3.5' }]
+            }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() =>
+      expect(
+        sent.filter((frame) => frame.includes('"method":"session/set_config_option"')).length
+      ).toBe(2)
+    )
+    const modelConfig = JSON.parse(
+      sent.filter((frame) => frame.includes('"method":"session/set_config_option"'))[1]!
+    ) as { params: { configId: string; value: string } }
+    expect(modelConfig.params).toEqual({
+      sessionId: 'session-mistral',
+      configId: 'model',
+      value: 'mistral-medium-3.5'
+    })
+
+    expect(instance.cancel('run-model-config')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('cancels only the exact active run', async () => {
+    const { instance, child } = open()
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    await vi.waitFor(() => expect(instance.cancel('run-1')).toBe(true))
+    expect(instance.cancel('other-run')).toBe(false)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('rejects a thread whose catalog model is not selectable', async () => {
+    const { instance } = open({ configuredThread: thread({ modelId: 'not-offered' }) })
+    await expect(
+      instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
+    ).rejects.toThrow(/configuration is not selectable/)
+  })
+
+  it.each(['devstral-small', 'mistral-medium-3.5'])(
+    'scrubs an ambient API key from the Vibe model %s',
+    async (modelId) => {
+      const { instance, child, spawnEnvs } = open({
+        configuredThread: thread({ modelId }),
+        environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'studio-key' }
+      })
+      const sent = frames(child)
+      const running = instance.run({
+        runId: 'run-1',
+        threadId: 'thread-1',
+        prompt: 'hello',
+        target: {}
+      })
+
+      await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+      expect(spawnEnvs).toHaveLength(1)
+      expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBeUndefined()
+      expect(instance.cancel('run-1')).toBe(true)
+      child.emit('close', 0)
+      await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+    }
+  )
+
+  it('passes the API key only to a key-marked Mistral model', async () => {
+    const { instance, child, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-2512' }),
+      environment: { PATH: '/usr/bin', MISTRAL_API_KEY: 'studio-key' }
+    })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: {}
+    })
+
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(spawnEnvs[0]?.MISTRAL_API_KEY).toBe('studio-key')
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('rejects a key-marked model before launch when the host has no API key', async () => {
+    const { instance, spawnEnvs } = open({
+      configuredThread: thread({ modelId: 'mistral-large-2512' }),
+      environment: { PATH: '/usr/bin' }
+    })
+
+    await expect(
+      instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: {} })
+    ).rejects.toThrow(/requires MISTRAL_API_KEY/)
+    expect(spawnEnvs).toHaveLength(0)
+  })
+
+  it('registers an ACP permission and resumes its exact request once after approval', async () => {
+    let settle!: (value: {
+      id: string
+      kind: 'approval'
+      decision: 'accept'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }) => void
+    const settlement = new Promise<{
+      id: string
+      kind: 'approval'
+      decision: 'accept'
+      actor: { clientId: string; clientClass: string; actorId: string }
+    }>((resolve) => {
+      settle = resolve
+    })
+    const interactions = {
+      register: vi.fn(() => settlement)
+    } satisfies HostNodeInteractionResolver
+    const { instance, child } = open({ interactions })
+    const sent = frames(child)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+
+    child.stdout.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'permission-1',
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'session-1',
+          toolCall: { id: 'tool-1', title: 'Write file', kind: 'edit' },
+          options: [
+            { optionId: 'allow-once', kind: 'allow_once' },
+            { optionId: 'reject-once', kind: 'reject_once' }
+          ]
+        }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(interactions.register).toHaveBeenCalledOnce())
+    expect(interactions.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'approval',
+        providerId: 'mistral',
+        runId: 'run-1',
+        threadId: 'thread-1',
+        toolId: 'tool-1',
+        options: ['allow-once', 'reject-once']
+      })
+    )
+
+    settle({
+      id: 'mistral:run-1:approval:1',
+      kind: 'approval',
+      decision: 'accept',
+      actor: { clientId: 'client', clientClass: 'tui', actorId: 'client' }
+    })
+    await vi.waitFor(() =>
+      expect(sent.filter((frame) => frame.includes('"id":"permission-1"'))).toHaveLength(1)
+    )
+    expect(
+      sent.map((frame) => JSON.parse(frame)).find((frame) => frame.id === 'permission-1')
+    ).toEqual({
+      jsonrpc: '2.0',
+      id: 'permission-1',
+      result: { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    })
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('does not register elicitation/create as a question: vibe ACP agent never emits it', async () => {
+    const interactions = {
+      register: vi.fn(async () => {
+        throw new Error('ACP questions have no event source on the Mistral Host adapter')
+      })
+    } satisfies HostNodeInteractionResolver
+    const { factory, instance, child } = open({ interactions })
+    const sent = frames(child)
+    expect(factory.supportsQuestions).toBe(false)
+    const running = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: { id: 'client' }
+    })
+    child.stdout.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'elicit-1',
+        method: 'elicitation/create',
+        params: { sessionId: 'session-1', mode: 'form', message: 'Pick a strategy?' }
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(sent.join('')).toContain('"method":"initialize"'))
+    expect(interactions.register).not.toHaveBeenCalled()
+    expect(instance.cancel('run-1')).toBe(true)
+    child.emit('close', 0)
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('resolves unknown resource auth into configured or auth-required status', async () => {
+    const unconfigured = open({ authState: 'unknown', isConfigured: () => false })
+    await expect(unconfigured.instance.getStatus()).resolves.toMatchObject({
+      providerId: 'mistral',
+      status: 'auth_required'
+    })
+    await expect(unconfigured.instance.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
+    })
+    expect(await unconfigured.instance.getAuthFlows()).toEqual([])
+
+    const launcher = { launchForProvider: vi.fn(async () => undefined) }
+    const login = open({
+      authState: 'unknown',
+      isConfigured: () => false,
+      terminalLauncher: launcher
+    })
+    expect(await login.instance.getAuthFlows()).toEqual([
+      expect.objectContaining({ flowId: 'mistral:login' })
+    ])
+    await expect(login.instance.beginAuth('auth-1')).resolves.toBeUndefined()
+    // `vibe`/`vibe-acp` have no `login` subcommand — a bare `login` argument is
+    // read as an interactive PROMPT. `--setup` is the CLI's real sign-in flow.
+    expect(launcher.launchForProvider).toHaveBeenCalledWith(
+      'mistral',
+      expect.objectContaining({ argv: ['/usr/local/bin/mistral', '--setup'] })
+    )
+    await expect(login.instance.getAuthStatus()).resolves.toMatchObject({
+      state: 'unauthenticated'
+    })
+
+    const configured = open({ authState: 'unknown', isConfigured: () => true })
+    await expect(configured.instance.getStatus()).resolves.toMatchObject({
+      providerId: 'mistral',
+      status: 'ready'
+    })
+    await expect(configured.instance.getAuthStatus()).resolves.toMatchObject({
+      state: 'authenticated'
+    })
+  })
+})

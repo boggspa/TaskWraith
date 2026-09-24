@@ -1,5 +1,6 @@
 import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
 import { TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES } from '../../shared/providerActionTaxonomy'
+import { coalesceToolArguments, type ToolArgumentAliasConflict } from './McpToolArgumentCoalesce'
 
 export const CAPABILITY_GATEWAY_TOOL_NAMES = TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES
 export const [CAPABILITY_SEARCH_TOOL_NAME, CAPABILITY_INVOKE_TOOL_NAME] =
@@ -38,15 +39,15 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
  * Providers that stream their own row for a TaskWraith MCP call.
  *
  * Main synthesizes `tool_use`/`tool_result` for MCP invocations because some
- * providers never mention them. For the providers listed here the provider
- * already emits a row keyed on ITS OWN call id, so synthesizing a second one
+ * providers never mention them. Most providers listed here emit a
+ * self-sufficient row keyed on THEIR OWN call id, so synthesizing a second one
  * keyed on `<provider>-mcp-<tool>-<ts>-<rand>` renders TWO complete tool cards
  * for one invocation — the renderer pairs use→result by tool_id, and the two
  * ids never match. Codex was fixed when this was found (its app-server
  * `mcpToolCall` items); Pi followed (TaskWraith's managed tools are registered
  * as real Pi tools by the app-owned extension, so Pi reports each through
- * `toolcall_end`). Claude, Kimi and Ollama joined on the 2026-08-18
- * measurement, after the user-visible "every Edit shows twice" duplicate:
+ * `toolcall_end`). Claude, Kimi and Ollama joined the native-row measurement on
+ * 2026-08-18, after the user-visible "every Edit shows twice" duplicate:
  * over the 14-day run-event corpus their plain (non-gateway) brokered calls
  * carried a native twin at 4896/4897 (claude, 515 runs — `mcp__TaskWraith__
  * <tool>` tool_use blocks in the assistant envelope), 1095/1095 (kimi, 73
@@ -62,6 +63,28 @@ export function isCapabilityGatewayToolName(value: unknown): value is Capability
  * does. When measuring, fold the control tool's two advertised spellings
  * (`ensemble_control` v2+ vs canonical `ensemble_bossman_control`) into one
  * name, or every control call reads as untwinned and drags the rate down.
+ *
+ * KIMI IS THE ENRICHMENT EXCEPTION. Its native ACP wrapper proves that a call
+ * happened, but Kimi Code currently omits the MCP arguments from that
+ * `session/update`: a real `replace` call persists as `parameters: {}` even
+ * though the governed host received `path` + `old_string` + `new_string`.
+ * TaskWraith must therefore keep the host receipt too. The renderer's
+ * `coalesceMirroredTaskWraithActivities` proves the nested mirror, keeps the
+ * enriched host activity (including +N/-N), and copies the native round-trip
+ * timing onto it, so the user still sees exactly one row.
+ *
+ * MUSE IS ABSENT FOR A DIFFERENT REASON: it twins, but only on a transport the
+ * 2026-08-18 measurement could not see. That corpus predates the MSP lane
+ * entirely, so Muse was never a candidate for this list. Measured 2026-09-10
+ * over the full run-event corpus, only two Muse runs carry MCP rows at all —
+ * both MSP-lane, both twinning 38/38 — and NO exec-lane Muse run has ever
+ * carried one, so that lane's twin rate is not merely low, it is unmeasured.
+ * Adding `muse` here would therefore suppress the host receipt on a lane where
+ * nothing has been shown to replace it, which deletes the card rather than
+ * deduplicating it. It is handled in the renderer instead, like Kimi and
+ * Mistral: `coalesceMirroredTaskWraithActivities` folds the pair when a
+ * genuine twin is present and is a no-op when it is not, so the exec lane
+ * stays correct without waiting for a measurement.
  */
 const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
   'codex',
@@ -70,6 +93,8 @@ const PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS: readonly string[] = [
   'kimi',
   'ollama'
 ]
+
+const PROVIDERS_REQUIRING_HOST_MCP_TRANSCRIPT_ENRICHMENT: readonly string[] = ['kimi']
 
 export function providerEmitsNativeMcpTranscriptRows(parentProvider: string): boolean {
   return PROVIDERS_WITH_NATIVE_MCP_TRANSCRIPT_ROWS.includes(parentProvider)
@@ -84,7 +109,11 @@ export function shouldEmitCanonicalTargetTranscript(
   parentProvider: string,
   viaGateway: boolean
 ): boolean {
-  return !providerEmitsNativeMcpTranscriptRows(parentProvider) || viaGateway
+  return (
+    !providerEmitsNativeMcpTranscriptRows(parentProvider) ||
+    PROVIDERS_REQUIRING_HOST_MCP_TRANSCRIPT_ENRICHMENT.includes(parentProvider) ||
+    viaGateway
+  )
 }
 
 /** Return fresh definitions so a transport cannot mutate the shared profile. */
@@ -454,11 +483,37 @@ export function searchGatewayCapabilities(
   const eligibleNames = normalizedEligibleNames(request.eligibleToolNames)
   const auditOnlyNames = normalizedAuditOnlyNames(request.auditOnlyToolNames)
   const ranked = stableDefinitions(request.definitions)
-    .filter((definition) => isDiscoverableTool(definition.name, eligibleNames, auditOnlyNames))
     .map(toSearchCandidate)
     .map((candidate) => {
       const match = scoreCandidate(candidate, queryTokens)
-      return match ? { candidate, ...match } : null
+      if (!match) return null
+
+      if (isDiscoverableTool(candidate.definition.name, eligibleNames, auditOnlyNames)) {
+        return { candidate, ...match }
+      }
+
+      if (
+        match.exactName &&
+        !isCapabilityGatewayToolName(candidate.definition.name) &&
+        !isAuditOnlyTool(candidate.definition.name, auditOnlyNames)
+      ) {
+        return {
+          candidate: {
+            ...candidate,
+            definition: {
+              ...candidate.definition,
+              annotations: {
+                ...(candidate.definition.annotations || {}),
+                direct: true,
+                notice: 'already advertised — call it directly.'
+              }
+            }
+          },
+          ...match
+        }
+      }
+
+      return null
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort(
@@ -1061,6 +1116,7 @@ export type GatewayInvocationErrorCode =
   | 'invalid_arguments_object'
   | 'invalid_target_schema'
   | 'target_argument_validation_failed'
+  | 'ambiguous_argument_alias'
 
 export type GatewayInvocationResolution =
   | {
@@ -1074,6 +1130,7 @@ export type GatewayInvocationResolution =
       code: GatewayInvocationErrorCode
       message: string
       issues?: GatewayArgumentValidationIssue[]
+      conflicts?: ToolArgumentAliasConflict[]
     }
 
 export interface GatewayInvocationRequest extends GatewayCatalogScope {
@@ -1144,7 +1201,26 @@ export function resolveGatewayInvocation(
     }
   }
 
-  const validation = validateGatewayToolArguments(target.inputSchema, request.arguments)
+  // Coalesce inner target args against THIS run-selected definition before
+  // schema validation. Eligibility, audit-only, recursion, and the reviewer-
+  // verdict exception have already been decided above; aliases must not change
+  // target identity or the wrapper contract.
+  const argumentCoalesce = coalesceToolArguments(name, request.arguments, {
+    inputSchema: target.inputSchema
+  })
+  if (!argumentCoalesce.ok) {
+    return {
+      ok: false,
+      code: argumentCoalesce.code,
+      message: argumentCoalesce.message,
+      conflicts: argumentCoalesce.conflicts
+    }
+  }
+  const coalescedArguments = isRecord(argumentCoalesce.arguments)
+    ? argumentCoalesce.arguments
+    : request.arguments
+
+  const validation = validateGatewayToolArguments(target.inputSchema, coalescedArguments)
   if (!validation.ok) {
     return {
       ok: false,
@@ -1161,6 +1237,6 @@ export function resolveGatewayInvocation(
     ok: true,
     target,
     name,
-    arguments: request.arguments
+    arguments: coalescedArguments
   }
 }

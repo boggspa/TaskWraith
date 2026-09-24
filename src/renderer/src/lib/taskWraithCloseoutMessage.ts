@@ -31,11 +31,15 @@ import {
   type CloseoutReceipt,
   type CloseoutValidationKind
 } from '../../../shared/closeoutReceipt'
-import { resolveCatalogToolName } from '../../../shared/canonicalToolCoalesce'
+import { commitAttributionActivityKind } from '../../../shared/commitAttributionProjection'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
+import {
+  KIMI_K27_MODEL_ID,
+  kimiModelSupportsReasoningEfforts
+} from '../../../shared/kimiModels'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
-import { humaniseModelIdCompact } from './modelDisplayName'
+import { humaniseRecordedModelIdCompact } from './modelDisplayName'
 import {
   DEFAULT_APPROVAL_LABEL,
   PLAN_LABEL,
@@ -75,6 +79,14 @@ export type CloseoutFileChange = {
   owners?: DiffFileSummaryOwner[]
 }
 
+/** Persisted close-outs cap row bodies for bounded transcript storage, but keep
+ * the full valid-path count separately so every renderer can disclose the cap
+ * rather than calling the retained prefix the whole task. */
+type CloseoutFileChangeCapture = {
+  fileChanges: CloseoutFileChange[]
+  total: number
+}
+
 export function isMessageInRunWindow(
   message: ChatMessage,
   run: Pick<ChatRun, 'runId' | 'startedAt' | 'endedAt'>
@@ -105,10 +117,11 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   const includeRunMessage = (message: ChatMessage): boolean =>
     message.runId === run.runId || isMessageInRunWindow(message, run)
   const closeoutCommits = collectCloseoutCommits(chat.messages, includeRunMessage, { chat })
-  const closeoutFileChanges =
+  const closeoutFileChangeCapture =
     input.fileChanges !== undefined
-      ? normalizeCloseoutFileChanges(input.fileChanges)
-      : collectCloseoutFileChanges(chat.messages, includeRunMessage)
+      ? capCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChangeCapture(chat.messages, includeRunMessage)
+  const closeoutFileChanges = closeoutFileChangeCapture.fileChanges
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: runIds,
@@ -124,6 +137,7 @@ export function buildTaskWraithRunCloseoutMessage(input: {
     totalTokens: totalTokensForRuns([run]),
     commits: closeoutCommits,
     fileChanges: closeoutFileChanges,
+    changedFileCount: closeoutFileChangeCapture.total,
     validations: validationReceipt
   })
   const aiSummary = normalizeCloseoutAiSummary(input.aiSummary)
@@ -148,7 +162,11 @@ export function buildTaskWraithRunCloseoutMessage(input: {
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, runIds))
   appendCloseoutProse(
     lines,
-    goalSummarySentence(resolveCloseoutGoal(chat.activeGoal, run.activeGoalId), input.now)
+    goalSummarySentence(
+      resolveCloseoutGoal(chat.activeGoal, run.activeGoalId),
+      input.now,
+      chat.updatedAt
+    )
   )
   // Commits + File Changes + Sub-threads render in the Task-complete epic stack
   // from metadata — keep the close-out bubble to Worked-for + prose.
@@ -171,6 +189,9 @@ export function buildTaskWraithRunCloseoutMessage(input: {
       closeoutReceipt,
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutFileChangeCapture.total > closeoutFileChanges.length
+        ? { closeoutFileChangesTotal: closeoutFileChangeCapture.total }
+        : {}),
       ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
@@ -197,13 +218,14 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     (message) => message.metadata?.ensembleRoundId === round.roundId,
     { chat }
   )
-  const closeoutFileChanges =
+  const closeoutFileChangeCapture =
     input.fileChanges !== undefined
-      ? normalizeCloseoutFileChanges(input.fileChanges)
-      : collectCloseoutFileChanges(
+      ? capCloseoutFileChanges(input.fileChanges)
+      : collectCloseoutFileChangeCapture(
           chat.messages,
           (message) => message.metadata?.ensembleRoundId === round.roundId
         )
+  const closeoutFileChanges = closeoutFileChangeCapture.fileChanges
   const closeoutSubagentDelegations = collectCloseoutSubagentDelegations({
     messages: chat.messages,
     parentRunIds: roundRunIds,
@@ -219,6 +241,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
     totalTokens: totalTokensForRuns(roundRuns),
     commits: closeoutCommits,
     fileChanges: closeoutFileChanges,
+    changedFileCount: closeoutFileChangeCapture.total,
     participants: closeoutParticipants,
     validations: validationReceipt
   })
@@ -236,7 +259,7 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
   appendCloseoutProse(lines, closeoutReceiptSentence(closeoutReceipt))
   appendCloseoutProse(lines, tokenUsageSentence('round', roundRuns))
   appendCloseoutProse(lines, validationSummarySentence(chat.messages, roundRunIds))
-  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now))
+  appendCloseoutProse(lines, goalSummarySentence(chat.activeGoal, input.now, chat.updatedAt))
   // Participants + Sub-threads + Commits + File Changes render in the
   // Task-complete epic stack. The close-out bubble keeps Worked-for + prose.
 
@@ -258,6 +281,9 @@ export function buildTaskWraithRoundCloseoutMessage(input: {
       ...(participantTable ? { closeoutParticipantTable: participantTable } : {}),
       ...(closeoutCommits.length > 0 ? { closeoutCommits } : {}),
       ...(closeoutFileChanges.length > 0 ? { closeoutFileChanges } : {}),
+      ...(closeoutFileChangeCapture.total > closeoutFileChanges.length
+        ? { closeoutFileChangesTotal: closeoutFileChangeCapture.total }
+        : {}),
       ...(closeoutSubagentDelegations.length > 0 ? { closeoutSubagentDelegations } : {})
     }
   }
@@ -274,12 +300,19 @@ export function collectCloseoutFileChanges(
   messages: ChatMessage[],
   includeMessage: (message: ChatMessage) => boolean
 ): CloseoutFileChange[] {
+  return collectCloseoutFileChangeCapture(messages, includeMessage).fileChanges
+}
+
+function collectCloseoutFileChangeCapture(
+  messages: ChatMessage[],
+  includeMessage: (message: ChatMessage) => boolean
+): CloseoutFileChangeCapture {
   const scoped = messages.filter(includeMessage)
-  if (scoped.length === 0) return []
+  if (scoped.length === 0) return { fileChanges: [], total: 0 }
   const summaries = getLiveToolFileDiffSummaries(scoped)
-  if (summaries.length === 0) return []
-  return normalizeCloseoutFileChanges(
-    summaries.slice(0, CLOSEOUT_FILE_CHANGES_LIMIT).map((summary) => ({
+  if (summaries.length === 0) return { fileChanges: [], total: 0 }
+  return capCloseoutFileChanges(
+    summaries.map((summary) => ({
       path: summary.path,
       status: summary.status,
       ...(typeof summary.additions === 'number' ? { additions: summary.additions } : {}),
@@ -287,6 +320,16 @@ export function collectCloseoutFileChanges(
       ...(summary.owners && summary.owners.length > 0 ? { owners: summary.owners } : {})
     }))
   )
+}
+
+function capCloseoutFileChanges(
+  fileChanges: CloseoutFileChange[] | undefined
+): CloseoutFileChangeCapture {
+  const normalized = normalizeCloseoutFileChanges(fileChanges)
+  return {
+    fileChanges: normalized.slice(0, CLOSEOUT_FILE_CHANGES_LIMIT),
+    total: normalized.length
+  }
 }
 
 function normalizeCloseoutFileChanges(
@@ -324,6 +367,7 @@ export function isSameTaskWraithCloseout(existing: ChatMessage, next: ChatMessag
       JSON.stringify(b?.closeoutParticipantTable ?? null) &&
     sameCloseoutTombstoneList(a?.closeoutCommits, b?.closeoutCommits) &&
     sameCloseoutTombstoneList(a?.closeoutFileChanges, b?.closeoutFileChanges) &&
+    a?.closeoutFileChangesTotal === b?.closeoutFileChangesTotal &&
     sameCloseoutTombstoneList(a?.closeoutSubagentDelegations, b?.closeoutSubagentDelegations)
   )
 }
@@ -353,6 +397,12 @@ export function upsertTaskWraithCloseoutMessage(
       previous.metadata.closeoutFileChanges.length > 0
     ) {
       nextMeta.closeoutFileChanges = previous.metadata.closeoutFileChanges
+    }
+    if (
+      typeof nextMeta.closeoutFileChangesTotal !== 'number' &&
+      typeof previous.metadata?.closeoutFileChangesTotal === 'number'
+    ) {
+      nextMeta.closeoutFileChangesTotal = previous.metadata.closeoutFileChangesTotal
     }
     if (
       (!Array.isArray(nextMeta.closeoutCommits) || nextMeta.closeoutCommits.length === 0) &&
@@ -1260,6 +1310,13 @@ function resolveCloseoutParticipants(
 }
 
 function participantStatusFromRun(chat: ChatRecord, run: ChatRun): EnsembleParticipantStatus {
+  const authoritativeStatus = run.ensembleParticipantStatus
+  if (
+    authoritativeStatus &&
+    ENSEMBLE_PARTICIPANT_STATUS_SET.has(authoritativeStatus as EnsembleParticipantStatus)
+  ) {
+    return authoritativeStatus as EnsembleParticipantStatus
+  }
   for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
     const message = chat.messages[index]
     if (message.runId !== run.runId) continue
@@ -1359,17 +1416,28 @@ export function buildCloseoutParticipantTable(
         })
       }
     )
-    const permissionSeq = seatFieldSequence<PermissionPresetId>(
-      turnConfigurations.map((configuration) => ({
-        raw: configuration.permissionPresetId || fallbackSnapshot.configuredPermissionPresetId,
-        display: configuration.permissionPresetId
-          ? formatPermissionPreset(configuration.permissionPresetId)
-          : null
-      })),
-      {
-        raw: fallbackSnapshot.configuredPermissionPresetId,
-        display: formatPermissionPreset(fallbackSnapshot.configuredPermissionPresetId)
-      }
+    const permissionTurns = turnConfigurations.map((configuration) => ({
+      raw: configuration.permissionPresetId || undefined,
+      display: configuration.permissionPresetId
+        ? formatPermissionPreset(configuration.permissionPresetId)
+        : null
+    }))
+    // A signed seal that omitted presetId is an honest unknown (`''`), not a
+    // missing turn. Falling through to the roster default here re-broke Claim 2
+    // after the decoder already refused the configured wider tier.
+    const signedBlankOmitsPreset = turnConfigurations.some(
+      (configuration) => configuration.permissionPresetId === ''
+    )
+    const permissionSeq = seatFieldSequence<PermissionPresetId | undefined>(
+      permissionTurns,
+      signedBlankOmitsPreset && permissionTurns.every((turn) => !turn.display)
+        ? { raw: undefined, display: '' }
+        : {
+            raw: fallbackSnapshot.configuredPermissionPresetId,
+            display: formatPermissionPreset(
+              fallbackSnapshot.configuredPermissionPresetId || 'default'
+            )
+          }
     )
     // Link TEXT keeps every field the five culled columns used to carry, so
     // surfaces that don't intercept the scheme lose nothing but the motion.
@@ -1425,7 +1493,7 @@ function participantSeatChangeLink(
     provider: SeatFieldSequence<ProviderId>
     model: SeatFieldSequence<string>
     reasoning: SeatFieldSequence<SeatReasoningRaw>
-    permission: SeatFieldSequence<PermissionPresetId>
+    permission: SeatFieldSequence<PermissionPresetId | undefined>
   }
 ): SeatChangeLink {
   const side = (which: 'first' | 'last'): SeatChangeSeatState => ({
@@ -1439,10 +1507,13 @@ function participantSeatChangeLink(
     ...(fields.reasoning[which].thinkingEnabled === undefined
       ? {}
       : { thinkingEnabled: fields.reasoning[which].thinkingEnabled }),
-    permissionPresetId: fields.permission[which]
+    ...(fields.permission[which] ? { permissionPresetId: fields.permission[which] } : {})
   })
   return { participantId: participant.participantId, before: side('first'), after: side('last') }
 }
+
+/** Per-turn capture: `''` = signed seal present but presetId omitted. */
+type TurnPermissionPresetCapture = PermissionPresetId | ''
 
 type ParticipantTurnConfiguration = {
   provider: ProviderId
@@ -1450,7 +1521,19 @@ type ParticipantTurnConfiguration = {
   reasoningEffort?: string
   thinkingEnabled?: boolean
   reasoningCaptured: boolean
-  permissionPresetId?: PermissionPresetId
+  permissionPresetId?: TurnPermissionPresetCapture
+}
+
+function captureTurnPermissionPreset(
+  run: ChatRun,
+  snapshotPresetId: PermissionPresetId | undefined
+): TurnPermissionPresetCapture | undefined {
+  if (run.permissionPosture?.signaturePresent) {
+    if (typeof run.permissionPosture.presetId !== 'string') return ''
+    const trimmed = run.permissionPosture.presetId.trim()
+    return trimmed ? (trimmed as PermissionPresetId) : ''
+  }
+  return run.permissionPosture?.presetId || snapshotPresetId
 }
 
 function participantFallbackSeatSnapshot(
@@ -1475,6 +1558,41 @@ function participantFallbackSeatSnapshot(
   }
 }
 
+const KIMI_LADDER_EFFORTS = new Set(['low', 'high', 'max'])
+
+/**
+ * Reconcile a configured Kimi effort with an authoritative recorded actual
+ * model. Shared by close-out and transcript presentation; it never changes a
+ * configured-only snapshot or an exact historical K2.7 actual model.
+ */
+export function effectiveRecordedKimiReasoningEffort(
+  provider: ProviderId,
+  actualModel: string | undefined,
+  reasoningEffort: string | undefined
+): string | undefined {
+  const actual = String(actualModel || '').trim()
+  if (
+    provider !== 'kimi' ||
+    !actual ||
+    actual.toLowerCase() === KIMI_K27_MODEL_ID ||
+    !kimiModelSupportsReasoningEfforts(actual)
+  ) {
+    return reasoningEffort
+  }
+  const normalized = String(reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'ultratask' || KIMI_LADDER_EFFORTS.has(normalized)) {
+    return reasoningEffort
+  }
+  // A post-migration Kimi init reports the canonical actual model. Its
+  // immutable configured snapshot may still carry K2.7's retired on/off
+  // control, but the dispatch boundary projected that state to K2.8's Max
+  // default. Only apply that projection when an actual model proves the newer
+  // route ran; a pre-init failure keeps the historical configured snapshot.
+  return 'max'
+}
+
 function participantTurnConfiguration(
   chat: ChatRecord,
   participant: EnsembleRoundParticipantState,
@@ -1494,17 +1612,26 @@ function participantTurnConfiguration(
     typeof metadata?.ensembleModel === 'string' ? metadata.ensembleModel : undefined
   const provider =
     run.providerReroute?.to || snapshot?.provider || run.provider || participant.provider
+  const modelId = run.actualModel || snapshot?.model || run.requestedModel || metadataModel || ''
+  const reasoningEffort = snapshot?.reasoningEffort ?? metadataReasoning
   return {
     provider,
-    modelId: run.actualModel || snapshot?.model || run.requestedModel || metadataModel || '',
-    reasoningEffort: snapshot?.reasoningEffort ?? metadataReasoning,
+    modelId,
+    reasoningEffort: effectiveRecordedKimiReasoningEffort(
+      provider,
+      run.actualModel,
+      reasoningEffort
+    ),
     thinkingEnabled: snapshot?.thinkingEnabled ?? metadataThinking,
     reasoningCaptured:
       Boolean(snapshot) ||
       metadataReasoning !== undefined ||
       metadataThinking !== undefined ||
       typeof metadata?.ensembleProvider === 'string',
-    permissionPresetId: run.permissionPosture?.presetId || snapshot?.configuredPermissionPresetId
+    permissionPresetId: captureTurnPermissionPreset(
+      run,
+      snapshot?.configuredPermissionPresetId
+    )
   }
 }
 
@@ -1521,7 +1648,7 @@ function latestEnsembleMetadataForRun(
 
 function formatParticipantModel(provider: ProviderId, modelId?: string): string {
   if (!modelId) return '—'
-  return humaniseModelIdCompact(provider, modelId) || modelId
+  return humaniseRecordedModelIdCompact(provider, modelId) || modelId
 }
 
 /**
@@ -1585,6 +1712,17 @@ function formatParticipantReasoning(input: {
   reasoningEffort?: string
   thinkingEnabled?: boolean
 }): string {
+  const normalizedEffort = String(input.reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (
+    input.provider === 'kimi' &&
+    input.modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID &&
+    (normalizedEffort === '' || normalizedEffort === 'on') &&
+    (input.thinkingEnabled === true || normalizedEffort === 'on')
+  ) {
+    return 'Thinking'
+  }
   const label = reasoningDisplayLabel({
     provider: input.provider,
     composerStyle: 'default',
@@ -1593,9 +1731,12 @@ function formatParticipantReasoning(input: {
     codexReasoningEffort: input.provider === 'codex' ? input.reasoningEffort : undefined,
     claudeReasoningEffort: input.provider === 'claude' ? input.reasoningEffort : undefined,
     mistralReasoningEffort: input.provider === 'mistral' ? input.reasoningEffort : undefined,
+    devinReasoningEffort: input.provider === 'devin' ? input.reasoningEffort : undefined,
     kimiReasoningEffort: input.provider === 'kimi' ? input.reasoningEffort : undefined,
     grokReasoningEffort: input.provider === 'grok' ? input.reasoningEffort : undefined,
     cursorReasoningEffort: input.provider === 'cursor' ? input.reasoningEffort : undefined,
+    antigravityReasoningEffort:
+      input.provider === 'antigravity' ? input.reasoningEffort : undefined,
     kimiThinkingEnabled: input.provider === 'kimi' ? input.thinkingEnabled : undefined
   })
   if (label) return label
@@ -1604,10 +1745,14 @@ function formatParticipantReasoning(input: {
     return 'On'
   }
   if (input.provider === 'codex' || input.provider === 'claude') {
-    return input.reasoningEffort?.toLowerCase() === 'off' ? 'Off' : 'Default'
+    const effort = input.reasoningEffort?.toLowerCase()
+    if (effort === 'off') return 'Off'
+    if (effort === 'ultratask') return 'UltraTask'
+    return 'Default'
   }
   if ((input.provider === 'grok' || input.provider === 'cursor') && input.reasoningEffort) {
     if (input.reasoningEffort.toLowerCase() === 'off') return 'Off'
+    if (input.reasoningEffort.toLowerCase() === 'ultratask') return 'UltraTask'
     return input.reasoningEffort
       .replace(/[_-]+/g, ' ')
       .replace(/\b\w/g, (character) => character.toUpperCase())
@@ -2131,13 +2276,9 @@ function formatCommitStats(raw: string): string {
 }
 
 export function closeoutCommitActivityKind(activity: ToolActivity): 'dedicated' | 'shell' | null {
-  const catalogTool = resolveCatalogToolName(activity.toolName || '')
-  if (catalogTool === 'git_commit') return 'dedicated'
-  if (catalogTool === 'run_shell_command' || activity.category?.toLowerCase() === 'shell') {
-    return 'shell'
-  }
-  const text = `${activity.toolName || ''} ${activity.displayName || ''}`.toLowerCase()
-  return text.includes('git_commit') || text.includes('git commit') ? 'dedicated' : null
+  // Single definition, shared with the main-side attribution projection: the
+  // projection drops every activity this rejects, so the two must not drift.
+  return commitAttributionActivityKind(activity)
 }
 
 function extractCommitsFromActivity(
@@ -2613,7 +2754,11 @@ function resolveCloseoutGoal(
   return activeGoal?.id === runGoalId ? activeGoal : undefined
 }
 
-function goalSummarySentence(goal: ActiveGoal | undefined, now?: Date): string | null {
+function goalSummarySentence(
+  goal: ActiveGoal | undefined,
+  now?: Date,
+  lastActivityAt?: number | string
+): string | null {
   if (!goal) return null
   const statusPhrase =
     goal.status === 'completed'
@@ -2624,7 +2769,11 @@ function goalSummarySentence(goal: ActiveGoal | undefined, now?: Date): string |
           ? 'was paused'
           : 'remained active'
   if (!goal.runtimeLedger) return `The linked goal ${statusPhrase}.`
-  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now || new Date())
+  // An open interval stops at the thread's last activity: a goal left `active`
+  // on a thread nobody has touched is not still working.
+  const timing = computeGoalRuntimeTiming(goal.runtimeLedger, now || new Date(), {
+    ...(lastActivityAt === undefined ? {} : { lastActivityAt })
+  })
   const details = [
     `wall ${formatCompactDuration(timing.wallMs)}`,
     timing.activeMs > 0 ? `active ${formatCompactDuration(timing.activeMs)}` : '',

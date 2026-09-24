@@ -1,6 +1,7 @@
 import type { ItemDeltaRunItemEvent, RunItemEvent } from '../../../shared/runItemEvents'
 import type { AssistantDeltaInput } from './applyAssistantDelta'
 import type { ProviderId } from '../../../main/store/types'
+import { mergeToolResultParameters } from '../../../shared/toolInvocationPresentation'
 
 export interface RunItemAssistantProjection {
   chatId: string
@@ -44,12 +45,58 @@ export function isAssistantRunItemDelta(
   return event.kind === 'item/delta' && event.channel === 'assistant'
 }
 
+/**
+ * The exact shape the sidecar lane can carry into the transcript: an
+ * assistant-channel `item/delta` that actually has text in it.
+ *
+ * `GeminiStreamAdapter` suppresses the legacy `assistant_message_delta` twin
+ * on any line whose sidecar matches this, and `projectRunItemAssistantDelta`
+ * below decides what the sidecar lane will apply — so the two MUST agree.
+ * They were spelled out separately (`event.delta.length > 0` in the adapter,
+ * `!event.delta` here) with nothing holding them in step; the moment they
+ * drift, the adapter disarms the only other copy of the text for a delta the
+ * projector then refuses, and the answer is lost with no fallback.
+ */
+export function carriesAssistantRunItemText(
+  event: RunItemEvent
+): event is ItemDeltaRunItemEvent & { channel: 'assistant' } {
+  return isAssistantRunItemDelta(event) && typeof event.delta === 'string' && event.delta.length > 0
+}
+
+/** The route a wire line declares for itself (`sendAgentCompatLine` stamps
+ *  both onto every payload it publishes). */
+export interface RunItemWireRoute {
+  appChatId?: unknown
+  appRunId?: unknown
+}
+
+/**
+ * True when a sidecar event is addressed to the same chat/run as the wire line
+ * that carried it.
+ *
+ * The renderer's sidecar applier is keyed on the RUN's chat (`runChatId`), so a
+ * sidecar addressed anywhere else is dropped there — while the legacy twin on
+ * the same line IS applied to the run's chat. Suppressing that twin for a
+ * sidecar the other lane will refuse is total, silent text loss, so the
+ * dual-lane skip is scoped by this. A line that declares no route (legacy
+ * spawns, unrouted main emissions) constrains nothing and matches.
+ */
+export function runItemEventMatchesWireRoute(
+  event: RunItemEvent,
+  route: RunItemWireRoute | null | undefined
+): boolean {
+  if (!route || typeof route !== 'object') return true
+  const { appChatId, appRunId } = route
+  if (typeof appChatId === 'string' && appChatId && appChatId !== event.chatId) return false
+  if (typeof appRunId === 'string' && appRunId && appRunId !== event.runId) return false
+  return true
+}
+
 export function projectRunItemAssistantDelta(
   event: RunItemEvent,
   providerModelMetadata?: AssistantDeltaInput['providerModelMetadata']
 ): RunItemAssistantProjection | null {
-  if (!isAssistantRunItemDelta(event)) return null
-  if (!event.delta) return null
+  if (!carriesAssistantRunItemText(event)) return null
   return {
     chatId: event.chatId,
     runId: event.runId,
@@ -161,13 +208,22 @@ export function projectRunItemToolEvents(
   provider?: ProviderId
 ): RunItemToolProjection[] {
   if (event.kind === 'tool/progress') {
-    const toolId = event.toolCallId || event.itemId
     const compatType = visibleProgressCompatType(event)
+    // Warnings remain available on the provider event stream for diagnostics
+    // and runtime handling, but are not transcript tool calls. Without this
+    // boundary they surface as a synthetic "Used Provider warning" activity.
+    if (compatType === 'provider_warning') return []
+
+    const toolId = event.toolCallId || event.itemId
     const isVisibleProgress = LEGACY_VISIBLE_PROGRESS_TYPES.has(compatType)
     const toolName = isVisibleProgress ? compatType : event.toolName || event.title || 'tool'
     const data = event.data && typeof event.data === 'object' ? event.data : {}
     const title = isVisibleProgress ? visibleProgressTitle(event, toolName) : event.title
     const output = isVisibleProgress ? visibleProgressOutput(event) : ''
+    // Run-item `data` is already the sidecar's canonical argument bag. Do
+    // not unwrap it a second time: capability_invoke deliberately owns an
+    // outer `{ name, arguments }` envelope which the transcript presenter
+    // needs in order to resolve the concrete target.
     const parameters = isVisibleProgress
       ? {
           title,
@@ -175,12 +231,16 @@ export function projectRunItemToolEvents(
           ...(output ? { summary: output } : {}),
           ...stripHiddenProgressFields(data)
         }
-      : {
-          ...(event.title ? { title: event.title } : {}),
-          ...(event.summary ? { summary: event.summary } : {}),
-          ...(event.status ? { status: event.status } : {}),
-          ...data
-        }
+      : data
+    const fallbackParameters =
+      !isVisibleProgress && Object.keys(parameters).length === 0
+        ? {
+            ...(event.title ? { title: event.title } : {}),
+            ...(event.summary ? { summary: event.summary } : {}),
+            ...(event.status ? { status: event.status } : {}),
+            ...data
+          }
+        : parameters
 
     const projections: RunItemToolProjection[] = [
       {
@@ -195,7 +255,7 @@ export function projectRunItemToolEvents(
             type: 'tool_use',
             tool_id: toolId,
             tool_name: toolName,
-            parameters,
+            parameters: fallbackParameters,
             ...(provider ? { provider } : {})
           },
           timestamp: event.createdAt,
@@ -238,6 +298,7 @@ export function projectRunItemToolEvents(
     const toolId = event.toolCallId || event.itemId
     const toolName = event.toolName || 'unknown'
     const output = event.output || event.delta
+    const resultParameters = mergeToolResultParameters(undefined, event.data)
     return [
       {
         chatId: event.chatId,
@@ -254,6 +315,11 @@ export function projectRunItemToolEvents(
             output,
             content: output,
             status: event.status || 'success',
+            // The renderer's legacy lane is intentionally skipped whenever a
+            // sidecar rides the same line. Keep terminal `changes`, patches,
+            // and provider-specific result arguments here so pairToolResult
+            // receives the same evidence as the skipped legacy event.
+            parameters: resultParameters,
             ...(provider ? { provider } : {})
           },
           timestamp: event.createdAt,

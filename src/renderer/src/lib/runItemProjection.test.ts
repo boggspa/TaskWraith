@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { RunItemEvent } from '../../../shared/runItemEvents'
 import {
   isAssistantRunItemDelta,
+  carriesAssistantRunItemText,
+  runItemEventMatchesWireRoute,
   projectRunItemToolEvents,
   projectRunItemToolEvent,
   projectRunItemAssistantDelta
@@ -26,8 +28,10 @@ const event = (overrides: Partial<RunItemEvent> & Record<string, unknown>): RunI
 describe('runItemProjection', () => {
   it('projects assistant item deltas into the existing assistant delta shape', () => {
     const projection = projectRunItemAssistantDelta(event({ cumulative: true }), {
+      assistantProvider: 'ollama',
       providerModel: 'qwen3:4b-instruct',
-      providerModelLabel: 'Qwen 3 (4B Param)'
+      providerModelLabel: 'Qwen 3 (4B Param)',
+      assistantReasoningEffort: 'ultratask'
     })
 
     expect(projection).toEqual({
@@ -42,8 +46,10 @@ describe('runItemProjection', () => {
         trustedIncremental: true,
         itemId: 'item-1',
         providerModelMetadata: {
+          assistantProvider: 'ollama',
           providerModel: 'qwen3:4b-instruct',
-          providerModelLabel: 'Qwen 3 (4B Param)'
+          providerModelLabel: 'Qwen 3 (4B Param)',
+          assistantReasoningEffort: 'ultratask'
         }
       }
     })
@@ -146,6 +152,30 @@ describe('runItemProjection', () => {
     })
   })
 
+  it('retains root result diff evidence even when the result also has a parameter bag', () => {
+    const projection = projectRunItemToolEvents(
+      event({
+        kind: 'tool/outputDelta',
+        itemKind: undefined,
+        channel: undefined,
+        delta: 'done',
+        itemId: 'tool-1',
+        toolCallId: 'tool-1',
+        toolName: 'edit_file',
+        output: 'done',
+        data: {
+          parameters: { path: 'src/a.ts' },
+          changes: [{ path: 'src/a.ts', additions: 3, deletions: 1 }]
+        }
+      })
+    )[0]
+
+    expect(projection?.event.data.parameters).toMatchObject({
+      path: 'src/a.ts',
+      changes: [{ path: 'src/a.ts', additions: 3, deletions: 1 }]
+    })
+  })
+
   it('projects visible progress compat sidecars into paired tool use and result events', () => {
     const projections = projectRunItemToolEvents(
       event({
@@ -201,6 +231,27 @@ describe('runItemProjection', () => {
     })
   })
 
+  it('omits provider warnings from transcript tool projections', () => {
+    const projections = projectRunItemToolEvents(
+      event({
+        kind: 'tool/progress',
+        itemKind: undefined,
+        channel: undefined,
+        delta: undefined,
+        itemId: 'provider-warning-1',
+        toolName: 'provider_warning',
+        data: {
+          type: 'provider_warning',
+          title: 'Provider warning',
+          message: 'The provider emitted a non-fatal warning.'
+        }
+      }),
+      'codex'
+    )
+
+    expect(projections).toEqual([])
+  })
+
   it('keeps the single-projection wrapper for callers that only need the first tool event', () => {
     const projection = projectRunItemToolEvent(
       event({
@@ -216,5 +267,40 @@ describe('runItemProjection', () => {
     )
 
     expect(projection?.event.isUse).toBe(true)
+  })
+
+  // The adapter's dual-lane skip and this projector must agree bit for bit:
+  // the adapter disarms the legacy twin — the text's only other copy — for
+  // exactly the events this predicate accepts.
+  it('accepts only assistant deltas that actually carry text', () => {
+    expect(carriesAssistantRunItemText(event({ delta: 'hi' }))).toBe(true)
+    expect(carriesAssistantRunItemText(event({ delta: '' }))).toBe(false)
+    expect(carriesAssistantRunItemText(event({ channel: 'reasoning' }))).toBe(false)
+    expect(carriesAssistantRunItemText(event({ kind: 'item/started' }))).toBe(false)
+    // Agreement is the whole point of the shared predicate.
+    for (const candidate of [
+      event({ delta: 'hi' }),
+      event({ delta: '' }),
+      event({ channel: 'reasoning' }),
+      event({ kind: 'item/started' })
+    ]) {
+      expect(carriesAssistantRunItemText(candidate)).toBe(
+        projectRunItemAssistantDelta(candidate) !== null
+      )
+    }
+  })
+
+  it('scopes a sidecar to the route its own wire line declares', () => {
+    const sidecar = event({ chatId: 'chat-1', runId: 'run-1' })
+    const route = (appChatId: unknown, appRunId: unknown) =>
+      runItemEventMatchesWireRoute(sidecar, { appChatId, appRunId })
+    expect(route('chat-1', 'run-1')).toBe(true)
+    expect(route('chat-2', 'run-1')).toBe(false)
+    expect(route('chat-1', 'run-2')).toBe(false)
+    // A line that declares no route constrains nothing: legacy spawns and
+    // unrouted main emissions must keep their existing dedupe.
+    expect(runItemEventMatchesWireRoute(sidecar, {})).toBe(true)
+    expect(runItemEventMatchesWireRoute(sidecar, null)).toBe(true)
+    expect(runItemEventMatchesWireRoute(sidecar, { appChatId: 42 })).toBe(true)
   })
 })

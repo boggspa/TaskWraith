@@ -185,7 +185,14 @@ export interface HumanCollaborationReconnectCandidate {
   participant: HumanCollaboratorParticipant
 }
 
+export interface PeopleHistoryDeletionScope {
+  kind: 'chat' | 'workspace' | 'truncate' | 'global'
+  chatIds: readonly string[]
+}
+
 export interface HumanCollaborationStoreOptions {
+  /** Only the live durable deletion coordinator may authorize this delete-only port. */
+  getHistoryDeletionScope?: () => (PeopleHistoryDeletionScope & { operationId: string }) | null
   /** Closed only by the terminal Channels migration while it captures/retire legacy state. */
   legacyWriteGate?: PeopleToChannelMigrationLegacyWriteGateLike
 }
@@ -211,6 +218,11 @@ export class HumanCollaborationStore {
     this.memory = this.load()
   }
 
+  /** Publish an external migration only after its writer has exited. */
+  reloadFromDisk(): void {
+    this.memory = this.load()
+  }
+
   listShares(chatId?: string): HumanCollaborationShare[] {
     return cloneSnapshot(this.memory).shares.filter((share) => !chatId || share.chatId === chatId)
   }
@@ -232,7 +244,9 @@ export class HumanCollaborationStore {
           continue
         }
         const invite = [...share.invites]
-          .filter((entry) => entry.collaboratorId === participant.collaboratorId && Boolean(entry.roomId))
+          .filter(
+            (entry) => entry.collaboratorId === participant.collaboratorId && Boolean(entry.roomId)
+          )
           .sort((a, b) => b.createdAt - a.createdAt)[0]
         if (!invite?.roomId) continue
         candidates.push({
@@ -278,7 +292,9 @@ export class HumanCollaborationStore {
     inviteTtlMs?: number
   }): CreateShareResult {
     const now = args.now ?? Date.now()
-    const existing = this.memory.shares.find((share) => share.chatId === args.chatId && share.enabled)
+    const existing = this.memory.shares.find(
+      (share) => share.chatId === args.chatId && share.enabled
+    )
     this.assertOrdinaryWriteAllowed(existing?.shareId)
     const share =
       existing ||
@@ -324,7 +340,10 @@ export class HumanCollaborationStore {
     // Prune invites well past expiry — consumed or not (createShare is the only
     // place invites accrue), so the list can't grow without bound over a
     // long-lived share. Fresh/not-yet-expired and in-grace invites are kept.
-    share.invites = [...share.invites.filter((existingInvite) => !isDeadInvite(existingInvite, now)), invite]
+    share.invites = [
+      ...share.invites.filter((existingInvite) => !isDeadInvite(existingInvite, now)),
+      invite
+    ]
 
     if (!existing) this.memory.shares.push(share)
     this.persist()
@@ -363,6 +382,34 @@ export class HumanCollaborationStore {
     if (removed === 0) return 0
     this.memory.shares = []
     this.persist()
+    return removed
+  }
+
+  /** Erasure is independent of ordinary migration writes and keeps the frozen scope. */
+  purgeForHistoryDeletionScope(scope: PeopleHistoryDeletionScope): number {
+    const pending = this.options.getHistoryDeletionScope?.()
+    const ids = [...new Set(scope.chatIds)].sort()
+    if (
+      !pending?.operationId ||
+      pending.kind !== scope.kind ||
+      (scope.kind !== 'global' &&
+        JSON.stringify(ids) !== JSON.stringify([...new Set(pending.chatIds)].sort()))
+    )
+      throw new Error('People history deletion requires its durable prepared scope.')
+    if (scope.kind === 'truncate') return 0
+    const targets = new Set(ids)
+    const previous = this.memory.shares
+    const retained =
+      scope.kind === 'global' ? [] : previous.filter((share) => !targets.has(share.chatId))
+    const removed = previous.length - retained.length
+    if (!removed) return 0
+    this.memory.shares = retained
+    try {
+      this.persist()
+    } catch (error) {
+      this.memory.shares = previous
+      throw error
+    }
     return removed
   }
 
@@ -583,7 +630,9 @@ export class HumanCollaborationStore {
     const existingByKey = state.existingByKey
     const invite = state.invite
     if (!share || !share.enabled) throw new Error('Collaboration share is not active.')
-    const activeCount = share.participants.filter((participant) => participant.status === 'active').length
+    const activeCount = share.participants.filter(
+      (participant) => participant.status === 'active'
+    ).length
     if (!existingByKey && activeCount >= MAX_ACTIVE_COLLABORATORS) {
       throw new Error('Collaboration share already has the maximum number of active collaborators.')
     }
@@ -703,8 +752,9 @@ export class HumanCollaborationStore {
         'Collaborator identity has been revoked for this share.'
       )
     }
-    const activeCount =
-      share.participants.filter((participant) => participant.status === 'active').length
+    const activeCount = share.participants.filter(
+      (participant) => participant.status === 'active'
+    ).length
 
     if (!existingByKey && activeCount >= MAX_ACTIVE_COLLABORATORS) {
       throw new HumanCollaborationDenialError(
@@ -739,13 +789,22 @@ export class HumanCollaborationStore {
     clientMessageId: string
     /** P2b contribution intent; plain comment when omitted (v1 clients). */
     intent?: 'comment' | 'requestHostAction'
-  }): { share: HumanCollaborationShare; participant: HumanCollaboratorParticipant; existingMessageId?: string } {
+  }): {
+    share: HumanCollaborationShare
+    participant: HumanCollaboratorParticipant
+    existingMessageId?: string
+  } {
     this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
-    if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
-    if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
+    if (!share)
+      throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
+    if (!share.enabled)
+      throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
     if (share.chatId !== args.chatId) {
-      throw new HumanCollaborationDenialError('rule_denied', 'Collaboration share does not match chat.')
+      throw new HumanCollaborationDenialError(
+        'rule_denied',
+        'Collaboration share does not match chat.'
+      )
     }
     if (share.mode !== 'comments') {
       throw new HumanCollaborationDenialError('read_only', 'Collaboration share is read-only.')
@@ -776,9 +835,13 @@ export class HumanCollaborationStore {
       (candidate) => candidate.collaboratorId === args.collaboratorId
     )
     if (!participant || participant.status !== 'active') {
-      throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
+      throw new HumanCollaborationDenialError(
+        'revoked',
+        'Collaborator is not active for this share.'
+      )
     }
-    const existingMessageId = share.idempotency[idempotencyKey(args.collaboratorId, args.clientMessageId)]
+    const existingMessageId =
+      share.idempotency[idempotencyKey(args.collaboratorId, args.clientMessageId)]
     return { share: cloneShare(share)!, participant: { ...participant }, existingMessageId }
   }
 
@@ -791,10 +854,15 @@ export class HumanCollaborationStore {
   }): number {
     this.assertOrdinaryWriteAllowed(args.shareId)
     const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
-    if (!share) throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
-    if (!share.enabled) throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
+    if (!share)
+      throw new HumanCollaborationDenialError('stale_session', 'Collaboration share is not active.')
+    if (!share.enabled)
+      throw new HumanCollaborationDenialError('revoked', 'Collaboration share is not active.')
     if (share.chatId !== args.chatId) {
-      throw new HumanCollaborationDenialError('rule_denied', 'Collaboration share does not match chat.')
+      throw new HumanCollaborationDenialError(
+        'rule_denied',
+        'Collaboration share does not match chat.'
+      )
     }
     if (share.mode !== 'comments' || !effectiveContributionRules(share).appendComment) {
       throw new HumanCollaborationDenialError('read_only', 'Collaboration share is read-only.')
@@ -803,7 +871,10 @@ export class HumanCollaborationStore {
       (candidate) => candidate.collaboratorId === args.collaboratorId
     )
     if (!participant || participant.status !== 'active') {
-      throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
+      throw new HumanCollaborationDenialError(
+        'revoked',
+        'Collaborator is not active for this share.'
+      )
     }
     const sequence = share.nextSequence
     share.nextSequence += 1
@@ -825,8 +896,8 @@ export class HumanCollaborationStore {
   /**
    * Terminal migration-only retirement. It removes exactly the supplied legacy
    * share records, which invalidates their invitations and active sessions by
-  * absence. The coordinator must never pass the retained P5 bootstrap ids.
-  */
+   * absence. The coordinator must never pass the retained P5 bootstrap ids.
+   */
   retireSharesForChannelMigration(shareIds: readonly string[]): number {
     const gate = this.options.legacyWriteGate
     if (!gate?.isQuiesced()) {
@@ -861,7 +932,9 @@ export class HumanCollaborationStore {
     // view as already retired and product writes would silently orphan the
     // original records.
     try {
-      const parsed = JSON.parse(readFileSync(this.storagePath, 'utf8')) as HumanCollaborationSnapshot
+      const parsed = JSON.parse(
+        readFileSync(this.storagePath, 'utf8')
+      ) as HumanCollaborationSnapshot
       return normalizeSnapshot(parsed)
     } catch {
       throw new HumanCollaborationStoreUnreadableError()

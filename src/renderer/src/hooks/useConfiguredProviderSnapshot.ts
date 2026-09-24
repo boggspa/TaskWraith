@@ -13,6 +13,7 @@ import type { HostProjectedProvider } from '../lib/host/hostSnapshotProjection'
 export interface ConfiguredProviderModel {
   id: string
   label: string
+  ultraTaskSupported?: boolean
 }
 
 export interface ConfiguredProviderSnapshot {
@@ -77,6 +78,37 @@ export function isDispatchableProviderForRun(
   )
 }
 
+/**
+ * Derive the provider snapshot that renderer pickers should offer.
+ *
+ * AntiGravity is conditionally offered, so its row must follow the SAME
+ * admission union that dispatch uses (`isAntigravityRendererAdmitted`), not
+ * only the momentary main-process discovery snapshot. A slow probe, a cache-key
+ * race, or a Host projection that has not yet settled can therefore no longer
+ * hide a fully-consented provider from every picker surface.
+ *
+ * When admission is withdrawn, any cached antigravity row is removed so stale
+ * consent does not linger.
+ */
+export function antigravityAdmittedProviderSnapshot(
+  snapshot: ConfiguredProviderSnapshot,
+  antigravityAdmitted: boolean
+): ConfiguredProviderSnapshot {
+  const hasAntigravity = snapshot.providerIds.includes(ANTIGRAVITY_PROVIDER_ID)
+  if (!antigravityAdmitted) {
+    if (!hasAntigravity) return snapshot
+    return {
+      ...snapshot,
+      providerIds: snapshot.providerIds.filter((id) => id !== ANTIGRAVITY_PROVIDER_ID)
+    }
+  }
+  if (hasAntigravity) return snapshot
+  return {
+    ...snapshot,
+    providerIds: [...snapshot.providerIds, ANTIGRAVITY_PROVIDER_ID]
+  }
+}
+
 export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
   const [identity, setIdentity] = useState('')
   const [mutationGeneration, setMutationGeneration] = useState(0)
@@ -120,7 +152,13 @@ export function sanitizeConfiguredProviderSnapshot(value: unknown): ConfiguredPr
     const id = typeof model?.id === 'string' ? model.id.trim() : ''
     const label = typeof model?.label === 'string' ? model.label.trim() : ''
     if (id && id.length <= 512 && !antigravityModelsById.has(id)) {
-      antigravityModelsById.set(id, { id, label: label || id })
+      antigravityModelsById.set(id, {
+        id,
+        label: label || id,
+        ...(typeof model?.ultraTaskSupported === 'boolean'
+          ? { ultraTaskSupported: model.ultraTaskSupported }
+          : {})
+      })
     }
   }
   const antigravityModels = Array.from(antigravityModelsById.values())
@@ -214,7 +252,11 @@ export function configuredProviderSnapshotFromHostProjection(
         : modelId
     const list = modelsByProvider[providerId] ?? []
     if (!list.some((model) => model.id === modelId)) {
-      list.push({ id: modelId, label })
+      list.push({
+        id: modelId,
+        label,
+        ...(providerId === ANTIGRAVITY_PROVIDER_ID ? { ultraTaskSupported: true } : {})
+      })
       modelsByProvider[providerId] = list
     }
   }

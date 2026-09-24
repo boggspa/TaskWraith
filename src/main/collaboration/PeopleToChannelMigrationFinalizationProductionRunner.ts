@@ -26,14 +26,16 @@ import {
   PEOPLE_TO_CHANNEL_FINALIZATION_EXECUTION_VERSION,
   PeopleToChannelMigrationFinalizationExecutionStore,
   createPeopleToChannelMigrationFinalizationExecution,
-  type PeopleToChannelMigrationFinalizationExecution
+  type PeopleToChannelMigrationFinalizationExecution,
+  type PeopleToChannelMigrationFinalizationExecutionDurablePublish
 } from './PeopleToChannelMigrationFinalizationExecutionStore'
 import { buildPeopleToChannelMigrationFinalizationDelta } from './PeopleToChannelMigrationFinalizationDelta'
 import { PeopleToChannelMigrationFinalizationPolicyWriter } from './PeopleToChannelMigrationFinalizationPolicyWriter'
 import { derivePeopleToChannelMigrationFinalizationScope } from './PeopleToChannelMigrationFinalizationScope'
 import {
   PeopleToChannelMigrationExecutionStore,
-  type PeopleToChannelMigrationExecution
+  type PeopleToChannelMigrationExecution,
+  type PeopleToChannelMigrationExecutionDurablePublish
 } from './PeopleToChannelMigrationExecutionStore'
 import type { PeopleToChannelExistingLogSnapshot } from './PeopleToChannelMigrationHistory'
 import {
@@ -65,6 +67,10 @@ export type PeopleToChannelMigrationFinalizationProductionRunnerStage =
   | PeopleToChannelMigrationFinalizationCoordinatorStage
   | `admission:${PeopleToChannelMigrationFinalizationAdmissionsStage}`
 
+export type PeopleToChannelMigrationFinalizationProductionRunnerDurablePublish =
+  | PeopleToChannelMigrationExecutionDurablePublish
+  | PeopleToChannelMigrationFinalizationExecutionDurablePublish
+
 export interface PeopleToChannelMigrationFinalizationProductionRunnerOptions {
   userDataPath: string
   safeStorage: HumanCollaborationSafeStorage
@@ -73,6 +79,10 @@ export interface PeopleToChannelMigrationFinalizationProductionRunnerOptions {
   listChats: () => readonly PeopleToChannelInventoryChat[]
   listWorkflowChatIds?: () => readonly string[]
   now?: () => number
+  /** Observability rendezvous inside either encrypted execution write window. */
+  beforeDurablePublish?: (
+    event: PeopleToChannelMigrationFinalizationProductionRunnerDurablePublish
+  ) => void
   /** Test/observability seam invoked only after the named durable transition. */
   afterStage?: (stage: PeopleToChannelMigrationFinalizationProductionRunnerStage) => void
 }
@@ -213,7 +223,8 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       hostDisplayName: options.hostDisplayName,
       listChats: options.listChats,
       ...(options.listWorkflowChatIds ? { listWorkflowChatIds: options.listWorkflowChatIds } : {}),
-      now: this.now
+      now: this.now,
+      beforeDurablePublish: options.beforeDurablePublish
     })
   }
 
@@ -377,11 +388,13 @@ export class PeopleToChannelMigrationFinalizationProductionRunner {
       recovery,
       initialExecution: new PeopleToChannelMigrationExecutionStore({
         userDataPath: this.options.userDataPath,
-        safeStorage: this.options.safeStorage
+        safeStorage: this.options.safeStorage,
+        beforeDurablePublish: this.options.beforeDurablePublish
       }),
       finalizationExecution: new PeopleToChannelMigrationFinalizationExecutionStore({
         userDataPath: this.options.userDataPath,
-        safeStorage: this.options.safeStorage
+        safeStorage: this.options.safeStorage,
+        beforeDurablePublish: this.options.beforeDurablePublish
       }),
       initialAdmissions: new PeopleToChannelMigrationAdmissionReissue({
         storagePath: join(recovery.paths.root, PEOPLE_TO_CHANNEL_ADMISSION_ESCROW_FILENAME),

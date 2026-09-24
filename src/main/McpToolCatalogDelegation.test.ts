@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_MAX_WAVE_AGENTS } from '../shared/fleetWave'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
+import {
+  ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS,
+  ULTRA_TASK_MAX_EFFECTIVE_WORKERS
+} from './ultraTask/UltraTaskToolRequest'
 
 describe('delegate_to_subthread MCP schema', () => {
   it('advertises fresh-seat model controls and marks them spawn-only', () => {
@@ -15,12 +19,21 @@ describe('delegate_to_subthread MCP schema', () => {
     expect(properties?.model?.description).toMatch(/spawn-only/i)
     expect(properties?.model?.description).toMatch(/omit.*recall/i)
     expect(properties?.reasoningEffort?.enum).toEqual(
-      expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+      expect.arrayContaining([
+        'off',
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultracode'
+      ])
     )
     // Path-B Cursor is a live selectable seat; parents may spawn/recall a Cursor
     // child, and a broker-active Cursor parent can use this same governed tool.
     expect(properties?.provider?.enum).toContain('cursor')
-    expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*kimi.*grok/i)
+    expect(properties?.reasoningEffort?.description).toMatch(/provider\/model.*Off/i)
     expect(properties?.kimiThinking?.description).toMatch(/kimi/i)
     expect(properties?.subThreadId?.description).toMatch(/inherits.*model.*controls/i)
     expect(properties?.subThreadId?.description).toMatch(/active child.*durably queued/i)
@@ -74,5 +87,102 @@ describe('delegate_wave roster sizing is discoverable', () => {
     expect(workers?.maxItems).toBe(64)
     expect(workers?.description).toMatch(/ceiling/i)
     expect(workers?.description).toMatch(new RegExp(`${DEFAULT_MAX_WAVE_AGENTS}`))
+  })
+
+  it('lets Pi workers request a real Off stop through the advertised schema', () => {
+    const schema = waveDefinition()?.inputSchema as
+      | {
+          properties?: {
+            workers?: {
+              items?: {
+                properties?: Record<string, { enum?: string[]; description?: string }>
+              }
+            }
+          }
+        }
+      | undefined
+    const reasoning = schema?.properties?.workers?.items?.properties?.reasoningEffort
+
+    expect(reasoning?.enum).toEqual(expect.arrayContaining(['off', 'minimal', 'high', 'max']))
+    expect(reasoning?.description).toMatch(/Off.*provider\/model/i)
+  })
+
+  it('advertises concise lane roles while retaining the historical aliases', () => {
+    const schema = waveDefinition()?.inputSchema as
+      | {
+          properties?: Record<
+            string,
+            { items?: { properties?: Record<string, { enum?: string[]; description?: string }> } }
+          >
+        }
+      | undefined
+    const role = schema?.properties?.workers?.items?.properties?.role
+
+    expect(role?.enum).toEqual(['scout', 'work', 'review', 'worker', 'reviewer'])
+    expect(role?.description).toMatch(/lane role/i)
+    expect(role?.description).toMatch(/backward-compatible aliases/i)
+  })
+})
+
+describe('ultra_task MCP schema', () => {
+  it('advertises the implemented worker default', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ultra_task'
+    )
+    const schema = definition?.inputSchema as
+      | {
+          properties?: Record<string, { default?: number; description?: string }>
+        }
+      | undefined
+    const maxWorkers = schema?.properties?.maxWorkers
+
+    expect(maxWorkers?.default).toBe(ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS)
+    expect(maxWorkers?.description).toMatch(
+      new RegExp(`default: ${ULTRA_TASK_DEFAULT_EFFECTIVE_WORKERS}`)
+    )
+    expect(maxWorkers?.description).toMatch(
+      new RegExp(`clamped to ${ULTRA_TASK_MAX_EFFECTIVE_WORKERS}`)
+    )
+    expect(definition?.description).toMatch(/durable staged UltraTask graph/i)
+    expect(definition?.description).toMatch(/TaskWraith owns.*all-join/i)
+    // Inverted 2026-08-29. This previously asserted the description must NOT
+    // mention ensemble_await, encoding a design where the graph was detached
+    // and the initiating turn was told it "may finish". That left graphs
+    // dispatching provider work with no accountable seat and no path back to
+    // the user. ultra_task now follows the same turn-ownership doctrine as
+    // delegate_wave and delegate_to_subthread, so the JOIN must be advertised.
+    expect(definition?.description).toMatch(/ensemble_await/i)
+    expect(definition?.description).toMatch(/keep your turn active/i)
+  })
+
+  it('requires concrete model identity and documents the model-list refusal', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ultra_task'
+    )
+    const schema = definition?.inputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined
+
+    expect(schema?.properties?.provider?.description).toMatch(/explicit concrete model/i)
+    expect(schema?.properties?.provider?.description).toMatch(/never guesses/i)
+    expect(schema?.properties?.model?.description).toMatch(/current run.*concrete model/i)
+    expect(schema?.properties?.model?.description).toMatch(/cli-default.*refused/i)
+    expect(schema?.properties?.model?.description).toMatch(/returns available concrete model ids/i)
+  })
+
+  it('documents durable execution progress and result-bearing awaits', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_await'
+    )
+    const schema = definition?.inputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined
+
+    expect(definition?.description).toMatch(/executionIds.*ultra_task/i)
+    expect(definition?.description).toMatch(/queued.*provider-running/i)
+    expect(definition?.description).toMatch(/untrusted graph output/i)
+    expect(definition?.description).toMatch(/implicit check-in is 45 seconds/i)
+    expect(schema?.properties?.executionIds?.description).toMatch(/provider-running/i)
+    expect(schema?.properties?.timeoutSeconds?.description).toMatch(/default 45 seconds/i)
   })
 })

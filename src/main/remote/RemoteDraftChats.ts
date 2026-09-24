@@ -54,7 +54,9 @@ function isLegacyIosDraft(chat: ChatRecord): boolean {
   )
 }
 
-export function isUnstartedRemoteDraftChat(chat: ChatRecord | null | undefined): chat is ChatRecord {
+export function isUnstartedRemoteDraftChat(
+  chat: ChatRecord | null | undefined
+): chat is ChatRecord {
   if (!chat || chat.archived) return false
   if (!readRemoteDraftMetadata(chat) && !isLegacyIosDraft(chat)) return false
   if ((chat.messages || []).length > 0 || (chat.runs || []).length > 0) return false
@@ -70,9 +72,7 @@ export function remoteDraftVariant(chat: ChatRecord | null | undefined): RemoteD
   return readRemoteDraftMetadata(chat)?.variant ?? null
 }
 
-export function isRemoteWorkflowDraftChat(
-  chat: ChatRecord | null | undefined
-): chat is ChatRecord {
+export function isRemoteWorkflowDraftChat(chat: ChatRecord | null | undefined): chat is ChatRecord {
   return isUnstartedRemoteDraftChat(chat) && remoteDraftVariant(chat) === 'workflow'
 }
 
@@ -83,10 +83,14 @@ export function remoteDraftMatchesTarget(chat: ChatRecord, target: RemoteDraftTa
     return chat.scope === 'global' && chatKind === 'single'
   }
   if (target.variant === 'ensemble') {
-    return chat.scope !== 'global' && chatKind === 'ensemble' && chat.workspaceId === target.workspaceId
+    return (
+      chat.scope !== 'global' && chatKind === 'ensemble' && chat.workspaceId === target.workspaceId
+    )
   }
   if (target.variant === 'workflow') {
-    return chat.scope !== 'global' && chatKind === 'single' && chat.workspaceId === target.workspaceId
+    return (
+      chat.scope !== 'global' && chatKind === 'single' && chat.workspaceId === target.workspaceId
+    )
   }
   return chat.scope !== 'global' && chatKind === 'single' && chat.workspaceId === target.workspaceId
 }
@@ -129,19 +133,33 @@ export function buildRemoteDraftChat(input: {
     ...(existing?.providerMetadata || {}),
     [REMOTE_DRAFT_METADATA_KEY]: remoteDraftMetadata(existing, target, now)
   }
-  const title =
-    target.title?.trim() ||
-    (target.variant === 'ensemble'
+  const defaultTitle =
+    target.variant === 'ensemble'
       ? 'New Ensemble'
       : target.variant === 'workflow'
         ? 'New Workflow'
-        : 'New Chat')
+        : 'New Chat'
+  const requestedTitle = target.title?.trim()
+  const existingExplicit =
+    existing?.threadTitle?.source === 'user' ||
+    existing?.threadTitle?.source === 'local-ai' ||
+    (!existing?.threadTitle && Boolean(existing?.title && existing.title !== defaultTitle))
+  const preserveExisting = Boolean(
+    existingExplicit && (!requestedTitle || requestedTitle === defaultTitle)
+  )
+  const title = preserveExisting ? existing!.title : requestedTitle || defaultTitle
+  const threadTitle = preserveExisting
+    ? existing!.threadTitle || { source: 'user' as const }
+    : requestedTitle && requestedTitle !== defaultTitle
+      ? { source: 'user' as const }
+      : { source: 'placeholder' as const }
   const base: ChatRecord = {
     appChatId: id,
     scope: target.variant === 'global' ? 'global' : 'workspace',
     chatKind: target.variant === 'ensemble' ? 'ensemble' : 'single',
     provider: target.provider,
     title,
+    threadTitle,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     archived: false,
@@ -178,9 +196,7 @@ export function remoteDraftIdsToDelete(chats: ChatRecord[], keepId: string): str
  * nuking a pinned real chat would be wrong; this predicate is only ever paired
  * with an age gate (sweep) or used to hide a contentless row (display).
  */
-export function isContentlessRemoteDraftChat(
-  chat: ChatRecord | null | undefined
-): boolean {
+export function isContentlessRemoteDraftChat(chat: ChatRecord | null | undefined): boolean {
   // Plain boolean, NOT a `chat is ChatRecord` guard like its strict sibling: it
   // is used NEGATED in `.filter(c => !isContentlessRemoteDraftChat(c))` on the
   // renderer side, and a negated type predicate makes TS infer the filtered

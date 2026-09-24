@@ -37,9 +37,21 @@ describe('OllamaRunProfiles', () => {
 
   it('uses larger context caps for known high-context local coding models', () => {
     expect(resolveOllamaRunProfile('ornith:35b', 'provider_parity').contextCapTokens).toBe(262_144)
+    expect(resolveOllamaRunProfile('ornith-1.5:35b', 'provider_parity').contextCapTokens).toBe(
+      262_144
+    )
     expect(resolveOllamaRunProfile('qwen3.6:35b', 'provider_parity').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('qwen3.8:27b-mlx', 'provider_parity').contextCapTokens).toBe(
       262_144
+    )
+    expect(
+      resolveOllamaRunProfile('qwen3.8-flash-next:125b-mlx', 'provider_parity').contextCapTokens
+    ).toBe(262_144)
+    expect(
+      resolveOllamaRunProfile('mistral-medium-3.5:128b', 'provider_parity').contextCapTokens
+    ).toBe(262_144)
+    expect(resolveOllamaRunProfile('granite4.2:8b', 'provider_parity').contextCapTokens).toBe(
+      131_072
     )
     // 2026-07-30: the working profiles' ceiling rose 131_072 -> 262_144, so a
     // 262K model is capped by ITS OWN window rather than by the profile.
@@ -123,82 +135,69 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('unknown-local:latest').contextCapTokens).toBe(65_536)
   })
 
-  it('returns thinking level for Ollama tags that advertise thinking support', () => {
+  it('sends each model the wire value its own ladder allows', () => {
     expect(
       resolveOllamaThinkingLevel('gpt-oss:latest', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
+    expect(resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
+      true
+    )
+    // Mistral Medium 3.5 maps only `high` through its `.ThinkLevel` branch.
     expect(
-      resolveOllamaThinkingLevel('qwen3.6:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('qwen3.8:27b-mlx', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('minicpm-v4.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('lfm2.5:8b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('nemotron3:33b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('laguna-xs-2.1:q8_0', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('qwen3.5:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('ornith:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    expect(
-      resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    // Live daemon capabilities, read 2026-07-30: devstral-small-2:24b and
-    // ministral-3:14b advertise ["completion","vision","tools"] with NO
-    // thinking, so they MUST stay off — Ollama rejects a `think` request
-    // outright on a tag that does not advertise it.
-    //
-    // The qwen3.5 dense sizes all advertise thinking and move together on
-    // purpose: splitting them would be a product difference the capabilities
-    // do not justify.
-    expect(
-      resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBe('medium')
-    for (const modelId of [
-      'qwen3.5:2b',
-      'deepseek-r1:1.5b',
-      'nemotron-3-nano:4b',
-      'lfm2.5-thinking:1.2b',
-      'lfm2.5-thinking',
-      'lfm2.5-thinking:latest',
-      'deepseek-r1:8b',
-      'glm-4.7-flash:q4_K_M',
-      'north-mini-code-1.0:q4_K_M',
-      'nemotron-3.5-lightning:30b-mlx',
-      'muse-glimmer:30b-mlx'
-    ]) {
-      expect(resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
-        'medium'
+      resolveOllamaThinkingLevel(
+        'mistral-medium-3.5:128b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity
       )
-    }
-    for (const modelId of [
-      'ministral-3:3b',
-      'granite4:3b',
-      'gemma3:4b',
-      'llama3.1:8b',
-      'rnj-1',
-      'llama3.2:3b'
-    ]) {
-      expect(
-        resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-      ).toBeUndefined()
-    }
+    ).toBe('high')
+    // Granite 4.2's packaging exposes no thinking at all.
     expect(
-      resolveOllamaThinkingLevel('devstral-small-2:24b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+      resolveOllamaThinkingLevel('granite4.2:8b', OLLAMA_RUN_PROFILE_PRESETS.provider_parity)
     ).toBeUndefined()
     expect(
-      resolveOllamaThinkingLevel('ministral-3:14b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+      resolveOllamaThinkingLevel(
+        'ornith:35b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'off'
+      )
+    ).toBe(false)
+    // GLM 5.3 cannot stop reasoning, so Off must not become `think: false` —
+    // but it must land on the LEAST the model will do, not its default of max.
+    expect(
+      resolveOllamaThinkingLevel(
+        'glm-5.3:cloud',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'off'
+      )
+    ).toBe('low')
+    expect(
+      resolveOllamaThinkingLevel(
+        'gpt-oss:20b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        undefined,
+        'low'
+      )
+    ).toBe('low')
+  })
+
+  it('lets authoritative daemon capabilities override the curated fallback', () => {
+    expect(
+      resolveOllamaThinkingLevel(
+        'custom-qwen:latest',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        { capabilities: ['completion', 'thinking'] }
+      )
+    ).toBe(true)
+    expect(
+      resolveOllamaThinkingLevel(
+        'ornith:35b',
+        OLLAMA_RUN_PROFILE_PRESETS.provider_parity,
+        { capabilities: ['completion', 'tools'] }
+      )
+    ).toBeUndefined()
+    expect(
+      resolveOllamaThinkingLevel('gemma3:4b', OLLAMA_RUN_PROFILE_PRESETS.provider_parity)
     ).toBeUndefined()
   })
 
@@ -212,9 +211,43 @@ describe('OllamaRunProfiles', () => {
     // nudge cycle.
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'high', profile })
-    ).toBe(profile.numPredictFinal)
+    ).toBe(8192)
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: false, profile })
+    ).toBe(profile.numPredictTool)
     expect(
       resolveOllamaTurnNumPredict({ toolCallCount: 2, thinkingLevel: null, profile })
     ).toBe(profile.numPredictFinal)
+  })
+
+  it('scales the turn budget with reasoning effort so a think stream cannot exhaust it', () => {
+    const profile = OLLAMA_RUN_PROFILE_PRESETS.provider_parity
+    // The whole budget holds thinking AND the answer, so an effort level that
+    // cannot be disabled (glm-5.3 ships `max`) spent all 4096 thinking and
+    // returned an empty turn the run loop scored as non-productive.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })).toBe(
+      16384
+    )
+    // Low effort has no need of the headroom; leave those runs untouched.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'low', profile })).toBe(
+      profile.numPredictFinal
+    )
+    // A toggle family reports a bare `true` with no level to read.
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: true, profile })).toBe(
+      profile.numPredictFinal
+    )
+  })
+
+  it('caps the scaled budget so generation cannot crowd out the prompt', () => {
+    // local_scout: 3072 final against a 32_768 cap. 4x would be 12_288, past
+    // the quarter-context ceiling, and num_ctx only ever reserves the unscaled
+    // budget — so the scale is clamped rather than allowed to starve the prompt.
+    const profile = OLLAMA_RUN_PROFILE_PRESETS.local_scout
+    expect(resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })).toBe(
+      8192
+    )
+    expect(
+      resolveOllamaTurnNumPredict({ toolCallCount: 0, thinkingLevel: 'max', profile })
+    ).toBeLessThan(profile.contextCapTokens / 4 + 1)
   })
 })

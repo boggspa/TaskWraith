@@ -79,6 +79,7 @@ function finalizeMacReleaseArtifacts({
   applePassword,
   teamId,
   keychainProfile,
+  channel: channelOverride,
   notarize = true,
   run = checkedRunner,
   retryWait = sleepSync
@@ -86,7 +87,7 @@ function finalizeMacReleaseArtifacts({
   const dmgPath = path.join(distDir, `TaskWraith-${version}-universal-mac.dmg`)
   const zipPath = path.join(distDir, `TaskWraith-${version}-universal-mac.zip`)
   const zipBlockmapPath = `${zipPath}.blockmap`
-  const channel = version.includes('-') ? 'beta' : 'latest'
+  const channel = channelOverride || (version.includes('-') ? 'beta' : 'latest')
   const feedPath = path.join(distDir, `${channel}-mac.yml`)
   for (const required of [dmgPath, zipPath, zipBlockmapPath, feedPath]) {
     if (!fs.existsSync(required) || !fs.statSync(required).isFile()) {
@@ -139,11 +140,13 @@ function finalizeMacReleaseArtifacts({
 
 function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
-  const notarize = !argv.includes('--skip-notarization')
-  const distArg = argv.find((arg) => !arg.startsWith('--')) || 'dist'
+  const parsed = parseCliArgs(argv)
+  const notarize = !parsed.skipNotarization
+  const distArg = parsed.targets[0] || 'dist'
   const result = finalizeMacReleaseArtifacts({
     distDir: path.resolve(repoRoot, distArg),
-    version: packageJson.version,
+    version: parsed.version || packageJson.version,
+    channel: parsed.channel,
     appleId: process.env.APPLE_ID,
     applePassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
     teamId: process.env.APPLE_TEAM_ID,
@@ -156,6 +159,27 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
     } stale DMG blockmap(s); refreshed ${path.basename(result.feedPath)}`
   )
   return 0
+}
+
+function parseCliArgs(argv) {
+  const options = { targets: [], skipNotarization: false }
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg === '--skip-notarization') {
+      options.skipNotarization = true
+      continue
+    }
+    if (arg === '--version' || arg === '--channel') {
+      const value = argv[index + 1]
+      if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}`)
+      options[arg.slice(2)] = value
+      index += 1
+      continue
+    }
+    options.targets.push(arg)
+  }
+  if (options.targets.length > 1) throw new Error('Only one dist directory may be provided.')
+  return options
 }
 
 if (require.main === module) {
@@ -171,6 +195,7 @@ if (require.main === module) {
 
 module.exports = {
   finalizeMacReleaseArtifacts,
+  parseCliArgs,
   rewriteMacUpdateFeed,
   runWithBoundedRetry,
   runCli,

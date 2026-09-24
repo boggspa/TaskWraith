@@ -539,6 +539,42 @@ describe('work provenance query and reconciliation', () => {
     ).not.toThrow()
   })
 
+  it('accepts a deterministic origin re-published after its derived annotations drift', () => {
+    const root = makeRepo()
+    writeFileSync(join(root, 'src', 'shared.ts'), 'export const shared = 2\n')
+    const identity = resolveWorkspaceIdentity(root)
+    // First publication carries a predecessor lineage link and an `exact` confidence,
+    // both derived from the store state that existed when the marker vanished.
+    const first = {
+      ...origin(root, {
+        id: 'origin-marker-derived-drift',
+        actor: { runId: 'run-drift' },
+        confidence: 'exact'
+      }),
+      predecessorOriginEventId: 'origin-marker-predecessor'
+    }
+    writeEventImmutable(identity, first)
+    // A later reconcile recomputes the SAME deterministic eventId, but the predecessor
+    // origin has since been resolved (so it drops out of the lineage lookup) and the
+    // candidate set has shrunk (so confidence downgrades). Only derived annotations
+    // differ; path, after-fingerprint and actor — the identity — are unchanged.
+    const recomputed = origin(root, {
+      id: 'origin-marker-derived-drift',
+      actor: { runId: 'run-drift' },
+      confidence: 'correlated-claim'
+    })
+    expect('predecessorOriginEventId' in recomputed).toBe(false)
+    expect(() => writeEventImmutable(identity, recomputed)).not.toThrow()
+    // The first publication is immutable: exactly one event on disk, still carrying the
+    // original lineage link and confidence rather than the drifted recompute's bytes.
+    const records = readEventRecords(identity).filter(
+      ({ event }) => event.eventId === 'origin-marker-derived-drift'
+    )
+    expect(records).toHaveLength(1)
+    expect(records[0].event.predecessorOriginEventId).toBe('origin-marker-predecessor')
+    expect(records[0].event.confidence).toBe('exact')
+  })
+
   it('never deletes a foreign recovery ref named by a mismatched local event', () => {
     const root = makeRepo()
     writeFileSync(join(root, 'src', 'shared.ts'), 'export const shared = 2\n')

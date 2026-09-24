@@ -62,7 +62,9 @@ async function startGateway(
 
 describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
   it('delivers routing-only alerts with the shared collapse id, uniformly 200', async () => {
-    const send = vi.fn(async () => ({ delivered: true }))
+    const send = vi.fn(async (_args: Parameters<ApnsGatewaySender['send']>[0]) => ({
+      delivered: true
+    }))
     const log = vi.fn()
     const { relay, base } = await startGateway({ send }, undefined, log)
     try {
@@ -73,7 +75,7 @@ describe('Tier-2 gateway: /v1/push/trigger (P5)', () => {
       expect(response.status).toBe(200)
       await settle()
       expect(send).toHaveBeenCalledTimes(1)
-      const args = send.mock.calls[0][0]
+      const args = send.mock.calls[0]![0]
       expect(args.deviceTokenHex).toBe('aabbccdd00112233')
       expect(args.env).toBe('sandbox')
       expect(args.collapseId).toMatch(/^tw1-[0-9a-f]{56}$/)

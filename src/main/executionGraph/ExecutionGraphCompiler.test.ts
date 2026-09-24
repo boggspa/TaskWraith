@@ -465,21 +465,28 @@ describe('ExecutionGraph compiler', () => {
     )
     expect(compiled.ok).toBe(true)
     if (!compiled.ok) return
-    expect(
-      validateExecutionGraphV1RuntimeAdmission(compiled.revision).map((entry) => entry.code)
-    ).toEqual(
+    const unsupportedCodes = validateExecutionGraphV1RuntimeAdmission(compiled.revision).map(
+      (entry) => entry.code
+    )
+    expect(unsupportedCodes).toEqual(
       expect.arrayContaining([
-        'runtime_concurrency_unsupported',
-        'runtime_parallel_topology_unsupported',
         'runtime_budget_unsupported',
         'runtime_retry_unsupported',
         'runtime_retry_backoff_unsupported',
         'runtime_timeout_unsupported',
-        'runtime_data_edge_unsupported',
-        'runtime_data_port_unsupported',
+        'runtime_join_mode_unsupported',
+        'runtime_output_shape_unsupported',
         'runtime_step_kind_unsupported'
       ])
     )
+    for (const supportedCode of [
+      'runtime_concurrency_unsupported',
+      'runtime_parallel_topology_unsupported',
+      'runtime_data_edge_unsupported',
+      'runtime_data_port_unsupported'
+    ]) {
+      expect(unsupportedCodes).not.toContain(supportedCode)
+    }
 
     const admitted = compileExecutionGraphRevision(
       draft({
@@ -490,7 +497,11 @@ describe('ExecutionGraph compiler', () => {
             outputs: [],
             retry: { maxAttempts: 1 },
             kind: 'solo_agent',
-            agent: { provider: 'codex', session: { mode: 'fresh' } }
+            agent: {
+              provider: 'codex',
+              runTemplateRef: 'template:execute@1',
+              session: { mode: 'fresh' }
+            }
           }
         ],
         edges: [],
@@ -501,7 +512,7 @@ describe('ExecutionGraph compiler', () => {
     if (admitted.ok) expect(validateExecutionGraphV1RuntimeAdmission(admitted.revision)).toEqual([])
   })
 
-  it('rejects data transport and output nodes from the bound V1 runtime profile', () => {
+  it('admits structured data transport and terminal output nodes', () => {
     const compiled = compileExecutionGraphRevision(
       draft({
         steps: [
@@ -511,11 +522,15 @@ describe('ExecutionGraph compiler', () => {
             outputs: [{ name: 'result', schema: reportSchema }],
             retry: { maxAttempts: 1 },
             kind: 'solo_agent',
-            agent: { provider: 'codex', session: { mode: 'fresh' } }
+            agent: {
+              provider: 'codex',
+              runTemplateRef: 'template:producer@1',
+              session: { mode: 'fresh' }
+            }
           },
           {
             ...common('result'),
-            inputs: [{ name: 'result', schema: reportSchema }],
+            inputs: [{ name: 'result', schema: reportSchema, required: true }],
             outputs: [],
             retry: { maxAttempts: 1 },
             kind: 'output',
@@ -543,19 +558,6 @@ describe('ExecutionGraph compiler', () => {
     expect(compiled.ok).toBe(true)
     if (!compiled.ok) return
 
-    expect(validateExecutionGraphV1RuntimeAdmission(compiled.revision)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'runtime_data_edge_unsupported', path: 'edges[1]' }),
-        expect.objectContaining({
-          code: 'runtime_data_port_unsupported',
-          path: 'steps[0].outputs[0]'
-        }),
-        expect.objectContaining({
-          code: 'runtime_data_port_unsupported',
-          path: 'steps[1].inputs[0]'
-        }),
-        expect.objectContaining({ code: 'runtime_step_kind_unsupported', path: 'steps[1].kind' })
-      ])
-    )
+    expect(validateExecutionGraphV1RuntimeAdmission(compiled.revision)).toEqual([])
   })
 })

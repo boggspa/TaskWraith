@@ -43,6 +43,8 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_sketch_update',
   'canvas_list',
   'canvas_status',
+  'canvas_drive_report',
+  'canvas_drive_verify',
   'canvas_snapshot',
   'canvas_screenshot',
   'canvas_inspect',
@@ -51,6 +53,11 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_resize',
   'canvas_click',
   'canvas_fill',
+  'canvas_key',
+  'canvas_scroll',
+  'canvas_hover',
+  'canvas_select',
+  'canvas_wait_for',
   'canvas_annotate',
   'canvas_eval',
   'canvas_navigate',
@@ -479,7 +486,6 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               driver: 'web',
               url,
               viewport,
-              originAllowlist: asStringArray(args.originAllowlist),
               ...(requestedPresentation === 'dock'
                 ? { embed: true, presentation: 'dock' as const }
                 : {})
@@ -786,8 +792,59 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         case 'canvas_status': {
           return jsonResult({ ok: true, tool: toolName, session: controller.status(needsId(), ctx) })
         }
+        case 'canvas_drive_report': {
+          if (!controller.driveReports) {
+            return fail(toolName, 'AppDrive session reporting is unavailable.')
+          }
+          const reports = controller.driveReports(
+            {
+              ...(asOptString(args.reportId) ? { reportId: asOptString(args.reportId) } : {}),
+              ...(asOptString(args.surfaceId) ? { surfaceId: asOptString(args.surfaceId) } : {}),
+              ...(asOptNumber(args.limit) !== undefined ? { limit: asOptNumber(args.limit) } : {})
+            },
+            ctx
+          )
+          return jsonResult({ ok: true, tool: toolName, count: reports.length, reports })
+        }
+        case 'canvas_drive_verify': {
+          if (!controller.verifyDriveAction) {
+            return fail(toolName, 'AppDrive action verification is unavailable.')
+          }
+          const reportId = asOptString(args.reportId)
+          const actionId = asOptString(args.actionId)
+          const surfaceId = asOptString(args.surfaceId)
+          const observationId = asOptString(args.observationId)
+          const verdict = asOptString(args.verdict)
+          if (!reportId || !actionId || !surfaceId || !observationId) {
+            return fail(
+              toolName,
+              '`reportId`, `actionId`, `surfaceId`, and `observationId` are required.'
+            )
+          }
+          if (
+            verdict !== 'confirmed' &&
+            verdict !== 'not-confirmed' &&
+            verdict !== 'inconclusive'
+          ) {
+            return fail(toolName, '`verdict` must be confirmed, not-confirmed, or inconclusive.')
+          }
+          try {
+            const action = controller.verifyDriveAction(
+              { reportId, actionId, surfaceId, observationId, verdict },
+              ctx
+            )
+            return jsonResult({ ok: true, tool: toolName, action })
+          } catch (error) {
+            return fail(
+              toolName,
+              error instanceof Error ? error.message : 'AppDrive verification failed.'
+            )
+          }
+        }
         case 'canvas_snapshot': {
-          const tree = await controller.snapshot(needsId(), ctx)
+          const tree = await controller.snapshot(needsId(), ctx, {
+            driveActionId: asOptString(args.driveActionId)
+          })
           return jsonResult({
             ok: true,
             tool: toolName,
@@ -880,7 +937,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               x,
               y,
               expectedInputEpoch,
-              expectedObservationId
+              expectedObservationId,
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )
@@ -903,7 +961,71 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               selector,
               value: args.value,
               expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
-              expectedObservationId: asOptString(args.expectedObservationId)
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
+            },
+            ctx
+          )
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
+        }
+        case 'canvas_key':
+        case 'canvas_hover':
+        case 'canvas_select':
+        case 'canvas_wait_for': {
+          const ref = asOptString(args.ref)
+          const selector = asOptString(args.selector)
+          if (!ref && !selector) return fail(toolName, 'Provide a `ref` or a `selector`.')
+          const kind = toolName.slice('canvas_'.length) as 'key' | 'hover' | 'select' | 'wait_for'
+          if (kind === 'key' && typeof args.key !== 'string') {
+            return fail(toolName, '`key` (string) is required.')
+          }
+          if (kind === 'select' && typeof args.value !== 'string') {
+            return fail(toolName, '`value` (option value or label) is required.')
+          }
+          const result = await controller.act(
+            needsId(),
+            {
+              kind,
+              ref,
+              selector,
+              ...(kind === 'key' ? { key: args.key as string } : {}),
+              ...(kind === 'select' ? { value: args.value as string } : {}),
+              ...(kind === 'wait_for' ? { timeoutMs: asOptNumber(args.timeoutMs) } : {}),
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
+            },
+            ctx
+          )
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
+        }
+        case 'canvas_scroll': {
+          const deltaX = asOptNumber(args.deltaX) ?? 0
+          const deltaY = asOptNumber(args.deltaY) ?? 0
+          if (deltaX === 0 && deltaY === 0) {
+            return fail(toolName, 'Provide a non-zero `deltaX` and/or `deltaY`.')
+          }
+          const result = await controller.act(
+            needsId(),
+            {
+              kind: 'scroll',
+              ref: asOptString(args.ref),
+              selector: asOptString(args.selector),
+              x: asOptNumber(args.x),
+              y: asOptNumber(args.y),
+              deltaX,
+              deltaY,
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
+              expectedObservationId: asOptString(args.expectedObservationId),
+              requireIndependentVerifier: args.requireIndependentVerifier === true
             },
             ctx
           )
@@ -930,7 +1052,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const script = asString(args.script)
           if (!script.trim()) return fail(toolName, '`script` (JavaScript string) is required.')
           // Bound the script size before it ever reaches the page (defence-in-depth
-          // alongside the per-session eval budget and the signed-elevated approval).
+          // alongside the per-session eval budget and per-execution receipt).
           if (script.length > CANVAS_EVAL_SCRIPT_CAP) {
             return fail(
               toolName,
@@ -938,7 +1060,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             )
           }
           if (!ctx.canvasEvalApproval) {
-            return fail(toolName, 'canvas_eval requires a bound per-call approval receipt.')
+            return fail(toolName, 'canvas_eval requires a bound per-execution approval receipt.')
           }
           const result = await controller.evaluate(needsId(), { script }, ctx)
           return jsonResult({

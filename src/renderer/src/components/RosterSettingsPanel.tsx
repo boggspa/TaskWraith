@@ -13,7 +13,6 @@ import { createPortal } from 'react-dom'
 import type {
   AgenticServicesSettings,
   ComposerStyle,
-  EnsembleOrchestrationMode,
   EnsembleParticipant,
   ProviderId
 } from '../../../main/store/types'
@@ -1188,15 +1187,6 @@ export function RosterSettingsPanel({
     [addPooledAgentToPreset]
   )
 
-  const setOrchestrationMode = useCallback(
-    (mode: EnsembleOrchestrationMode): void => {
-      const current = editingRef.current
-      if (!current) return
-      commit({ ...current, meta: { ...current.meta, orchestrationMode: mode } })
-    },
-    [commit]
-  )
-
   const setMaxParticipants = useCallback(
     (value: number): void => {
       const current = editingRef.current
@@ -1462,21 +1452,6 @@ export function RosterSettingsPanel({
               </div>
 
               <div className="settings-roster-options">
-                <label className="settings-roster-option">
-                  <span className="settings-roster-field-label">Turn order</span>
-                  <select
-                    className="settings-roster-select"
-                    value={
-                      editing.meta.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
-                    }
-                    onChange={(event) =>
-                      setOrchestrationMode(event.target.value as EnsembleOrchestrationMode)
-                    }
-                  >
-                    <option value="turn_bound">Turn-based (in order)</option>
-                    <option value="continuous">Continuous (all at once)</option>
-                  </select>
-                </label>
                 <label className="settings-roster-option">
                   <span className="settings-roster-field-label">Max participants</span>
                   <input

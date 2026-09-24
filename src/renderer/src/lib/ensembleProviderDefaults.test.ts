@@ -35,6 +35,35 @@ function participant(overrides: Partial<EnsembleParticipant> = {}): EnsemblePart
   }
 }
 
+describe('UltraTask Ensemble catalog metadata', () => {
+  it('marks every curated concrete row explicitly and preserves the Haiku opt-out', () => {
+    const providers = [
+      'codex',
+      'claude',
+      'gemini',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
+      'pi',
+      'mistral',
+      'muse'
+    ] as const
+    for (const provider of providers) {
+      for (const model of getEnsembleModelDefaults(provider).modelOptions) {
+        if (model.id === 'custom') {
+          expect(model.ultraTaskSupported).toBeUndefined()
+        } else if (model.id === 'claude-haiku-4-5') {
+          expect(model.ultraTaskSupported).toBe(false)
+        } else {
+          expect(model.ultraTaskSupported, `${provider}/${model.id}`).toBe(true)
+        }
+      }
+    }
+  })
+})
+
 describe('getDefaultEnsembleParticipantConfig', () => {
   // Every live provider seeds new participants with the 'default'
   // (Accept Edits) preset — deterministic, never inherited from the
@@ -67,20 +96,20 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns kimi defaults: K2.7 Coding, Standard speed, thinking On', () => {
+  it('returns kimi defaults: K2.8 Preview, Max, Standard speed, thinking on', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
-      model: 'kimi-k2.7-code',
+      model: 'kimi-k2.8-preview',
       permissionPresetId: 'default',
-      reasoningEffort: 'on',
+      reasoningEffort: 'max',
       fastModeEnabled: false,
       thinkingEnabled: true,
       serviceTier: 'standard'
     })
   })
 
-  it('returns grok defaults: Grok 4.6 model, default approval, high reasoning', () => {
+  it('returns grok defaults: Grok 4.7 model, default approval, high reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
-      model: 'grok-4.6',
+      model: 'grok-4.7',
       permissionPresetId: 'default',
       reasoningEffort: 'high'
     })
@@ -94,28 +123,50 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns ollama defaults: Qwen 3.5 model, default approval, no reasoning axis', () => {
+  it('returns Ollama defaults with its boolean thinking control enabled', () => {
     expect(getDefaultEnsembleParticipantConfig('ollama')).toEqual({
       model: 'qwen3.5:9b',
-      permissionPresetId: 'default'
+      permissionPresetId: 'default',
+      reasoningEffort: 'on'
     })
   })
 })
 
 describe('Kimi reasoning picker selection', () => {
-  it('keeps K3 effort separate from K2.7 Coding\'s fixed thinking state', () => {
+  it("keeps a laddered route's effort separate from Highspeed's fixed thinking", () => {
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'max')).toBe('max')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', 'high')).toBe('high')
     expect(resolveKimiReasoningPickerSelection('kimi-k3', undefined)).toBe('max')
-    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code', 'max')).toBe('on')
+    expect(resolveKimiReasoningPickerSelection('kimi-k3-256k', 'low')).toBe('low')
+    expect(resolveKimiReasoningPickerSelection('k3-256k', undefined)).toBe('max')
+    // K2.8 Preview took K3's axis onto the standard route, so it keeps its
+    // own effort; only Highspeed collapses to the fixed `on` stop.
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.8-preview', 'max')).toBe('max')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code-highspeed', 'max')).toBe('on')
+    expect(resolveKimiReasoningPickerSelection('kimi-k2.7-code-highspeed', 'ultraTask')).toBe(
+      'ultraTask'
+    )
   })
 
-  it('persists K3 ladder choices as reasoning effort rather than the legacy thinking flag', () => {
+  it('persists ladder choices as reasoning effort rather than the legacy thinking flag', () => {
     expect(buildKimiReasoningPickerPatch('kimi-k3', 'high')).toEqual({
       reasoningEffort: 'high',
       thinkingEnabled: true
     })
-    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code', 'on')).toEqual({
+    expect(buildKimiReasoningPickerPatch('kimi-k3-256k', 'low')).toEqual({
+      reasoningEffort: 'low',
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.8-preview', 'high')).toEqual({
+      reasoningEffort: 'high',
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code-highspeed', 'on')).toEqual({
+      reasoningEffort: undefined,
+      thinkingEnabled: true
+    })
+    expect(buildKimiReasoningPickerPatch('kimi-k2.7-code-highspeed', 'ultraTask')).toEqual({
+      reasoningEffort: 'ultraTask',
       thinkingEnabled: true
     })
   })
@@ -187,8 +238,8 @@ describe('normalizeProviderModelSelection', () => {
   })
 
   it('seeds Kimi thinking with the Standard speed tier', () => {
-    expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code')).toEqual({
-      model: 'kimi-k2.7-code',
+    expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code-highspeed')).toEqual({
+      model: 'kimi-k2.7-code-highspeed',
       reasoningEffort: 'on',
       fastModeEnabled: false,
       thinkingEnabled: true,
@@ -196,7 +247,21 @@ describe('normalizeProviderModelSelection', () => {
     })
   })
 
-  it('keeps Grok 4.6 and 4.5 reasoning but treats permanent Fast as provider encoded', () => {
+  it('keeps Grok 4.7/4.6/4.5 reasoning but treats permanent Fast as provider encoded', () => {
+    expect(normalizeProviderModelSelection('grok', 'grok-4.7')).toEqual({
+      model: 'grok-4.7',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('grok', 'grok-4.7-fast')).toEqual({
+      model: 'grok-4.7-fast',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
     expect(normalizeProviderModelSelection('grok', 'grok-4.6')).toEqual({
       model: 'grok-4.6',
       reasoningEffort: 'high',
@@ -242,8 +307,10 @@ describe('normalizeProviderModelSelection', () => {
       thinkingEnabled: undefined,
       serviceTier: undefined
     })
+    // The retired Cursor Grok 4.5 row migrates onto 4.6 rather than keeping a
+    // model id the picker no longer lists and cursor-agent rejects outright.
     expect(normalizeProviderModelSelection('cursor', 'grok-4.5')).toEqual({
-      model: 'grok-4.5',
+      model: 'grok-4.6',
       reasoningEffort: 'high',
       fastModeEnabled: false,
       thinkingEnabled: undefined,
@@ -340,6 +407,29 @@ describe('resolveReasoningEffortForSeatChange', () => {
   it('keeps an effort that remains enabled and otherwise snaps to the nearest ladder stop', () => {
     expect(
       resolveReasoningEffortForSeatChange({
+        provider: 'ollama',
+        model: 'deepseek-v4-pro:cloud',
+        previousEffort: 'max'
+      })
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'ollama',
+        model: 'deepseek-v4-pro:cloud',
+        previousEffort: 'on'
+      })
+    ).toBe('high')
+    expect(
+      resolveEnsembleParticipantSettings(
+        participant({
+          provider: 'ollama',
+          model: 'deepseek-v4-pro:cloud',
+          reasoningEffort: 'max'
+        })
+      ).reasoningEffort
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
         provider: 'codex',
         model: 'gpt-5.5',
         previousEffort: 'high'
@@ -361,7 +451,7 @@ describe('resolveReasoningEffortForSeatChange', () => {
     ).toBe('ultracode')
   })
 
-  it('preserves Muse wire ultra/minimal and rank-snaps Codex ultra→ultracode', () => {
+  it('preserves Muse wire max/ultra/minimal and rank-snaps Codex ultra→ultracode', () => {
     expect(
       resolveReasoningEffortForSeatChange({
         provider: 'muse',
@@ -383,6 +473,20 @@ describe('resolveReasoningEffortForSeatChange', () => {
         previousEffort: 'xhigh'
       })
     ).toBe('xhigh')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.3',
+        previousEffort: 'max'
+      })
+    ).toBe('max')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'muse',
+        model: 'muse-spark-1.2',
+        previousEffort: 'max'
+      })
+    ).toBe('ultra')
     // Legacy Muse seats may still carry Codex-shaped ultracode from the old
     // ultra→ultracode rewrite — snap back to Muse wire ultra.
     expect(
@@ -447,6 +551,80 @@ describe('resolveReasoningEffortForSeatChange', () => {
         provider: 'cursor',
         model: 'grok-4.6',
         previousEffort: 'xhigh'
+      })
+    ).toBe('xhigh')
+  })
+
+  it('preserves UltraTask when the destination model still supports it', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code-highspeed',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'claude',
+        model: 'claude-sonnet-5',
+        previousEffort: 'ultratask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'antigravity',
+        model: 'gemini-api:gemini-3.6-flash',
+        previousEffort: 'ultraTask'
+      })
+    ).toBe('ultraTask')
+    expect(
+      normalizeProviderModelSelection('kimi', 'kimi-k3', undefined, {
+        reasoningEffort: 'ultraTask'
+      }).reasoningEffort
+    ).toBe('ultraTask')
+  })
+
+  it('drops or snaps UltraTask when the destination does not support it', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'claude',
+        model: 'claude-haiku-4-5',
+        previousEffort: 'ultraTask'
+      })
+    ).toBeUndefined()
+    expect(
+      normalizeProviderModelSelection('claude', 'claude-haiku-4-5', undefined, {
+        reasoningEffort: 'ultraTask'
+      }).reasoningEffort
+    ).toBeUndefined()
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        previousEffort: 'ultraTask',
+        modelMetadata: {
+          ultraTaskSupported: false,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low' },
+            { reasoningEffort: 'medium' },
+            { reasoningEffort: 'high' },
+            { reasoningEffort: 'xhigh' }
+          ]
+        }
       })
     ).toBe('xhigh')
   })
@@ -556,6 +734,28 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(resolved.thinkingEnabled).toBe(false)
   })
 
+  it('reflects a legacy GPT-OSS Local Scout profile until the user picks an effort', () => {
+    const legacy = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: undefined,
+        ollamaRunProfile: 'local_scout'
+      })
+    )
+    expect(legacy.reasoningEffort).toBe('medium')
+
+    const selected = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'ollama',
+        model: 'gpt-oss:20b',
+        reasoningEffort: 'low',
+        ollamaRunProfile: 'local_scout'
+      })
+    )
+    expect(selected.reasoningEffort).toBe('low')
+  })
+
   it('keeps kimi thinking ON even when stale metadata requests off', () => {
     const defaults = resolveEnsembleParticipantSettings(
       participant({ provider: 'kimi', id: 'ensemble-kimi' })
@@ -564,6 +764,8 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(defaults.fastModeEnabled).toBe(false)
     expect(defaults.serviceTier).toBe('standard')
     expect(defaults.permissionPresetId).toBe('default')
+    expect(defaults.model).toBe('kimi-k2.8-preview')
+    expect(defaults.reasoningEffort).toBe('max')
 
     const overridden = resolveEnsembleParticipantSettings(
       participant({
@@ -577,6 +779,73 @@ describe('resolveEnsembleParticipantSettings', () => {
 })
 
 describe('getEnsembleModelDefaults (existing helper)', () => {
+  it('offers Astra with its reasoning controls before live model discovery', () => {
+    const defaults = getEnsembleModelDefaults('codex')
+    const astra = defaults.modelOptions.find((option) => option.id === 'gpt-6-astra')
+    expect(astra).toMatchObject({ label: 'GPT-6-Astra', ultraTaskSupported: true })
+    expect(astra?.disabled).not.toBe(true)
+    expect(
+      getEnsembleReasoningOptions('codex', astra?.id, astra).map((option) => option.value)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(defaults.defaultModelId).toBe('gpt-5.5')
+    expect(defaults.modelOptions[0]?.id).toBe(defaults.defaultModelId)
+  })
+
+  it('keeps Astra Max and Ultra available in the participant reasoning picker', () => {
+    const options = getEnsembleReasoningOptions('codex', 'gpt-6-astra')
+    expect(options.filter((option) => !option.disabled).map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(options.find((option) => option.value === 'max')?.label).toBe('Max')
+    expect(options.find((option) => option.value === 'ultracode')?.label).toBe('Ultra')
+    expect(getEnsembleReasoningOptions('codex', ' GPT-6-Astra ')).toEqual(options)
+  })
+
+  it.each(['max', 'ultracode'])(
+    'preserves Astra %s when resolving a saved participant',
+    (effort) => {
+      const saved = participant({ model: 'gpt-6-astra', reasoningEffort: effort })
+      expect(resolveEnsembleParticipantSettings(saved).reasoningEffort).toBe(effort)
+    }
+  )
+
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol'],
+    ['gpt-6-luna', 'GPT-6-Luna']
+  ])(
+    'offers %s on the documented low..max ladder with the Fast toggle and no Ultra',
+    (id, label) => {
+      const codex = getEnsembleModelDefaults('codex')
+      const row = codex.modelOptions.find((option) => option.id === id)
+      expect(row).toMatchObject({ label, ultraTaskSupported: true })
+      expect(row?.disabled).not.toBe(true)
+      expect(getEnsembleReasoningOptions('codex', id).map((option) => option.value)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(codex.fastModeCapableModelIds.has(id)).toBe(true)
+      // GPT-5.5 keeps the default; the GPT-6 pair sits right behind Astra, above
+      // the 5.6 generation.
+      expect(codex.defaultModelId).toBe('gpt-5.5')
+      const ids = codex.modelOptions.map((option) => option.id)
+      expect(ids.indexOf(id)).toBeGreaterThan(ids.indexOf('gpt-6-astra'))
+      expect(ids.indexOf(id)).toBeLessThan(ids.indexOf('gpt-5.6-sol'))
+    }
+  )
+
+  it('preserves a saved GPT-6 Sol Max seat without snapping it down', () => {
+    const saved = participant({ model: 'gpt-6-sol', reasoningEffort: 'max' })
+    expect(resolveEnsembleParticipantSettings(saved).reasoningEffort).toBe('max')
+  })
+
   // Sanity check that the previously-existing model-options helper is
   // untouched by the F2 consolidation. The chip picker reads
   // `defaultModelId` here should match the concrete model persisted by
@@ -632,7 +901,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(codex.fastModeCapableModelIds.has('gpt-5.6-luna')).toBe(true)
   })
 
-  it('warns before Cerebras GLM-4.7 retires and removes only that row on the date', () => {
+  it('warns before Pi model sunsets and removes each reached row from Add Participant', () => {
     const before = getEnsembleModelDefaults('pi', new Date(2026, 7, 16, 23, 59))
     expect(
       before.modelOptions.find((option) => option.id === 'cerebras/zai-glm-4.7')
@@ -640,11 +909,32 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       label: 'GLM-4.7 (Cerebras)',
       retiresAt: '2026-08-17'
     })
+    expect(
+      before.modelOptions.find((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toMatchObject({
+      label: 'Ox Alpha',
+      retiresAt: '2026-08-28'
+    })
 
-    const retired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
-    expect(retired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(false)
-    expect(retired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
-    expect(retired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(true)
+    const cerebrasRetired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
+    expect(cerebrasRetired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(
+      false
+    )
+    expect(
+      cerebrasRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toBe(true)
+
+    const oxAlphaRetired = getEnsembleModelDefaults('pi', new Date(2026, 7, 28, 0, 0))
+    expect(
+      oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/stealth/ox-alpha')
+    ).toBe(false)
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(
+      true
+    )
+    expect(oxAlphaRetired.modelOptions.some((option) => option.id === 'openrouter/z-ai/glm-5.2')).toBe(
+      true
+    )
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
@@ -667,28 +957,47 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('exposes K2.7 Coding as Fast-capable with fixed thinking on', () => {
+  it('exposes Highspeed as its own row with fixed thinking and no Fast toggle', () => {
     const kimi = getEnsembleModelDefaults('kimi')
-    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
-    expect(kimi.defaultReasoning).toBe('on')
-    expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code')).toEqual([
+    expect(kimi.defaultModelId).toBe('kimi-k2.8-preview')
+    expect(kimi.defaultReasoning).toBe('max')
+    expect(kimi.reasoningOptions.map((option) => option.value)).toEqual(['low', 'high', 'max'])
+    expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code-highspeed')).toEqual([
       expect.objectContaining({ value: 'on', label: 'On' })
     ])
-    expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
+    // Highspeed is a row now, so NO Kimi row is Fast-capable — a toggle here
+    // would silently re-route whichever row the seat picker is showing.
+    expect(kimi.modelOptions.length).toBeGreaterThan(0)
+    for (const option of kimi.modelOptions) {
+      expect(kimi.fastModeCapableModelIds.has(option.id)).toBe(false)
+    }
   })
 
-  it('lists K3 after K2.7 Coding with Low, High, and Max but no Fast capability', () => {
+  it('lists Highspeed and both K3 routes after K2.8 Preview, each on its own ladder', () => {
     const kimi = getEnsembleModelDefaults('kimi')
-    expect(kimi.modelOptions.map((option) => option.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
-    expect(getEnsembleReasoningOptions('kimi', 'kimi-k3').map((option) => option.value)).toEqual([
-      'low',
-      'high',
-      'max'
+    expect(kimi.modelOptions.map((option) => option.id)).toEqual([
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
+      'kimi-k3',
+      'kimi-k3-256k'
     ])
-    // K3 has no Highspeed tier — Fast stays a K2.7 Coding exclusive — and the
-    // provider default remains K2.7 Coding.
-    expect(kimi.fastModeCapableModelIds.has('kimi-k3')).toBe(false)
-    expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+    expect(kimi.modelOptions.map((option) => option.label)).toEqual([
+      'K2.8 Preview',
+      'K2.7 Code Highspeed',
+      'K3 (1M)',
+      'K3 (256K)'
+    ])
+    for (const modelId of ['kimi-k2.8-preview', 'kimi-k3', 'kimi-k3-256k']) {
+      expect(getEnsembleReasoningOptions('kimi', modelId).map((option) => option.value)).toEqual([
+        'low',
+        'high',
+        'max'
+      ])
+      expect(kimi.fastModeCapableModelIds.has(modelId)).toBe(false)
+    }
+    // No Kimi row has a Highspeed speed tier any more, and the provider
+    // default is the standard route under its current name.
+    expect(kimi.defaultModelId).toBe('kimi-k2.8-preview')
     expect(
       resolveEnsembleParticipantSettings(
         participant({
@@ -700,6 +1009,17 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
         })
       )
     ).toMatchObject({ reasoningEffort: 'max', thinkingEnabled: true, fastModeEnabled: false })
+    expect(
+      resolveEnsembleParticipantSettings(
+        participant({
+          provider: 'kimi',
+          model: 'kimi-k3-256k',
+          reasoningEffort: 'high',
+          thinkingEnabled: false,
+          fastModeEnabled: true
+        })
+      )
+    ).toMatchObject({ reasoningEffort: 'high', thinkingEnabled: true, fastModeEnabled: false })
   })
 
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {
@@ -724,22 +1044,39 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(
       claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled
     ).toBeFalsy()
-    // Current models first, the Legacy cluster (4.8 1M now among them) below.
+    expect(
+      claude.modelOptions.find((option) => option.id === 'claude-fable-5-1')?.disabled
+    ).toBeFalsy()
+    expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.label).toBe(
+      'Fable 5 Legacy'
+    )
+    expect(claude.modelOptions.find((option) => option.id === 'claude-opus-5-5')?.label).toBe(
+      'Opus 5.5'
+    )
+    // Current models first, the Legacy cluster (Fable 5 and 4.8 1M among them) below.
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
+      'claude-opus-5-5',
       'claude-opus-5',
-      'claude-fable-5',
+      'claude-fable-5-1',
       'claude-sonnet-5',
+      'claude-fable-5',
       'claude-sonnet-4-6',
       'claude-opus-4-8-1m',
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
     ])
     expect(claude.defaultModelId).toBe('claude-sonnet-5')
+    expect(claude.fastModeCapableModelIds.has('claude-opus-5-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-8-1m')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-7-1m')).toBe(true)
+    expect(claude.fastModeCapableModelIds.has('claude-fable-5-1')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5-1m')).toBe(false)
+    expect(
+      claude.modelOptions.find((option) => option.id === 'claude-haiku-4-5')
+        ?.ultraTaskSupported
+    ).toBe(false)
   })
 
   it('returns model-aware Claude reasoning options for ensemble pickers', () => {
@@ -790,16 +1127,32 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(haiku.every((o) => o.disabled)).toBe(true)
   })
 
-  it('defaults Grok to 4.6 while retaining 4.5 with its narrower effort ladder', () => {
+  it('defaults Grok to 4.7 while retaining 4.5 with its narrower effort ladder', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-4.6')
+    expect(grok.defaultModelId).toBe('grok-4.7')
+    // grok-composer-2.5-fast retired 2026-09-18. Unlike the Pi list, the Grok
+    // rows are NOT wrapped in a lifecycle filter, so the row is deleted
+    // outright rather than dated. 4.7 ships as a standard/Fast pair.
     expect(grok.modelOptions.map((o) => o.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-fast',
       'grok-4.6',
-      'grok-4.5',
-      'grok-composer-2.5-fast'
+      'grok-4.5'
     ])
     expect(grok.defaultReasoning).toBe('high')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.7').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.7-fast').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
     expect(getEnsembleReasoningOptions('grok', 'grok-4.6').map((o) => o.value)).toEqual([
       'low',
       'medium',
@@ -819,25 +1172,25 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       ])
     }
     expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
+    expect(grok.fastModeCapableModelIds.has('grok-4.7')).toBe(true)
+    expect(grok.fastModeCapableModelIds.has('grok-4.7-fast')).toBe(true)
     expect(grok.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
     expect(grok.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })
 
-  it('keeps Cursor Composer default while exposing Grok 4.6 and 4.5 with reasoning/Fast', () => {
+  it('keeps Cursor Composer default while exposing Grok 4.6 with reasoning/Fast', () => {
     const cursor = getEnsembleModelDefaults('cursor')
     expect(cursor.defaultModelId).toBe('composer-2.5-fast')
     expect(cursor.modelOptions.map((o) => o.id)).toEqual([
       'composer-2.5-fast',
       'composer-2.5',
-      'grok-4.6',
-      'grok-4.5'
+      'grok-4.6'
     ])
     expect(cursor.modelOptions.find((option) => option.id === 'grok-4.6')?.label).toBe(
       'Cursor Grok 4.6'
     )
-    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe(
-      'Cursor Grok 4.5'
-    )
+    // Retired upstream — Cursor's catalogue no longer carries the 4.5 family.
+    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')).toBeUndefined()
     expect(cursor.reasoningOptions).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])
@@ -847,13 +1200,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'high',
       'xhigh'
     ])
-    expect(getEnsembleReasoningOptions('cursor', 'grok-4.5').map((o) => o.value)).toEqual([
-      'low',
-      'medium',
-      'high'
-    ])
+    expect(getEnsembleReasoningOptions('cursor', 'grok-4.5')).toEqual([])
     expect(cursor.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
-    expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
+    expect(cursor.fastModeCapableModelIds.has('grok-4.5')).toBe(false)
   })
 
   it('exposes local Ollama models with Qwen 3.5 as the default', () => {
@@ -866,11 +1215,14 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'qwen3.8:27b-mlx',
+      'qwen3.8-flash-next:125b-mlx',
       'gemma3:4b',
       'gemma4:12b',
       'gemma4:31b-mlx',
       'ornith:9b',
       'ornith:35b',
+      'ornith-1.5:9b',
+      'ornith-1.5:35b',
       'laguna-xs-2.1:q8_0',
       'gpt-oss:20b',
       'lfm2.5-thinking:1.2b',
@@ -879,10 +1231,14 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'granite4:3b',
       'granite4.1:3b',
       'granite4.1:30b',
+      'granite4.2:3b',
+      'granite4.2:8b',
+      'granite4.2:30b',
       'nemotron-3-nano:4b',
       'nemotron3:33b',
       'nemotron-3.5-lightning:30b-mlx',
       'devstral-small-2:24b',
+      'mistral-medium-3.5:128b',
       'ministral-3:3b',
       'ministral-3:14b',
       'muse-glimmer:30b-mlx',
@@ -894,20 +1250,78 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'north-mini-code-1.0:q4_K_M',
       'llama3.2:3b'
     ])
-    expect(ollama.reasoningOptions).toEqual([])
+    expect(ollama.reasoningOptions.map((option) => option.value)).toEqual(['off', 'on'])
+    expect(ollama.defaultReasoning).toBe('on')
+  })
+
+  it('distinguishes Ollama boolean thinking, GPT-OSS levels, unsupported, and live models', () => {
+    expect(getEnsembleReasoningOptions('ollama', 'ornith:35b').map((o) => o.value)).toEqual([
+      'off',
+      'on'
+    ])
+    // Ornith 1.5 ships without 1.0's thinking parser, and Granite 4.2's
+    // packaging exposes none at all.
+    expect(getEnsembleReasoningOptions('ollama', 'ornith-1.5:35b')).toEqual([])
+    expect(getEnsembleReasoningOptions('ollama', 'gpt-oss:20b').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high'
+    ])
+    expect(getEnsembleReasoningOptions('ollama', 'gemma3:4b')).toEqual([])
+    // Only `high` maps through Mistral Medium 3.5's `.ThinkLevel` branch.
+    expect(
+      getEnsembleReasoningOptions('ollama', 'mistral-medium-3.5:128b').map((o) => o.value)
+    ).toEqual(['off', 'high'])
+    expect(getEnsembleReasoningOptions('ollama', 'granite4.2:8b')).toEqual([])
+    expect(
+      getEnsembleReasoningOptions('ollama', 'custom-thinking:latest', {
+        capabilities: ['completion', 'thinking']
+      }).map((o) => o.value)
+    ).toEqual(['off', 'on'])
   })
 })
 
 describe('muse reasoning options', () => {
-  it('includes xhigh between high and ultra (Meta /effort ladder)', () => {
-    expect(getEnsembleReasoningOptions('muse').map((option) => option.value)).toEqual([
+  it('offers both Spark 1.3 routes ahead of 1.2 without changing the standard default', () => {
+    const defaults = getEnsembleModelDefaults('muse')
+    expect(defaults.modelOptions.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
+      { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
+      { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
+      {
+        id: 'muse-spark-1.2-contributor',
+        label: 'Muse Contributor Spark 1.2'
+      }
+    ])
+    expect(defaults.defaultModelId).toBe('muse-spark-1.2')
+  })
+
+  it('adds Max only to regular Spark 1.3 while preserving every existing tier', () => {
+    expect(
+      getEnsembleReasoningOptions('muse', 'muse-spark-1.3').map((option) => option.value)
+    ).toEqual([
       'minimal',
       'low',
       'medium',
       'high',
       'xhigh',
+      'max',
       'ultra'
     ])
+    for (const modelId of [
+      'muse-spark-1.3-contributor',
+      'muse-spark-1.2',
+      'muse-spark-1.2-contributor'
+    ]) {
+      expect(getEnsembleReasoningOptions('muse', modelId).map((option) => option.value)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'ultra'
+      ])
+    }
   })
 })
 
@@ -922,16 +1336,70 @@ describe('mistral configurable reasoning support', () => {
     ])
   })
 
-  it('mirrors the lock on the Pi BYOK lane and keeps every other Pi model honestly inert', () => {
-    // Pi's launch authority seals thinkingMode 'provider-default' — we keep
-    // this to a known model-specific ladder for Mistral-hosted options.
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-3.5')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
+  it('offers each Pi model only the stops its own upstream honours', () => {
+    const values = (modelId?: string | null): string[] =>
+      getEnsembleReasoningOptions('pi', modelId).map((option) => option.value)
+
+    // Mistral documents `high` and `none`; the wider schema enum has no
+    // defined semantics, so the honest surface is off-or-high.
+    expect(values('mistral/mistral-medium-3.5')).toEqual(['off', 'high'])
+    // DeepSeek V4: medium and xhigh are documented aliases for high, and the
+    // two routes split on Low — pi maps Pro's `low` to null, Flash's to `low`.
+    expect(values('deepseek/deepseek-v4-pro')).toEqual(['off', 'high', 'max'])
+    expect(values('deepseek/deepseek-v4-flash')).toEqual(['off', 'low', 'high', 'max'])
+    // Z.ai collapses seven efforts onto High and Max.
+    expect(values('zai/glm-5.2')).toEqual(['off', 'high', 'max'])
+    // GLM 5.1 predates `reasoning_effort` entirely.
+    expect(values('zai/glm-5.1')).toEqual(['off', 'high'])
+    // Qwen has no ladder at all — a boolean plus a token budget.
+    expect(values('qwen-token-plan/qwen3.8-max')).toEqual(['off', 'high'])
+    // OpenRouter's GLM copy advertises a DIFFERENT pair from Z.ai's own.
+    expect(values('openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
+    // Space Bunny Alpha's reasoning is mandatory: its five enumerated efforts
+    // and no Off, which the gateway has no `none` for.
+    expect(values('openrouter/stealth/space-bunny-alpha')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
     ])
+    // Non-reasoning models get no control rather than a ladder that does
+    // nothing.
+    expect(values('mistral/mistral-large-2512')).toEqual([])
+    expect(values('mistral/ministral-8b-2512')).toEqual([])
+  })
+
+  // Regression: the seat-change chain had no `pi` branch, so a fresh seat fell
+  // through to `enabled.includes('medium')`. Once each model carried its own
+  // ladder most no longer offered medium, and the seat landed on `enabled[0]`
+  // — `off`. Every Pi run would have launched with `--thinking off`.
+  it('seeds a fresh Pi seat on its model default, never on Off', () => {
+    const seat = (model: string): string | undefined =>
+      resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null })
+
+    expect(seat('zai/glm-5.2')).toBe('max')
+    expect(seat('deepseek/deepseek-v4-pro')).toBe('high')
+    expect(seat('openrouter/z-ai/glm-5.2')).toBe('high')
+    expect(seat('openrouter/stealth/space-bunny-alpha')).toBe('max')
+    // Only where Off is the honest answer: a model with no reasoning axis
+    // resolves to no effort at all.
+    expect(seat('mistral/mistral-large-2512')).toBeUndefined()
+  })
+
+  it('locks the ladder for Pi upstreams that always reason', () => {
+    // Both accept a disable flag and ignore it, so an Off stop would be a
+    // control that silently does nothing.
+    for (const modelId of ['zai/glm-4.7', 'minimax/MiniMax-M2.7']) {
+      const options = getEnsembleReasoningOptions('pi', modelId)
+      expect(options.map((option) => option.value), modelId).toEqual(['high'])
+      expect(options[0]?.disabledReason, modelId).toMatch(/always reasons/i)
+    }
+    // GPT-OSS reasoning cannot be switched off on Groq or Cerebras either —
+    // neither enum carries a `none`.
+    expect(getEnsembleReasoningOptions('pi', 'groq/openai/gpt-oss-120b').map((o) => o.value)).toEqual(
+      ['low', 'medium', 'high']
+    )
   })
 
   it('unlocks Devstral Small in both live and Pi BYOK lanes', () => {
@@ -942,16 +1410,58 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/devstral-small')).toEqual([
+    // `mistral/devstral-small` is not a catalogued Pi row, so it keeps the
+    // full ladder rather than being silently stripped of a control.
+    expect(
+      getEnsembleReasoningOptions('pi', 'mistral/devstral-small').map((option) => option.value)
+    ).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
+  it('keeps the full ladder for a model no one has researched yet', () => {
+    const PI_LADDER = [
       { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'Extra High' },
       { value: 'max', label: 'Max' }
+    ]
+    // An uncatalogued or unset model keeps the full ladder: a newly registered
+    // upstream must not be stripped of a control it may well support.
+    expect(getEnsembleReasoningOptions('pi', 'openrouter/stealth/ox-alpha')).toEqual(PI_LADDER)
+    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual(PI_LADDER)
+  })
+
+  it('seeds the Pi add-participant defaults with the full reasoning ladder and a medium default', () => {
+    const pi = getEnsembleModelDefaults('pi')
+    expect(pi.reasoningOptions.map((option) => option.value)).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
     ])
-    expect(getEnsembleReasoningOptions('pi', 'deepseek/deepseek-v4-pro')).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', 'cerebras/gpt-oss-120b')).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
+    expect(pi.defaultReasoning).toBe('medium')
+  })
+
+  it('keeps Pi Minimal distinct from Off when carrying effort between models', () => {
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'pi',
+        model: 'openrouter/thinkingmachines/inkling:free',
+        previousEffort: 'minimal'
+      })
+    ).toBe('minimal')
+    expect(
+      resolveReasoningEffortForSeatChange({
+        provider: 'pi',
+        model: 'openrouter/cohere/north-mini-code:free',
+        previousEffort: 'low'
+      })
+    ).toBe('high')
   })
 
   it('keeps legacy Mistral aliases configurable for picker continuity', () => {
@@ -976,25 +1486,18 @@ describe('mistral configurable reasoning support', () => {
       { value: 'high', label: 'High' },
       { value: 'max', label: 'Max' }
     ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-medium-latest')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
-    expect(getEnsembleReasoningOptions('pi', 'mistral/mistral-small-2603')).toEqual([
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' }
-    ])
+    // Through the Pi lane these are the Mistral API, where only `high` and
+    // `none` have documented semantics — narrower than the Vibe seat above.
+    for (const modelId of ['mistral/mistral-medium-latest', 'mistral/mistral-small-2603']) {
+      expect(
+        getEnsembleReasoningOptions('pi', modelId).map((option) => option.value),
+        modelId
+      ).toEqual(['off', 'high'])
+    }
   })
 
   it('keeps unsupported models on an empty reasoning set', () => {
     expect(getEnsembleReasoningOptions('mistral', undefined)).toEqual([])
-    expect(getEnsembleReasoningOptions('pi', undefined)).toEqual([])
   })
 })
 
@@ -1009,6 +1512,52 @@ describe('mistral configurable reasoning support', () => {
  * helper so a retiring model can't make this look like drift.
  */
 describe('Pi add-participant model options', () => {
+  it('humanises the new OpenRouter rows and applies each model-specific reasoning default', () => {
+    const labels = Object.fromEntries(
+      getEnsembleModelDefaults('pi').modelOptions.map((option) => [option.id, option.label])
+    )
+    expect(labels).toMatchObject({
+      'openrouter/cohere/north-mini-code:free': 'North Mini Code',
+      'openrouter/minimax/minimax-m3:free': 'M3 (OpenRouter)',
+      'openrouter/thinkingmachines/inkling:free': 'Inkling',
+      'openrouter/thinkingmachines/inkling-small:free': 'Inkling Small'
+    })
+
+    const inklingLadder = [
+      { value: 'off', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ]
+    for (const model of [
+      'openrouter/thinkingmachines/inkling:free',
+      'openrouter/thinkingmachines/inkling-small:free'
+    ]) {
+      expect(getEnsembleReasoningOptions('pi', model), model).toEqual(inklingLadder)
+      expect(
+        resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null }),
+        model
+      ).toBe('high')
+    }
+
+    const booleanLadder = [
+      { value: 'off', label: 'Off' },
+      { value: 'high', label: 'High' }
+    ]
+    for (const model of [
+      'openrouter/cohere/north-mini-code:free',
+      'openrouter/minimax/minimax-m3:free'
+    ]) {
+      expect(getEnsembleReasoningOptions('pi', model), model).toEqual(booleanLadder)
+      expect(
+        resolveReasoningEffortForSeatChange({ provider: 'pi', model, previousEffort: null }),
+        model
+      ).toBe('high')
+    }
+  })
+
   it('offers exactly the active catalogued Pi models, with matching labels', () => {
     const now = new Date('2026-08-06T00:00:00.000Z')
     const offered = Object.fromEntries(
@@ -1022,5 +1571,68 @@ describe('Pi add-participant model options', () => {
     )
 
     expect(offered).toEqual(catalogued)
+  })
+})
+
+describe('seat reasoning read-back accepts every rung the seat picker offers', () => {
+  // The seat pickers seed an explicit Off bottom stop whenever a model's base
+  // ladder is empty (`withUltraTaskLadderBottom`), so Off is a rung the user
+  // can really pick. `resolveEnsembleParticipantSettings` returned '' for
+  // exactly those rows, so the pick was erased on the very next read and the
+  // slider snapped to the model default.
+  const PROVIDERS = [
+    'codex',
+    'claude',
+    'kimi',
+    'grok',
+    'cursor',
+    'muse',
+    'mistral',
+    'devin',
+    'pi',
+    'ollama'
+  ] as const
+
+  const emptyLadderRows = PROVIDERS.flatMap((provider) =>
+    getEnsembleModelDefaults(provider)
+      .modelOptions.filter(
+        (model) =>
+          getEnsembleReasoningOptions(provider, model.id).filter((option) => !option.disabled)
+            .length === 0
+      )
+      .map((model) => ({ provider, modelId: model.id }))
+  )
+
+  it('has rows with an empty base ladder to speak about', () => {
+    // Non-vacuity guard: without it the sweep below could pass by iterating
+    // nothing at all.
+    expect(emptyLadderRows.length).toBeGreaterThan(0)
+  })
+
+  it('holds an Off pick on every empty-ladder row instead of snapping it away', () => {
+    const snapped = emptyLadderRows
+      .map(({ provider, modelId }) => {
+        const resolved = resolveEnsembleParticipantSettings({
+          provider,
+          model: modelId,
+          reasoningEffort: 'off'
+        } as unknown as EnsembleParticipant)
+        return resolved.reasoningEffort === 'off'
+          ? null
+          : `${provider}/${modelId}: off -> ${resolved.reasoningEffort || "''"}`
+      })
+      .filter((row): row is string => row !== null)
+
+    expect(snapped).toEqual([])
+  })
+
+  it('still snaps a rung the seat picker never offered', () => {
+    const [row] = emptyLadderRows
+    const resolved = resolveEnsembleParticipantSettings({
+      provider: row.provider,
+      model: row.modelId,
+      reasoningEffort: 'not-a-rung'
+    } as unknown as EnsembleParticipant)
+    expect(resolved.reasoningEffort).not.toBe('not-a-rung')
   })
 })

@@ -165,7 +165,7 @@ const ollama = {
   tools: tools(),
   controls: {
     transport: 'http-chat',
-    reasoningLevel: 'medium',
+    reasoningLevel: true,
     contextCapTokens: 65_536,
     protocolMode: 'native_first',
     compactToolSchemas: false,
@@ -318,7 +318,30 @@ describe('ProviderLaunchAuthorityDigest', () => {
       'taskwraith-gateway-v8',
       'taskwraith-gateway-v8-mesh',
       'taskwraith-gateway-v9',
-      'taskwraith-gateway-v9-mesh'
+      'taskwraith-gateway-v9-mesh',
+      'taskwraith-gateway-v10',
+      'taskwraith-gateway-v10-mesh',
+      'taskwraith-gateway-v11',
+      'taskwraith-gateway-v11-mesh',
+      'taskwraith-gateway-v12',
+      'taskwraith-gateway-v12-mesh',
+      'taskwraith-gateway-v13',
+      'taskwraith-gateway-v13-mesh',
+      'taskwraith-gateway-v14',
+      'taskwraith-gateway-v14-mesh',
+      'taskwraith-gateway-v15',
+      'taskwraith-gateway-v15-mesh',
+      'taskwraith-gateway-v16',
+      'taskwraith-gateway-v16-mesh',
+      'taskwraith-gateway-v17',
+      'taskwraith-gateway-v17-mesh',
+      'taskwraith-gateway-v18',
+      'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
+      'taskwraith-gateway-solo-v1',
+      'taskwraith-gateway-solo-v2',
+      'taskwraith-gateway-solo-v3'
     ] as const
     const digests = new Set<string>()
     for (const profileId of profileIds) {
@@ -332,10 +355,17 @@ describe('ProviderLaunchAuthorityDigest', () => {
     expect(digests.size).toBe(profileIds.length)
   })
 
-  it('accepts the current gateway-v9 tool-surface identities', () => {
+  it('accepts the current gateway tool-surface identities', () => {
     for (const taskWraithMcpProfileId of [
-      'taskwraith-gateway-v9',
-      'taskwraith-gateway-v9-mesh'
+      'taskwraith-gateway-v17',
+      'taskwraith-gateway-v17-mesh',
+      'taskwraith-gateway-v18',
+      'taskwraith-gateway-v18-mesh',
+      'taskwraith-gateway-v19',
+      'taskwraith-gateway-v19-mesh',
+      'taskwraith-gateway-solo-v1',
+      'taskwraith-gateway-solo-v2',
+      'taskwraith-gateway-solo-v3'
     ] as const) {
       const current = {
         ...codex,
@@ -345,6 +375,17 @@ describe('ProviderLaunchAuthorityDigest', () => {
         taskWraithMcpProfileId
       )
     }
+  })
+
+  it('accepts inactive full-v3 as a distinct signed profile identity without selecting it', () => {
+    const input = {
+      ...codex,
+      tools: { ...codex.tools, taskWraithMcpProfileId: 'taskwraith-full-v3' as const }
+    }
+    expect(buildProviderLaunchAuthority(input).tools.taskWraithMcpProfileId).toBe(
+      'taskwraith-full-v3'
+    )
+    expect(providerLaunchAuthorityDigest(input)).not.toBe(providerLaunchAuthorityDigest(codex))
   })
 
   it('is deterministic across object insertion order', () => {
@@ -438,6 +479,12 @@ describe('ProviderLaunchAuthorityDigest', () => {
       providerLaunchAuthorityDigest({
         ...ollama,
         controls: { ...ollama.controls, contextCapTokens: 32_768 }
+      })
+    ).not.toBe(providerLaunchAuthorityDigest(ollama))
+    expect(
+      providerLaunchAuthorityDigest({
+        ...ollama,
+        controls: { ...ollama.controls, reasoningLevel: false }
       })
     ).not.toBe(providerLaunchAuthorityDigest(ollama))
   })

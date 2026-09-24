@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { OLLAMA_CLOUD_PROBE_TIMEOUT_MS } from './OllamaCliSignInMemory'
 import { discoverOllamaCloud, normalizeOllamaCloudRecommendations } from './OllamaCloudCatalog'
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -63,6 +64,7 @@ describe('discoverOllamaCloud', () => {
       supported: true,
       enabled: true,
       authenticated: true,
+      accountProbe: 'answered',
       plan: 'pro',
       source: 'none',
       models: [
@@ -196,7 +198,89 @@ describe('discoverOllamaCloud', () => {
       supported: false,
       enabled: true,
       authenticated: null,
+      accountProbe: 'answered',
       models: []
     })
+  })
+
+  // The gate that lets the remembered CLI sign-in stand in has to tell "no
+  // daemon is there" from "our own deadline fired first": the second is what a
+  // relaunch looks like while main is busy parsing a large chat.
+  it('tells its own deadline apart from a refused connection', async () => {
+    const hangUntilAborted = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const abort = (): void =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (init?.signal?.aborted) abort()
+          else init?.signal?.addEventListener('abort', abort, { once: true })
+        })
+    ) as unknown as typeof fetch
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', { fetchImpl: hangUntilAborted, timeoutMs: 10 })
+    ).resolves.toEqual({
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'timed-out',
+      models: []
+    })
+
+    const refused = vi.fn(async () => {
+      throw new TypeError('fetch failed')
+    }) as unknown as typeof fetch
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', { fetchImpl: refused })
+    ).resolves.toEqual({
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'refused',
+      models: []
+    })
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', {
+        fetchImpl: hangUntilAborted,
+        signal: controller.signal
+      })
+    ).resolves.toMatchObject({ authenticated: null, accountProbe: 'aborted' })
+  })
+
+  // The Host lane waits on the same constant, so main and the Host give one
+  // slow `/api/me` the same answer.
+  it('waits for the account answer up to the deadline it shares with the Host', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const [delayMs, accountProbe] of [
+        [OLLAMA_CLOUD_PROBE_TIMEOUT_MS - 500, 'answered'],
+        [OLLAMA_CLOUD_PROBE_TIMEOUT_MS + 500, 'timed-out']
+      ] as const) {
+        const answerAfterDelay = vi.fn(
+          (url: string, init?: RequestInit) =>
+            new Promise<Response>((resolve, reject) => {
+              if (!url.endsWith('/api/me')) return reject(new TypeError('fetch failed'))
+              const answer = setTimeout(() => resolve(jsonResponse({ plan: 'pro' })), delayMs)
+              init?.signal?.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(answer)
+                  reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+                },
+                { once: true }
+              )
+            })
+        ) as unknown as typeof fetch
+        const discovery = discoverOllamaCloud('http://127.0.0.1:11434', {
+          fetchImpl: answerAfterDelay
+        })
+        await vi.advanceTimersByTimeAsync(delayMs)
+        await expect(discovery).resolves.toMatchObject({ accountProbe })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

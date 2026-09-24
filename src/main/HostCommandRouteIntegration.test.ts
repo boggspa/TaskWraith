@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const mainSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 const ollamaSource = readFileSync(new URL('./ollama/OllamaProvider.ts', import.meta.url), 'utf8')
-const auditGateSource = readFileSync(new URL('./audit/AuditGatesRunner.ts', import.meta.url), 'utf8')
+const auditGateSource = readFileSync(
+  new URL('./audit/AuditGatesRunner.ts', import.meta.url),
+  'utf8'
+)
 
 function between(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -15,7 +18,11 @@ function between(source: string, start: string, end: string): string {
 
 describe('host command route/history integration', () => {
   it('registers before admission/spawn and resolves timeout or error only from actual close', () => {
-    const runner = between(mainSource, 'function runHostCommand(', 'function codexNeedsApprovalGate(')
+    const runner = between(
+      mainSource,
+      'function runHostCommand(',
+      'function codexNeedsApprovalGate('
+    )
     const registered = runner.indexOf('hostCommandOperations.register(')
     const admitted = runner.indexOf('historyClearAdmissionBlocked(')
     const liveBundleGuard = runner.indexOf('runningAppBundleMutationBlockReason({')
@@ -33,6 +40,7 @@ describe('host command route/history integration', () => {
     expect(runner.slice(timeout)).toContain("signalChild('SIGTERM')")
     expect(runner.slice(timeout)).toContain("signalChild('SIGKILL')")
     expect(runner.slice(timeout)).not.toContain('resolveCommand(')
+    expect(runner).toContain('for (const key of unsetCommandEnvironment || []) delete env[key]')
   })
 
   it('retains Codex reruns and every brokered workspace command through result projection', () => {
@@ -47,11 +55,38 @@ describe('host command route/history integration', () => {
       rerun.indexOf('completeHostCommandTerminalProjection(')
     )
 
-    const mcp = between(mainSource, 'async function executeGeminiMcpTool(', 'async function startGeminiMcpBroker(')
+    const mcp = between(
+      mainSource,
+      'async function executeUnscopedGeminiMcpTool(',
+      'async function startGeminiMcpBroker('
+    )
     expect(mcp).toContain("source: 'brokered-mcp'")
     // Call head only: the brokered shell also forwards a session release-lease
     // approval, so this call is no longer two-arity.
-    expect(mcp).toContain('runHostCommand(command, cwd')
+    expect(mcp).toContain('executionCommand = [liveMatch.executableRealPath, ...liveMatch.argv]')
+    expect(mcp).toContain('runHostCommand(executionCommand, executionCwd')
+    expect(mcp).not.toContain('runHostCommand(command, cwd')
+    expect(mcp).toContain('if (workspaceInspectionFastPath)')
+    expect(mcp).toContain('workspaceInspectionExecutionPlan(command, {')
+    expect(mcp).toContain('workspaceInspectionProgramPlan(command, {')
+    expect(mcp).toContain('workspaceInspectionSequencePlan(command, {')
+    expect(mcp).toContain('workspaceInspectionOutsideReadsStillHold(')
+    expect(mcp).toContain("workspaceInspectionProgram.recipe === 'workspace_git_snapshot_v1'")
+    expect(mcp).toContain('executeWorkspaceInspectionProgram(')
+    expect(mcp).toContain('[invocation.executableRealPath, ...invocation.argv]')
+    expect(mcp).toContain('canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)')
+    expect(mcp).toContain('workspaceExecutionContext.assertMutationStillLive?.()')
+    expect(mcp).toContain('Marker output is a bounded list of JSON-escaped names only')
+    expect(mcp).toContain('workspaceInspectionPlan.executableRealPath')
+    expect(mcp).toContain('executionEnvironment = workspaceInspectionPlan.environment')
+    expect(mcp).toContain('unsetExecutionEnvironment = workspaceInspectionPlan.unsetEnvironment')
+    expect(mcp).toContain('workspaceInspectionBrokeredShellHardening(command, {')
+    expect(mcp.indexOf('if (workspaceInspectionFastPath)')).toBeLessThan(
+      mcp.indexOf('runHostCommand(executionCommand, executionCwd')
+    )
+    expect(mcp.indexOf('workspaceInspectionProgramPlan(command, {')).toBeLessThan(
+      mcp.indexOf('executeWorkspaceInspectionProgram(')
+    )
     expect(mcp).toContain('workspaceToolExecutors.executeWorkspaceMcpTool')
     expect(mcp).toContain('completeHostCommandTerminalProjection(hostCommandProjection)')
   })

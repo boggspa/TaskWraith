@@ -3,6 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createRef } from 'react'
 import { TranscriptPanel } from './App'
 import {
+  collapsedSuperGroupLeadForRow,
+  closeoutScopedEvidenceMessages
+} from './components/TranscriptPanel'
+import {
   TranscriptHistoryPageBoundary,
   buildTranscriptHistoryPageBoundaryMessages
 } from './components/TranscriptHistoryPageBoundary'
@@ -230,6 +234,37 @@ function transcriptParityMessages(provider: ProviderId, chatKind: ChatKind): Cha
   ]
 }
 
+describe('execution graph transcript visibility', () => {
+  it('keeps internal graph prompts and raw stage output behind the execution surface', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            { ...msg(0), content: 'Ordinary user request' },
+            {
+              ...msg(2),
+              content: 'INTERNAL_GRAPH_PROMPT',
+              metadata: { kind: 'executionGraphAttempt' }
+            },
+            {
+              ...msg(3),
+              content: 'INTERNAL_SCOUT_OUTPUT',
+              metadata: { kind: 'executionGraphAttemptOutput' }
+            },
+            { ...msg(1), content: 'Ordinary parent reply' }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Ordinary user request')
+    expect(html).toContain('Ordinary parent reply')
+    expect(html).not.toContain('INTERNAL_GRAPH_PROMPT')
+    expect(html).not.toContain('INTERNAL_SCOUT_OUTPUT')
+  })
+})
+
 /** Pull a spacer div's pixel height out of the static markup. */
 function spacerHeight(html: string, cls: string): number {
   const idx = html.indexOf(cls)
@@ -448,7 +483,88 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Model: K3 Max')
   })
 
-  it('renders the active Ensemble participant role in the working indicator', () => {
+  it.each([
+    ['assistant', 'kimi-k2.8-preview', 'K2.8 Preview Max'],
+    ['tool', 'kimi-k2.8-preview', 'K2.8 Preview Max'],
+    ['assistant', 'kimi-k2.7-code', 'K2.7 Coding Thinking'],
+    ['tool', 'kimi-k2.7-code', 'K2.7 Coding Thinking']
+  ] as const)('attributes a %s header to its recorded %s run', (role, actualModel, badge) => {
+    const chat = {
+      appChatId: 'kimi-recorded-header',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      title: 'Recorded header',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'run-recorded',
+          provider: 'kimi',
+          requestedModel: 'kimi-k2.7-code',
+          actualModel,
+          startedAt: '2026-09-12T12:00:00.000Z',
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'on',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'read_only'
+          }
+        }
+      ]
+    } as ChatRecord
+    const message: ChatMessage = {
+      id: 'recorded-header',
+      role,
+      content: role === 'assistant' ? 'Completed the review.' : '',
+      timestamp: '2026-09-12T12:00:01.000Z',
+      runId: 'run-recorded',
+      metadata: {
+        kind: role === 'assistant' ? 'ensembleParticipant' : 'ensembleParticipantTools',
+        ensembleProvider: 'kimi',
+        ensembleRole: 'Reviewer',
+        ensembleModel: 'kimi-k2.7-code',
+        ensembleReasoningEffort: 'on',
+        ensembleThinkingEnabled: true
+      },
+      ...(role === 'tool'
+        ? {
+            toolActivities: [
+              {
+                id: 'thinking-recorded',
+                toolName: 'kimi_reasoning',
+                displayName: 'Kimi thinking',
+                category: 'task',
+                status: 'success',
+                resultSummary: 'Reviewed the request.'
+              } as ToolActivity
+            ]
+          }
+        : {})
+    }
+    const captured = JSON.stringify({ chat, message })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentChat: chat,
+          currentProvider: 'codex',
+          currentProviderLabel: 'Codex',
+          messages: [message]
+        })}
+      />
+    )
+
+    expect(html).toContain('Kimi / Reviewer')
+    expect(html).toContain(`title="Model: ${badge}"`)
+    expect(JSON.stringify({ chat, message })).toBe(captured)
+  })
+
+  it('renders one unified Working signal with the active Ensemble seat and telemetry', () => {
     const chat = activeEnsembleChat(
       ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })
     )
@@ -481,14 +597,129 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('Codex')
-    expect(html).toContain('Role: Builder')
-    expect(html).toContain('Builder')
-    expect(html).toContain('5.5 Extra High')
-    expect(html).toContain('provider-codex')
+    expect(html).toContain('message-working-unified')
+    expect(html).toContain('message-working-seat-grid')
+    expect(html).toContain('data-label="#1 Builder"')
+    expect(html).toContain('--message-working-accent:var(--provider-codex-color, var(--accent))')
     expect(html).toContain('message-working-telemetry')
     expect(html).toContain('digit-odometer')
+    expect(html).not.toContain('Role: Builder')
+    expect(html).not.toContain('5.5 Extra High')
     expect(html).not.toContain('message-working-sparkles')
+  })
+
+  it('renders six concurrent seats under one Working ghost in roster order', () => {
+    const participants = [
+      ensembleParticipant({ id: 'general', role: 'General', order: 1 }),
+      ensembleParticipant({ id: 'specialist-a', role: 'Specialist', order: 2 }),
+      ensembleParticipant({ id: 'reviewer', role: 'Reviewer', order: 3 }),
+      ensembleParticipant({ id: 'specialist-b', role: 'Specialist', order: 4 }),
+      ensembleParticipant({ id: 'researcher', role: 'Researcher', order: 5 }),
+      ensembleParticipant({ id: 'specialist-c', role: 'Specialist', order: 6 })
+    ]
+    const chat = activeEnsembleChat(participants[0])
+    chat.ensemble!.maxParticipants = participants.length
+    chat.ensemble!.participants = participants
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      concurrentMode: true,
+      fanoutPolicy: 'read_only',
+      activeParticipantId: participants[0].id,
+      participants: participants.map((participant) => ({
+        participantId: participant.id,
+        provider: participant.provider,
+        role: participant.role,
+        order: participant.order,
+        model: participant.model,
+        status: 'running' as const
+      })),
+      lanes: Object.fromEntries(
+        participants.map((participant, index) => [
+          `lane-${index + 1}`,
+          {
+            laneId: `lane-${index + 1}`,
+            participantId: participant.id,
+            provider: participant.provider,
+            status: 'running' as const,
+            intent: 'read' as const,
+            startedAt: `2026-07-01T00:00:0${index + 1}.000Z`
+          }
+        ])
+      )
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html.match(/class="message-working-ghost"/g) || []).toHaveLength(1)
+    expect(html.match(/message-working-seat-label/g) || []).toHaveLength(6)
+    expect(html).toContain('data-label="#1 General"')
+    expect(html).toContain('data-label="#4 Specialist"')
+    expect(html).toContain('data-label="#6 Specialist"')
+    expect(html).not.toContain('message-meta-role-badge')
+  })
+
+  it('keeps the roster seat number when a legacy zero-based partial round omits seat one', () => {
+    const general = ensembleParticipant({ id: 'general', role: 'General', order: 0 })
+    const reviewer = ensembleParticipant({ id: 'reviewer', role: 'Reviewer', order: 1 })
+    const chat = activeEnsembleChat(general)
+    chat.ensemble!.participants = [general, reviewer]
+    chat.ensemble!.activeRound = {
+      ...chat.ensemble!.activeRound!,
+      concurrentMode: true,
+      fanoutPolicy: 'read_only',
+      activeParticipantId: reviewer.id,
+      participants: [
+        {
+          participantId: reviewer.id,
+          provider: reviewer.provider,
+          role: reviewer.role,
+          order: reviewer.order,
+          model: reviewer.model,
+          status: 'running'
+        }
+      ],
+      lanes: {
+        reviewer: {
+          laneId: 'reviewer',
+          participantId: reviewer.id,
+          provider: reviewer.provider,
+          status: 'running',
+          intent: 'read',
+          startedAt: '2026-07-01T00:00:02.000Z'
+        }
+      }
+    }
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('data-label="#2 Reviewer"')
+    expect(html).not.toContain('data-label="#1 Reviewer"')
   })
 
   it('renders a neutral handoff status without claiming that either seat is working', () => {
@@ -637,7 +868,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('--message-working-accent:var(--provider-ensemble-color, var(--accent))')
   })
 
-  it('uses Ollama display-brand label and hue for an active Ensemble local model', () => {
+  it('uses the Ollama display-brand hue while keeping the active seat role-only', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -660,13 +891,13 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('Alibaba')
-    expect(html).toContain('Role: Scout')
-    expect(html).toContain('Qwen 3.5 (9B Param)')
-    expect(html).toContain('provider-alibaba')
+    expect(html).toContain('data-label="#1 Scout"')
+    expect(html).toContain('--message-working-accent:var(--provider-alibaba-color, var(--accent))')
+    expect(html).not.toContain('Role: Scout')
+    expect(html).not.toContain('Qwen 3.5 (9B Param)')
   })
 
-  it('uses the Pi upstream brand, hue, and human model name for an active Ensemble working indicator', () => {
+  it('uses the Pi upstream hue while keeping the active seat role-only', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
         {...makeProps({
@@ -689,10 +920,9 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       />
     )
 
-    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('data-label="#1 Scout"')
     expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
-    expect(html).toContain('DeepSeek')
-    expect(html).toContain('DeepSeek V4 Flash')
+    expect(html).not.toContain('V4 Flash')
   })
 
   it('scopes a settled solo tool stack to its Pi upstream brand hue', () => {
@@ -755,7 +985,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('--accent:var(--provider-deepseek-color, var(--accent))')
     expect(html).not.toContain('--accent:var(--provider-pi-color, var(--accent))')
     expect(html).toContain('>DeepSeek</span>')
-    expect(html).toContain('Model: DeepSeek V4 Flash')
+    expect(html).toContain('Model: V4 Flash')
   })
 
   it('prepends participant-style headers to live tool-call viewports', () => {
@@ -872,6 +1102,223 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('taskwraith-closeout-badge provider-pi')
   })
 
+  it('suppresses a persisted Task Complete card that matches a suppressed notice', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:00:10.000Z',
+            exitCode: 130,
+            runId: 'steered-run',
+            suppressRunSummary: true
+          },
+          messages: [
+            {
+              id: 'closeout-steered',
+              role: 'system',
+              content: 'Steer handoff close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'steered-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).not.toContain('run-complete-card')
+  })
+
+  it('suppresses a persisted Task Complete card from the durable run flag after reload', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentChat: {
+            appChatId: 'suppressed-chat',
+            runs: [{ runId: 'steered-run', suppressRunSummary: true }]
+          },
+          messages: [
+            {
+              id: 'closeout-steered-reload',
+              role: 'system',
+              content: 'Steer handoff close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'steered-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).not.toContain('run-complete-card')
+  })
+
+  it('uses durable failed and cancelled statuses for historical Task Complete cards', () => {
+    const epic = {
+      closeoutParticipantTable: {
+        rows: [
+          {
+            participantId: 'p1',
+            seatText: 'Worker',
+            workLabel: '1 Turn',
+            status: 'failed',
+            statusGlyphMarkdown: '[Failed](ensemble-status://failed)'
+          }
+        ]
+      }
+    }
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'closeout-failed-history',
+              role: 'system',
+              content: 'Failed close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutStatus: 'failed',
+                ...epic
+              }
+            },
+            {
+              id: 'closeout-cancelled-history',
+              role: 'system',
+              content: 'Cancelled close-out.',
+              timestamp: '2026-01-01T00:01:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutStatus: 'cancelled',
+                ...epic
+              }
+            },
+            {
+              id: 'history-tail',
+              role: 'assistant',
+              content: 'Later response.',
+              timestamp: '2026-01-01T00:02:10.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Task failed')
+    expect(html).toContain('Run cancelled')
+    expect(html).not.toContain('Task complete')
+  })
+
+  it('does not fold later live files into a historical close-out card', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          displayFileChangeSummaries: [
+            { path: 'src/later-run.ts', status: 'modified', additions: 8, deletions: 1 }
+          ],
+          messages: [
+            {
+              id: 'closeout-history-files',
+              role: 'system',
+              content: 'Historical close-out.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                sourceRunId: 'old-run',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              id: 'later-run-tool',
+              role: 'tool',
+              content: '',
+              timestamp: '2026-01-01T00:01:10.000Z',
+              runId: 'later-run'
+            },
+            {
+              id: 'history-tail',
+              role: 'assistant',
+              content: 'Later response.',
+              timestamp: '2026-01-01T00:02:10.000Z'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('run-complete-card')
+    expect(html).not.toContain('src/later-run.ts')
+  })
+
+  it('limits a tombstoned close-out preview to durable run evidence', () => {
+    const scoped = closeoutScopedEvidenceMessages(
+      [
+        {
+          id: 'old-run-edit',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          runId: 'old-run'
+        },
+        {
+          id: 'later-run-edit',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-01-01T00:01:01.000Z',
+          runId: 'later-run'
+        }
+      ],
+      {
+        runId: undefined,
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: { kind: TASKWRAITH_CLOSEOUT_KIND, sourceRunId: 'old-run' }
+      } as ChatMessage
+    )
+
+    expect(scoped?.map((message) => message.id)).toEqual(['old-run-edit'])
+  })
+
   it('renders persisted closeout epic stack from message metadata without runCompleteNotice', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel
@@ -912,7 +1359,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
                     additions: 3,
                     deletions: 1
                   }
-                ]
+                ],
+                closeoutFileChangesTotal: 2
               }
             }
           ]
@@ -928,6 +1376,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Persist closeout epic')
     expect(html).toContain('File changes')
     expect(html).toContain('src/foo.ts')
+    expect(html).toContain('2 files · 1 captured')
+    expect(html).toContain('Showing 1 of 2 changed files; 1 additional path was not captured')
     expect(html).toContain('+3')
     expect(html).toContain('-1')
     // Epic is nested inside the Task Complete card — one outer card, one stack.
@@ -975,6 +1425,48 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect((html.match(/run-complete-card/g) || []).length).toBe(1)
     expect((html.match(/run-complete-epic-stack/g) || []).length).toBe(1)
     expect(html).not.toContain('Awaiting your next prompt.')
+  })
+
+  it('does not let an older round closeout suppress the current footer card', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          runCompleteNotice: {
+            timestamp: '2026-01-01T00:10:00.000Z',
+            exitCode: 0,
+            roundId: 'round-new'
+          },
+          messages: [
+            {
+              id: 'closeout-old',
+              role: 'system',
+              content: 'Worked for 30s.\n\nClose-out:\n\nOld round.',
+              timestamp: '2026-01-01T00:00:10.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutRoundId: 'round-old',
+                closeoutParticipantTable: {
+                  rows: [
+                    {
+                      participantId: 'p1',
+                      seatText: 'Worker',
+                      workLabel: '1 Turn',
+                      status: 'answered',
+                      statusGlyphMarkdown: '[Answered](ensemble-status://answered)'
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    // The historical closeout keeps its historical card, while the unmatched
+    // current notice still renders its footer instead of disappearing.
+    expect((html.match(/run-complete-card/g) || []).length).toBe(2)
   })
 
   it('hosts Task Complete from Sub-threads tombstone alone', () => {
@@ -1279,6 +1771,56 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html.match(/data-fanout-slot="trail"/g)).toHaveLength(1)
   })
 
+  it('spans a lane with no row to share, rather than leaving a hole beside it', () => {
+    // THE NEGATIVE THE LANE GRID RESTS ON, and which had no DOM-level guard.
+    // The CSS spans every child of `.transcript-inner` and opts ONLY the two
+    // CELL values back out, so an unpaired lane keeps the full column purely by
+    // not carrying `lead` or `trail`. A model that stamped a cell slot on every
+    // lane would pass every other lane assertion in this file while shipping
+    // the half-width-card-with-a-hole defect the `solo` rule exists to refuse.
+    const spanLane = (id: string, order: number, content: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: `2026-08-15T00:4${order}:00.000Z`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: 'round-span-lane',
+        ensembleParticipantId: id,
+        ensembleLaneId: `lane-${id}`,
+        ensembleLaneIntent: 'write',
+        ensembleProvider: 'codex',
+        ensembleRole: id,
+        ensembleOrder: order,
+        ensembleFanoutWaveId: 'span-wave',
+        ensembleFanoutCategory: 'user'
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          messages: [
+            spanLane('span-1', 1, 'SPAN_LANE_ONE'),
+            spanLane('span-2', 2, 'SPAN_LANE_TWO'),
+            spanLane('span-3', 3, 'SPAN_LANE_THREE')
+          ]
+        })}
+      />
+    )
+
+    // Three lanes at the two tracks a renderToStaticMarkup suite always
+    // resolves to: one shared grid row, then one spanning card.
+    expect(html.match(/data-fanout-slot="solo"/g)).toHaveLength(1)
+    // Positive controls in the same markup, proving the matcher can fire on a
+    // cell value and that the run really did pair.
+    expect(html.match(/data-fanout-slot="lead"/g)).toHaveLength(1)
+    expect(html.match(/data-fanout-slot="trail"/g)).toHaveLength(1)
+    expect(html.match(/data-fanout-slot="/g)).toHaveLength(3)
+  })
+
   it('folds a settled fan-out wave to a stage-aware handle when the next turn begins', () => {
     const roundId = 'round-persisted-fanout'
     const roundMessages: ChatMessage[] = [
@@ -1384,6 +1926,168 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-mistral')
     expect(html).not.toContain('PERSISTED_LANE_MARKER')
     expect(html).toContain('The worker turn has begun.')
+  })
+
+  it('folds every wave to its own one-liner when the dispatch receipts are hidden as routine notices', () => {
+    // Production receipt wording — this is what `isRedundantEnsembleTranscriptNotice`
+    // hides, unlike the "read-only participants" phrasing of the test above.
+    // Hiding the receipt must not starve the fold of its anchor: each settled
+    // wave still folds to its own one-liner at the receipt's position, a live
+    // later wave leaves the settled ones folded, and the receipt itself never
+    // renders.
+    const roundId = 'round-hidden-receipts'
+    const receipt = (id: string, waveId: string): ChatMessage => ({
+      id,
+      role: 'system',
+      content:
+        'Locked writer fan-out · 1 participant(s) dispatched concurrently (0 read / 1 write-intent).',
+      timestamp: '2026-09-02T19:00:00.000Z',
+      metadata: {
+        kind: 'ensembleRoundStatus',
+        ensembleRoundId: roundId,
+        ensembleFanoutWaveId: waveId,
+        ensembleFanoutCategory: 'orchestrated',
+        ensembleFanoutLabel: 'Locked writer fan-out',
+        ensembleFanoutDispatch: {
+          label: 'Locked writer fan-out',
+          category: 'orchestrated',
+          participants: [
+            {
+              participantId: 'work-1',
+              provider: 'pi',
+              role: 'Work1',
+              model: 'mimo-v2.5-pro',
+              intent: 'write'
+            }
+          ]
+        }
+      }
+    })
+    const lane = (
+      id: string,
+      waveId: string,
+      attempt: number,
+      status: string,
+      content: string
+    ): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: '2026-09-02T19:00:01.000Z',
+      runId: `run-${id}`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: roundId,
+        ensembleParticipantId: 'work-1',
+        ensembleLaneId: `lane-${roundId}-work-1-${attempt}`,
+        ensembleLaneIntent: 'write',
+        ensembleFanoutWaveId: waveId,
+        ensembleFanoutLabel: 'Locked writer fan-out',
+        ensembleFanoutCategory: 'orchestrated',
+        ensembleProvider: 'pi',
+        ensembleRole: 'Work1',
+        ensembleStageRole: 'worker',
+        ensembleModel: 'mimo-v2.5-pro',
+        ensembleStatus: status,
+        ensembleOrder: 11
+      }
+    })
+    const orchestratorTurn = (id: string, content: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: '2026-09-02T19:00:02.000Z',
+      runId: `run-${id}`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: roundId,
+        ensembleParticipantId: 'orchestrator',
+        ensembleProvider: 'claude',
+        ensembleRole: 'Orchestrator',
+        ensembleStatus: 'answered'
+      }
+    })
+    const prompt: ChatMessage = {
+      id: 'hidden-receipt-prompt',
+      role: 'user',
+      content: 'Fix the fold.',
+      timestamp: '2026-09-02T18:59:59.000Z',
+      metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+    }
+    const render = (messages: ChatMessage[]): string =>
+      renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            collapseOlderRounds: true,
+            currentChat: {
+              appChatId: 'hidden-receipt-chat',
+              title: 'Hidden receipts',
+              chatKind: 'ensemble',
+              provider: 'claude',
+              createdAt: 0,
+              updatedAt: 0,
+              archived: false,
+              messages,
+              runs: [],
+              ensemble: {
+                enabled: true,
+                maxParticipants: 2,
+                participants: [],
+                activeRound: {
+                  roundId,
+                  status: 'running',
+                  prompt: 'Fix the fold.',
+                  startedAt: '2026-09-02T19:00:00.000Z',
+                  activeParticipantId: 'orchestrator',
+                  participants: [
+                    {
+                      participantId: 'orchestrator',
+                      provider: 'claude',
+                      role: 'Orchestrator',
+                      order: 1,
+                      status: 'running'
+                    }
+                  ]
+                }
+              }
+            } as ChatRecord,
+            messages
+          })}
+        />
+      )
+
+    const secondWaveLive = render([
+      prompt,
+      receipt('receipt-a', 'wave-a'),
+      lane('lane-a', 'wave-a', 1, 'answered', 'WAVE_A_LANE_MARKER'),
+      orchestratorTurn('orchestrator-1', 'ORCHESTRATOR_BETWEEN_WAVES'),
+      receipt('receipt-b', 'wave-b'),
+      lane('lane-b', 'wave-b', 2, 'running', 'WAVE_B_LANE_MARKER')
+    ])
+    // Wave A is a one-liner, wave B is a live card, and neither receipt renders.
+    expect(secondWaveLive.match(/data-fanout-stage="work"/g)).toHaveLength(1)
+    expect(secondWaveLive).not.toContain('WAVE_A_LANE_MARKER')
+    expect(secondWaveLive).toContain('WAVE_B_LANE_MARKER')
+    expect(secondWaveLive.match(/ensemble-fanout-result-card/g)).toHaveLength(1)
+    expect(secondWaveLive).not.toContain('ensemble-fanout-dispatch-message')
+    expect(secondWaveLive).not.toContain('dispatched concurrently')
+
+    const secondWaveSettled = render([
+      prompt,
+      receipt('receipt-a', 'wave-a'),
+      lane('lane-a', 'wave-a', 1, 'answered', 'WAVE_A_LANE_MARKER'),
+      orchestratorTurn('orchestrator-1', 'ORCHESTRATOR_BETWEEN_WAVES'),
+      receipt('receipt-b', 'wave-b'),
+      lane('lane-b', 'wave-b', 2, 'answered', 'WAVE_B_LANE_MARKER'),
+      orchestratorTurn('orchestrator-2', 'ORCHESTRATOR_AFTER_WAVES')
+    ])
+    // Both waves fold, each to its OWN one-liner — never one merged handle.
+    expect(secondWaveSettled.match(/data-fanout-stage="work"/g)).toHaveLength(2)
+    expect(secondWaveSettled).not.toContain('WAVE_A_LANE_MARKER')
+    expect(secondWaveSettled).not.toContain('WAVE_B_LANE_MARKER')
+    expect(secondWaveSettled).not.toContain('ensemble-fanout-result-card')
+    expect(secondWaveSettled).toContain('ORCHESTRATOR_AFTER_WAVES')
   })
 
   it('folds a complete parallel-result wave under a Sub-thread viewport header', () => {
@@ -1507,6 +2211,50 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('parallel-result-viewport-header')
     expect(html).toContain('data-fanout-slot="lead"')
     expect(html).toContain('data-fanout-slot="trail"')
+  })
+
+  it('pairs two adjacent Fleet cards only when the same run called them', () => {
+    const fleet = (id: string, runId: string): ChatMessage => ({
+      id,
+      role: 'system',
+      content: `Fleet ${id}`,
+      timestamp: '2026-08-24T02:00:00.000Z',
+      runId,
+      metadata: {
+        kind: 'fleetWave',
+        waveId: `wave-${id}`,
+        parentProvider: 'codex',
+        status: 'running',
+        workers: []
+      }
+    })
+    const messages = [fleet('fleet-a', 'caller-run'), fleet('fleet-b', 'caller-run')]
+    const chat = {
+      appChatId: 'fleet-pair-chat',
+      title: 'Fleet pair',
+      chatKind: 'single',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages,
+      runs: []
+    } as ChatRecord
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          currentChat: chat,
+          messages
+        })}
+      />
+    )
+
+    expect(html).toContain('data-fanout-slot="lead"')
+    expect(html).toContain('data-fanout-slot="trail"')
+    expect(html.match(/fleet-wave-card/g)?.length).toBeGreaterThanOrEqual(2)
   })
 
   it('ignores legacy completion-claim support metadata in the transcript', () => {
@@ -1643,7 +2391,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(blocks).toBeGreaterThan(0)
     expect(blocks).toBeLessThan(40)
     // Bottom of the list is mounted; the far top is collapsed.
-    expect(html).toContain('data-vrow-id="m119#119"')
+    expect(html).toContain('data-vrow-id="m119#0"')
     expect(html).not.toContain('data-vrow-id="m0#0"')
     // The window reaches the end → bottom spacer collapses to 0, the
     // existing `scrollTop = scrollHeight` snap still hits the true bottom.
@@ -1663,8 +2411,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
     expect(top.includes('data-vrow-id="m0#0"')).toBe(true)
     expect(bottom.includes('data-vrow-id="m0#0"')).toBe(false)
-    expect(top.includes('data-vrow-id="m119#119"')).toBe(false)
-    expect(bottom.includes('data-vrow-id="m119#119"')).toBe(true)
+    expect(top.includes('data-vrow-id="m119#0"')).toBe(false)
+    expect(bottom.includes('data-vrow-id="m119#0"')).toBe(true)
   })
 
   it('1.0.7 — KEEPS virtualisation ON for ensemble chats (oscillation fixed at source)', () => {
@@ -2113,6 +2861,122 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       expect(html).not.toContain('Awaiting your next prompt.')
       expect(html).not.toContain('tone-warning')
       expect(html).not.toContain('tone-danger')
+    })
+
+    // The bug this exists to stop: an UltraTask can pause or fail minutes after
+    // the initiating turn ends, and a green "Task complete" over live work reads
+    // as an answer. The thread is still accountable, so it has not finished.
+    it('suppresses the close-out while the thread owns an unsettled execution', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            runCompleteNotice: notice,
+            hasLiveOwnedExecution: true
+          })}
+        />
+      )
+      expect(html).not.toContain('Task complete')
+    })
+
+    // Suppression is render-time, so the card must come back on its own the
+    // moment the last owned execution settles. Gating the authoring effects
+    // instead would have lost it permanently.
+    it('restores the close-out once no owned execution is live', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            runCompleteNotice: notice,
+            hasLiveOwnedExecution: false
+          })}
+        />
+      )
+      expect(html).toContain('Task complete')
+    })
+
+    it('renders a delivered execution result as its own graph-native card', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [
+              {
+                id: 'execution-result-1',
+                role: 'tool',
+                content: 'The reviewed synthesis.',
+                timestamp: new Date('2026-08-29T00:00:00.000Z').toISOString(),
+                metadata: {
+                  kind: 'executionResult',
+                  executionId: 'ultratask-1',
+                  executionMailboxEventId: 'execution-result-abc',
+                  executionOutcome: 'requires_action',
+                  executionTitle: 'UltraTask · gemini-3.1-pro',
+                  executionSeatId: 'antigravity:gemini-3.1-pro'
+                }
+              }
+            ]
+          })}
+        />
+      )
+      expect(html).toContain('execution-result-card')
+      expect(html).toContain('UltraTask · gemini-3.1-pro')
+      // A paused graph must not read as a failure: it is stopped for a person.
+      expect(html).toContain('Needs attention')
+      // The delivered result must be VISIBLE, not collapsed behind the card's
+      // disclosure chevron. This card exists so a graph's answer reaches the
+      // thread; hiding it would reproduce the silence it was built to remove.
+      expect(html).toContain('The reviewed synthesis.')
+    })
+
+    it('shows one actionable live card while a delivered execution is paused', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [
+              {
+                id: 'execution-result-paused',
+                role: 'tool',
+                content: 'Internal blocker result card.',
+                timestamp: '2026-08-29T00:00:00.000Z',
+                metadata: {
+                  kind: 'executionResult',
+                  executionId: 'ultratask-paused',
+                  executionOutcome: 'requires_action'
+                }
+              }
+            ],
+            hasLiveOwnedExecution: true,
+            ownedExecutionViews: [
+              {
+                executionId: 'ultratask-paused',
+                title: 'UltraTask · paused',
+                state: 'requires_action',
+                settled: false,
+                cells: [{ id: 'scout-1', status: 'needs_action', kind: 'solo_agent' }],
+                counts: {
+                  total: 1,
+                  proposed: 0,
+                  queued: 0,
+                  running: 0,
+                  needsAction: 1,
+                  completed: 0,
+                  failed: 0,
+                  skipped: 0,
+                  settled: 0
+                }
+              }
+            ],
+            onResumeOwnedExecution: () => {},
+            onCancelOwnedExecution: () => {}
+          })}
+        />
+      )
+      expect(html).toContain('execution-live-card')
+      expect(html).toContain('execution-live-card-resume')
+      expect(html).not.toContain('execution-result-card-body')
+      expect(html).not.toContain('Internal blocker result card.')
     })
 
     it('replaces the title with the blocker in red when the round produced nothing', () => {
@@ -2875,6 +3739,110 @@ describe('collapsed one-liner super-groups', () => {
     expect(html).toContain('collapsed-activity-stack-summary')
   })
 
+  it('resolves a hidden jump target to its super-group lead before focus', () => {
+    const groups = new Map<string, { leadRowKey: string }>([
+      ['super-lead#4', { leadRowKey: 'super-lead#4' }],
+      ['super-member#7', { leadRowKey: 'super-lead#4' }]
+    ])
+
+    expect(
+      collapsedSuperGroupLeadForRow(groups, { rowKey: 'super-member#7' } as { rowKey: string })
+    ).toBe('super-lead#4')
+    expect(collapsedSuperGroupLeadForRow(groups, null)).toBeNull()
+  })
+
+  it('keeps duplicate message-id super-groups independent by occurrence', () => {
+    const messages: ChatMessage[] = [
+      { id: 'start', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'duplicate-stack',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [shellActivity('first-shell')]
+      },
+      {
+        id: 'first-notice',
+        role: 'system',
+        content: 'FIRST_DUPLICATE_GROUP_NOTICE',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'separator',
+        role: 'assistant',
+        content: 'A non-foldable separator.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      },
+      {
+        id: 'duplicate-stack',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:04.000Z',
+        toolActivities: [shellActivity('second-shell-1'), shellActivity('second-shell-2')]
+      },
+      {
+        id: 'second-notice',
+        role: 'system',
+        content: 'SECOND_DUPLICATE_GROUP_NOTICE',
+        timestamp: '2026-01-01T00:00:05.000Z'
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-01-01T00:00:06.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html.match(/collapsed-activity-stack-summary/g)?.length).toBe(2)
+    expect(html.match(/Ran 1 command/g)?.length).toBe(1)
+    expect(html.match(/Ran 2 commands/g)?.length).toBe(1)
+    expect(html).not.toContain('FIRST_DUPLICATE_GROUP_NOTICE')
+    expect(html).not.toContain('SECOND_DUPLICATE_GROUP_NOTICE')
+  })
+
+  it('does not absorb all-hidden infrastructure into an empty super-group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'hidden-infrastructure',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'hidden-infrastructure-tool',
+            toolName: 'antigravity_init',
+            displayName: 'Used AntiGravity Init',
+            category: 'unknown',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'infrastructure-notice',
+        role: 'system',
+        content: 'INFRASTRUCTURE_NOTICE_MARKER retained.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Done.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html).toContain('INFRASTRUCTURE_NOTICE_MARKER retained.')
+    expect(html).not.toContain('Activity · 1 system notice')
+  })
+
   it('leaves a lone settled stack as an ordinary one-liner', () => {
     const loneStack = [
       superGroupMessages[0],
@@ -2886,6 +3854,108 @@ describe('collapsed one-liner super-groups', () => {
     )
     expect(html).toContain('Ran 1 command')
     expect(html).not.toContain('system notice')
+  })
+})
+
+describe('routine Ensemble transcript receipts', () => {
+  it('hides fan-out queue and adapter notices without leaving a system-notice group', () => {
+    const notices = [
+      'User Fan-Out host queue · 0 admitted now, 1 waiting; 5/30 Ensemble slots active across chats. Up to 10 active per chat; chats below 3 get priority as slots free up. Providers and seats remain available.',
+      'User Fan-Out provider dispatch started · Work1 crossed the adapter boundary; remaining accepted lanes continue through host admission.',
+      'Locked writer fan-out provider dispatch started · Work4 crossed the adapter boundary; remaining accepted lanes continue through host admission.'
+    ]
+    const messages: ChatMessage[] = [
+      ...notices.map(
+        (content, index): ChatMessage => ({
+          id: `routine-fanout-${index}`,
+          role: 'system',
+          content,
+          timestamp: `2026-09-05T00:43:0${index}.000Z`,
+          metadata: { kind: 'ensembleRoundStatus' }
+        })
+      ),
+      {
+        id: 'reply',
+        role: 'assistant',
+        content: 'MUSE_REPLY_MARKER',
+        timestamp: '2026-09-05T00:43:05.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('MUSE_REPLY_MARKER')
+    expect(html).not.toContain('host queue')
+    expect(html).not.toContain('provider dispatch started')
+    expect(html).not.toContain('system notices')
+  })
+
+  it('hides historical success notices whose effect is already visible', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      ...[
+        'Routed next: Claude.',
+        '@-mention: Boss is Boss and takes routing priority over advisory participant mentions.',
+        '@-mention: Worker promoted to speak next.',
+        'User Fan-Out complete · 2 lane(s) returned.'
+      ].map(
+        (content, index) =>
+          ({
+            id: `routine-${index}`,
+            role: 'system',
+            content,
+            timestamp: `2026-01-01T00:00:0${index + 1}.000Z`,
+            metadata: { kind: 'ensembleRoundStatus' }
+          }) as ChatMessage
+      ),
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:06.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).not.toContain('Routed next: Claude.')
+    expect(html).not.toContain('takes routing priority')
+    expect(html).not.toContain('promoted to speak next')
+    expect(html).not.toContain('User Fan-Out complete')
+    expect(html).toContain('FINAL_ANSWER_MARKER')
+  })
+
+  it('promotes canonical legacy handoff and Blackboard rows instead of grouping them', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'legacy-handoff',
+        role: 'system',
+        content: '@-mention: extra turn appended for Boss. Continuous handoff 49/124.',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: { kind: 'ensembleRoundStatus' }
+      },
+      {
+        id: 'legacy-blackboard',
+        role: 'system',
+        content: 'Blackboard updated: fact / work1-snapshot-family-quarantine-uncommitted.',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: { kind: 'ensembleRoundStatus' }
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('Handoff turns')
+    expect(html).toContain('Blackboard updated')
+    expect(html).toContain('blackboard-change-entry-delta')
+    expect(html).not.toContain('system notices')
   })
 })
 
@@ -2920,7 +3990,7 @@ describe('context-compaction transcript rows', () => {
     expect(html).not.toContain('collapsed-activity-stack-summary')
   })
 
-  it('folds a passed compaction record into a one-liner like other settled rows', () => {
+  it('keeps a passed compaction record at the preserved event hierarchy', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
       compactionMessage('compaction-mid'),
@@ -2934,14 +4004,95 @@ describe('context-compaction transcript rows', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
     )
-    // One-liner label = the message's pre-formatted summary content, with the
-    // compaction glyph riding the summary and the frozen speaker meta prefix.
-    expect(html).toContain('collapsed-activity-stack-summary')
-    expect(html).toContain('Context compacted · 145k → 18k tokens · automatic · Claude')
-    expect(html).toContain('collapsed-context-compaction-glyph')
-    expect(html).toContain('Claude')
-    // The full row body only mounts when expanded.
-    expect(html).not.toContain('context-compaction-row')
+    expect(html).toContain('context-compaction-row is-completed')
+    expect(html).toContain('Compacted context')
+    expect(html).toContain('145k → 18k tokens')
+    expect(html).not.toContain('collapsed-context-compaction-glyph')
+    expect(html).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('never folds adjacent compaction events into a system-notice group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      compactionMessage('compaction-one'),
+      compactionMessage('compaction-two'),
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html.match(/context-compaction-row is-completed/g)).toHaveLength(2)
+    expect(html).not.toContain('2 system notices')
+    expect(html).not.toContain('is-super-hidden')
+  })
+
+  it('keeps a failed compaction visible instead of laundering it into a neutral super-group', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'before-failed-compaction',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'before-failed-compaction-tool',
+            toolName: 'bash',
+            displayName: 'Ran command',
+            category: 'shell',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'failed-compaction',
+        role: 'system',
+        content: 'Context compaction failed · Claude',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          provider: 'claude',
+          contextCompaction: {
+            kind: 'failed',
+            telemetry: { provider: 'claude', error: 'Compaction quota exhausted.' }
+          }
+        }
+      } as ChatMessage,
+      {
+        id: 'after-failed-compaction',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:03.000Z',
+        toolActivities: [
+          {
+            id: 'after-failed-compaction-tool',
+            toolName: 'bash',
+            displayName: 'Ran command',
+            category: 'shell',
+            status: 'success'
+          }
+        ]
+      },
+      {
+        id: 'tail',
+        role: 'assistant',
+        content: 'Continuing after the failure.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+
+    expect(html).toContain('context-compaction-row is-failed')
+    expect(html).toContain('Context compaction failed')
+    expect(html).toContain('Compaction quota exhausted.')
+    expect(html).not.toContain('Ran 2 commands')
   })
 })
 
@@ -3315,7 +4466,12 @@ describe('inter-seat transcript rows', () => {
     expect(next).toBeGreaterThan(start)
     expect(html).toContain('ensemble-fanout-result-card')
     expect(html).toContain('FANOUT_CARD_MARKER')
-    expect(sideBlock).toContain('Claude / Reviewer')
+    // The speaker line names the ROUTE, not just the provider that spoke: this
+    // note was ADDRESSED to the reader, and that is half of what it says.
+    expect(sideBlock).toContain('aria-label="Reviewer to You"')
+    expect(sideBlock).toContain('ensemble-side-party is-user')
+    // ...which is why the body no longer repeats it as prose.
+    expect(sideBlock).not.toContain('Reviewer to User:')
     expect(sideBlock).toContain('message-bubble assistant ensemble-side-message')
     expect(sideBlock).toContain('SIDE_MESSAGE_MARKER')
     expect(sideBlock).toContain('<code>kimi</code>')
@@ -3326,6 +4482,117 @@ describe('inter-seat transcript rows', () => {
 })
 
 describe('participant yield transcript rows', () => {
+  it('keeps an ensemble_yield tool handoff out of settled activity one-liners', () => {
+    const validator = ensembleParticipant({
+      id: 'codex-validator',
+      provider: 'codex',
+      role: 'Validator',
+      model: 'gpt-5.6-sol'
+    })
+    const paperwork = ensembleParticipant({
+      id: 'claude-paperwork',
+      provider: 'claude',
+      role: 'Paperwork',
+      model: 'claude-sonnet-4-7',
+      order: 1
+    })
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'yield-tool-row',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        metadata: {
+          ensembleParticipantId: validator.id,
+          ensembleProvider: validator.provider,
+          ensembleRole: validator.role,
+          ensembleModel: validator.model
+        },
+        toolActivities: [
+          {
+            id: 'yield-tool-activity',
+            toolName: 'mcp_TaskWraith_ensemble_yield',
+            displayName: 'Validator yielding to Paperwork',
+            category: 'task',
+            status: 'success',
+            parameters: { target: paperwork.id },
+            durationMs: 445,
+            metadata: {
+              ensembleParticipantId: validator.id,
+              ensembleProvider: validator.provider
+            }
+          }
+        ]
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      }
+    ]
+    const currentChat = activeEnsembleChat(validator)
+    currentChat.messages = messages
+    currentChat.ensemble!.participants = [validator, paperwork]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, currentChat, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="yield-tool-row"')
+    const next = html.indexOf('data-message-id="final"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(yieldBlock).toContain('Codex / Validator')
+    expect(yieldBlock).toContain('yielded to')
+    expect(yieldBlock).toContain('@Paperwork')
+    expect(yieldBlock).not.toContain('Used 1 tool')
+    expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('keeps a targetless settled Yielded lifecycle row visible', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        id: 'targetless-yield-tool-row',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        toolActivities: [
+          {
+            id: 'targetless-yield-tool-activity',
+            toolName: 'mcp__TaskWraith__ensemble_yield',
+            displayName: 'Yielding',
+            category: 'task',
+            status: 'success',
+            parameters: {},
+            durationMs: 11
+          }
+        ]
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'Continuing.',
+        timestamp: '2026-01-01T00:00:02.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    const start = html.indexOf('data-message-id="targetless-yield-tool-row"')
+    const next = html.indexOf('data-message-id="final"', start)
+    const yieldBlock = html.slice(start, next)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(next).toBeGreaterThan(start)
+    expect(yieldBlock).toContain('>Yielded</span>')
+    expect(yieldBlock).toContain('11ms')
+    expect(yieldBlock).not.toContain('Used 1 tool')
+    expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
+  })
+
   it('keeps a yield handoff at assistant hierarchy and out of system-notice folds', () => {
     const participant = ensembleParticipant({
       id: 'kimi-orchestrator',
@@ -3567,4 +4834,121 @@ describe('delivered external contribution rows', () => {
     // `outOfPosition` was written for this and read nowhere.
     expect(html).toContain('Out of position')
   })
+})
+
+describe('transcript event layout', () => {
+  function openingTag(html: string, id: string): string {
+    return html.match(new RegExp(`<div[^>]*data-message-id="${id}"[^>]*>`))?.[0] || ''
+  }
+
+  it.each([false, true])(
+    'stacks Blackboard posts and Scout briefs together (virtualize=%s)',
+    (virtualize) => {
+      const start = Date.parse('2026-09-05T18:22:00Z')
+      const events: ChatMessage[] = ['post-one', 'scout-two', 'scout-three', 'post-two'].map(
+        (id, index) => {
+          const timestamp = new Date(start + index * 70_000).toISOString()
+          const attribution = {
+            provider: 'codex',
+            displayProviderLabel: 'Codex',
+            displayHueClass: 'codex',
+            changedAt: timestamp
+          }
+          return {
+            id,
+            role: 'system',
+            content: id,
+            timestamp,
+            metadata: {
+              kind: 'ensembleBlackboardChange',
+              ensembleRoundId: 'round-mixed',
+              blackboardChange:
+                index === 1 || index === 2
+                  ? { ...attribution, action: 'scoutBriefShared', role: `Scout${index + 1}` }
+                  : {
+                      ...attribution,
+                      action: 'updated',
+                      category: 'fact',
+                      key: id,
+                      scope: 'session'
+                    }
+            }
+          }
+        }
+      )
+      const html = renderToStaticMarkup(
+        <TranscriptPanel {...makeProps({ messages: events, virtualize })} />
+      )
+      expect(html).toContain('2 updates · 2 Scout briefs')
+      expect(html).toContain('Show all 4 Blackboard events')
+      expect(countBlocks(html)).toBe(4)
+      expect(openingTag(html, 'post-one')).toContain('is-row-hidden')
+      expect(openingTag(html, 'scout-two')).toContain('is-row-hidden')
+      expect(openingTag(html, 'scout-three')).toContain('is-row-hidden')
+      expect(openingTag(html, 'post-two')).not.toContain('is-row-hidden')
+    }
+  )
+
+  it('suppresses repeated owner labels across prose and activities, preserving provider markup', () => {
+    const events: ChatMessage[] = [
+      { ...msg(0), id: 'first', role: 'assistant', runId: 'run-a' },
+      {
+        ...msg(1),
+        id: 'activity',
+        role: 'tool',
+        runId: 'run-a',
+        content: '',
+        toolActivities: [
+          {
+            id: 'read',
+            toolName: 'read_file',
+            displayName: 'Read file',
+            category: 'read',
+            status: 'success'
+          }
+        ]
+      },
+      { ...msg(2), id: 'answer', role: 'assistant', runId: 'run-a' },
+      { ...msg(3), id: 'other', role: 'assistant', runId: 'run-b' }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages: events, virtualize: false })} />
+    )
+    expect(openingTag(html, 'first')).not.toContain('is-speaker-continuation')
+    expect(openingTag(html, 'activity')).toContain('is-speaker-continuation')
+    expect(openingTag(html, 'answer')).toContain('is-speaker-continuation')
+    expect(openingTag(html, 'other')).not.toContain('is-speaker-continuation')
+    expect(html).toContain('message-meta provider-claude')
+    expect(html).toContain('aria-label="Copy Entire Turn"')
+  })
+
+  it.each([false, true])(
+    'joins adjacent seat rows with independent controls (virtualize=%s)',
+    (virtualize) => {
+      const events: ChatMessage[] = ['model', 'brief', 'disabled'].map((id) => ({
+        ...msg(0),
+        id,
+        role: 'system',
+        metadata: {
+          seatChange: {
+            participantId: id,
+            label: id,
+            before: { provider: 'codex', model: 'gpt-5.5' },
+            after: { provider: 'codex', model: 'gpt-5.5' },
+            appliedAt: '2026-01-01T00:00:00Z',
+            ...(id === 'brief' ? { briefUpdated: true } : {}),
+            ...(id === 'disabled' ? { enabledChangedTo: false } : {})
+          }
+        }
+      }))
+      const html = renderToStaticMarkup(
+        <TranscriptPanel {...makeProps({ messages: events, virtualize })} />
+      )
+      expect(openingTag(html, 'model')).toContain('data-seat-change-stack="start"')
+      expect(openingTag(html, 'brief')).toContain('data-seat-change-stack="middle"')
+      expect(openingTag(html, 'disabled')).toContain('data-seat-change-stack="end"')
+      expect((html.match(/class="seat-change-row"/g) || []).length).toBe(3)
+      expect((html.match(/Show the previous seat configuration/g) || []).length).toBe(3)
+    }
+  )
 })

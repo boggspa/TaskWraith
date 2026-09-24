@@ -34,6 +34,16 @@ export type WorkingIndicatorTokenTarget = {
   estimatedToolResultTokens: number
 }
 
+/** Run ids are authoritative when present. Before a lane has one, retain the
+ * participant identity so simultaneous pre-run seats cannot overwrite the
+ * same `null` Map entry and borrow one another's context/token baseline. */
+export function workingIndicatorTokenTargetKey(
+  input: Pick<WorkingIndicatorTokenInput, 'runId' | 'participantId'>
+): string | null {
+  if (input.runId) return input.runId
+  return input.participantId ? `participant:${input.participantId}` : null
+}
+
 export type WorkingIndicatorContextState =
   | 'available'
   | 'estimated'
@@ -304,7 +314,7 @@ export function buildWorkingIndicatorTokenTargets(
     const compactionEpochKey = compaction
       ? compaction.epochKey || `${compaction.observedAt}:${compaction.postTokens ?? 'unknown'}`
       : null
-    targets.set(input.runId, {
+    targets.set(workingIndicatorTokenTargetKey(input), {
       runId: input.runId,
       tokenEpochKey: compactionEpochKey
         ? `${seatEpochKey}:compaction:${compactionEpochKey}`

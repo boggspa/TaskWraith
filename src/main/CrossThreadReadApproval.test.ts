@@ -88,14 +88,15 @@ describe('crossThreadRead approval service', () => {
     expect(eff.agenticServices.crossThreadRead).toBe('ask')
   })
 
-  it('is GRANTABLE — honors a workspace/allow setting, unlike non-grantable canvasEval', () => {
+  it('honors a broad workspace setting, unlike exact-surface-window canvasEval', () => {
     const eff = resolveEffectiveRunPermissions({
       provider: 'claude',
       presetId: 'default',
       settings: settings({ crossThreadRead: 'workspace', canvasEval: 'allow' })
     })
     expect(eff.agenticServices.crossThreadRead).toBe('workspace')
-    // canvasEval is clamped (non-grantable) — a settings 'allow' must not survive.
+    // A canvasEval settings allow cannot become an all-surfaces grant; its
+    // dedicated live-surface window is resolved at the approval gate.
     expect(eff.agenticServices.canvasEval).not.toBe('allow')
   })
 

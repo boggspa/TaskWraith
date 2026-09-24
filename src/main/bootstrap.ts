@@ -2,10 +2,58 @@
 // singleton lock is acquired or any other Electron module can resolve it.
 import './devAppName'
 
-import { app } from 'electron'
+import * as fs from 'node:fs'
+import os from 'node:os'
+import { basename, isAbsolute, parse, resolve } from 'node:path'
+import { app, protocol } from 'electron'
 import type { Event } from 'electron'
-import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
+import { isPeopleMigrationHelper } from './startup/PeopleMigrationHelperProtocol'
+import {
+  isTaskWraithHelperProcess,
+  shouldSuppressMacAppPresentation
+} from './HelperProcessPresentation'
+import { setMacAppPresentation } from './MacAppPresentation'
+import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
 import { bootstrapMainProcess, type SecondInstanceEventArguments } from './MainProcessBootstrap'
+import { isDesktopExternalHostEnabled } from './host/DesktopExternalHostPolicy'
+import { composerSelectionOverlayDirectory } from './store/ChatComposerSelectionOverlayPersistence'
+import {
+  chatsDirectoryHygieneChangedAnything,
+  nodeChatsDirectoryHygieneDeps,
+  repairChatsDirectoryForHost
+} from './store/ChatsDirectoryHostHygiene'
+import {
+  createHostExternalPreparation,
+  type HostExternalPreparation
+} from './host/HostExternalPreparation'
+import { resolveHostExternalLaunch } from './host/HostExternalLaunchResolver'
+import { HostExternalSupervisor } from './host/HostExternalSupervisor'
+import { ProfileWriterLivePeerError } from './host/DesktopWriterArbitration'
+import { drainLegacyStoreForInProcessHost } from './host/LegacyInProcessHostWriter'
+import {
+  clearInProcessProfileAuthority,
+  publishInProcessProfileAuthority
+} from './host/HostInProcessProfileAuthorityState'
+import type { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
+import { TWEMU_PRIVILEGE } from './emulator/EmulatorAssetProtocol'
+import { TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
+
+function configureElectronBeforeReady(): void {
+  app.commandLine.appendSwitch('enable-gpu-rasterization')
+  app.commandLine.appendSwitch('enable-zero-copy')
+  const rendererHeapCeilingMaxMb = 8_192
+  const rendererHeapCeilingMinMb = 4_096
+  const hostMemoryMb = Math.floor(os.totalmem() / (1024 * 1024))
+  const rendererHeapCeilingMb = Math.min(rendererHeapCeilingMaxMb, Math.floor(hostMemoryMb / 8))
+  if (rendererHeapCeilingMb >= rendererHeapCeilingMinMb) {
+    app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererHeapCeilingMb}`)
+  }
+  protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE, TWEMU_PRIVILEGE])
+}
+
+const peopleMigrationHelper = isPeopleMigrationHelper()
+if (!peopleMigrationHelper) configureElectronBeforeReady()
 
 function subscribeSecondInstance(
   listener: (...args: SecondInstanceEventArguments) => void
@@ -20,19 +68,208 @@ function subscribeSecondInstance(
   return () => app.removeListener('second-instance', handler)
 }
 
-void bootstrapMainProcess({
-  isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
-  requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
-  quit: () => app.quit(),
-  // index.ts retains its existing guard during this extraction. Electron's
-  // requestSingleInstanceLock is idempotent for the process that owns it.
-  loadMainProcess: () => import('./index'),
-  subscribeSecondInstance,
-  replaySecondInstance: ([event, argv, workingDirectory, additionalData]) => {
-    app.emit('second-instance', event as Event, argv, workingDirectory, additionalData)
-  },
-  log: (message) => console.log(message)
-}).catch((error) => {
+function canonicalProfilePath(value: string): string {
+  if (typeof value !== 'string' || value.trim() !== value || !isAbsolute(value)) {
+    throw new Error('External Host requires a canonical profile directory.')
+  }
+  const resolved = resolve(value)
+  if (resolved === parse(resolved).root) {
+    throw new Error('External Host refuses a filesystem-root profile.')
+  }
+  fs.mkdirSync(resolved, { recursive: true, mode: 0o700 })
+  const canonical = fs.realpathSync(resolved)
+  if (canonical === parse(canonical).root) {
+    throw new Error('External Host refuses a filesystem-root profile.')
+  }
+  return canonical
+}
+
+function developmentRepoRoot(): string {
+  const value = app.getAppPath() || process.cwd()
+  if (typeof value !== 'string' || value.trim() !== value || !isAbsolute(value)) {
+    throw new Error('External Host requires an absolute development repository path.')
+  }
+  return resolve(value)
+}
+
+function developmentNodeExecutable(repoRoot: string): string {
+  for (const value of [process.env.npm_node_execpath, process.env.NODE]) {
+    if (typeof value === 'string' && value.trim() === value && isAbsolute(value)) {
+      return resolve(value)
+    }
+  }
+  return resolve(
+    repoRoot,
+    'build',
+    'tui-runtime',
+    `${process.platform}-${process.arch}`,
+    process.platform === 'win32' ? 'node.exe' : 'node'
+  )
+}
+
+function isOrdinaryNodeExecutable(value: string): boolean {
+  const name = basename(value).toLowerCase()
+  return (name === 'node' || name === 'node.exe') && !/electron/i.test(value)
+}
+
+function createExternalHostPreparation(profilePath: string): HostExternalPreparation {
+  const packaged = app.isPackaged
+  const repoRoot = packaged ? undefined : developmentRepoRoot()
+  const nodeExecutable = repoRoot ? developmentNodeExecutable(repoRoot) : undefined
+  return createHostExternalPreparation({
+    profilePath,
+    // Bootstrap has already completed migration before deciding whether this
+    // rollout lane is enabled. Keep the transaction's ordering seam explicit.
+    migrateLegacyUserData: () => undefined,
+    createSupervisor: () =>
+      new HostExternalSupervisor({
+        profilePath,
+        resolveLaunch: () =>
+          resolveHostExternalLaunch({
+            profilePath,
+            packaged,
+            ...(packaged ? { resourcesPath: process.resourcesPath } : { repoRoot, nodeExecutable }),
+            env: process.env,
+            isOrdinaryNode: isOrdinaryNodeExecutable
+          })
+      })
+  })
+}
+
+function boundedBootstrapError(error: unknown): string {
+  const value = error instanceof Error ? error.message : String(error)
+  return (value.replace(/\s+/g, ' ').trim() || 'unknown failure').slice(0, 300)
+}
+
+let externalHostPreparation: HostExternalPreparation | null = null
+let inProcessHostLease: HostProfileAuthorityLease | null = null
+
+function releaseInProcessHostLease(): void {
+  const lease = inProcessHostLease
+  inProcessHostLease = null
+  if (!lease) return
+  clearInProcessProfileAuthority(lease)
+  lease.release()
+}
+
+async function prepareInProcessHost(profilePath: string): Promise<void> {
+  const lease = await drainLegacyStoreForInProcessHost({ profilePath })
+  if (!lease) {
+    throw new Error('In-process Host did not acquire an exact profile authority lease.')
+  }
+  try {
+    publishInProcessProfileAuthority({ profilePath, lease })
+    inProcessHostLease = lease
+  } catch (error) {
+    lease.release()
+    throw error
+  }
+}
+
+// `index.ts` uses will-quit to hold the first quit attempt while Host-routed
+// chat persistence drains. Release only after that gate has completed and the
+// final quit is committed, or the in-process record executor loses authority
+// underneath its own shutdown barrier.
+app.on('quit', () => {
+  releaseInProcessHostLease()
+})
+
+void (
+  peopleMigrationHelper
+    ? import('./startup/PeopleMigrationHelperMain').then((module) =>
+        module.startPeopleMigrationHelper()
+      )
+    : bootstrapMainProcess({
+        isHelperProcess: isTaskWraithHelperProcess(process.argv, process.env),
+        requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+        quit: () => app.quit(),
+        // index.ts retains its existing guard during this extraction. Electron's
+        // requestSingleInstanceLock is idempotent for the process that owns it.
+        prepareMainProcess: async () => {
+          // LSUIElement keeps every launch out of the Dock until the primary
+          // desktop wins the singleton. Helpers and TUI Hosts stay hidden.
+          if (!shouldSuppressMacAppPresentation()) setMacAppPresentation(app, true)
+          const profilePath = canonicalProfilePath(app.getPath('userData'))
+          const migration = migrateLegacyUserDataSync({
+            userDataPath: profilePath,
+            log: {
+              log: () => console.log('[rebrand-migration] legacy userData copied'),
+              warn: () => console.warn('[rebrand-migration] legacy userData migration skipped')
+            }
+          })
+          if (migration.state === 'failed' || migration.state === 'invalid_profile') {
+            throw new Error('Legacy userData migration did not complete safely.')
+          }
+
+          // `chats/` is the Host's domain and HostProfileDomainStore fail-closes on
+          // any entry that is not an owner-only chat record, so legacy residue is
+          // repaired BEFORE either Host is selected. Never fatal: a repair that
+          // cannot run must not stop the app from booting.
+          try {
+            const chatsDir = resolve(profilePath, 'chats')
+            const hygiene = repairChatsDirectoryForHost({
+              chatsDir,
+              overlayDir: composerSelectionOverlayDirectory(chatsDir),
+              deps: nodeChatsDirectoryHygieneDeps()
+            })
+            if (chatsDirectoryHygieneChangedAnything(hygiene)) {
+              console.info(
+                `[chats-hygiene] repaired for the Host: ${hygiene.relocatedOverlayFiles} overlay file(s) relocated, ${hygiene.tightenedFileModes} file mode(s) tightened`
+              )
+            }
+            if (hygiene.unrepairableEntries.length > 0) {
+              console.warn(
+                `[chats-hygiene] ${hygiene.unrepairableEntries.length} entr(y/ies) the Host will still reject: ${hygiene.unrepairableEntries.slice(0, 5).join(', ')}`
+              )
+            }
+          } catch (error) {
+            console.warn(`[chats-hygiene] repair skipped: ${boundedBootstrapError(error)}`)
+          }
+          if (!isDesktopExternalHostEnabled()) {
+            await prepareInProcessHost(profilePath)
+            return
+          }
+          externalHostPreparation = createExternalHostPreparation(profilePath)
+          try {
+            await externalHostPreparation.prepare()
+          } catch (error) {
+            console.error(
+              `[main-bootstrap] external Host unavailable; using in-process Host: ${boundedBootstrapError(error)}`
+            )
+            try {
+              await externalHostPreparation.cleanup()
+            } catch (cleanupError) {
+              console.error(
+                `[main-bootstrap] external Host cleanup failed: ${boundedBootstrapError(cleanupError)}`
+              )
+            }
+            externalHostPreparation = null
+            try {
+              await prepareInProcessHost(profilePath)
+            } catch (fallbackError) {
+              if (
+                fallbackError instanceof ProfileWriterLivePeerError ||
+                (fallbackError instanceof Error &&
+                  fallbackError.name === 'ProfileWriterLivePeerError')
+              ) {
+                throw fallbackError
+              }
+              throw error
+            }
+          }
+        },
+        cleanupPreparedMainProcess: async () => {
+          await externalHostPreparation?.cleanup()
+          releaseInProcessHostLease()
+        },
+        loadMainProcess: () => import('./index'),
+        subscribeSecondInstance,
+        replaySecondInstance: ([event, argv, workingDirectory, additionalData]) => {
+          app.emit('second-instance', event as Event, argv, workingDirectory, additionalData)
+        },
+        log: (message) => console.log(message)
+      })
+).catch((error) => {
   console.error('[main-bootstrap] failed to load the main process', error)
   app.exit(1)
 })

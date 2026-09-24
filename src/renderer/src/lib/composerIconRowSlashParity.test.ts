@@ -103,7 +103,8 @@ describe('composer icon row ↔ slash command parity', () => {
       '/blackboard', // ComposerBlackboardButton (ensemble-only)
       '/copy-transcript', // CopyTranscriptButton
       '/multiview', // MultiviewLayoutPicker
-      '/canvas' // CanvasComposerButton
+      '/canvas', // CanvasComposerButton
+      '/view' // TranscriptViewPicker
     ]) {
       expect(all).toContain(command)
     }

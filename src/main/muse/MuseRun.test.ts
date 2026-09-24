@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMuseIsolatedHome } from './MuseIsolatedHome'
+import { buildMuseTaskWraithMcpSettings } from './MuseMcpConfig'
+import { MUSE_LONG_TURN_PROGRESS_NOTE, MUSE_OPENING_STEER_NOTE } from './MuseLongTurnProgress'
 import { runMuseProvider, type MuseRunSpawnHandle } from './MuseRun'
 
 const temps: string[] = []
@@ -94,6 +96,180 @@ function usageSessionLine(sequence: number, runId: string, sessionId: string): s
 }
 
 describe('runMuseProvider', () => {
+  it('launches every turn steered to open in-line, uncapped and at its real seat posture', async () => {
+    const root = tempDir('muse-run-launch-')
+    let argv: readonly string[] = []
+    const result = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: 'Verify the totals.',
+      runId: 'launch',
+      temporaryRoot: root,
+      approvalMode: 'default',
+      reasoningEffort: 'high',
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      spawn: (input) => {
+        argv = input.argv
+        return fakeSpawn([stdoutEnvelope({ payload: { text: 'I will verify the totals.' } })])
+      }
+    })
+    // Nothing supplies an introduction any more, so the launch prompt always
+    // takes the no-introduction path — the one that asks for the opening.
+    const launchPrompt = String(argv.at(-1))
+    expect(launchPrompt).toContain(MUSE_OPENING_STEER_NOTE)
+    expect(launchPrompt).toContain(MUSE_LONG_TURN_PROGRESS_NOTE)
+    expect(launchPrompt).toContain('Verify the totals.')
+    expect(launchPrompt).not.toBe('Verify the totals.')
+    // The one-step cap and the forced read-only/minimal posture belonged to
+    // the private pass. A real turn is capped by nothing and keeps its seat.
+    expect(argv).not.toContain('--max-model-steps')
+    expect(argv).not.toContain('--disable-write')
+    expect(argv).not.toContain('--disable-shell')
+    expect(argv[argv.indexOf('--reasoning-effort') + 1]).toBe('high')
+    expect(result.writeCapable).toBe(true)
+  })
+
+  it('still hands a provider-native slash dispatch through on the wire prefix', async () => {
+    const root = tempDir('muse-run-slash-')
+    let argv: readonly string[] = []
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: '/compact',
+      runId: 'slash',
+      temporaryRoot: root,
+      approvalMode: 'default',
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      spawn: (input) => {
+        argv = input.argv
+        return fakeSpawn([stdoutEnvelope({ payload: { text: 'compacted' } })])
+      }
+    })
+    expect(argv.at(-1)).toBe('/compact')
+  })
+
+  it('keeps the provider answer available when session-log lookups fail', async () => {
+    const root = tempDir('muse-run-log-error-')
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath: root,
+      prompt: 'Say hello.',
+      runId: 'missing-log-run',
+      temporaryRoot: root,
+      resolveSessionLog: async () => {
+        throw new Error('temporary index failure')
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({ payload: { text: 'Hello.' } }),
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { terminal: 'completed', text: 'Hello.' }
+          })
+        ])
+    })
+    expect(outcome.status).toBe('success')
+    expect(outcome.assistantText).toBe('Hello.')
+    expect(outcome.warnings).toContain('Muse session-log read failed: temporary index failure')
+    expect(
+      outcome.warnings.filter((warning) => warning.startsWith('Muse session-log read failed'))
+    ).toHaveLength(1)
+  })
+
+  it('orders logged thinking around stdout introductions, tools and the final answer', async () => {
+    const temporaryRoot = tempDir('muse-run-thinking-')
+    const workspacePath = tempDir('muse-ws-thinking-')
+    const sessionLogPath = join(temporaryRoot, 'session.jsonl')
+    const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    const logged = (time: number, event: Record<string, unknown>) =>
+      stdoutEnvelope({
+        id: `logged-${time}`,
+        stream: { kind: 'session', id: sessionId },
+        sequence: time,
+        recorded_at: time,
+        payload_type: 'runtime.session',
+        payload: { kind: 'run', run_id: 'native-run', event }
+      })
+    writeFileSync(
+      sessionLogPath,
+      [
+        logged(200, {
+          kind: 'reasoning_summary_delta',
+          message_id: 'thought-1',
+          summary_index: 0,
+          text: 'Inspect the file.'
+        }),
+        logged(210, {
+          kind: 'reasoning_summary_committed',
+          message_id: 'thought-1',
+          text: 'Inspect the file.'
+        }),
+        logged(300, {
+          kind: 'assistant_tool_calls_committed',
+          tool_calls: [{ call_id: 'read-1', name: 'read_file', args: '{"path":"a.txt"}' }]
+        }),
+        logged(400, {
+          kind: 'tool_result_batch_committed',
+          results: [{ tool_call_id: 'read-1', text: 'File contents.' }]
+        }),
+        logged(500, {
+          kind: 'reasoning_summary_committed',
+          message_id: 'thought-2',
+          text: 'Confirm the result.'
+        }),
+        logged(600, {
+          kind: 'reasoning_committed',
+          message_id: 'private-thought',
+          text: '',
+          encrypted_content: 'ciphertext'
+        })
+      ].join('\n') + '\n'
+    )
+    const seen: string[] = []
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'Inspect a.txt and report the result.',
+      runId: 'thinking-run',
+      sessionId,
+      temporaryRoot,
+      // Simulate stdout arriving while native index discovery is still pending.
+      resolveSessionLog: vi
+        .fn()
+        .mockResolvedValueOnce({ row: null, sessionLogPath: null, source: 'missing' })
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { row: null, sessionLogPath, source: 'fs-fallback' }
+        }),
+      onEvent: (event) => {
+        if (['content', 'thinking', 'tool_use', 'tool_result', 'terminal'].includes(event.type)) {
+          seen.push(`${event.type}:${event.text || event.toolName || event.toolOutput}`)
+        }
+      },
+      spawn: () =>
+        fakeSpawn([
+          stdoutEnvelope({ recorded_at: 100, payload: { text: 'I will inspect a.txt.\n' } }),
+          stdoutEnvelope({ recorded_at: 700, payload: { text: 'Verified.' } }),
+          stdoutEnvelope({
+            recorded_at: 800,
+            payload_type: 'run.terminal.completed',
+            payload: { terminal: 'completed', text: 'I will inspect a.txt.\nVerified.' }
+          })
+        ])
+    })
+    expect(seen).toEqual([
+      'content:I will inspect a.txt.\n',
+      'thinking:Inspect the file.',
+      'tool_use:read_file',
+      'tool_result:File contents.',
+      'thinking:Confirm the result.',
+      'content:Verified.',
+      'terminal:I will inspect a.txt.\nVerified.'
+    ])
+    expect(outcome.assistantText).toBe('I will inspect a.txt.\nVerified.')
+    expect(outcome.assistantText).not.toContain('Inspect the file.')
+  })
+
   it('leases home with skill pin, builds safe argv, pumps stdout, meters jsonl, asserts cron', async () => {
     const temporaryRoot = tempDir('muse-run-')
     const workspacePath = tempDir('muse-ws-')
@@ -169,6 +345,90 @@ describe('runMuseProvider', () => {
     expect(outcome.warnings.filter((w) => w.includes('cron')).length).toBe(0)
   })
 
+  it('steers the launch prompt to continue past a plan into tool execution', async () => {
+    const temporaryRoot = tempDir('muse-run-steer-')
+    const workspacePath = tempDir('muse-ws-steer-')
+    let observedArgv: readonly string[] = []
+
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'say hi',
+      runId: 'run-steer',
+      temporaryRoot,
+      approvalMode: 'plan',
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-steer',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'done' }
+          })
+        ])
+      }
+    })
+
+    const launchPrompt = observedArgv[observedArgv.length - 1]
+    expect(outcome.status).toBe('success')
+    expect(launchPrompt).toContain('say hi')
+    expect(launchPrompt).toContain('Do not stop after announcing a plan')
+    expect(launchPrompt).toContain('phase-based, not per tool or fixed count')
+    expect(launchPrompt).toContain(
+      'not a final answer, question, yield, handoff, or completion signal'
+    )
+  })
+
+  it('leaves a slash-prefixed Muse prompt on the wire prefix', async () => {
+    const temporaryRoot = tempDir('muse-run-slash-')
+    const workspacePath = tempDir('muse-ws-slash-')
+    let observedArgv: readonly string[] = []
+
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: '/compact',
+      runId: 'run-slash',
+      temporaryRoot,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-slash',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'done' }
+          })
+        ])
+      }
+    })
+
+    expect(observedArgv[observedArgv.length - 1]).toBe('/compact')
+  })
+
   it('projects OAuth only into the private run home and does not use API-key stdin', async () => {
     const temporaryRoot = tempDir('muse-run-oauth-')
     const workspacePath = tempDir('muse-ws-oauth-')
@@ -227,6 +487,113 @@ describe('runMuseProvider', () => {
     expect(observedStdin).toBeNull()
     expect(observedArgv).not.toContain('--api-key-stdin')
     expect(existsSync(outcome.leasePath)).toBe(false)
+  })
+
+  it('materializes signed UltraTask native delegation without widening file or shell tools', async () => {
+    const temporaryRoot = tempDir('muse-run-ultratask-')
+    const workspacePath = tempDir('muse-ws-ultratask-')
+    let observedSettings: unknown
+    let observedArgv: readonly string[] = []
+
+    const outcome = await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'review this change',
+      runId: 'run-ultratask',
+      temporaryRoot,
+      approvalMode: 'plan',
+      ultraTaskDelegationAutoAllow: true,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-ultratask',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedSettings = JSON.parse(
+          readFileSync(join(input.env.XDG_CONFIG_HOME, 'muse', 'settings.json'), 'utf8')
+        )
+        observedArgv = input.argv
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: { kind: 'run_terminal_completed', terminal: 'completed', text: 'reviewed' }
+          })
+        ])
+      }
+    })
+
+    expect(outcome.status).toBe('success')
+    expect(observedSettings).toMatchObject({
+      run: { subagent_delegation_mode: 'auto' }
+    })
+    expect(observedArgv).toContain('--agents')
+    expect(observedArgv).toContain('--disable-write')
+    expect(observedArgv).toContain('--disable-shell')
+    expect(observedArgv).not.toContain('--yolo')
+    expect(observedArgv).not.toContain('--disable-sandbox')
+  })
+
+  it('materializes a TaskWraith MCP route only inside the one-run Muse home', async () => {
+    const temporaryRoot = tempDir('muse-run-mcp-')
+    const workspacePath = tempDir('muse-ws-mcp-')
+    let observedSettings: Record<string, unknown> | undefined
+
+    await runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'yield when done',
+      runId: 'run-mcp',
+      temporaryRoot,
+      mcpSettings: buildMuseTaskWraithMcpSettings({
+        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        args: ['--taskwraith-gemini-mcp-bridge', '--taskwraith-mcp-route-from-env'],
+        env: { TASKWRAITH_PARENT_PROVIDER: 'muse', TASKWRAITH_RUN_ID: 'run-mcp' }
+      }),
+      resolveSessionLog: async () => ({ row: null, sessionLogPath: null, source: 'missing' }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-mcp',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: (input) => {
+        observedSettings = JSON.parse(
+          readFileSync(join(input.env.XDG_CONFIG_HOME, 'muse', 'settings.json'), 'utf8')
+        )
+        expect(input.env.TASKWRAITH_RUN_ID).toBeUndefined()
+        return fakeSpawn([
+          stdoutEnvelope({
+            payload_type: 'run.terminal.completed',
+            payload: {
+              kind: 'run_terminal_completed',
+              terminal: 'completed',
+              text: '@Builder done'
+            }
+          })
+        ])
+      }
+    })
+
+    expect(observedSettings).toMatchObject({
+      mcp_servers: {
+        taskwraith: {
+          transport: 'stdio',
+          mode: 'required',
+          enabled: true,
+          env: { TASKWRAITH_PARENT_PROVIDER: 'muse', TASKWRAITH_RUN_ID: 'run-mcp' }
+        }
+      }
+    })
   })
 
   it('cleans the private home when OAuth projection is rejected before spawn', async () => {
@@ -381,6 +748,66 @@ describe('runMuseProvider', () => {
         }
       })
     })
+    expect(outcome.status).toBe('cancelled')
+  })
+
+  it('kills the spawned process when cancellation is requested mid-run', async () => {
+    const temporaryRoot = tempDir('muse-run-kill-')
+    const workspacePath = tempDir('muse-ws-kill-')
+    let cancelled = false
+    const kill = vi.fn()
+    let releaseWait: (() => void) | null = null
+    let safetyValve: ReturnType<typeof setTimeout> | null = null
+    const outcomePromise = runMuseProvider({
+      binaryPath: '/bin/muse',
+      workspacePath,
+      prompt: 'x',
+      runId: 'run-kill',
+      temporaryRoot,
+      sessionLogPollIntervalMs: 10,
+      shouldCancel: () => cancelled,
+      resolveSessionLog: async () => ({
+        row: null,
+        sessionLogPath: null,
+        source: 'missing'
+      }),
+      assertCron: () => ({
+        ok: true,
+        sessionId: 'run-kill',
+        sessionDir: temporaryRoot,
+        cronDbPath: join(temporaryRoot, 'cron.db'),
+        jobCount: 0,
+        schemaVersion: null
+      }),
+      spawn: () => ({
+        pid: 1,
+        kill(signal) {
+          kill(signal)
+          // A real child exits on SIGTERM; the double mirrors that.
+          if (safetyValve) clearTimeout(safetyValve)
+          releaseWait?.()
+        },
+        onStdout() {
+          // This test double does not emit stdout.
+        },
+        onStderr() {
+          // This test double does not emit stderr.
+        },
+        wait() {
+          return new Promise((resolve) => {
+            releaseWait = () => resolve({ code: null, signal: 'SIGTERM' })
+            // A child that is never killed would hang this test forever; end
+            // it late so the kill assertion below fails instead of timing out.
+            safetyValve = setTimeout(() => releaseWait?.(), 1_000)
+          })
+        }
+      })
+    })
+    // Stop is pressed while the child is still mid-turn.
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    cancelled = true
+    const outcome = await outcomePromise
+    expect(kill).toHaveBeenCalledWith('SIGTERM')
     expect(outcome.status).toBe('cancelled')
   })
 

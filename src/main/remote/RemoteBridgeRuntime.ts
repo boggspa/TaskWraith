@@ -573,6 +573,13 @@ export class RemoteBridgeRuntime {
         // re-publishes 1 synchronously — benign (no async yield between them).
         this.publishConnectedDeviceCount()
       },
+      onRecovered: () => {
+        // The watchdog detaches Host-v2 state on the down edge. A later
+        // decrypted pong can restore the same E2EE session without another
+        // handshake/onEstablished callback, so explicitly rebuild every
+        // per-device projection and broadcaster attachment here.
+        this.onDeviceEstablished()
+      },
       onReplayGap: () => {
         // RC5: same pubKey resolution as onMessage. A same-epoch resume evicted
         // un-acked tail — push a targeted full snapshot so the returning peer

@@ -14,6 +14,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomBytes } from 'crypto'
+import { isWebSiteLoginId } from '../../shared/webSiteLogin'
 import type {
   CanvasAnnotation,
   CanvasDriverKind,
@@ -43,7 +44,8 @@ const CANVAS_DRIVER_KINDS: ReadonlySet<CanvasDriverKind> = new Set([
   'sketch',
   'window',
   'device',
-  'chart'
+  'chart',
+  'emulator'
 ])
 const SKETCH_ELEMENT_KINDS = new Set(['rect', 'ellipse', 'line', 'arrow', 'text', 'path'])
 
@@ -445,13 +447,11 @@ function normalizeSessionRecord(value: unknown): CanvasSessionRecord | null {
     url: asString(input.url),
     title: asString(input.title),
     viewport: asViewport(input.viewport),
-    originAllowlist: Array.isArray(input.originAllowlist)
-      ? input.originAllowlist.filter((h): h is string => typeof h === 'string')
-      : [],
     status,
     chatId: typeof input.chatId === 'string' ? input.chatId : undefined,
     runId: typeof input.runId === 'string' ? input.runId : undefined,
     workspacePath: typeof input.workspacePath === 'string' ? input.workspacePath : undefined,
+    siteId: isWebSiteLoginId(input.siteId) ? input.siteId : undefined,
     createdAt: asString(input.createdAt) || nowIso,
     updatedAt: asString(input.updatedAt) || nowIso,
     closedAt: typeof input.closedAt === 'string' ? input.closedAt : undefined,

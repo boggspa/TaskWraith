@@ -27,7 +27,11 @@ import type {
   WorkspaceBoardDefinition
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
-import { DEFAULT_THEME_ACCENT_COLOR, normalizeThemeAccentColor } from '../shared/themeAccentColor'
+import {
+  DEFAULT_THEME_ACCENT_COLOR,
+  resolveDefaultThemeAccentColor,
+  resolveThemeAccentColorForAppearance
+} from '../shared/themeAccentColor'
 import {
   LIVE_ENSEMBLE_LANE_STATUSES,
   ensembleTurnTransitionLabel,
@@ -323,6 +327,7 @@ export interface RemoteTaskCard {
   kimiFastMode?: boolean
   kimiReasoningEffort?: string
   kimiThinkingEnabled?: boolean
+  piReasoningEffort?: string
   /** Host-authoritative composer permission selection. The workspace grant is
    * a separate outer gate; these fields describe this thread/lane only. */
   approvalMode?: string
@@ -415,12 +420,48 @@ export interface RemoteTaskCapabilities {
   pin?: boolean
   yolo?: boolean
   deleteMessage?: boolean
+  /** True only when spawn will succeed: injected `createSubThreadFn` AND workspace `startTurn`. */
+  createSubThread?: boolean
+  /** True when the merge route is structurally wired and this workspace grants `externalPublish`. Host approval policy, PR state, and mergeability can still refuse. */
+  githubMergePr?: boolean
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean
   cancelWakeup?: boolean
   queuePrompt?: boolean
   queueLimit?: number
+}
+
+/**
+ * Phone Spawn is gated on this bit.
+ * A capability bit must answer "will this succeed", not "does a function exist".
+ * The phone cannot detect the difference, so the host must not advertise more than it will honour.
+ */
+export function projectCreateSubThreadCapability(
+  createSubThreadFn: unknown,
+  startTurn: unknown = false
+): boolean {
+  return typeof createSubThreadFn === 'function' && startTurn === true
+}
+
+/**
+ * Phone merge is gated on this bit.
+ * True means the route is structurally wired (both merge callbacks are functions)
+ * AND the workspace is authorized (`externalPublish`). It does not mean merge will
+ * succeed: host approval policy, PR state, and mergeability can still refuse.
+ * Projecting on one callback, or skipping the router grant, advertises a control
+ * the host will still refuse.
+ */
+export function projectGithubMergePrCapability(
+  githubMergePrFn: unknown,
+  requestGithubMergePrApprovalFn: unknown,
+  externalPublish: unknown = false
+): boolean {
+  return (
+    typeof githubMergePrFn === 'function' &&
+    typeof requestGithubMergePrApprovalFn === 'function' &&
+    externalPublish === true
+  )
 }
 
 export interface RemoteTaskFeedSnapshot {
@@ -853,17 +894,20 @@ const THEME_ACCENTS: Partial<Record<ThemeAppearance | ThemeAccentStyle, string>>
   sage: '#84a33b',
   obsidian: '#c8c0d2',
   alabaster: '#5a6172',
-  midnight: '#5a8cff'
+  midnight: '#5a8cff',
+  'xcode-dark': '#2656d0',
+  'xcode-light': '#2656d0'
 }
 
-const LIGHT_THEMES = new Set<ThemeAppearance>(['light', 'mist', 'sage', 'alabaster'])
+const LIGHT_THEMES = new Set<ThemeAppearance>(['light', 'mist', 'sage', 'alabaster', 'xcode-light'])
 const DARK_THEMES = new Set<ThemeAppearance>([
   'dark',
   'midnight',
   'rainbow',
   'twilight',
   'cyber',
-  'obsidian'
+  'obsidian',
+  'xcode-dark'
 ])
 
 const DEFAULT_REMOTE_SHELL_SETTINGS: Required<BuildRemoteShellAppearanceSettings> = {
@@ -1012,9 +1056,12 @@ export function buildRemoteShellAppearance(
 ): RemoteShellAppearance {
   const resolved = { ...DEFAULT_REMOTE_SHELL_SETTINGS, ...settings }
   const accent = settings.themeAccentColor
-    ? normalizeThemeAccentColor(settings.themeAccentColor)
+    ? resolveThemeAccentColorForAppearance(
+        settings.themeAccentColor,
+        resolved.themeAppearance
+      )
     : resolved.themeAccentStyle === 'system'
-      ? THEME_ACCENTS[resolved.themeAppearance] || DEFAULT_REMOTE_SHELL_COLORS.accent
+      ? resolveDefaultThemeAccentColor(resolved.themeAppearance)
       : THEME_ACCENTS[resolved.themeAccentStyle] || DEFAULT_REMOTE_SHELL_COLORS.accent
 
   return {
@@ -1271,6 +1318,9 @@ export function buildRemoteTaskCard(
   }
   if (typeof providerMetadata.kimiThinkingEnabled === 'boolean') {
     card.kimiThinkingEnabled = providerMetadata.kimiThinkingEnabled
+  }
+  if (isString(providerMetadata.piReasoningEffort)) {
+    card.piReasoningEffort = providerMetadata.piReasoningEffort
   }
   if (isString(providerMetadata.approvalMode)) {
     card.approvalMode = providerMetadata.approvalMode
@@ -1628,7 +1678,9 @@ export function buildRemoteEnsembleState(
     threadId: chat.appChatId,
     roundId: activeRound?.roundId,
     status: projectedRoundStatus,
-    orchestrationMode: activeRound?.orchestrationMode ?? ensemble.orchestrationMode,
+    // Continuous-only: legacy records may still say 'turn_bound'; the phone
+    // should never render a mode the desktop can no longer run.
+    orchestrationMode: 'continuous',
     activeParticipantId:
       projectedRoundStatus === 'running' ? activeRound?.activeParticipantId : undefined,
     ...(() => {

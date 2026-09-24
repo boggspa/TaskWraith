@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RunQueueJob } from '../store/types'
+import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import type { AllowlistDecision } from '../RemoteWorkspaceAllowlist'
 import {
   REMOTE_COMPOSER_ACTIVE_QUEUE_STATUSES,
@@ -9,6 +10,9 @@ import {
   classifyRemoteComposerQueueDispatchResult,
   remoteComposerChatIsBusy
 } from './RemoteComposerQueueService'
+
+const HOST_ACTION_ID_A = 'host:command:11111111-1111-4111-8111-111111111111'
+const HOST_ACTION_ID_B = 'host:command:22222222-2222-4222-8222-222222222222'
 
 function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   return {
@@ -47,6 +51,13 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
       }
     },
     ...overrides
+  }
+}
+
+function withDispatchReceipt(job: RunQueueJob): RunQueueJob {
+  return {
+    ...job,
+    dispatchReceipt: buildRunQueueDispatchReceipt(job, '2026-09-20T00:00:00.000Z')
   }
 }
 
@@ -179,6 +190,75 @@ describe('buildRemoteComposerQueueDispatchAction', () => {
   it('returns null for non-remote jobs', () => {
     expect(buildRemoteComposerQueueDispatchAction(makeJob({ source: 'manual' }))).toBeNull()
   })
+
+  it('returns Host correlation separately without copying it onto the Bridge action', () => {
+    const job = withDispatchReceipt(
+      makeJob({
+        request: {
+          ...makeJob().request!,
+          remoteComposer: {
+            ...makeJob().request!.remoteComposer!,
+            hostCommandActionId: HOST_ACTION_ID_A
+          }
+        }
+      })
+    )
+
+    const dispatch = buildRemoteComposerQueueDispatchAction(job)
+    expect(dispatch?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(dispatch?.action).not.toHaveProperty('actionId')
+  })
+
+  it('fails closed when stored Host correlation no longer matches its dispatch receipt', () => {
+    const original = withDispatchReceipt(
+      makeJob({
+        request: {
+          ...makeJob().request!,
+          remoteComposer: {
+            ...makeJob().request!.remoteComposer!,
+            hostCommandActionId: HOST_ACTION_ID_A
+          }
+        }
+      })
+    )
+    const swapped: RunQueueJob = {
+      ...original,
+      request: {
+        ...original.request!,
+        remoteComposer: {
+          ...original.request!.remoteComposer!,
+          hostCommandActionId: HOST_ACTION_ID_B
+        }
+      }
+    }
+
+    expect(buildRemoteComposerQueueDispatchAction(swapped)).toBeNull()
+  })
+
+  it.each(['cancelling', 'cancelled', 'failed', 'completed'] as const)(
+    'does not construct a dispatch for %s jobs',
+    (status) => {
+      expect(buildRemoteComposerQueueDispatchAction(makeJob({ status }))).toBeNull()
+    }
+  )
+
+  it('retains cancelled-job correlation for audit without constructing a dispatch', () => {
+    const cancelled = withDispatchReceipt(
+      makeJob({
+        status: 'cancelled',
+        request: {
+          ...makeJob().request!,
+          remoteComposer: {
+            ...makeJob().request!.remoteComposer!,
+            hostCommandActionId: HOST_ACTION_ID_A
+          }
+        }
+      })
+    )
+
+    expect(cancelled.request?.remoteComposer?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(buildRemoteComposerQueueDispatchAction(cancelled)).toBeNull()
+  })
 })
 
 describe('authorizeRemoteComposerQueueDispatch', () => {
@@ -283,5 +363,47 @@ describe('classifyRemoteComposerQueueDispatchFailure', () => {
         error: 13
       }).statusReason
     ).toBe('13')
+  })
+})
+
+describe('buildRemoteComposerQueueDispatchAction origin', () => {
+  const remoteComposer = {
+    workspaceId: 'ws-phone',
+    threadId: 'thread-phone',
+    provider: 'codex',
+    text: 'Keep going.'
+  }
+
+  it('re-emits the host-stamped origin so a flushed socket prompt keeps its sender label', () => {
+    const origin = { channel: 'local-control' as const, pid: 84536, label: 'Claude Code' }
+    const job = makeJob({
+      request: {
+        scope: 'workspace',
+        prompt: 'Keep going.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [],
+        remoteComposer: { ...remoteComposer, origin }
+      }
+    })
+    expect(buildRemoteComposerQueueDispatchAction(job)?.action.origin).toEqual(origin)
+  })
+
+  it('leaves origin off the flushed action when the queued request carried none', () => {
+    const job = makeJob({
+      request: {
+        scope: 'workspace',
+        prompt: 'Keep going.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [],
+        remoteComposer
+      }
+    })
+    expect(buildRemoteComposerQueueDispatchAction(job)?.action).not.toHaveProperty('origin')
   })
 })

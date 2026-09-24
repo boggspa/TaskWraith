@@ -1895,6 +1895,33 @@ describe('TranscriptScroll', () => {
       expect(cancelAnimationFrame).toHaveBeenCalledWith(99)
       expect(apply).not.toHaveBeenCalled()
     })
+
+    it('forwards a same-pass context to the synchronous apply only', () => {
+      const apply = vi.fn()
+      const callbacks: FrameRequestCallback[] = []
+      const scheduler = createFollowPinScheduler<{ marker: string }>({
+        apply,
+        requestAnimationFrame: (cb) => {
+          callbacks.push(cb)
+          return callbacks.length
+        },
+        cancelAnimationFrame: vi.fn()
+      })
+
+      // The pre-paint pin caller owns a geometry read phase that is valid for
+      // ITS synchronous pass only; the scheduler must hand it to the immediate
+      // apply so the pin does not re-read geometry the pass already holds.
+      const context = { marker: 'same-pass-geometry' }
+      scheduler.pinNowAndScheduleTrailing(context)
+      expect(apply).toHaveBeenNthCalledWith(1, context)
+
+      // The trailing frame is a NEW pass: it must not inherit the context —
+      // scroll events and layout can interleave before it runs, so a carried
+      // read phase would serve stale geometry.
+      callbacks[0]?.(16)
+      expect(apply).toHaveBeenCalledTimes(2)
+      expect(apply.mock.calls[1]).toEqual([])
+    })
   })
 
   describe('buildCodeBlockResizeEventInit', () => {

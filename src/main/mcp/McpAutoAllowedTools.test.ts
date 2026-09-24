@@ -61,7 +61,6 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -118,11 +117,16 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     }
   })
 
-  it('lets every posture reach one-shot permission elicitation without auto-running its target', () => {
+  it('lets every posture reach legacy and host-issued permission elicitation without auto-running a target', () => {
     expect(autoAllowedTools.has('request_tool_permission')).toBe(true)
     expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('request_tool_permission')
     expect(
       (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('request_tool_permission')
+    ).toBe(false)
+    expect(autoAllowedTools.has('redeem_permission_opportunity')).toBe(true)
+    expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('redeem_permission_opportunity')
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('redeem_permission_opportunity')
     ).toBe(false)
   })
 })
@@ -132,6 +136,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     for (const tool of [
       'ask_user_question',
       'request_tool_permission',
+      'redeem_permission_opportunity',
       'ensemble_yield',
       'read_file',
       'find_files',
@@ -171,7 +176,6 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -216,8 +220,12 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'cancel_subthread',
         'canvas_navigate',
         'canvas_render_chart',
+        'computer_use',
+        'emulator_open',
         'delegate_to_subthread',
         'delegate_wave',
+        'ultra_task',
+        'run_shell_command',
         ...MESH_MCP_TOOL_NAMES,
         'simulator_boot',
         'simulator_button',
@@ -235,9 +243,12 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_navigate.service).toBe('webBrowsing')
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.service).toBe('mcpTools')
+    expect(TASKWRAITH_TOOL_ACTIONS.emulator_open.service).toBe('mcpTools')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_to_subthread.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.delegate_wave.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.ultra_task.service).toBe('subThreadDelegation')
     expect(TASKWRAITH_TOOL_ACTIONS.cancel_subthread.service).toBe('subThreadDelegation')
+    expect(TASKWRAITH_TOOL_ACTIONS.run_shell_command.service).toBe('shellCommands')
     for (const tool of [
       'simulator_open',
       'simulator_boot',
@@ -290,6 +301,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     for (const tool of [
       'ask_user_question',
       'request_tool_permission',
+      'redeem_permission_opportunity',
       'ensemble_yield',
       'ensemble_send',
       'read_file',
@@ -330,7 +342,6 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'move_path',
       'rename_path',
       'apply_patch',
-      'run_shell_command',
       'start_background_process',
       'kill_background_process',
       'git_stage',
@@ -353,17 +364,27 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     }
   })
 
+  it('advertises run_shell_command as an approval-queued Ask instrument', () => {
+    expect(isReadOnlyAdvertisedTool('run_shell_command')).toBe(true)
+    expect(isPlanAdvertisedTool('run_shell_command')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('run_shell_command')).toBe(false)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toContain('run_shell_command')
+  })
+
   it('advertises sub-thread delegation as an approval-queued Ask instrument', () => {
     expect(isReadOnlyAdvertisedTool('delegate_to_subthread')).toBe(true)
     expect(isReadOnlyAdvertisedTool('delegate_wave')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('ultra_task')).toBe(true)
     expect(isReadOnlyAdvertisedTool('cancel_subthread')).toBe(true)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_to_subthread')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('delegate_wave')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('ultra_task')).toBe(false)
     expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('cancel_subthread')).toBe(false)
     expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toEqual(
       expect.arrayContaining([
         'delegate_to_subthread',
         'delegate_wave',
+        'ultra_task',
         'cancel_subthread',
         'canvas_navigate'
       ])
@@ -374,6 +395,16 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     // canvas actuation + media are the plan tier — a read_only seat must not see them.
     expect(isReadOnlyAdvertisedTool('canvas_click')).toBe(false)
     expect(isReadOnlyAdvertisedTool('canvas_fill')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_key')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_scroll')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_hover')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_select')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('canvas_wait_for')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_wait_for')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_drive_report')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_drive_verify')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_drive_report')).toBe(true)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('canvas_drive_verify')).toBe(true)
     expect(isReadOnlyAdvertisedTool('canvas_sketch_update')).toBe(false)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
@@ -402,6 +433,17 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     expect(TASKWRAITH_TOOL_ACTIONS.canvas_render_chart.toolClass).toBe('orchestration')
   })
 
+  it('advertises only fixed emulator open to Ask, while pixels and stepping remain gated', () => {
+    expect(isReadOnlyAdvertisedTool('emulator_open')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_open')).toBe(true)
+    expect(RECON_INSTRUMENT_ADVERTISE_TOOLS).toContain('emulator_open')
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_open')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('emulator_observe')).toBe(false)
+    expect(isReadOnlyAdvertisedTool('emulator_step')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_observe')).toBe(false)
+    expect((MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>).has('emulator_step')).toBe(false)
+  })
+
   it('advertises every Mesh Canvas action to Ask as an approval-queued instrument', () => {
     for (const tool of MESH_MCP_TOOL_NAMES) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
@@ -422,6 +464,13 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
   it('advertises canvas actuation + every media-editing tool to a plan seat', () => {
     expect(isPlanAdvertisedTool('canvas_click')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_fill')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_key')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_scroll')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_hover')).toBe(true)
+    expect(isPlanAdvertisedTool('canvas_select')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_step')).toBe(true)
+    expect(isPlanAdvertisedTool('emulator_observe')).toBe(false)
+    expect(isPlanAdvertisedTool('canvas_wait_for')).toBe(true)
     expect(isPlanAdvertisedTool('canvas_sketch_update')).toBe(true)
     for (const tool of MEDIA_EDITING_TOOLS) {
       expect(isPlanAdvertisedTool(tool)).toBe(true)
@@ -449,7 +498,6 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
       'write_file',
       'replace',
       'apply_patch',
-      'run_shell_command',
       'git_stage',
       'git_commit',
       'git_push',
@@ -473,8 +521,10 @@ describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scop
   it('inherits Ask sub-thread instruments on plan seats (modal-gated, not auto-allowed)', () => {
     expect(isPlanAdvertisedTool('delegate_to_subthread')).toBe(true)
     expect(isPlanAdvertisedTool('delegate_wave')).toBe(true)
+    expect(isPlanAdvertisedTool('ultra_task')).toBe(true)
     expect(isPlanAdvertisedTool('cancel_subthread')).toBe(true)
     expect(autoAllowedTools.has('delegate_to_subthread')).toBe(false)
     expect(autoAllowedTools.has('delegate_wave')).toBe(false)
+    expect(autoAllowedTools.has('ultra_task')).toBe(false)
   })
 })

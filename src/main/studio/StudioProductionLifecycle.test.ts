@@ -81,13 +81,13 @@ describe('StudioProductionLifecycle', () => {
     )
   })
 
-  it('is side-effect free when disabled', async () => {
+  it.each([undefined, false])('is side-effect free with setting %s', async (settingEnabled) => {
     const root = await temporaryRoot()
     let spawned = false
     const result = await startStudioProductionLifecycle({
       userDataPath: root,
       binaryPath: '/does/not/matter',
-      settingEnabled: false,
+      settingEnabled,
       platform: 'darwin',
       pathExists: () => true,
       spawnProcess: () => {
@@ -108,6 +108,7 @@ describe('StudioProductionLifecycle', () => {
       startStudioProductionLifecycle({
         userDataPath: root,
         binaryPath: '/missing/TaskWraithStudioCompanion',
+        settingEnabled: true,
         platform: 'darwin',
         pathExists: () => false
       })
@@ -124,6 +125,7 @@ describe('StudioProductionLifecycle', () => {
     const result = await startStudioProductionLifecycle({
       userDataPath: root,
       binaryPath: '/fake/TaskWraithStudioCompanion',
+      settingEnabled: true,
       platform: 'darwin',
       pathExists: () => true,
       spawnProcess: (command, args) => {
@@ -194,6 +196,7 @@ describe('StudioProductionLifecycle', () => {
     const result = await startStudioProductionLifecycle({
       userDataPath: root,
       binaryPath: '/fake/TaskWraithStudioCompanion',
+      settingEnabled: true,
       platform: 'darwin',
       pathExists: () => true,
       spawnProcess: () => child

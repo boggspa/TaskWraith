@@ -56,4 +56,77 @@ describe('TaskWraith local-control protocol decoder', () => {
       error: 'limit must be an integer from 1 to 200'
     })
   })
+  it('accepts a bounded thread.find and rejects unbounded or unknown filters', () => {
+    expect(
+      decodeTaskWraithControlClientMessage({
+        type: 'request',
+        id: 'find-1',
+        method: 'thread.find',
+        params: {
+          query: 'persistence',
+          workspacePath: '/repo/packages/app',
+          status: ['working', 'needs-input'],
+          includeArchived: false,
+          limit: 5
+        }
+      }).ok
+    ).toBe(true)
+    expect(
+      decodeTaskWraithControlClientMessage({ type: 'request', id: 'find-2', method: 'thread.find' })
+        .ok
+    ).toBe(true)
+    expect(
+      decodeTaskWraithControlClientMessage({
+        type: 'request',
+        id: 'find-3',
+        method: 'thread.find',
+        params: { limit: 101 }
+      })
+    ).toMatchObject({ ok: false, error: 'limit must be an integer from 1 to 100' })
+    expect(
+      decodeTaskWraithControlClientMessage({
+        type: 'request',
+        id: 'find-4',
+        method: 'thread.find',
+        params: { status: ['working', 'exploded'] }
+      })
+    ).toMatchObject({ ok: false, error: 'status must list known thread statuses' })
+    expect(
+      decodeTaskWraithControlClientMessage({
+        type: 'request',
+        id: 'find-5',
+        method: 'thread.find',
+        params: { query: 'x'.repeat(201) }
+      })
+    ).toMatchObject({ ok: false, error: 'query must be a bounded string' })
+  })
+
+  it('accepts a hello that names the sending process and rejects a malformed one', () => {
+    const hello = {
+      type: 'hello',
+      protocolVersion: TASKWRAITH_CONTROL_PROTOCOL_VERSION,
+      client: TASKWRAITH_CONTROL_CLIENT_NAME,
+      clientVersion: '0.1.0',
+      token: 'secret',
+      capabilities: ['compose']
+    }
+    expect(
+      decodeTaskWraithControlClientMessage({
+        ...hello,
+        clientPid: 4242,
+        clientLabel: 'Claude Code'
+      }).ok
+    ).toBe(true)
+    expect(decodeTaskWraithControlClientMessage({ ...hello, clientPid: 0 })).toMatchObject({
+      ok: false,
+      error: 'clientPid must be a positive integer'
+    })
+    expect(decodeTaskWraithControlClientMessage({ ...hello, clientPid: '4242' })).toMatchObject({
+      ok: false,
+      error: 'clientPid must be a positive integer'
+    })
+    expect(
+      decodeTaskWraithControlClientMessage({ ...hello, clientLabel: 'x'.repeat(81) })
+    ).toMatchObject({ ok: false, error: 'clientLabel must be a bounded string' })
+  })
 })

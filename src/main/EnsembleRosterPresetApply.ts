@@ -8,6 +8,7 @@ import {
   type EnsembleRosterParticipantSnapshot,
   type EnsembleRosterPreset
 } from '../shared/EnsembleRosterPresetContract'
+import { ensembleAuthoredConfigurationSignature } from '../shared/ensembleAuthoredSlice'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
 import { isLiveSelectableProvider } from '../shared/retiredProviders'
 import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
@@ -101,7 +102,7 @@ export function buildAgentRosterPresetExportFromDraft(
     exportedAt: new Date(metadata.now).toISOString(),
     presets: [
       {
-        orchestrationMode: 'turn_bound',
+        orchestrationMode: 'continuous',
         maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
         ...preset,
         id: metadata.id,
@@ -156,16 +157,18 @@ function fail(
 }
 
 function normalizedFanoutPolicy(preset: EnsembleRosterPreset): EnsembleFanoutPolicy {
+  // Fan-out collapsed to On/Off (On = the old 'all'); the retired graded
+  // levels and the legacy boolean concurrent flag normalize on apply.
+  if (preset.fanoutPolicy === 'off') return 'off'
   if (
-    preset.fanoutPolicy === 'off' ||
     preset.fanoutPolicy === 'read_only' ||
     preset.fanoutPolicy === 'all' ||
     preset.fanoutPolicy === 'locked_writers_with_boss' ||
     preset.fanoutPolicy === 'locked_writers_user_preflight'
   ) {
-    return preset.fanoutPolicy
+    return 'all'
   }
-  return preset.concurrentModeEnabled === true ? 'read_only' : 'off'
+  return preset.concurrentModeEnabled === true ? 'all' : 'off'
 }
 
 function validatePortableParticipant(
@@ -482,7 +485,8 @@ export function buildEnsembleRosterPresetApply(
         ? { secondInCommandParticipantId: captainParticipantIds[0] }
         : {}),
       orchestrationMode:
-        preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+        // Continuous-only: legacy 'turn_bound' presets normalize on apply.
+        'continuous',
       fanoutPolicy: normalizedFanoutPolicy(preset),
       maxParticipants,
       maxContinuationHops,
@@ -495,11 +499,21 @@ export function queuePendingEnsembleRosterPresetApply(
   chat: ChatRecord,
   plan: PendingEnsembleRosterPresetApply
 ): ChatRecord {
+  // Stamped here rather than in the plan builder because this is the one choke
+  // point that sees the chat the plan is queued AGAINST. A chat with no roster
+  // yet (a solo thread this preset will convert) gets no baseline and keeps the
+  // old unconditional behaviour — there is nothing of the user's to protect.
+  const queuedConfigurationSignature =
+    plan.queuedConfigurationSignature ??
+    (chat.ensemble ? ensembleAuthoredConfigurationSignature(chat.ensemble) : undefined)
   return {
     ...chat,
     providerMetadata: {
       ...(chat.providerMetadata || {}),
-      [PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY]: plan
+      [PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY]:
+        queuedConfigurationSignature === undefined
+          ? plan
+          : { ...plan, queuedConfigurationSignature }
     }
   }
 }
@@ -530,6 +544,33 @@ export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): Ch
   if (
     chat.chatKind === 'ensemble' &&
     chat.ensemble?.activeRosterPresetId === plan.presetId
+  ) {
+    return {
+      ...chat,
+      providerMetadata: withoutPendingMetadata(chat)
+    }
+  }
+  // The user reshaped the panel by hand between queueing this plan and the
+  // boundary it lands on — a window that is routinely minutes long. Reported
+  // 2026-09-11 as edits that "settle for a minute and then revert again": a seat
+  // model, a reasoning effort, a role rename, a stage role, a Captain
+  // assignment, the round budget and Boss auto-approvals all snapped back to the
+  // preset's values, because the replace below takes every one of them.
+  //
+  // Their later edit is the newer intent, and it is not mergeable with this
+  // plan: a preset swap installs NEW seat ids, so the seats they just edited are
+  // not the seats it would leave behind. Consume the plan instead of replaying
+  // it. Nothing is lost that the user did not themselves replace, and applying
+  // the preset again is one click.
+  //
+  // Gated on the signature being present so a plan queued before this existed
+  // keeps its old behaviour, and computed over user-authored keys ONLY so the
+  // orchestrator's own writes in the same window are not mistaken for the user.
+  if (
+    plan.queuedConfigurationSignature !== undefined &&
+    chat.chatKind === 'ensemble' &&
+    chat.ensemble &&
+    ensembleAuthoredConfigurationSignature(chat.ensemble) !== plan.queuedConfigurationSignature
   ) {
     return {
       ...chat,
@@ -631,7 +672,7 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
       requiredPresetFields: ['name', 'participants'],
       hostGeneratedFields: ['id', 'createdAt', 'updatedAt', 'exportedAt'],
       hostDefaults: {
-        orchestrationMode: 'turn_bound',
+        orchestrationMode: 'continuous',
         maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
       },
       note:
@@ -647,12 +688,12 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
       briefField: 'instructions'
     },
     settings: {
-      orchestrationMode: ['turn_bound', 'continuous'],
+      orchestrationMode:
+        "always 'continuous' (a legacy 'turn_bound' value is accepted and normalized)",
       fanoutPolicy: {
         Off: 'off',
-        Read: 'read_only',
-        Write: 'locked_writers_with_boss',
-        All: 'all'
+        On: 'all',
+        note: "Legacy 'read_only' / 'locked_writers_*' values are accepted and normalize to 'all'."
       },
       maxContinuationHops: `1-${AGENT_ROSTER_MAX_CONTINUATION_HOPS}`,
       ensembleContextChars: `${AGENT_ROSTER_CONTEXT_MIN_CHARS}-${AGENT_ROSTER_CONTEXT_MAX_CHARS}`

@@ -1,4 +1,15 @@
-import type { ChatMessage, ChatRecord } from '../main/store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../main/store/types'
+import {
+  DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES,
+  DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES,
+  buildTranscriptPage,
+  estimateJsonishBytes,
+  isTranscriptPagedShell,
+  selectTranscriptPageRuns,
+  shouldPageTranscriptOnOpen,
+  type TranscriptPage
+} from './transcriptPage'
+import { projectThreadRunWallMs, type ThreadEnsembleWallTimeSource } from './threadRunWallTime'
 
 export const CHAT_UPDATE_CHANNEL = 'chat-updated'
 export const CHAT_UPDATE_ACK_CHANNEL = 'chat-updated:ack'
@@ -30,6 +41,31 @@ export type ChatTranscriptOp =
   | { op: 'append'; messages: ChatMessage[] }
   | { op: 'update'; id: string; message: ChatMessage }
   | { op: 'delete'; id: string }
+  /**
+   * Rewind: drop every row AFTER `id`; the anchor row itself survives.
+   *
+   * A rewind can cut hundreds of rows, and expressing that as one delete per
+   * row costs an op per row on the wire and an O(rows) index rewrite per op on
+   * both sides. This states the intent once and applies in a single pass.
+   *
+   * Editing the anchor's own text is deliberately NOT part of this op — that is
+   * the existing `update`, so a rewind is `[update(anchor), truncateFrom(anchor)]`
+   * and the net new wire surface stays one member.
+   */
+  | { op: 'truncateFrom'; id: string }
+
+/**
+ * Main-authored delivery vocabulary.
+ *
+ * Renderer-authored transcript mutations deliberately stay on the narrower
+ * {@link ChatTranscriptOp} surface. Ensemble fan-out owns deterministic lane
+ * ordering in main, so it may additionally place a newly materialised lane
+ * immediately before an existing identity without degrading to a whole-list
+ * splice. The anchor is resolved after every preceding operation in the batch.
+ */
+export type ChatUpdateTranscriptOp =
+  | ChatTranscriptOp
+  | { op: 'insertBefore'; beforeId: string; messages: ChatMessage[] }
 
 export interface ChatUpdateSubRevisions {
   ensembleRevision: number
@@ -37,10 +73,32 @@ export interface ChatUpdateSubRevisions {
   recordHash: string
 }
 
+/**
+ * Byte totals for the three exact values serialized to produce chat
+ * sub-revisions. These are deliberately named after their inputs, rather than
+ * calling any of them a transcript: the inputs are ensemble, runs, and the
+ * non-message record.
+ */
+export interface ChatUpdateRevisionInputBytes {
+  ensemble: number
+  runs: number
+  nonMessageRecord: number
+}
+
 export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
   chatId: string
   persistenceRevision: number
   retainedBytes: number
+  /** False when the canonical transcript cannot safely use id-based ops. */
+  transcriptIdsUnique?: boolean
+  /**
+   * A compact transcript operation-chain digest. A snapshot roots it in the
+   * exact message content; each accepted patch advances it from the previous
+   * digest and its precise operations. It lets both sides reject an ACKed
+   * patch that was applied from the wrong transcript base without re-hashing
+   * a large transcript on every streaming save.
+   */
+  transcriptHash?: string
 }
 
 /**
@@ -52,11 +110,13 @@ export interface ChatUpdateProducerState extends ChatUpdateSubRevisions {
  */
 export interface ChatUpdateProducerDelta extends ChatUpdateProducerState {
   basePersistenceRevision: number
+  /** Transcript digest before this exact producer-authored delta. */
+  baseTranscriptHash?: string
   recordMask: string[]
   recordDelta: Partial<ChatUpdateRecord>
   recordCleared?: string[]
-  /** null means the producer observed an edit that append/update/delete cannot express. */
-  transcriptOps: ChatTranscriptOp[] | null
+  /** null means the producer observed an edit the main delivery vocabulary cannot express. */
+  transcriptOps: ChatUpdateTranscriptOp[] | null
   changedMessageCount: number
 }
 
@@ -89,9 +149,19 @@ export interface ChatUpdateSnapshotDelivery {
   chatId: string
   revision: number
   chat: ChatRecord
+  /** Main-side generation for this WebContents; echoed by a modern ACK. */
+  deliveryEpoch?: number
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  transcriptHash?: string
+  /** Snapshot metadata carried forward so later patches keep the recovery fence. */
+  transcriptIdsUnique?: boolean
+  /**
+   * Present when the snapshot was bounded to a transcript page instead of the
+   * canonical messages array. The delivered `chat.messages` are that page.
+   */
+  page?: TranscriptPage
 }
 
 /** v1 patch: full non-message record (legacy clients / default emit). */
@@ -104,6 +174,9 @@ export interface ChatUpdatePatchDeliveryV1 {
   revision: number
   record: ChatUpdateRecord
   messages: ChatUpdateMessageSplice
+  deliveryEpoch?: number
+  baseTranscriptHash?: string
+  transcriptHash?: string
 }
 
 /**
@@ -119,6 +192,7 @@ export interface ChatUpdatePatchDeliveryV2 {
   chatId: string
   baseRevision: number
   revision: number
+  deliveryEpoch?: number
   /** Keys whose values changed (set or cleared). */
   recordMask: string[]
   /** Changed top-level fields only (never a full Omit<ChatRecord, messages>). */
@@ -127,10 +201,12 @@ export interface ChatUpdatePatchDeliveryV2 {
   recordCleared?: string[]
   /** Retained for dual-read when transcriptOps is absent or incomplete. */
   messages?: ChatUpdateMessageSplice
-  transcriptOps?: ChatTranscriptOp[]
+  transcriptOps?: ChatUpdateTranscriptOp[]
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  baseTranscriptHash?: string
+  transcriptHash?: string
 }
 
 export type ChatUpdatePatchDelivery = ChatUpdatePatchDeliveryV1 | ChatUpdatePatchDeliveryV2
@@ -143,6 +219,16 @@ export interface ChatUpdateAck {
   /** Optional T6c-forward fields; ignored by v1 ACK consumers. */
   revision?: number
   recordHash?: string
+  /** Operation-chain digest of the renderer baseline that accepted this delivery. */
+  transcriptHash?: string
+  /** Echo of the coordinator's target generation; rejects reload-era ACKs. */
+  deliveryEpoch?: number
+  /** Fresh opaque id created once per renderer document. */
+  rendererEpoch?: string
+  /** `accepted` releases transport backpressure; `rendered` is telemetry only. */
+  phase?: 'accepted' | 'rendered'
+  /** Required only for non-gating `rendered` receipts. */
+  chatId?: string
 }
 
 export interface ChatUpdateBaseline {
@@ -151,6 +237,9 @@ export interface ChatUpdateBaseline {
   ensembleRevision?: number
   runsRevision?: number
   recordHash?: string
+  transcriptHash?: string
+  /** Whether this acknowledged transcript is safe for id-based patching. */
+  transcriptIdsUnique?: boolean
 }
 
 /**
@@ -161,6 +250,9 @@ export interface ChatUpdateBaseline {
 export interface CompactChatUpdateBaseline {
   revision: number
   recordHash: string
+  transcriptHash?: string
+  /** Whether the acknowledged transcript is safe for id-based patching. */
+  transcriptIdsUnique?: boolean
   ensembleRevision?: number
   runsRevision?: number
   /** Cheap retained-byte estimate for statsForTarget meters. */
@@ -228,22 +320,39 @@ export function composeChatUpdateProducerDeltas(
     recordDelta[key] = value
     recordCleared.delete(key)
   }
+  const transcriptOps =
+    first.transcriptOps === null || second.transcriptOps === null
+      ? null
+      : [...first.transcriptOps, ...second.transcriptOps]
+  // A composed wire patch is applied once, not as two renderer deliveries.
+  // Re-root its digest in the composed operation payload so the receiver
+  // derives the identical chain value in one step.
+  const transcriptHash =
+    transcriptOps && first.baseTranscriptHash
+      ? advanceChatTranscriptHash(first.baseTranscriptHash, {
+          kind: 'ops',
+          persistenceRevision: second.persistenceRevision,
+          operations: transcriptOps
+        })
+      : second.transcriptHash
 
   return {
     chatId: first.chatId,
     basePersistenceRevision: first.basePersistenceRevision,
+    baseTranscriptHash: first.baseTranscriptHash,
     persistenceRevision: second.persistenceRevision,
     recordMask,
     recordDelta: recordDelta as Partial<ChatUpdateRecord>,
     ...(recordCleared.size > 0 ? { recordCleared: [...recordCleared] } : {}),
-    transcriptOps:
-      first.transcriptOps === null || second.transcriptOps === null
-        ? null
-        : [...first.transcriptOps, ...second.transcriptOps],
+    transcriptOps,
     changedMessageCount: first.changedMessageCount + second.changedMessageCount,
     ensembleRevision: second.ensembleRevision,
     runsRevision: second.runsRevision,
     recordHash: second.recordHash,
+    ...(second.transcriptIdsUnique !== undefined
+      ? { transcriptIdsUnique: second.transcriptIdsUnique }
+      : {}),
+    ...(transcriptHash ? { transcriptHash } : {}),
     retainedBytes: second.retainedBytes
   }
 }
@@ -294,29 +403,189 @@ function stableStringify(value: unknown): string {
     return `[${value.map((entry) => stableStringify(entry)).join(',')}]`
   }
   const record = value as Record<string, unknown>
-  const keys = Object.keys(record).sort()
+  // JSON semantics: an own key whose value is `undefined` is indistinguishable
+  // from an absent one. `Object.keys` alone kept it, so `{ ...chat, field:
+  // undefined }` hashed differently from a record that simply never had the
+  // key — and the two sides of a delivery legitimately disagree about which
+  // they hold. That disagreement surfaced as `recordHashMismatch` on an ACK
+  // main had every reason to accept.
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
 }
 
 function fnv1aHex(text: string): string {
-  let hash = 0x811c9dc5
+  return fnv1aHexFromSeed(text, 0x811c9dc5)
+}
+
+function fnv1aHexFromSeed(text: string, seed: number): string {
+  return (fnv1aUpdate(seed, text) >>> 0).toString(16).padStart(8, '0')
+}
+
+function fnv1aUpdate(seed: number, text: string): number {
+  let hash = seed
   for (let index = 0; index < text.length; index += 1) {
     hash ^= text.charCodeAt(index)
     hash = Math.imul(hash, 0x01000193)
   }
-  return (hash >>> 0).toString(16).padStart(8, '0')
+  return hash >>> 0
 }
 
-function fingerprintNumber(value: unknown): number {
-  return Number.parseInt(fnv1aHex(stableStringify(value)), 16)
+/**
+ * Hash the stable JSON shape without constructing a transcript-sized string.
+ * Snapshot repair already crosses the full record boundary; this keeps its
+ * integrity proof streaming so it never adds a second giant allocation.
+ */
+function stableTranscriptDigest(value: unknown): string {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  const write = (text: string): void => {
+    first = fnv1aUpdate(first, text)
+    second = fnv1aUpdate(second, text)
+  }
+  const visit = (entry: unknown): void => {
+    if (entry === null || typeof entry !== 'object') {
+      write(JSON.stringify(entry) ?? 'undefined')
+      return
+    }
+    if (Array.isArray(entry)) {
+      write('[')
+      for (let index = 0; index < entry.length; index += 1) {
+        if (index > 0) write(',')
+        visit(entry[index])
+      }
+      write(']')
+      return
+    }
+    const record = entry as Record<string, unknown>
+    const keys = Object.keys(record).sort()
+    write('{')
+    for (let index = 0; index < keys.length; index += 1) {
+      if (index > 0) write(',')
+      const key = keys[index]
+      write(`${JSON.stringify(key)}:`)
+      visit(record[key])
+    }
+    write('}')
+  }
+  visit(value)
+  return `${first.toString(16).padStart(8, '0')}${second.toString(16).padStart(8, '0')}`
 }
 
-export function computeChatSubRevisions(chat: ChatRecord): ChatUpdateSubRevisions {
+/** UTF-8 byte length without allocating a Buffer in renderer-shared code. */
+export function utf8ByteLength(text: string): number {
+  let bytes = 0
+  for (let index = 0; index < text.length; index += 1) {
+    const codeUnit = text.charCodeAt(index)
+    if (codeUnit < 0x80) {
+      bytes += 1
+    } else if (codeUnit < 0x800) {
+      bytes += 2
+    } else if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < text.length &&
+      text.charCodeAt(index + 1) >= 0xdc00 &&
+      text.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4
+      index += 1
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
+}
+
+export function computeChatSubRevisions(
+  chat: ChatRecord,
+  byteSink?: ChatUpdateRevisionInputBytes
+): ChatUpdateSubRevisions {
   const record = chatRecordWithoutMessages(chat)
+  const ensembleInput = stableStringify(record.ensemble ?? null)
+  const runsInput = stableStringify(record.runs ?? [])
+  const nonMessageRecordInput = stableStringify(record)
+  if (byteSink) {
+    byteSink.ensemble = utf8ByteLength(ensembleInput)
+    byteSink.runs = utf8ByteLength(runsInput)
+    byteSink.nonMessageRecord = utf8ByteLength(nonMessageRecordInput)
+  }
   return {
-    ensembleRevision: fingerprintNumber(record.ensemble ?? null),
-    runsRevision: fingerprintNumber(record.runs ?? []),
-    recordHash: fnv1aHex(stableStringify(record))
+    ensembleRevision: Number.parseInt(fnv1aHex(ensembleInput), 16),
+    runsRevision: Number.parseInt(fnv1aHex(runsInput), 16),
+    recordHash: fnv1aHex(nonMessageRecordInput)
+  }
+}
+
+/**
+ * Compact, deterministic root for a snapshot's exact message list.
+ *
+ * This intentionally runs only for a snapshot/seed. Streaming patches advance
+ * from this root with {@link advanceChatTranscriptHash}, so a 20k-message
+ * transcript never needs a full re-hash at every token boundary.
+ */
+export function computeChatTranscriptHash(messages: readonly ChatMessage[]): string {
+  return stableTranscriptDigest(messages)
+}
+
+/**
+ * Whether a transcript is safe for identity-based delivery operations.
+ * Historical/imported records can contain duplicate or blank ids; those
+ * records must be delivered as exact snapshots until a later save repairs the
+ * transcript rather than being spliced by id.
+ */
+export function hasUniqueChatMessageIds(messages: readonly ChatMessage[]): boolean {
+  const seen = new Set<string>()
+  for (const message of messages) {
+    const id = message?.id
+    if (typeof id !== 'string' || id.length === 0 || seen.has(id)) return false
+    seen.add(id)
+  }
+  return true
+}
+
+export type ChatTranscriptHashOperation =
+  | { kind: 'ops'; persistenceRevision: number; operations: readonly ChatUpdateTranscriptOp[] }
+  | { kind: 'splice'; persistenceRevision: number; splice: ChatUpdateMessageSplice }
+
+/**
+ * Advances a transcript's delivery-integrity chain.
+ *
+ * The result is deliberately a chain digest rather than another full-content
+ * scan: both producer and renderer derive it from the same acknowledged base,
+ * target revision, and exact wire operation. A bad base, tampered operation,
+ * duplicate, or out-of-order patch therefore nacks into the ordinary snapshot
+ * recovery path without putting transcript-sized work on the hot ACK path.
+ */
+export function advanceChatTranscriptHash(
+  baseHash: string,
+  operation: ChatTranscriptHashOperation
+): string {
+  return stableTranscriptDigest([baseHash, 'transcript', operation])
+}
+
+/**
+ * ACK/apply fingerprint of the chat the renderer actually holds.
+ *
+ * Producer `recordHash` on the wire is a rolling op-hash. Copying that onto
+ * the applied baseline made every ACK match even when apply diverged.
+ * This is the content hash of the non-message record (runs/ensemble/chrome),
+ * which is cheap and is what main now compares.
+ */
+export function appliedChatUpdateBaseline(
+  revision: number,
+  chat: ChatRecord,
+  transcriptHash?: string
+): ChatUpdateBaseline {
+  const sub = computeChatSubRevisions(chat)
+  return {
+    revision,
+    chat,
+    ensembleRevision: sub.ensembleRevision,
+    runsRevision: sub.runsRevision,
+    recordHash: sub.recordHash,
+    ...(transcriptHash ? { transcriptHash } : {})
   }
 }
 
@@ -402,7 +671,7 @@ export function buildChatTranscriptOps(
 
 export function applyChatTranscriptOps(
   messages: readonly ChatMessage[],
-  ops: readonly ChatTranscriptOp[]
+  ops: readonly ChatUpdateTranscriptOp[]
 ): ChatMessage[] | null {
   // A v2 patch can carry an empty ops list when only record metadata changed.
   // Preserve the baseline array so metadata-only deliveries do not turn into
@@ -427,6 +696,29 @@ export function applyChatTranscriptOps(
       }
       continue
     }
+    if (op.op === 'insertBefore') {
+      if (
+        typeof op.beforeId !== 'string' ||
+        op.beforeId.length === 0 ||
+        !Array.isArray(op.messages) ||
+        op.messages.length === 0
+      ) {
+        return null
+      }
+      const index = indexById.get(op.beforeId)
+      if (index === undefined) return null
+      const insertedIds = new Set<string>()
+      for (const message of op.messages) {
+        const id = message?.id
+        if (!id || indexById.has(id) || insertedIds.has(id)) return null
+        insertedIds.add(id)
+      }
+      next.splice(index, 0, ...op.messages)
+      for (let cursor = index; cursor < next.length; cursor += 1) {
+        indexById.set(next[cursor].id, cursor)
+      }
+      continue
+    }
     if (op.op === 'update') {
       const index = indexById.get(op.id)
       if (index === undefined || !op.message || op.message.id !== op.id) return null
@@ -441,6 +733,17 @@ export function applyChatTranscriptOps(
       for (let cursor = index; cursor < next.length; cursor += 1) {
         indexById.set(next[cursor].id, cursor)
       }
+      continue
+    }
+    if (op.op === 'truncateFrom') {
+      const index = indexById.get(op.id)
+      if (index === undefined) return null
+      // Surviving rows keep their indices, so only the dropped ids leave the
+      // map — no reindex pass, unlike the per-row delete this replaces.
+      for (let cursor = index + 1; cursor < next.length; cursor += 1) {
+        indexById.delete(next[cursor].id)
+      }
+      next.length = index + 1
       continue
     }
     return null
@@ -478,7 +781,12 @@ export function buildChatRecordDelta(
       recordCleared.push(key)
       continue
     }
-    if (!plainDataEqual(previousRecord[key], nextRecord[key])) {
+    // `had !== has` is the appearing-key direction, and it must be asked
+    // BEFORE the values are compared: a key that appears valued `undefined`
+    // compares equal to the absent one it replaced (`plainDataEqual` opens on
+    // `a === b`), so the delta carried nothing while the record had genuinely
+    // changed shape. The disappearing direction is already handled above.
+    if (had !== has || !plainDataEqual(previousRecord[key], nextRecord[key])) {
       recordMask.push(key)
       ;(recordDelta as Record<string, unknown>)[key] = nextRecord[key]
     }
@@ -531,6 +839,41 @@ function applyMessageSplice(
   ]
 }
 
+function nextTranscriptHashForPatch(
+  baseline: ChatUpdateBaseline,
+  delivery: Pick<ChatUpdatePatchDelivery, 'baseTranscriptHash' | 'transcriptHash' | 'revision'>,
+  operation: ChatTranscriptHashOperation
+): string | undefined | null {
+  const baseHash = baseline.transcriptHash
+  if (delivery.baseTranscriptHash !== undefined) {
+    if (!baseHash || delivery.baseTranscriptHash !== baseHash) return null
+  }
+  if (!baseHash) {
+    // A legacy baseline has no trustworthy chain root. Do not accept a claimed
+    // new digest without its matching base; the ordinary NACK path requests a
+    // one-shot snapshot that establishes one.
+    return delivery.transcriptHash === undefined ? undefined : null
+  }
+  const nextHash = advanceChatTranscriptHash(baseHash, operation)
+  return delivery.transcriptHash && delivery.transcriptHash !== nextHash ? null : nextHash
+}
+
+function transcriptHashFieldsForPatch(
+  baseline: ChatUpdateBaseline,
+  operation: ChatTranscriptHashOperation,
+  preferredHash?: string,
+  preferredBaseHash?: string
+): Pick<ChatUpdatePatchDeliveryV2, 'baseTranscriptHash' | 'transcriptHash'> {
+  const baseTranscriptHash = baseline.transcriptHash
+  if (!baseTranscriptHash) return {}
+  const derivedHash = advanceChatTranscriptHash(baseTranscriptHash, operation)
+  const transcriptHash =
+    preferredHash && preferredBaseHash === baseTranscriptHash && preferredHash === derivedHash
+      ? preferredHash
+      : derivedHash
+  return { baseTranscriptHash, transcriptHash }
+}
+
 function resolveEmitProtocolVersion(
   requested?: ChatUpdateProtocolVersion
 ): ChatUpdateProtocolVersion {
@@ -551,6 +894,357 @@ export interface ChatUpdateDeliveryDiagnostics {
   producerDeltaMissing: boolean
   /** The change was recovered by diffing the baseline rather than sending the record. */
   spliceRecovery: boolean
+  /**
+   * The delivery was built against a bounded transcript WINDOW rather than the
+   * canonical transcript.
+   *
+   * Kept separate from `producerDeltaMissing` deliberately. A windowed delivery
+   * must ignore producer transcript ops — they describe the canonical array and
+   * would be nonsense applied to a page — so it takes the same baseline-diff
+   * path. Counting that as a missing producer delta would make a healthy large
+   * thread look like the broken-producer signature that path exists to report.
+   */
+  transcriptWindowed: boolean
+}
+
+/**
+ * Whether this record is a bounded transcript WINDOW rather than a whole
+ * transcript — the marked shell `boundChatUpdateSnapshot` produces.
+ *
+ * Load-bearing for the delivery lane: once a target has acknowledged a shell,
+ * every later delivery to it must be built against a shell, or the patch either
+ * clears the paged markers on a renderer holding one page, or re-ships the
+ * whole runs array as changed chrome.
+ */
+export function isWindowedChatUpdateRecord(chat: ChatRecord | null | undefined): boolean {
+  return isTranscriptPagedShell(chat)
+}
+
+function transcriptContentExceedsPageBytes(messages: readonly ChatMessage[]): boolean {
+  let bytes = 0
+  for (const message of messages) {
+    if (typeof message.content === 'string') bytes += message.content.length * 2
+    if (bytes > DEFAULT_TRANSCRIPT_PAGE_MAX_BYTES) return true
+  }
+  return false
+}
+
+/**
+ * Per-message byte-meter memo for window projection.
+ *
+ * An anchored window is re-projected on every delivery cadence tick, and the
+ * naive path re-walked every held row with `estimateJsonishBytes` each time —
+ * O(window) deep object walks per tick, when a stream tick changes only the
+ * tail row. Row identity is already load-bearing here:
+ * `buildChatUpdateMessageSplice` treats `a === b` as unchanged, so a message
+ * edited in place would never reach the wire as a row change at all. Keying
+ * the meter by that same identity adds no new assumption: a row whose content
+ * changed arrives as a new object and re-meters exactly once, and untouched
+ * rows reuse the previous projection's number word-for-word.
+ */
+const meteredWindowMessageBytes = new WeakMap<ChatMessage, number>()
+
+function estimateWindowedMessageBytes(message: ChatMessage): number {
+  const metered = meteredWindowMessageBytes.get(message)
+  if (metered !== undefined) return metered
+  const measured = estimateJsonishBytes(message)
+  meteredWindowMessageBytes.set(message, measured)
+  return measured
+}
+
+/**
+ * Reference-level fingerprint of the exact inputs {@link projectThreadRunWallMs}
+ * reads. Every one of those inputs is an immutable string/number field or an
+ * object's own entries, so reference equality plus entry pair equality proves
+ * the output unchanged — and any mutation (a run gaining `endedAt` as it
+ * completes, a round-ledger entry landing, a run array replaced on save)
+ * installs a new reference and evicts.
+ */
+interface WindowRunWallSource {
+  readonly runStarts: readonly (string | null | undefined)[]
+  readonly runEnds: readonly (string | null | undefined)[]
+  readonly runRoundIds: readonly (string | null | undefined)[]
+  readonly activeRoundStatus: string | null | undefined
+  readonly activeRoundId: string | null | undefined
+  readonly activeRoundStart: string | null | undefined
+  readonly activeRoundEnd: string | null | undefined
+  readonly roundWallKeys: readonly string[]
+  readonly roundWallValues: readonly unknown[]
+}
+
+interface WindowRunWallEntry {
+  readonly ensemble: unknown
+  readonly source: WindowRunWallSource
+  readonly wallMs: number
+}
+
+/**
+ * One cached wall-time projection per run array. The array's own lifetime
+ * bounds the entry, so a settled thread carries one row of reference arrays,
+ * not an ever-growing ledger of past generations.
+ */
+const windowRunWallMsCache = new WeakMap<ChatRun[], WindowRunWallEntry>()
+
+function windowRunWallSourceFor(
+  runs: readonly ChatRun[] | null | undefined,
+  ensemble: ThreadEnsembleWallTimeSource | null | undefined
+): WindowRunWallSource {
+  const activeRound = ensemble?.activeRound ?? null
+  const ledger = ensemble?.roundWallMsById
+  const ledgerEntries =
+    ledger && typeof ledger === 'object' && !Array.isArray(ledger)
+      ? Object.entries(ledger as Record<string, unknown>)
+      : []
+  return {
+    runStarts: (runs ?? []).map((run) => run?.startedAt),
+    runEnds: (runs ?? []).map((run) => run?.endedAt),
+    runRoundIds: (runs ?? []).map((run) => run?.ensembleRoundId),
+    activeRoundStatus: activeRound?.status,
+    activeRoundId: activeRound?.roundId,
+    activeRoundStart: activeRound?.startedAt,
+    activeRoundEnd: activeRound?.endedAt,
+    roundWallKeys: ledgerEntries.map(([key]) => key),
+    roundWallValues: ledgerEntries.map(([, value]) => value)
+  }
+}
+
+function windowRunWallSourcesEqual(a: WindowRunWallSource, b: WindowRunWallSource): boolean {
+  if (
+    a.runStarts.length !== b.runStarts.length ||
+    a.activeRoundStatus !== b.activeRoundStatus ||
+    a.activeRoundId !== b.activeRoundId ||
+    a.activeRoundStart !== b.activeRoundStart ||
+    a.activeRoundEnd !== b.activeRoundEnd ||
+    a.roundWallKeys.length !== b.roundWallKeys.length
+  ) {
+    return false
+  }
+  for (let index = 0; index < a.runStarts.length; index += 1) {
+    if (
+      a.runStarts[index] !== b.runStarts[index] ||
+      a.runEnds[index] !== b.runEnds[index] ||
+      a.runRoundIds[index] !== b.runRoundIds[index]
+    ) {
+      return false
+    }
+  }
+  for (let index = 0; index < a.roundWallKeys.length; index += 1) {
+    if (a.roundWallKeys[index] !== b.roundWallKeys[index]) return false
+    if (a.roundWallValues[index] !== b.roundWallValues[index]) return false
+  }
+  return true
+}
+
+/**
+ * `runWallMs` for the paged shell, without re-running the O(runs) date-parse
+ * and sort on every delivery tick when the run/ensemble inputs did not move.
+ *
+ * The cache is keyed by run-array identity and validated field by reference
+ * (see {@link WindowRunWallSource}); a miss computes the full projection once
+ * and a hit costs one O(runs) pointer walk instead of `Date.parse` runs plus
+ * an interval sort. The shell still ships the exact current projection —
+ * never a stale aggregate — because the first changed reference discards the
+ * entry.
+ */
+function windowRunWallMs(
+  runs: ChatRun[] | null | undefined,
+  ensemble: ThreadEnsembleWallTimeSource | null | undefined
+): number {
+  if (!Array.isArray(runs)) return projectThreadRunWallMs(runs, ensemble)
+  const source = windowRunWallSourceFor(runs, ensemble)
+  const cached = windowRunWallMsCache.get(runs)
+  if (cached && cached.ensemble === ensemble && windowRunWallSourcesEqual(cached.source, source)) {
+    return cached.wallMs
+  }
+  const wallMs = projectThreadRunWallMs(runs, ensemble)
+  windowRunWallMsCache.set(runs, { ensemble, source, wallMs })
+  return wallMs
+}
+
+/**
+ * Baseline-drop snapshots must not put the canonical transcript on the wire.
+ * Oversized chats become a marked shell whose `messages` are one tail page.
+ */
+/**
+ * The marked shell shape, shared by the first bounded snapshot and every
+ * windowed patch that follows it. Kept in one place so the two can never drift
+ * — a shell whose marker set differs between snapshot and patch would hash
+ * differently and drop the baseline, which is the whole class of bug this
+ * windowing exists to end.
+ */
+function windowedChatRecord(
+  chat: ChatRecord,
+  windowMessages: ChatMessage[],
+  windowRuns: ChatRun[],
+  totalMessageCount: number
+): ChatRecord {
+  const ensemble = chat.ensemble
+    ? (({ roundWallMsById: _roundWallMsById, ...rest }) => rest)(chat.ensemble)
+    : undefined
+  return {
+    ...chat,
+    ...(ensemble ? { ensemble } : {}),
+    messages: windowMessages,
+    runs: windowRuns,
+    summaryOnly: true,
+    transcriptPaged: true,
+    messageCount: totalMessageCount,
+    runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
+    // Measure the complete record before dropping the run/round history.
+    // Memoized by exact input identity: the anchored window holds still across
+    // many cadence ticks while a transcript streams, and the run set usually
+    // does not move, so the O(runs) date-parse + sort would otherwise repeat
+    // unchanged on every tick.
+    runWallMs: windowRunWallMs(chat.runs, chat.ensemble)
+  } as ChatRecord
+}
+
+export function boundChatUpdateSnapshot(chat: ChatRecord): {
+  chat: ChatRecord
+  page?: TranscriptPage
+} {
+  const messages = Array.isArray(chat.messages) ? chat.messages : []
+  const sourceChatSizeValue = (chat as { sourceChatSize?: unknown }).sourceChatSize
+  const sourceChatSize = typeof sourceChatSizeValue === 'number' ? sourceChatSizeValue : 0
+  if (
+    !shouldPageTranscriptOnOpen({
+      messageCount: messages.length,
+      sourceChatSize
+    }) &&
+    !transcriptContentExceedsPageBytes(messages)
+  ) {
+    return { chat }
+  }
+  const page = buildTranscriptPage(chat, { chatId: chat.appChatId })
+  if (!page || (!page.hasOlder && !page.hasNewer)) return { chat }
+  return {
+    page,
+    chat: windowedChatRecord(chat, page.messages, page.runs, page.totalMessageCount)
+  }
+}
+
+/**
+ * How far a windowed transcript may GROW before it is re-anchored.
+ *
+ * A window that slides — always the newest N rows — is the wrong shape for a
+ * patch. Appending k rows drops k from the front and adds k at the back, and a
+ * single splice cannot express that cheaply: the common region is no longer a
+ * prefix, so the splice replaces nearly the whole window and the transport
+ * correctly falls back to a snapshot. Measured on the three-chat scale gate,
+ * that produced zero patches for 2,000/5,500/9,000-message chats.
+ *
+ * An ANCHORED window fixes it: hold the start still and let the tail grow, so
+ * an append is a pure suffix and the splice is exactly the new rows. Growth is
+ * bounded by re-anchoring with a fresh snapshot, which is what keeps a long
+ * session from shipping an ever-larger window.
+ */
+export const MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS = DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES * 2
+
+export interface ChatUpdateWindowProjection {
+  /** The record a target should be sent — the shell when windowed, else `chat`. */
+  chat: ChatRecord
+  /** True when the transcript was replaced by a bounded window. */
+  windowed: boolean
+  /**
+   * The window, for a target that needs to place it in the canonical
+   * transcript. Present whenever `windowed`, because a shell WITHOUT a page
+   * tells the renderer it is holding a partial transcript and not which part.
+   */
+  page?: TranscriptPage
+  /** Id of the window's FIRST row, to be carried into the next projection. */
+  anchorMessageId: string | null
+  /** True when the window start moved, which requires a fresh snapshot. */
+  reanchored: boolean
+}
+
+/** Index of `messageId`, searched from the tail. -1 when absent. */
+function lastIndexOfMessageId(messages: readonly ChatMessage[], messageId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.id === messageId) return index
+  }
+  return -1
+}
+
+/**
+ * Project the record a target should hold, keeping an already-established
+ * window anchored wherever that is still possible.
+ *
+ * `previousAnchorMessageId` is the first row of the window the target last
+ * acknowledged. While that row is still present and the window has not grown
+ * past its ceiling, the projection keeps the same start — so the delivered
+ * transcript is a strict extension of the one the target holds and the patch is
+ * just the appended rows. Anything else (no anchor, the anchor compacted away,
+ * the window grown too far) re-anchors on a fresh bounded page, and the caller
+ * owes a snapshot.
+ */
+export function projectChatUpdateWindow(
+  chat: ChatRecord,
+  previousAnchorMessageId?: string | null,
+  options?: { maxGrowthRows?: number }
+): ChatUpdateWindowProjection {
+  const messages = Array.isArray(chat.messages) ? chat.messages : []
+  const anchorIndex = previousAnchorMessageId
+    ? lastIndexOfMessageId(messages, previousAnchorMessageId)
+    : -1
+  const maxGrowthRows = Math.max(
+    1,
+    Math.floor(options?.maxGrowthRows ?? MAX_WINDOWED_TRANSCRIPT_GROWTH_ROWS)
+  )
+  // Try the held anchor BEFORE building a bounded page. Re-paging first and
+  // then discarding it would put a full tail-page walk on every delivery of
+  // every large thread purely to compute a value the anchored path never reads.
+  if (anchorIndex > 0 && messages.length - anchorIndex <= maxGrowthRows) {
+    const page = buildAnchoredTranscriptPage(chat, messages, anchorIndex)
+    return {
+      chat: windowedChatRecord(chat, page.messages, page.runs, page.totalMessageCount),
+      windowed: true,
+      page,
+      anchorMessageId: previousAnchorMessageId ?? null,
+      reanchored: false
+    }
+  }
+
+  const bounded = boundChatUpdateSnapshot(chat)
+  if (!bounded.page) {
+    return { chat: bounded.chat, windowed: false, anchorMessageId: null, reanchored: false }
+  }
+  return {
+    chat: bounded.chat,
+    windowed: true,
+    page: bounded.page,
+    anchorMessageId: bounded.page.messages[0]?.id ?? null,
+    // "You asked me to keep an anchor and I could not." A first delivery asked
+    // for nothing, so it is not a re-anchor: it gave up no patchable state, and
+    // counting it would make the signal fire once per new chat.
+    reanchored: Boolean(previousAnchorMessageId)
+  }
+}
+
+/** The window [anchorIndex, end) as a page, matching `buildTranscriptPage`'s shape. */
+function buildAnchoredTranscriptPage(
+  chat: ChatRecord,
+  messages: readonly ChatMessage[],
+  anchorIndex: number
+): TranscriptPage {
+  const windowMessages = messages.slice(anchorIndex)
+  let estimatedBytes = 0
+  for (const message of windowMessages) estimatedBytes += estimateWindowedMessageBytes(message)
+  return {
+    chatId: chat.appChatId,
+    messages: windowMessages,
+    runs: selectTranscriptPageRuns(Array.isArray(chat.runs) ? chat.runs : [], windowMessages),
+    totalMessageCount: messages.length,
+    windowStart: anchorIndex,
+    windowEnd: messages.length,
+    estimatedBytes,
+    hasOlder: anchorIndex > 0,
+    // The window is anchored to the tail by construction, so there is never
+    // anything newer than its last row.
+    hasNewer: false,
+    oldestMessageId: windowMessages[0]?.id ?? null,
+    newestMessageId: windowMessages[windowMessages.length - 1]?.id ?? null,
+    updatedAt: chat.updatedAt ?? 0
+  }
 }
 
 export function buildChatUpdateDelivery(input: {
@@ -569,6 +1263,26 @@ export function buildChatUpdateDelivery(input: {
    * coordinator flag) to emit compact field-mask patches.
    */
   protocolVersion?: ChatUpdateProtocolVersion
+  /**
+   * `chat` is a bounded transcript window, not the canonical transcript.
+   *
+   * Set by the coordinator once a target holds a shell. It forces the
+   * baseline-diff path: producer transcript ops describe the CANONICAL array,
+   * and splicing them into a page would corrupt the window rather than update
+   * it.
+   */
+  transcriptWindowed?: boolean
+  /**
+   * The window `chat` already carries, when the caller windowed it.
+   *
+   * Required alongside `transcriptWindowed` for any snapshot this call may
+   * produce: a shell without a page tells the renderer it holds a partial
+   * transcript but not WHICH part, so it can neither position the window nor
+   * page outward from it. Supplying it also stops this function re-bounding a
+   * record the caller already bounded, which would deliver different bytes than
+   * the ones the caller hashed for the ACK.
+   */
+  transcriptPage?: TranscriptPage
   /** Optional out-param; mutated in place so the caller can count degradations. */
   diagnostics?: ChatUpdateDeliveryDiagnostics
 }): ChatUpdateDelivery {
@@ -577,6 +1291,7 @@ export function buildChatUpdateDelivery(input: {
   if (diagnostics) {
     diagnostics.producerDeltaMissing = false
     diagnostics.spliceRecovery = false
+    diagnostics.transcriptWindowed = input.transcriptWindowed === true
   }
   const protocolVersion = resolveEmitProtocolVersion(input.protocolVersion)
   const producerDelta = input.producerDelta
@@ -594,17 +1309,52 @@ export function buildChatUpdateDelivery(input: {
       }
     : computeChatSubRevisions(chat)
 
-  const snapshot = (): ChatUpdateSnapshotDelivery => ({
-    protocolVersion,
-    kind: 'snapshot',
-    deliveryId,
-    chatId: chat.appChatId,
-    revision,
-    chat,
-    ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? sub : {})
-  })
+  const transcriptWindowed = input.transcriptWindowed === true
+  const snapshot = (): ChatUpdateSnapshotDelivery => {
+    // An already-windowed record is delivered EXACTLY as projected. Re-bounding
+    // it here would page the window a second time and put a record on the wire
+    // that the caller never hashed.
+    const bounded = transcriptWindowed
+      ? { chat, page: input.transcriptPage }
+      : boundChatUpdateSnapshot(chat)
+    // v1 snapshots never carry sub-revisions, and the coordinator hashes the
+    // delivered record regardless; computing them here too burned a full
+    // record hash on every v1 snapshot for bytes nobody reads.
+    const snapshotSub =
+      protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? computeChatSubRevisions(bounded.chat) : null
+    return {
+      protocolVersion,
+      kind: 'snapshot',
+      deliveryId,
+      chatId: chat.appChatId,
+      revision,
+      chat: bounded.chat,
+      // Hash the delivered window, not the canonical array, so ACK/apply agree
+      // and a 18k-row ensemble cannot be cloned onto the wire.
+      transcriptHash: computeChatTranscriptHash(bounded.chat.messages),
+      transcriptIdsUnique: hasUniqueChatMessageIds(bounded.chat.messages),
+      ...(bounded.page ? { page: bounded.page } : {}),
+      ...(snapshotSub ?? {})
+    }
+  }
 
   if (!baseline || baseline.chat.appChatId !== chat.appChatId) {
+    return snapshot()
+  }
+
+  // The producer tracker and snapshot ACK carry this bit without a transcript
+  // walk on the normal patch path. A splice can preserve a duplicate or blank
+  // id from a legacy baseline and leave the renderer with an identity map that
+  // cannot safely accept the next update. Snapshots are the recovery boundary
+  // for malformed identity; do not turn this into another id-based patch while
+  // the canonical record remains malformed.
+  if (
+    baseline.transcriptIdsUnique === false ||
+    chatUpdateProducerEnvelopeFor(baseline.chat)?.state.transcriptIdsUnique === false ||
+    producerDelta?.transcriptIdsUnique === false ||
+    producerState?.transcriptIdsUnique === false ||
+    chatUpdateProducerEnvelopeFor(chat)?.state.transcriptIdsUnique === false
+  ) {
     return snapshot()
   }
 
@@ -615,6 +1365,11 @@ export function buildChatUpdateDelivery(input: {
     const messages = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
     const replacedRows = messages.deleteCount + messages.items.length
     if (replacedRows > replacementLimit) return snapshot()
+    const transcript = transcriptHashFieldsForPatch(baseline, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(chat),
+      splice: messages
+    })
     return {
       protocolVersion: CHAT_UPDATE_PROTOCOL_V1,
       kind: 'patch',
@@ -623,15 +1378,22 @@ export function buildChatUpdateDelivery(input: {
       baseRevision: baseline.revision,
       revision,
       record: chatRecordWithoutMessages(chat),
-      messages
+      messages,
+      ...transcript
     }
   }
 
-  // The v2 hot path is producer-only: an exact delta, already derived at the
-  // mutation seam, that needs no transcript walk at all. When a caller skips a
-  // mutation, revisions do not chain, or the change escapes the public
-  // append/update/delete vocabulary, the change is STILL recoverable without
-  // the whole record — the renderer's baseline is in hand, so diff it.
+  // The v2 transcript hot path is producer-authored and needs no transcript
+  // walk. Top-level record fields are deliberately diffed from the acknowledged
+  // baseline below: concurrent main-owned metadata can land outside a caller's
+  // authored mutation, and trusting that incomplete mask reconstructs a record
+  // whose content hash main must reject. The non-message record is already
+  // hashed for every ACK, so this adds no transcript-sized work.
+  //
+  // When a caller skips a transcript mutation, revisions do not chain, or the
+  // change escapes the public append/update/delete vocabulary, the change is
+  // STILL recoverable without the whole record — the renderer's baseline is in
+  // hand, so diff it.
   //
   // Shipping the full record here instead was the 2026-08-19 renderer OOM: a
   // producer that yields no delta (a swallowed incremental-persistence failure
@@ -643,6 +1405,7 @@ export function buildChatUpdateDelivery(input: {
   // side of the boundary that can afford it. A snapshot is still owed when
   // there is no baseline to diff, or when the diff is no smaller than one.
   if (
+    transcriptWindowed ||
     !producerDelta ||
     producerDelta.chatId !== chat.appChatId ||
     producerDelta.basePersistenceRevision !== persistenceRevision(baseline.chat) ||
@@ -650,14 +1413,24 @@ export function buildChatUpdateDelivery(input: {
     producerDelta.transcriptOps === null ||
     producerDelta.changedMessageCount > replacementLimit
   ) {
-    if (diagnostics) diagnostics.producerDeltaMissing = true
+    // A windowed delivery reaches this path by design, not by degradation.
+    if (diagnostics && !transcriptWindowed) diagnostics.producerDeltaMissing = true
     const recovered = buildChatUpdateMessageSplice(baseline.chat.messages, chat.messages)
     if (recovered.deleteCount + recovered.items.length > replacementLimit) return snapshot()
-    if (diagnostics) diagnostics.spliceRecovery = true
+    // Same reasoning: a windowed delivery diffs the window because that is the
+    // design, so it must not inflate the counter that means "the producer's
+    // delta was unusable". Conflating the two would make the one number that
+    // reports producer health rise with ordinary traffic on every long thread.
+    if (diagnostics && !transcriptWindowed) diagnostics.spliceRecovery = true
     const record = buildChatRecordDelta(
       chatRecordWithoutMessages(baseline.chat),
       chatRecordWithoutMessages(chat)
     )
+    const transcript = transcriptHashFieldsForPatch(baseline, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(chat),
+      splice: recovered
+    })
     return {
       protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
       kind: 'patch',
@@ -669,10 +1442,25 @@ export function buildChatUpdateDelivery(input: {
       recordDelta: record.recordDelta,
       ...(record.recordCleared.length ? { recordCleared: record.recordCleared } : {}),
       messages: recovered,
-      ...sub
+      ...sub,
+      ...transcript
     }
   }
 
+  const transcript = transcriptHashFieldsForPatch(
+    baseline,
+    {
+      kind: 'ops',
+      persistenceRevision: producerDelta.persistenceRevision,
+      operations: producerDelta.transcriptOps
+    },
+    producerDelta.transcriptHash,
+    producerDelta.baseTranscriptHash
+  )
+  const record = buildChatRecordDelta(
+    chatRecordWithoutMessages(baseline.chat),
+    chatRecordWithoutMessages(chat)
+  )
   const patch: ChatUpdatePatchDeliveryV2 = {
     protocolVersion: CHAT_UPDATE_PROTOCOL_V2,
     kind: 'patch',
@@ -680,11 +1468,12 @@ export function buildChatUpdateDelivery(input: {
     chatId: chat.appChatId,
     baseRevision: baseline.revision,
     revision,
-    recordMask: producerDelta.recordMask,
-    recordDelta: producerDelta.recordDelta,
-    ...(producerDelta.recordCleared?.length ? { recordCleared: producerDelta.recordCleared } : {}),
+    recordMask: record.recordMask,
+    recordDelta: record.recordDelta,
+    ...(record.recordCleared.length ? { recordCleared: record.recordCleared } : {}),
     transcriptOps: producerDelta.transcriptOps,
-    ...sub
+    ...sub,
+    ...transcript
   }
   return patch
 }
@@ -697,20 +1486,19 @@ export function applyChatUpdateDelivery(
     if (delivery.chat.appChatId !== delivery.chatId) {
       return { ok: false, reason: 'Snapshot chat id does not match its envelope.' }
     }
-    const nextBaseline: ChatUpdateBaseline = {
-      revision: delivery.revision,
-      chat: delivery.chat
+    const transcriptHash = computeChatTranscriptHash(delivery.chat.messages)
+    if (delivery.transcriptHash && delivery.transcriptHash !== transcriptHash) {
+      return { ok: false, reason: 'Snapshot transcript hash does not match its messages.' }
     }
-    if (delivery.ensembleRevision !== undefined) {
-      nextBaseline.ensembleRevision = delivery.ensembleRevision
+    return {
+      ok: true,
+      baseline: {
+        ...appliedChatUpdateBaseline(delivery.revision, delivery.chat, transcriptHash),
+        ...(delivery.transcriptIdsUnique !== undefined
+          ? { transcriptIdsUnique: delivery.transcriptIdsUnique }
+          : {})
+      }
     }
-    if (delivery.runsRevision !== undefined) {
-      nextBaseline.runsRevision = delivery.runsRevision
-    }
-    if (delivery.recordHash !== undefined) {
-      nextBaseline.recordHash = delivery.recordHash
-    }
-    return { ok: true, baseline: nextBaseline }
   }
 
   if (!baseline) return { ok: false, reason: 'Patch has no renderer baseline.' }
@@ -727,12 +1515,24 @@ export function applyChatUpdateDelivery(
     }
     const spliced = applyMessageSplice(baseline.chat.messages, delivery.messages)
     if (!spliced) return { ok: false, reason: 'Patch message splice is invalid.' }
+    const transcriptHash = nextTranscriptHashForPatch(baseline, delivery, {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(delivery.record),
+      splice: delivery.messages
+    })
+    if (transcriptHash === null) {
+      return { ok: false, reason: 'Patch transcript hash does not match its baseline.' }
+    }
     return {
       ok: true,
-      baseline: {
-        revision: delivery.revision,
-        chat: { ...delivery.record, messages: spliced }
-      }
+      baseline: appliedChatUpdateBaseline(
+        delivery.revision,
+        {
+          ...delivery.record,
+          messages: spliced
+        },
+        transcriptHash
+      )
     }
   }
 
@@ -746,26 +1546,35 @@ export function applyChatUpdateDelivery(
   }
 
   let messages: ChatMessage[] | null = null
+  let transcriptOperation: ChatTranscriptHashOperation | null = null
   if (delivery.transcriptOps !== undefined) {
     messages = applyChatTranscriptOps(baseline.chat.messages, delivery.transcriptOps)
     if (!messages) return { ok: false, reason: 'Patch transcript ops are invalid.' }
+    transcriptOperation = {
+      kind: 'ops',
+      persistenceRevision: persistenceRevision(record),
+      operations: delivery.transcriptOps
+    }
   } else if (delivery.messages) {
     messages = applyMessageSplice(baseline.chat.messages, delivery.messages)
     if (!messages) return { ok: false, reason: 'Patch message splice is invalid.' }
+    transcriptOperation = {
+      kind: 'splice',
+      persistenceRevision: persistenceRevision(record),
+      splice: delivery.messages
+    }
   } else {
     return { ok: false, reason: 'Patch has neither transcript ops nor a message splice.' }
   }
 
+  const transcriptHash = nextTranscriptHashForPatch(baseline, delivery, transcriptOperation)
+  if (transcriptHash === null) {
+    return { ok: false, reason: 'Patch transcript hash does not match its baseline.' }
+  }
   const chat = { ...record, messages }
   return {
     ok: true,
-    baseline: {
-      revision: delivery.revision,
-      chat,
-      ensembleRevision: delivery.ensembleRevision,
-      runsRevision: delivery.runsRevision,
-      recordHash: delivery.recordHash
-    }
+    baseline: appliedChatUpdateBaseline(delivery.revision, chat, transcriptHash)
   }
 }
 
@@ -806,6 +1615,29 @@ export function normalizeChatUpdateAck(value: unknown): ChatUpdateAck | null {
   }
   if (typeof candidate.recordHash === 'string' && candidate.recordHash.length <= 64) {
     ack.recordHash = candidate.recordHash
+  }
+  if (typeof candidate.transcriptHash === 'string' && candidate.transcriptHash.length <= 64) {
+    ack.transcriptHash = candidate.transcriptHash
+  }
+  if (Number.isSafeInteger(candidate.deliveryEpoch) && (candidate.deliveryEpoch ?? -1) >= 0) {
+    ack.deliveryEpoch = candidate.deliveryEpoch
+  }
+  if (
+    typeof candidate.rendererEpoch === 'string' &&
+    candidate.rendererEpoch.length > 0 &&
+    candidate.rendererEpoch.length <= 160
+  ) {
+    ack.rendererEpoch = candidate.rendererEpoch
+  }
+  if (candidate.phase === 'accepted' || candidate.phase === 'rendered') {
+    ack.phase = candidate.phase
+  }
+  if (
+    typeof candidate.chatId === 'string' &&
+    candidate.chatId.length > 0 &&
+    candidate.chatId.length <= 160
+  ) {
+    ack.chatId = candidate.chatId
   }
   return ack
 }

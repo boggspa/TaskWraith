@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the approved TaskWraith Studio icon from first-party SVG sources."""
+"""Build the TaskWraith companion icon family from the existing SVG catalogue."""
 
 import hashlib
 import json
@@ -14,10 +14,12 @@ HERE = Path(__file__).resolve().parent
 DESIGN = HERE.parent
 SVG = 'http://www.w3.org/2000/svg'
 ET.register_namespace('', SVG)
-SOURCE_COMMIT = '63603c538d66c862f64440126a8452b98242471c'
 GHOST = DESIGN / 'ghost/ghost-guy-mark-monoline-white.svg'
-GLYPH = DESIGN / 'agent-pool-icons/icons/glyph-timeline.svg'
-PRODUCT = ('studio', 'TaskWraith Studio', 'glyph-timeline', '#C6ADFF', '#352B4D')
+PRODUCTS = [
+    ('observatory', 'TaskWraith Observatory', 'turbo-telescope', '#6EDBE7', '#173B49'),
+    ('provider-hub', 'Provider Hub', 'glyph-fanout-routes', '#FFB276', '#493323'),
+    ('studio', 'TaskWraith Studio', 'glyph-timeline', '#C6ADFF', '#352B4D'),
+]
 
 
 def digest(path):
@@ -49,7 +51,9 @@ def glyph_markup(slug, accent):
     return ''.join(result)
 
 
-def artwork(name, slug, accent, tone):
+def artwork(name, slug, accent, tone, *, tile=True, ink=None):
+    ghost_ink = ink or '#EDF3FA'
+    glyph_ink = ink or accent
     background = f'''
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0.85" y2="1">
@@ -75,7 +79,7 @@ def artwork(name, slug, accent, tone):
   <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#tile)"/>
   <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#wash)"/>
   <rect x="90" y="90" width="844" height="844" rx="196" fill="none" stroke="url(#edge)" stroke-width="3"/>
-'''
+''' if tile else ''
     mask = '''
   <defs>
     <mask id="symbol-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
@@ -86,7 +90,7 @@ def artwork(name, slug, accent, tone):
     badge = '''
   <circle cx="726" cy="716" r="158" fill="url(#badge)"/>
   <circle cx="726" cy="716" r="156.5" fill="none" stroke="{accent}" stroke-opacity="0.28" stroke-width="2"/>
-'''.format(accent=accent)
+'''.format(accent=accent) if tile else ''
     # The unmodified ghost paths stay in their original 128-unit coordinate space.
     # The catalogue icon keeps its original 600-unit geometry, optically balanced
     # inside the common product badge; only line weights and colours are unified.
@@ -95,13 +99,13 @@ def artwork(name, slug, accent, tone):
   <desc id="desc">TaskWraith monoline ghost with the {slug.replace('-', ' ')} catalogue glyph.</desc>
 {background}{mask}
   <g mask="url(#symbol-clearance)">
-    <g transform="translate(-18 -8) scale(7.45)" fill="none" stroke="#EDF3FA" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(-18 -8) scale(7.45)" fill="none" stroke="{ghost_ink}" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round">
       {ghost_markup()}
     </g>
   </g>
 {badge}
   <g transform="translate(551 541) scale(0.5833333333)">
-    {glyph_markup(slug, accent)}
+    {glyph_markup(slug, glyph_ink)}
   </g>
 </svg>
 '''
@@ -109,51 +113,66 @@ def artwork(name, slug, accent, tone):
 
 
 def render(source, target, size):
-    subprocess.run([
-        'rsvg-convert', '-w', str(size), '-h', str(size),
-        '-o', str(target), str(source),
-    ], check=True)
+    subprocess.run(['rsvg-convert', '-w', str(size), '-h', str(size),
+                    '-o', str(target), str(source)], check=True)
 
 
 def build():
-    key, name, slug, accent, tone = PRODUCT
-    directory = HERE / key
-    directory.mkdir(exist_ok=True)
-    source = directory / 'app-icon.svg'
-    source.write_text(artwork(name, slug, accent, tone))
-    render(source, directory / 'app-icon.png', 1024)
-    with tempfile.TemporaryDirectory(prefix='taskwraith-studio-') as tmp:
-        iconset = Path(tmp) / 'AppIcon.iconset'
-        iconset.mkdir()
-        for size in (16, 32, 128, 256, 512):
-            for scale in (1, 2):
-                suffix = '@2x' if scale == 2 else ''
-                render(source, iconset / f'icon_{size}x{size}{suffix}.png', size * scale)
-        subprocess.run([
-            'iconutil', '-c', 'icns', str(iconset),
-            '-o', str(directory / 'app-icon.icns'),
-        ], check=True)
-    manifest = {
-        'family': 'TaskWraith companions',
-        'scope': 'studio-only',
-        'sourceCommit': SOURCE_COMMIT,
-        'ghost': {
-            'path': str(GHOST.relative_to(DESIGN)),
-            'sha256': digest(GHOST),
-        },
-        'products': [{
-            'id': key,
-            'name': name,
-            'accent': accent,
-            'catalogueGlyph': str(GLYPH.relative_to(DESIGN)),
-            'catalogueGlyphSha256': digest(GLYPH),
-            'outputs': {
-                output: digest(directory / output)
-                for output in ('app-icon.icns', 'app-icon.png', 'app-icon.svg')
-            },
-        }],
-    }
+    manifest = {'family': 'TaskWraith companions', 'ghost': {
+        'path': str(GHOST.relative_to(DESIGN)), 'sha256': digest(GHOST)}, 'products': []}
+    for key, name, slug, accent, tone in PRODUCTS:
+        directory = HERE / key
+        directory.mkdir(exist_ok=True)
+        source = directory / 'app-icon.svg'
+        source.write_text(artwork(name, slug, accent, tone))
+        (directory / 'mark.svg').write_text(artwork(name, slug, accent, tone, tile=False))
+        (directory / 'mark-on-light.svg').write_text(
+            artwork(name, slug, accent, tone, tile=False, ink='#202A38'))
+        render(source, directory / 'app-icon.png', 1024)
+        with tempfile.TemporaryDirectory(prefix=f'taskwraith-{key}-') as tmp:
+            iconset = Path(tmp) / 'AppIcon.iconset'
+            iconset.mkdir()
+            for size in (16, 32, 128, 256, 512):
+                for scale in (1, 2):
+                    suffix = '@2x' if scale == 2 else ''
+                    render(source, iconset / f'icon_{size}x{size}{suffix}.png', size * scale)
+            subprocess.run(['iconutil', '-c', 'icns', str(iconset), '-o',
+                            str(directory / 'app-icon.icns')], check=True)
+        glyph = DESIGN / f'agent-pool-icons/icons/{slug}.svg'
+        manifest['products'].append({
+            'id': key, 'name': name, 'accent': accent,
+            'catalogueGlyph': str(glyph.relative_to(DESIGN)),
+            'catalogueGlyphSha256': digest(glyph),
+            'outputs': {name: digest(directory / name) for name in (
+                'app-icon.icns', 'app-icon.png', 'app-icon.svg', 'mark-on-light.svg', 'mark.svg')},
+        })
     (HERE / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    board()
+
+
+def board():
+    parts = [f'<svg xmlns="{SVG}" width="1560" height="1020" viewBox="0 0 1560 1020">',
+             '<rect width="1560" height="1020" fill="#0D1016"/>',
+             '<text x="68" y="76" fill="#A9B6C6" font-family="Helvetica, sans-serif" font-size="17" letter-spacing="4">TASKWRAITH / COMPANION ICONS</text>',
+             '<text x="68" y="129" fill="#EDF3FA" font-family="Helvetica, sans-serif" font-size="35" font-weight="600">One ghost. Three disciplines.</text>']
+    for i, (key, name, slug, accent, tone) in enumerate(PRODUCTS):
+        x = 62 + i * 510
+        parts.append(f'<image href="{key}/app-icon.svg" x="{x}" y="174" width="420" height="420"/>')
+        parts.append(f'<text x="{x+38}" y="623" fill="#F1F5FA" font-family="Helvetica, sans-serif" font-size="24" font-weight="600">{name}</text>')
+        label = {'observatory': 'TELESCOPE / OBSERVE', 'provider-hub': 'FANOUT / CONNECT', 'studio': 'TIMELINE / CREATE'}[key]
+        parts.append(f'<text x="{x+38}" y="655" fill="{accent}" font-family="Helvetica, sans-serif" font-size="12" letter-spacing="2">{label}</text>')
+        parts.append(f'<rect x="{x+24}" y="700" width="388" height="112" rx="18" fill="#ECEFF4"/>')
+        parts.append(f'<text x="{x+42}" y="724" fill="#546176" font-family="Helvetica, sans-serif" font-size="10" letter-spacing="1.5">DOCK SIZES</text>')
+        for offset, size in ((44, 64), (140, 48), (230, 32), (310, 16)):
+            y = 746 + (64-size)/2
+            parts.append(f'<image href="{key}/app-icon.svg" x="{x+offset}" y="{y}" width="{size}" height="{size}"/>')
+        parts.append(f'<image href="{key}/mark.svg" x="{x+30}" y="848" width="108" height="108"/>')
+        parts.append(f'<text x="{x+155}" y="897" fill="#B6C1CF" font-family="Helvetica, sans-serif" font-size="14">Standalone vector mark</text>')
+        parts.append(f'<text x="{x+155}" y="920" fill="#738198" font-family="Helvetica, sans-serif" font-size="12">SVG · PNG · macOS ICNS</text>')
+    parts.append('</svg>')
+    source = HERE / 'preview.svg'
+    source.write_text('\n'.join(parts))
+    subprocess.run(['rsvg-convert', '-o', str(HERE / 'preview.png'), str(source)], check=True)
 
 
 if __name__ == '__main__':

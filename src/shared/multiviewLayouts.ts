@@ -3,19 +3,23 @@
  * renderer (useMultiviewState, the pane grid, the composer picker) and by
  * settings validation. No imports from main/renderer; data + pure helpers only.
  *
- * Multiview splits ONLY the central chat pane into 1-4 panes. It is distinct
+ * Multiview splits ONLY the central chat pane into 1-8 panes. It is distinct
  * from the existing side-chats feature and never touches either sidebar.
  */
 
 export const MULTIVIEW_LAYOUT_IDS = [
   'single',
   'vertical-2',
+  'vertical-3',
+  'vertical-4',
   'horizontal-2',
   'two-top-one-bottom',
   'one-top-two-bottom',
   'one-left-two-right',
   'two-left-one-right',
-  'quad'
+  'quad',
+  'six-way',
+  'eight-way'
 ] as const
 
 export type MultiviewLayout = (typeof MULTIVIEW_LAYOUT_IDS)[number]
@@ -78,7 +82,7 @@ export interface MultiviewLayoutSpec {
   id: MultiviewLayout
   /** Human label for the layout picker. */
   label: string
-  /** Number of panes this layout renders (1-4). */
+  /** Number of panes this layout renders (1-8). */
   paneCount: number
   /** pane-index -> CSS grid-area name; length always equals paneCount. */
   cellAreas: string[]
@@ -90,7 +94,7 @@ export interface MultiviewLayoutSpec {
 
 export const DEFAULT_MULTIVIEW_LAYOUT: MultiviewLayout = 'single'
 
-export const MAX_MULTIVIEW_PANES = 4
+export const MAX_MULTIVIEW_PANES = 8
 
 /**
  * Every layout, keyed by id. cellAreas[index] is the grid-area for pane
@@ -114,6 +118,24 @@ export const MULTIVIEW_LAYOUTS: Record<MultiviewLayout, MultiviewLayoutSpec> = {
     cellAreas: ['a', 'b'],
     gridTemplateAreas: '"a b"',
     gridTemplateColumns: '1fr 1fr',
+    gridTemplateRows: '1fr'
+  },
+  'vertical-3': {
+    id: 'vertical-3',
+    label: 'Vertical split',
+    paneCount: 3,
+    cellAreas: ['a', 'b', 'c'],
+    gridTemplateAreas: '"a b c"',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gridTemplateRows: '1fr'
+  },
+  'vertical-4': {
+    id: 'vertical-4',
+    label: '4 columns',
+    paneCount: 4,
+    cellAreas: ['a', 'b', 'c', 'd'],
+    gridTemplateAreas: '"a b c d"',
+    gridTemplateColumns: '1fr 1fr 1fr 1fr',
     gridTemplateRows: '1fr'
   },
   'horizontal-2': {
@@ -168,6 +190,24 @@ export const MULTIVIEW_LAYOUTS: Record<MultiviewLayout, MultiviewLayoutSpec> = {
     cellAreas: ['a', 'b', 'c', 'd'],
     gridTemplateAreas: '"a b" "c d"',
     gridTemplateColumns: '1fr 1fr',
+    gridTemplateRows: '1fr 1fr'
+  },
+  'six-way': {
+    id: 'six-way',
+    label: '6-Way',
+    paneCount: 6,
+    cellAreas: ['a', 'b', 'c', 'd', 'e', 'f'],
+    gridTemplateAreas: '"a b c" "d e f"',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gridTemplateRows: '1fr 1fr'
+  },
+  'eight-way': {
+    id: 'eight-way',
+    label: '8-Way',
+    paneCount: 8,
+    cellAreas: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+    gridTemplateAreas: '"a b c d" "e f g h"',
+    gridTemplateColumns: '1fr 1fr 1fr 1fr',
     gridTemplateRows: '1fr 1fr'
   }
 }

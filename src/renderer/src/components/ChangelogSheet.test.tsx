@@ -88,6 +88,56 @@ describe('UpdatePill', () => {
     expect(html).toContain('chat-corner-update-pill-downloading')
     expect(html).toContain('42%')
   })
+
+  it('labels the one-time identity bridge separately from an ordinary update', () => {
+    const html = renderToStaticMarkup(
+      <UpdatePill
+        snapshot={{
+          status: 'available',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          identityHandoff: {
+            active: true,
+            phase: 'ready',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json'
+          }
+        }}
+        onOpen={() => {}}
+      />
+    )
+    expect(html).toContain('Move to Release')
+    expect(html).toContain('public Release identity')
+  })
+
+  it('titles a queued restart with what it is waiting for', () => {
+    const html = renderToStaticMarkup(
+      <UpdatePill
+        snapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.4.4',
+          restartPending: true,
+          restartDeferral: {
+            reason: 'Waiting for 1 active agent run',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: false
+          }
+        }}
+        onQuickUpdate={() => {}}
+        variant="sidebar"
+      />
+    )
+    expect(html).toContain('Restart queued')
+    expect(html).toContain('Waiting for 1 active agent run')
+  })
 })
 
 describe('ChangelogSheet', () => {
@@ -145,6 +195,167 @@ describe('ChangelogSheet', () => {
       />
     )
     expect(html).toContain('Restart to install')
+  })
+
+  it('explains a queued restart and offers restart anyway', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73',
+          restartPending: true,
+          restartDeferral: {
+            reason: 'Waiting for 1 active agent run',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: false
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('will restart when active work completes')
+    expect(html).toContain('Waiting for 1 active agent run')
+    expect(html).toContain('>Restart anyway</button>')
+  })
+
+  it('reports an abandoned restart wait and still offers restart anyway', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73',
+          restartPending: false,
+          restartDeferral: {
+            reason: 'Waiting for 2 active agent runs',
+            since: '2026-09-02T21:00:00.000Z',
+            expired: true
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('stopped waiting')
+    expect(html).toContain('Waiting for 2 active agent runs')
+    expect(html).toContain('Restart to install')
+    expect(html).toContain('>Restart anyway</button>')
+  })
+
+  it('does not offer restart anyway for a plain downloaded update', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '1.0.73'
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('Restart to install')
+    expect(html).not.toContain('>Restart anyway</button>')
+  })
+
+  it('shows the feed note when Nightly followed the stable feed', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={changelogSnapshot}
+        updateSnapshot={{
+          status: 'not-available',
+          enabled: true,
+          channel: 'nightly',
+          feedNote:
+            'No nightly feed is published for the current release; following the stable feed.'
+        }}
+        onCheckForUpdates={() => {}}
+      />
+    )
+    expect(html).toContain('changelog-sheet-status-feed')
+    expect(html).toContain(
+      'No nightly feed is published for the current release; following the stable feed.'
+    )
+  })
+
+  it('shows the resumable beta-to-Release journey and exact installer action', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={{ currentVersion: '1.9.9' }}
+        updateSnapshot={{
+          status: 'downloaded',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          releaseName: 'TaskWraith Release',
+          identityHandoff: {
+            active: true,
+            phase: 'downloaded',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json',
+            instructions: 'Replace the beta app, then launch TaskWraith Release.'
+          }
+        }}
+        onInstallUpdateNow={() => {}}
+      />
+    )
+    expect(html).toContain('TaskWraith Release')
+    expect(html).toContain('Release installer is verified')
+    expect(html).toContain('Replace the beta app')
+    expect(html).toContain('Open Release installer')
+  })
+
+  it('offers the support route without an inert retry action for a blocked handoff', () => {
+    const html = renderToStaticMarkup(
+      <ChangelogSheet
+        open
+        onDismiss={() => {}}
+        changelogSnapshot={{ currentVersion: '1.9.9' }}
+        updateSnapshot={{
+          status: 'error',
+          enabled: true,
+          channel: 'stable',
+          latestVersion: '0.1.0',
+          releasePageUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+          errorMessage: 'Unsupported platform.',
+          identityHandoff: {
+            active: true,
+            phase: 'blocked',
+            handoffId: 'taskwraith-1.9.9-to-0.1.0-v1',
+            sourceVersion: '1.9.9',
+            targetVersion: '0.1.0',
+            targetAppId: 'com.taskwraith.desktop',
+            targetUpdateFeedChannel: 'release',
+            supportUrl: 'https://github.com/boggspa/TaskWraith/releases/tag/v0.1.0',
+            evidencePath: '/profile/identity-handoff-v1/state.json',
+            errorMessage: 'Unsupported platform.'
+          }
+        }}
+        onCheckForUpdates={() => {}}
+      />
+    )
+    expect(html).toContain('Open release')
+    expect(html).not.toContain('Resume or verify again')
   })
 
   it('falls back to bundled current-version release notes when updater metadata is missing', () => {

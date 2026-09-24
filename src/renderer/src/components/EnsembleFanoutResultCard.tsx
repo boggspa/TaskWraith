@@ -4,7 +4,8 @@ import type {
   ChatRecord,
   DiffFileSummary,
   ProviderId,
-  ToolActivity
+  ToolActivity,
+  TranscriptView
 } from '../../../main/store/types'
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
@@ -16,10 +17,12 @@ import {
 } from '../lib/ollamaDisplayBrand'
 import {
   ActivityStack,
+  activityStackHasVisibleContent,
   type ActivityTimelineSegmentKind,
   type ThinkingTraceActionsConfig
 } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
+import { DEFAULT_TRANSCRIPT_VIEW } from '../lib/transcriptViewOverride'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole, seatFromEnsembleMetadata } from '../lib/transcriptSeat'
@@ -40,6 +43,12 @@ const COLLAPSED_FANOUT_PART_LIMIT = 24
 // to fit. 331 = the original 240 grown ~20% (→288) then a further ~15% so more
 // of a long lane is visible at rest without dominating the transcript.
 const COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 331
+// Half band for lanes in a six-plus round (FANOUT_LANE_COMPACT_THRESHOLD):
+// at full band a big round shows at most two lane rows per screen even
+// paired, so overview beats per-lane depth there. 166 ≈ half of 331 and sits
+// at LiveActivityViewport's default 168 band, a size the edge fades and
+// reveal already serve well. Expanding a lane is unaffected.
+const COMPACT_COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT = 166
 const COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT = 184
 const COLLAPSED_FANOUT_MARKDOWN_LIMIT = 6_000
 const COLLAPSED_FANOUT_PREVIEW_CHARS = 2_400
@@ -56,6 +65,15 @@ interface EnsembleFanoutResultCardProps {
    * off at exactly the moment the seat's "working…" row does.
    */
   working?: boolean
+  /**
+   * This lane belongs to a round of six-plus lanes, so its collapsed viewport
+   * takes the half band — more of the round fits on screen at once. Derived
+   * per run by `classifyCompactFanoutLaneRows`; the height must flow through
+   * `collapsedMaxHeight` (which publishes `--live-activity-collapsed-height`)
+   * rather than a stylesheet, or the working-lane reservation drifts from the
+   * cap.
+   */
+  compactLaneBand?: boolean
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
   compactDensity?: boolean
@@ -65,6 +83,10 @@ interface EnsembleFanoutResultCardProps {
   thinkingTraceActions?: ThinkingTraceActionsConfig
   onPreviewImage: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
+  /** How much of each lane's activity stack to render. Threaded from
+   * TranscriptPanel, the card's only render site, rather than subscribed —
+   * one subscription per transcript, not one per lane card. */
+  transcriptView?: TranscriptView
 }
 
 function textValue(value: unknown): string | undefined {
@@ -171,9 +193,11 @@ function FanoutContentPart({
 export function EnsembleFanoutResultCard({
   message,
   chat,
+  transcriptView,
   workspacePath,
   streamRunId,
   working = false,
+  compactLaneBand = false,
   expanded,
   onExpandedChange,
   compactDensity = false,
@@ -224,7 +248,19 @@ export function EnsembleFanoutResultCard({
   // provider. The element now omits the permission chip when the tier is
   // unknown, so those rows can render the seat honestly: same provider, model,
   // role and #N the pills carried, minus a claim nobody can make.
-  const seat = useMemo(() => seatFromEnsembleMetadata(metadata), [metadata])
+  //
+  // The snapshot's preset is the seat's CONFIGURED tier, and it is not what ran:
+  // a lane sealed `read_only` was rendering "Full WS Access" off its roster
+  // while the close-out table one screen away correctly said "Ask". So the row's
+  // OWN run goes in beside the metadata and its signed posture wins. Matched on
+  // `message.runId` only — never the streaming/boundary run, which for a lane
+  // row can be a different seat's turn entirely, and a wrong run's posture is
+  // just a new way to lie.
+  const laneRun = useMemo(
+    () => (message.runId ? chat?.runs?.find((run) => run.runId === message.runId) : undefined),
+    [chat?.runs, message.runId]
+  )
+  const seat = useMemo(() => seatFromEnsembleMetadata(metadata, laneRun), [metadata, laneRun])
   const seatRole = composedSeatRole(seat)
   const content = message.content || ''
   const transcriptParts = useMemo(() => readEnsembleFanoutTranscriptParts(message), [message])
@@ -310,6 +346,7 @@ export function EnsembleFanoutResultCard({
         providerHueClass={hueClass}
         chatId={chat?.appChatId}
         runId={streamRunId || message.runId}
+        transcriptView={transcriptView}
         chat={chat}
         compactDensity={compactDensity}
         liveActivityViewport
@@ -324,15 +361,28 @@ export function EnsembleFanoutResultCard({
         expandedActivityIds={expandedActivityIds}
         onExpandedActivityIdsChange={onExpandedActivityIdsChange}
         onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+        showDiffStats
         thinkingTraceActions={thinkingTraceActions}
       />
     )
+    // Computed ONCE and used for both the fold and `canExpand`, so a part
+    // cannot fold to a one-liner that opens onto nothing, nor stay unfolded
+    // while rendering nothing. The row renderer pairs these the same way.
+    const partHasVisibleContent = activityStackHasVisibleContent(
+      partActivities,
+      transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+      { provider, chatId: chat?.appChatId, runId: streamRunId || message.runId }
+    )
     if (
-      !shouldCollapseFanoutActivityPart({
-        activities: partActivities,
-        isLatestPart,
-        laneWorking: working
-      })
+      !shouldCollapseFanoutActivityPart(
+        {
+          activities: partActivities,
+          isLatestPart,
+          laneWorking: working
+        },
+        transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+        !partHasVisibleContent
+      )
     ) {
       return activityStack
     }
@@ -342,6 +392,8 @@ export function EnsembleFanoutResultCard({
         header={null}
         activities={partActivities}
         providerHueClass={hueClass}
+        showDiffStats
+        canExpand={partHasVisibleContent}
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >
@@ -432,7 +484,11 @@ export function EnsembleFanoutResultCard({
         <LiveActivityViewport
           className="ensemble-fanout-result-viewport"
           revision={revision}
-          collapsedMaxHeight={COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT}
+          collapsedMaxHeight={
+            compactLaneBand
+              ? COMPACT_COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT
+              : COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT
+          }
           expanded={expanded}
           onExpandedChange={onExpandedChange}
           label={`${role} fan-out result`}

@@ -46,7 +46,15 @@ import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfil
 import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
-import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
+import {
+  applyProviderChange,
+  clearPendingProviderChange,
+  readPendingProviderChange
+} from '../providerChangeQueue'
+import {
+  isExternalProviderThreadImportMessage,
+  stripExternalProviderThreadImportContinuity
+} from '../../shared/externalProviderThreadImport'
 import {
   clearPendingWorkspaceRebind,
   queuePendingWorkspaceRebind,
@@ -71,6 +79,8 @@ import {
   collectExternalPathGrantsFromMetadata,
   externalPathGrantMetadataLists
 } from '../store/ExternalPathGrants'
+import type { AuthoredChatTranscriptMutation } from '../store/ChatRecordMutation'
+import type { ChatComposerSelectionPatchRequest } from '../../shared/chatComposerSelectionPatch'
 
 // Known ids for historical decode. New chat lifecycles use the shared live
 // admission predicate through `assertLiveProviderId` below.
@@ -85,7 +95,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral',
-  'muse'
+  'muse',
+  'devin'
 ])
 
 export interface CreateSubThreadInput {
@@ -110,7 +121,9 @@ export interface CreateSideChatInput {
   claudeReasoningEffort?: string | null
   grokReasoningEffort?: string | null
   museReasoningEffort?: string | null
+  ollamaReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
+  antigravityReasoningEffort?: string | null
   cursorFastMode?: boolean
 }
 
@@ -157,6 +170,34 @@ export interface RebindChatWorkspaceOptions {
   now?: number
 }
 
+/** Narrow Host setup creation input; it cannot carry a renderer-authored ChatRecord. */
+export type CreateSingleThreadInput =
+  | { readonly scope: 'global'; readonly title?: unknown }
+  | {
+      readonly scope: 'workspace'
+      readonly workspaceId: string
+      readonly workspacePath: string
+      readonly title?: unknown
+    }
+
+/** Bounded Host configuration patch; never accepts an effective permission body. */
+export interface ConfigureThreadInput {
+  readonly chatId: string
+  readonly chatKind?: ChatKind
+  readonly canonicalProvider?: ProviderId
+  readonly provider?: ProviderId
+  readonly selectedModelType?: unknown
+  readonly reasoningId?: unknown
+  readonly postureId?: 'read_only' | 'plan' | 'default' | 'workspace_write'
+  readonly title?: unknown
+}
+
+export interface ArchiveThreadInput {
+  readonly chatId: string
+  /** Undefined retains legacy archive-only callers; Host passes explicit state. */
+  readonly archived?: boolean
+}
+
 type ResolvedChatWorkspaceRebindTarget =
   | {
       chatId: string
@@ -182,6 +223,8 @@ export type PrepareForkMessages = (input: PrepareForkMessagesInput) => ChatMessa
 
 export interface ChatServiceStore {
   getChats: (workspaceId?: string) => ChatRecord[]
+  getAbandonedReapCandidates: () => { chats: ChatRecord[]; parentChatIds: Set<string> }
+  getWorkspaceCommitAttributionProjections: (workspaceId: string) => ChatRecord[]
   getChatList: (workspaceId?: string) => ChatListItem[]
   getPinnedMessages: (workspaceId?: string) => PinnedMessageGroup[]
   getChat: (chatId: string) => ChatRecord | null
@@ -201,10 +244,20 @@ export interface ChatServiceStore {
   ) => ChatRecord
   getChildChats: (parentChatId: string) => ChatRecord[]
   getSideChats: (parentChatId: string) => ChatRecord[]
-  saveChat: (chat: ChatRecord) => ChatRecord
-  deleteChat: (chatId: string) => void
-  truncateChatHistory?: (chatId: string) => ChatRecord | null
-  clearChats: (workspaceId?: string) => void
+  saveChat: (
+    chat: ChatRecord,
+    options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
+  ) => ChatRecord
+  persistChatComposerSelection: (
+    request: ChatComposerSelectionPatchRequest
+  ) => Promise<{ chat: ChatRecord; changed: boolean }>
+  deleteChat: (chatId: string) => void | Promise<void>
+  deleteChatViaHost?: (chatId: string) => Promise<void>
+  truncateChatHistory?: (chatId: string) => ChatRecord | null | Promise<ChatRecord | null>
+  truncateChatHistoryViaHost?: (chatId: string) => Promise<ChatRecord | null>
+  clearChats: (workspaceId?: string) => void | Promise<void>
+  clearChatsViaHost?: (workspaceId?: string) => Promise<void>
+  legacyStoreWritesOpen?: () => boolean
 }
 
 export interface ChatServiceDeps {
@@ -216,6 +269,16 @@ export interface ChatServiceDeps {
   canonicalPath: (path: string) => string
   /** Main-owned authority seam; must prepare copied media before the fork is persisted. */
   prepareForkMessages: PrepareForkMessages
+  /**
+   * Stage 5 — true when the v2 segmented store is enabled AND has a healthy
+   * baseline for the parent, so the fork's v2 seed will share the parent's
+   * immutable prefix instead of copying payloads. Only then may createForkChat
+   * skip the defensive structuredClone: the injected prepareForkMessages is
+   * pure (it builds fresh message objects), the fork record gets a fresh
+   * array either way, and the v1 legacy file still carries the full copy.
+   * Absent/false → today's clone behavior, unchanged.
+   */
+  canShareForkTranscript?: (parentChatId: string) => boolean
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
   /** Main-owned topology fence checked immediately before child persistence. */
   assertParentChatCreationAllowed?: (parentChatId: string) => void
@@ -251,6 +314,10 @@ export interface ChatServiceDeps {
     title: string,
     payload?: unknown
   ) => void
+  /** Current-offer validation belongs to the main-owned provider catalog. */
+  assertProviderOfferedForThread?: (provider: ProviderId, chat: ChatRecord) => void
+  /** Stronger live run/round fence supplied by the main-owned coordinator when available. */
+  assertThreadSetupIdle?: (chat: ChatRecord) => void
 }
 
 /**
@@ -266,6 +333,21 @@ export class ChatService {
 
   getChats(workspaceId?: string): ChatRecord[] {
     return this.deps.appStore.getChats(workspaceId)
+  }
+
+  /**
+   * Narrow source for the abandoned-chat reaper: only the chats that could
+   * still be reapable, plus whole-corpus parentage. See
+   * `AppStore.getAbandonedReapCandidates` for why the reaper must not take
+   * `getChats()` — nothing on a boot path may parse the whole corpus.
+   */
+  getAbandonedReapCandidates(): { chats: ChatRecord[]; parentChatIds: Set<string> } {
+    return this.deps.appStore.getAbandonedReapCandidates()
+  }
+
+  /** Transcript-reduced, workspace-scoped records for the Commits inspector. */
+  getWorkspaceCommitAttributionProjections(workspaceId: string): ChatRecord[] {
+    return this.deps.appStore.getWorkspaceCommitAttributionProjections(workspaceId)
   }
 
   getChatList(workspaceId?: string): ChatListItem[] {
@@ -290,6 +372,136 @@ export class ChatService {
 
   createGlobalChat(): ChatRecord {
     return this.deps.appStore.createGlobalChat()
+  }
+
+  /** Creates exactly one canonical single thread in global or registered-workspace scope. */
+  createSingleThread(input: CreateSingleThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object') throw new Error('Thread creation input is required.')
+    const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
+    if (input.scope === 'global') {
+      const chat = this.createGlobalChat()
+      return title === undefined
+        ? chat
+        : this.saveChat({
+            ...chat,
+            title,
+            threadTitle: { source: 'user' },
+            updatedAt: Date.now()
+          })
+    }
+    if (input.scope !== 'workspace') throw new Error('Thread scope must be global or workspace.')
+    const chat = this.createChat(
+      requireNonEmptyString(input.workspaceId, 'Workspace id'),
+      requireNonEmptyString(input.workspacePath, 'Workspace path')
+    )
+    return title === undefined
+      ? chat
+      : this.saveChat({
+          ...chat,
+          title,
+          threadTitle: { source: 'user' },
+          updatedAt: Date.now()
+        })
+  }
+
+  /**
+   * Applies a current provider/model/reasoning/posture or title patch to an idle thread.
+   * The shared provider-change helper clears stale linked sessions on a real
+   * provider switch and preserves them for a same-provider model adjustment.
+   */
+  configureThread(input: ConfigureThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object')
+      throw new Error('Thread configuration input is required.')
+    const chatId = requireSafeChatId(input.chatId, 'Chat id')
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current || current.archived) throw new Error('Chat is not available for configuration.')
+    assertHostSetupThreadIdle(current)
+    this.deps.assertThreadSetupIdle?.(current)
+
+    if (input.chatKind !== undefined) {
+      if (input.chatKind !== 'single' && input.chatKind !== 'ensemble') {
+        throw new Error('Thread chat kind is invalid.')
+      }
+      if (
+        input.provider !== undefined ||
+        input.selectedModelType !== undefined ||
+        input.reasoningId !== undefined ||
+        input.postureId !== undefined ||
+        input.title !== undefined ||
+        (input.chatKind === 'ensemble' && input.canonicalProvider !== undefined) ||
+        (input.chatKind === 'single' && input.canonicalProvider === undefined)
+      ) {
+        throw new Error('Chat-kind configuration must be an exact mode change.')
+      }
+      if (input.chatKind === 'ensemble') {
+        const seedParticipant = buildExternalJoinSeedParticipant(current)
+        if (!seedParticipant) throw new Error('Thread provider is required for Ensemble mode.')
+        return this.setChatKind({
+          chatId,
+          targetKind: 'ensemble',
+          seedParticipant
+        })
+      }
+      return this.setChatKind({
+        chatId,
+        targetKind: 'single',
+        canonicalProvider: input.canonicalProvider
+      })
+    }
+
+    const title = input.title === undefined ? undefined : requireBoundedText(input.title, 'Title', 200)
+    const selectedModelType = sanitizeThreadModel(input.selectedModelType)
+    const reasoningId = input.reasoningId === undefined ? undefined : sanitizeThreadModel(input.reasoningId)
+    const posture = input.postureId === undefined ? undefined : hostSetupPosture(input.postureId)
+    const changesProviderState =
+      input.provider !== undefined ||
+      selectedModelType !== undefined ||
+      reasoningId !== undefined ||
+      posture !== undefined
+    if (!changesProviderState) {
+      if (title === undefined) throw new Error('Thread configuration is empty.')
+      return this.saveChat({
+        ...current,
+        title,
+        threadTitle: { source: 'user' },
+        updatedAt: Date.now()
+      })
+    }
+    const provider =
+      input.provider === undefined ? current.provider : assertLiveProviderId(input.provider)
+    if (!provider) throw new Error('Thread provider is required for configuration.')
+    this.deps.assertProviderOfferedForThread?.(provider, current)
+    const metadata = {
+      ...(selectedModelType ? { selectedModelType } : {}),
+      ...(reasoningId ? { reasoningEffort: reasoningId } : {}),
+      ...(posture ? { approvalMode: posture.approvalMode, permissionPresetId: posture.permissionPresetId } : {})
+    }
+    const configured = applyProviderChange(current, {
+      provider,
+      ...(Object.keys(metadata).length > 0 ? { providerMetadata: metadata } : {})
+    })
+    return this.saveChat({
+      ...configured,
+      ...(title !== undefined ? { title, threadTitle: { source: 'user' as const } } : {}),
+      ...(posture ? { workflowMode: posture.workflowMode } : {}),
+      updatedAt: Date.now()
+    })
+  }
+
+  /** Archives or restores a canonical idle thread without accepting a full mutable chat payload. */
+  archiveThread(input: ArchiveThreadInput): ChatRecord {
+    if (!input || typeof input !== 'object') throw new Error('Thread archive input is required.')
+    const chatId = requireSafeChatId(input.chatId, 'Chat id')
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current) throw new Error('Chat not found.')
+    if (input.archived !== undefined && typeof input.archived !== 'boolean') {
+      throw new Error('Thread archive state is invalid.')
+    }
+    const archived = input.archived ?? true
+    if (current.archived === archived) return current
+    assertHostSetupThreadIdle(current)
+    this.deps.assertThreadSetupIdle?.(current)
+    return this.saveChat({ ...current, archived, updatedAt: Date.now() })
   }
 
   createEnsembleChat(args?: { workspaceId?: string; workspacePath?: string }, configuredProviders?: Set<ProviderId>): ChatRecord {
@@ -366,7 +578,9 @@ export class ChatService {
       claudeReasoningEffort: optionalString(args?.claudeReasoningEffort),
       grokReasoningEffort: optionalString(args?.grokReasoningEffort),
       museReasoningEffort: optionalString(args?.museReasoningEffort),
+      ollamaReasoningEffort: optionalString(args?.ollamaReasoningEffort),
       cursorReasoningEffort: optionalString(args?.cursorReasoningEffort),
+      antigravityReasoningEffort: optionalString(args?.antigravityReasoningEffort),
       ...(typeof args?.cursorFastMode === 'boolean'
         ? { cursorFastMode: args.cursorFastMode }
         : {}),
@@ -443,10 +657,15 @@ export class ChatService {
       },
       updatedAt: now
     }
+    // Stage 5: with the parent's v2 baseline healthy, the fork's v2 seed
+    // shares the parent's immutable prefix (see the mirrorSegmentedChatStore
+    // fork hook), so skip the defensive deep copy. prepareForkMessages is
+    // pure — it rebuilds fresh message objects without mutating the source.
+    const shareForkPrefix = this.deps.canShareForkTranscript?.(parent.appChatId) === true
     const preparedMessages = this.deps.prepareForkMessages({
       sourceChat: parent,
       targetFork,
-      copiedMessages: structuredClone(parent.messages)
+      copiedMessages: shareForkPrefix ? parent.messages : structuredClone(parent.messages)
     })
     if (!Array.isArray(preparedMessages)) {
       throw new Error('Fork transcript preparation did not return a message list.')
@@ -468,33 +687,6 @@ export class ChatService {
       ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
       : undefined
     if (seedParticipant) assertLiveProviderId(seedParticipant.provider)
-    // A SHARED thread cannot leave panel mode — not the host, not an agent, not
-    // any renderer. Collapsing routes through AppStore.setChatKind, which strips
-    // the roster into `providerMetadata.stashedEnsemble`; a later preset-apply
-    // consumes that stash, so a seat removed by a collapse can RESURRECT. With
-    // externals occupying seats, that means a kicked person's seat coming back.
-    //
-    // The refusal lives HERE because this is the only thing all the doors have
-    // in common. The desktop `set-chat-kind` handler and the bridge/iOS action
-    // both check it too, so their callers get shaped errors instead of a throw —
-    // but the bridge path reaches this method directly, and a comment on the
-    // desktop handler used to claim it was "the gate every surface goes
-    // through". It was not. This is.
-    if (targetKind !== 'ensemble') {
-      // ACTIVE PARTICIPANTS, not enabled shares. An enabled share with nobody
-      // admitted protects nothing — and keying on it made the guard refuse the
-      // very revert it exists to make safe, because both revoke paths leave the
-      // share record behind. What must never happen is collapsing a panel
-      // somebody is still admitted to.
-      if (
-        this.activeExternalCountForChat(chatId) > 0 &&
-        this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble'
-      ) {
-        throw new Error(
-          'This chat is shared. Stop sharing before switching it out of panel mode.'
-        )
-      }
-    }
     const canonicalProviderMetadata =
       args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
         ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)
@@ -532,11 +724,25 @@ export class ChatService {
     return this.deps.appStore.getSideChats(requireSafeChatId(parentChatId, 'Parent chat id'))
   }
 
-  saveChat(chat: ChatRecord): ChatRecord {
-    return this.saveChatInternal(chat, false)
+  saveChat(
+    chat: ChatRecord,
+    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+  ): ChatRecord {
+    return this.saveChatInternal(chat, false, options)
   }
 
-  private saveChatInternal(chat: ChatRecord, allowWorkspaceTransition: boolean): ChatRecord {
+  patchChatComposerSelection(
+    request: ChatComposerSelectionPatchRequest
+  ): Promise<{ chat: ChatRecord; changed: boolean }> {
+    const chatId = requireSafeChatId(request.chatId, 'Chat id')
+    return this.deps.appStore.persistChatComposerSelection({ ...request, chatId })
+  }
+
+  private saveChatInternal(
+    chat: ChatRecord,
+    allowWorkspaceTransition: boolean,
+    options: { authoredTranscript?: AuthoredChatTranscriptMutation } = {}
+  ): ChatRecord {
     const sanitizedInput = this.deps.sanitizeChatForSave(chat)
     assertSafeChatId(sanitizedInput.appChatId)
     const current = this.deps.appStore.getChat(sanitizedInput.appChatId)
@@ -567,8 +773,11 @@ export class ChatService {
     const continuityFenced = allowWorkspaceTransition
       ? grantFenced
       : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
-    const sanitized = this.preserveCollaboratorComments(continuityFenced)
-    return this.deps.appStore.saveChat(sanitized)
+    const importedTranscriptFenced = this.preserveExternalProviderThreadImport(continuityFenced)
+    const sanitized = this.preserveCollaboratorComments(importedTranscriptFenced)
+    return options.authoredTranscript && sanitized.messages === chat.messages
+      ? this.deps.appStore.saveChat(sanitized, options)
+      : this.deps.appStore.saveChat(sanitized)
   }
 
   /**
@@ -1561,7 +1770,7 @@ export class ChatService {
     }
   }
 
-  deleteChat(chatId: string): void {
+  deleteChat(chatId: string): void | Promise<void> {
     const id = requireSafeChatId(chatId, 'Chat id')
     // Settle any active shares first so deleting a shared chat actually ends the
     // share (revocation bites on the collaborator's next inbound action) instead
@@ -1570,15 +1779,24 @@ export class ChatService {
     if (store && store.hasShareForChat(id)) {
       this.endCollaborationShares(store.listShares(id))
     }
-    this.deps.appStore.deleteChat(id)
+    if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.deleteChatViaHost) {
+      return this.deps.appStore.deleteChat(id)
+    }
+    return this.deps.appStore.deleteChatViaHost(id)
   }
 
-  truncateChatHistory(chatId: string): ChatRecord | null {
+  truncateChatHistory(chatId: string): ChatRecord | null | Promise<ChatRecord | null> {
     const id = requireSafeChatId(chatId, 'Chat id')
     if (!this.deps.appStore.truncateChatHistory) {
       throw new Error('Strict chat history truncation is unavailable.')
     }
-    return this.deps.appStore.truncateChatHistory(id)
+    if (
+      (this.deps.appStore.legacyStoreWritesOpen?.() ?? true) ||
+      !this.deps.appStore.truncateChatHistoryViaHost
+    ) {
+      return this.deps.appStore.truncateChatHistory(id)
+    }
+    return this.deps.appStore.truncateChatHistoryViaHost(id)
   }
 
   async clearChats(workspaceId?: string): Promise<void> {
@@ -1588,7 +1806,7 @@ export class ChatService {
     }
     try {
       await this.prepareClearChats(workspaceId)
-      this.commitClearChats(workspaceId)
+      await this.commitClearChats(workspaceId)
     } finally {
       this.finishClearChats(workspaceId)
     }
@@ -1642,8 +1860,11 @@ export class ChatService {
   }
 
   /** Commit the durable chat deletion after every external store has cleared. */
-  commitClearChats(workspaceId?: string): void {
-    this.deps.appStore.clearChats(workspaceId)
+  commitClearChats(workspaceId?: string): void | Promise<void> {
+    if ((this.deps.appStore.legacyStoreWritesOpen?.() ?? true) || !this.deps.appStore.clearChatsViaHost) {
+      return this.deps.appStore.clearChats(workspaceId)
+    }
+    return this.deps.appStore.clearChatsViaHost(workspaceId)
   }
 
   /** Release the prepare-phase admission hold for the same clear scope. */
@@ -1831,6 +2052,21 @@ export class ChatService {
       ...chat,
       messages
     }
+  }
+
+  private preserveExternalProviderThreadImport(chat: ChatRecord): ChatRecord {
+    const current = this.deps.appStore.getChat(chat.appChatId)
+    if (!current?.externalProviderThreadImport) return chat
+    const canonicalImportedMessages = current.messages.filter(isExternalProviderThreadImportMessage)
+    const canonicalIds = new Set(canonicalImportedMessages.map((message) => message.id))
+    const ordinaryMessages = chat.messages.filter(
+      (message) => !canonicalIds.has(message.id) && !isExternalProviderThreadImportMessage(message)
+    )
+    return stripExternalProviderThreadImportContinuity({
+      ...chat,
+      externalProviderThreadImport: current.externalProviderThreadImport,
+      messages: [...canonicalImportedMessages, ...ordinaryMessages]
+    })
   }
 }
 
@@ -2171,4 +2407,49 @@ function requireBoundedText(value: unknown, label: string, maxChars: number): st
     throw new Error(`${label} is too long.`)
   }
   return trimmed
+}
+
+function sanitizeThreadModel(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('Selected model must be a non-empty string.')
+  }
+  const model = value.trim()
+  if (model.length > 200) throw new Error('Selected model is too long.')
+  return model
+}
+
+function hostSetupPosture(value: unknown): {
+  approvalMode: string
+  permissionPresetId: 'read_only' | 'default' | 'workspace_write'
+  workflowMode: 'normal' | 'plan'
+} {
+  switch (value) {
+    case 'read_only':
+      return { approvalMode: 'plan', permissionPresetId: 'read_only', workflowMode: 'normal' }
+    case 'plan':
+      return { approvalMode: 'plan', permissionPresetId: 'read_only', workflowMode: 'plan' }
+    case 'default':
+      return { approvalMode: 'default', permissionPresetId: 'default', workflowMode: 'normal' }
+    case 'workspace_write':
+      return {
+        approvalMode: 'default',
+        permissionPresetId: 'workspace_write',
+        workflowMode: 'normal'
+      }
+    default:
+      throw new Error('Thread permission posture is invalid.')
+  }
+}
+
+function assertHostSetupThreadIdle(chat: ChatRecord): void {
+  const activeRun = (chat.runs || []).some((run) => {
+    const status = String(run.status || '').toLowerCase()
+    return (
+      status === 'running' || status === 'pending' || status === 'awaiting' || status === 'queued'
+    )
+  })
+  if (activeRun || chat.ensemble?.activeRound) {
+    throw new Error('Thread setup is unavailable while a run or round is active.')
+  }
 }

@@ -31,10 +31,7 @@ import {
   claudeReasoningDisplayLabel,
   mistralReasoningDisplayLabel
 } from './composerChipFormat'
-import {
-  isMistralThinkingCapableModel,
-  isPiMistralThinkingCapableModel
-} from '../../../shared/mistralModels'
+import { isMistralThinkingCapableModel } from '../../../shared/mistralModels'
 import {
   CLAUDE_DEFAULT_MODELS,
   CODEX_DEFAULT_MODELS,
@@ -42,7 +39,11 @@ import {
   type CodexModelOption
 } from './providerModelDefaults'
 import {
-  CURSOR_GROK_45_BASE_MODEL_ID,
+  normalizeOllamaReasoningEffort,
+  resolveOllamaReasoningSupport
+} from '../../../shared/ollamaReasoning'
+import { resolvePiReasoningSupport } from '../../../shared/piReasoning'
+import {
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -50,11 +51,39 @@ import {
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS,
   cursorGrokBaseModelId,
+  migrateRetiredCursorGrokModelId,
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
+import {
+  KIMI_K27_HIGHSPEED_MODEL_ID,
+  KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_256K_MODEL_ID,
+  KIMI_K3_256K_MODEL_LABEL,
+  KIMI_K3_MODEL_ID,
+  KIMI_K3_MODEL_LABEL,
+  KIMI_K3_REASONING_EFFORTS,
+  kimiModelSupportsReasoningEfforts
+} from '../../../shared/kimiModels'
 import { activePiModelRows } from '../../../shared/piModelLifecycle'
+import {
+  MUSE_META_REASONING_EFFORT_LABELS,
+  museReasoningEffortsForModel
+} from '../../../shared/museReasoning'
+import {
+  DEVIN_DEFAULT_MODEL_ID,
+  DEVIN_MODEL_CATALOG,
+  DEVIN_REASONING_EFFORT_LABELS,
+  devinDefaultReasoningEffort,
+  devinReasoningEfforts
+} from '../../../shared/devinModelCatalog'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -73,16 +102,26 @@ export interface EnsembleModelDefaults {
   defaultModelId: string
 }
 
+/** Curated roster rows mirror main's runnable catalogs. Every concrete row is
+ * an explicit UltraTask candidate unless it opts out; `custom` remains unknown
+ * until live discovery proves that exact id. */
+function withCuratedUltraTaskSupport<T extends CombinedModelPickerModelOption>(
+  models: readonly T[]
+): Array<T & { ultraTaskSupported?: boolean }> {
+  return models.map((model) =>
+    model.id === 'custom' ? { ...model } : { ultraTaskSupported: true, ...model }
+  )
+}
+
 const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'low', label: codexReasoningDisplayLabel('low') },
   { value: 'medium', label: codexReasoningDisplayLabel('medium') },
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
 ]
-// Official GPT-5.6 tiers (2026-07-09): `max` on all three trio models; the top
-// `ultra` tier (internal token 'ultracode', displayed "Ultra") on Sol + Terra
-// only — Luna stops at max.
-const CODEX_TRIO_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
+// Astra, Sol, and Terra expose Max and Ultra (internal token 'ultracode');
+// Luna stops at Max.
+const CODEX_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
   ...CODEX_REASONING,
   { value: 'max', label: codexReasoningDisplayLabel('max') },
   { value: 'ultracode', label: codexReasoningDisplayLabel('ultracode') }
@@ -119,7 +158,7 @@ const KIMI_ALWAYS_ON_REASONING: CombinedModelPickerReasoningOption[] = [
   {
     value: 'on',
     label: 'On',
-    disabledReason: 'Thinking is always on for K2.7 Coding.'
+    disabledReason: 'Thinking is always on for K2.7 Code Highspeed.'
   }
 ]
 const KIMI_K3_REASONING: CombinedModelPickerReasoningOption[] = [
@@ -140,11 +179,13 @@ const grokReasoningOptions = (
   }))
 
 // Grok 4.5 stops at High; Grok 4.6 adds the verified Extra High (`xhigh`)
-// tier. GrokCliArgs remains the dispatch-side guard for the wire token.
+// tier. 4.7 carries the 4.6 ladder forward. GrokCliArgs remains the
+// dispatch-side guard for the wire token.
 const GROK_45_REASONING = grokReasoningOptions(GROK_45_REASONING_EFFORTS)
 const GROK_46_REASONING = grokReasoningOptions(GROK_46_REASONING_EFFORTS)
+const GROK_47_REASONING = grokReasoningOptions(GROK_47_REASONING_EFFORTS)
 
-// Mistral Devstral Small and Mistral Medium 3.5 now support configurable Thinking levels
+// Mistral Medium 3.5 and hosted GLM-5.2 support configurable Thinking levels
 // (off, low, medium, high, max). These match the Vibe CLI's ThinkingLevel enum.
 const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'off', label: 'Off' },
@@ -154,84 +195,220 @@ const MISTRAL_THINKING_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'max', label: mistralReasoningDisplayLabel('max') }
 ]
 
-/** Muse Code seat models. Wire id mirrors the on-disk Muse model-catalog
- *  (`muse-spark-1.2`). Opaque CLI seat — keep the catalogue small until the
- *  live probe widens it. */
-const MUSE_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' }
-]
+// Pi effort labels, surfaced via piReasoningEffort and dispatched as Pi's
+// `--thinking` level. Mirrors composerChipFormat's provider === 'pi' branch.
+// The stops OFFERED are per-model (see shared/piReasoning.ts): the upstreams
+// behind this one seat range from a four-tier effort ladder to a plain
+// boolean to a token budget with no ladder at all.
+const PI_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max'
+}
 
-// Muse Spark effort ladder (HANDOFF #4 / Meta `/effort`): minimal→ultra,
-// including xhigh. Never `none` — meta rejects it (maps to minimal at argv).
-const MUSE_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'ultra', label: 'Ultra' }
-]
+function piReasoningOptions(modelId?: string | null): CombinedModelPickerReasoningOption[] {
+  const support = resolvePiReasoningSupport(modelId)
+  if (support.efforts.length === 0) return []
+  const lockedReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: PI_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && lockedReason ? { disabledReason: lockedReason } : {})
+  }))
+}
 
-const CODEX_MODELS: CombinedModelPickerModelOption[] = [
+const OLLAMA_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  off: 'Off',
+  on: 'On',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  max: 'Max'
+}
+
+/**
+ * Project the resolved Ollama surface into picker stops.
+ *
+ * The ladder is derived rather than picked from two fixed arrays because it is
+ * genuinely per-model: GPT-OSS has no Off, GLM 5.3 has no Medium, and a model
+ * that always reasons gets a single locked stop instead of an Off that the
+ * daemon would accept and ignore.
+ */
+function ollamaReasoningOptions(
+  support: ReturnType<typeof resolveOllamaReasoningSupport>
+): CombinedModelPickerReasoningOption[] {
+  if (support.efforts.length === 0) return []
+  const alwaysOnReason = support.canDisable
+    ? null
+    : 'This model always reasons; its thinking cannot be turned off.'
+  return support.efforts.map((effort) => ({
+    value: effort,
+    label: OLLAMA_EFFORT_LABELS[effort] || effort,
+    ...(support.efforts.length === 1 && alwaysOnReason ? { disabledReason: alwaysOnReason } : {})
+  }))
+}
+
+/** Muse Code seat models. Wire ids mirror the visible rows in the on-disk Muse
+ *  model-catalog, newest first; Spark 1.2 stays the default (still `is_current`
+ *  there) and Contributor Spark remains an explicit non-default choice. */
+const MUSE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  { id: 'muse-spark-1.3', label: 'Muse Spark 1.3' },
+  { id: 'muse-spark-1.3-contributor', label: 'Muse Contributor Spark 1.3' },
+  { id: 'muse-spark-1.2', label: 'Muse Spark 1.2' },
+  { id: 'muse-spark-1.2-contributor', label: 'Muse Contributor Spark 1.2' }
+]
+const MUSE_MODELS = withCuratedUltraTaskSupport(MUSE_MODEL_ROWS)
+
+// Devin CLI seat (`devin acp`): one row per model family the CLI enumerates,
+// read from the shared devinModelCatalog.ts so this list, the composer
+// catalogue in providerModelDefaults.ts, and main's StaticProviderModels.ts
+// never diverge. The family's variant ladder is its reasoning axis; the run
+// folds the chosen level into `--model <family>-<level>`.
+const DEVIN_MODEL_ROWS: CombinedModelPickerModelOption[] = DEVIN_MODEL_CATALOG.map((family) => {
+  const efforts = devinReasoningEfforts(family.id)
+  return {
+    id: family.id,
+    label: family.label,
+    ...(efforts.length > 0
+      ? {
+          supportedReasoningEfforts: efforts.map((reasoningEffort) => ({ reasoningEffort })),
+          defaultReasoningEffort: family.defaultEffort ?? efforts[0]
+        }
+      : {})
+  }
+})
+const DEVIN_MODELS = withCuratedUltraTaskSupport(DEVIN_MODEL_ROWS)
+
+function devinReasoningOptions(
+  modelId: string | null | undefined
+): CombinedModelPickerReasoningOption[] {
+  return devinReasoningEfforts(modelId).map((value) => ({
+    value,
+    label: DEVIN_REASONING_EFFORT_LABELS[value]
+  }))
+}
+
+// Muse Spark effort ladder (Meta `/effort`). Never `none` — meta rejects it
+// (maps to minimal at argv). The shared resolver inserts Max only for regular
+// Spark 1.3, matching the provider-published model catalog; existing Ultra
+// remains available on every route.
+function museReasoningOptions(
+  modelId: string | null | undefined
+): CombinedModelPickerReasoningOption[] {
+  return museReasoningEffortsForModel(modelId).map((value) => ({
+    value,
+    label: MUSE_META_REASONING_EFFORT_LABELS[value]
+  }))
+}
+
+const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
+  { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
+  // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
+  { id: 'gpt-6-sol', label: 'GPT-6-Sol' },
+  { id: 'gpt-6-luna', label: 'GPT-6-Luna' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
   // errors cleanly if the user's account hasn't been ramped into the staged
   // rollout yet (the id is simply absent from that account's live model/list).
   { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
-  { id: 'gpt-5.4', label: 'GPT-5.4' },
-  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (the API rejects requests) and
-  // removed from the ensemble Codex picker. Historical/cost lookups elsewhere
+  // removed from the ensemble Codex picker. gpt-5.4, gpt-5.4-mini and
+  // gpt-5.3-codex-spark were retired by product decision on 2026-09-18 and are
+  // removed for the same reason. Historical/cost lookups elsewhere
   // (modelDisplayName, contextWindows, ProviderRateService) keep their entries.
 ]
+const CODEX_MODELS = withCuratedUltraTaskSupport(CODEX_MODEL_ROWS)
 
-const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
+const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // Labels omit the "Claude " prefix (provider header/chip already carries
   // it); Legacy cluster below the current models — mirrors the main catalog.
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
-  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-fable-5', label: 'Fable 5 Legacy' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
   { id: 'claude-opus-4-8-1m', label: 'Opus 4.8 1M Legacy' },
   { id: 'claude-opus-4-7-1m', label: 'Opus 4.7 1M Legacy' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
+  {
+    id: 'claude-haiku-4-5',
+    label: 'Haiku 4.5',
+    ultraTaskSupported: false
+  }
 ]
+const CLAUDE_MODELS = withCuratedUltraTaskSupport(CLAUDE_MODEL_ROWS)
 
-const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
+const GEMINI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite' }
 ]
+const GEMINI_MODELS = withCuratedUltraTaskSupport(GEMINI_MODEL_ROWS)
 
-const KIMI_MODELS: CombinedModelPickerModelOption[] = [
+const KIMI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   {
-    id: 'kimi-k2.7-code',
-    label: 'K2.7 Coding',
-    supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
-    defaultReasoningEffort: 'on',
-    additionalSpeedTiers: ['fast']
+    id: KIMI_K28_MODEL_ID,
+    label: KIMI_K28_MODEL_LABEL,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
   },
   {
-    id: 'kimi-k3',
-    label: 'K3',
-    supportedReasoningEfforts: [
-      { reasoningEffort: 'low' },
-      { reasoningEffort: 'high' },
-      { reasoningEffort: 'max' }
-    ],
+    id: KIMI_K27_HIGHSPEED_MODEL_ID,
+    label: KIMI_K27_HIGHSPEED_MODEL_LABEL,
+    supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+    defaultReasoningEffort: 'on'
+  },
+  {
+    id: KIMI_K3_MODEL_ID,
+    label: KIMI_K3_MODEL_LABEL,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
+  },
+  {
+    id: KIMI_K3_256K_MODEL_ID,
+    label: KIMI_K3_256K_MODEL_LABEL,
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
     defaultReasoningEffort: 'max'
   }
 ]
-// Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — K3 has no tier.
-const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
+const KIMI_MODELS = withCuratedUltraTaskSupport(KIMI_MODEL_ROWS)
+// Kimi has no Fast tier any more: Highspeed became its own picker row on
+// 2026-09-11 when the standard route moved to K2.8 and the two stopped sharing
+// a capability set. Keep the empty set so the seat picker hides the toggle
+// rather than offering one that resolves to whatever row is already selected.
+const KIMI_FAST_CAPABLE = new Set<string>()
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
-// from the Cursor catalog below.
-const GROK_MODELS: CombinedModelPickerModelOption[] = [
+// from the Cursor catalog below. 4.7 ships as a standard/Fast pair; 4.7
+// standard is the seat default.
+const GROK_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  {
+    id: GROK_47_MODEL_ID,
+    label: 'Grok 4.7',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
   {
     id: GROK_46_MODEL_ID,
     label: 'Grok 4.6 Fast',
@@ -243,22 +420,25 @@ const GROK_MODELS: CombinedModelPickerModelOption[] = [
     label: 'Grok 4.5 Fast',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+  }
+  // grok-composer-2.5-fast retired 2026-09-18. Cursor's own composer pair is a
+  // different provider and keeps its rows.
 ]
+const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 
 /** Mistral Vibe seat models. BARE ids only — a `mistral/<model>` id belongs to
  *  Pi's BYOK upstream, a different provider that shares the brand word.
- *  devstral-small leads because it is the seat default. Mirrors
+ *  Medium 3.5 leads because it is the Vibe 2.25 seat default. Mirrors
  *  MISTRAL_SEAT_MODELS and the contextWindows registrations. */
-const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'devstral-small', label: 'Devstral Small' },
+const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
+  { id: 'glm-5-2', label: 'GLM-5.2 (Mistral Hosted)' },
+  { id: 'glm-5-3', label: 'GLM-5.3 (Mistral Hosted)' },
+  { id: 'zai-glm-5-3', label: 'GLM-5.3 (via Mistral)' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
   { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
   { id: 'codestral-2508', label: 'Codestral (Aug 2025)' },
   { id: 'mistral-small-2603', label: 'Mistral Small 4' },
-  { id: 'devstral-2512', label: 'Devstral 2' },
   { id: 'labs-leanstral-1-5', label: 'Leanstral 1.5 (Labs)' },
   { id: 'mistral-medium-latest', label: 'Mistral Medium (Latest)' },
   { id: 'mistral-medium-2508', label: 'Mistral Medium 3.1' },
@@ -267,10 +447,11 @@ const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'ministral-8b-2512', label: 'Ministral 3 (8B)' },
   { id: 'ministral-3b-2512', label: 'Ministral 3 (3B)' }
 ]
+const MISTRAL_MODELS = withCuratedUltraTaskSupport(MISTRAL_MODEL_ROWS)
 
 // Cursor model catalog — backs live Path-B Cursor seats and decodes stored
 // historical ensemble seats.
-const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
+const CURSOR_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
@@ -279,15 +460,10 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
     additionalSpeedTiers: ['fast']
-  },
-  {
-    id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
-    supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
-    defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
-    additionalSpeedTiers: ['fast']
   }
+  // Cursor Grok 4.5 is RETIRED — Cursor's catalogue dropped the family.
 ]
+const CURSOR_MODELS = withCuratedUltraTaskSupport(CURSOR_MODEL_ROWS)
 
 /** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
  * load-bearing (dispatch + discovery both key on it); the live discovery
@@ -304,29 +480,45 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
  *
  * Context windows resolve through the provider-level antigravity fallback
  * (1M), not per-model rows — shared/contextWindows.ts has no 3.x entries. */
-const ANTIGRAVITY_MODELS: CombinedModelPickerModelOption[] = [
+const ANTIGRAVITY_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gemini-api:gemini-3.6-flash', label: '3.6 Flash' },
   { id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' },
   { id: 'gemini-api:gemini-3.1-pro-preview', label: '3.1 Pro Preview' },
   { id: 'gemini-api:gemini-3.1-flash-lite', label: '3.1 Flash-Lite' }
 ]
+const ANTIGRAVITY_MODELS = withCuratedUltraTaskSupport(ANTIGRAVITY_MODEL_ROWS)
 
 /** Pi seat models. Wire ids are `<upstream>/<model>` (pi's own syntax) and
  * MUST stay in lockstep with src/main/pi/PiModels.ts — that module owns the
  * curated catalog and the anti-circumvention wall; this is the renderer-side
  * mirror the seat editor offers. A model whose upstream has no stored key is
  * still listed here but fails visibly at dispatch with a "no key" message. */
-const PI_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-  { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  { id: 'deepseek/deepseek-v4-flash', label: 'V4 Flash' },
+  { id: 'deepseek/deepseek-v4-pro', label: 'V4 Pro' },
   { id: 'zai/glm-5.2', label: 'GLM-5.2' },
   { id: 'zai/glm-5.1', label: 'GLM-5.1' },
   { id: 'zai/glm-4.7', label: 'GLM-4.7' },
   { id: 'qwen-token-plan/qwen3.7-max', label: 'Qwen3.7 Max' },
   { id: 'qwen-token-plan/qwen3.7-plus', label: 'Qwen3.7 Plus' },
-  { id: 'qwen-token-plan/qwen3.8-max-preview', label: 'Qwen3.8 Max Preview' },
-  { id: 'minimax/MiniMax-M3', label: 'MiniMax M3' },
-  { id: 'minimax/MiniMax-M2.7', label: 'MiniMax M2.7' },
+  { id: 'qwen-token-plan/qwen3.8-max', label: 'Qwen3.8 Max' },
+  { id: 'minimax/MiniMax-M3', label: 'M3' },
+  { id: 'minimax/MiniMax-M2.7', label: 'M2.7' },
+  { id: 'xiaomi-token-plan-cn/mimo-v2-pro', label: 'MiMo V2 Pro (CN)' },
+  { id: 'xiaomi-token-plan-cn/mimo-v2.5', label: 'MiMo V2.5 (CN)' },
+  { id: 'xiaomi-token-plan-cn/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (CN)' },
+  { id: 'xiaomi-token-plan-cn/mimo-v2.6-pro', label: 'MiMo V2.6 Pro (CN)' },
+  { id: 'xiaomi-token-plan-cn/mimo-v2.6-flash', label: 'MiMo V2.6 Flash (CN)' },
+  { id: 'xiaomi-token-plan-sgp/mimo-v2-pro', label: 'MiMo V2 Pro (SGP)' },
+  { id: 'xiaomi-token-plan-sgp/mimo-v2.5', label: 'MiMo V2.5 (SGP)' },
+  { id: 'xiaomi-token-plan-sgp/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (SGP)' },
+  { id: 'xiaomi-token-plan-sgp/mimo-v2.6-pro', label: 'MiMo V2.6 Pro (SGP)' },
+  { id: 'xiaomi-token-plan-sgp/mimo-v2.6-flash', label: 'MiMo V2.6 Flash (SGP)' },
+  { id: 'xiaomi-token-plan-ams/mimo-v2-pro', label: 'MiMo V2 Pro (AMS)' },
+  { id: 'xiaomi-token-plan-ams/mimo-v2.5', label: 'MiMo V2.5 (AMS)' },
+  { id: 'xiaomi-token-plan-ams/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (AMS)' },
+  { id: 'xiaomi-token-plan-ams/mimo-v2.6-pro', label: 'MiMo V2.6 Pro (AMS)' },
+  { id: 'xiaomi-token-plan-ams/mimo-v2.6-flash', label: 'MiMo V2.6 Flash (AMS)' },
   { id: 'mistral/zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
   { id: 'mistral/mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'mistral/mistral-medium-latest', label: 'Mistral Medium (Latest)' },
@@ -343,21 +535,56 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'groq/openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)' },
   { id: 'groq/qwen/qwen3-32b', label: 'Qwen3 32B (Groq)' },
   { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
-  { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' }
+  { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' },
+  { id: 'cerebras/qwen-3.8-27b', label: 'Qwen 3.8 27B (Cerebras)' },
+  { id: 'openrouter/stealth/ox-alpha', label: 'Ox Alpha' },
+  { id: 'openrouter/z-ai/glm-5.2', label: 'GLM 5.2' },
+  { id: 'openrouter/poolside/laguna-s-2.1', label: 'Laguna S 2.1' },
+  { id: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra' },
+  {
+    id: 'openrouter/cohere/north-mini-code:free',
+    label: 'North Mini Code'
+  },
+  { id: 'openrouter/minimax/minimax-m3:free', label: 'M3 (OpenRouter)' },
+  { id: 'openrouter/thinkingmachines/inkling:free', label: 'Inkling' },
+  {
+    id: 'openrouter/thinkingmachines/inkling-small:free',
+    label: 'Inkling Small'
+  },
+  { id: 'openrouter/tencent/hy4-preview', label: 'Hy4 Preview' },
+  { id: 'openrouter/inception/mercury-2.5-preview', label: 'Mercury 2.5 Preview' },
+  { id: 'openrouter/inception/mercury-2.5', label: 'Mercury 2.5' },
+  { id: 'openrouter/nex-agi/nex-n2.5-mini:free', label: 'Nex-N2.5-Mini' },
+  { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' },
+  { id: 'openrouter/sakana/fugu-max', label: 'Fugu Max' },
+  { id: 'openrouter/sakana/fugu-ultra-v2', label: 'Fugu Ultra v2' },
+  // Retired 2026-09-18, but the ROW STAYS: this list is wrapped in
+  // activePiModelRows(PI_MODELS, now), so the lifecycle date does the removal
+  // and the list must keep mirroring the catalogue at any `now`. Deleting the
+  // row here instead makes the picker disagree with PI_STATIC_MODELS for every
+  // date before the retirement.
+  { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' },
+  { id: 'openrouter/unbiased/pareto', label: 'Pareto' },
+  { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' },
+  { id: 'openrouter/stealth/space-bunny-alpha', label: 'Space Bunny Alpha' }
 ]
+const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 
-const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
+const OLLAMA_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)' },
   { id: 'qwen3.5:2b', label: 'Qwen 3.5 (2B Param)' },
   { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
   { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)' },
   { id: 'qwen3.8:27b-mlx', label: 'Qwen 3.8 (27B-MLX)' },
+  { id: 'qwen3.8-flash-next:125b-mlx', label: 'Qwen 3.8 Flash Next (125B-MLX)' },
   { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)' },
   { id: 'gemma4:31b-mlx', label: 'Gemma 4 (31B-MLX)' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)' },
+  { id: 'ornith-1.5:9b', label: 'Ornith 1.5 (9B Param)' },
+  { id: 'ornith-1.5:35b', label: 'Ornith 1.5 (35B Param)' },
   { id: 'laguna-xs-2.1:q8_0', label: 'Laguna XS 2.1 (33B-A3B Q8)' },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)' },
   { id: 'lfm2.5-thinking:1.2b', label: 'LFM 2.5 Thinking (1.2B Param)' },
@@ -366,25 +593,32 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'granite4:3b', label: 'Granite 4.0 (3B Param)' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)' },
+  { id: 'granite4.2:3b', label: 'Granite 4.2 (3B Param)' },
+  { id: 'granite4.2:8b', label: 'Granite 4.2 (8B Param)' },
+  { id: 'granite4.2:30b', label: 'Granite 4.2 (30B Param)' },
   { id: 'nemotron-3-nano:4b', label: 'Nemotron 3 Nano (4B Param)' },
   { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)' },
   { id: 'nemotron-3.5-lightning:30b-mlx', label: 'Nemotron 3.5 Lightning (30B-MLX)' },
   { id: 'devstral-small-2:24b', label: 'Devstral Small 2 (24B Param)' },
+  { id: 'mistral-medium-3.5:128b', label: 'Mistral Medium 3.5 (128B Param)' },
   { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)' },
   { id: 'muse-glimmer:30b-mlx', label: 'Muse Glimmer (30B-MLX)' },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)' },
-  { id: 'deepseek-r1:1.5b', label: 'DeepSeek R1 (1.5B Param)' },
-  { id: 'deepseek-r1:8b', label: 'DeepSeek R1 (8B Param)' },
+  { id: 'deepseek-r1:1.5b', label: 'R1 (1.5B Param)' },
+  { id: 'deepseek-r1:8b', label: 'R1 (8B Param)' },
   { id: 'rnj-1', label: 'Rnj-1 (8B Param)' },
   { id: 'glm-4.7-flash:q4_K_M', label: 'GLM-4.7-Flash (30B-A3B Q4)' },
   { id: 'north-mini-code-1.0:q4_K_M', label: 'North Mini Code 1.0 (30B-A3B Q4)' },
   { id: 'llama3.2:3b', label: 'Llama 3.2 (3B Param)' }
 ]
+const OLLAMA_MODELS = withCuratedUltraTaskSupport(OLLAMA_MODEL_ROWS)
 
 const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.5',
-  'gpt-5.4',
+  // GPT-6 Sol and Luna (2026-09-22) sit on OpenAI's Fast-mode pricing table.
+  'gpt-6-sol',
+  'gpt-6-luna',
   // GPT-5.6 trio (GA, 5.5 parity) — all expose the Fast speed tier
   // (additionalSpeedTiers:['fast'] in the preview catalog); the solo composer
   // derives Fast dynamically from that field, so mirror it here for ensemble seats.
@@ -392,9 +626,11 @@ const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.6-terra',
   'gpt-5.6-luna'
 ])
-// Claude Fast mode is limited to supported Opus models. Fable 5 deliberately
-// keeps its full reasoning ladder but does not expose the paid Fast toggle.
+// Claude Fast mode is limited to supported Opus models. Fable 5 / 5.1
+// deliberately keep their full reasoning ladder but do not expose the paid
+// Fast toggle.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8-1m',
   'claude-opus-4-7-1m'
@@ -402,17 +638,12 @@ const CLAUDE_FAST_CAPABLE = new Set<string>([
 const CURSOR_FAST_CAPABLE = new Set<string>([
   'composer-2.5',
   'composer-2.5-fast',
-  CURSOR_GROK_46_BASE_MODEL_ID,
-  CURSOR_GROK_45_BASE_MODEL_ID
+  CURSOR_GROK_46_BASE_MODEL_ID
 ])
 // All Grok CLI models run permanently in Fast mode. This set only drives the
 // picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
 // renders and no fast-clearing runs on model switch.
-const GROK_FAST_CAPABLE = new Set<string>([
-  GROK_46_MODEL_ID,
-  GROK_45_MODEL_ID,
-  'grok-composer-2.5-fast'
-])
+const GROK_FAST_CAPABLE = new Set<string>([GROK_47_MODEL_ID, GROK_47_FAST_MODEL_ID, GROK_46_MODEL_ID, GROK_45_MODEL_ID])
 
 function isDirectGrok46ModelId(modelId?: string | null): boolean {
   const id = String(modelId || '')
@@ -421,23 +652,28 @@ function isDirectGrok46ModelId(modelId?: string | null): boolean {
   return id === GROK_46_MODEL_ID
 }
 
+function isDirectGrok47ModelId(modelId?: string | null): boolean {
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return id === GROK_47_MODEL_ID || id === GROK_47_FAST_MODEL_ID
+}
+
 function grokReasoningDefaultForModel(
   provider: ProviderId,
   modelId?: string | null
 ): string | undefined {
   if (provider === 'grok') {
     if (!isGrokReasoningModelId(modelId)) return undefined
+    if (isDirectGrok47ModelId(modelId)) return GROK_47_DEFAULT_REASONING_EFFORT
     return isDirectGrok46ModelId(modelId)
       ? GROK_46_DEFAULT_REASONING_EFFORT
       : GROK_45_DEFAULT_REASONING_EFFORT
   }
   if (provider === 'cursor') {
-    const baseModelId = cursorGrokBaseModelId(modelId)
-    if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) {
+    // Cursor's only Grok family is 4.6 now.
+    if (cursorGrokBaseModelId(modelId) === CURSOR_GROK_46_BASE_MODEL_ID) {
       return GROK_46_DEFAULT_REASONING_EFFORT
-    }
-    if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) {
-      return GROK_45_DEFAULT_REASONING_EFFORT
     }
   }
   return undefined
@@ -468,24 +704,34 @@ function isClaudeHaikuModel(modelId?: string | null): boolean {
 
 export function getEnsembleReasoningOptions(
   provider: ProviderId,
-  modelId?: string | null
+  modelId?: string | null,
+  modelMetadata?: { capabilities?: readonly string[] | null } | null
 ): CombinedModelPickerReasoningOption[] {
   switch (provider) {
     case 'codex': {
       // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
-      // (official 2026-07-09 tiers): Sol + Terra get max + ultra('ultracode');
-      // Luna gets max only; everything else stops at xhigh. Stale
-      // pre-un-gate placeholder ids count as their concrete slugs.
-      const codexModel = String(modelId || '').toLowerCase()
+      // tiers: Astra, 5.6 Sol, and 5.6 Terra get max + ultra('ultracode');
+      // GPT-6 Sol, GPT-6 Luna and 5.6 Luna get max only (their official model
+      // pages document none..max and no `ultra`); everything else stops at
+      // xhigh. Stale pre-un-gate placeholder ids count as their concrete slugs.
+      const codexModel = String(modelId || '')
+        .trim()
+        .toLowerCase()
       if (
+        codexModel === 'gpt-6-astra' ||
         codexModel === 'gpt-5.6-sol' ||
         codexModel === 'gpt-5.6-terra' ||
         codexModel === 'preview:openai:gpt-5.6:sol' ||
         codexModel === 'preview:openai:gpt-5.6:terra'
       ) {
-        return CODEX_TRIO_FULL_REASONING
+        return CODEX_FULL_REASONING
       }
-      if (codexModel === 'gpt-5.6-luna' || codexModel === 'preview:openai:gpt-5.6:luna') {
+      if (
+        codexModel === 'gpt-6-sol' ||
+        codexModel === 'gpt-6-luna' ||
+        codexModel === 'gpt-5.6-luna' ||
+        codexModel === 'preview:openai:gpt-5.6:luna'
+      ) {
         return CODEX_TRIO_MAX_REASONING
       }
       return CODEX_REASONING
@@ -496,26 +742,37 @@ export function getEnsembleReasoningOptions(
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':
-      return String(modelId || '').toLowerCase() === 'kimi-k3'
+      return kimiModelSupportsReasoningEfforts(modelId)
         ? KIMI_K3_REASONING
         : KIMI_ALWAYS_ON_REASONING
     case 'grok':
       if (!isGrokReasoningModelId(modelId)) return []
+      if (isDirectGrok47ModelId(modelId)) return GROK_47_REASONING
       return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
     case 'cursor': {
-      const baseModelId = cursorGrokBaseModelId(modelId)
-      if (baseModelId === CURSOR_GROK_46_BASE_MODEL_ID) return GROK_46_REASONING
-      if (baseModelId === CURSOR_GROK_45_BASE_MODEL_ID) return GROK_45_REASONING
-      return []
+      // Cursor's only Grok family is 4.6 now; 4.5 is retired upstream.
+      return cursorGrokBaseModelId(modelId) === CURSOR_GROK_46_BASE_MODEL_ID
+        ? GROK_46_REASONING
+        : []
     }
     case 'mistral': {
       return isMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
     }
-    case 'pi': {
-      return isPiMistralThinkingCapableModel(modelId) ? MISTRAL_THINKING_REASONING : []
-    }
+    case 'pi':
+      return piReasoningOptions(modelId)
+    case 'ollama':
+      return ollamaReasoningOptions(
+        resolveOllamaReasoningSupport({
+          modelId,
+          ...(modelMetadata && Array.isArray(modelMetadata.capabilities)
+            ? { capabilities: modelMetadata.capabilities }
+            : {})
+        })
+      )
     case 'muse':
-      return MUSE_REASONING
+      return museReasoningOptions(modelId)
+    case 'devin':
+      return devinReasoningOptions(modelId)
     default:
       return []
   }
@@ -588,9 +845,9 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'kimi':
       return {
-        model: 'kimi-k2.7-code',
+        model: KIMI_K28_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: 'on',
+        reasoningEffort: 'max',
         fastModeEnabled: false,
         thinkingEnabled: true,
         serviceTier: 'standard'
@@ -600,9 +857,9 @@ export function getDefaultEnsembleParticipantConfig(
       // still toolless at dispatch, so the preset only matters if the user
       // later swaps the row to a tool-capable provider config.
       return {
-        model: GROK_46_MODEL_ID,
+        model: GROK_47_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+        reasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
       }
     case 'cursor':
       return {
@@ -613,7 +870,8 @@ export function getDefaultEnsembleParticipantConfig(
     case 'ollama':
       return {
         model: 'qwen3.5:9b',
-        permissionPresetId: 'default'
+        permissionPresetId: 'default',
+        reasoningEffort: 'on'
       }
     case 'antigravity':
       // Gemini-api lane model id — the `gemini-api:` prefix is load-bearing
@@ -634,7 +892,7 @@ export function getDefaultEnsembleParticipantConfig(
       // participant ends up configured differently depending on which surface
       // created it.
       return {
-        model: 'devstral-small',
+        model: 'mistral-medium-3.5',
         permissionPresetId: 'default',
         reasoningEffort: 'medium'
       }
@@ -646,6 +904,17 @@ export function getDefaultEnsembleParticipantConfig(
         model: 'muse-spark-1.2',
         permissionPresetId: 'default',
         reasoningEffort: 'high'
+      }
+    case 'devin':
+      // Must stay in lockstep with getDefaultEnsembleModel in
+      // src/main/EnsembleDefaults.ts. A family with a ladder seeds its CLI
+      // default level; the default seat (SWE-1.6 Slow) has no axis.
+      return {
+        model: DEVIN_DEFAULT_MODEL_ID,
+        permissionPresetId: 'default',
+        ...(devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID)
+          ? { reasoningEffort: devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ?? '' }
+          : {})
       }
     default:
       return {
@@ -684,6 +953,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'Mistral'
     case 'muse':
       return 'Muse'
+    case 'devin':
+      return 'Devin'
     default:
       return 'Gemini'
   }
@@ -744,7 +1015,11 @@ export function buildProviderChangeParticipantPatch(
  */
 export type ProviderModelSelectionMetadata = Pick<
   CodexModelOption,
-  'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'additionalSpeedTiers'
+  | 'supportedReasoningEfforts'
+  | 'defaultReasoningEffort'
+  | 'capabilities'
+  | 'additionalSpeedTiers'
+  | 'ultraTaskSupported'
 >
 
 /**
@@ -770,35 +1045,42 @@ function normalizeReasoningEffortToken(value?: string | null): string {
   return normalized
 }
 
-/** K3 has a selectable Low/High/Max effort; K2.7 Coding's thinking is fixed On. */
-export function isKimiK3Model(model?: string | null): boolean {
-  return (
-    String(model || '')
-      .trim()
-      .toLowerCase() === 'kimi-k3'
-  )
+/**
+ * K2.8 Preview and both K3 routes have a selectable Low/High/Max effort; K2.7
+ * Code Highspeed's thinking is fixed On. Keyed on the ladder, not on "is K3":
+ * K2.8 took the axis with it when it replaced K2.7 on the standard route.
+ */
+export function kimiModelHasSelectableReasoning(model?: string | null): boolean {
+  return kimiModelSupportsReasoningEfforts(model)
 }
 
 /**
- * The picker uses K2.7's fixed thinking state as an `on` stop, but K3 must
- * retain its independent effort. Collapsing K3 to `on` makes the shared ladder
- * land on Low even when the persisted selection is High or Max.
+ * The picker uses Highspeed's fixed thinking state as an `on` stop, but a
+ * laddered route must retain its independent effort. Collapsing it to `on`
+ * makes the shared ladder land on Low even when the persisted selection is
+ * High or Max.
  */
 export function resolveKimiReasoningPickerSelection(
   model: string | null | undefined,
   reasoningEffort?: string | null
 ): string {
-  if (!isKimiK3Model(model)) return 'on'
+  if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') return 'ultraTask'
+  if (!kimiModelHasSelectableReasoning(model)) return 'on'
   return normalizeReasoningEffortToken(reasoningEffort) || 'max'
 }
 
-/** Persist a K3 ladder selection without treating it as K2.7's legacy flag. */
+/** Persist a laddered route's effort and the synthetic UltraTask selection
+ * without treating ordinary Highspeed choices as anything other than its fixed
+ * thinking flag. */
 export function buildKimiReasoningPickerPatch(
   model: string | null | undefined,
   reasoningEffort: string
 ): Pick<Partial<EnsembleParticipant>, 'reasoningEffort' | 'thinkingEnabled'> {
-  if (isKimiK3Model(model)) return { reasoningEffort, thinkingEnabled: true }
-  return { thinkingEnabled: true }
+  if (normalizeReasoningEffortToken(reasoningEffort) === 'ultratask') {
+    return { reasoningEffort: 'ultraTask', thinkingEnabled: true }
+  }
+  if (kimiModelHasSelectableReasoning(model)) return { reasoningEffort, thinkingEnabled: true }
+  return { reasoningEffort: undefined, thinkingEnabled: true }
 }
 
 function fallbackModelSelectionMetadata(
@@ -827,7 +1109,7 @@ function enabledReasoningEffortsForModel(
     ? source
         .filter((option) => !option.disabled)
         .map((option) => normalizeReasoningEffortToken(option.reasoningEffort))
-    : getEnsembleReasoningOptions(provider, model)
+    : getEnsembleReasoningOptions(provider, model, metadata)
         .filter((option) => !option.disabled)
         .map((option) => normalizeReasoningEffortToken(option.value))
   return [...new Set(values.filter(Boolean))]
@@ -863,6 +1145,26 @@ function defaultReasoningEffortForModel(
   )
   if (modelDefault) return modelDefault
 
+  if (provider === 'ollama') {
+    const ollamaDefault = resolveOllamaReasoningSupport({
+      modelId: model,
+      ...(metadata && Array.isArray(metadata.capabilities)
+        ? { capabilities: metadata.capabilities }
+        : {})
+    }).defaultEffort
+    if (ollamaDefault && enabled.includes(ollamaDefault)) return ollamaDefault
+  }
+
+  // Pi needs the same branch. Without it the chain falls through to
+  // `enabled.includes('medium')` — and once each Pi model carries its own
+  // ladder, most no longer offer `medium`, so a fresh seat landed on
+  // `enabled[0]`, which is `off`. That would launch every Pi run with
+  // `--thinking off`.
+  if (provider === 'pi') {
+    const piDefault = resolvePiReasoningSupport(model).defaultEffort
+    if (piDefault && enabled.includes(piDefault)) return piDefault
+  }
+
   const providerDefault = resolveEnabledEffortToken(
     normalizeReasoningEffortToken(getDefaultEnsembleParticipantConfig(provider).reasoningEffort),
     enabled
@@ -890,21 +1192,54 @@ const EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
   ultracode: 6,
   // Muse Meta ceiling stop (shared Ultracode index).
   ultra: 6,
+  // CombinedModelPicker LADDER_STOPS index 7. Token is normalized lowercase;
+  // pickers persist camelCase `ultraTask`.
+  ultratask: 7,
   // Kimi binary thinking rides Light when mapping onto the shared ladder.
   on: 1
 }
 
-function effortLadderRank(value?: string | null): number | null {
+const PI_EFFORT_LADDER_RANK: Readonly<Record<string, number>> = {
+  off: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+  ultra: 6,
+  ultracode: 6,
+  ultratask: 7
+}
+
+function effortLadderRank(value?: string | null, provider?: ProviderId): number | null {
   const token = normalizeReasoningEffortToken(value)
   if (!token) return null
-  return Object.prototype.hasOwnProperty.call(EFFORT_LADDER_RANK, token)
-    ? EFFORT_LADDER_RANK[token]!
-    : null
+  const ranks = provider === 'pi' ? PI_EFFORT_LADDER_RANK : EFFORT_LADDER_RANK
+  return Object.prototype.hasOwnProperty.call(ranks, token) ? ranks[token]! : null
+}
+
+/** Live catalog rows win; otherwise curated ensemble defaults. Unknown/custom
+ * ids stay false so UltraTask cannot become the destination default. */
+function destinationSupportsUltraTask(
+  provider: ProviderId,
+  model: string,
+  modelMetadata?: ProviderModelSelectionMetadata | null
+): boolean {
+  if (modelMetadata?.ultraTaskSupported === true) return true
+  if (modelMetadata?.ultraTaskSupported === false) return false
+  return (
+    getEnsembleModelDefaults(provider).modelOptions.find((option) => option.id === model)
+      ?.ultraTaskSupported === true
+  )
 }
 
 /**
  * Keep the previous effort when still enabled; otherwise snap to the nearest
  * enabled ladder stop (ties → higher), else the model/provider default.
+ * UltraTask is a synthetic picker stop (not a catalog reasoning option), so
+ * it is preserved only when the destination model still advertises support —
+ * matching solo `buildQueuedProviderChange`.
  */
 export function resolveReasoningEffortForSeatChange(options: {
   provider: ProviderId
@@ -915,20 +1250,47 @@ export function resolveReasoningEffortForSeatChange(options: {
   const { provider, model, previousEffort, modelMetadata } = options
   const fallbackMetadata = fallbackModelSelectionMetadata(provider, model)
   const metadata = modelMetadata ? { ...fallbackMetadata, ...modelMetadata } : fallbackMetadata
+  const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
+  if (
+    normalizedPrevious === 'ultratask' &&
+    destinationSupportsUltraTask(provider, model, metadata)
+  ) {
+    return 'ultraTask'
+  }
+
   const enabled = enabledReasoningEffortsForModel(provider, model, metadata)
   if (enabled.length === 0) return undefined
 
-  const normalizedPrevious = normalizeReasoningEffortToken(previousEffort)
   const exactPrevious = resolveEnabledEffortToken(normalizedPrevious, enabled)
-  if (exactPrevious) return exactPrevious
+  if (exactPrevious) return exactPrevious === 'ultratask' ? 'ultraTask' : exactPrevious
 
-  const previousRank = effortLadderRank(normalizedPrevious)
+  if (provider === 'ollama') {
+    // Boolean `on` shares EFFORT_LADDER_RANK 1 with `low`. Nearest-stop
+    // snapping therefore rewrote DeepSeek V4 Cloud Max/On onto Low. Fold
+    // through the vendor ladder first so Max stays Max and On becomes the
+    // model default (high), not Light.
+    const healed = normalizeOllamaReasoningEffort(
+      previousEffort,
+      resolveOllamaReasoningSupport({
+        modelId: model,
+        ...(metadata && Array.isArray(metadata.capabilities)
+          ? { capabilities: metadata.capabilities }
+          : {})
+      })
+    )
+    const healedToken = healed ? normalizeReasoningEffortToken(healed) : ''
+    if (healedToken && enabled.includes(healedToken)) {
+      return healedToken === 'ultratask' ? 'ultraTask' : healedToken
+    }
+  }
+
+  const previousRank = effortLadderRank(normalizedPrevious, provider)
   if (previousRank != null) {
     let best: string | undefined
     let bestDistance = Infinity
     let bestRank = -1
     for (const effort of enabled) {
-      const rank = effortLadderRank(effort)
+      const rank = effortLadderRank(effort, provider)
       if (rank == null) continue
       const distance = Math.abs(rank - previousRank)
       // Match CombinedModelPicker.nearestEnabledLadderIndex: ties → higher stop.
@@ -986,6 +1348,11 @@ export function normalizeProviderModelSelection(
     'reasoningEffort' | 'fastModeEnabled' | 'serviceTier' | 'thinkingEnabled'
   > | null
 ): ProviderModelSelectionFields {
+  // A seat persisted on the retired Cursor Grok 4.5 row would otherwise keep a
+  // model id the picker no longer lists and the CLI rejects outright. Migrate
+  // it to 4.6 here so the composer shows a real selection with a real ladder.
+  const migratedCursorGrok = provider === 'cursor' ? migrateRetiredCursorGrokModelId(model) : null
+  if (migratedCursorGrok) model = migratedCursorGrok
   const cleared: ProviderModelSelectionFields = {
     model,
     reasoningEffort: undefined,
@@ -1154,6 +1521,7 @@ export function resolveEnsembleParticipantSettings(
     | 'fastModeEnabled'
     | 'thinkingEnabled'
     | 'serviceTier'
+    | 'ollamaRunProfile'
   >
 ): ResolvedEnsembleParticipantSettings {
   const defaults = getDefaultEnsembleParticipantConfig(participant.provider)
@@ -1162,17 +1530,37 @@ export function resolveEnsembleParticipantSettings(
   const reasoningOptions = getEnsembleReasoningOptions(participant.provider, model)
   const enabledReasoningOptions = reasoningOptions.filter((option) => !option.disabled)
   const reasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
-  const modelDefaultReasoning = defaultReasoningEffortForModel(participant.provider, model)
+  const configuredModelDefaultReasoning = defaultReasoningEffortForModel(
+    participant.provider,
+    model
+  )
+  const modelDefaultReasoning =
+    participant.provider === 'ollama' &&
+    participant.ollamaRunProfile === 'local_scout' &&
+    reasoningValues.has('medium')
+      ? 'medium'
+      : configuredModelDefaultReasoning
   const reasoningEffort =
-    enabledReasoningOptions.length === 0
-      ? ''
-      : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
-        ? participant.reasoningEffort
-        : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)
-          ? modelDefaultReasoning
-          : (enabledReasoningOptions[0]?.value ?? '')
+    participant.reasoningEffort === 'ultraTask'
+      ? 'ultraTask'
+      : enabledReasoningOptions.length === 0
+        ? // An empty base ladder is exactly the case where the seat pickers
+          // seed an explicit Off bottom stop beside the injected UltraTask
+          // (`withUltraTaskLadderBottom`), so Off is a rung the user can
+          // genuinely pick here. Returning '' erased that pick on the very
+          // next read and the slider snapped to the model default.
+          participant.reasoningEffort === 'off'
+          ? 'off'
+          : ''
+        : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
+          ? participant.reasoningEffort
+          : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)
+            ? modelDefaultReasoning
+            : (enabledReasoningOptions[0]?.value ?? '')
   const fastModeEnabled =
-    participant.provider === 'kimi' && model === 'kimi-k3'
+    // No Kimi route has a Fast tier since Highspeed became its own row; a seat
+    // still carrying the retired flag must not re-route the row it shows.
+    participant.provider === 'kimi'
       ? false
       : Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
   const thinkingEnabled =
@@ -1226,18 +1614,18 @@ export function getEnsembleModelDefaults(
     case 'kimi':
       return {
         modelOptions: KIMI_MODELS,
-        reasoningOptions: KIMI_ALWAYS_ON_REASONING,
-        defaultReasoning: 'on',
+        reasoningOptions: KIMI_K3_REASONING,
+        defaultReasoning: 'max',
         fastModeCapableModelIds: KIMI_FAST_CAPABLE,
-        defaultModelId: 'kimi-k2.7-code'
+        defaultModelId: KIMI_K28_MODEL_ID
       }
     case 'grok':
       return {
         modelOptions: GROK_MODELS,
-        reasoningOptions: GROK_46_REASONING,
-        defaultReasoning: GROK_46_DEFAULT_REASONING_EFFORT,
+        reasoningOptions: GROK_47_REASONING,
+        defaultReasoning: GROK_47_DEFAULT_REASONING_EFFORT,
         fastModeCapableModelIds: GROK_FAST_CAPABLE,
-        defaultModelId: GROK_46_MODEL_ID
+        defaultModelId: GROK_47_MODEL_ID
       }
     case 'cursor':
       return {
@@ -1250,8 +1638,8 @@ export function getEnsembleModelDefaults(
     case 'ollama':
       return {
         modelOptions: OLLAMA_MODELS,
-        reasoningOptions: [],
-        defaultReasoning: '',
+        reasoningOptions: getEnsembleReasoningOptions('ollama', 'qwen3.5:9b'),
+        defaultReasoning: 'on',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'qwen3.5:9b'
       }
@@ -1266,8 +1654,10 @@ export function getEnsembleModelDefaults(
     case 'pi':
       return {
         modelOptions: activePiModelRows(PI_MODELS, now),
-        reasoningOptions: [],
-        defaultReasoning: '',
+        // Model-agnostic default for the seat; the per-model ladder narrows it
+        // as soon as a model is known (getEnsembleReasoningOptions).
+        reasoningOptions: piReasoningOptions(null),
+        defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'deepseek/deepseek-v4-flash'
       }
@@ -1282,15 +1672,23 @@ export function getEnsembleModelDefaults(
         reasoningOptions: MISTRAL_THINKING_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'devstral-small'
+        defaultModelId: 'mistral-medium-3.5'
       }
     case 'muse':
       return {
         modelOptions: MUSE_MODELS,
-        reasoningOptions: MUSE_REASONING,
+        reasoningOptions: museReasoningOptions('muse-spark-1.2'),
         defaultReasoning: 'high',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'muse-spark-1.2'
+      }
+    case 'devin':
+      return {
+        modelOptions: DEVIN_MODELS,
+        reasoningOptions: devinReasoningOptions(DEVIN_DEFAULT_MODEL_ID),
+        defaultReasoning: devinDefaultReasoningEffort(DEVIN_DEFAULT_MODEL_ID) ?? '',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: DEVIN_DEFAULT_MODEL_ID
       }
     default:
       return {

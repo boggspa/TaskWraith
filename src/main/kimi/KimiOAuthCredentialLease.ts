@@ -70,7 +70,10 @@ export const KIMI_CREDENTIAL_LAYOUT: OAuthCredentialLayout = {
   primaryCredential: PRIMARY_CREDENTIAL,
   artefacts: CREDENTIAL_ARTEFACTS,
   freshness: credentialExpiry,
-  scrub: { mode: 'all-but-preserved', preserve: ['sessions', 'session_index.jsonl'] }
+  scrub: {
+    mode: 'all-but-preserved',
+    preserve: ['sessions', 'session_index.jsonl', 'runtime-cwd']
+  }
 }
 
 /**

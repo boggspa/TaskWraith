@@ -42,7 +42,7 @@ import { join } from 'node:path'
 
 import { HOST_PROTOCOL_MAX_ID } from '../../shared/hostProtocol'
 
-import { hostRuntimeDataDir } from './HostMainComposition'
+import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
 
 /** File that carries the durable install identity, beside the Host journal. */
 export const HOST_INSTALL_IDENTITY_FILE_NAME = 'host-install-identity.json'

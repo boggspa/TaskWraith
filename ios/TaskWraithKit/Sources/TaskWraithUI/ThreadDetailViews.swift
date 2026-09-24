@@ -65,13 +65,11 @@ enum TranscriptTouchTrackingPolicy {
 /// position. `force` at the call site only bypasses the reveal-pin throttle —
 /// it must never override an explicit unfollow (`autoFollow == false`).
 enum TranscriptFollowPolicy {
-    /// Quiet window after a finger leaves the transcript, before a content-driven
-    /// pin may move the offset again.
-    static let userTouchQuietPeriod: TimeInterval = 0.6
     /// How long a flick can still be MOVING the transcript after the finger has
-    /// gone. UIKit deceleration outlives `userTouchQuietPeriod` several times
-    /// over, and until it stops the scroll is still the user's gesture playing
-    /// out — see `sentinelDisappearanceEndsFollowing`.
+    /// gone. Until it stops, the scroll is still the user's gesture playing out.
+    /// This same full window gates both sentinel intent and content-driven repair
+    /// pins: letting pins resume earlier is what made a completed transcript fight
+    /// the final deceleration and bounce away from the position the user chose.
     static let userScrollSettlePeriod: TimeInterval = 2.5
     /// After a programmatic pin, ignore sentinel `onAppear` re-arm so a settle
     /// pass that briefly shows the bottom cannot undo a user unfollow.
@@ -87,7 +85,7 @@ enum TranscriptFollowPolicy {
         // the requestFollowPin call site. Unfollow always wins.
         _ = force
         guard autoFollow else { return false }
-        return now.timeIntervalSince(lastUserTouchAt) >= userTouchQuietPeriod
+        return now.timeIntervalSince(lastUserTouchAt) >= userScrollSettlePeriod
     }
 
     /// May sentinel `onAppear` turn following back on?
@@ -121,13 +119,11 @@ enum TranscriptFollowPolicy {
     /// recovered it — the 2026-07-28 "picker during streaming" stall, which
     /// reproduced on a plain send with no picker at all.
     ///
-    /// The window is `userScrollSettlePeriod`, NOT the shorter
-    /// `userTouchQuietPeriod` this shared with `shouldScroll` until 2026-08-07.
-    /// Sharing one constant left the two edges adjacent with nothing in between:
-    /// the instant a disappearance stopped counting as the user's, a repair pin
-    /// was already permitted. A flick whose sentinel dematerialised during
-    /// deceleration therefore latched nothing off AND scrolled back to the tail,
-    /// which is the transcript fighting the gesture in the opposite direction.
+    /// The same `userScrollSettlePeriod` also gates `shouldScroll`. A shorter
+    /// repair-pin window left an overlap where the sentinel still represented the
+    /// user's decelerating flick but a deferred content/layout pin was already
+    /// allowed to move the viewport. A flick whose sentinel dematerialised during
+    /// that overlap therefore fought a programmatic tail pin.
     /// A flick's deceleration is that gesture still playing out, so it belongs
     /// on the user's side of the line; only a transcript provably at rest can
     /// attribute a disappearance to layout.
@@ -174,8 +170,22 @@ extension View {
         #endif
     }
 
-    /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad touch
+    /// Shared by ThreadDetailView and MiniThreadView so iPhone/iPad scroll
     /// stamping stays one policy.
+    ///
+    /// TWO lanes, because no single recognizer sees both kinds of scroll. The
+    /// `DragGesture` covers direct touch. `transcriptIndirectScrollTracking`
+    /// covers pointer scrolls — trackpad and mouse wheel — which a
+    /// `DragGesture` structurally never reports, because it is itself a
+    /// direct-touch pan and those ship with an empty `allowedScrollTypesMask`.
+    ///
+    /// Both lanes feed the SAME stamp: the follow policy only ever asks when
+    /// the user last moved the transcript, never what they moved it with.
+    /// Before the second lane existed, a pointer scroll stamped nothing at all,
+    /// so `TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing` read
+    /// every scroll-up as pure layout and the sentinel's `onDisappear` re-pinned
+    /// the viewport to the tail — the transcript could not be scrolled up at
+    /// all with a trackpad, on any thread, running or idle.
     func transcriptTouchTracking(isPadInterface: Bool, onTouch: @escaping () -> Void) -> some View {
         self.simultaneousGesture(
             DragGesture(
@@ -184,6 +194,7 @@ extension View {
             )
             .onChanged { _ in onTouch() }
         )
+        .transcriptIndirectScrollTracking(onScroll: onTouch)
     }
 }
 
@@ -311,6 +322,12 @@ func twShouldRenderAfterLiveBlock(
     return rowTimestampMs >= liveStartedAtMs
 }
 
+/// Workspace whose git surface is open. `id` IS the workspaceId — the sheet
+/// has exactly one target at a time and nothing else identifies it.
+private struct GitSurfaceTarget: Identifiable, Equatable {
+    let id: String
+}
+
 struct ThreadDetailView: View {
     // Plain reference (NOT @ObservedObject): the transcript's re-renders are gated
     // by `store` below, not by the monolithic RemoteSessionModel's whole-object
@@ -371,12 +388,19 @@ struct ThreadDetailView: View {
     @State private var ensembleSoloProviderChoices: [String] = []
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
-    /// Git workspace surface (branch / changes / PR) opened from the
-    /// composer workspace pill. The workspace is captured at open time — the
-    /// pill lives inside a view builder whose locals aren't in scope at the
-    /// presentation modifier.
-    @State private var gitSurfacePresented = false
-    @State private var gitSurfaceWorkspaceId: String?
+    /// Git workspace surface (branch / changes / PR) opened from the composer
+    /// workspace pill. The workspace is captured at open time — the pill lives
+    /// inside a view builder whose locals aren't in scope at the presentation
+    /// modifier.
+    ///
+    /// ONE piece of state, deliberately. The pair this replaced
+    /// (`presented: Bool` + `workspaceId: String?`) let `.sheet(isPresented:)`
+    /// build its content while the workspaceId was still nil, and the `if let`
+    /// inside collapsed to an EMPTY sheet — a blank panel carrying none of the
+    /// `twSheetLiquidGlass` chrome either, since those modifiers live inside
+    /// the same `if let`. `.sheet(item:)` hands the id to the builder, so the
+    /// content cannot be built without one.
+    @State private var gitSurfaceTarget: GitSurfaceTarget?
     @State private var diffPillRefreshGeneration = 0
     /// Drives the focus-independent git snapshot refresh on foregrounding —
     /// the compact pill (mounted only while the composer is blurred) can no
@@ -839,6 +863,11 @@ struct ThreadDetailView: View {
             id: String, members: [TranscriptDisplayItem],
             stackRows: [RemoteThreadSnapshot.Row], systemCount: Int,
             firstSystemPreview: String, lastRow: RemoteThreadSnapshot.Row)
+        /// Two adjacent fan-out lane cards laid side by side (regular-width
+        /// iPad only; desktop `paired` lane-layout parity). Emitted by
+        /// `pairFanoutLaneItems` at the top level only, after every fold.
+        case fanoutPair(
+            id: String, lead: RemoteThreadSnapshot.Row, trail: RemoteThreadSnapshot.Row)
 
         var id: String {
             switch self {
@@ -847,6 +876,7 @@ struct ThreadDetailView: View {
             case .fanoutViewport(let group): return group.id
             case .settledStack(let id, _, _, _): return id
             case .superStack(let id, _, _, _, _, _): return id
+            case .fanoutPair(let id, _, _): return id
             }
         }
 
@@ -857,34 +887,79 @@ struct ThreadDetailView: View {
             case .fanoutViewport(let group): return group.lastRow
             case .settledStack(_, _, _, let lastRow): return lastRow
             case .superStack(_, _, _, _, _, let lastRow): return lastRow
+            case .fanoutPair(_, _, let trail): return trail
             }
         }
     }
 
     private var settledDisplayItemsBeforeLive: [TranscriptDisplayItem] {
         if !activeTranscriptFilterKeys.isEmpty {
-            return groupAdjacentToolRows(settledRowsBeforeLive)
+            return pairFanoutLaneItems(groupAdjacentToolRows(settledRowsBeforeLive))
         }
-        return toolRowGroupingCache.items(
-            segment: "before",
-            rows: settledRowsBeforeLive,
-            revision: snapshotRevisionToken,
-            liveRunId: liveRunId,
-            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
-            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
+        return pairFanoutLaneItems(
+            toolRowGroupingCache.items(
+                segment: "before",
+                rows: settledRowsBeforeLive,
+                revision: snapshotRevisionToken,
+                liveRunId: liveRunId,
+                extraKey:
+                    "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+                group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) }))
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
         if !activeTranscriptFilterKeys.isEmpty {
-            return groupAdjacentToolRows(settledRowsAfterLive)
+            return pairFanoutLaneItems(groupAdjacentToolRows(settledRowsAfterLive))
         }
-        return toolRowGroupingCache.items(
-            segment: "after",
-            rows: settledRowsAfterLive,
-            revision: snapshotRevisionToken,
-            liveRunId: liveRunId,
-            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
-            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
+        return pairFanoutLaneItems(
+            toolRowGroupingCache.items(
+                segment: "after",
+                rows: settledRowsAfterLive,
+                revision: snapshotRevisionToken,
+                liveRunId: liveRunId,
+                extraKey:
+                    "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+                group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) }))
+    }
+
+    /// Regular-width iPads lay adjacent fan-out lanes two-across (desktop
+    /// `paired` lane-layout parity). Applied OUTSIDE the grouping cache so the
+    /// cached fold shape stays layout-agnostic — rotation or a split-view
+    /// resize re-pairs a cheap O(items) walk instead of invalidating the
+    /// cache. Pairing runs after every fold; a lane the wave-collapse or a
+    /// stack already owns is no longer a top-level `.row` and never pairs.
+    private var fanoutLanePairingEnabled: Bool {
+        twFanoutLanePairingEnabled(
+            isPadInterface: isPadInterface, isRegularWidth: hSizeClass == .regular)
+    }
+
+    private func pairFanoutLaneItems(_ items: [TranscriptDisplayItem]) -> [TranscriptDisplayItem] {
+        guard fanoutLanePairingEnabled else { return items }
+        var out: [TranscriptDisplayItem] = []
+        var index = 0
+        while index < items.count {
+            guard case .row(let first) = items[index], twIsFanoutLaneRow(first) else {
+                out.append(items[index])
+                index += 1
+                continue
+            }
+            var runRows: [RemoteThreadSnapshot.Row] = [first]
+            var end = index + 1
+            while end < items.count, case .row(let next) = items[end], twIsFanoutLaneRow(next) {
+                runRows.append(next)
+                end += 1
+            }
+            for placement in twPairFanoutLaneRun(runRows) {
+                switch placement {
+                case .pair(let lead, let trail):
+                    out.append(.fanoutPair(id: placement.id, lead: lead, trail: trail))
+                case .solo(let row):
+                    out.append(.row(row))
+                }
+            }
+            index = end
+        }
+        return out
     }
 
     /// Second-level fold: consecutive one-liner items — settled stacks that
@@ -1060,6 +1135,16 @@ struct ThreadDetailView: View {
             settledRowItemView(row, itemId: item.id)
         case .toolBurst:
             stackConstituentView(item)
+        case .fanoutPair(_, let lead, let trail):
+            // Two-across lane pair (regular-width iPad). `.top` alignment so a
+            // short lane never stretches to its sibling's height; each cell
+            // takes half the column.
+            HStack(alignment: .top, spacing: 10) {
+                stackConstituentView(.row(lead))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                stackConstituentView(.row(trail))
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         case .fanoutViewport(let group):
             fanoutViewportItemView(group)
         case .settledStack(let id, let items, let rows, _):
@@ -1101,6 +1186,10 @@ struct ThreadDetailView: View {
             // Fan-out viewports are only emitted at the outer display level;
             // their expansion renders raw lane rows above, never a nested
             // viewport.
+            EmptyView()
+        case .fanoutPair:
+            // Pairs never join a super-group (memberKind treats them as a
+            // run-breaking item); top-level dispatch owns them.
             EmptyView()
         case .settledStack(let id, let items, let rows, _):
             settledStackItemView(id: id, items: items, rows: rows)
@@ -1167,12 +1256,36 @@ struct ThreadDetailView: View {
                 group: group,
                 expanded: expanded,
                 onToggle: { toggleFanoutViewportExpanded(group.id) })
-            if expanded {
+            if expanded, fanoutLanePairingEnabled {
+                // Restored lanes keep the same two-across layout the live wave
+                // had on a regular-width iPad.
+                ForEach(twPairFanoutLaneRun(group.laneRows)) { placement in
+                    switch placement {
+                    case .pair(let lead, let trail):
+                        HStack(alignment: .top, spacing: 10) {
+                            stackConstituentView(.row(lead))
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                            stackConstituentView(.row(trail))
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                    case .solo(let row):
+                        stackConstituentView(.row(row))
+                    }
+                }
+            } else if expanded {
                 ForEach(group.laneRows) { row in
                     stackConstituentView(.row(row))
                 }
             }
         }
+    }
+
+    /// Fan-out lanes sitting in a six-plus adjacent run take the compact
+    /// collapsed band (desktop `classifyCompactFanoutLaneRows` parity). Walked
+    /// over `visibleRows` so adjacency matches what the reader sees; the walk
+    /// is O(rows) and only visible lazy items consult it.
+    private var compactFanoutLaneRowIds: Set<String> {
+        twCompactFanoutLaneRowIds(visibleRows)
     }
 
     private func toggleSettledStackExpanded(_ id: String) {
@@ -1212,7 +1325,8 @@ struct ThreadDetailView: View {
                 participants: transcriptParticipants,
                 isPinned: isMessagePinned(row.id),
                 linkedChildCard: linkedChildCard(for: row),
-                workingParticipantIds: workingParticipantIds
+                workingParticipantIds: workingParticipantIds,
+                fanoutCompactBand: compactFanoutLaneRowIds.contains(row.id)
             )
             .equatable()
         case .toolBurst(_, let rows, _):
@@ -1224,6 +1338,10 @@ struct ThreadDetailView: View {
             // Fan-out viewports are only emitted at the outer display level;
             // their expansion renders raw lane rows above, never a nested
             // viewport.
+            EmptyView()
+        case .fanoutPair:
+            // Pairs are likewise top-level only (pairFanoutLaneItems runs
+            // after every fold); the outer dispatch renders them.
             EmptyView()
         case .superStack:
             EmptyView()
@@ -1499,6 +1617,14 @@ struct ThreadDetailView: View {
         snapshot?.runSummaries ?? [snapshot?.runSummary].compactMap { $0 }
     }
 
+    /// `runSummary` is the Mac's current round aggregate (summed tokens/cost,
+    /// unioned files, full wall-clock span). `runSummaries` stays per-lane so
+    /// the participant table can enumerate individual contributors without
+    /// double-counting the aggregate.
+    private var headlineRunSummary: RemoteThreadSnapshot.RunSummary? {
+        snapshot?.runSummary
+    }
+
     private var runSummaryById: [String: RemoteThreadSnapshot.RunSummary] {
         var out: [String: RemoteThreadSnapshot.RunSummary] = [:]
         for summary in runSummaries {
@@ -1514,16 +1640,18 @@ struct ThreadDetailView: View {
     }
 
     private func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
-        let status = summary.status ?? ""
-        return !status.isEmpty && status != "running"
+        twIsTerminalRunSummary(summary)
     }
 
     private func ensembleRoundIsActive(_ roundId: String) -> Bool {
         guard let state = ensembleState, state.roundId == roundId else {
             return false
         }
-        let status = state.status ?? ""
-        return !["idle", "completed", "cancelled", "failed", "error"].contains(status)
+        let status = (state.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ![
+            "canceled", "cancelled", "complete", "completed", "done", "error", "failed", "idle",
+            "success", "success_with_warnings"
+        ].contains(status)
     }
 
     /// Does the loaded window carry this run's failure explanation? Drives the
@@ -1541,40 +1669,39 @@ struct ThreadDetailView: View {
         return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
     }
 
-    /// Tombstoned Participants / File changes / Commits tables from the
-    /// matching close-out row (desktop RunCompleteEpicStack). Prefer round
-    /// close-out, then run-scoped close-out. Absent on older Macs —
-    /// TaskCompleteCard keeps the legacy Run-details token grid.
+    /// Tombstoned Participants / File changes / Commits tables plus the
+    /// authoritative close-out outcome. A round close-out outranks any final
+    /// participant lane: the latter can succeed while the round was cancelled
+    /// or failed later by orchestration.
     private func closeoutEpicTables(for summary: RemoteThreadSnapshot.RunSummary) -> (
         RemoteThreadSnapshot.Row.CloseoutParticipantTable?,
         [RemoteThreadSnapshot.Row.CloseoutCommit]?,
         [RemoteThreadSnapshot.Row.CloseoutFileChange]?,
-        [RemoteThreadSnapshot.Row.CloseoutSubThread]?
+        [RemoteThreadSnapshot.Row.CloseoutSubThread]?,
+        String?,
+        Int?,
+        Int?
     ) {
         let rows = snapshot?.rows ?? []
-        func hasEpicTables(_ row: RemoteThreadSnapshot.Row) -> Bool {
-            (row.closeoutParticipantTable?.rows?.isEmpty == false)
-                || (row.closeoutCommits?.isEmpty == false)
-                || (row.closeoutFileChanges?.isEmpty == false)
-                || (row.closeoutSubThreads?.isEmpty == false)
-        }
-        if let roundId = summary.ensembleRoundId, !roundId.isEmpty,
-            let row = rows.last(where: { $0.ensembleRoundId == roundId && hasEpicTables($0) })
-        {
+        if let row = twPreferredCloseoutRow(for: summary, rows: rows) {
             return (
                 row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
-                row.closeoutSubThreads
+                row.closeoutSubThreads, row.closeoutStatus, row.closeoutDurationMs,
+                row.closeoutFileChangesTotal
             )
         }
-        if let runId = summary.runId, !runId.isEmpty,
-            let row = rows.last(where: { $0.runId == runId && hasEpicTables($0) })
-        {
-            return (
-                row.closeoutParticipantTable, row.closeoutCommits, row.closeoutFileChanges,
-                row.closeoutSubThreads
-            )
+        return (nil, nil, nil, nil, nil, nil, nil)
+    }
+
+    private func headlineSummary(forRound roundId: String) -> RemoteThreadSnapshot.RunSummary? {
+        guard let summary = headlineRunSummary, summary.ensembleRoundId == roundId else { return nil }
+        return summary
+    }
+
+    private func terminalParticipantSummary(forRound roundId: String) -> RemoteThreadSnapshot.RunSummary? {
+        runSummaries.reversed().first {
+            $0.ensembleRoundId == roundId && isTerminalRunSummary($0)
         }
-        return (nil, nil, nil, nil)
     }
 
     /// The terminal summary to show after this row, if it's a run's last row.
@@ -1582,11 +1709,29 @@ struct ThreadDetailView: View {
         -> RemoteThreadSnapshot.RunSummary?
     {
         if card?.isEnsemble == true, let roundId = ensembleRoundId(for: row) {
+            let rows = snapshot?.rows ?? []
+            if let closeout = twAuthoritativeRoundCloseoutRow(roundId: roundId, rows: rows) {
+                // A durable round close-out is the terminal anchor. It can
+                // legitimately arrive before stale participant summaries have
+                // updated, so do not let an arbitrary lane suppress it.
+                guard closeout.id == row.id, twIsTerminalCloseoutStatus(closeout.closeoutStatus)
+                else { return nil }
+                if let headline = headlineSummary(forRound: roundId) { return headline }
+                if let participant = terminalParticipantSummary(forRound: roundId) { return participant }
+                return twSyntheticRoundCloseoutSummary(roundId: roundId, closeout: closeout)
+            }
+
+            // Legacy fallback: without an explicit close-out, never infer a
+            // terminal card from a page that may continue below this window.
             guard ensembleRoundLastRowIds[roundId] == row.id else { return nil }
+            guard snapshot?.hasMoreBelow != true else { return nil }
             guard !ensembleRoundIsActive(roundId) else { return nil }
             let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
-            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
-            return summaries.last(where: isTerminalRunSummary)
+            guard !summaries.contains(where: { !isTerminalRunSummary($0) }) else { return nil }
+            if let headline = headlineSummary(forRound: roundId), isTerminalRunSummary(headline) {
+                return headline
+            }
+            return terminalParticipantSummary(forRound: roundId)
         }
 
         guard let runId = row.runId, runLastRowIds[runId] == row.id else { return nil }
@@ -1596,13 +1741,21 @@ struct ThreadDetailView: View {
     }
 
     private var unanchoredRunCardSummary: RemoteThreadSnapshot.RunSummary? {
-        guard let run = snapshot?.runSummary, !isRunning else { return nil }
+        guard let run = headlineRunSummary, !isRunning else { return nil }
         if card?.isEnsemble == true, let roundId = run.ensembleRoundId {
             guard ensembleRoundLastRowIds[roundId] == nil else { return nil }
+            if let closeout = twAuthoritativeRoundCloseoutRow(
+                roundId: roundId, rows: snapshot?.rows ?? []
+            ) {
+                guard twIsTerminalCloseoutStatus(closeout.closeoutStatus) else { return nil }
+                return run
+            }
+            guard snapshot?.hasMoreBelow != true else { return nil }
             guard !ensembleRoundIsActive(roundId) else { return nil }
             let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
-            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
-            return summaries.last(where: isTerminalRunSummary)
+            guard !summaries.contains(where: { !isTerminalRunSummary($0) }) else { return nil }
+            guard isTerminalRunSummary(run) else { return terminalParticipantSummary(forRound: roundId) }
+            return run
         }
         guard runLastRowIds[run.runId ?? ""] == nil else { return nil }
         guard isTerminalRunSummary(run) else { return nil }
@@ -1848,8 +2001,11 @@ struct ThreadDetailView: View {
                             closeoutParticipantTable: epic.0,
                             closeoutCommits: epic.1,
                             closeoutFileChanges: epic.2,
+                            closeoutFileChangesTotal: epic.6,
                             closeoutSubThreads: epic.3,
-                            hasFailureDetail: runCardHasFailureDetail(runCard)
+                            hasFailureDetail: runCardHasFailureDetail(runCard),
+                            closeoutStatus: epic.4,
+                            closeoutDurationMs: epic.5
                         )
                         .listRowInsets(
                             EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1906,8 +2062,11 @@ struct ThreadDetailView: View {
                                 closeoutParticipantTable: epic.0,
                                 closeoutCommits: epic.1,
                                 closeoutFileChanges: epic.2,
+                                closeoutFileChangesTotal: epic.6,
                                 closeoutSubThreads: epic.3,
-                                hasFailureDetail: runCardHasFailureDetail(runCard)
+                                hasFailureDetail: runCardHasFailureDetail(runCard),
+                                closeoutStatus: epic.4,
+                                closeoutDurationMs: epic.5
                             )
                             .listRowInsets(
                                 EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1960,7 +2119,11 @@ struct ThreadDetailView: View {
                         closeoutParticipantTable: epic.0,
                         closeoutCommits: epic.1,
                         closeoutFileChanges: epic.2,
-                        hasFailureDetail: runCardHasFailureDetail(run)
+                        closeoutFileChangesTotal: epic.6,
+                        closeoutSubThreads: epic.3,
+                        hasFailureDetail: runCardHasFailureDetail(run),
+                        closeoutStatus: epic.4,
+                        closeoutDurationMs: epic.5
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -2104,6 +2267,11 @@ struct ThreadDetailView: View {
             }
         }
         .background(TWTheme.appBg)
+        // Native scroll dismissal is the deterministic iPad escape hatch when
+        // the custom UITextView owns first responder. The explicit tap and
+        // keyboard-chevron paths remain as fallbacks; this adds the standard
+        // drag-down interaction users expect from a transcript.
+        .scrollDismissesKeyboard(.interactively)
         // Observe-only touch tracker (simultaneousGesture): stamps
         // `lastUserTouchAt` so touch-gated unfollow and settle suppression
         // work. Phone uses minimumDistance 0; iPad uses 12 so the recognizer
@@ -2757,8 +2925,7 @@ struct ThreadDetailView: View {
         #if canImport(UIKit)
             dismissKeyboard()
         #endif
-        gitSurfaceWorkspaceId = workspaceId
-        gitSurfacePresented = true
+        gitSurfaceTarget = GitSurfaceTarget(id: workspaceId)
     }
 
     private func openComposerDiff(workspaceId: String?) {
@@ -2802,10 +2969,34 @@ struct ThreadDetailView: View {
             model.clearActionMessage()
             model.visibleThreadId = taskId
             requestSnapshotIfNeeded()
+
+            // Adopt this thread's DURABLE follow state. `@State` dies with the
+            // view's structural identity, and AppShell rebuilds the whole shell
+            // on every `model.phase` transition, so anything held here alone is
+            // discarded by a reconnect the user never asked for.
+            let store = TranscriptFollowStateStore.shared
+            followPin = store.pin(for: taskId)
+
+            guard
+                store.shouldArmOnOpen(
+                    threadId: taskId,
+                    selectionGeneration: model.threadSelectionGeneration)
+            else {
+                // A remount, not an open. Restore what the user chose and do
+                // NOT pin — pinning here is what yanked them back to the tail.
+                autoFollow = store.autoFollow(for: taskId)
+                return
+            }
+
             followPin.userLatchedOff = false
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
             requestFollowPin(proxy, force: true)
+        }
+        .onChange(of: autoFollow) { _, isFollowing in
+            // Mirror intent into the store on every transition so a remount
+            // that lands between here and the next open restores the truth.
+            TranscriptFollowStateStore.shared.setAutoFollow(isFollowing, for: taskId)
         }
         .task(id: snapshotRequestTrigger) {
             requestSnapshotIfNeeded()
@@ -3143,19 +3334,17 @@ struct ThreadDetailView: View {
             }
             .twSheetLiquidGlass(detents: [.medium])
         }
-        .sheet(isPresented: $gitSurfacePresented) {
+        .sheet(item: $gitSurfaceTarget) { target in
             // Roster pattern (a1815e037): the SAME content adapts — a sheet on
             // phone, and `presentationCompactAdaptation(.popover)` lets a
             // regular-width iPad render it as an anchored popover instead.
-            if let workspaceId = gitSurfaceWorkspaceId {
-                GitWorkspaceSurface(
-                    model: model,
-                    workspaceId: workspaceId,
-                    chatId: taskId,
-                    onDismiss: { gitSurfacePresented = false }
-                )
-                .twSheetLiquidGlass(detents: [.large])
-            }
+            GitWorkspaceSurface(
+                model: model,
+                workspaceId: target.id,
+                chatId: taskId,
+                onDismiss: { gitSurfaceTarget = nil }
+            )
+            .twSheetLiquidGlass(detents: [.large])
         }
         .sheet(isPresented: $composerDiffSheetPresented) {
             NavigationStack {
@@ -4019,13 +4208,8 @@ struct ContextCompactionSummaryCard: View {
         compaction: RemoteThreadSnapshot.Row.ContextCompaction?,
         preview: String?, role: String?, kind: String?
     ) -> Bool {
-        if compaction != nil { return true }
-        guard let preview, !preview.isEmpty else { return false }
-        guard role == "system" || kind == "system" else { return false }
-        let lower = preview.lowercased()
-        return lower.hasPrefix("context compacted")
-            || lower.hasPrefix("context compaction failed")
-            || lower.hasPrefix("compacting context")
+        twIsContextCompactionRow(
+            compaction: compaction, preview: preview, role: role, kind: kind)
     }
 
     private var failed: Bool {
@@ -4100,17 +4284,36 @@ struct ContextCompactionSummaryCard: View {
 /// The HEIGHTS deliberately do NOT match desktop
 /// `COLLAPSED_FANOUT_RESULT_VIEWPORT_HEIGHT` (331): that band was sized for a
 /// desktop transcript column. A fan-out puts SEVERAL lanes on screen at once,
-/// and 331 is over half an iPhone transcript viewport, so a two-lane round left
-/// nothing else visible. 185 puts two lanes in the space one used to take.
-/// Tapping a clamped lane still expands it in place, so nothing is lost — only
-/// the resting size changed.
+/// and 331 is over half an iPhone transcript viewport. The first phone clamp
+/// (185, 2026-08-15) put two lanes in the space one used to take and was still
+/// too tall in use — a big round remained mostly scrolling — so the band was
+/// halved again: 92 shows roughly four lanes per screen. Tapping a clamped
+/// lane still expands it in place, so nothing is lost — only the resting size
+/// changed.
 enum TWFanoutResultViewport {
-    static let collapsedMaxHeight: CGFloat = 185
-    /// Scaled with the band (desktop ran 60 against 331). Holding 60 here would
-    /// have masked both edges of a 185pt window and left ~65pt legible.
-    static let edgeFadeHeight: CGFloat = 34
+    static let collapsedMaxHeight: CGFloat = 92
+    /// Six-plus rounds drop every lane of the run to this band — desktop
+    /// parity in DIRECTION (its 331 halves to 166 at the same threshold), not
+    /// in value: this band stays phone-sized like the full one above. 62
+    /// keeps roughly two body lines readable inside the scaled fades while a
+    /// big round fits meaningfully more lanes per screen.
+    static let compactCollapsedMaxHeight: CGFloat = 62
+    /// Scaled with the band (desktop ran 60 against 331, ~18%; the fade masks
+    /// BOTH edges). Holding the previous 34 on a 92pt window would have left
+    /// only ~24pt at full opacity.
+    static let edgeFadeHeight: CGFloat = 17
+    /// Holds the band's ~18% fade ratio (17/92) at the compact size.
+    static let compactEdgeFadeHeight: CGFloat = 11
     static let expandLabel = "Expand result"
     static let collapseLabel = "Collapse result"
+
+    static func collapsedMaxHeight(compact: Bool) -> CGFloat {
+        compact ? compactCollapsedMaxHeight : collapsedMaxHeight
+    }
+
+    static func edgeFadeHeight(compact: Bool) -> CGFloat {
+        compact ? compactEdgeFadeHeight : edgeFadeHeight
+    }
 }
 
 /// Header chrome for an ensemble fan-out lane result (desktop
@@ -4481,6 +4684,9 @@ struct MessageActionsBar: View {
     let onTogglePin: (() -> Void)?
     let onOpenSideChat: (() -> Void)?
     var onDelete: (() -> Void)? = nil
+    /// False when the buttons are embedded beside thumbs feedback in the
+    /// transcript's single footer row; the outer row owns the flexible tail.
+    var fillsAvailableWidth = true
 
     var body: some View {
         HStack(spacing: 2) {
@@ -4511,7 +4717,9 @@ struct MessageActionsBar: View {
                     action: onDelete
                 )
             }
-            Spacer(minLength: 0)
+            if fillsAvailableWidth {
+                Spacer(minLength: 0)
+            }
         }
         .padding(.top, 2)
         .accessibilityElement(children: .contain)
@@ -4557,6 +4765,13 @@ struct ThreadRowView: View, Equatable {
     /// token), so a shimmer derived from it would never re-render on or off.
     /// The projected set only changes when a lane starts or finishes.
     var workingParticipantIds: Set<String> = []
+    /// This lane sits in a run of `twFanoutLaneCompactThreshold`-plus adjacent
+    /// fan-out lanes, so its collapsed viewport takes the compact band
+    /// (desktop `compactLaneBand` parity). Explicit input for the same reason
+    /// as `workingParticipantIds`: it must join the equality gate below, or
+    /// the retroactive flip when the sixth lane streams in never re-renders
+    /// the first five.
+    var fanoutCompactBand: Bool = false
 
     @State private var deletionPresentation: TranscriptMessageDeletionPresentation?
 
@@ -4580,6 +4795,9 @@ struct ThreadRowView: View, Equatable {
             // only at lane start/finish, and it is what turns the fan-out rim
             // shimmer on and off.
             && lhs.workingParticipantIds == rhs.workingParticipantIds
+            // Changes only when a run crosses (or falls back through) the
+            // six-lane threshold; it resizes the collapsed lane viewport.
+            && lhs.fanoutCompactBand == rhs.fanoutCompactBand
             && twParticipantsSignature(lhs.participants)
                 == twParticipantsSignature(rhs.participants)
     }
@@ -4596,7 +4814,7 @@ struct ThreadRowView: View, Equatable {
         (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
             && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
             && !hasRunFailureCard && !hasTrustAwareCard && !hasSubThreadReturnCard
-            && !hasAgentInvocationCard && !hasSeatChangeCard
+            && !hasAgentInvocationCard && !hasSeatPresentationCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -4649,6 +4867,17 @@ struct ThreadRowView: View, Equatable {
     /// stack replaces the plain sentence. Empty renderable seats fall back to
     /// the sentence, exactly like an older Mac that projected nothing.
     private var hasSeatRosterCard: Bool { row.seatRoster?.renderableSeats.isEmpty == false }
+    /// User-added participant mid-round — same ownership rule as the change
+    /// strip. A missing or blank seat falls back to the sentence.
+    private var seatParticipantAddedLink: TWSeatChangeLink? { row.seatParticipantAdded?.renderableLink }
+    private var hasSeatParticipantAddedCard: Bool { seatParticipantAddedLink != nil }
+    /// Every first-class seat presentation owns the carrier row: no generic
+    /// System label, fallback sentence, or expansion affordance renders beside
+    /// it. Keep the shared gate centralized so a new seat variant cannot stand
+    /// down in one branch and leak through another.
+    private var hasSeatPresentationCard: Bool {
+        hasSeatChangeCard || hasSeatRosterCard || hasSeatParticipantAddedCard
+    }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
         ContextCompactionSummaryCard.matches(
@@ -4701,12 +4930,12 @@ struct ThreadRowView: View, Equatable {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
                     || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard
-                    || hasDelegationLifecycleCard || hasSeatChangeCard || hasSeatRosterCard)
+                    || hasDelegationLifecycleCard || hasSeatPresentationCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
-                    && !hasSeatChangeCard && !hasSeatRosterCard
+                    && !hasSeatPresentationCard
                 {
                     HStack(spacing: 4) {
                         HStack(spacing: 0) {
@@ -4747,8 +4976,10 @@ struct ThreadRowView: View, Equatable {
                 }
                 if hasFanoutResultCard {
                     ToolActivityViewport(
-                        maxHeight: TWFanoutResultViewport.collapsedMaxHeight,
-                        fadeHeight: TWFanoutResultViewport.edgeFadeHeight,
+                        maxHeight: TWFanoutResultViewport.collapsedMaxHeight(
+                            compact: fanoutCompactBand),
+                        fadeHeight: TWFanoutResultViewport.edgeFadeHeight(
+                            compact: fanoutCompactBand),
                         overflowSlack: 0,
                         expandLabel: TWFanoutResultViewport.expandLabel,
                         collapseLabel: TWFanoutResultViewport.collapseLabel
@@ -4775,6 +5006,12 @@ struct ThreadRowView: View, Equatable {
                     TWSeatRosterStack(
                         roster: roster,
                         timestamp: roster.appliedAt ?? row.timestamp)
+                } else if let seatParticipantAddedLink {
+                    TWSeatStrip(
+                        link: seatParticipantAddedLink,
+                        showsChair: true,
+                        timestamp: row.seatParticipantAdded?.appliedAt ?? row.timestamp,
+                        addedNote: true)
                 } else if hasContextCompactionCard {
                     ContextCompactionSummaryCard(
                         preview: row.preview ?? "", phase: row.contextCompaction?.phase)
@@ -4923,7 +5160,7 @@ struct ThreadRowView: View, Equatable {
                 }
                 if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
-                    && !hasTrustAwareCard && !hasSeatChangeCard,
+                    && !hasTrustAwareCard && !hasSeatPresentationCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
@@ -4939,59 +5176,7 @@ struct ThreadRowView: View, Equatable {
                             )
                             .textSelection(.enabled)
                         }
-                        if let footerTime = transcriptFooterTime {
-                            HStack(spacing: 6) {
-                                Text(footerTime)
-                                    .font(.caption2)
-                                    .foregroundStyle(TWTheme.textMuted.opacity(0.88))
-                                    .monospacedDigit()
-                                if showsMessageActionChrome {
-                                    MessageActionsBar(
-                                        isPinned: isPinned,
-                                        onCopy: { copyText(preview) },
-                                        onAddToPrompt: {
-                                            model.requestComposerAppend(preview, threadId: threadId)
-                                        },
-                                        onTogglePin: { togglePin() },
-                                        onOpenSideChat: { openSideChatFromMessage() },
-                                        onDelete: canDeleteTranscriptMessage
-                                            ? { requestMessageDeletion() }
-                                            : nil
-                                    )
-                                }
-                            }
-                            if showsMessageActionChrome,
-                                let assistantFeedbackItem, let card = threadCard
-                            {
-                                AssistantMessageFeedbackBar(
-                                    item: assistantFeedbackItem,
-                                    onFeedback: { request in
-                                        model.toggleMessageFeedback(card, request: request)
-                                    }
-                                )
-                            }
-                        } else if showsMessageActionChrome {
-                            MessageActionsBar(
-                                isPinned: isPinned,
-                                onCopy: { copyText(preview) },
-                                onAddToPrompt: {
-                                    model.requestComposerAppend(preview, threadId: threadId)
-                                },
-                                onTogglePin: { togglePin() },
-                                onOpenSideChat: { openSideChatFromMessage() },
-                                onDelete: canDeleteTranscriptMessage
-                                    ? { requestMessageDeletion() }
-                                    : nil
-                            )
-                            if let assistantFeedbackItem, let card = threadCard {
-                                AssistantMessageFeedbackBar(
-                                    item: assistantFeedbackItem,
-                                    onFeedback: { request in
-                                        model.toggleMessageFeedback(card, request: request)
-                                    }
-                                )
-                            }
-                        }
+                        messageFooter(preview: preview)
                     }
                     .contextMenu {
                         messageActionMenu(
@@ -5045,8 +5230,62 @@ struct ThreadRowView: View, Equatable {
                 onDismissBlocked: { deletionPresentation = nil }
             )
             .padding()
-            .presentationDetents([.medium])
+            .twSheetLiquidGlass(detents: [.medium])
         }
+    }
+
+    /// Timestamp + ordinary actions + thumbs all share one compact row. The
+    /// feedback view still expands its reason picker below that row when a poor
+    /// rating is selected.
+    @ViewBuilder
+    private func messageFooter(preview: String) -> some View {
+        if showsMessageActionChrome {
+            if let assistantFeedbackItem, let card = threadCard {
+                AssistantMessageFeedbackBar(
+                    item: assistantFeedbackItem,
+                    onFeedback: { request in
+                        model.toggleMessageFeedback(card, request: request)
+                    },
+                    leadingContent: {
+                        HStack(spacing: 6) {
+                            transcriptFooterTimestamp
+                            messageActions(preview: preview, fillsAvailableWidth: false)
+                        }
+                    }
+                )
+            } else {
+                HStack(spacing: 6) {
+                    transcriptFooterTimestamp
+                    messageActions(preview: preview, fillsAvailableWidth: true)
+                }
+            }
+        } else {
+            transcriptFooterTimestamp
+        }
+    }
+
+    @ViewBuilder
+    private var transcriptFooterTimestamp: some View {
+        if let footerTime = transcriptFooterTime {
+            Text(footerTime)
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textMuted.opacity(0.88))
+                .monospacedDigit()
+        }
+    }
+
+    private func messageActions(preview: String, fillsAvailableWidth: Bool) -> MessageActionsBar {
+        MessageActionsBar(
+            isPinned: isPinned,
+            onCopy: { copyText(preview) },
+            onAddToPrompt: {
+                model.requestComposerAppend(preview, threadId: threadId)
+            },
+            onTogglePin: { togglePin() },
+            onOpenSideChat: { openSideChatFromMessage() },
+            onDelete: canDeleteTranscriptMessage ? { requestMessageDeletion() } : nil,
+            fillsAvailableWidth: fillsAvailableWidth
+        )
     }
 
     /// Body content for the per-lane clamped viewport (Electron
@@ -5437,7 +5676,9 @@ struct ThreadRowView: View, Equatable {
             }
             .padding(.top, 2)
             .sheet(item: $preview) { preview in
-                TranscriptMediaPreviewSheet(preview: preview, model: model)
+                TranscriptMediaPreviewSheet(
+                    preview: preview, model: model, threadId: threadId)
+                    .twSheetLiquidGlass(detents: [.large])
             }
         }
 
@@ -5623,9 +5864,33 @@ struct ThreadRowView: View, Equatable {
             errorText = nil
             Task {
                 do {
-                    let fetched = try await model.fetchThreadMedia(
-                        threadId: threadId, rowId: rowId, mediaId: item.id,
-                        variant: "full", maxBytes: 8 * 1024 * 1024)
+                    var assembler = FullSizeMediaAssembler()
+                    var currentOffset = 0
+                    while assembler.needsMore {
+                        let chunk = try await model.fetchThreadMediaChunk(
+                            threadId: threadId, rowId: rowId, mediaId: item.id,
+                            offset: currentOffset, length: FullSizeMediaAssembler.chunkLength)
+                        try assembler.append(chunk: chunk.data, totalBytes: chunk.totalBytes)
+                        currentOffset += chunk.data.count
+                    }
+                    let allData = try assembler.finish()
+                    guard UIImage(data: allData) != nil else {
+                        throw FullSizeMediaFetchError.undecodableImage
+                    }
+                    let fetched = TranscriptMediaFetchResult(
+                        id: item.id,
+                        rowId: rowId,
+                        threadId: threadId,
+                        name: item.name,
+                        source: item.source,
+                        mimeType: item.mimeType ?? "image/jpeg",
+                        dataBase64: allData.base64EncodedString(),
+                        width: item.width,
+                        height: item.height,
+                        byteLength: allData.count,
+                        variant: "full",
+                        totalBytes: nil,
+                        offset: nil)
                     await MainActor.run {
                         self.preview = TranscriptMediaPreview(payload: .image(fetched))
                         self.fetchingMediaId = nil
@@ -5700,7 +5965,10 @@ struct ThreadRowView: View, Equatable {
     private struct TranscriptMediaPreviewSheet: View {
         let preview: TranscriptMediaPreview
         let model: RemoteSessionModel
+        let threadId: String
         @Environment(\.dismiss) private var dismiss
+        @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+        @State private var markupSource: MarkupCaptureSource?
 
         var body: some View {
             NavigationStack {
@@ -5712,13 +5980,34 @@ struct ThreadRowView: View, Equatable {
                         AVStreamPreview(descriptor: descriptor, model: model)
                     }
                 }
-                .background(TWTheme.appBg.ignoresSafeArea())
+                .background(
+                    (glassSheetHosted ? Color.clear : TWTheme.appBg)
+                        .ignoresSafeArea()
+                )
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        if let source = markupCaptureSource() {
+                            Button("Annotate") { markupSource = source }
+                        }
+                    }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
                     }
+                }
+                .sheet(item: $markupSource) { source in
+                    MarkupCaptureView(
+                        image: source.image,
+                        imageData: source.imageData,
+                        suggestedName: source.name,
+                        threadId: source.threadId,
+                        onAttached: {
+                            markupSource = nil
+                            dismiss()
+                        },
+                        onCancel: { markupSource = nil })
+                        .twSheetLiquidGlass(detents: [.large])
                 }
             }
         }
@@ -5755,6 +6044,33 @@ struct ThreadRowView: View, Equatable {
             guard let data = Data(base64Encoded: base64) else { return nil }
             return UIImage(data: data)
         }
+
+        /// Reuse the already-assembled full-size bytes. Never re-fetch.
+        private func markupCaptureSource() -> MarkupCaptureSource? {
+            guard case .image(let result) = preview.payload else { return nil }
+            let fromResult = result.threadId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let fromStrip = threadId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedThread = fromResult.isEmpty ? fromStrip : fromResult
+            guard !resolvedThread.isEmpty else { return nil }
+            guard let data = Data(base64Encoded: result.dataBase64), !data.isEmpty else {
+                return nil
+            }
+            guard let image = UIImage(data: data) else { return nil }
+            let name = result.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MarkupCaptureSource(
+                image: image,
+                imageData: data,
+                name: (name?.isEmpty == false ? name! : "screenshot.jpg"),
+                threadId: resolvedThread)
+        }
+    }
+
+    private struct MarkupCaptureSource: Identifiable {
+        let id = UUID()
+        let image: UIImage
+        let imageData: Data
+        let name: String
+        let threadId: String
     }
 
     /// Streams a transcript audio/video asset through the bridge resource loader

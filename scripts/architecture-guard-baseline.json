@@ -20,10 +20,6 @@
     },
     {
       "from": "src/renderer/src/App.tsx",
-      "to": "src/main/ollama/OllamaEnsembleContext"
-    },
-    {
-      "from": "src/renderer/src/App.tsx",
       "to": "src/main/providerChangeQueue"
     },
     {
@@ -59,14 +55,6 @@
       "to": "src/main/services/EnsembleMentionAlias"
     },
     {
-      "from": "src/renderer/src/components/SettingsPanel.tsx",
-      "to": "src/main/PlaintextSecretPolicy"
-    },
-    {
-      "from": "src/renderer/src/components/SettingsPanel.tsx",
-      "to": "src/main/TaskWraithMcpTools"
-    },
-    {
       "from": "src/renderer/src/components/Sidebar.tsx",
       "to": "src/main/remote/RemoteDraftChats"
     },
@@ -75,20 +63,12 @@
       "to": "src/main/TodoList"
     },
     {
-      "from": "src/renderer/src/components/ToolClassBreakdown.tsx",
-      "to": "src/main/ToolClassTaxonomy"
-    },
-    {
       "from": "src/renderer/src/components/TranscriptPanel.tsx",
       "to": "src/main/collaboration/HumanCollaboratorMessages"
     },
     {
       "from": "src/renderer/src/lib/ComposerMentionTrigger.ts",
       "to": "src/main/services/EnsembleMentionAlias"
-    },
-    {
-      "from": "src/renderer/src/lib/HandoffPrompt.ts",
-      "to": "src/main/MarkdownFenceSerializer"
     },
     {
       "from": "src/renderer/src/lib/TranscriptVirtualWindow.ts",
@@ -105,10 +85,6 @@
     {
       "from": "src/renderer/src/lib/mentionHighlight.ts",
       "to": "src/main/services/EnsembleMentionAlias"
-    },
-    {
-      "from": "src/renderer/src/lib/multiviewEnsembleComposer.ts",
-      "to": "src/main/ollama/OllamaEnsembleContext"
     },
     {
       "from": "src/renderer/src/lib/multiviewWorkspaceIsolation.ts",
