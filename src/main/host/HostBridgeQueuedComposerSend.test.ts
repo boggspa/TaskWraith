@@ -1,33 +1,7 @@
 /**
- * HostBridgeQueuedComposerSend tests (Independent Threads M2, producer step 3b).
- *
- * Pins the ACK executor's contract: register-before-ACK, single dispatch,
- * busy-queue→queued, dispatched→prepared, failure→settled-once,
- * steer→legacy without registration, never-throw, drain awaits tails,
- * shutdown fence, and the ruling's R5 case-2 classification (Bridge success
- * with neither run identity nor queue reservation → abortQueuedStart once,
- * never handleQueuedStartDispatchSettled).
- *
- * 3b-fix additions (audit 8374a93d2-3b):
- * - the abort port is REQUIRED: the constructor throws without it (N1);
- * - a refused/throwing adapter event aborts instead of reporting a false
- *   success (N3);
- * - a throwing adapter.register is contained (N4);
- * - the settled-once fence is deletion-proven (N6);
- * - the vacuous handleQueuedStartDispatchSettled forward-guards are dropped
- *   (N5) — the module never calls that method on any path.
- *
- * RED-PROOF: each named pin must go red when its behaviour is deleted
- * separately. The R5 pin in particular is the ruling's red-first test.
- * Proven by separate deletion: the required-port guard (N1), the
- * refused-prepared abort (N3), the settled-once fence (N6), the register
- * try/catch (N4), the case-2 abort (which reds BOTH R5 tests), and case-2
- * reverted to `failed` (which reds the run_queued_unproven status pin alone,
- * so status and abort-count are independently pinned).
- *
- * The register-before-ACK ORDER pin is the one row NOT deletion-proven here:
- * it asserts an `order` array, so proving it needs the two calls swapped
- * rather than a behaviour deleted. It is owed to the exact-SHA audit.
+ * ACK regressions: register before dispatch, queue reservation, no persistence
+ * proof from appRunId, fast-flush ordering, conservative uncertain outcomes,
+ * single settlements, and shutdown with delayed Bridge work.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -88,6 +62,7 @@ type AdapterStub = HostBridgeQueuedComposerSendAdapterPort & {
   queued: Mock<HostBridgeQueuedComposerSendAdapterPort['queued']>
   prepared: Mock<HostBridgeQueuedComposerSendAdapterPort['prepared']>
   settled: Mock<HostBridgeQueuedComposerSendAdapterPort['settled']>
+  get: Mock<HostBridgeQueuedComposerSendAdapterPort['get']>
   beginShutdown: Mock<HostBridgeQueuedComposerSendAdapterPort['beginShutdown']>
   drain: Mock<HostBridgeQueuedComposerSendAdapterPort['drain']>
 }
@@ -133,7 +108,7 @@ function resolvers(overrides: Partial<ResolversStub> = {}): ResolversStub {
 }
 
 /**
- * A REAL view, not a cast. The executor never reads `view`, but typing the
+ * A REAL view, not a cast. The executor verifies correlation with `get`; typing the
  * fixture properly is what lets every adapter mock satisfy its port signature
  * without an escape hatch — and it reds honestly if the view shape changes.
  */
@@ -167,6 +142,7 @@ function adapter(overrides: Partial<AdapterStub> = {}): AdapterStub {
       kind: 'applied',
       view: VIEW
     })),
+    get: vi.fn<HostBridgeQueuedComposerSendAdapterPort['get']>(() => VIEW),
     beginShutdown: vi.fn<HostBridgeQueuedComposerSendAdapterPort['beginShutdown']>(),
     drain: vi.fn<HostBridgeQueuedComposerSendAdapterPort['drain']>(async () => undefined),
     ...overrides
@@ -273,7 +249,7 @@ describe('HostBridgeQueuedComposerSend', () => {
     expect(adapterPort.prepared).not.toHaveBeenCalled()
   })
 
-  it('maps a dispatched Bridge result to a prepared adapter event with the literal persist assertion', async () => {
+  it('ACKs a dispatched run identity without synthesizing persistence or calling prepared', async () => {
     const { execute, adapterPort } = build({
       bridge: {
         executeComposerPrompt: vi.fn(async () => ({
@@ -285,17 +261,8 @@ describe('HostBridgeQueuedComposerSend', () => {
     })
     const result = await execute(command(), context())
     expect(result).toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
-    expect(adapterPort.prepared).toHaveBeenCalledWith({
-      kind: 'prepared',
-      hostCommandActionId: ACTION_ID,
-      threadId: THREAD_ID,
-      durablePromptAndStartPersisted: true,
-      start: { kind: 'solo', runId: RUN_ID },
-      effectRefs: [
-        { family: 'run', entityId: RUN_ID },
-        { family: 'thread', entityId: THREAD_ID }
-      ]
-    })
+    expect(adapterPort.prepared).not.toHaveBeenCalled()
+    expect(adapterPort.get).toHaveBeenCalledWith(ACTION_ID)
     expect(adapterPort.queued).not.toHaveBeenCalled()
   })
 
@@ -342,6 +309,33 @@ describe('HostBridgeQueuedComposerSend', () => {
     })
   })
 
+  it('does not replace a producer-proven start with a contradictory late Bridge failure', async () => {
+    const { execute, adapterPort, authorityPort } = build({
+      adapter: {
+        get: vi.fn(() => ({
+          ...VIEW,
+          phase: 'prepared',
+          prepared: {
+            start: { kind: 'solo', runId: RUN_ID },
+            effectRefs: [
+              { family: 'thread', entityId: THREAD_ID },
+              { family: 'run', entityId: RUN_ID }
+            ]
+          }
+        }))
+      },
+      bridge: {
+        executeComposerPrompt: vi.fn(async () => ({ executed: false, message: 'late failure' }))
+      }
+    })
+    expect(await execute(command(), context())).toEqual({
+      status: 'succeeded',
+      resultSummary: 'run_queued_unproven'
+    })
+    expect(adapterPort.settled).not.toHaveBeenCalled()
+    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+  })
+
   it('R5: Bridge success with neither run identity nor queue reservation aborts once and never settles', async () => {
     const { execute, adapterPort, authorityPort } = build({
       bridge: {
@@ -376,10 +370,12 @@ describe('HostBridgeQueuedComposerSend', () => {
     expect(adapterPort.settled).not.toHaveBeenCalled()
   })
 
-  it('R5: a throwing abortQueuedStart still resolves failed without settling', async () => {
+  it('R5: an abort port that mutates then throws cannot turn delivered work into failure', async () => {
+    let promoted = false
     const { execute, adapterPort, authorityPort } = build({
       authority: {
         abortQueuedStart: vi.fn(() => {
+          promoted = true
           throw new Error('authority exploded')
         })
       },
@@ -388,13 +384,8 @@ describe('HostBridgeQueuedComposerSend', () => {
       }
     })
     const result = await execute(command(), context())
-    // THE F4 EXCEPTION, and the negative control for the two pins above. When
-    // the abort THREW, nothing promoted the receipt, so there is no
-    // indeterminate state to protect and no race to avoid. ACKing succeeded
-    // here would leave the receipt pending FOREVER (the stuck-pending defect
-    // N3 closes), so `failed` is the only terminalization still reachable.
-    expect(result.status).toBe('failed')
-    expect(result.errorCode).toBe('run_identity_unavailable')
+    expect(promoted).toBe(true)
+    expect(result).toEqual({ status: 'succeeded', resultSummary: 'run_queued_unproven' })
     expect(authorityPort.abortQueuedStart).toHaveBeenCalledTimes(1)
     expect(adapterPort.settled).not.toHaveBeenCalled()
   })
@@ -412,32 +403,32 @@ describe('HostBridgeQueuedComposerSend', () => {
     ).toThrow('HostBridgeQueuedComposerSend requires authority.abortQueuedStart')
   })
 
-  it('N3: a refused prepared event aborts once and ACKs unproven, never run_queued', async () => {
+  it('N3: a refused queued event aborts once and ACKs unproven, never run_queued', async () => {
     const { execute, adapterPort, authorityPort } = build({
       adapter: {
-        prepared: vi.fn(async () => ({ kind: 'refused', reason: 'shutting_down' }))
+        queued: vi.fn(async () => ({ kind: 'refused', reason: 'shutting_down' }))
       },
       bridge: {
         executeComposerPrompt: vi.fn(async () => ({
           executed: true,
           message: 'sent',
-          data: { appRunId: RUN_ID }
+          data: { queuedBehindActiveRun: true, queueId: RUN_ID }
         }))
       }
     })
     const result = await execute(command(), context())
     expect(result.status).toBe('succeeded')
     // The distinction that matters: unproven, NOT the run_queued a genuinely
-    // applied prepared event returns.
+    // applied queued event returns.
     expect(result.resultSummary).toBe('run_queued_unproven')
     expect(authorityPort.abortQueuedStart).toHaveBeenCalledTimes(1)
     expect(adapterPort.settled).not.toHaveBeenCalled()
   })
 
-  it('N3: a throwing prepared event aborts once and ACKs unproven, never run_queued', async () => {
+  it('N3: a throwing queued event aborts once and ACKs unproven, never run_queued', async () => {
     const { execute, authorityPort } = build({
       adapter: {
-        prepared: vi.fn(async () => {
+        queued: vi.fn(async () => {
           throw new Error('adapter exploded')
         })
       },
@@ -445,7 +436,7 @@ describe('HostBridgeQueuedComposerSend', () => {
         executeComposerPrompt: vi.fn(async () => ({
           executed: true,
           message: 'sent',
-          data: { appRunId: RUN_ID }
+          data: { queuedBehindActiveRun: true, queueId: RUN_ID }
         }))
       }
     })
@@ -541,6 +532,178 @@ describe('HostBridgeQueuedComposerSend', () => {
     const { execute, adapterPort } = build()
     await execute.drain()
     expect(adapterPort.drain).toHaveBeenCalledTimes(1)
+  })
+
+  it('drain waits for a delayed Bridge ACK before draining its resulting adapter events', async () => {
+    let releaseBridge!: () => void
+    const bridgeWait = new Promise<void>((resolve) => {
+      releaseBridge = resolve
+    })
+    const order: string[] = []
+    const { execute, bridgePort, adapterPort } = build({
+      bridge: {
+        executeComposerPrompt: vi.fn(async () => {
+          await bridgeWait
+          order.push('bridge')
+          return {
+            executed: true,
+            message: 'queued',
+            data: { queuedBehindActiveRun: true, queueId: RUN_ID }
+          }
+        })
+      },
+      adapter: {
+        queued: vi.fn(async () => {
+          order.push('queued')
+          return { kind: 'applied', view: VIEW }
+        }),
+        drain: vi.fn(async () => {
+          order.push('drain')
+        })
+      }
+    })
+    const execution = execute(command(), context())
+    await vi.waitFor(() => expect(bridgePort.executeComposerPrompt).toHaveBeenCalledOnce())
+    execute.beginShutdown()
+    let drained = false
+    const draining = execute.drain().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    expect(adapterPort.drain).not.toHaveBeenCalled()
+    releaseBridge()
+    await Promise.all([execution, draining])
+    expect(order).toEqual(['bridge', 'queued', 'drain'])
+  })
+
+  it.each(['prepared', 'settled'] as const)(
+    'preserves a matching %s run when queue flush beats its ACK',
+    async (phase) => {
+      const { execute, authorityPort, adapterPort } = build({
+        adapter: {
+          queued: vi.fn(async () => ({
+            kind: 'refused',
+            reason: phase === 'prepared' ? 'regression' : 'terminal'
+          })),
+          get: vi.fn(() => ({
+            ...VIEW,
+            phase,
+            prepared: {
+              start: { kind: 'solo', runId: RUN_ID },
+              effectRefs: [
+                { family: 'run', entityId: RUN_ID },
+                { family: 'thread', entityId: THREAD_ID }
+              ]
+            },
+            ...(phase === 'settled'
+              ? {
+                  settled: {
+                    status: 'started' as const,
+                    start: { kind: 'solo' as const, runId: RUN_ID }
+                  }
+                }
+              : {})
+          }))
+        },
+        bridge: {
+          executeComposerPrompt: vi.fn(async () => ({
+            executed: true,
+            message: 'queued',
+            data: { queuedBehindActiveRun: true, queueId: RUN_ID }
+          }))
+        }
+      })
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued'
+      })
+      expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+      expect(adapterPort.prepared).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['thread', 'run', 'action', 'reservation'] as const)(
+    'does not accept a prepared queue race with mismatched %s identity',
+    async (mismatch) => {
+      const { execute, authorityPort } = build({
+        adapter: {
+          queued: vi.fn(async () => ({ kind: 'refused', reason: 'regression' })),
+          get: vi.fn(() => ({
+            ...VIEW,
+            hostCommandActionId:
+              mismatch === 'action'
+                ? 'host:command:22222222-2222-4222-8222-222222222222'
+                : ACTION_ID,
+            threadId: mismatch === 'thread' ? 'other-thread' : THREAD_ID,
+            phase: 'prepared',
+            ...(mismatch === 'reservation'
+              ? { queued: { queueId: 'other-run', reservedRunId: 'other-run' } }
+              : {}),
+            prepared: {
+              start: { kind: 'solo', runId: mismatch === 'run' ? 'other-run' : RUN_ID },
+              effectRefs: [
+                { family: 'run', entityId: RUN_ID },
+                { family: 'thread', entityId: THREAD_ID }
+              ]
+            }
+          }))
+        },
+        bridge: {
+          executeComposerPrompt: vi.fn(async () => ({
+            executed: true,
+            message: 'queued',
+            data: { queuedBehindActiveRun: true, queueId: RUN_ID }
+          }))
+        }
+      })
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued_unproven'
+      })
+      expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    }
+  )
+
+  it.each(['refused', 'throws'] as const)(
+    'abandons proof if failure settlement %s instead of leaving the receipt pending',
+    async (failure) => {
+      const { execute, authorityPort } = build({
+        adapter: {
+          settled: vi.fn(async () => {
+            if (failure === 'throws') throw new Error('settlement unavailable')
+            return { kind: 'refused', reason: 'shutting_down' }
+          })
+        },
+        bridge: {
+          executeComposerPrompt: vi.fn(async () => ({ executed: false, message: 'not sent' }))
+        }
+      })
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued_unproven'
+      })
+      expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    }
+  )
+
+  it('does not accept an early run ACK whose registered correlation disappeared', async () => {
+    const { execute, authorityPort, adapterPort } = build({
+      adapter: { get: vi.fn(() => undefined) },
+      bridge: {
+        executeComposerPrompt: vi.fn(async () => ({
+          executed: true,
+          message: 'sent',
+          data: { appRunId: RUN_ID }
+        }))
+      }
+    })
+    expect(await execute(command(), context())).toEqual({
+      status: 'succeeded',
+      resultSummary: 'run_queued_unproven'
+    })
+    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    expect(adapterPort.prepared).not.toHaveBeenCalled()
   })
 
   it('rejects a non-composer.send command without touching Bridge', async () => {

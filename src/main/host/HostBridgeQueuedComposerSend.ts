@@ -1,88 +1,19 @@
 /**
- * In-main Bridge queued-start ACK executor (Independent Threads M2, producer
- * step 3b).
+ * In-main Bridge queued-start ACK executor. Register the exact Host action
+ * before the single Bridge dispatch. Queue reservations may publish queued;
+ * an early appRunId ACK never publishes prepared or asserts persistence.
+ * HostBridgeQueuedStartProducer owns that proof after adapter invocation.
  *
- * UNWIRED BY CONSTRUCTION. Nothing builds this yet: no composition root, no
- * `src/main/index.ts` call, no flag. It takes injected FUNCTION ports only
- * (Bridge action port, composer-send resolver, the 2b queued-start adapter,
- * and the Authority-facing publication port) and never reaches for a
- * composition bind, so landing it cannot change any live route. The bootstrap
- * ON-path wiring is separate work and is DEFERRED: Review3's ruling
- * (blackboard ruling-step3-indeterminate-terminalization) traced that
- * HostMainComposition.ts:582-584's third bind forwards only
- * (commandId, result) and drops startEntities, so an in-main ON path wired
- * through those binds would silently strip run/round evidence. This module is
- * exact and disjoint from that defect.
+ * Ensemble steering retains the legacy lane without queued-start registration.
+ * Bridge-proven rejection/cancellation settles once; uncertain dispatches and
+ * refused publication abandon proof through abortQueuedStart. Their succeeded
+ * ACK with run_queued_unproven is internal acknowledgement only, so it cannot
+ * race a false failed settlement against the indeterminate receipt.
  *
- * WHAT IT DOES. Turns `composer.send` into the short-start ACK path for the
- * in-main Bridge route: register the Host↔Bridge correlation with the
- * queued-start adapter BEFORE any Bridge call, dispatch exactly once, then
- * classify the raw Bridge result into adapter events:
- *
- * - ensemble steer (ctx.mode === 'ensemble') → LEGACY: executeEnsembleSteer
- *   directly, NO registration, byte-compatible with HostBridgeCommandExecutor.
- * - busy-queue (data.queuedBehindActiveRun === true + queueId) → adapter
- *   `queued` event. The queue job's runId IS its queueId (index.ts
- *   queueRemoteComposerPrompt mints `runId: queueId`), so reservedRunId is
- *   the queueId itself — the same reservation the adapter's prepared gate
- *   later checks against the solo start.
- * - dispatched (data.appRunId) → adapter `prepared` event carrying the
- *   literal `durablePromptAndStartPersisted: true` assertion plus the solo
- *   start ref and its run+thread effect refs.
- * - Bridge success with NEITHER identity (case 2 of the ruling) → the prompt
- *   may have been delivered but no run row or queue reservation exists to
- *   prove it. Call authority.abortQueuedStart(commandId) EXACTLY ONCE and
- *   NEVER handleQueuedStartDispatchSettled — `failed` would be a lie about a
- *   prompt that was in fact delivered. The abort port is REQUIRED (audit
- *   8374a93d2-3b N1): an absent port must fail the constructor, not compile
- *   a silent false-failure route.
- * - Bridge throw → same unproven route: abort once, never settle. A throwing
- *   Bridge call cannot certify "no execution".
- * - Bridge-reported failure/cancelled → adapter `settled` EXACTLY ONCE
- *   (settled-once fence), which drives the glue's terminalizing settlement.
- * - Adapter event REFUSED or THREW (audit N3) → the receipt would otherwise
- *   sit pending forever; abort once. Never report succeeded/run_queued for an
- *   event the adapter did not apply.
- *
- * ACK CONTRACT. Every path that calls `abortOnce` returns
- * `{ status: 'succeeded', resultSummary: 'run_queued_unproven' }`, NOT a
- * failure. The ACK status is consumed for exactly one decision — any
- * non-succeeded ACK drives `publication.fail` (AppStoreHostAuthority.ts:
- * 1206-1207) — and the ACK value itself never reaches the wire; the receipt
- * projection does. Returning `failed` after an abort would race
- * `publication.fail` against `abort()` having already emptied the pending
- * gate: win the race and the receipt is truthfully indeterminate, lose it and
- * a delivered prompt is recorded as a failure. `succeeded` removes the
- * ordering dependency outright. `resultSummary` names the state honestly so
- * the ACK is never mistaken for a proven start.
- *
- * ONE EXCEPTION, and it is not a softening of the rule. If `abortQueuedStart`
- * itself THREW, `abortOnce` returns false and the path keeps its `failed`
- * result. Nothing promoted the receipt, so there is no race to avoid and no
- * indeterminate state to protect: ACKing `succeeded` there would leave the
- * receipt pending FOREVER — precisely the stuck-pending defect audit N3 exists
- * to close. `failed` is then the only terminalization still reachable, so the
- * boolean `abortOnce` returns is load-bearing and must not be discarded.
- *
- * `failed` therefore survives ONLY where nothing was dispatched: shutting_down,
- * not_governed_mutation, invalid_command_arguments, invalid_command_id,
- * context_resolve_failed, queued_start_registration_refused and
- * queued_start_registration_threw. Bridge-reported failed/cancelled still
- * return the MAPPED result after settleOnce — the Bridge itself proved the
- * outcome there, so nothing is abandoned. The ensemble steer lane keeps its
- * legacy `failed` on throw: it never registers, so there is no queued-start
- * record to abandon and byte-compatibility with HostBridgeCommandExecutor is
- * the governing contract.
- *
- * NEVER-THROW. execute() always resolves to a HostCommandExecutionResult;
- * every foreign port call is try/catch-contained (adapter.register included —
- * audit N4). beginShutdown() fences new executes; drain() awaits the
- * adapter's in-flight tails.
- *
- * STILL UNWIRED. Nothing imports this module, no flag is read, and no
- * bootstrap ON-path edit exists — the composition port that would carry
- * start evidence was only repaired in 3t, so 3a remains the slice that
- * decides whether any of this runs.
+ * An abort port can mutate then throw. That never proves failure: the receipt
+ * may remain pending until shutdown/restart recovery marks it indeterminate.
+ * beginShutdown fences new sends; drain waits for active Bridge ACKs before
+ * draining the adapter events those sends can still publish.
  */
 
 import type { HostCommand } from '../../shared/hostProtocol'
@@ -101,12 +32,12 @@ import {
 } from './HostBridgeCommandExecutor'
 import {
   createHostBridgeQueuedStartAdapter,
-  type HostBridgePreparedEvent,
   type HostBridgeQueuedEvent,
   type HostBridgeQueuedStartEventResult,
   type HostBridgeQueuedStartRegisterResult,
   type HostBridgeQueuedStartRegistration,
-  type HostBridgeSettledEvent
+  type HostBridgeSettledEvent,
+  type HostBridgeQueuedStartView
 } from './HostBridgeQueuedStartAdapter'
 
 const BRIDGE_ACTION_TTL_MS = 120_000
@@ -131,7 +62,7 @@ export interface HostBridgeQueuedComposerSendAuthorityPort {
 /** Narrow adapter slice this executor may call. */
 export type HostBridgeQueuedComposerSendAdapterPort = Pick<
   ReturnType<typeof createHostBridgeQueuedStartAdapter>,
-  'register' | 'queued' | 'prepared' | 'settled' | 'beginShutdown' | 'drain'
+  'register' | 'queued' | 'prepared' | 'settled' | 'get' | 'beginShutdown' | 'drain'
 >
 
 /**
@@ -161,19 +92,10 @@ function failResult(errorCode: string, errorMessage: string): HostCommandExecuti
 }
 
 /**
- * ACK for a path that ABANDONED PROOF (every path that calls `abortOnce`).
- *
- * `succeeded` is not a claim that the send worked — the receipt is already
- * indeterminate, promoted by the Authority's `abortQueuedStart`, and the ACK
- * value never reaches the wire: the receipt projection does. The ACK status is
- * read for exactly one decision, at AppStoreHostAuthority.ts:1206-1207, where
- * any non-succeeded ACK drives `publication.fail`. Returning `failed` here
- * would race that against `abort()` having already emptied the pending gate:
- * win the race and the receipt is truthfully indeterminate, lose it and the
- * same delivered prompt is recorded as a failure. `succeeded` can never reach
- * `publication.fail`, so the outcome stops depending on that ordering.
- *
- * `failed` therefore stays ONLY where nothing was dispatched at all.
+ * Internal ACK after abandoning proof. The Authority projects indeterminate
+ * through abortQueuedStart; if that port fails, shutdown/restart owns recovery.
+ * Returning a failed ACK here could race that abort and falsely fail a prompt
+ * which took effect. This ACK never certifies a start or reaches the wire.
  */
 function unprovenResult(): HostCommandExecutionResult {
   return { status: 'succeeded', resultSummary: 'run_queued_unproven' }
@@ -211,6 +133,7 @@ export function createHostBridgeQueuedComposerSend(
     typeof adapter.queued !== 'function' ||
     typeof adapter.prepared !== 'function' ||
     typeof adapter.settled !== 'function' ||
+    typeof adapter.get !== 'function' ||
     typeof adapter.beginShutdown !== 'function' ||
     typeof adapter.drain !== 'function'
   ) {
@@ -224,18 +147,48 @@ export function createHostBridgeQueuedComposerSend(
 
   let shuttingDown = false
   /** Settled-once fence: one terminal adapter event per commandId. */
-  const settled = new Set<string>()
+  const settled = new Map<string, Promise<boolean>>()
   /** Abort-once fence: one indeterminate promotion per commandId. */
   const aborted = new Set<string>()
+  const inFlight = new Set<Promise<HostCommandExecutionResult>>()
+
+  const getView = (actionId: string): HostBridgeQueuedStartView | undefined => {
+    try {
+      return adapter.get(actionId)
+    } catch {
+      return undefined
+    }
+  }
+
+  const alreadyPrepared = (actionId: string, threadId: string, runId: string): boolean => {
+    const view = getView(actionId)
+    return Boolean(
+      view?.hostCommandActionId === actionId &&
+      view.threadId === threadId &&
+      (view.phase === 'prepared' || view.phase === 'settled') &&
+      (!view.queued || (view.queued.queueId === runId && view.queued.reservedRunId === runId)) &&
+      view.prepared?.start.kind === 'solo' &&
+      view.prepared.start.runId === runId
+    )
+  }
 
   const settleOnce = async (
     hostCommandActionId: string,
     threadId: string,
     status: 'failed' | 'cancelled',
     errorCode?: string
-  ): Promise<void> => {
-    if (settled.has(hostCommandActionId)) return
-    settled.add(hostCommandActionId)
+  ): Promise<boolean> => {
+    const existing = settled.get(hostCommandActionId)
+    if (existing) return existing
+    const prior = getView(hostCommandActionId)
+    if (
+      !prior ||
+      prior.hostCommandActionId !== hostCommandActionId ||
+      prior.threadId !== threadId ||
+      prior.prepared
+    ) {
+      return false
+    }
     const event: HostBridgeSettledEvent = {
       kind: 'settled',
       hostCommandActionId,
@@ -243,23 +196,34 @@ export function createHostBridgeQueuedComposerSend(
       status,
       ...(errorCode ? { errorCode } : {})
     }
-    try {
-      await adapter.settled(event)
-    } catch {
-      // Never-throw: the adapter's own failure path already fences the record.
-    }
+    const operation = (async (): Promise<boolean> => {
+      try {
+        const result = await adapter.settled(event)
+        if (result.kind === 'applied' || result.kind === 'unchanged') return true
+        const view = getView(hostCommandActionId)
+        return Boolean(
+          view?.hostCommandActionId === hostCommandActionId &&
+          view.threadId === threadId &&
+          view.phase === 'settled' &&
+          view.settled?.status === status &&
+          !view.prepared
+        )
+      } catch {
+        return false
+      }
+    })()
+    settled.set(hostCommandActionId, operation)
+    return operation
   }
 
-  const abortOnce = (commandId: string): boolean => {
-    if (aborted.has(commandId)) return true
+  const abortOnce = (commandId: string): void => {
+    if (aborted.has(commandId)) return
+    aborted.add(commandId)
     try {
       authority.abortQueuedStart(commandId)
-      aborted.add(commandId)
-      return true
     } catch {
-      // The Authority's own abort path is try/catch-contained; a throw here
-      // still cannot justify a `failed` settlement about a delivered prompt.
-      return false
+      // A void port can mutate and then throw. Never reinterpret that as
+      // evidence that a delivered prompt failed or retry an unknown effect.
     }
   }
 
@@ -381,9 +345,7 @@ export function createHostBridgeQueuedComposerSend(
       // text is deliberately dropped — it would describe a transport fault, not
       // the receipt outcome, and nothing reads an errorMessage off a succeeded
       // ACK.
-      if (!abortOnce(commandId)) {
-        return failResult('bridge_adapter_threw', 'bridge adapter threw')
-      }
+      abortOnce(commandId)
       return unprovenResult()
     }
 
@@ -408,48 +370,39 @@ export function createHostBridgeQueuedComposerSend(
         try {
           queuedResult = await adapter.queued(event)
         } catch {
-          if (!abortOnce(commandId)) {
-            return failResult('queued_start_event_threw', 'queued adapter event threw')
-          }
+          abortOnce(commandId)
           return unprovenResult()
         }
         if (queuedResult.kind === 'refused' || queuedResult.kind === 'failed') {
+          // Queue flushing can invoke and persist the exact reserved run
+          // before the early queue ACK gets here. Do not regress that proof.
+          if (
+            queuedResult.kind === 'refused' &&
+            (queuedResult.reason === 'regression' || queuedResult.reason === 'terminal') &&
+            alreadyPrepared(actionId, threadId, data.queueId)
+          ) {
+            return { status: 'succeeded', resultSummary: 'run_queued' }
+          }
           // Audit N3: a refused event leaves the receipt pending forever.
           // Abort (indeterminate) instead of reporting a false success.
-          if (!abortOnce(commandId)) {
-            return failResult('queued_start_event_refused', queuedResult.reason)
-          }
+          abortOnce(commandId)
           return unprovenResult()
         }
         return { status: 'succeeded', resultSummary: 'run_queued' }
       }
-      if (typeof data?.appRunId === 'string' && data.appRunId.length > 0) {
-        const event: HostBridgePreparedEvent = {
-          kind: 'prepared',
-          hostCommandActionId: actionId,
-          threadId,
-          durablePromptAndStartPersisted: true,
-          start: { kind: 'solo', runId: data.appRunId },
-          effectRefs: [
-            { family: 'run', entityId: data.appRunId },
-            { family: 'thread', entityId: threadId }
-          ]
-        }
-        let preparedResult: HostBridgeQueuedStartEventResult
-        try {
-          preparedResult = await adapter.prepared(event)
-        } catch {
-          if (!abortOnce(commandId)) {
-            return failResult('queued_start_event_threw', 'prepared adapter event threw')
-          }
-          return unprovenResult()
-        }
-        if (preparedResult.kind === 'refused' || preparedResult.kind === 'failed') {
-          // Audit N3: a refused prepared event leaves the receipt pending
-          // forever. Abort (indeterminate) instead of a false success.
-          if (!abortOnce(commandId)) {
-            return failResult('queued_start_event_refused', preparedResult.reason)
-          }
+      if (isSafeHostIdentifier(data?.appRunId)) {
+        // Dispatch is still asynchronous. Only the producer may certify the
+        // original persisted prompt/start after observing adapter invocation.
+        const view = getView(actionId)
+        if (
+          !view ||
+          view.hostCommandActionId !== actionId ||
+          view.threadId !== threadId ||
+          (view.queued && view.queued.reservedRunId !== data.appRunId) ||
+          (view.prepared &&
+            (view.prepared.start.kind !== 'solo' || view.prepared.start.runId !== data.appRunId))
+        ) {
+          abortOnce(commandId)
           return unprovenResult()
         }
         return { status: 'succeeded', resultSummary: 'run_queued' }
@@ -457,31 +410,39 @@ export function createHostBridgeQueuedComposerSend(
       // Case 2 (ruling): Bridge success with neither run identity nor queue
       // reservation. The prompt may have been delivered; `failed` would be a
       // lie. Abort once, never settle, never handleQueuedStartDispatchSettled.
-      if (!abortOnce(commandId)) {
-        return failResult(
-          'run_identity_unavailable',
-          'Bridge reported success without a run identity or queue reservation'
-        )
-      }
+      abortOnce(commandId)
       return unprovenResult()
     }
 
     // Bridge-reported failure/cancelled: settle the adapter record exactly
     // once so the glue terminalizes the original receipt.
-    await settleOnce(
+    const applied = await settleOnce(
       actionId,
       threadId,
       mapped.status === 'cancelled' ? 'cancelled' : 'failed',
       mapped.errorCode
     )
+    if (!applied) {
+      abortOnce(commandId)
+      return unprovenResult()
+    }
     return mapped
   }
 
-  const executor = execute as HostBridgeQueuedComposerSendExecutor
+  const executor: HostBridgeQueuedComposerSendExecutor = Object.assign(
+    (command: HostCommand, context: HostAuthorityCallContext) => {
+      const operation = Promise.resolve(execute(command, context))
+      inFlight.add(operation)
+      void operation.finally(() => inFlight.delete(operation)).catch(() => undefined)
+      return operation
+    },
+    { beginShutdown: () => undefined, drain: async () => undefined }
+  )
   executor.beginShutdown = (): void => {
     shuttingDown = true
   }
   executor.drain = async (): Promise<void> => {
+    while (inFlight.size > 0) await Promise.allSettled([...inFlight])
     await adapter.drain()
   }
   return executor
