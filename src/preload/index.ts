@@ -1837,6 +1837,10 @@ const api = {
       message?: string
       state: { active: boolean; displayName: string | null; effectId: string | null }
     }>,
+  getStudioResourceSnapshot: () =>
+    ipcRenderer.invoke('studio:resource-snapshot') as Promise<
+      import('../shared/studioResourceSnapshot').StudioResourceSnapshotOutcome
+    >,
   getStudioEffectPreviewState: () =>
     ipcRenderer.invoke('studio:effect-preview-state') as Promise<{
       active: boolean

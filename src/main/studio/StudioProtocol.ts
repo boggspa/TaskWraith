@@ -29,6 +29,7 @@ export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 export const STUDIO_METHODS = Object.freeze({
   hello: 'studio/hello',
   getDocument: 'studio/getDocument',
+  getResourceSnapshot: 'studio/getResourceSnapshot',
   applyEdit: 'studio/applyEdit',
   openMedia: 'studio/openMedia',
   proposeEdit: 'studio/proposeEdit',

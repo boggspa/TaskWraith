@@ -1,4 +1,5 @@
 import type { StudioTranscriptStatus } from '../shared/studioTranscriptStatus'
+import type { StudioResourceSnapshotOutcome } from '../shared/studioResourceSnapshot'
 import {
   AppSettings,
   BlackboardEntry,
@@ -1852,6 +1853,7 @@ declare global {
       loadStudioEffectPreview: () => Promise<StudioEffectPreviewActionResult>
       clearStudioEffectPreview: () => Promise<StudioEffectPreviewActionResult>
       getStudioEffectPreviewState: () => Promise<StudioEffectPreviewState>
+      getStudioResourceSnapshot: () => Promise<StudioResourceSnapshotOutcome>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
       getMediaAssetPath: (sha256: string, mimeType: string) => Promise<string | null>
       saveMediaAssetAs: (

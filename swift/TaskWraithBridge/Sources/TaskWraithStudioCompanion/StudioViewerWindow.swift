@@ -1987,6 +1987,7 @@ final class StudioViewerAppState {
     private var routes = StudioRouteVisibility()
     private let reviewController: StudioViewerWindowController?
     private let workspaceController: StudioWorkspaceWindowController?
+    private let resourceSnapshotResponder = StudioViewerResourceSnapshotResponder()
 
     /// Everything one pump update means, applied.
     ///
@@ -2033,6 +2034,21 @@ final class StudioViewerAppState {
         if !update.step.resolvedProposalIds.isEmpty {
             adopt(resolvedProposals: update.step.resolvedProposalIds)
         }
+        for request in update.step.resourceQueries {
+            StudioOutboundWriter.shared.write([resourceSnapshotResponse(to: request)])
+        }
+    }
+
+    func resourceSnapshotResponse(to request: StudioResourceQueryRequest) -> Data {
+        resourceSnapshotResponder.response(
+            to: request,
+            window: workspaceController?.window ?? controller.window,
+            sourcePresentationAttached: controller.isPresentationAttached,
+            reviewPresentationAttached: reviewController?.isPresentationAttached ?? false,
+            sourceAssetId: openAssetId,
+            reviewAssetId: reviewAttachment?.attachedAssetId,
+            sequenceAssetIds: activeSequence?.referencedAssetIds.sorted() ?? []
+        )
     }
 
     /// Restores the durable document without turning a supervisor reconnect into

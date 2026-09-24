@@ -416,6 +416,7 @@ import {
 } from './studio/StudioProductionLifecycle'
 import { type SpeechRecognitionResult } from './studio/StudioTranscriptAdapter'
 import { registerStudioEffectPreviewHandlers } from './studio/StudioEffectPreviewHandlers'
+import { registerStudioResourceSnapshotHandlers } from './studio/StudioResourceSnapshotHandlers'
 import { createStudioOpenInStudioHandler } from './studio/StudioOpenMediaHop'
 import { StudioTranscriptStatusCoordinator } from './studio/StudioTranscriptStatusBroadcast'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from './bridge/BridgeToolDiffStats'
@@ -60425,6 +60426,9 @@ if (isGeminiMcpBridgeProcess) {
       copyFile: (src, dest) => fs.copyFile(src, dest)
     })
 
+    registerStudioResourceSnapshotHandlers(ipcMain, {
+      getLifecycle: () => studioProductionLifecycleRef
+    })
     // Studio effect preview (LUT). The renderer supplies NO path — the dialog
     // lives here, so the only filesystem path that can reach the host is one the
     // operator personally selected in a trusted OS dialog.

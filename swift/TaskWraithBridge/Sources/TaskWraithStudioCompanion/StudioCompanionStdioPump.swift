@@ -94,6 +94,29 @@ enum StudioCompanionStdioPump {
         )
     }
 
+    /// Dispatch one wire line at a time. Aggregating a whole read could move a
+    /// query past a later edit in the same chunk. The session decoder still owns
+    /// partial UTF-8 lines and its existing byte bound.
+    static func consumeOrdered(
+        chunk: Data,
+        session: StudioCompanionSession,
+        hydration: inout HydrationCursor
+    ) -> [Update] {
+        var updates: [Update] = []
+        var start = chunk.startIndex
+        for index in chunk.indices where chunk[index] == 0x0A {
+            let end = chunk.index(after: index)
+            let update = consume(chunk: chunk.subdata(in: start..<end), session: session, hydration: &hydration)
+            updates.append(update)
+            if update.step.exitCode != nil { return updates }
+            start = end
+        }
+        if start < chunk.endIndex {
+            updates.append(consume(chunk: chunk.subdata(in: start..<chunk.endIndex), session: session, hydration: &hydration))
+        }
+        return updates
+    }
+
     static func run(
         hydrateOnce: Bool,
         onUpdate: (@Sendable (Update) -> Void)? = nil
@@ -125,16 +148,22 @@ enum StudioCompanionStdioPump {
             if chunk.isEmpty {
                 break // stdin EOF: the host closed us down.
             }
-            let update = consume(
+            let updates = consumeOrdered(
                 chunk: chunk,
                 session: session,
                 hydration: &hydrationCursor
             )
-            reportProtocolErrors(update.step.protocolErrors)
-            writeLines(update.step.outboundLines)
-            onUpdate?(update)
-            if let code = update.step.exitCode {
-                return code
+            for update in updates {
+                reportProtocolErrors(update.step.protocolErrors)
+                writeLines(update.step.outboundLines)
+                if let onUpdate {
+                    onUpdate(update)
+                } else {
+                    writeLines(update.step.resourceQueries.map {
+                        StudioResourceQueryRequest.errorLine(id: $0.id, reason: "Resource snapshots require the retained viewer owners.")
+                    })
+                }
+                if let code = update.step.exitCode { return code }
             }
         }
         return session.eofExitCode()

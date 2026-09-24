@@ -181,6 +181,7 @@ public final class StudioCompanionSession {
         /// Set, clear, or rejected effect preview notification. This is not an
         /// optional: absence must not be confused with an intentional clear.
         public let effectPreview: StudioEffectPreviewChange
+        public let resourceQueries: [StudioResourceQueryRequest]
 
         public init(
             outboundLines: [Data],
@@ -191,7 +192,8 @@ public final class StudioCompanionSession {
             resolvedProposalIds: [String] = [],
             acceptedInserts: [AcceptedInsertCommit] = [],
             transcripts: [StudioTranscript] = [],
-            effectPreview: StudioEffectPreviewChange = .unchanged
+            effectPreview: StudioEffectPreviewChange = .unchanged,
+            resourceQueries: [StudioResourceQueryRequest] = []
         ) {
             self.outboundLines = outboundLines
             self.exitCode = exitCode
@@ -202,6 +204,7 @@ public final class StudioCompanionSession {
             self.acceptedInserts = acceptedInserts
             self.transcripts = transcripts
             self.effectPreview = effectPreview
+            self.resourceQueries = resourceQueries
         }
     }
 
@@ -311,6 +314,7 @@ public final class StudioCompanionSession {
         var accepted: [AcceptedInsertCommit] = []
         var transcripts: [StudioTranscript] = []
         var effectPreview: StudioEffectPreviewChange = .unchanged
+        var resourceQueries: [StudioResourceQueryRequest] = []
         var exitCode: Int32?
         for event in decoder.push(chunk: chunk) {
             if exitCode != nil { break }
@@ -319,6 +323,20 @@ public final class StudioCompanionSession {
                 protocolErrorCount += 1
                 errors.append("\(code): \(message)")
             case .message(let message):
+                if message.method == "studio/getResourceSnapshot" {
+                    if phase == .hydrated,
+                        let request = StudioResourceQueryRequest.decode(
+                            message, documentRevision: latestRevision ?? documentRevision)
+                    {
+                        resourceQueries.append(request)
+                    } else {
+                        outbound.append(StudioResourceQueryRequest.errorLine(
+                            id: message.id, invalid: phase == .hydrated,
+                            reason: "Resource snapshot request is invalid or Studio is not hydrated."
+                        ))
+                    }
+                    continue
+                }
                 let outcome = handle(message)
                 outbound.append(contentsOf: outcome.lines)
                 if let error = outcome.error {
@@ -389,7 +407,8 @@ public final class StudioCompanionSession {
             resolvedProposalIds: resolved,
             acceptedInserts: accepted,
             transcripts: transcripts,
-            effectPreview: effectPreview
+            effectPreview: effectPreview,
+            resourceQueries: resourceQueries
         )
     }
 

@@ -69,7 +69,7 @@ final class StudioPumpAdoptionTests: XCTestCase {
             fields,
             [
                 "acceptedInserts", "effectPreview", "exitCode", "openedAssets",
-                "outboundLines", "proposals", "protocolErrors", "resolvedProposalIds",
+                "outboundLines", "proposals", "protocolErrors", "resolvedProposalIds", "resourceQueries",
                 "transcripts",
             ],
             "StudioCompanionSession.Step changed shape — does "

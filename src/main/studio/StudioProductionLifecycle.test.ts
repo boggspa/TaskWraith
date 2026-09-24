@@ -138,6 +138,11 @@ describe('StudioProductionLifecycle', () => {
 
     expect(launches).toEqual([{ command: '/fake/TaskWraithStudioCompanion', args: ['--viewer'] }])
     expect(lifecycle.paths.allowedMediaRoot).toBe(nodePath.join(root, TRANSCRIPT_MEDIA_ASSET_DIR))
+    await expect(lifecycle.getResourceSnapshot()).resolves.toMatchObject({
+      ok: false,
+      code: 'studio_unavailable'
+    })
+    expect(launches).toHaveLength(1)
     await expect(
       lifecycle.setTranscript({
         schemaVersion: STUDIO_TRANSCRIPT_SCHEMA_VERSION,
@@ -177,6 +182,11 @@ describe('StudioProductionLifecycle', () => {
 
     await lifecycle.dispose()
     expect(lifecycle.status().state).toBe('stopped')
+    await expect(lifecycle.getResourceSnapshot()).resolves.toMatchObject({
+      ok: false,
+      code: 'studio_unavailable'
+    })
+    expect(launches).toHaveLength(1)
     await expect(
       lifecycle.store.openMedia(1, {
         assetId: 'closed',
