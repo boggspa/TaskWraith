@@ -15,6 +15,11 @@ const maxAsarBytes = readMegabyteLimit('TASKWRAITH_MAX_ASAR_MB', 500)
 const maxZipBytes = readMegabyteLimit('TASKWRAITH_MAX_ZIP_MB', 700)
 const launchSmokeTimeoutMs = readIntegerEnv('TASKWRAITH_PACKAGE_SMOKE_TIMEOUT_MS', 8000)
 const DEVELOPER_ID_LEAF_PREFIX = 'Developer ID Application:'
+const MAC_BRIDGE_IDENTITY_KEYS = Object.freeze([
+  'CFBundleIdentifier',
+  'CFBundleShortVersionString',
+  'CFBundleVersion'
+])
 
 // Requiring this script — its unit tests do, to exercise the signing-posture
 // helpers — must not launch the smoke run against the real repository. Only
@@ -780,12 +785,6 @@ function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
   }
   console.log('validated Electron Framework code signature')
 }
-
-const MAC_BRIDGE_IDENTITY_KEYS = Object.freeze([
-  'CFBundleIdentifier',
-  'CFBundleShortVersionString',
-  'CFBundleVersion'
-])
 
 function collectMacBridgeIdentityFailures(bridgeInfo, parentInfo) {
   const failures = []
