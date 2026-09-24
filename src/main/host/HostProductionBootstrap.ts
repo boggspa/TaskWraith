@@ -33,6 +33,26 @@
  * and never to a window, so a renderer reload cannot interrupt an active
  * mission. A module that cannot name a window surface cannot bind to one.
  *
+ * QUEUED START (Independent Threads M2, producer step 3a). Presence-gated on
+ * `options.queuedStart`; the root reads the flag ONCE and either passes the
+ * option or does not. This module never reads an environment variable. When
+ * the option is absent the composition input is byte-equivalent to the
+ * pre-3a shape (pinned by the OFF golden in the test file). When present,
+ * the bootstrap builds ONE queued-start generation PER COMPOSITION inside the
+ * wrapped createComposition: the Bridge queued-start adapter, the
+ * Bridge→Authority publication glue, and the in-main ACK executor. A
+ * supervisor stop fences that generation; an explicit start() builds a fresh
+ * one, so a restarted handle never inherits a fenced executor. The composition
+ * input captures only its own generation, including shutdown callbacks, and the
+ * Authority's lifecycle handlers reach the glue through the composition's
+ * sanctioned binds — never through a facade cast. A forwarder whose handler
+ * was never bound THROWS by name; nothing is dropped silently, because a
+ * dropped abort or settlement leaves a receipt pending forever.
+ *
+ * The adapter owns a private EVENT queue (created here). Publication capture
+ * and effects still run on the Authority's shared projection queue via the
+ * void settled callback, so the two never nest and cannot deadlock.
+ *
  * BOUNDARIES:
  * - zero `electron` imports
  * - zero AppStore / BridgeActionExecutor / provider / store VALUE imports
@@ -50,8 +70,23 @@ import type {
   AppStoreHostAuthorityHealthProvider
 } from '../../host-runtime/AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
-import { HostBridgeCommandExecutor, type HostBridgeActionPort } from './HostBridgeCommandExecutor'
+import {
+  HostBridgeCommandExecutor,
+  type HostBridgeActionPort,
+  type HostBridgeContextResolvers
+} from './HostBridgeCommandExecutor'
+import {
+  createHostBridgeQueuedComposerSend,
+  type HostBridgeQueuedComposerSendExecutor
+} from './HostBridgeQueuedComposerSend'
+import { createHostBridgeQueuedStartAdapter } from './HostBridgeQueuedStartAdapter'
+import {
+  createHostBridgeQueuedStartPublicationBridge,
+  type HostBridgeQueuedStartAuthorityPort,
+  type HostBridgeQueuedStartPublicationResult
+} from './HostBridgeQueuedStartPublicationBridge'
 import { HostChannelCommandExecutor } from './HostChannelCommandExecutor'
+import type { HostCommandExecutionResult } from '../../host-runtime/HostCommandExecutionResult'
 import { HostCommandMutationPipeline } from '../../host-runtime/HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
 import { HostDeferredCommandEnvelopeResolver } from '../../host-runtime/HostDeferredCommandEnvelopeResolver'
@@ -65,6 +100,11 @@ import {
 import { hostRuntimeDataDir } from '../../host-runtime/HostRuntimePaths'
 import { HostMutationCompletionCoordinator } from '../../host-runtime/HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from '../../host-runtime/HostObservedMutationExecutor'
+import { createHostProjectionSerialQueue } from '../../host-runtime/HostProjectionSerialQueue'
+import type {
+  HostQueuedStartEntities,
+  HostQueuedStartStartedView
+} from '../../host-runtime/HostQueuedStartPublication'
 import {
   HostProfileDomainStore,
   type HostProfileAuthorityPort
@@ -157,6 +197,34 @@ const HOST_INTERNAL_CONTEXT: HostAuthorityCallContext = {
 /*  Options                                                          */
 /* ------------------------------------------------------------------ */
 
+/** The 2b queued-start adapter, exactly as its factory returns it. */
+export type HostProductionQueuedStartAdapter = ReturnType<typeof createHostBridgeQueuedStartAdapter>
+
+/**
+ * Presence-gated in-main queued-start wiring (producer step 3a). The root
+ * passes this ONLY when the flag it read once is on; the bootstrap never
+ * reads the environment.
+ */
+export interface HostProductionQueuedStartOptions {
+  /**
+   * Called once per composition, BEFORE the composition is built and before
+   * any command can reach the executor, with the fresh adapter and the
+   * sanctioned abort forwarder (the root cannot reach the Authority facade).
+   * Bind references only; the forwarder resolves its handler lazily.
+   */
+  readonly onAdapter: (
+    adapter: HostProductionQueuedStartAdapter,
+    abortQueuedStart: (commandId: string) => void
+  ) => void
+  /**
+   * Root-owned fence/drain (the producer may hold a pending journal await
+   * after the executor has drained). Awaited after the executor and adapter
+   * are fenced and before the executor drains. Receives the exact adapter
+   * for this composition so an old shutdown cannot drain a restarted producer.
+   */
+  readonly beforeShutdown?: (adapter: HostProductionQueuedStartAdapter) => void | Promise<void>
+}
+
 /**
  * Everything the bootstrap needs from the composition root.
  *
@@ -227,6 +295,8 @@ export interface HostProductionBootstrapOptions {
   /** Complete canonical history ports; omitted means history remains unavailable. */
   readonly history?: Omit<HostProductionHistoryAdapterOptions, 'getPosition'>
   readonly threadCatalogueProvider?: HostMainCompositionInput['threadCatalogueProvider']
+  /** Presence-gated queued-start wiring; omitted means the pre-3a OFF shape. */
+  readonly queuedStart?: HostProductionQueuedStartOptions
   /** Extra durable-state flush performed after the Host's own flush. */
   readonly onShutdown?: () => void | Promise<void>
   /** Optional diagnostic logger. */
@@ -304,6 +374,92 @@ function registryKey(userDataPath: string): string {
 /** Test-only registry reset. Production code must never call this. */
 export function resetHostProductionBootstrapForTests(): void {
   SUPERVISOR_REGISTRY.clear()
+}
+
+/* ------------------------------------------------------------------ */
+/*  Queued start generation (producer step 3a)                        */
+/* ------------------------------------------------------------------ */
+
+type QueuedStartSettledHandler = (
+  commandId: string,
+  result: HostCommandExecutionResult,
+  startEntities?: HostQueuedStartEntities
+) => void
+
+/**
+ * The Authority handlers the composition hands back through its sanctioned
+ * binds. Null until bound; a forwarder that finds null throws by name.
+ *
+ * There is deliberately no `started` slot: the in-main route holds no durable
+ * pre-spawn claim, so nothing ever produces a `started` view to forward, and
+ * supplying that bind would attach a handler no producer can call.
+ */
+interface QueuedStartBoundHandlers {
+  starting: ((view: HostQueuedStartStartedView) => void) | null
+  settled: QueuedStartSettledHandler | null
+  abort: ((commandId: string) => void) | null
+}
+
+interface QueuedStartGeneration {
+  readonly adapter: HostProductionQueuedStartAdapter
+  readonly executor: HostBridgeQueuedComposerSendExecutor
+  readonly abortQueuedStart: (commandId: string) => void
+  readonly handlers: QueuedStartBoundHandlers
+}
+
+function unboundQueuedStartHandler(name: string): never {
+  throw new Error(`HostProductionBootstrap queued-start ${name} handler is not bound`)
+}
+
+function createQueuedStartGeneration(input: {
+  readonly bridge: HostBridgeActionPort
+  readonly resolvers: HostBridgeContextResolvers
+  readonly nowMs?: () => number
+  readonly log?: (line: string) => void
+}): QueuedStartGeneration {
+  const handlers: QueuedStartBoundHandlers = { starting: null, settled: null, abort: null }
+  const abortQueuedStart = (commandId: string): void => {
+    const abort = handlers.abort ?? unboundQueuedStartHandler('abort')
+    abort(commandId)
+  }
+  // The glue's Authority port is composed ONLY of bind forwarders: the
+  // bootstrap never holds the concrete Authority and never casts the facade.
+  const authority: HostBridgeQueuedStartAuthorityPort = {
+    handleQueuedStartStarting: (view) => {
+      const starting = handlers.starting ?? unboundQueuedStartHandler('starting')
+      starting(view)
+    },
+    handleQueuedStartDispatchSettled: (commandId, result, startEntities) => {
+      const settled = handlers.settled ?? unboundQueuedStartHandler('dispatch-settled')
+      // Forward the bound start evidence verbatim (the 3t regression pin).
+      settled(commandId, result, startEntities)
+    },
+    abortQueuedStart
+  }
+  const glue = createHostBridgeQueuedStartPublicationBridge({ authority })
+  const report = (label: string, result: HostBridgeQueuedStartPublicationResult): void => {
+    if (result.kind === 'refused') {
+      input.log?.(`[host-bootstrap] queued-start ${label} refused: ${result.reason}`)
+    }
+  }
+  const adapter = createHostBridgeQueuedStartAdapter({
+    // Private EVENT queue. Publication effects still run on the Authority's
+    // shared projection queue through the void settled callback, so this
+    // never awaits that queue and cannot nest inside it.
+    runProjectionOperation: createHostProjectionSerialQueue(),
+    onQueued: (view) => report('queued', glue.onQueued(view)),
+    onPrepared: (view) => report('prepared', glue.onPrepared(view)),
+    onSettled: (view) => report('settled', glue.onSettled(view)),
+    onFailure: (failure) => report('failure', glue.onFailure(failure))
+  })
+  const executor = createHostBridgeQueuedComposerSend({
+    bridge: input.bridge,
+    resolvers: input.resolvers,
+    adapter,
+    authority: { abortQueuedStart },
+    ...(input.nowMs ? { nowMs: input.nowMs } : {})
+  })
+  return { adapter, executor, abortQueuedStart, handlers }
 }
 
 /* ------------------------------------------------------------------ */
@@ -409,6 +565,23 @@ export function createHostProductionBootstrap(
     typeof options.profileAuthority.assertProfileAuthority !== 'function'
   ) {
     throw new Error('HostProductionBootstrap requires profileAuthority.assertProfileAuthority')
+  }
+  if (options.queuedStart !== undefined) {
+    if (
+      !options.queuedStart ||
+      typeof options.queuedStart !== 'object' ||
+      typeof options.queuedStart.onAdapter !== 'function'
+    ) {
+      throw new Error('HostProductionBootstrap requires queuedStart.onAdapter to be a function')
+    }
+    if (
+      options.queuedStart.beforeShutdown !== undefined &&
+      typeof options.queuedStart.beforeShutdown !== 'function'
+    ) {
+      throw new Error(
+        'HostProductionBootstrap requires queuedStart.beforeShutdown to be a function'
+      )
+    }
   }
 
   /* ---- re-entrancy: one live supervisor per resolved data dir ---- */
@@ -565,6 +738,9 @@ export function createHostProductionBootstrap(
     })
   }
 
+  /* ---- 3b. queued-start option (presence-gated) ---- */
+  const queuedStart = options.queuedStart
+
   /* ---- 4. assemble compositionInput ---- */
   const compositionInput: HostMainCompositionInput = {
     userDataPath: options.userDataPath,
@@ -618,7 +794,44 @@ export function createHostProductionBootstrap(
   // Wrap createComposition to back-patch compositionRef so the pipeline
   // chain's captureSnapshot closure can reach the Authority.
   const wrappedCreateComposition = (input: HostMainCompositionInput): HostMainComposition => {
-    const composition = createComposition(input)
+    let boundInput = input
+    if (queuedStart) {
+      // Fresh generation per composition. onAdapter runs BEFORE the
+      // composition is built so a throwing root cannot strand a built
+      // composition (and its journal) that the supervisor never receives.
+      const generation = createQueuedStartGeneration({
+        bridge: options.bridge,
+        resolvers: contextResolvers,
+        ...(options.nowMs ? { nowMs: options.nowMs } : {}),
+        ...(log ? { log } : {})
+      })
+      queuedStart.onAdapter(generation.adapter, generation.abortQueuedStart)
+      // stopSync can leave this composition's shutdown pending while start
+      // builds another. Capture this generation in every port; neither an old
+      // callback nor a delayed bind may reach the new composition's handlers.
+      boundInput = {
+        ...input,
+        queuedComposerSend: generation.executor,
+        queuedStartStartingBind: (handler) => {
+          generation.handlers.starting = handler
+        },
+        queuedStartDispatchSettledBind: (handler) => {
+          generation.handlers.settled = handler
+        },
+        queuedStartAbortBind: (handler) => {
+          generation.handlers.abort = handler
+        },
+        // Fence both ingress paths before the root drains this producer, then
+        // drain ACKs and adapter tails before Authority publication and flush.
+        queuedStartBeforeShutdown: async () => {
+          generation.executor.beginShutdown()
+          generation.adapter.beginShutdown()
+          await queuedStart.beforeShutdown?.(generation.adapter)
+          await generation.executor.drain()
+        }
+      }
+    }
+    const composition = createComposition(boundInput)
     compositionRef = composition
     return composition
   }

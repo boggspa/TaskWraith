@@ -21,6 +21,7 @@ import {
   resetHostProductionBootstrapForTests
 } from './HostProductionBootstrap'
 import type { HostProductionBootstrapOptions } from './HostProductionBootstrap'
+import type { HostProductionQueuedStartAdapter } from './HostProductionBootstrap'
 import type { HostProductionContextResolverDeps } from './HostProductionContextResolvers'
 import type {
   HostProductionChatListPort,
@@ -28,9 +29,10 @@ import type {
 } from '../../host-runtime/HostProductionSuppliers'
 import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
 import type { HostLocalServer, HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
-import type {
-  HostMainComposition,
-  HostMainCompositionInput
+import {
+  createHostMainComposition,
+  type HostMainComposition,
+  type HostMainCompositionInput
 } from '../../host-runtime/HostMainComposition'
 import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from '../../host-runtime/HostSupervisor'
@@ -736,6 +738,479 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
     })
     expect(compositionInput.now?.()).toBe('2026-08-06T00:00:00.000Z')
     expect(supervisorInput.now?.()).toBe(1234)
+  })
+
+  it('OFF golden: without queuedStart the composition input carries exactly the pre-3a keys', () => {
+    // Captured BEFORE the queued-start wiring was added (A1.61 ruling). The
+    // OFF path must stay byte-equivalent: no queuedComposerSend, no lifecycle
+    // bind, no shutdown hook, and no extra key of any kind.
+    const createComposition = vi.fn((_input: HostMainCompositionInput) => fakeComposition())
+    const { supervisorInput, compositionInput } = captureSupervisorInput({ createComposition })
+    supervisorInput.createComposition(compositionInput)
+    expect(createComposition).toHaveBeenCalledWith(compositionInput)
+    expect(createComposition.mock.calls[0][0]).toBe(compositionInput)
+    expect(Object.keys(compositionInput).sort()).toEqual(
+      [
+        'authorityEvaluator',
+        'commandExecutor',
+        'healthProvider',
+        'host',
+        'hostCapabilityOffer',
+        'pipelineFactory',
+        'snapshotDonor',
+        'threadOffersProvider',
+        'userDataPath'
+      ].sort()
+    )
+    expect(compositionInput.queuedComposerSend).toBeUndefined()
+    expect(compositionInput.queuedStartStartingBind).toBeUndefined()
+    expect(compositionInput.queuedStartStartedBind).toBeUndefined()
+    expect(compositionInput.queuedStartDispatchSettledBind).toBeUndefined()
+    expect(compositionInput.queuedStartAbortBind).toBeUndefined()
+    expect(compositionInput.queuedStartBeforeShutdown).toBeUndefined()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Queued start (producer step 3a)                                   */
+/* ------------------------------------------------------------------ */
+
+const OFF_COMPOSITION_KEYS = [
+  'authorityEvaluator',
+  'commandExecutor',
+  'healthProvider',
+  'host',
+  'hostCapabilityOffer',
+  'pipelineFactory',
+  'snapshotDonor',
+  'threadOffersProvider',
+  'userDataPath'
+]
+
+const ON_QUEUED_START_KEYS = [
+  'queuedComposerSend',
+  'queuedStartStartingBind',
+  'queuedStartDispatchSettledBind',
+  'queuedStartAbortBind',
+  'queuedStartBeforeShutdown'
+]
+
+const COMMAND_ID = '11111111-1111-4111-8111-111111111111'
+const ACTION_ID = `host:command:${COMMAND_ID}`
+const ACTOR = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+
+type QueuedComposerSend = NonNullable<HostMainCompositionInput['queuedComposerSend']>
+
+function composerSendCommand(
+  name: Parameters<QueuedComposerSend>[0]['name'] = 'composer.send'
+): Parameters<QueuedComposerSend>[0] {
+  return {
+    type: 'host.command',
+    protocolVersion: 2,
+    commandId: COMMAND_ID,
+    idempotencyKey: 'desktop:client-1:22222222-2222-4222-8222-222222222222',
+    actor: ACTOR,
+    name,
+    target: { threadId: 'thread-1' },
+    arguments: { text: 'hello from Host' },
+    issuedAt: '2026-08-09T00:00:00.000Z'
+  } as Parameters<QueuedComposerSend>[0]
+}
+
+function callContext(): Parameters<QueuedComposerSend>[1] {
+  return {
+    actor: ACTOR,
+    client: { clientId: 'client-1', clientClass: 'desktop', clientVersion: 'test' }
+  }
+}
+
+function soloChatSources(): HostProductionContextResolverDeps {
+  return {
+    getChat: (threadId) =>
+      threadId === 'thread-1'
+        ? {
+            appChatId: 'thread-1',
+            scope: 'workspace',
+            workspaceId: 'workspace-1',
+            provider: 'codex',
+            archived: false,
+            runs: []
+          }
+        : null,
+    getApproval: () => null,
+    getQuestion: () => null
+  }
+}
+
+/**
+ * ON harness: a real supervisor over fake server/composition, with the fake
+ * composition binding spy handlers through the sanctioned binds exactly as
+ * HostMainComposition does, and the root callbacks recorded.
+ */
+function queuedStartHarness(input: {
+  readonly bind?: boolean
+  readonly bridge?: HostProductionBootstrapOptions['bridge']
+  readonly beforeShutdown?: (adapter: HostProductionQueuedStartAdapter) => void | Promise<void>
+}) {
+  const adapters: HostProductionQueuedStartAdapter[] = []
+  const aborts: Array<(commandId: string) => void> = []
+  const order: string[] = []
+  const starting = vi.fn()
+  const settled = vi.fn()
+  const abort = vi.fn()
+  let captured: HostMainCompositionInput | null = null
+  const supervisor = createHostProductionBootstrap(
+    validOptions({
+      contextSources: soloChatSources(),
+      ...(input.bridge ? { bridge: input.bridge } : {}),
+      queuedStart: {
+        onAdapter: (adapter, abortQueuedStart) => {
+          order.push('adapter')
+          adapters.push(adapter)
+          aborts.push(abortQueuedStart)
+        },
+        ...(input.beforeShutdown ? { beforeShutdown: input.beforeShutdown } : {})
+      },
+      createComposition: (compositionInput) => {
+        order.push('composition')
+        captured = compositionInput
+        if (input.bind !== false) {
+          compositionInput.queuedStartStartingBind?.(starting)
+          compositionInput.queuedStartDispatchSettledBind?.(settled)
+          compositionInput.queuedStartAbortBind?.(abort)
+        }
+        return {
+          ...fakeComposition(),
+          shutdown: async () => {
+            await compositionInput.queuedStartBeforeShutdown?.()
+          }
+        }
+      }
+    })
+  )
+  const compositionInput = (): HostMainCompositionInput => {
+    if (!captured) throw new Error('composition input was never captured')
+    return captured
+  }
+  return { supervisor, adapters, aborts, order, starting, settled, abort, compositionInput }
+}
+
+describe('HostProductionBootstrap queued start (producer step 3a)', () => {
+  it('rejects a queuedStart option whose onAdapter is not a function', () => {
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          queuedStart: {} as unknown as HostProductionBootstrapOptions['queuedStart']
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires queuedStart.onAdapter to be a function')
+  })
+
+  it('rejects a queuedStart.beforeShutdown that is not a function', () => {
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          queuedStart: {
+            onAdapter: () => {},
+            beforeShutdown: 'later'
+          } as unknown as HostProductionBootstrapOptions['queuedStart']
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires queuedStart.beforeShutdown to be a function')
+  })
+
+  it('ON shape: adds exactly the ACK executor, three sanctioned binds and the shutdown hook', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    const compositionInput = h.compositionInput()
+    for (const key of ON_QUEUED_START_KEYS) {
+      expect(typeof (compositionInput as unknown as Record<string, unknown>)[key]).toBe('function')
+    }
+    // No started bind: the in-main route holds no durable pre-spawn claim, so
+    // nothing can ever produce a started view to forward.
+    expect(compositionInput.queuedStartStartedBind).toBeUndefined()
+    expect(Object.keys(compositionInput).sort()).toEqual(
+      [...OFF_COMPOSITION_KEYS, ...ON_QUEUED_START_KEYS].sort()
+    )
+  })
+
+  it('builds nothing at construction; one generation per composition, rebuilt on restart', async () => {
+    const h = queuedStartHarness({})
+    expect(h.adapters).toHaveLength(0)
+
+    await h.supervisor.start()
+    expect(h.adapters).toHaveLength(1)
+    expect(typeof h.adapters[0].register).toBe('function')
+    expect(typeof h.aborts[0]).toBe('function')
+    // onAdapter runs BEFORE the composition is built so a throwing root cannot
+    // strand a built composition the supervisor never receives.
+    expect(h.order).toEqual(['adapter', 'composition'])
+
+    await h.supervisor.stop()
+    await h.supervisor.start()
+    expect(h.adapters).toHaveLength(2)
+    expect(h.adapters[1]).not.toBe(h.adapters[0])
+    expect(h.aborts[1]).not.toBe(h.aborts[0])
+  })
+
+  it('routes glue publications through the composition-bound handlers and forwards startEntities verbatim', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    const adapter = h.adapters[0]
+
+    expect(
+      adapter.register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      }).kind
+    ).toBe('registered')
+
+    const prepared = await adapter.prepared({
+      kind: 'prepared',
+      hostCommandActionId: ACTION_ID,
+      threadId: 'thread-1',
+      durablePromptAndStartPersisted: true,
+      start: { kind: 'solo', runId: 'run-1' },
+      effectRefs: [
+        { family: 'run', entityId: 'run-1' },
+        { family: 'thread', entityId: 'thread-1' }
+      ]
+    })
+    expect(prepared.kind).toBe('applied')
+
+    expect(h.starting).toHaveBeenCalledTimes(1)
+    expect(h.starting).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: COMMAND_ID, threadId: 'thread-1', phase: 'starting' })
+    )
+    // The 3t regression pin: the third argument must survive the forwarder.
+    expect(h.settled).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledWith(
+      COMMAND_ID,
+      { status: 'succeeded' },
+      { runEntityId: 'run-1' }
+    )
+  })
+
+  it('hands onAdapter an abort forwarder that reaches the composition-bound abort handler', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    h.aborts[0](COMMAND_ID)
+    expect(h.abort).toHaveBeenCalledTimes(1)
+    expect(h.abort).toHaveBeenCalledWith(COMMAND_ID)
+  })
+
+  it('refuses by name instead of dropping a call when a handler was never bound', async () => {
+    const h = queuedStartHarness({ bind: false })
+    await h.supervisor.start()
+    expect(() => h.aborts[0](COMMAND_ID)).toThrow(
+      'HostProductionBootstrap queued-start abort handler is not bound'
+    )
+  })
+
+  it('exposes no generation ports before a composition has been assembled', () => {
+    const onAdapter = vi.fn()
+    const { compositionInput } = captureSupervisorInput({
+      queuedStart: { onAdapter }
+    })
+    expect(onAdapter).not.toHaveBeenCalled()
+    expect(Object.keys(compositionInput).sort()).toEqual([...OFF_COMPOSITION_KEYS].sort())
+  })
+
+  it('drives a real composer.send through the ACK executor and abandons proof via the abort bind', async () => {
+    // Bridge success with neither a run identity nor a queue reservation:
+    // the prompt may have been delivered, so the receipt goes indeterminate
+    // through the composition's abort bind, never a false failure.
+    const executeComposerPrompt = vi.fn(async () => ({ executed: true, message: 'sent' }))
+    const h = queuedStartHarness({ bridge: { ...mockBridge(), executeComposerPrompt } })
+    await h.supervisor.start()
+
+    const result = await h
+      .compositionInput()
+      .queuedComposerSend?.(composerSendCommand(), callContext())
+    expect(result).toEqual({ status: 'succeeded', resultSummary: 'run_queued_unproven' })
+    expect(executeComposerPrompt).toHaveBeenCalledTimes(1)
+    expect(executeComposerPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'composerPrompt',
+        actionId: ACTION_ID,
+        workspaceId: 'workspace-1',
+        threadId: 'thread-1',
+        provider: 'codex',
+        text: 'hello from Host'
+      })
+    )
+    expect(h.abort).toHaveBeenCalledWith(COMMAND_ID)
+    expect(h.settled).not.toHaveBeenCalled()
+    expect(h.adapters[0].get(ACTION_ID)).toMatchObject({ phase: 'registered' })
+  })
+
+  it('shutdown hook fences the executor and adapter before the root drains, then drains the executor', async () => {
+    const observed: string[] = []
+    let hooksSeen: { register: string; send: unknown } | null = null
+    const h = queuedStartHarness({
+      beforeShutdown: async (adapter) => {
+        observed.push('root')
+        expect(adapter).toBe(h.adapters[0])
+        // By the time the root drains, both fences must already be up.
+        const register = adapter.register({
+          hostCommandActionId: ACTION_ID,
+          threadId: 'thread-1',
+          authority: {
+            actorId: 'actor-1',
+            clientId: 'client-1',
+            clientClass: 'desktop',
+            commandFingerprint: 'fingerprint-1'
+          }
+        })
+        const send = await h
+          .compositionInput()
+          .queuedComposerSend?.(composerSendCommand(), callContext())
+        hooksSeen = {
+          register: register.kind === 'refused' ? register.reason : register.kind,
+          send
+        }
+      }
+    })
+    await h.supervisor.start()
+
+    // Before the hook the generation is open for business.
+    await expect(
+      h.compositionInput().queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'not_governed_mutation' })
+
+    await expect(h.compositionInput().queuedStartBeforeShutdown?.()).resolves.toBeUndefined()
+    expect(observed).toEqual(['root'])
+    expect(hooksSeen).toEqual({
+      register: 'shutting_down',
+      send: { status: 'failed', errorCode: 'shutting_down', errorMessage: expect.any(String) }
+    })
+    // Idempotent: a second call neither throws nor re-runs anything it must not.
+    await expect(h.compositionInput().queuedStartBeforeShutdown?.()).resolves.toBeUndefined()
+  })
+
+  it('a restarted handle receives a fresh, unfenced generation rather than the stopped fence', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    await h.compositionInput().queuedStartBeforeShutdown?.()
+    await h.supervisor.stop()
+
+    await h.supervisor.start()
+    expect(
+      h.adapters[1].register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      }).kind
+    ).toBe('registered')
+    await expect(
+      h.compositionInput().queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'not_governed_mutation' })
+  })
+
+  it('keeps a delayed real-composition shutdown on its own generation across immediate stopSync/start', async () => {
+    const adapters: HostProductionQueuedStartAdapter[] = []
+    const inputs: HostMainCompositionInput[] = []
+    const compositions: HostMainComposition[] = []
+    const drainedAdapters: HostProductionQueuedStartAdapter[] = []
+    let releaseOldDrain!: () => void
+    const oldDrain = new Promise<void>((resolve) => {
+      releaseOldDrain = resolve
+    })
+    let markOldDrainEntered!: () => void
+    const oldDrainEntered = new Promise<void>((resolve) => {
+      markOldDrainEntered = resolve
+    })
+    let oldShutdown: Promise<void> | undefined
+    let restarting: Promise<void> | undefined
+    let oldShutdownComplete = false
+    const supervisor = createHostProductionBootstrap(
+      validOptions({
+        userDataPath: profilePath(),
+        contextSources: soloChatSources(),
+        queuedStart: {
+          onAdapter: (adapter) => {
+            adapters.push(adapter)
+          },
+          beforeShutdown: async (adapter) => {
+            drainedAdapters.push(adapter)
+            if (drainedAdapters.length === 1) {
+              markOldDrainEntered()
+              await oldDrain
+            }
+          }
+        },
+        createComposition: (input) => {
+          inputs.push(input)
+          const composition = createHostMainComposition(input)
+          compositions.push(composition)
+          return composition
+        }
+      })
+    )
+    const register = (adapter: HostProductionQueuedStartAdapter) =>
+      adapter.register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      })
+
+    try {
+      await supervisor.start()
+      supervisor.stopSync()
+      // Obtain the same real shutdown promise that stopSync fired without
+      // awaiting it: start must replace the composition before its hook runs.
+      oldShutdown = compositions[0].shutdown().then(() => {
+        oldShutdownComplete = true
+      })
+      restarting = supervisor.start()
+      expect(adapters).toHaveLength(2)
+      expect(drainedAdapters).toEqual([])
+
+      await oldDrainEntered
+      await restarting
+      expect(oldShutdownComplete).toBe(false)
+      expect(drainedAdapters).toEqual([adapters[0]])
+      expect(inputs[1]).not.toBe(inputs[0])
+      expect(inputs[1].queuedComposerSend).not.toBe(inputs[0].queuedComposerSend)
+      expect(register(adapters[0])).toMatchObject({ kind: 'refused', reason: 'shutting_down' })
+      expect(register(adapters[1])).toMatchObject({ kind: 'registered' })
+      await expect(
+        inputs[0].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'shutting_down' })
+      await expect(
+        inputs[1].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'not_governed_mutation' })
+
+      releaseOldDrain()
+      await oldShutdown
+      expect(supervisor.isRunning).toBe(true)
+      await expect(
+        inputs[1].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'not_governed_mutation' })
+      await supervisor.stop()
+      expect(drainedAdapters).toEqual(adapters)
+    } finally {
+      releaseOldDrain()
+      await oldShutdown
+      await restarting
+      await supervisor.stop()
+    }
   })
 })
 
