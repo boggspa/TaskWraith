@@ -1290,7 +1290,7 @@ function carryT2DriverPopulationFields(run, windowedReplayResult) {
  * case where a silent SIGKILL is invisible.
  *
  * @param {object|null} termination
- * @returns {{ usedForce: boolean, killedProcessGroup: boolean, strayKills: Array<object> }|null}
+ * @returns {{ usedForce: boolean, killedProcessGroup: boolean, strayKills: Array<object>, straySkips: Array<object> }|null}
  */
 function childTerminationRecord(termination) {
   if (!termination || typeof termination !== 'object') return null
@@ -1298,6 +1298,7 @@ function childTerminationRecord(termination) {
     usedForce: termination.usedForce === true,
     killedProcessGroup: termination.killedProcessGroup === true,
     strayKills: Array.isArray(termination.strayKills) ? termination.strayKills : [],
+    straySkips: Array.isArray(termination.straySkips) ? termination.straySkips : [],
     // null, never true, when the terminate did not say: the absence of a claim
     // is not a claim of support, and an empty strayKills means nothing without
     // it — on win32 the probes cannot run at all.
@@ -2934,7 +2935,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
               userDataPath: userDataResolved.userDataPath
             })
           )
-          childTerminationSucceeded = true
+          childTerminationSucceeded =
+            childTermination !== null && childTermination.straySkips.length === 0
+          if (!childTerminationSucceeded) {
+            cleanupFailures.push({
+              phase: 'terminateExactChild',
+              error: `Cleanup has ${childTermination?.straySkips.length ?? 'unknown'} unresolved process ownership checks`
+            })
+          }
         } catch (error) {
           cleanupFailures.push({
             phase: 'terminateExactChild',

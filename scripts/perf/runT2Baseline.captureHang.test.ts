@@ -80,6 +80,7 @@ describe('stray reap audit record', () => {
       usedForce: true,
       killedProcessGroup: true,
       strayKills: [{ pid: 42, reason: 'listening on owned inspector port' }],
+      straySkips: [],
       strayReapSupported: true
     })
   })
@@ -92,6 +93,7 @@ describe('stray reap audit record', () => {
       usedForce: false,
       killedProcessGroup: false,
       strayKills: [],
+      straySkips: [],
       strayReapSupported: null
     })
   })
@@ -106,6 +108,13 @@ describe('stray reap audit record', () => {
     expect(childTerminationRecord({ strayKills: [], strayReapSupported: true })).toMatchObject({
       strayReapSupported: true
     })
+  })
+
+  it('preserves unresolved listener ownership in the persisted termination record', () => {
+    const straySkips = [{ pid: 42, reason: 'listen:9411', error: 'ownership check failed: EACCES' }]
+    expect(
+      childTerminationRecord({ strayKills: [], straySkips, strayReapSupported: true })
+    ).toMatchObject({ strayKills: [], straySkips, strayReapSupported: true })
   })
 
   it('carries the record into the report, the cleanup journal and the abort path', () => {

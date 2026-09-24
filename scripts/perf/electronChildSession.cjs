@@ -516,14 +516,21 @@ async function terminateExactChild(session, options = {}) {
     }
   })
 
+  let killedProcessGroup = false
   const killTree = (sig) => {
+    // After exit, the recorded PID/PGID can belong to a new process. Never
+    // signal that numeric identity again; the reap below independently checks
+    // live ownership for residual listeners before signalling them.
+    if (exited || session.exited === true) return
     if (typeof options.killProcessGroup === 'function' && session.pgid) {
       options.killProcessGroup(session.pgid, sig)
+      killedProcessGroup = true
       return
     }
     if (session.pgid && process.platform !== 'win32') {
       try {
         process.kill(-session.pgid, sig)
+        killedProcessGroup = true
         return
       } catch {
         // Fall through to direct pid kill
@@ -557,21 +564,22 @@ async function terminateExactChild(session, options = {}) {
     terminated: true,
     neverAutoDeletedArtifacts: true,
     usedForce: Boolean(raced && raced.timeout) || strayKills.length > 0,
-    killedProcessGroup: Boolean(session.pgid),
+    killedProcessGroup,
     strayKills,
+    straySkips: reap.skipped,
     strayReapSupported: reap.supported === true
   }
 }
 
 /**
- * After the recorded child/group is signalled, kill anything still listening
- * on the owned CDP/inspector ports and helpers whose command line still
- * names the isolated userData path. Not a broad pgrep: ports and path are
- * the ones this session recorded.
+ * After the recorded child/group is signalled, reap listeners proved to belong
+ * to its tree/group and helpers whose command line names the isolated userData
+ * path. Recorded ports only identify candidates: a colliding foreign listener
+ * must be skipped, including if it also appears in the command-path sweep.
  *
  * @param {object} session
  * @param {object} options
- * @returns {Promise<{ supported: boolean, killed: Array<{ pid: number, reason: string }> }>}
+ * @returns {Promise<{ supported: boolean, killed: Array<{ pid: number, reason: string }>, skipped: Array<{ pid: number, reason: string, error: string }> }>}
  */
 async function reapOwnedStrays(session, options = {}) {
   const platform = typeof options.platform === 'string' ? options.platform : process.platform
@@ -580,7 +588,7 @@ async function reapOwnedStrays(session, options = {}) {
   // the owned ports and every command line, found no strays" for a search that
   // never ran. Refuse instead: an artifact must not report a check it could not
   // perform. Building netstat/wmic equivalents is deliberately out of scope.
-  if (platform === 'win32') return { supported: false, killed: [] }
+  if (platform === 'win32') return { supported: false, killed: [], skipped: [] }
   const forceSignal = options.forceSignal || 'SIGKILL'
   const killPid =
     typeof options.killPid === 'function'
@@ -596,8 +604,15 @@ async function reapOwnedStrays(session, options = {}) {
     typeof options.listPidsMatchingCommandNeedle === 'function'
       ? options.listPidsMatchingCommandNeedle
       : defaultListPidsMatchingCommandNeedle
+  const portAdapters = options.portAdapters || {}
+  const resolveIdentity =
+    typeof portAdapters.getProcessIdentity === 'function'
+      ? portAdapters.getProcessIdentity
+      : (pid) => getProcessIdentity(pid, portAdapters)
   /** @type {Array<{ pid: number, reason: string }>} */
   const killed = []
+  /** @type {Array<{ pid: number, reason: string, error: string }>} */
+  const skipped = []
   const seen = new Set()
 
   const tryKill = (pid, reason) => {
@@ -607,8 +622,16 @@ async function reapOwnedStrays(session, options = {}) {
     try {
       killPid(pid, forceSignal)
       killed.push({ pid, reason })
-    } catch {
-      // ESRCH: already gone
+    } catch (err) {
+      // Only ESRCH proves the process is already gone. Other signal failures
+      // remain unresolved so callers cannot report a successful cleanup.
+      if (err && err.code === 'ESRCH') return
+      const code = err && err.code ? `${err.code}: ` : ''
+      skipped.push({
+        pid,
+        reason,
+        error: `signal failed: ${code}${String(err && err.message ? err.message : err)}`
+      })
     }
   }
 
@@ -623,7 +646,44 @@ async function reapOwnedStrays(session, options = {}) {
       continue
     }
     if (!Array.isArray(pids)) continue
-    for (const pid of pids) tryKill(pid, `listen:${port}`)
+    for (const pid of pids) {
+      if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || seen.has(pid)) continue
+      const reason = `listen:${port}`
+      let error = 'not in owned Electron tree'
+      try {
+        let listenerIdentity
+        const owned = await isPidInOwnedElectronTree(pid, session, {
+          ...portAdapters,
+          requireLiveIdentity: true,
+          getProcessIdentity: async (target) => {
+            const identity = await resolveIdentity(target)
+            if (target === pid) listenerIdentity = identity
+            return identity
+          }
+        })
+        if (owned) {
+          // The ownership walk can await ancestor probes. Read the listener
+          // again immediately before signalling, even for recorded owned PIDs.
+          const current = await resolveIdentity(pid)
+          if (
+            current &&
+            current.pid === pid &&
+            current.ppid === listenerIdentity.ppid &&
+            current.pgid === listenerIdentity.pgid &&
+            !(pid === session.pid && session.exited === true)
+          ) {
+            tryKill(pid, reason)
+            continue
+          }
+          error = 'process identity changed or unavailable before signal'
+        }
+      } catch (err) {
+        error = `ownership check failed: ${String(err && err.message ? err.message : err)}`
+      }
+      // Do not let the later command-path sweep bypass a failed ownership check.
+      seen.add(pid)
+      skipped.push({ pid, reason, error })
+    }
   }
 
   const needle =
@@ -645,7 +705,7 @@ async function reapOwnedStrays(session, options = {}) {
     }
   }
 
-  return { supported: true, killed }
+  return { supported: true, killed, skipped }
 }
 
 /**
@@ -707,17 +767,20 @@ function assertExactChildAttach(session, attachClaim) {
 /**
  * Whether a listener PID is the spawned Electron pid, an explicit owned pid,
  * shares the recorded process group, or is a descendant of the owned tree.
+ * Cleanup requires live identity evidence: cached PIDs cannot grant ownership,
+ * and an exited child's PID cannot anchor a newly reused process group.
  *
  * @param {number} listenerPid
  * @param {object} session
- * @param {{ getProcessIdentity?: Function, maxAncestorHops?: number }} [adapters]
+ * @param {{ getProcessIdentity?: Function, maxAncestorHops?: number, requireLiveIdentity?: boolean }} [adapters]
  * @returns {Promise<boolean>}
  */
 async function isPidInOwnedElectronTree(listenerPid, session, adapters = {}) {
   if (!Number.isInteger(listenerPid) || listenerPid <= 0) return false
-  if (listenerPid === session.pid) return true
+  const requireLiveIdentity = adapters.requireLiveIdentity === true
+  if (!requireLiveIdentity && listenerPid === session.pid) return true
   const ownedPids = Array.isArray(session.ownedPids) ? session.ownedPids : []
-  if (ownedPids.includes(listenerPid)) return true
+  if (!requireLiveIdentity && ownedPids.includes(listenerPid)) return true
 
   const resolveIdentity =
     typeof adapters.getProcessIdentity === 'function'
@@ -725,7 +788,7 @@ async function isPidInOwnedElectronTree(listenerPid, session, adapters = {}) {
       : (pid) => getProcessIdentity(pid, adapters)
   const maxHops = adapters.maxAncestorHops == null ? 32 : adapters.maxAncestorHops
 
-  if (session.pgid) {
+  if (session.pgid && !requireLiveIdentity) {
     const self = await resolveIdentity(listenerPid)
     if (self && self.pgid === session.pgid) return true
   }
@@ -735,10 +798,35 @@ async function isPidInOwnedElectronTree(listenerPid, session, adapters = {}) {
   for (let hop = 0; hop < maxHops; hop++) {
     if (seen.has(current)) break
     seen.add(current)
-    if (current === session.pid || ownedPids.includes(current)) return true
+    if (!requireLiveIdentity && (current === session.pid || ownedPids.includes(current))) {
+      return true
+    }
     const identity = await resolveIdentity(current)
     if (!identity) break
-    if (session.pgid && identity.pgid === session.pgid) return true
+    if (
+      requireLiveIdentity &&
+      (identity.pid !== current ||
+        !Number.isInteger(identity.ppid) ||
+        identity.ppid < 0 ||
+        !Number.isInteger(identity.pgid) ||
+        identity.pgid <= 0 ||
+        (current === session.pid && session.exited === true))
+    ) {
+      return false
+    }
+    if (session.pgid && identity.pgid === session.pgid) {
+      // A surviving orphan group has no live leader after our child exits.
+      // A process now occupying that leader PID means the group was reused.
+      if (
+        requireLiveIdentity &&
+        session.exited === true &&
+        session.pgid === session.pid &&
+        (await resolveIdentity(session.pid))
+      ) {
+        return false
+      }
+      return true
+    }
     if (!Number.isInteger(identity.ppid) || identity.ppid <= 0) break
     current = identity.ppid
   }

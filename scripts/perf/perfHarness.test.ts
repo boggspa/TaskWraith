@@ -12,7 +12,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { resolveHostRegistryRoot } from '../../src/host-runtime/HostRegistry'
 import { createHostPerfInstrumentation } from '../../src/host-runtime/HostPerfSnapshot'
 import {
@@ -1301,6 +1301,7 @@ describe('T2 runner (no Electron launch)', () => {
     assertExactChildOwnsDebugPorts,
     isPidInOwnedElectronTree,
     terminateExactChild,
+    reapOwnedStrays,
     spawnExactElectronChild,
     runIsolatedBuild,
     resolveElectronBinary,
@@ -2295,9 +2296,118 @@ describe('T2 runner (no Electron launch)', () => {
     ).rejects.toThrow(/unsupported/i)
   })
 
+  it('E: cleanup preserves a colliding session after attach rejects its foreign listener', async () => {
+    const sessionA = {
+      pid: 4242,
+      pgid: 4242,
+      remoteDebuggingPort: 9411,
+      mainInspectorPort: 9811,
+      exited: true
+    }
+    const sessionB = { pid: 7777, pgid: 7777, remoteDebuggingPort: 9411 }
+    const listPortPids = async (port: number) =>
+      port === sessionB.remoteDebuggingPort ? [sessionB.pid] : [5555, 6666]
+    const getProcessIdentity = async (pid: number) => {
+      if (pid === sessionB.pid) return { pid, ppid: 1, pgid: sessionB.pgid }
+      // A reparented group member and a descendant with its own group must
+      // still be cleaned up after the recorded child has exited.
+      if (pid === 5555) return { pid, ppid: 1, pgid: sessionA.pgid }
+      if (pid === 6666) return { pid, ppid: 5555, pgid: 6666 }
+      return null
+    }
+    await expect(
+      assertExactChildOwnsDebugPorts(sessionA, {
+        listPortPids,
+        getProcessIdentity,
+        sleep: async () => {}
+      })
+    ).rejects.toThrow(/7777.*not in owned Electron tree/i)
+
+    const pidSignals: Array<{ pid: number; signal: string }> = []
+    const groupSignals: Array<{ pgid: number; signal: string }> = []
+    const result = await terminateExactChild(sessionA, {
+      platform: 'darwin',
+      sleep: async () => {},
+      killProcessGroup: (pgid: number, signal: string) => groupSignals.push({ pgid, signal }),
+      killPid: (pid: number, signal: string) => pidSignals.push({ pid, signal }),
+      listListeningPidsForPort: listPortPids,
+      // A rejected listener must not be retried through the command-path
+      // sweep; distinct isolated-userData helpers retain their cleanup.
+      listPidsMatchingCommandNeedle: async () => [sessionB.pid, 8888],
+      userDataPath: '/virtual/studio-session-a/user-data',
+      portAdapters: { getProcessIdentity }
+    })
+
+    expect(pidSignals).toEqual([
+      { pid: 5555, signal: 'SIGKILL' },
+      { pid: 6666, signal: 'SIGKILL' },
+      { pid: 8888, signal: 'SIGKILL' }
+    ])
+    expect(groupSignals).toEqual([])
+    expect(result.killedProcessGroup).toBe(false)
+    expect(result.strayKills).toEqual([
+      { pid: 5555, reason: 'listen:9811' },
+      { pid: 6666, reason: 'listen:9811' },
+      { pid: 8888, reason: 'userData-command' }
+    ])
+    expect(result.straySkips).toEqual([
+      { pid: sessionB.pid, reason: 'listen:9411', error: 'not in owned Electron tree' }
+    ])
+    expect(result.strayReapSupported).toBe(true)
+  })
+
+  it.each(['missing', 'failed', 'malformed'] as const)(
+    'E: cleanup fails closed on %s process identity and continues with proved ownership',
+    async (failure) => {
+      const signals: number[] = []
+      const session = { pid: 4242, pgid: 4242, remoteDebuggingPort: 9411 }
+      const result = await reapOwnedStrays(session, {
+        platform: 'darwin',
+        killPid: (pid: number) => signals.push(pid),
+        listListeningPidsForPort: async () => [7777, 5555],
+        listPidsMatchingCommandNeedle: async () => [7777],
+        userDataPath: '/virtual/studio-session-a/user-data',
+        portAdapters: {
+          // Exercise the production identity parser through its OS adapter,
+          // without reading or signalling any real host process.
+          execFile: (file, args, _options, callback) => {
+            expect(file).toBe('ps')
+            expect(args.slice(0, 3)).toEqual(['-o', 'pid=,ppid=,pgid=', '-p'])
+            if (args[3] === '5555') {
+              callback(null, '5555 1 4242\n')
+            } else if (failure === 'malformed') {
+              callback(null, 'unreadable process identity\n')
+            } else {
+              callback(
+                Object.assign(new Error('identity probe failed'), {
+                  code: failure === 'missing' ? 'ENOENT' : 'EACCES'
+                })
+              )
+            }
+          }
+        }
+      })
+
+      expect(signals).toEqual([5555])
+      expect(result.killed).toEqual([{ pid: 5555, reason: 'listen:9411' }])
+      expect(result.skipped).toEqual([
+        { pid: 7777, reason: 'listen:9411', error: expect.any(String) }
+      ])
+      if (failure === 'missing') expect(result.skipped[0].error).toMatch(/ps not found/i)
+    }
+  )
+
   it('E: runT2Baseline refuses attach before ownership check passes', async () => {
     const kills = []
     let cdpCalled = false
+    const stdioClosed: Promise<void>[] = []
+    const fsApi = require('node:fs')
+    const createWriteStream = fsApi.createWriteStream
+    const streamSpy = vi.spyOn(fsApi, 'createWriteStream').mockImplementation((...args) => {
+      const stream = createWriteStream(...args)
+      stdioClosed.push(new Promise<void>((resolve) => stream.once('close', resolve)))
+      return stream
+    })
     const repoRoot = path.resolve(__dirname, '..', '..')
     const homesRoot = path.join(repoRoot, 'perf-homes')
     mkdirSync(homesRoot, { recursive: true })
@@ -2315,6 +2425,7 @@ describe('T2 runner (no Electron launch)', () => {
             '--scale-down=40',
             '--instance-id=perfOwnE01',
             `--home=${home}`,
+            `--artifact-dir=${path.join(home, 'artifacts')}`,
             '--port=9411',
             '--inspect-port=9811'
           ],
@@ -2380,6 +2491,14 @@ describe('T2 runner (no Electron launch)', () => {
             terminateOptions: {
               waitMs: 20,
               sleep: async () => {},
+              platform: 'darwin',
+              listListeningPidsForPort: async (port) => (port === 9411 ? [5555] : []),
+              listPidsMatchingCommandNeedle: async () => [],
+              portAdapters: {
+                getProcessIdentity: async () => {
+                  throw Object.assign(new Error('identity probe denied'), { code: 'EACCES' })
+                }
+              },
               // The fake child's pid doubles as its process-group id. Without
               // this seam the runner tries `process.kill(-pid)` first, and on a
               // hosted runner where a real group with that id exists the
@@ -2394,7 +2513,24 @@ describe('T2 runner (no Electron launch)', () => {
       ).rejects.toThrow(/not in owned Electron tree|Refuse attach/i)
       expect(cdpCalled).toBe(false)
       expect(kills.length).toBeGreaterThan(0)
+      const progress = JSON.parse(
+        readFileSync(path.join(home, 'artifacts', 'perf-t2-progress.json'), 'utf8')
+      )
+      expect(progress.cleanup.childTerminationSucceeded).toBe(false)
+      expect(progress.cleanup.childTermination.straySkips).toEqual([
+        {
+          pid: 5555,
+          reason: 'listen:9411',
+          error: expect.stringContaining('identity probe denied')
+        }
+      ])
+      expect(progress.cleanup.failures).toContainEqual({
+        phase: 'terminateExactChild',
+        error: expect.stringContaining('unresolved')
+      })
     } finally {
+      streamSpy.mockRestore()
+      await Promise.all(stdioClosed)
       rmSync(home, { recursive: true, force: true })
     }
   })
