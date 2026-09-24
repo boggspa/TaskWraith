@@ -1085,6 +1085,11 @@ import {
   verifyHostBridgeQueuedStartRecord
 } from './host/HostBridgeQueuedStartProducer'
 import { createHostBridgeQueuedStartProducerBinding } from './host/HostBridgeQueuedStartProducerBinding'
+import {
+  createHostBridgeQueuedRoundStartProducer,
+  dispatchObservedHostBridgeRound,
+  verifyHostBridgeQueuedRoundStartRecord
+} from './host/HostBridgeQueuedRoundStartProducer'
 import { resolveHostCommandActionId } from './host/HostCommandIdentity'
 import { createHostProductionChatListCoalescer } from './host/HostProductionChatListCoalescer'
 import { createHostProductionProviderAdmission } from './host/HostProductionProviderAdmission'
@@ -4250,6 +4255,9 @@ function globalHistoryClearInProgress(): boolean {
 let runCoordinatorRef: RunCoordinator | null = null
 let hostBridgeQueuedStartProducerRef: ReturnType<
   typeof createHostBridgeQueuedStartProducer
+> | null = null
+let hostBridgeQueuedRoundStartProducerRef: ReturnType<
+  typeof createHostBridgeQueuedRoundStartProducer
 > | null = null
 let projectReferenceContextAuditServiceRef: ProjectReferenceContextAuditService | null = null
 const subThreadJoinWakeTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -51077,30 +51085,42 @@ if (isGeminiMcpBridgeProcess) {
               return { ok: true, ...absorbed }
             }
           }
-          const result = ensembleOrchestratorRef?.startRound({
-            chatId: action.threadId,
-            prompt: steerProviderPrompt,
-            event: fakeEvent,
-            mode: 'steer',
-            ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-            // A phone steer with one resolved @target has the same directed
-            // boundary as desktop: never inherit Read/Write/All fan-out from
-            // the roster for a one-participant round.
-            ...(dmTargetParticipantId ? { concurrentMode: false, fanoutPolicy: 'off' } : {}),
-            ...(steerImagePaths.length
-              ? {
-                  imageAttachments: steerImagePaths.map((imagePath) => ({
-                    path: imagePath,
-                    name: basename(imagePath)
-                  }))
-                }
-              : {}),
-            ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {}),
-            ...(action.origin ? { origin: action.origin } : {})
+          const hostRoundObservation = hostBridgeQueuedRoundStartProducerRef?.observeRound({
+            hostCommandActionId: action.actionId,
+            threadId: action.threadId
           })
-          if (result?.status === 'started' || result?.status === 'steered') {
-            // Durability barrier: persist the round-started record through the
-            // Host before participants dispatch; a failure rejects this IPC.
+          const result = dispatchObservedHostBridgeRound(
+            hostRoundObservation,
+            (roundStartObserver) =>
+              ensembleOrchestratorRef?.startRound({
+                chatId: action.threadId,
+                prompt: steerProviderPrompt,
+                event: fakeEvent,
+                mode: 'steer',
+                ...(roundStartObserver ? { roundStartObserver } : {}),
+                ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+                // A phone steer with one resolved @target has the same directed
+                // boundary as desktop: never inherit Read/Write/All fan-out from
+                // the roster for a one-participant round.
+                ...(dmTargetParticipantId ? { concurrentMode: false, fanoutPolicy: 'off' } : {}),
+                ...(steerImagePaths.length
+                  ? {
+                      imageAttachments: steerImagePaths.map((imagePath) => ({
+                        path: imagePath,
+                        name: basename(imagePath)
+                      }))
+                    }
+                  : {}),
+                ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {}),
+                ...(action.origin ? { origin: action.origin } : {})
+              })
+          )
+          if (
+            !hostRoundObservation &&
+            (result?.status === 'started' || result?.status === 'steered')
+          ) {
+            // Legacy Bridge callers retain their full-record acknowledgement;
+            // Host start evidence follows the detached journal/round observer.
             await AppStore.awaitChatRecordPersisted(action.threadId)
           }
           const ok = result?.status === 'started' || result?.status === 'steered'
@@ -56408,6 +56428,16 @@ if (isGeminiMcpBridgeProcess) {
             verifyHostBridgeQueuedStartRecord(AppStore.getChat(identity.threadId), identity),
           onCurrentProducer: (producer) => {
             hostBridgeQueuedStartProducerRef = producer
+          },
+          roundStart: {
+            persistenceEnabled: () => AppStore.getSettings().storeLocalChatHistory !== false,
+            awaitPromptAndRoundDurable: ({ threadId }) =>
+              AppStore.awaitChatRecordDispatchDurable(threadId),
+            verifyPromptAndRound: (identity) =>
+              verifyHostBridgeQueuedRoundStartRecord(AppStore.getChat(identity.threadId), identity),
+            onCurrentProducer: (producer) => {
+              hostBridgeQueuedRoundStartProducerRef = producer
+            }
           }
         })
       : undefined
