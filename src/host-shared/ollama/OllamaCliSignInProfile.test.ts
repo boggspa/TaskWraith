@@ -4,7 +4,10 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { readRememberedOllamaCliSignIn } from './OllamaCliSignInProfile'
+import {
+  createProfileOllamaBaseUrlReader,
+  readRememberedOllamaCliSignIn
+} from './OllamaCliSignInProfile'
 
 // Each safety check in the reader is a pair: the lstat before the open, then
 // O_NOFOLLOW and fstat on the opened descriptor, so a file swapped between the
@@ -156,5 +159,50 @@ describe('readRememberedOllamaCliSignIn', () => {
       if (checked === settings) writeFileSync(settings, record + OVER_BOUND_PADDING)
     }
     expect(readRememberedOllamaCliSignIn(path)).toBeNull()
+  })
+})
+
+describe('createProfileOllamaBaseUrlReader', () => {
+  const readOnce = (path: string) => createProfileOllamaBaseUrlReader(path)()
+
+  it('reads only the daemon URL, normalised, from the one file it checked', () => {
+    const path = profile(
+      JSON.stringify({
+        ollamaBaseUrl: 'http://127.0.0.1:43123/v1?x=1',
+        ollamaCliSignIn: { signedIn: true, updatedAt: EARLIER }
+      })
+    )
+    expect(readOnce(path)).toBe('http://127.0.0.1:43123')
+    expect(fsHooks.opened).toEqual([join(path, 'settings.json')])
+    // Main strips a path of any length, so the Host does too.
+    expect(
+      readOnce(profile(JSON.stringify({ ollamaBaseUrl: `http://127.0.0.1:1/${'a'.repeat(4096)}` })))
+    ).toBe('http://127.0.0.1:1')
+  })
+
+  it('answers null for an absent URL or settings file, or a symlinked settings file', () => {
+    expect(readOnce(join(profile(), 'missing'))).toBeNull()
+    expect(readOnce(profile('{}'))).toBeNull()
+    const linked = profile()
+    const elsewhere = profile(JSON.stringify({ ollamaBaseUrl: 'http://127.0.0.1:43123' }))
+    symlinkSync(join(elsewhere, 'settings.json'), join(linked, 'settings.json'))
+    fsHooks.opened.length = 0
+    expect(readOnce(linked)).toBeNull()
+    expect(fsHooks.opened).toEqual([])
+  })
+
+  it('keeps the URL it last read while the settings file cannot be read', () => {
+    const path = profile(JSON.stringify({ ollamaBaseUrl: 'http://127.0.0.1:43123' }))
+    const read = createProfileOllamaBaseUrlReader(path)
+    expect(read()).toBe('http://127.0.0.1:43123')
+    writeFileSync(join(path, 'settings.json'), '{"ollamaBaseUrl": "http://127.0.0.1:5')
+    expect(read()).toBe('http://127.0.0.1:43123')
+    unlinkSync(join(path, 'settings.json'))
+    expect(read()).toBe('http://127.0.0.1:43123')
+    // A settings record that names no URL is the user's choice of the default.
+    writeFileSync(join(path, 'settings.json'), JSON.stringify({ ollamaDefaultModel: 'x' }))
+    expect(read()).toBeNull()
+    writeFileSync(join(path, 'settings.json'), '{')
+    expect(read()).toBeNull()
   })
 })

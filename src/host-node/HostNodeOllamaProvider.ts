@@ -182,6 +182,12 @@ export interface HostNodeOllamaProviderOptions {
    * fetch so a sign-in or sign-out reaches the Host without a restart.
    */
   readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
+  /**
+   * The profile's `ollamaBaseUrl`, read afresh per catalog fetch and per run
+   * like the remembered sign-in (see `createProfileOllamaBaseUrlReader`). Null
+   * keeps `baseUrl` (or the default daemon).
+   */
+  readonly profileBaseUrl?: () => string | null
 }
 
 interface ActiveOllamaRun {
@@ -194,7 +200,7 @@ interface ActiveOllamaRun {
 
 export class HostNodeOllamaProvider implements HostNodeProviderInstance {
   readonly providerId = OLLAMA_PROVIDER_ID
-  private readonly baseUrl: string
+  private readonly fixedBaseUrl: string
   private readonly cloudApiKey: string | null
   private readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   private readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
@@ -222,12 +228,17 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     null
 
   constructor(private readonly options: HostNodeOllamaProviderOptions) {
-    this.baseUrl = options.baseUrl ?? 'http://127.0.0.1:11434'
+    this.fixedBaseUrl = options.baseUrl ?? 'http://127.0.0.1:11434'
     this.cloudApiKey = options.cloudApiKey ?? null
     this.terminalLauncher = options.terminalLauncher
     this.rememberedCliSignIn = options.rememberedCliSignIn
     this.lastReadOffers = options.offers
     this.executeTool = options.executeTool
+  }
+
+  /** The daemon the user configured, else this provider's fixed default. */
+  private get baseUrl(): string {
+    return this.options.profileBaseUrl?.() ?? this.fixedBaseUrl
   }
 
   private async catalog(defaultModel?: string) {
@@ -404,10 +415,10 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     return normalized
   }
 
-  private async ensureModelAvailable(modelId: string): Promise<OllamaModelInfo> {
+  private async ensureModelAvailable(modelId: string, baseUrl: string): Promise<OllamaModelInfo> {
     let catalog
     try {
-      catalog = await fetchOllamaModelCatalog(this.baseUrl, {
+      catalog = await fetchOllamaModelCatalog(baseUrl, {
         cloudApiKey: this.cloudApiKey,
         rememberedCliSignIn: this.rememberedCliSignIn?.() ?? null,
         defaultModel: modelId
@@ -574,10 +585,11 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     let usage: HostProviderRunUsage | undefined
 
     try {
-      const model = await this.ensureModelAvailable(thread.modelId)
+      // One run talks to one daemon: the URL read when it began.
+      const model = await this.ensureModelAvailable(thread.modelId, active.baseUrl)
       const directCloud = model.transport === 'cloud-direct'
       active.directCloud = directCloud
-      const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : this.baseUrl
+      const transportBaseUrl = directCloud ? OLLAMA_CLOUD_API_BASE_URL : active.baseUrl
       const transportModelId = directCloud ? ollamaCloudBaseModelId(thread.modelId) : thread.modelId
       const think =
         thread.reasoningId === 'off'
@@ -768,7 +780,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       this.options.runPort.clearCancel(request.runId)
       this.activeRuns.delete(request.runId)
       if (status === 'cancelled' && !active.directCloud) {
-        await unloadOllamaModel(this.baseUrl, active.modelId).catch(() => undefined)
+        await unloadOllamaModel(active.baseUrl, active.modelId).catch(() => undefined)
       }
     }
 
@@ -847,6 +859,7 @@ export interface HostNodeOllamaProviderFactoryOptions {
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
   readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
+  readonly profileBaseUrl?: () => string | null
 }
 
 /** Static Ollama factory implementing the generic HostNodeProvider contract. */
@@ -874,7 +887,10 @@ export function createHostNodeOllamaProviderFactory(
         ...(options.cloudApiKey !== undefined ? { cloudApiKey: options.cloudApiKey } : {}),
         ...(options.terminalLauncher ? { terminalLauncher: options.terminalLauncher } : {}),
         ...(options.executeTool ? { executeTool: options.executeTool } : {}),
-        ...(options.rememberedCliSignIn ? { rememberedCliSignIn: options.rememberedCliSignIn } : {})
+        ...(options.rememberedCliSignIn
+          ? { rememberedCliSignIn: options.rememberedCliSignIn }
+          : {}),
+        ...(options.profileBaseUrl ? { profileBaseUrl: options.profileBaseUrl } : {})
       })
     }
   }

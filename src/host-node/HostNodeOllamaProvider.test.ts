@@ -1,10 +1,12 @@
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { MainSourceProbe } from '../main/mainSourceProbe.testutil'
+import { normalizeOllamaBaseUrl } from '../main/ollama/OllamaProvider'
+import { createProfileOllamaBaseUrlReader } from '../host-shared/ollama/OllamaCliSignInProfile'
 
 import {
   createHostNodeOllamaProviderFactory,
@@ -387,6 +389,117 @@ describe('HostNodeOllamaProvider status and auth', () => {
       'http://127.0.0.1:11434',
       expect.objectContaining({ rememberedCliSignIn: null })
     )
+  })
+})
+
+// Desktop routes every Ollama call through the profile's `ollamaBaseUrl`. The
+// Host reads the same setting, afresh per catalog fetch and per run, and used
+// to ignore it: a user with a daemon elsewhere got Host runs against
+// 127.0.0.1:11434.
+describe('HostNodeOllamaProvider profile daemon URL', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: OLLAMA_MODEL_ID }]))
+    mockUnloadModel.mockResolvedValue(undefined)
+  })
+
+  it('reaches the daemon the profile names and falls back when it names none', async () => {
+    const urls: Array<string | null> = ['http://127.0.0.1:43123', null]
+    const profileBaseUrl = vi.fn(() => (urls.length > 0 ? urls.shift()! : null))
+    mockRunChatLoop.mockResolvedValue({
+      content: 'done',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
+    const instance = provider(resourcePort(), new FakeRunPort(), {
+      baseUrl: 'http://127.0.0.1:11434',
+      profileBaseUrl
+    })
+
+    await instance.getOffers()
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith('http://127.0.0.1:43123', expect.anything())
+
+    await instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: TARGET })
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith('http://127.0.0.1:11434', expect.anything())
+    expect(mockRunChatLoop).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseUrl: 'http://127.0.0.1:11434' })
+    )
+  })
+
+  it('keeps one daemon for a whole run when the setting changes mid-run', async () => {
+    const urls = ['http://127.0.0.1:43123', 'http://127.0.0.1:59999']
+    const profileBaseUrl = vi.fn(() => urls.shift() ?? 'http://127.0.0.1:1')
+    mockRunChatLoop.mockImplementation(
+      (options) =>
+        new Promise((resolve) => {
+          options.signal.addEventListener('abort', () =>
+            resolve({ content: '', thinking: '', toolCalls: [], toolResults: [] })
+          )
+        })
+    )
+    const instance = provider(resourcePort(), new FakeRunPort(), { profileBaseUrl })
+    const run = instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: TARGET
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(instance.cancel('run-1')).toBe(true)
+    expect((await run).status).toBe('cancelled')
+
+    expect(profileBaseUrl).toHaveBeenCalledTimes(1)
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith('http://127.0.0.1:43123', expect.anything())
+    expect(mockRunChatLoop).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseUrl: 'http://127.0.0.1:43123' })
+    )
+    expect(mockUnloadModel).toHaveBeenCalledWith('http://127.0.0.1:43123', OLLAMA_MODEL_ID)
+  })
+
+  it('passes the profile URL reader through the factory', async () => {
+    const factory = createHostNodeOllamaProviderFactory({
+      profileBaseUrl: () => 'http://127.0.0.1:43123'
+    })
+    const instance = factory.create({ runPort: new FakeRunPort(), interactions: {} as never })
+
+    await instance.getOffers?.()
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith('http://127.0.0.1:43123', expect.anything())
+  })
+
+  it('resolves every setting to the daemon main would reach', () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-ollama-profile-url-'))
+    try {
+      for (const value of [
+        'http://127.0.0.1:11434',
+        'http://127.0.0.1:43123/',
+        '  https://ollama.lan:8443/v1/?q=1#frag  ',
+        'http://[::1]:11434',
+        'HTTP://LOCALHOST:11434',
+        'http://user:secret@127.0.0.1:11434',
+        'ftp://ollama.lan',
+        `http://ollama.lan:8443/${'a'.repeat(4096)}`,
+        'not a url',
+        '',
+        '   ',
+        42,
+        0,
+        true,
+        null,
+        {},
+        ['http://ollama.lan:11434'],
+        ['http://a:1', 'http://b:2']
+      ]) {
+        const profile = mkdtempSync(join(root, 'profile-'))
+        writeFileSync(join(profile, 'settings.json'), JSON.stringify({ ollamaBaseUrl: value }))
+        // Main hands settings.json's value to its normaliser unchecked.
+        const main = normalizeOllamaBaseUrl(value as string)
+        const host = createProfileOllamaBaseUrlReader(profile)() ?? 'http://127.0.0.1:11434'
+        expect([value, host]).toEqual([value, main])
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -825,6 +938,9 @@ describe('HostNodeProductionFactory wiring', () => {
     expect(calls).toHaveLength(1)
     expect(probe.propText(calls[0], 0, 'rememberedCliSignIn')).toBe(
       '() => readRememberedOllamaCliSignIn(profilePath)'
+    )
+    expect(probe.propText(calls[0], 0, 'profileBaseUrl')).toBe(
+      'createProfileOllamaBaseUrlReader(profilePath)'
     )
   })
 })

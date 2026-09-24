@@ -33,7 +33,10 @@ import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
 import { createHostNodeDevinProvider } from './HostNodeDevinProvider'
 import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
 import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
-import { readRememberedOllamaCliSignIn } from '../host-shared/ollama/OllamaCliSignInProfile'
+import {
+  createProfileOllamaBaseUrlReader,
+  readRememberedOllamaCliSignIn
+} from '../host-shared/ollama/OllamaCliSignInProfile'
 import { createHostNodeProviderResourcePort } from './HostNodeProviderResources'
 import { createHostNodePiProviderFactory } from './HostNodePiProvider'
 import { createHostNodeCursorProviderFactory } from './HostNodeCursorProvider'
@@ -262,8 +265,10 @@ export function createHostNodeProductionServer(
                 ...(launcher ? { terminalLauncher: launcher } : {}),
                 ...(ollamaCloudApiKey ? { cloudApiKey: ollamaCloudApiKey } : {}),
                 // The profile's settings.json carries main's remembered
-                // `ollama signin`; the Host reads it per catalog fetch.
-                rememberedCliSignIn: () => readRememberedOllamaCliSignIn(profilePath)
+                // `ollama signin` and the user's daemon URL; the Host reads
+                // both per use, as main does.
+                rememberedCliSignIn: () => readRememberedOllamaCliSignIn(profilePath),
+                profileBaseUrl: createProfileOllamaBaseUrlReader(profilePath)
               }),
               createHostNodePiProviderFactory(),
               createHostNodeCursorProviderFactory({
