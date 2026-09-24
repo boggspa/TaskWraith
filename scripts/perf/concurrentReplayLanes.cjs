@@ -103,7 +103,9 @@ function copyEvent(event) {
 }
 
 function seqRange(schedule) {
-  const seqs = schedule.map((event) => event && event.seq).filter((seq) => Number.isSafeInteger(seq))
+  const seqs = schedule
+    .map((event) => event && event.seq)
+    .filter((seq) => Number.isSafeInteger(seq))
   if (seqs.length === 0) return { firstSeq: null, lastSeq: null }
   return { firstSeq: seqs[0], lastSeq: seqs[seqs.length - 1] }
 }

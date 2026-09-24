@@ -545,7 +545,9 @@ describe('seeded-tail replay driver (A1.52 item 1 producer)', () => {
     expect(heavySaves[0].messageCount).toBe(20)
     expect(heavySaves[1].messageCount).toBe(13)
     expect(heavySaves[1].messageCount).not.toBe(1)
-    expect(heavySaves.map((entry) => entry.messageCount)).toEqual([20, 13, 14, 15, 16, 17, 18, 19, 20])
+    expect(heavySaves.map((entry) => entry.messageCount)).toEqual([
+      20, 13, 14, 15, 16, 17, 18, 19, 20
+    ])
   })
 })
 
