@@ -12,9 +12,15 @@ export interface EnsembleRoundStartObservation {
 }
 
 const absentObservation: EnsembleRoundStartObservation = {
-  reserved() {},
-  async beforeParticipants() {},
-  unproven() {}
+  reserved() {
+    return undefined
+  },
+  async beforeParticipants() {
+    return undefined
+  },
+  unproven() {
+    return undefined
+  }
 }
 
 // Continuations may ask for the same observation again. Its lifetime follows
