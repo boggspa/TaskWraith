@@ -1663,6 +1663,9 @@ export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential
 
 export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredential | null> {
   if (process.platform !== 'darwin') return null
+  // Electron's mock switch does not cover the native `security` helper. Keep
+  // isolated launches from querying the user's keychain or opening system prompts.
+  if (app.commandLine.hasSwitch('use-mock-keychain')) return null
   return new Promise((resolve) => {
     let settled = false
     let timeout: ReturnType<typeof setTimeout> | null = null

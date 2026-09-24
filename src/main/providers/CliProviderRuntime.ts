@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import { spawn } from 'child_process'
 import { delimiter, extname, join } from 'path'
 import { cliBinaryNameCandidates, getCliSearchDirs } from './CliSearchDirs'
@@ -662,6 +663,8 @@ export async function readClaudeAuthState(
   deps?: CliProviderRuntimeDependencies
 ): Promise<string> {
   if (!resolved.binaryPath) return 'unknown'
+  // The external CLI can query the native keychain independently of Electron.
+  if (app.commandLine.hasSwitch('use-mock-keychain')) return 'unknown'
   const output = await captureProcessOutput(
     resolved.binaryPath,
     ['auth', 'status'],
