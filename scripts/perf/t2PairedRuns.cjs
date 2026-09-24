@@ -13,8 +13,9 @@
  * Honesty rules, all pinned by `t2PairedRuns.test.ts`:
  *
  * - Alone is the light lane only; beside is the full lane set. Both runs
- *   share seed, workload, fixture fingerprint/versions, cell, build, window
- *   and API options. The adapter never invents a second fixture.
+ *   share seed, workload, fixture fingerprint/versions, build, window and
+ *   API options. The declared cell describes beside; alone uses its derived
+ *   small/1 cell. The adapter never invents a second fixture.
  * - Driver outcomes pass through verbatim. Short windows, failed saves,
  *   missing identity and diagnostic-only runs keep pairing ineligible; the
  *   adapter never reshapes coverage or manufactures deltas.
@@ -25,7 +26,7 @@
 
 const { runConcurrentReplayLanes } = require('./concurrentReplayLanes.cjs')
 const { FIXTURE_GENERATOR_VERSION } = require('./fixtureGenerator.cjs')
-const { pairRuns } = require('./interferenceMatrix.cjs')
+const { cellName, parseCellName, lightAloneCellFor, pairRuns } = require('./interferenceMatrix.cjs')
 const { buildT2LaneSpecs } = require('./t2WindowOrchestration.cjs')
 
 function isPlainObject(value) {
@@ -43,14 +44,24 @@ async function runT2PairedReplay(options) {
       't2PairedRuns refuses pairingRole; it produces both light-alone and light-beside'
     )
   }
-  const { fixture: _fixture, fixtureVersions, ...rest } = options
+  const { fixture: _fixture, fixtureVersions, cell, cellName: declaredCellName, ...rest } = options
+  // Match the lanes driver's cell-object precedence, then keep each role's
+  // cell explicit. Missing or invalid names remain ineligible; they cannot
+  // supply an identity from which to derive a baseline.
+  const besideCellName = cell ? cellName(cell) : declaredCellName
+  const besideCell = parseCellName(besideCellName)
+  const aloneCellName = besideCell === null ? besideCellName : lightAloneCellFor(besideCell).name
   const shared = {
     ...rest,
     fixtureVersions: fixtureVersions ?? { fixtureGenerator: FIXTURE_GENERATOR_VERSION }
   }
   const lightLanes = lanes.filter((lane) => lane.role === 'light')
-  const alone = await runConcurrentReplayLanes({ ...shared, lanes: lightLanes })
-  const beside = await runConcurrentReplayLanes({ ...shared, lanes })
+  const alone = await runConcurrentReplayLanes({
+    ...shared,
+    cellName: aloneCellName,
+    lanes: lightLanes
+  })
+  const beside = await runConcurrentReplayLanes({ ...shared, cellName: besideCellName, lanes })
   return { alone, beside, pairing: pairRuns(alone.run, beside.run) }
 }
 

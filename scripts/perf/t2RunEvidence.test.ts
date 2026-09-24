@@ -418,10 +418,12 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
     })
     expect(result.report.pairs).toEqual([])
     expect(result.report.runEvidence.role).toBe('light-beside')
+    expect(result.report.runEvidence.cellName).toBe(CELL)
     expect(result.report.runEvidence.evidence.windows).toHaveLength(3)
     expect(result.report.pairedRuns.reasons.length).toBeGreaterThan(0)
     expect(result.report.interferenceReport).toMatchObject({
       schemaVersion: 2,
+      cells: [{ name: CELL }],
       pairs: []
     })
     expect(validateInterferenceReport(result.report.interferenceReport)).toEqual({
@@ -457,6 +459,8 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
     const { lightAlone, lightBeside } = result.report.pairedRuns
     expect(lightAlone.pairingRole).toBe('light-alone')
     expect(lightBeside.pairingRole).toBe('light-beside')
+    expect(lightAlone.cellName).toBe('small/1/warm/codex_bridge_disabled/none')
+    expect(lightBeside.cellName).toBe(CELL)
     for (const half of [lightAlone, lightBeside]) {
       expect(half.evidenceEligible).toBe(false)
       expect(half.windows).toHaveLength(3)
@@ -487,12 +491,22 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
     expect(pairedRunRecord(null)).toBeNull()
     expect(pairedRunRecord({})).toBeNull()
     expect(pairedRunRecord({ run: { role: 'light-alone' } })).toMatchObject({
+      cellName: null,
       pairingRole: 'light-alone',
       censored: false,
       evidenceEligible: false,
       signals: null,
       windows: []
     })
+  })
+
+  it('checks the declared beside cell against the full fixture before paired replay', async () => {
+    await expect(
+      runT2BaselineCli(
+        pairedArgs(['--cell=large/2/warm/codex_profiles_solo_ensemble_mesh/none']),
+        pairedOptions()
+      )
+    ).rejects.toMatchObject({ code: 'T2_CELL_FIXTURE_SHAPE_MISMATCH' })
   })
 
   it('implies windowed replay so sequential gap-declaring stays the default', async () => {

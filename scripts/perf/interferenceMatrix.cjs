@@ -414,10 +414,11 @@ function pairedRunNames(cell) {
 }
 
 /**
- * G-X pairing self-test (M1 automated checks): the light-alone and
- * light-beside runs of one cell must have used IDENTICAL fixtures and
- * windows, or the §1.1 delta between them measures setup drift instead of
- * interference. Each run descriptor carries the evidence the runner
+ * G-X pairing self-test (M1 automated checks): light-alone and light-beside
+ * must share the source fixture identity and windows, or the §1.1 delta
+ * between them measures setup drift instead of interference. Cell names
+ * either match (legacy) or alone is exactly the derived light-half cell
+ * answering beside. Each run descriptor carries the evidence the runner
  * recorded:
  *
  *   { cellName, role, fixtureFingerprint, workload, seed, windowMs }
@@ -435,10 +436,17 @@ function assertPairedRunCompatibility(alone, beside) {
   if (beside.role !== 'light-beside') {
     reasons.push(`beside run role must be light-beside, got ${JSON.stringify(beside.role)}`)
   }
-  if (alone.cellName !== beside.cellName) {
+  if (parseCellName(alone.cellName) === null) {
+    reasons.push(`alone cell name is not a valid canonical matrix cell: ${alone.cellName}`)
+  }
+  const besideCell = parseCellName(beside.cellName)
+  if (besideCell === null) {
+    reasons.push(`beside cell name is not a valid canonical matrix cell: ${beside.cellName}`)
+  } else if (
+    alone.cellName !== beside.cellName &&
+    alone.cellName !== lightAloneCellFor(besideCell).name
+  ) {
     reasons.push(`cell mismatch: ${alone.cellName} vs ${beside.cellName}`)
-  } else if (parseCellName(alone.cellName) === null) {
-    reasons.push(`cell name is not a valid canonical matrix cell: ${alone.cellName}`)
   }
   if (
     typeof alone.fixtureFingerprint !== 'string' ||
@@ -968,7 +976,7 @@ function pairRuns(lightAlone, lightBeside) {
   return {
     ok: true,
     pair: {
-      cellName: lightAlone.cellName,
+      cellName: lightBeside.cellName,
       // Detach the receipt from mutable caller-owned samples.
       lightAlone: JSON.parse(JSON.stringify(lightAlone)),
       lightBeside: JSON.parse(JSON.stringify(lightBeside)),
