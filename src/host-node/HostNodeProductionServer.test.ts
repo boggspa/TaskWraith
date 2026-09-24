@@ -1562,7 +1562,8 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
         expect(h.ended(), late).toEqual([1])
         expect(h.lease.release, late).not.toHaveBeenCalled()
         // Whatever the stop does afterwards, the Host has given up: no second
-        // report and no second ending.
+        // failure report and no second ending. Only a stop that finishes
+        // after all says so, because it released the authority (N2 below).
         if (late === 'finishes') finish()
         if (late === 'fails') fail(new Error('claim compaction refused'))
         await new Promise((resolve) => setTimeout(resolve, 50))
@@ -1570,9 +1571,71 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
           stderrLines(write).filter((line) => /finish|failed,/.test(line)),
           late
         ).toEqual([
-          'taskwraith-host: stopping after the last client lease did not finish within 50 ms, profile authority retained\n'
+          'taskwraith-host: stopping after the last client lease did not finish within 50 ms, profile authority retained\n',
+          ...(late === 'finishes'
+            ? [
+                'taskwraith-host: stopping after the last client lease finished after its 50 ms deadline, profile authority released\n'
+              ]
+            : [])
         ])
+        expect(h.lease.release, late).toHaveBeenCalledTimes(late === 'finishes' ? 1 : 0)
         expect(h.ended(), late).toEqual([1])
+      }
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  // S1a review N2. The process ends a while after endProcess (endHostProcess
+  // waits up to a second for stderr), and a stop still running at its deadline
+  // can finish in that time, releasing the authority the deadline's line
+  // called retained. When the process ends, the log must agree with the lease.
+  it('says so when a stop finishes after its deadline, before the process has ended, and released the authority', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      for (const trigger of ['last lease', 'request'] as const) {
+        write.mockClear()
+        const clock = steppedLeaseClock()
+        const exits: { code: number; released: number; lines: string[] }[] = []
+        const h = harness({
+          environment: {},
+          leasePorts: clock.ports,
+          lifetimeStopDeadlineMs: 50,
+          // The process ends 100 ms after the call, as it does once stderr drains.
+          endProcess: (code: number) => {
+            setTimeout(() => {
+              exits.push({
+                code,
+                released: h.lease.release.mock.calls.length,
+                lines: stderrLines(write)
+              })
+            }, 100)
+          }
+        })
+        // Finishes 30 ms past the deadline, inside that time.
+        h.composition.shutdown.mockImplementationOnce(
+          () => new Promise<void>((resolve) => setTimeout(resolve, 80))
+        )
+        await h.server.start()
+        if (trigger === 'last lease') {
+          clock.advance(leasesOf(h), HOST_LAST_LEASE_GRACE_MS)
+        } else {
+          void Promise.resolve()
+            .then(() => h.authenticatedShutdown()?.())
+            .catch(() => undefined)
+        }
+        await vi.waitFor(() => expect(exits, trigger).toHaveLength(1))
+        const action =
+          trigger === 'last lease' ? 'stopping after the last client lease' : 'stopping on request'
+        expect(exits[0].code, trigger).toBe(1)
+        expect(exits[0].released, trigger).toBe(1)
+        expect(
+          exits[0].lines.filter((line) => /finish|failed,/.test(line)),
+          trigger
+        ).toEqual([
+          `taskwraith-host: ${action} did not finish within 50 ms, profile authority retained\n`,
+          `taskwraith-host: ${action} finished after its 50 ms deadline, profile authority released\n`
+        ])
       }
     } finally {
       write.mockRestore()
