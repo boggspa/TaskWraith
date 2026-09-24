@@ -21,18 +21,36 @@ import {
   resetHostProductionBootstrapForTests
 } from './HostProductionBootstrap'
 import type { HostProductionBootstrapOptions } from './HostProductionBootstrap'
+import type { HostProductionQueuedStartAdapter } from './HostProductionBootstrap'
 import type { HostProductionContextResolverDeps } from './HostProductionContextResolvers'
+import { createHostBridgeQueuedStartProducerBinding } from './HostBridgeQueuedStartProducerBinding'
+import {
+  verifyHostBridgeQueuedStartRecord,
+  type createHostBridgeQueuedStartProducer,
+  type HostBridgeQueuedStartIdentity
+} from './HostBridgeQueuedStartProducer'
+import {
+  dispatchObservedHostBridgeRound,
+  verifyHostBridgeQueuedRoundStartRecord,
+  type createHostBridgeQueuedRoundStartProducer,
+  type HostBridgeQueuedRoundStartIdentity
+} from './HostBridgeQueuedRoundStartProducer'
+import { createEnsembleRoundStartObservation } from '../services/EnsembleRoundStartObserver'
+import type { ChatRecord, ChatRun } from '../store/types'
+import type { HostCursorPosition } from '../../shared/hostProtocol'
+import type { HostDeltaAppendEvent } from '../../host-runtime/HostDeltaStore'
 import type {
   HostProductionChatListPort,
   HostProductionProviderListPort
 } from '../../host-runtime/HostProductionSuppliers'
 import { HostDeferredAllowPipeline } from '../../host-runtime/HostDeferredAllowPipeline'
 import type { HostLocalServer, HostLocalServerOptions } from '../../host-runtime/HostLocalServer'
-import type {
-  HostMainComposition,
-  HostMainCompositionInput
+import {
+  createHostMainComposition,
+  type HostMainComposition,
+  type HostMainCompositionInput
 } from '../../host-runtime/HostMainComposition'
-import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
+import { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from '../../host-runtime/HostSupervisor'
 
 /* ------------------------------------------------------------------ */
@@ -737,6 +755,861 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
     expect(compositionInput.now?.()).toBe('2026-08-06T00:00:00.000Z')
     expect(supervisorInput.now?.()).toBe(1234)
   })
+
+  it('OFF golden: without queuedStart the composition input carries exactly the pre-3a keys', () => {
+    // Captured BEFORE the queued-start wiring was added (A1.61 ruling). The
+    // OFF path must stay byte-equivalent: no queuedComposerSend, no lifecycle
+    // bind, no shutdown hook, and no extra key of any kind.
+    const createComposition = vi.fn((_input: HostMainCompositionInput) => fakeComposition())
+    const { supervisorInput, compositionInput } = captureSupervisorInput({ createComposition })
+    supervisorInput.createComposition(compositionInput)
+    expect(createComposition).toHaveBeenCalledWith(compositionInput)
+    expect(createComposition.mock.calls[0][0]).toBe(compositionInput)
+    expect(Object.keys(compositionInput).sort()).toEqual(
+      [
+        'authorityEvaluator',
+        'commandExecutor',
+        'healthProvider',
+        'host',
+        'hostCapabilityOffer',
+        'pipelineFactory',
+        'snapshotDonor',
+        'threadOffersProvider',
+        'userDataPath'
+      ].sort()
+    )
+    expect(compositionInput.queuedComposerSend).toBeUndefined()
+    expect(compositionInput.queuedStartStartingBind).toBeUndefined()
+    expect(compositionInput.queuedStartStartedBind).toBeUndefined()
+    expect(compositionInput.queuedStartDispatchSettledBind).toBeUndefined()
+    expect(compositionInput.queuedStartAbortBind).toBeUndefined()
+    expect(compositionInput.queuedStartBeforeShutdown).toBeUndefined()
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Queued start (producer step 3a)                                   */
+/* ------------------------------------------------------------------ */
+
+const OFF_COMPOSITION_KEYS = [
+  'authorityEvaluator',
+  'commandExecutor',
+  'healthProvider',
+  'host',
+  'hostCapabilityOffer',
+  'pipelineFactory',
+  'snapshotDonor',
+  'threadOffersProvider',
+  'userDataPath'
+]
+
+const ON_QUEUED_START_KEYS = [
+  'queuedComposerSend',
+  'queuedStartStartingBind',
+  'queuedStartDispatchSettledBind',
+  'queuedStartAbortBind',
+  'queuedStartBeforeShutdown'
+]
+
+const COMMAND_ID = '11111111-1111-4111-8111-111111111111'
+const ACTION_ID = `host:command:${COMMAND_ID}`
+const ACTOR = { actorId: 'actor-1', clientId: 'client-1', clientClass: 'desktop' as const }
+
+type QueuedComposerSend = NonNullable<HostMainCompositionInput['queuedComposerSend']>
+
+function composerSendCommand(
+  name: Parameters<QueuedComposerSend>[0]['name'] = 'composer.send'
+): Parameters<QueuedComposerSend>[0] {
+  return {
+    type: 'host.command',
+    protocolVersion: 2,
+    commandId: COMMAND_ID,
+    idempotencyKey: 'desktop:client-1:22222222-2222-4222-8222-222222222222',
+    actor: ACTOR,
+    name,
+    target: { threadId: 'thread-1' },
+    arguments: { text: 'hello from Host' },
+    issuedAt: '2026-08-09T00:00:00.000Z'
+  } as Parameters<QueuedComposerSend>[0]
+}
+
+function callContext(): Parameters<QueuedComposerSend>[1] {
+  return {
+    actor: ACTOR,
+    client: { clientId: 'client-1', clientClass: 'desktop', clientVersion: 'test' }
+  }
+}
+
+function soloChatSources(): HostProductionContextResolverDeps {
+  return {
+    getChat: (threadId) =>
+      threadId === 'thread-1'
+        ? {
+            appChatId: 'thread-1',
+            scope: 'workspace',
+            workspaceId: 'workspace-1',
+            provider: 'codex',
+            archived: false,
+            runs: []
+          }
+        : null,
+    getApproval: () => null,
+    getQuestion: () => null
+  }
+}
+
+/**
+ * ON harness: a real supervisor over fake server/composition, with the fake
+ * composition binding spy handlers through the sanctioned binds exactly as
+ * HostMainComposition does, and the root callbacks recorded.
+ */
+function queuedStartHarness(input: {
+  readonly bind?: boolean
+  readonly bridge?: HostProductionBootstrapOptions['bridge']
+  readonly beforeShutdown?: (adapter: HostProductionQueuedStartAdapter) => void | Promise<void>
+}) {
+  const adapters: HostProductionQueuedStartAdapter[] = []
+  const aborts: Array<(commandId: string) => void> = []
+  const order: string[] = []
+  const starting = vi.fn()
+  const settled = vi.fn()
+  const abort = vi.fn()
+  let captured: HostMainCompositionInput | null = null
+  const supervisor = createHostProductionBootstrap(
+    validOptions({
+      contextSources: soloChatSources(),
+      ...(input.bridge ? { bridge: input.bridge } : {}),
+      queuedStart: {
+        onAdapter: (adapter, abortQueuedStart) => {
+          order.push('adapter')
+          adapters.push(adapter)
+          aborts.push(abortQueuedStart)
+        },
+        ...(input.beforeShutdown ? { beforeShutdown: input.beforeShutdown } : {})
+      },
+      createComposition: (compositionInput) => {
+        order.push('composition')
+        captured = compositionInput
+        if (input.bind !== false) {
+          compositionInput.queuedStartStartingBind?.(starting)
+          compositionInput.queuedStartDispatchSettledBind?.(settled)
+          compositionInput.queuedStartAbortBind?.(abort)
+        }
+        return {
+          ...fakeComposition(),
+          shutdown: async () => {
+            await compositionInput.queuedStartBeforeShutdown?.()
+          }
+        }
+      }
+    })
+  )
+  const compositionInput = (): HostMainCompositionInput => {
+    if (!captured) throw new Error('composition input was never captured')
+    return captured
+  }
+  return { supervisor, adapters, aborts, order, starting, settled, abort, compositionInput }
+}
+
+describe('HostProductionBootstrap queued start (producer step 3a)', () => {
+  it('rejects a queuedStart option whose onAdapter is not a function', () => {
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          queuedStart: {} as unknown as HostProductionBootstrapOptions['queuedStart']
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires queuedStart.onAdapter to be a function')
+  })
+
+  it('rejects a queuedStart.beforeShutdown that is not a function', () => {
+    expect(() =>
+      createHostProductionBootstrap(
+        validOptions({
+          queuedStart: {
+            onAdapter: () => {},
+            beforeShutdown: 'later'
+          } as unknown as HostProductionBootstrapOptions['queuedStart']
+        })
+      )
+    ).toThrow('HostProductionBootstrap requires queuedStart.beforeShutdown to be a function')
+  })
+
+  it('ON shape: adds exactly the ACK executor, three sanctioned binds and the shutdown hook', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    const compositionInput = h.compositionInput()
+    for (const key of ON_QUEUED_START_KEYS) {
+      expect(typeof (compositionInput as unknown as Record<string, unknown>)[key]).toBe('function')
+    }
+    // No started bind: the in-main route holds no durable pre-spawn claim, so
+    // nothing can ever produce a started view to forward.
+    expect(compositionInput.queuedStartStartedBind).toBeUndefined()
+    expect(Object.keys(compositionInput).sort()).toEqual(
+      [...OFF_COMPOSITION_KEYS, ...ON_QUEUED_START_KEYS].sort()
+    )
+  })
+
+  it('builds nothing at construction; one generation per composition, rebuilt on restart', async () => {
+    const h = queuedStartHarness({})
+    expect(h.adapters).toHaveLength(0)
+
+    await h.supervisor.start()
+    expect(h.adapters).toHaveLength(1)
+    expect(typeof h.adapters[0].register).toBe('function')
+    expect(typeof h.aborts[0]).toBe('function')
+    // onAdapter runs BEFORE the composition is built so a throwing root cannot
+    // strand a built composition the supervisor never receives.
+    expect(h.order).toEqual(['adapter', 'composition'])
+
+    await h.supervisor.stop()
+    await h.supervisor.start()
+    expect(h.adapters).toHaveLength(2)
+    expect(h.adapters[1]).not.toBe(h.adapters[0])
+    expect(h.aborts[1]).not.toBe(h.aborts[0])
+  })
+
+  it('routes glue publications through the composition-bound handlers and forwards startEntities verbatim', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    const adapter = h.adapters[0]
+
+    expect(
+      adapter.register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      }).kind
+    ).toBe('registered')
+
+    const prepared = await adapter.prepared({
+      kind: 'prepared',
+      hostCommandActionId: ACTION_ID,
+      threadId: 'thread-1',
+      durablePromptAndStartPersisted: true,
+      start: { kind: 'solo', runId: 'run-1' },
+      effectRefs: [
+        { family: 'run', entityId: 'run-1' },
+        { family: 'thread', entityId: 'thread-1' }
+      ]
+    })
+    expect(prepared.kind).toBe('applied')
+
+    expect(h.starting).toHaveBeenCalledTimes(1)
+    expect(h.starting).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: COMMAND_ID, threadId: 'thread-1', phase: 'starting' })
+    )
+    // The 3t regression pin: the third argument must survive the forwarder.
+    expect(h.settled).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledWith(
+      COMMAND_ID,
+      { status: 'succeeded' },
+      { runEntityId: 'run-1' }
+    )
+  })
+
+  it('hands onAdapter an abort forwarder that reaches the composition-bound abort handler', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    h.aborts[0](COMMAND_ID)
+    expect(h.abort).toHaveBeenCalledTimes(1)
+    expect(h.abort).toHaveBeenCalledWith(COMMAND_ID)
+  })
+
+  it('refuses by name instead of dropping a call when a handler was never bound', async () => {
+    const h = queuedStartHarness({ bind: false })
+    await h.supervisor.start()
+    expect(() => h.aborts[0](COMMAND_ID)).toThrow(
+      'HostProductionBootstrap queued-start abort handler is not bound'
+    )
+  })
+
+  it('exposes no generation ports before a composition has been assembled', () => {
+    const onAdapter = vi.fn()
+    const { compositionInput } = captureSupervisorInput({
+      queuedStart: { onAdapter }
+    })
+    expect(onAdapter).not.toHaveBeenCalled()
+    expect(Object.keys(compositionInput).sort()).toEqual([...OFF_COMPOSITION_KEYS].sort())
+  })
+
+  it('drives a real composer.send through the ACK executor and abandons proof via the abort bind', async () => {
+    // Bridge success with neither a run identity nor a queue reservation:
+    // the prompt may have been delivered, so the receipt goes indeterminate
+    // through the composition's abort bind, never a false failure.
+    const executeComposerPrompt = vi.fn(async () => ({ executed: true, message: 'sent' }))
+    const h = queuedStartHarness({ bridge: { ...mockBridge(), executeComposerPrompt } })
+    await h.supervisor.start()
+
+    const result = await h
+      .compositionInput()
+      .queuedComposerSend?.(composerSendCommand(), callContext())
+    expect(result).toEqual({ status: 'succeeded', resultSummary: 'run_queued_unproven' })
+    expect(executeComposerPrompt).toHaveBeenCalledTimes(1)
+    expect(executeComposerPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'composerPrompt',
+        actionId: ACTION_ID,
+        workspaceId: 'workspace-1',
+        threadId: 'thread-1',
+        provider: 'codex',
+        text: 'hello from Host'
+      })
+    )
+    expect(h.abort).toHaveBeenCalledWith(COMMAND_ID)
+    expect(h.settled).not.toHaveBeenCalled()
+    expect(h.adapters[0].get(ACTION_ID)).toMatchObject({ phase: 'registered' })
+  })
+
+  it('shutdown hook fences the executor and adapter before the root drains, then drains the executor', async () => {
+    const observed: string[] = []
+    let hooksSeen: { register: string; send: unknown } | null = null
+    const h = queuedStartHarness({
+      beforeShutdown: async (adapter) => {
+        observed.push('root')
+        expect(adapter).toBe(h.adapters[0])
+        // By the time the root drains, both fences must already be up.
+        const register = adapter.register({
+          hostCommandActionId: ACTION_ID,
+          threadId: 'thread-1',
+          authority: {
+            actorId: 'actor-1',
+            clientId: 'client-1',
+            clientClass: 'desktop',
+            commandFingerprint: 'fingerprint-1'
+          }
+        })
+        const send = await h
+          .compositionInput()
+          .queuedComposerSend?.(composerSendCommand(), callContext())
+        hooksSeen = {
+          register: register.kind === 'refused' ? register.reason : register.kind,
+          send
+        }
+      }
+    })
+    await h.supervisor.start()
+
+    // Before the hook the generation is open for business.
+    await expect(
+      h.compositionInput().queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'not_governed_mutation' })
+
+    await expect(h.compositionInput().queuedStartBeforeShutdown?.()).resolves.toBeUndefined()
+    expect(observed).toEqual(['root'])
+    expect(hooksSeen).toEqual({
+      register: 'shutting_down',
+      send: { status: 'failed', errorCode: 'shutting_down', errorMessage: expect.any(String) }
+    })
+    // Idempotent: a second call neither throws nor re-runs anything it must not.
+    await expect(h.compositionInput().queuedStartBeforeShutdown?.()).resolves.toBeUndefined()
+  })
+
+  it('a restarted handle receives a fresh, unfenced generation rather than the stopped fence', async () => {
+    const h = queuedStartHarness({})
+    await h.supervisor.start()
+    await h.compositionInput().queuedStartBeforeShutdown?.()
+    await h.supervisor.stop()
+
+    await h.supervisor.start()
+    expect(
+      h.adapters[1].register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      }).kind
+    ).toBe('registered')
+    await expect(
+      h.compositionInput().queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'not_governed_mutation' })
+  })
+
+  it('keeps a delayed real-composition shutdown on its own generation across immediate stopSync/start', async () => {
+    const adapters: HostProductionQueuedStartAdapter[] = []
+    const inputs: HostMainCompositionInput[] = []
+    const compositions: HostMainComposition[] = []
+    const drainedAdapters: HostProductionQueuedStartAdapter[] = []
+    let releaseOldDrain!: () => void
+    const oldDrain = new Promise<void>((resolve) => {
+      releaseOldDrain = resolve
+    })
+    let markOldDrainEntered!: () => void
+    const oldDrainEntered = new Promise<void>((resolve) => {
+      markOldDrainEntered = resolve
+    })
+    let oldShutdown: Promise<void> | undefined
+    let restarting: Promise<void> | undefined
+    let oldShutdownComplete = false
+    const supervisor = createHostProductionBootstrap(
+      validOptions({
+        userDataPath: profilePath(),
+        contextSources: soloChatSources(),
+        queuedStart: {
+          onAdapter: (adapter) => {
+            adapters.push(adapter)
+          },
+          beforeShutdown: async (adapter) => {
+            drainedAdapters.push(adapter)
+            if (drainedAdapters.length === 1) {
+              markOldDrainEntered()
+              await oldDrain
+            }
+          }
+        },
+        createComposition: (input) => {
+          inputs.push(input)
+          const composition = createHostMainComposition(input)
+          compositions.push(composition)
+          return composition
+        }
+      })
+    )
+    const register = (adapter: HostProductionQueuedStartAdapter) =>
+      adapter.register({
+        hostCommandActionId: ACTION_ID,
+        threadId: 'thread-1',
+        authority: {
+          actorId: 'actor-1',
+          clientId: 'client-1',
+          clientClass: 'desktop',
+          commandFingerprint: 'fingerprint-1'
+        }
+      })
+
+    try {
+      await supervisor.start()
+      supervisor.stopSync()
+      // Obtain the same real shutdown promise that stopSync fired without
+      // awaiting it: start must replace the composition before its hook runs.
+      oldShutdown = compositions[0].shutdown().then(() => {
+        oldShutdownComplete = true
+      })
+      restarting = supervisor.start()
+      expect(adapters).toHaveLength(2)
+      expect(drainedAdapters).toEqual([])
+
+      await oldDrainEntered
+      await restarting
+      expect(oldShutdownComplete).toBe(false)
+      expect(drainedAdapters).toEqual([adapters[0]])
+      expect(inputs[1]).not.toBe(inputs[0])
+      expect(inputs[1].queuedComposerSend).not.toBe(inputs[0].queuedComposerSend)
+      expect(register(adapters[0])).toMatchObject({ kind: 'refused', reason: 'shutting_down' })
+      expect(register(adapters[1])).toMatchObject({ kind: 'registered' })
+      await expect(
+        inputs[0].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'shutting_down' })
+      await expect(
+        inputs[1].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'not_governed_mutation' })
+
+      releaseOldDrain()
+      await oldShutdown
+      expect(supervisor.isRunning).toBe(true)
+      await expect(
+        inputs[1].queuedComposerSend?.(composerSendCommand('run.cancel'), callContext())
+      ).resolves.toMatchObject({ errorCode: 'not_governed_mutation' })
+      await supervisor.stop()
+      expect(drainedAdapters).toEqual(adapters)
+    } finally {
+      releaseOldDrain()
+      await oldShutdown
+      await restarting
+      await supervisor.stop()
+    }
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Queued-start receipt integration                                  */
+/* ------------------------------------------------------------------ */
+
+describe('HostProductionBootstrap queued-start receipt integration', () => {
+  it.each(['solo', 'ensemble'] as const)(
+    'publishes a durable %s start before terminal success and serializes other projection work',
+    async (mode) => {
+      const gate = () => {
+        let resolve!: () => void
+        const promise = new Promise<void>((done) => {
+          resolve = done
+        })
+        return { promise, resolve }
+      }
+      const journal = gate()
+      const publication = gate()
+      const publicationEntered = vi.fn()
+      const startedAt = '2026-09-24T00:00:00.000Z'
+      const runId = 'provider-run-bootstrap'
+      const roundId = 'ensemble-round-bootstrap'
+      const promptMessageId = 'prompt-bootstrap'
+      const stored: Pick<ChatRecord, 'appChatId' | 'messages' | 'ensemble'> & {
+        runs: Array<ChatRun & { provider: 'codex' }>
+      } = {
+        appChatId: 'thread-1',
+        runs: [],
+        messages: [],
+        ...(mode === 'ensemble'
+          ? { ensemble: { enabled: true, maxParticipants: 2, participants: [] } }
+          : {})
+      }
+      const producers: {
+        solo: ReturnType<typeof createHostBridgeQueuedStartProducer> | null
+        round: ReturnType<typeof createHostBridgeQueuedRoundStartProducer> | null
+      } = { solo: null, round: null }
+      const soloBarrier = vi.fn((_identity: HostBridgeQueuedStartIdentity) => journal.promise)
+      const roundBarrier = vi.fn((_identity: HostBridgeQueuedRoundStartIdentity) => journal.promise)
+      const binding = createHostBridgeQueuedStartProducerBinding({
+        persistenceEnabled: () => true,
+        awaitPromptAndStartDurable: soloBarrier,
+        verifyPromptAndStart: (identity) => verifyHostBridgeQueuedStartRecord(stored, identity),
+        onCurrentProducer: (producer) => {
+          producers.solo = producer
+        },
+        roundStart: {
+          persistenceEnabled: () => true,
+          awaitPromptAndRoundDurable: roundBarrier,
+          verifyPromptAndRound: (identity) =>
+            verifyHostBridgeQueuedRoundStartRecord(stored, identity),
+          onCurrentProducer: (producer) => {
+            producers.round = producer
+          }
+        }
+      })
+      const compositions: HostMainComposition[] = []
+      const runtimes: HostRuntimeBootstrap[] = []
+      const durableEvents: HostDeltaAppendEvent[] = []
+      const order: string[] = []
+      let title = 'Queued-start integration'
+      let holdNextSnapshot = false
+      let beforeParticipants: Promise<void> | undefined
+      let positionBeforeSelection: HostCursorPosition | undefined
+      let receiptBeforeSelection:
+        | ReturnType<HostRuntimeBootstrap['receiptStore']['getByCommandId']>
+        | undefined
+      let receiptAtStartAppend:
+        | ReturnType<HostRuntimeBootstrap['receiptStore']['getByCommandId']>
+        | undefined
+      const executeComposerPrompt = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeComposerPrompt']
+      >(async (action) => {
+        stored.messages.push({
+          id: promptMessageId,
+          role: 'user',
+          content: action.text,
+          timestamp: startedAt
+        })
+        stored.runs.push({
+          runId,
+          promptMessageId,
+          provider: 'codex',
+          status: 'running',
+          startedAt
+        })
+        const observation = producers.solo?.observeDispatch({
+          hostCommandActionId: action.actionId,
+          threadId: action.threadId,
+          runId,
+          promptMessageId,
+          provider: 'codex'
+        })
+        // Controlled provider boundary: invocation is observed, but the full
+        // turn never completes in this test. Its result cannot prove a start.
+        observation?.observer.onAdapterInvoked?.({ appRunId: runId, provider: 'codex' })
+        return { executed: true, message: 'Solo dispatch registered', data: { appRunId: runId } }
+      })
+      const executeEnsembleSteer = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeEnsembleSteer']
+      >(async (action) => {
+        const observation = producers.round?.observeRound({
+          hostCommandActionId: action.actionId,
+          threadId: action.threadId
+        })
+        const result = dispatchObservedHostBridgeRound(observation, (observer) => {
+          if (!stored.ensemble) throw new Error('expected an Ensemble fixture')
+          stored.ensemble.activeRound = {
+            roundId,
+            status: 'running',
+            prompt: action.text,
+            startedAt,
+            participants: []
+          }
+          stored.messages.push({
+            id: `ensemble-user-${roundId}`,
+            role: 'user',
+            content: action.text,
+            timestamp: startedAt,
+            metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+          })
+          const observed = createEnsembleRoundStartObservation(observer, roundId)
+          observed.reserved()
+          beforeParticipants = observed.beforeParticipants()
+          return { status: 'started', roundId }
+        })
+        return {
+          executed: true,
+          message: 'Ensemble round started',
+          data: { actionKind: 'ensembleSteer', result }
+        }
+      })
+      const executeSetWatchedThread = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeSetWatchedThread']
+      >(async () => {
+        order.push('ordinary-command')
+        const runtime = runtimes[0]
+        positionBeforeSelection = runtime.getPosition()
+        receiptBeforeSelection = runtime.receiptStore.getByCommandId(COMMAND_ID, ACTOR)
+        // A real projection change gives this command its own later cursor.
+        title = 'Selected after durable start'
+        return { executed: true, message: 'Thread selected' }
+      })
+      const supervisor = createHostProductionBootstrap(
+        validOptions({
+          userDataPath: profilePath(),
+          contextSources: {
+            ...soloChatSources(),
+            getChat: (threadId) =>
+              threadId === stored.appChatId
+                ? { ...stored, workspaceId: 'workspace-1', scope: 'workspace', provider: 'codex' }
+                : null
+          },
+          chatList: {
+            getChatList: () => [
+              {
+                appChatId: stored.appChatId,
+                workspaceId: 'workspace-1',
+                title,
+                archived: false,
+                updatedAt: Date.parse(startedAt) + stored.messages.length,
+                messageCount: stored.messages.length,
+                provider: 'codex'
+              }
+            ]
+          },
+          runs: {
+            listRuns: () =>
+              stored.runs.map((run) => ({
+                runId: run.runId,
+                threadId: stored.appChatId,
+                providerId: run.provider,
+                providerOutcome: 'running',
+                startedAt: Date.parse(startedAt)
+              }))
+          },
+          rounds: {
+            listRounds: () =>
+              stored.ensemble?.activeRound
+                ? [
+                    {
+                      roundId: stored.ensemble.activeRound.roundId,
+                      threadId: stored.appChatId,
+                      status: 'running',
+                      startedAt: Date.parse(startedAt),
+                      participantIds: [],
+                      providerRunIds: []
+                    }
+                  ]
+                : []
+          },
+          bridge: {
+            ...mockBridge(),
+            executeComposerPrompt,
+            executeEnsembleSteer,
+            executeSetWatchedThread
+          },
+          queuedStart: binding,
+          createComposition: (input) => {
+            const composition = createHostMainComposition({
+              ...input,
+              // Explicit test authorization. Production's default deferral
+              // policy is covered separately; no approval service runs here.
+              authorityEvaluator: () => ({ decision: 'allowed' }),
+              pipelineFactory: (runtime) => {
+                runtimes.push(runtime)
+                return input.pipelineFactory!(runtime)
+              },
+              snapshotDonor: async () => {
+                if (holdNextSnapshot) {
+                  // One-shot hold at the publication's AFTER snapshot. Other
+                  // readers are free to run, so only the real shared queue can
+                  // keep the command and reconciler behind this publication.
+                  holdNextSnapshot = false
+                  publicationEntered()
+                  await publication.promise
+                }
+                return input.snapshotDonor()
+              }
+            })
+            compositions.push(composition)
+            return composition
+          }
+        })
+      )
+      let selection: ReturnType<HostMainComposition['authority']['command']> | undefined
+      let reconciliation: ReturnType<HostMainComposition['reconcileProjection']> | undefined
+      try {
+        await supervisor.start()
+        const composition = compositions[0]
+        const runtime = runtimes[0]
+        const initialPosition = composition.getPosition()
+        const startFamily = mode === 'solo' ? 'run' : 'round'
+        const startEntityId = mode === 'solo' ? runId : roundId
+        composition.subscribeDeltas((event) => {
+          durableEvents.push(event)
+          if (event.record.envelope.family === startFamily) {
+            order.push('start-effect')
+            receiptAtStartAppend = runtime.receiptStore.getByCommandId(COMMAND_ID, ACTOR)
+          }
+        })
+
+        const queued = await composition.authority.command(callContext(), composerSendCommand())
+        expect(queued).toMatchObject({ ok: true, value: { status: 'pending', phase: 'queued' } })
+        const barrier = mode === 'solo' ? soloBarrier : roundBarrier
+        expect(barrier).toHaveBeenCalledExactlyOnceWith({
+          hostCommandActionId: ACTION_ID,
+          threadId: stored.appChatId,
+          ...(mode === 'solo' ? { runId, promptMessageId, provider: 'codex' } : { roundId })
+        })
+        // Leave the journal unresolved across a real scheduling window: an
+        // early Bridge result or an ignored barrier must not certify a start.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        await expect(
+          composition.authority.receipt(callContext(), { commandId: COMMAND_ID })
+        ).resolves.toMatchObject({
+          ok: true,
+          outcome: 'found',
+          receipt: { status: 'pending', phase: 'queued' }
+        })
+        expect(durableEvents).toEqual([])
+        expect(composition.getPosition()).toEqual(initialPosition)
+
+        holdNextSnapshot = true
+        journal.resolve()
+        await vi.waitFor(() => expect(publicationEntered).toHaveBeenCalledOnce())
+        await expect(
+          composition.authority.receipt(callContext(), { commandId: COMMAND_ID })
+        ).resolves.toMatchObject({
+          ok: true,
+          outcome: 'found',
+          receipt: { status: 'pending', phase: 'started' }
+        })
+        expect(durableEvents).toEqual([])
+
+        selection = composition.authority.command(callContext(), {
+          ...composerSendCommand('thread.select'),
+          commandId: '33333333-3333-4333-8333-333333333333',
+          idempotencyKey: 'desktop:client-1:44444444-4444-4444-8444-444444444444',
+          arguments: {}
+        })
+        reconciliation = composition.reconcileProjection().then((result) => {
+          order.push('reconcile')
+          return result
+        })
+        // A real timer window makes the serialization assertion sensitive to
+        // removing either queue injection, rather than to microtask ordering.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(executeSetWatchedThread).not.toHaveBeenCalled()
+        expect(order).toEqual([])
+        expect(composition.getPosition()).toEqual(initialPosition)
+
+        publication.resolve()
+        const selected = await selection
+        expect(selected).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+        expect(['unchanged', 'published']).toContain((await reconciliation).kind)
+        await beforeParticipants
+        expect(order).toEqual(['start-effect', 'ordinary-command', 'reconcile'])
+        expect(receiptAtStartAppend).toMatchObject({
+          kind: 'found',
+          receipt: { status: 'pending' }
+        })
+        expect(receiptBeforeSelection).toMatchObject({
+          kind: 'found',
+          receipt: { status: 'succeeded', phase: 'started', resultSummary: 'run_started' }
+        })
+        const terminal = await composition.authority.receipt(callContext(), {
+          commandId: COMMAND_ID
+        })
+        if (!terminal.ok || terminal.outcome !== 'found') throw new Error('missing start receipt')
+        const receipt = terminal.receipt
+        expect(receipt).toMatchObject({
+          status: 'succeeded',
+          phase: 'started',
+          resultSummary: 'run_started'
+        })
+        expect(positionBeforeSelection).toEqual({
+          generation: receipt.generation,
+          cursor: receipt.cursor
+        })
+        expect(receipt.cursor).toBeGreaterThan(initialPosition.cursor)
+        if (!selected.ok) throw new Error('ordinary command failed')
+        expect(selected.value.cursor).toBeGreaterThan(receipt.cursor)
+        const startBatch = durableEvents.filter((event) => event.position.cursor <= receipt.cursor)
+        expect(startBatch.map((event) => event.record.envelope.family)).toEqual(
+          mode === 'solo' ? ['run', 'thread'] : ['thread', 'round']
+        )
+        const startEffect = startBatch.find((event) => event.record.envelope.family === startFamily)
+        expect(startEffect?.record.envelope).toMatchObject({
+          kind: 'upsert',
+          entityId: startEntityId,
+          payload: { threadId: stored.appChatId }
+        })
+        expect(startBatch.at(-1)?.position).toEqual({
+          generation: receipt.generation,
+          cursor: receipt.cursor
+        })
+        if (mode === 'ensemble') {
+          expect(startEffect?.record.envelope.payload).toMatchObject({ providerRunIds: [] })
+          expect(executeComposerPrompt).not.toHaveBeenCalled()
+          expect(executeEnsembleSteer).toHaveBeenCalledOnce()
+        } else {
+          expect(executeComposerPrompt).toHaveBeenCalledOnce()
+          expect(executeEnsembleSteer).not.toHaveBeenCalled()
+        }
+        // Replaying the same Host command returns its receipt, never a second
+        // Bridge invocation or a second provider/round start.
+        await expect(
+          composition.authority.command(callContext(), composerSendCommand())
+        ).resolves.toEqual({ ok: true, value: receipt })
+        expect(
+          executeComposerPrompt.mock.calls.length + executeEnsembleSteer.mock.calls.length
+        ).toBe(1)
+
+        await supervisor.stop()
+        expect(producers).toEqual({ solo: null, round: null })
+        const recovered = new HostRuntimeBootstrap({ hostDataDir: composition.hostDataDir })
+        expect(recovered.receiptStore.getByCommandId(COMMAND_ID, ACTOR)).toMatchObject({
+          kind: 'found',
+          receipt: {
+            status: 'succeeded',
+            resultSummary: 'run_started',
+            generation: receipt.generation,
+            cursor: receipt.cursor
+          }
+        })
+        // Reload the real journal/checkpoint: the exact start effect and the
+        // final effect at the receipt cursor must both survive teardown.
+        for (const event of startBatch) {
+          expect(recovered.deltaStore.getByCursor(event.position.cursor)?.envelope).toEqual(
+            event.record.envelope
+          )
+        }
+      } finally {
+        journal.resolve()
+        publication.resolve()
+        await Promise.allSettled([selection, reconciliation, beforeParticipants])
+        await supervisor.stop()
+      }
+    }
+  )
 })
 
 /* ------------------------------------------------------------------ */

@@ -43,7 +43,10 @@ import {
   HostPermissionConsentAuthority,
   type HostPermissionConsentProofRequest
 } from '../host-runtime/HostPermissionConsent'
-import type { HostTerminationOutcome } from '../host-client/HostProcessTermination'
+import type {
+  HostTerminationExpectedHost,
+  HostTerminationOutcome
+} from '../host-client/HostProcessTermination'
 import type { HostStopAllHost } from '../host-client/HostStopAll'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { taskWraithHostSocketPath } from '../shared/taskWraithHostPaths.node'
@@ -5375,6 +5378,7 @@ function stopAllHostRow(
     source: 'registry',
     profilePath,
     pid,
+    birthIdentity: 'a'.repeat(64),
     cliPath: '/payload/host-runtime/cli.js',
     payloadVersion: FAKE_PAYLOAD_VERSION,
     startedAt: new Date(0).toISOString(),
@@ -5609,9 +5613,14 @@ describe('TaskWraithTui /host', () => {
   })
 
   it('restarts at once when nothing is running, and names both pids', async () => {
-    const { host, userDataPath } = await setupLeaseHost({ hostStatus: () => makeHostStatus() })
-    const restart = vi.fn(async (pid: number | null) => ({
-      termination: terminationOutcome('stopped', pid),
+    const { host, userDataPath } = await setupLeaseHost({
+      hostStatus: () =>
+        makeHostStatus({
+          lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 }
+        })
+    })
+    const restart = vi.fn(async (expected: HostTerminationExpectedHost | null) => ({
+      termination: terminationOutcome('stopped', expected?.pid ?? null),
       launch: { kind: 'launched' as const, pid: 777 }
     }))
     const { control } = hostControl({ restart })
@@ -5621,20 +5630,28 @@ describe('TaskWraithTui /host', () => {
 
     feed(input, '/host restart\r')
     await waitFor(() => restart.mock.calls.length === 1, 'restarted')
-    expect(restart).toHaveBeenCalledWith(process.pid)
+    expect(restart).toHaveBeenCalledWith({ pid: process.pid, birthIdentity: null, startedAtMs: 0 })
     await waitFor(
       () =>
         tuiNotice(tui) === `Restarted the TaskWraith Host (was pid ${process.pid}) · now pid 777`,
       'restart reported'
     )
+    host.dropAllClients()
+    await waitFor(() => host.welcomeCount >= 2, 'welcomed after restart')
+    expect(tuiNotice(tui)).toBe(
+      `Restarted the TaskWraith Host (was pid ${process.pid}) · now pid 777`
+    )
+    expect(
+      (tui as unknown as { state: { notice: { expiresAt: number } } }).state.notice.expiresAt
+    ).toBeGreaterThan(Date.now())
   })
 
   it('asks before a restart that would end live runs, and only y restarts', async () => {
     const { host, userDataPath } = await setupLeaseHost({
       hostStatus: () => makeHostStatus({ liveWork: { runs: 2 } })
     })
-    const restart = vi.fn(async (pid: number | null) => ({
-      termination: terminationOutcome('stopped', pid),
+    const restart = vi.fn(async (expected: HostTerminationExpectedHost | null) => ({
+      termination: terminationOutcome('stopped', expected?.pid ?? null),
       launch: { kind: 'launched' as const, pid: 778 }
     }))
     const { control } = hostControl({ restart })
@@ -5665,9 +5682,18 @@ describe('TaskWraithTui /host', () => {
   })
 
   it('reports a refused restart, launches nothing, and says the Host keeps running', async () => {
-    const { host, userDataPath } = await setupLeaseHost({ hostStatus: () => makeHostStatus() })
-    const restart = vi.fn(async (pid: number | null) => ({
-      termination: terminationOutcome('not_a_host', pid, 'the pid runs something else')
+    const { host, userDataPath } = await setupLeaseHost({
+      hostStatus: () =>
+        makeHostStatus({
+          lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 }
+        })
+    })
+    const restart = vi.fn(async (expected: HostTerminationExpectedHost | null) => ({
+      termination: terminationOutcome(
+        'not_a_host',
+        expected?.pid ?? null,
+        'the pid runs something else'
+      )
     }))
     const { control } = hostControl({ restart })
     const { tui, input } = startTui(userDataPath, { hostControl: control })
@@ -5682,6 +5708,268 @@ describe('TaskWraithTui /host', () => {
       'refusal reported'
     )
     expect(host.welcomeCount).toBe(1)
+  })
+
+  it('bounds a status read that never answers and leaves the Host lens usable', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { tui, input, output } = startTui(userDataPath)
+    await tui.start()
+    const client = (
+      tui as unknown as {
+        client: { getHostStatus(): Promise<HostStatusProjection> }
+      }
+    ).client
+    vi.spyOn(client, 'getHostStatus').mockImplementation(() => new Promise(() => undefined))
+
+    feed(input, '/host\r')
+    await waitFor(() => output.lastFrame.includes('did not answer in time'), 'bounded status read')
+    feed(input, '\u001b')
+    await waitFor(() => tuiState(tui).overlay === 'none', 'timed-out lens dismissed')
+  })
+
+  it('refuses another destructive command while a restart operation is pending', async () => {
+    const { userDataPath } = await setupLeaseHost({
+      hostStatus: () =>
+        makeHostStatus({
+          lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 }
+        })
+    })
+    let finish!: (result: Awaited<ReturnType<NonNullable<TuiHostControl['restart']>>>) => void
+    const restart = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<NonNullable<TuiHostControl['restart']>>>>((resolve) => {
+          finish = resolve
+        })
+    )
+    const { control, planStopAll, runStopAll } = hostControl({ restart })
+    const { tui } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    const commands = tui as unknown as { runHostCommand(argument: string): Promise<void> }
+    const pending = commands.runHostCommand('restart')
+    await waitFor(() => restart.mock.calls.length === 1, 'restart pending')
+
+    await commands.runHostCommand('stop-all --all')
+    expect(tuiNotice(tui)).toBe('A /host operation is already running.')
+    expect(planStopAll).not.toHaveBeenCalled()
+    expect(runStopAll).not.toHaveBeenCalled()
+    finish({ termination: terminationOutcome('identity_unavailable', process.pid) })
+    await pending
+  })
+
+  it.each(['fails', 'times out'] as const)(
+    'requires y when the restart status read %s with an empty projection',
+    async (failure) => {
+      const { userDataPath } = await setupLeaseHost()
+      const restart = vi.fn(async () => ({
+        termination: terminationOutcome('identity_unavailable', process.pid)
+      }))
+      const { control } = hostControl({ restart })
+      const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+      await tui.start()
+      const commands = tui as unknown as {
+        client: { getHostStatus(): Promise<HostStatusProjection> }
+        runHostCommand(argument: string): Promise<void>
+      }
+      vi.spyOn(commands.client, 'getHostStatus').mockImplementation(() =>
+        failure === 'fails'
+          ? Promise.reject(new Error('Host status read failed'))
+          : new Promise(() => undefined)
+      )
+
+      await commands.runHostCommand('restart')
+      expect(restart).not.toHaveBeenCalled()
+      expect(output.lastFrame).toContain('y restarts the Host and may end live runs')
+      expect(output.lastFrame).toContain('Host status is unavailable')
+      expect(tuiState(tui).hostPanel).toMatchObject({
+        fields: expect.arrayContaining([
+          { label: 'live runs', value: 'unknown', tone: 'warning' },
+          { label: 'other clients', value: 'unknown', tone: 'warning' }
+        ])
+      })
+      feed(input, 'y')
+      await waitFor(() => restart.mock.calls.length === 1, 'unknown impact confirmed')
+    }
+  )
+
+  it.each([
+    { pendingStage: 'prepare', liveRuns: 0, reconnect: false },
+    { pendingStage: 'prepare', liveRuns: 1, reconnect: true },
+    { pendingStage: 'status', liveRuns: 0, reconnect: false },
+    { pendingStage: 'status', liveRuns: 1, reconnect: false },
+    { pendingStage: 'status', liveRuns: 0, reconnect: true },
+    { pendingStage: 'status', liveRuns: 1, reconnect: true }
+  ] as const)(
+    'abandons a pending $pendingStage restart check after disconnect (runs=$liveRuns, reconnect=$reconnect)',
+    async ({ pendingStage, liveRuns, reconnect }) => {
+      const { host, userDataPath } = await setupLeaseHost()
+      let finishPrepare!: (expected: HostTerminationExpectedHost | null) => void
+      let finishStatus!: (status: HostStatusProjection) => void
+      const prepareRestart = vi.fn((expected: HostTerminationExpectedHost | null) =>
+        pendingStage === 'prepare'
+          ? new Promise<HostTerminationExpectedHost | null>((resolve) => {
+              finishPrepare = resolve
+            })
+          : Promise.resolve(expected)
+      )
+      const restart = vi.fn(async () => ({
+        termination: terminationOutcome('identity_unavailable', process.pid)
+      }))
+      const { control } = hostControl({ prepareRestart, restart })
+      const { tui, input } = startTui(userDataPath, {
+        hostControl: control,
+        reconnectBaseDelayMs: reconnect ? 20 : 60_000
+      })
+      await tui.start()
+      await waitFor(() => host.explicitHolders === 1, 'lease held')
+      const commands = tui as unknown as {
+        client: { connected: boolean; getHostStatus(): Promise<HostStatusProjection> }
+        runHostCommand(argument: string): Promise<void>
+        hostConfirmation: unknown
+        hostOperation: unknown
+      }
+      const statusRead = vi.spyOn(commands.client, 'getHostStatus').mockImplementation(() =>
+        pendingStage === 'status'
+          ? new Promise<HostStatusProjection>((resolve) => {
+              finishStatus = resolve
+            })
+          : Promise.resolve(
+              makeHostStatus({
+                liveWork: { runs: liveRuns },
+                lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 }
+              })
+            )
+      )
+      const pending = commands.runHostCommand('restart')
+      await waitFor(
+        () =>
+          pendingStage === 'prepare'
+            ? prepareRestart.mock.calls.length === 1
+            : statusRead.mock.calls.length === 1,
+        'restart check pending'
+      )
+      host.dropAllClients()
+      await waitFor(
+        () => (reconnect ? host.welcomeCount >= 2 : !commands.client.connected),
+        reconnect ? 'connection replaced' : 'connection dropped'
+      )
+      if (pendingStage === 'prepare') finishPrepare(prepareRestart.mock.calls[0][0])
+      else
+        finishStatus(
+          makeHostStatus({
+            liveWork: { runs: liveRuns },
+            lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 }
+          })
+        )
+      await pending
+
+      expect(restart).not.toHaveBeenCalled()
+      expect(commands.hostConfirmation).toBeUndefined()
+      expect(commands.hostOperation).toBeUndefined()
+      expect(tuiState(tui).overlay).not.toBe('host')
+      if (pendingStage === 'prepare') expect(statusRead).not.toHaveBeenCalled()
+      feed(input, 'y')
+      await settle()
+      expect(restart).not.toHaveBeenCalled()
+    }
+  )
+
+  it('asks before disconnecting another lease holder even with no live runs', async () => {
+    const { userDataPath } = await setupLeaseHost({
+      hostStatus: () =>
+        makeHostStatus({
+          lifetime: { phase: 'held', holders: 2, implicitHolders: 0, declined: 0 }
+        })
+    })
+    const restart = vi.fn(async () => ({
+      termination: terminationOutcome('identity_unavailable', process.pid)
+    }))
+    const { control } = hostControl({ restart })
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+
+    feed(input, '/host restart\r')
+    await waitFor(
+      () => output.lastFrame.includes('other client will be disconnected'),
+      'other holder confirmation'
+    )
+    expect(restart).not.toHaveBeenCalled()
+    feed(input, 'n')
+    expect(restart).not.toHaveBeenCalled()
+  })
+
+  it('abandons a pending restart check when lease loss closes the connection', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const restart = vi.fn(async () => ({
+      termination: terminationOutcome('identity_unavailable', process.pid)
+    }))
+    const { control } = hostControl({ restart })
+    const { tui } = startTui(userDataPath, {
+      hostControl: control,
+      reconnectBaseDelayMs: 60_000
+    })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+    const commands = tui as unknown as {
+      client: { connected: boolean; getHostStatus(): Promise<HostStatusProjection> }
+      runHostCommand(argument: string): Promise<void>
+      onHostLeaseFailed(error: Error): void
+      hostConfirmation: unknown
+    }
+    let finish!: (status: HostStatusProjection) => void
+    const statusRead = vi.spyOn(commands.client, 'getHostStatus').mockImplementation(
+      () =>
+        new Promise<HostStatusProjection>((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = commands.runHostCommand('restart')
+    await waitFor(() => statusRead.mock.calls.length === 1, 'restart status pending')
+    commands.onHostLeaseFailed(new Error('lease expired'))
+    expect(commands.client.connected).toBe(false)
+    finish(
+      makeHostStatus({
+        liveWork: { runs: 2 },
+        lifetime: { phase: 'held', holders: 2, implicitHolders: 0, declined: 0 }
+      })
+    )
+    await pending
+
+    expect(restart).not.toHaveBeenCalled()
+    expect(commands.hostConfirmation).toBeUndefined()
+    expect(tuiState(tui).overlay).not.toBe('host')
+  })
+
+  it('executes the restart identity captured before confirmation despite later discovery', async () => {
+    const { userDataPath } = await setupLeaseHost({
+      hostStatus: () => makeHostStatus({ liveWork: { runs: 1 } })
+    })
+    const restart = vi.fn(async () => ({
+      termination: terminationOutcome('inconsistent', process.pid)
+    }))
+    const { control } = hostControl({ restart })
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    const client = (
+      tui as unknown as {
+        client: {
+          readonly discoveryProcessIdentity: {
+            pid: number
+            startedAt: string
+          } | null
+        }
+      }
+    ).client
+    const discovery = vi.spyOn(client, 'discoveryProcessIdentity', 'get')
+
+    feed(input, '/host restart\r')
+    await waitFor(
+      () => output.lastFrame.includes('y restarts the Host'),
+      'restart confirmed target shown'
+    )
+    discovery.mockReturnValue({ pid: 777, startedAt: '2026-09-24T00:00:00.000Z' })
+    feed(input, 'y')
+    await waitFor(() => restart.mock.calls.length === 1, 'confirmed target executed')
+    expect(restart).toHaveBeenCalledWith({ pid: process.pid, birthIdentity: null, startedAtMs: 0 })
   })
 
   it('lists Hosts without a scope and arms nothing', async () => {

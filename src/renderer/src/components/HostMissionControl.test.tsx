@@ -237,7 +237,7 @@ describe('HostMissionControl', () => {
         state={state}
         presentation="pane"
         lifecycleControl={{
-          note: 'Runs only while TaskWraith is open',
+          note: 'Independent Host · pid 4242 · up 3h 12m',
           stateLabel: 'Running in this app',
           action: 'stop',
           actionLabel: 'Stop Host',

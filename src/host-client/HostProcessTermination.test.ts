@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { resolveHostExternalLaunch } from '../main/host/HostExternalLaunchResolver'
 import {
   HostProfileAuthorityLease,
   type HostProfileAuthorityProcessPort
@@ -48,6 +49,7 @@ import {
   type HostTerminationPorts,
   type HostTerminationSignal
 } from './HostProcessTermination'
+import { HostShutdownIdentityError, HostShutdownUnsupportedError } from './HostShutdownClient'
 
 const PROFILE = '/profiles/host-termination-p'
 const PID = 4242
@@ -263,19 +265,19 @@ describe('terminateHostProcess', () => {
   })
 
   it('never signals a pid whose identity changed between TERM and KILL', async () => {
-    // Calls: 1 the verify before TERM, 2-5 the four TERM polls (1 s at
-    // 250 ms), 6 the re-verify before KILL — where the pid turns out to
+    // Calls: 1 before the socket stop, 2 the verify before TERM, 3-6 the four
+    // TERM polls (1 s at 250 ms), 7 the re-verify before KILL — where the pid turns out to
     // belong to a process born at another time.
     const run = harness({
-      observe: (call) => (call >= 6 ? live(OTHER, REUSED_START) : live(BORN))
+      observe: (call) => (call >= 7 ? live(OTHER, REUSED_START) : live(BORN))
     })
     const outcome = await terminate({
       profilePath: PROFILE,
       timings: { termMs: 1_000, killMs: 1_000 },
       ports: run.ports
     })
-    // Call 7 observes the pid again to prove each record stale before the sweep.
-    expect(run.observeCalls()).toBe(7)
+    // Call 8 observes the pid again to prove each record stale before the sweep.
+    expect(run.observeCalls()).toBe(8)
     expect(outcome).toMatchObject({ kind: 'pid_reused', detail: 'identity changed before SIGKILL' })
     expect(run.signals.map((entry) => entry.signal)).toEqual(['SIGTERM'])
     expect(run.sweeps).toEqual([REGISTRY_EVIDENCE])
@@ -371,9 +373,10 @@ describe('terminateHostProcess', () => {
     expect(outcome.detail).toBe(
       'a record naming the pid is not contradicted by the process now at it: ' +
         `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)} and the discovery ` +
-        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
-        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
-        'remove those files and stop again'
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is not a TaskWraith Host serving ` +
+        'this profile (`…/host-runtime/cli.js serve … --profile /profiles/host-termination-p …`) ' +
+        'or the TaskWraith app, remove whichever of those files still names pid 4242 and run ' +
+        'stop-all again'
     )
     expect(outcome.steps).toEqual([
       'socket:failed:Host shutdown request timed out',
@@ -385,8 +388,7 @@ describe('terminateHostProcess', () => {
 
     // An observation that fails before the sweep proves nothing: nothing is swept.
     const blind = harness({
-      observe: (call) =>
-        call === 1 ? live(OTHER, REUSED_START) : { state: 'identity_unavailable' }
+      observe: (call) => (call <= 2 ? live(OTHER, REUSED_START) : { state: 'identity_unavailable' })
     })
     await expect(terminate({ profilePath: PROFILE, ports: blind.ports })).resolves.toMatchObject({
       kind: 'pid_reused'
@@ -407,9 +409,10 @@ describe('terminateHostProcess', () => {
     const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
     const refusal =
       'a record naming the pid is not contradicted by the process now at it: ' +
-      `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)}. If pid 4242 is ` +
-      "neither this profile's Host (host-runtime/cli.js serve --profile " +
-      '/profiles/host-termination-p) nor the TaskWraith app, remove that file and stop again'
+      `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)}. If pid 4242 is not ` +
+      'a TaskWraith Host serving this profile (`…/host-runtime/cli.js serve … --profile ' +
+      '/profiles/host-termination-p …`) or the TaskWraith app, and that file still names pid ' +
+      '4242, remove it and run stop-all again'
     expect(outcome).toEqual({
       kind: 'inconsistent',
       pid: PID,
@@ -460,7 +463,7 @@ describe('terminateHostProcess', () => {
     const terminated = harness({
       evidence,
       observe: (call) =>
-        call === 1 ? live(BORN) : call === 2 ? { state: 'dead' } : live(OTHER, REUSED_START)
+        call <= 2 ? live(BORN) : call === 3 ? { state: 'dead' } : live(OTHER, REUSED_START)
     })
     await expect(terminate({ profilePath: PROFILE, ports: terminated.ports })).resolves.toEqual({
       kind: 'terminated',
@@ -507,9 +510,9 @@ describe('terminateHostProcess', () => {
     expect(run.sweeps).toEqual([])
     expect(outcome.detail).toBe(
       'a record naming the pid is not contradicted by the process now at it: the discovery ' +
-        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
-        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
-        'remove that file and stop again'
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is not a TaskWraith Host serving ` +
+        'this profile (`…/host-runtime/cli.js serve … --profile /profiles/host-termination-p …`) ' +
+        'or the TaskWraith app, and that file still names pid 4242, remove it and run stop-all again'
     )
     expect(run.lines.at(-1)).toContain(`inconsistent (${outcome.detail}) after`)
   })
@@ -616,14 +619,53 @@ describe('terminateHostProcess', () => {
     expect(run.sweeps).toEqual([evidence])
   })
 
-  it('sweeps a dead Host without signalling and reports no Host when nothing names one', async () => {
-    const dead = harness({ observe: () => ({ state: 'dead' }) })
-    await expect(terminate({ profilePath: PROFILE, ports: dead.ports })).resolves.toMatchObject({
-      kind: 'already_gone',
-      pid: PID
+  it.each([
+    { name: 'all ownership records', evidence: REGISTRY_EVIDENCE },
+    { name: 'only a lease', evidence: { ...NO_RECORDS, lease: REGISTRY_EVIDENCE.lease } },
+    { name: 'only discovery', evidence: { ...NO_RECORDS, discovery: REGISTRY_EVIDENCE.discovery } }
+  ])('N1: skips the socket and drain when $name names a dead pid', async ({ evidence }) => {
+    const command = vi.fn(() => hostCommand())
+    const dead = harness({
+      evidence,
+      shutdown: async () => 'stopping',
+      observe: () => ({ state: 'dead' }),
+      command
     })
+    const outcome = await terminate({ profilePath: PROFILE, ports: dead.ports })
+    expect(outcome).toMatchObject({ kind: 'already_gone', pid: PID })
+    expect(outcome.steps).toEqual(['observe:dead', 'swept:registry'])
+    expect(dead.budgets).toEqual([])
     expect(dead.signals).toEqual([])
-    expect(dead.sweeps).toEqual([REGISTRY_EVIDENCE])
+    expect(dead.delays).toEqual([])
+    expect(dead.clock()).toBe(0)
+    expect(command).not.toHaveBeenCalled()
+    expect(dead.observeCalls()).toBe(2)
+    expect(dead.sweeps).toEqual([evidence])
+  })
+
+  it.each([{ state: 'identity_unavailable' } as const, live(BORN)])(
+    'N1: does not claim record cleanup after the final observation becomes $state',
+    async (final) => {
+      const dead = harness({ observe: (call) => (call === 1 ? { state: 'dead' } : final) })
+      const sweep = vi.fn(async () => [])
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: { ...dead.ports, sweep }
+      })
+      expect(outcome).toEqual({
+        kind: 'already_gone',
+        pid: PID,
+        steps: ['observe:dead'],
+        swept: []
+      })
+      expect(sweep).toHaveBeenCalledExactlyOnceWith(PROFILE, NO_RECORDS, REGISTRY_ROOT)
+      expect(dead.budgets).toEqual([])
+      expect(dead.signals).toEqual([])
+      expect(dead.delays).toEqual([])
+    }
+  )
+
+  it('reports no Host when nothing names one', async () => {
     const empty = harness({
       evidence: { discovery: null, lease: null, registry: null },
       observe: () => live(BORN)
@@ -781,6 +823,456 @@ describe('terminateHostProcess', () => {
     })
     expect(blind.signals).toEqual([])
     expect(blind.sweeps).toEqual([])
+  })
+})
+
+/**
+ * S1b: `stop-all --payload-root` hands termination the Host each selected
+ * entry names. Termination by profile otherwise acts on whichever Host holds
+ * the profile when it runs, which may be another Host entirely.
+ */
+describe('terminateHostProcess with an expected Host', () => {
+  const EXPECTED = { pid: PID, birthIdentity: BORN }
+  const HOLDER = 5151
+  const HOLDER_BORN = 'c'.repeat(64)
+  const HOLDER_START = Date.parse('2026-09-23T07:00:00.000Z')
+  /** The expected Host's entry, beside the lease and discovery of a Host that took its profile over. */
+  const TAKEN_OVER: HostTerminationEvidence = {
+    discovery: {
+      pid: HOLDER,
+      socketPath: '/tmp/twh2/sock',
+      startedAt: new Date(HOLDER_START + 4_000).toISOString()
+    },
+    lease: {
+      pid: HOLDER,
+      processStartIdentity: HOLDER_BORN,
+      processStartedAt: new Date(HOLDER_START).toISOString(),
+      acquiredAt: new Date(HOLDER_START + 100).toISOString()
+    },
+    registry: REGISTRY_EVIDENCE.registry
+  }
+  const ownEntry: HostTerminationEvidence = { ...NO_RECORDS, registry: REGISTRY_EVIDENCE.registry }
+
+  it.each(['mismatch', 'unavailable'] as const)(
+    'forwards the selected identity and refuses socket identity %s without signals or cleanup',
+    async (reason) => {
+      const run = harness({ observe: () => live(BORN) })
+      const expected = { ...EXPECTED, startedAt: REGISTRY_EVIDENCE.discovery!.startedAt }
+      const shutdown = vi.fn(async () => {
+        throw new HostShutdownIdentityError('socket identity refused', reason, HOLDER)
+      })
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: { ...run.ports, shutdown },
+        expected
+      })
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith(
+        PROFILE,
+        {
+          ackMs: DEFAULT_HOST_TERMINATION_TIMINGS.ackMs,
+          drainMs: DEFAULT_HOST_TERMINATION_TIMINGS.drainMs
+        },
+        expected
+      )
+      expect(outcome).toMatchObject({
+        kind: reason === 'mismatch' ? 'inconsistent' : 'identity_unavailable',
+        pid: PID,
+        heldBy: HOLDER,
+        swept: [],
+        detail: 'socket identity refused'
+      })
+      expect(run.signals).toEqual([])
+      expect(run.sweeps).toEqual([])
+    }
+  )
+
+  it('falls back from explicit legacy status unsupported only after verifying the expected birth and command', async () => {
+    const command = vi.fn(() => hostCommand())
+    const run = harness({
+      shutdown: async () => {
+        throw new HostShutdownUnsupportedError('Host status request is unsupported')
+      },
+      observe: (_call, _clock, signals) => (signals.length ? { state: 'dead' } : live(BORN)),
+      command
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toMatchObject({ kind: 'terminated', pid: PID })
+    expect(command).toHaveBeenCalledTimes(1)
+    expect(run.signals.map(({ pid, signal }) => ({ pid, signal }))).toEqual([
+      { pid: PID, signal: 'SIGTERM' }
+    ])
+    expect(outcome.steps).toContain('verify:match')
+  })
+
+  it.each(['birth', 'command'] as const)(
+    'does not signal a successor whose %s changes after legacy status is unsupported',
+    async (changed) => {
+      const run = harness({
+        shutdown: async () => {
+          throw new HostShutdownUnsupportedError('Host status request is unsupported')
+        },
+        observe: (call) => (changed === 'birth' && call > 1 ? live(OTHER) : live(BORN)),
+        command: () =>
+          changed === 'command' ? hostCommand('/usr/local/bin/node unrelated.js') : hostCommand()
+      })
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: run.ports,
+        expected: EXPECTED
+      })
+      expect(outcome).toMatchObject({
+        kind: changed === 'birth' ? 'inconsistent' : 'not_a_host',
+        pid: PID
+      })
+      expect(run.signals).toEqual([])
+    }
+  )
+
+  it('stops the expected Host as before while the records name it and it is alive', async () => {
+    const run = harness({
+      shutdown: async () => 'stopping',
+      observe: (call) => (call === 1 ? live(BORN) : { state: 'dead' })
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toEqual({
+      kind: 'stopped',
+      pid: PID,
+      steps: ['expected:match', 'socket:stopping', 'swept:registry'],
+      swept: ['registry']
+    })
+    expect(run.budgets).toHaveLength(1)
+    expect(run.sweeps).toEqual([REGISTRY_EVIDENCE])
+  })
+
+  it("never reaches the Host that took a gone Host's profile: no socket stop, no signal, only the gone Host's entry swept", async () => {
+    const run = harness({
+      evidence: TAKEN_OVER,
+      shutdown: async () => 'stopping',
+      observe: (_call, _clock, _signals, pid) =>
+        pid === PID ? { state: 'dead' } : live(HOLDER_BORN, HOLDER_START)
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toEqual({
+      kind: 'already_gone',
+      pid: PID,
+      steps: ['evidence:stale-registry', 'expected:dead', 'swept:registry'],
+      swept: ['registry'],
+      detail: `another Host (pid ${HOLDER}) holds the profile now`,
+      heldBy: HOLDER
+    })
+    expect(run.budgets).toEqual([])
+    expect(run.signals).toEqual([])
+    expect(run.sweeps).toEqual([ownEntry])
+
+    // Control: without an expected Host the same records stop the Host that
+    // holds the profile now, which is what `stop-all --profile` asks for.
+    let asked = false
+    const unscoped = harness({
+      evidence: TAKEN_OVER,
+      shutdown: async () => {
+        asked = true
+        return 'stopping'
+      },
+      observe: (_call, _clock, _signals, pid) =>
+        pid === PID || asked ? { state: 'dead' } : live(HOLDER_BORN, HOLDER_START)
+    })
+    await expect(terminate({ profilePath: PROFILE, ports: unscoped.ports })).resolves.toMatchObject(
+      { kind: 'stopped', pid: HOLDER }
+    )
+    expect(unscoped.budgets).toHaveLength(1)
+  })
+
+  it('sweeps only records naming the expected pid, never a stale record of another Host', async () => {
+    const evidence: HostTerminationEvidence = {
+      ...TAKEN_OVER,
+      discovery: { ...TAKEN_OVER.discovery!, pid: 6161 }
+    }
+    const run = harness({
+      evidence,
+      observe: (_call, _clock, _signals, pid) =>
+        pid === HOLDER ? live(HOLDER_BORN, HOLDER_START) : { state: 'dead' }
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toMatchObject({ kind: 'already_gone', pid: PID, heldBy: HOLDER })
+    expect(outcome.steps.slice(0, 3)).toEqual([
+      'evidence:stale-registry',
+      'evidence:stale-discovery',
+      'expected:dead'
+    ])
+    // The dead pid 6161's discovery is proven stale too, but it is not the expected Host's.
+    expect(run.sweeps).toEqual([ownEntry])
+  })
+
+  it('leaves a process that took both the pid and the profile alone: a reused pid is gone, not stopped', async () => {
+    const evidence: HostTerminationEvidence = {
+      discovery: {
+        pid: PID,
+        socketPath: '/tmp/twh2/sock',
+        startedAt: new Date(REUSED_START + 5_000).toISOString()
+      },
+      lease: { ...REGISTRY_EVIDENCE.lease!, processStartIdentity: OTHER },
+      registry: REGISTRY_EVIDENCE.registry
+    }
+    const run = harness({
+      evidence,
+      shutdown: async () => 'stopping',
+      observe: () => live(OTHER, REUSED_START)
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    // The lease and discovery that survive are the new Host's own: no refusal
+    // offers them to an operator for removal.
+    expect(outcome).toEqual({
+      kind: 'pid_reused',
+      pid: PID,
+      steps: ['evidence:stale-registry', 'expected:mismatch', 'swept:registry'],
+      swept: ['registry'],
+      detail: `another Host (pid ${PID}) holds the profile now`,
+      heldBy: PID
+    })
+    expect(run.budgets).toEqual([])
+    expect(run.signals).toEqual([])
+    expect(run.sweeps).toEqual([ownEntry])
+  })
+
+  it('refuses while the expected Host is alive but the records name another Host, or another birth', async () => {
+    const run = harness({
+      evidence: { ...TAKEN_OVER, registry: null },
+      shutdown: async () => 'stopping',
+      observe: (_call, _clock, _signals, pid) =>
+        pid === PID ? live(BORN) : live(HOLDER_BORN, HOLDER_START)
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toEqual({
+      kind: 'inconsistent',
+      pid: PID,
+      steps: ['expected:match'],
+      swept: [],
+      detail: `the expected Host (pid ${PID}) is still running, but another Host (pid ${HOLDER}) holds the profile now`,
+      heldBy: HOLDER
+    })
+    expect(run.budgets).toEqual([])
+    expect(run.signals).toEqual([])
+    expect(run.sweeps).toEqual([])
+
+    // A legacy lease on the expected pid whose start is a minute off its birth.
+    const start = Date.parse('2026-09-23T05:00:00.000Z')
+    const stale = harness({
+      evidence: {
+        discovery: null,
+        lease: {
+          pid: PID,
+          processStartIdentity: `node:${PID}:172d23b8aef73`,
+          processStartedAt: new Date(start - 60_000).toISOString(),
+          acquiredAt: new Date(start - 59_900).toISOString()
+        },
+        registry: null
+      },
+      shutdown: async () => 'stopping',
+      observe: () => live(BORN, start)
+    })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: stale.ports, expected: EXPECTED })
+    ).resolves.toEqual({
+      kind: 'inconsistent',
+      pid: PID,
+      steps: ['expected:match'],
+      swept: [],
+      detail: `the profile's records name pid ${PID} with another birth than the expected Host`
+    })
+    expect(stale.budgets).toEqual([])
+  })
+
+  it('stops through the socket when the expected Host cannot be observed only while the records carry its birth digest', async () => {
+    const run = harness({
+      shutdown: async () => 'stopping',
+      observe: (call) => (call === 1 ? { state: 'identity_unavailable' } : { state: 'dead' })
+    })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    ).resolves.toEqual({
+      kind: 'stopped',
+      pid: PID,
+      steps: ['expected:unavailable', 'socket:stopping', 'swept:registry'],
+      swept: ['registry']
+    })
+    expect(run.budgets).toHaveLength(1)
+
+    // A legacy lease carries no digest to stand in for the observation.
+    const legacy = harness({
+      evidence: {
+        discovery: REGISTRY_EVIDENCE.discovery,
+        lease: { ...REGISTRY_EVIDENCE.lease!, processStartIdentity: `node:${PID}:172d23b8aef73` },
+        registry: null
+      },
+      shutdown: async () => 'stopping',
+      observe: () => ({ state: 'identity_unavailable' })
+    })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: legacy.ports, expected: EXPECTED })
+    ).resolves.toEqual({
+      kind: 'identity_unavailable',
+      pid: PID,
+      steps: ['expected:unavailable'],
+      swept: [],
+      detail: `the expected Host (pid ${PID}) cannot be observed`
+    })
+    expect(legacy.budgets).toEqual([])
+    expect(legacy.signals).toEqual([])
+  })
+
+  it('refuses an expected Host named without a birth while its pid lives, and sweeps its entry once the pid is dead', async () => {
+    const blindEntry: HostTerminationEvidence = {
+      ...NO_RECORDS,
+      registry: { pid: PID, birthIdentity: null, bootEpoch: null }
+    }
+    const blind = { pid: PID, birthIdentity: null }
+    const living = harness({ evidence: blindEntry, observe: () => live(BORN) })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: living.ports, expected: blind })
+    ).resolves.toEqual({
+      kind: 'unverifiable',
+      pid: PID,
+      steps: ['expected:unverifiable'],
+      swept: [],
+      detail: `the expected Host (pid ${PID}) carries no birth to compare with`
+    })
+    expect(living.signals).toEqual([])
+    expect(living.sweeps).toEqual([])
+
+    const dead = harness({ evidence: blindEntry, observe: () => ({ state: 'dead' }) })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: dead.ports, expected: blind })
+    ).resolves.toEqual({
+      kind: 'already_gone',
+      pid: PID,
+      steps: ['expected:dead', 'swept:registry'],
+      swept: ['registry']
+    })
+    expect(dead.sweeps).toEqual([blindEntry])
+  })
+
+  it("re-checks the expected birth at every later observation: a process born within the lease's 2 s tolerance is never signalled", async () => {
+    // A legacy lease can only be matched by start instant. The expected birth
+    // is exact, so another process born 400 ms later at the same pid is not it.
+    const start = Date.parse('2026-09-23T05:00:00.000Z')
+    const run = harness({
+      evidence: {
+        discovery: {
+          pid: PID,
+          socketPath: '/tmp/twh2/sock',
+          startedAt: new Date(start + 4_000).toISOString()
+        },
+        lease: {
+          pid: PID,
+          processStartIdentity: `node:${PID}:172d23b8aef73`,
+          processStartedAt: new Date(start).toISOString(),
+          acquiredAt: new Date(start + 100).toISOString()
+        },
+        registry: null
+      },
+      observe: (call) => (call === 1 ? live(BORN, start + 100) : live(OTHER, start + 500))
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome.steps.slice(0, 3)).toEqual([
+      'expected:match',
+      'socket:failed:Host shutdown request timed out',
+      'verify:mismatch'
+    ])
+    expect(run.signals).toEqual([])
+  })
+
+  it('reports the expected pid on a refusal that comes before any Host is chosen', async () => {
+    const run = harness({
+      evidence: TAKEN_OVER,
+      observe: (_call, _clock, _signals, pid) =>
+        pid === PID ? live(BORN) : live(HOLDER_BORN, HOLDER_START)
+    })
+    await expect(
+      terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    ).resolves.toEqual({
+      kind: 'inconsistent',
+      pid: PID,
+      steps: ['evidence:inconsistent'],
+      swept: []
+    })
+    expect(run.budgets).toEqual([])
+  })
+})
+
+describe('the reused-pid refusal advice (E1)', () => {
+  /**
+   * The Host command line the advice describes, read the way an operator
+   * reads it: `…` stands for any run of the command line, none at all
+   * included, and the rest is literal.
+   */
+  function describedHostCommand(detail: string): RegExp {
+    const described = /\(`?([^`()]* serve [^`()]*?)`?\)/.exec(detail)?.[1]
+    if (!described) throw new Error(`the advice describes no Host command: ${detail}`)
+    const source = described
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/^…/, '.*')
+      .replace(/ …$/, '(?: .*)?')
+      .replace(/ … /g, ' (?:.* )?')
+    return new RegExp(`^${source}$`)
+  }
+
+  it("describes a Host by the command line every launcher gives it, and no other profile's Host", async () => {
+    const run = harness({
+      evidence: {
+        discovery: null,
+        lease: REGISTRY_EVIDENCE.lease,
+        registry: { pid: PID, birthIdentity: null, bootEpoch: null }
+      },
+      observe: () => live(OTHER, REUSED_START)
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
+    expect(outcome.kind).toBe('inconsistent')
+    const described = describedHostCommand(outcome.detail ?? '')
+
+    const payloadVersion = (): string => `sha256:${'0'.repeat(64)}`
+    const launches = await Promise.all([
+      // The app's external Host, packaged and from a checkout.
+      resolveHostExternalLaunch({
+        profilePath: PROFILE,
+        packaged: true,
+        resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
+        platform: 'darwin',
+        architecture: 'arm64',
+        env: {},
+        pathExists: async () => true,
+        resolvePayloadVersion: payloadVersion
+      }),
+      resolveHostExternalLaunch({
+        profilePath: PROFILE,
+        packaged: false,
+        repoRoot: '/repo',
+        nodeExecutable: '/usr/local/bin/node',
+        isOrdinaryNode: () => true,
+        platform: 'darwin',
+        env: {},
+        pathExists: async () => true,
+        resolvePayloadVersion: payloadVersion
+      })
+    ])
+    // The packaged launcher fixes the mode and passes its caller's options
+    // on, so a Host started through it can carry options after its profile.
+    const launcher = /^exec "\$NODE_BIN" "\$CLI_JS" (serve [^"\n]*)"\$@"$/m.exec(
+      readFileSync(join(process.cwd(), 'build', 'host-launcher', 'taskwraith-host'), 'utf8')
+    )
+    expect(launcher).not.toBeNull()
+    const hosts = [
+      ...launches.map((launch) => [launch!.executable, ...launch!.args].join(' ')),
+      `/opt/tw/node /opt/tw/host/host-runtime/cli.js ${launcher![1]}--profile ${PROFILE} --muse-binary /opt/muse`,
+      HOST_COMMAND
+    ]
+    for (const line of hosts) {
+      expect(isHostServeCommandFor(hostCommand(line), PROFILE, 'darwin')).toBe(true)
+      expect({ line, described: described.test(line) }).toEqual({ line, described: true })
+    }
+    for (const other of [`${PROFILE}-2`, '/profiles/other']) {
+      const line = HOST_COMMAND.replace(PROFILE, other)
+      expect({ line, described: described.test(line) }).toEqual({ line, described: false })
+    }
   })
 })
 

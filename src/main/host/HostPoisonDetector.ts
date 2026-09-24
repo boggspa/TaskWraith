@@ -39,6 +39,7 @@ import {
   type HostStatusProjection
 } from '../../shared/hostProtocol'
 import type { HostProjectionTransportErrorReport } from './HostProjectionBroker'
+import type { HostLifecycleHostIdentity } from '../../shared/hostLifecycle'
 import { HostProjectionClient } from './HostProjectionClient'
 
 export const POISON_WINDOW_MS = 30_000
@@ -67,11 +68,15 @@ export interface HostPoisonDetectorOptions {
   /** What a fresh bind of the Desktop request is granted on this Host now; null when unknown. */
   readonly readReferenceGrant: () => Promise<readonly HostCapability[] | null>
   /** `HostLifecycleController.restart('poison-restart')`. */
-  readonly restart: () => Promise<{ readonly ok: boolean; readonly error?: string }>
+  readonly restart: (
+    expectedHost: HostLifecycleHostIdentity
+  ) => Promise<{ readonly ok: boolean; readonly error?: string }>
   readonly isClosing: () => boolean
   readonly isUpdateRestartPending: () => boolean
   /** The lifecycle's last start failed: nothing restarts in the background then. */
   readonly lastStartFailed: () => boolean
+  /** A stopped or replaced lifecycle must not inherit a deferred restart. */
+  readonly isHostRunning?: () => boolean
   readonly notify: (message: string) => void
   readonly now?: () => number
   readonly delay?: (ms: number) => Promise<void>
@@ -197,6 +202,7 @@ export class HostPoisonDetector {
     if (this.options.isClosing()) return 'the app is quitting'
     if (this.options.isUpdateRestartPending()) return 'an update restart is pending'
     if (this.options.lastStartFailed()) return 'the last Host start failed'
+    if (this.options.isHostRunning?.() === false) return 'the Host is no longer running'
     return null
   }
 
@@ -244,7 +250,17 @@ export class HostPoisonDetector {
         this.log(`[host-poison] restart abandoned: ${stillBlocked}`)
         return
       }
-      const live = (await this.options.readHostStatus())?.liveWork.runs
+      const current = await this.options.readHostStatus()
+      if (
+        !current ||
+        current.pid !== status.pid ||
+        current.startedAt !== status.startedAt ||
+        current.hostId !== status.hostId
+      ) {
+        this.log('[host-poison] restart abandoned: the confirmed Host is no longer current')
+        return
+      }
+      const live = current.liveWork.runs
       if (live === 0) break
       if (this.now() - deferredAt >= POISON_BUSY_CAP_MS) {
         this.log(
@@ -261,7 +277,11 @@ export class HostPoisonDetector {
     }
     this.restarts += 1
     this.lastRestartAt = this.now()
-    const result = await this.options.restart()
+    const result = await this.options.restart({
+      pid: status.pid,
+      startedAt: status.startedAt,
+      hostId: status.hostId
+    })
     this.log(
       result.ok
         ? `[host-poison] restarted the Host (${this.restarts} of ${POISON_RESTARTS_PER_SESSION} this session)`
@@ -282,7 +302,10 @@ export class HostPoisonDetector {
 
 /** The lifecycle surface the detector acts through. */
 export interface HostPoisonLifecycle {
-  restart(reason: 'poison-restart'): Promise<{ readonly ok: boolean; readonly error?: string }>
+  restart(
+    reason: 'poison-restart',
+    expectedHost?: HostLifecycleHostIdentity
+  ): Promise<{ readonly ok: boolean; readonly error?: string }>
   readonly isClosing: boolean
   getSnapshot(): { readonly phase: string; readonly reason: string }
 }
@@ -307,13 +330,14 @@ export function createHostPoisonDetector(input: {
       userDataPath: input.profilePath,
       appVersion: input.appVersion
     }),
-    restart: () => input.lifecycle.restart('poison-restart'),
+    restart: (expectedHost) => input.lifecycle.restart('poison-restart', expectedHost),
     isClosing: () => input.lifecycle.isClosing,
     isUpdateRestartPending: input.isUpdateRestartPending,
     lastStartFailed: () => {
       const snapshot = input.lifecycle.getSnapshot()
       return snapshot.phase === 'failed' && snapshot.reason === 'start-failed'
     },
+    isHostRunning: () => input.lifecycle.getSnapshot().phase === 'running',
     notify: input.notify,
     ...(input.log ? { log: input.log } : {})
   })

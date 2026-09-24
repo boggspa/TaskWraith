@@ -1148,6 +1148,7 @@ function pairedRunRecord(result) {
   const run = result.run
   const evidence = run.evidence && typeof run.evidence === 'object' ? run.evidence : null
   return {
+    cellName: run.cellName == null ? null : run.cellName,
     pairingRole: run.role == null ? null : run.role,
     windowMs: run.windowMs == null ? null : run.windowMs,
     repetitions: run.repetitions == null ? null : run.repetitions,
@@ -1546,6 +1547,8 @@ Options:
   --paired-runs                   Run light-alone then light-beside and emit report.pairs (implies
                                   --windowed-replay; ≥12 min). Requires --cell and --build-id; refuses
                                   --role and --max-replay-events; a single-chat fixture cannot pair
+                                  --cell describes the full beside fixture; alone derives small/1
+                                  with the same path, provider mix and saturation
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1754,10 +1757,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   // whatever the workload happens to produce. Everything downstream
   // (fingerprint, the cell guard, materialize, the lanes, the run-evidence
   // descriptor) then describes the fixture that ACTUALLY replays.
-  // --paired-runs is deliberately unaffected: pairingRole is null there
-  // (refused with --paired-runs), the alone leg runs the same light half by
-  // lane selection, and pairing requires the shared full-fixture
-  // fingerprint — so the single-chat refusal below needs no carve-out.
+  // --paired-runs keeps the full fixture here: pairingRole is null there
+  // (refused with --paired-runs), and --cell names that full beside fixture
+  // for the shape guard and report. The adapter selects the light lane and
+  // derives its small/1 cell while preserving the full-fixture fingerprint.
   const lightAloneDeriver =
     typeof options.lightAloneFixtureDeriver === 'function'
       ? options.lightAloneFixtureDeriver

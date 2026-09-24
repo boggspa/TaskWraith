@@ -276,6 +276,7 @@ function stopAllReport(
       source: 'registry',
       profilePath,
       pid: 900 + index,
+      birthIdentity: 'a'.repeat(64),
       cliPath: null,
       payloadVersion: null,
       startedAt: null,
@@ -309,6 +310,56 @@ it('dispatches stop-all with the parsed scope and returns its exit code', async 
     scope: { kind: 'list' },
     exitCode: 3
   })
+})
+
+it('forwards the paired expected Host through the profile stop and rejects malformed flags before dispatch', async () => {
+  const expected = { pid: 4242, birthIdentity: 'b'.repeat(64) }
+  const stopAll = vi.fn(async (options: HostStopAllOptions) => stopAllReport(options))
+  const write = vi.fn()
+  await expect(
+    runHostStopAllCli(
+      [
+        'stop-all',
+        '--profile',
+        CLI_PROFILE,
+        '--expect-pid',
+        String(expected.pid),
+        '--expect-birth',
+        expected.birthIdentity,
+        '--json'
+      ],
+      { stopAll, write }
+    )
+  ).resolves.toBe(0)
+  expect(stopAll).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      scope: { kind: 'profile', profilePath: CLI_PROFILE },
+      expected,
+      scanArgv: false,
+      sweep: false
+    })
+  )
+  expect(JSON.parse(write.mock.calls[0][0])).toMatchObject({ exitCode: 0 })
+  stopAll.mockClear()
+  write.mockClear()
+  for (const argv of [
+    ['stop-all', '--profile', CLI_PROFILE, '--expect-pid', '4242'],
+    [
+      'stop-all',
+      '--profile',
+      CLI_PROFILE,
+      '--expect-pid',
+      '1e3',
+      '--expect-birth',
+      expected.birthIdentity
+    ],
+    ['stop-all', '--profile', CLI_PROFILE, '--expect-pid', '4242', '--expect-birth', 'legacy'],
+    ['stop-all', '--all', '--expect-pid', '4242', '--expect-birth', expected.birthIdentity]
+  ]) {
+    await expect(runHostStopAllCli(argv, { stopAll, write })).rejects.toThrow()
+  }
+  expect(stopAll).not.toHaveBeenCalled()
+  expect(write).not.toHaveBeenCalled()
 })
 
 it('reports status as a listing that exits 0 and narrows to one profile', async () => {

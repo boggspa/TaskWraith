@@ -45,6 +45,7 @@ function row(
     source: 'registry',
     profilePath,
     pid,
+    birthIdentity: 'a'.repeat(64),
     cliPath: '/payload/host-runtime/cli.js',
     payloadVersion: PAYLOAD,
     startedAt: new Date(0).toISOString(),
@@ -421,6 +422,22 @@ describe('/host lens panels', () => {
     ])
   })
 
+  it('reports an unlisted replacement as refused rather than stopped', () => {
+    const panel = buildStopAllResultPanel(
+      {
+        kind: 'done',
+        results: [{ host: row(OWN, 42), outcome: { ...outcome('already_gone'), heldBy: 777 } }]
+      },
+      OWN
+    )
+
+    expect(panel.hostsHeading).toBe('Stopped 0 of 1; 1 Host refused')
+    expect(panel.hosts?.[0].note).toContain(
+      'replacement pid 777 was not in the plan and keeps running'
+    )
+    expect(panel.hosts?.[0].tone).toBe('error')
+  })
+
   it('asks before a restart that ends live runs, naming how many', () => {
     expect(buildRestartConfirmPanel({ pid: 42, profilePath: OWN, liveRuns: 1 }).prompt).toBe(
       'y restarts the Host and ends 1 live run · any other key cancels'
@@ -432,6 +449,28 @@ describe('/host lens panels', () => {
         { label: 'live runs', value: '3', tone: 'warning' }
       ],
       prompt: 'y restarts the Host and ends 3 live runs · any other key cancels'
+    })
+  })
+
+  it('keeps unavailable restart impact unknown in the confirmation', () => {
+    expect(
+      buildRestartConfirmPanel({
+        pid: 42,
+        profilePath: OWN,
+        liveRuns: null,
+        otherHolders: null
+      })
+    ).toMatchObject({
+      fields: [
+        { label: 'pid', value: '42' },
+        { label: 'profile', value: OWN },
+        { label: 'live runs', value: 'unknown', tone: 'warning' },
+        { label: 'other clients', value: 'unknown', tone: 'warning' }
+      ],
+      notes: expect.arrayContaining([
+        'Host status is unavailable; live runs and other clients could not be checked.'
+      ]),
+      prompt: 'y restarts the Host and may end live runs · any other key cancels'
     })
   })
 })

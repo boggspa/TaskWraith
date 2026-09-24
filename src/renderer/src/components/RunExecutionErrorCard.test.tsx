@@ -209,6 +209,24 @@ describe('RunExecutionErrorCardView', () => {
     expect(html).toContain('Copy details')
   })
 
+  it('labels the restart button with how long the Host lives under leases', () => {
+    const html = renderToStaticMarkup(
+      <RunExecutionErrorCardView
+        description={describeRunError(HOST_ERROR)}
+        hostControl={describeRunErrorHostControl(lifecycle())}
+        hostPrompt={hostActionPrompt('stopped')}
+        onHostAction={() => undefined}
+        onCopy={() => undefined}
+        copied={false}
+      />
+    )
+    expect(html).toContain(
+      'aria-label="Restart Host. The Host runs while TaskWraith or a TUI holds it, and stops about 45 s after the last one leaves, once live work drains."'
+    )
+    // The Host outlives the window now; the no-daemon promise must not come back.
+    expect(html).not.toContain('only while TaskWraith is open')
+  })
+
   it('shows Copied feedback on the copy button', () => {
     const html = renderToStaticMarkup(
       <RunExecutionErrorCardView

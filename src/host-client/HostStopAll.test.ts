@@ -14,7 +14,12 @@ import {
   type HostRegistryListing
 } from '../host-runtime/HostRegistry'
 import type { ProcessBirthObservation } from '../host-runtime/ProcessBirthIdentity'
-import type { HostTerminationEvidence, HostTerminationOutcome } from './HostProcessTermination'
+import {
+  terminateHostProcess,
+  type HostTerminationEvidence,
+  type HostTerminationExpectedHost,
+  type HostTerminationOutcome
+} from './HostProcessTermination'
 import {
   commandServesPayloadRoot,
   formatHostStopAllReport,
@@ -155,7 +160,11 @@ afterEach(() => {
 async function run(
   scope: HostStopAllScope,
   injected: ReturnType<typeof ports>,
-  extra: { readonly scanArgv?: boolean; readonly sweep?: boolean } = {}
+  extra: {
+    readonly scanArgv?: boolean
+    readonly sweep?: boolean
+    readonly expected?: HostTerminationExpectedHost
+  } = {}
 ) {
   return stopAllHosts({ scope, registryRoot: ROOT, platform: 'darwin', ports: injected, ...extra })
 }
@@ -217,6 +226,7 @@ describe('stopAllHosts', () => {
       source: 'profile',
       profilePath: '/profiles/orphan',
       pid: 301,
+      birthIdentity: BORN('f'),
       selected: true
     })
   })
@@ -388,6 +398,14 @@ describe('stopAllHosts', () => {
       'pid_reused',
       'identity_unavailable',
       'unverified'
+    ])
+    // Plan rows carry the recorded identity, including a missing birth; an
+    // observation of the replacement process must never rewrite that target.
+    expect(report.hosts.map((host) => host.birthIdentity)).toEqual([
+      BORN('a'),
+      BORN('b'),
+      BORN('c'),
+      null
     ])
   })
 
@@ -574,6 +592,330 @@ describe('stopAllHosts', () => {
     })
     expect(existsSync(hostRegistryEntryPath(root, inScope))).toBe(false)
     expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
+  })
+
+  it('hands termination the pid and birth each selected entry names under --payload-root, and nothing under --profile or --all (S1b)', async () => {
+    const inputs: Array<Parameters<HostStopAllPorts['terminate']>[0]> = []
+    const injected = ports()
+    injected.terminate = async (input) => {
+      inputs.push(input)
+      return stopped(1)
+    }
+    await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected)
+    expect(inputs).toStrictEqual([
+      {
+        profilePath: '/profiles/dev',
+        registryRoot: ROOT,
+        expected: { pid: 101, birthIdentity: BORN('a') }
+      },
+      {
+        profilePath: '/profiles/verify',
+        registryRoot: ROOT,
+        expected: { pid: 102, birthIdentity: BORN('b') }
+      }
+    ])
+    // --profile and --all stop whichever Host holds each profile now.
+    inputs.length = 0
+    await run({ kind: 'profile', profilePath: '/profiles/verify' }, injected)
+    await run({ kind: 'all' }, injected)
+    expect(inputs).toStrictEqual([
+      { profilePath: '/profiles/verify', registryRoot: ROOT },
+      { profilePath: '/profiles/dev', registryRoot: ROOT },
+      { profilePath: '/profiles/verify', registryRoot: ROOT },
+      { profilePath: '/profiles/app', registryRoot: ROOT }
+    ])
+    inputs.length = 0
+    const expected = { pid: 102, birthIdentity: BORN('b') }
+    await run({ kind: 'profile', profilePath: '/profiles/verify' }, injected, { expected })
+    expect(inputs).toStrictEqual([
+      { profilePath: '/profiles/verify', registryRoot: ROOT, expected }
+    ])
+  })
+
+  it('rejects an expected Host outside profile scope before reading or mutating anything', async () => {
+    const injected = ports()
+    injected.readRegistry = vi.fn(injected.readRegistry)
+    injected.terminate = vi.fn(injected.terminate)
+    for (const scope of [
+      { kind: 'list' },
+      { kind: 'all' },
+      { kind: 'payload-root', payloadRoot: REPO_PAYLOAD }
+    ] as const) {
+      await expect(
+        run(scope, injected, {
+          expected: { pid: 101, birthIdentity: BORN('a') }
+        })
+      ).rejects.toThrow('An expected Host requires profile scope.')
+    }
+    expect(injected.readRegistry).not.toHaveBeenCalled()
+    expect(injected.terminate).not.toHaveBeenCalled()
+  })
+
+  it('does not borrow a successor discovery listener start for an expected fallback plan row', async () => {
+    const injected = ports({
+      entries: [],
+      evidence: () => ({
+        registry: null,
+        lease: null,
+        discovery: {
+          pid: 5151,
+          socketPath: '/tmp/replaced.sock',
+          startedAt: '2026-09-24T01:00:00.000Z'
+        }
+      })
+    })
+    const expected = { pid: 4242, birthIdentity: BORN('e') }
+    const report = await run({ kind: 'profile', profilePath: '/profiles/replaced' }, injected, {
+      expected
+    })
+    expect(report.hosts).toMatchObject([{ ...expected, startedAt: null }])
+  })
+
+  it('reports the expected pid and birth when a profile has already lost every Host record', async () => {
+    const empty = { registry: null, lease: null, discovery: null }
+    const shutdown = vi.fn(async () => 'stopping' as const)
+    const signal = vi.fn()
+    for (const pid of [7, 4242, 98765]) {
+      const expected = { pid, birthIdentity: BORN('e') }
+      const injected = ports({ entries: [], observe: () => ({ state: 'dead' }) })
+      injected.terminate = (input) =>
+        terminateHostProcess({
+          ...input,
+          ports: {
+            readEvidence: () => empty,
+            observe: async () => ({ state: 'dead' }),
+            shutdown,
+            signal,
+            sweep: async () => [],
+            log: () => {}
+          }
+        })
+      const report = await run({ kind: 'profile', profilePath: '/profiles/gone' }, injected, {
+        expected
+      })
+      expect(report.exitCode).toBe(0)
+      expect(report.hosts).toMatchObject([
+        {
+          source: 'profile',
+          profilePath: '/profiles/gone',
+          ...expected,
+          selected: true,
+          outcome: { kind: 'already_gone', pid, swept: [] }
+        }
+      ])
+      expect(report.hosts).toHaveLength(1)
+    }
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(signal).not.toHaveBeenCalled()
+  })
+
+  it('hands termination a scanned Host by its pid and the birth observed while scanning, under --payload-root only (S1b)', async () => {
+    const inputs: Array<Parameters<HostStopAllPorts['terminate']>[0]> = []
+    const injected = ports({
+      entries: [],
+      processes: [{ pid: LEGACY_PID, commandLine: LEGACY_COMMAND }],
+      evidence: () => legacyEvidence()
+    })
+    injected.terminate = async (input) => {
+      inputs.push(input)
+      return stopped(LEGACY_PID)
+    }
+    const report = await run({ kind: 'payload-root', payloadRoot: APP_PAYLOAD }, injected, {
+      scanArgv: true
+    })
+    expect(report.hosts).toMatchObject([{ pid: LEGACY_PID, birthIdentity: BORN('f') }])
+    await run({ kind: 'all' }, injected, { scanArgv: true })
+    expect(inputs).toStrictEqual([
+      {
+        profilePath: LEGACY_PROFILE,
+        registryRoot: ROOT,
+        expected: { pid: LEGACY_PID, birthIdentity: BORN('f') }
+      },
+      { profilePath: LEGACY_PROFILE, registryRoot: ROOT }
+    ])
+  })
+
+  it("under --payload-root notes the Host that took a gone entry's profile, and refuses a listed Host replaced before its stop (S1b)", async () => {
+    const taken: HostTerminationOutcome = {
+      kind: 'already_gone',
+      pid: 101,
+      steps: ['evidence:stale-registry', 'expected:dead', 'swept:registry'],
+      swept: ['registry'],
+      detail: 'another Host (pid 777) holds the profile now',
+      heldBy: 777
+    }
+    const outside = 'another Host (pid 777) holds the profile now, outside this scope'
+    const replaced =
+      'another Host (pid 777) holds the profile now, not the expected one; it was left running'
+    const cases: Array<readonly [HostRegistryEntry, ProcessBirthObservation, string]> = [
+      [DEV, { state: 'dead' }, 'dead'],
+      [DEV, { state: 'live', birthIdentity: BORN('9'), startedAtMs: null }, 'pid_reused'],
+      [DEV, { state: 'live', birthIdentity: BORN('a'), startedAtMs: null }, 'live'],
+      [DEV, { state: 'identity_unavailable' }, 'identity_unavailable'],
+      [
+        { ...DEV, birthIdentity: null },
+        { state: 'live', birthIdentity: BORN('9'), startedAtMs: null },
+        'unverified'
+      ]
+    ]
+    for (const [listed, observation, liveness] of cases) {
+      const injected = ports({ entries: [listed], observe: () => observation })
+      injected.terminate = async () => taken
+      const report = await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected)
+      const gone = liveness === 'dead' || liveness === 'pid_reused'
+      expect(report.hosts).toStrictEqual([
+        expect.objectContaining({
+          liveness,
+          outcome: gone ? taken : { ...taken, kind: 'inconsistent', detail: replaced },
+          note: gone ? outside : replaced
+        })
+      ])
+      expect(report.exitCode).toBe(gone ? 0 : 1)
+      expect(formatHostStopAllReport(report)).toContain(
+        gone ? `-> already_gone · (${outside})` : `-> inconsistent · (${replaced})`
+      )
+    }
+    // Replaced by a Host that was handed the same pid: refused the same way.
+    const reused: HostTerminationOutcome = { ...taken, kind: 'pid_reused', heldBy: 101 }
+    const injected = ports({ entries: [DEV] })
+    injected.terminate = async () => reused
+    const report = await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected)
+    expect(report.exitCode).toBe(1)
+    expect(report.hosts[0]?.outcome).toStrictEqual({
+      ...reused,
+      kind: 'inconsistent',
+      detail:
+        'another Host (pid 101) holds the profile now, not the expected one; it was left running'
+    })
+  })
+
+  it("never stops, signals or sweeps the Host holding a selected entry's profile through verified termination, and --profile still stops it (S1b)", async () => {
+    const holder = 777
+    const evidence: HostTerminationEvidence = {
+      registry: { pid: 101, birthIdentity: BORN('a'), bootEpoch: null },
+      lease: {
+        pid: holder,
+        processStartIdentity: BORN('7'),
+        processStartedAt: '2026-09-23T01:00:00.000Z',
+        acquiredAt: '2026-09-23T01:00:00.100Z'
+      },
+      discovery: {
+        pid: holder,
+        socketPath: '/tmp/twh2-501-x/taskwraith-host-v2.sock',
+        startedAt: '2026-09-23T01:00:04.000Z'
+      }
+    }
+    // The entry's Host (101) is dead by the time termination runs; the
+    // listing saw it dead, or alive a moment before it was replaced.
+    const stop = async (
+      scope: HostStopAllScope,
+      listed: ProcessBirthObservation,
+      expected?: HostTerminationExpectedHost,
+      listedEntry = DEV
+    ) => {
+      const seen = { shutdowns: 0, signals: 0, sweeps: [] as HostTerminationEvidence[] }
+      let clock = 0
+      const report = await stopAllHosts({
+        scope,
+        ...(expected ? { expected } : {}),
+        registryRoot: ROOT,
+        platform: 'darwin',
+        ports: {
+          ...ports({ entries: [listedEntry], observe: () => listed }),
+          terminate: (input) =>
+            terminateHostProcess({
+              ...input,
+              platform: 'darwin',
+              ports: {
+                shutdown: async () => {
+                  seen.shutdowns += 1
+                  return 'stopping'
+                },
+                readEvidence: () => evidence,
+                observe: async (pid) =>
+                  pid === holder && seen.shutdowns === 0
+                    ? { state: 'live', birthIdentity: BORN('7'), startedAtMs: null }
+                    : { state: 'dead' },
+                observeCommand: async () => ({ state: 'dead' }),
+                signal: () => {
+                  seen.signals += 1
+                },
+                sweep: async (_profile, dead) => {
+                  seen.sweeps.push(dead)
+                  return ['registry']
+                },
+                delay: async (ms) => {
+                  clock += ms
+                },
+                now: () => clock
+              }
+            })
+        }
+      })
+      return { report, seen }
+    }
+    const ownEntry = { registry: evidence.registry, lease: null, discovery: null }
+    const payloadRoot: HostStopAllScope = { kind: 'payload-root', payloadRoot: REPO_PAYLOAD }
+
+    const dead = await stop(payloadRoot, { state: 'dead' })
+    expect(dead.report.exitCode).toBe(0)
+    expect(dead.report.hosts).toMatchObject([
+      {
+        pid: 101,
+        liveness: 'dead',
+        outcome: { kind: 'already_gone', pid: 101, heldBy: holder, swept: ['registry'] },
+        note: `another Host (pid ${holder}) holds the profile now, outside this scope`
+      }
+    ])
+    expect(dead.seen).toEqual({ shutdowns: 0, signals: 0, sweeps: [ownEntry] })
+
+    const race = await stop(payloadRoot, {
+      state: 'live',
+      birthIdentity: BORN('a'),
+      startedAtMs: null
+    })
+    expect(race.report.exitCode).toBe(1)
+    expect(race.report.hosts).toMatchObject([
+      {
+        pid: 101,
+        liveness: 'live',
+        outcome: {
+          kind: 'inconsistent',
+          pid: 101,
+          heldBy: holder,
+          detail: `another Host (pid ${holder}) holds the profile now, not the expected one; it was left running`
+        }
+      }
+    ])
+    expect(race.seen).toEqual({ shutdowns: 0, signals: 0, sweeps: [ownEntry] })
+
+    // Explicit expected identity binds --profile too, even when the registry
+    // already lists the replacement before this invocation begins.
+    for (const listedEntry of [DEV, { ...DEV, pid: holder, birthIdentity: BORN('7') }]) {
+      const guarded = await stop(
+        { kind: 'profile', profilePath: '/profiles/dev' },
+        { state: 'dead' },
+        { pid: 101, birthIdentity: BORN('a') },
+        listedEntry
+      )
+      expect(guarded.report.exitCode).toBe(1)
+      expect(guarded.report.hosts).toMatchObject([
+        {
+          pid: 101,
+          birthIdentity: BORN('a'),
+          outcome: { kind: 'inconsistent', pid: 101, heldBy: holder }
+        }
+      ])
+      expect(guarded.seen).toEqual({ shutdowns: 0, signals: 0, sweeps: [ownEntry] })
+    }
+
+    // Control: --profile stops whichever Host holds the profile, here the holder.
+    const profile = await stop({ kind: 'profile', profilePath: '/profiles/dev' }, { state: 'dead' })
+    expect(profile.report.exitCode).toBe(0)
+    expect(profile.report.hosts).toMatchObject([
+      { pid: 101, outcome: { kind: 'stopped', pid: holder } }
+    ])
+    expect(profile.seen.shutdowns).toBe(1)
   })
 })
 

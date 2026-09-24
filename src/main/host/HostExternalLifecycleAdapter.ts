@@ -1,11 +1,15 @@
 import { isAbsolute, parse, resolve } from 'node:path'
 
 import {
+  HOST_TERMINATION_ACK_MS,
+  HOST_TERMINATION_DRAIN_MS,
   HOST_TERMINATION_SUCCESS_KINDS,
   terminateHostProcess,
+  type HostTerminationExpectedHost,
   type HostTerminationOutcome
 } from '../../host-client/HostProcessTermination'
-import { HostShutdownClient } from '../../host-client/HostShutdownClient'
+import { HostShutdownClient, HostShutdownIdentityError } from '../../host-client/HostShutdownClient'
+import { canonicalHostProfilePath } from '../../host-runtime/HostRegistry'
 import type { HostLifecycleHostIdentity } from '../../shared/hostLifecycle'
 import type { HostHealthProjection } from '../../shared/hostProtocol'
 import type { HostLifecycleSupervisor } from './HostLifecycleController'
@@ -15,7 +19,10 @@ export interface HostExternalLifecycleAdapterOptions {
   readonly profilePath: string
   readonly supervisor: HostExternalSupervisor
   readonly preparedResult?: HostExternalEnsureResult
-  readonly createShutdownClient?: (profilePath: string) => Pick<HostShutdownClient, 'shutdown'>
+  readonly createShutdownClient?: (
+    profilePath: string,
+    expected?: HostTerminationExpectedHost
+  ) => Pick<HostShutdownClient, 'shutdown'>
   /**
    * Verified termination (D9) when the authenticated stop fails: identity is
    * re-checked before TERM and again before KILL, and an unverifiable Host is
@@ -24,7 +31,8 @@ export interface HostExternalLifecycleAdapterOptions {
    */
   readonly terminate?: (
     profilePath: string,
-    cause: unknown
+    cause: unknown,
+    expected?: HostTerminationExpectedHost
   ) => Promise<Pick<HostTerminationOutcome, 'kind' | 'pid' | 'detail'>>
 }
 
@@ -44,10 +52,12 @@ function sameHost(
 
 async function defaultTerminate(
   profilePath: string,
-  cause: unknown
+  cause: unknown,
+  expected?: HostTerminationExpectedHost
 ): Promise<HostTerminationOutcome> {
   return terminateHostProcess({
     profilePath,
+    expected,
     ports: {
       shutdown: async () => {
         throw cause instanceof Error ? cause : new Error(String(cause))
@@ -80,7 +90,13 @@ export function createHostExternalLifecycleAdapter(
   }
   const createShutdownClient =
     options.createShutdownClient ??
-    ((profilePath: string) => new HostShutdownClient({ profilePath }))
+    ((profilePath: string, expected?: HostTerminationExpectedHost) =>
+      new HostShutdownClient({
+        profilePath: canonicalHostProfilePath(profilePath),
+        expected,
+        timeoutMs: HOST_TERMINATION_ACK_MS,
+        removalTimeoutMs: HOST_TERMINATION_DRAIN_MS
+      }))
   const terminate = options.terminate ?? defaultTerminate
   let preparedResult = options.preparedResult ?? null
   let activeResult: HostExternalEnsureResult | null = null
@@ -106,11 +122,25 @@ export function createHostExternalLifecycleAdapter(
 
   /** The socket stop, then (D9) verified termination when the socket path fails. */
   const stopHost = async (): Promise<void> => {
+    const host = activeResult?.host
+    const expected: HostTerminationExpectedHost | undefined = host
+      ? { pid: host.pid, birthIdentity: host.birthIdentity ?? null, startedAt: host.startedAt }
+      : undefined
     try {
-      await createShutdownClient(options.profilePath).shutdown()
+      await createShutdownClient(options.profilePath, expected).shutdown()
       return
     } catch (shutdownError) {
-      const outcome = await terminate(options.profilePath, shutdownError)
+      if (shutdownError instanceof HostShutdownIdentityError) throw shutdownError
+      if (host && !expected?.birthIdentity) {
+        // Current records cannot recover the birth of an earlier attachment:
+        // its pid may already name a successor with the old discovery still present.
+        throw new HostShutdownIdentityError(
+          'Attached Host birth was not captured; verified signal fallback is unavailable',
+          'unavailable',
+          host.pid
+        )
+      }
+      const outcome = await terminate(options.profilePath, shutdownError, expected)
       if (HOST_TERMINATION_SUCCESS_KINDS.has(outcome.kind)) return
       throw new Error(
         `Host did not stop: ${describe(shutdownError)}; verified termination ended ${

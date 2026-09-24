@@ -232,6 +232,9 @@ function hostRow(
   if (host.source !== 'registry') notes.push(`from ${host.source}`)
   if (outcome) {
     notes.push(outcome.detail ? `${outcome.kind} (${outcome.detail})` : outcome.kind)
+    if (outcome.heldBy !== undefined) {
+      notes.push(`replacement pid ${outcome.heldBy} was not in the plan and keeps running`)
+    }
   } else if (host.liveness !== 'live') {
     notes.push(host.liveness === 'identity_unavailable' ? 'identity unavailable' : host.liveness)
   }
@@ -245,9 +248,10 @@ function hostRow(
     ...(notes.length ? { note: notes.join(' · ') } : {}),
     ...(outcome
       ? {
-          tone: HOST_TERMINATION_SUCCESS_KINDS.has(outcome.kind)
-            ? ('good' as const)
-            : ('error' as const)
+          tone:
+            outcome.heldBy === undefined && HOST_TERMINATION_SUCCESS_KINDS.has(outcome.kind)
+              ? ('good' as const)
+              : ('error' as const)
         }
       : host.liveness === 'live'
         ? {}
@@ -333,8 +337,9 @@ export function buildStopAllResultPanel(
       hint: 'Run /host stop-all again to see the current Hosts.'
     }
   }
-  const stopped = outcome.results.filter((result) =>
-    HOST_TERMINATION_SUCCESS_KINDS.has(result.outcome.kind)
+  const stopped = outcome.results.filter(
+    (result) =>
+      result.outcome.heldBy === undefined && HOST_TERMINATION_SUCCESS_KINDS.has(result.outcome.kind)
   )
   const refused = outcome.results.length - stopped.length
   return {
@@ -353,17 +358,44 @@ export function buildStopAllResultPanel(
 export function buildRestartConfirmPanel(input: {
   readonly pid: number | null
   readonly profilePath: string
-  readonly liveRuns: number
+  readonly liveRuns: number | null
+  readonly otherHolders?: number | null
 }): TuiHostPanel {
   return {
     title: 'Restart Host',
     fields: [
       { label: 'pid', value: input.pid === null ? 'unknown' : String(input.pid) },
       { label: 'profile', value: input.profilePath },
-      { label: 'live runs', value: String(input.liveRuns), tone: 'warning' }
+      {
+        label: 'live runs',
+        value: input.liveRuns === null ? 'unknown' : String(input.liveRuns),
+        tone: 'warning'
+      },
+      ...(input.otherHolders === null || input.otherHolders
+        ? [
+            {
+              label: 'other clients',
+              value: input.otherHolders === null ? 'unknown' : String(input.otherHolders),
+              tone: 'warning' as const
+            }
+          ]
+        : [])
     ],
-    notes: ['Restarting stops the Host now; its live runs end with it.'],
-    prompt: `y restarts the Host and ends ${plural(input.liveRuns, 'live run')} · any other key cancels`,
+    notes: [
+      'Restarting stops the Host now; its live runs end with it.',
+      ...(input.liveRuns === null || input.otherHolders === null
+        ? ['Host status is unavailable; live runs and other clients could not be checked.']
+        : []),
+      ...(input.otherHolders
+        ? [`${plural(input.otherHolders, 'other client')} will be disconnected.`]
+        : [])
+    ],
+    prompt:
+      input.liveRuns === null
+        ? 'y restarts the Host and may end live runs · any other key cancels'
+        : input.liveRuns
+          ? `y restarts the Host and ends ${plural(input.liveRuns, 'live run')} · any other key cancels`
+          : 'y restarts the Host and disconnects other clients · any other key cancels',
     hint: 'Nothing is restarted unless you press y.'
   }
 }

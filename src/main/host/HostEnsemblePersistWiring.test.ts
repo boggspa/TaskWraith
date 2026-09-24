@@ -470,6 +470,54 @@ describe('HostEnsemblePersistWiring', () => {
     utimesSync(chatPath, later, later)
     expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
   })
+  it.each(['acknowledged', 'host_unavailable', 'revision_conflict'] as const)(
+    'waits for the only durable Host copy after journal failure: %s',
+    async (outcome) => {
+      const { AppStore, profilePath, persistPort, enqueued } = await importStoreWithHostOwnedGate()
+      const chatId = 'chat-dispatch-journal-failure'
+      const previous = { ...ensembleChatRecord(chatId), persistenceRevision: 3 }
+      mkdirSync(join(profilePath, 'chats'), { recursive: true })
+      writeFileSync(join(profilePath, 'chats', `${chatId}.json`), JSON.stringify(previous))
+      mkdirSync(join(profilePath, 'chat-journal-v2', `${chatId}.mutations.jsonl`), {
+        recursive: true
+      })
+      let finish!: (error?: Error) => void
+      const drain = new Promise<void>((resolve, reject) => {
+        finish = (error) => (error ? reject(error) : resolve())
+      })
+      persistPort.drain.mockImplementation(() => drain)
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        AppStore.saveChat({ ...previous, title: 'Not yet durable' } as never)
+        expect(enqueued).toHaveLength(1)
+        expect(enqueued[0].record.title).toBe('Not yet durable')
+        let settled = false
+        const dispatch = AppStore.awaitChatRecordDispatchDurable(chatId).then(
+          () => {
+            settled = true
+            return null
+          },
+          (error: unknown) => {
+            settled = true
+            return error
+          }
+        )
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        expect(settled).toBe(false)
+        const failure =
+          outcome === 'acknowledged'
+            ? undefined
+            : new HostThreadRecordPersistError(outcome, 'The fallback did not land.')
+        finish(failure)
+        expect(await dispatch).toBe(failure ?? null)
+        expect(persistPort.drain).toHaveBeenCalledWith(chatId)
+      } finally {
+        finish()
+        consoleError.mockRestore()
+      }
+    }
+  )
+
   it('releases dispatch on journal durability while the Host write is still draining', async () => {
     const { AppStore, persistPort, enqueued } = await importStoreWithHostOwnedGate()
     const chatId = 'chat-dispatch-durable'

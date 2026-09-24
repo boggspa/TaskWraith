@@ -1444,8 +1444,10 @@ function canonicalWorkspaceIdentity(inputPath: string): string {
  * two same-run admissions gives them different objects, and same-owner leases
  * never conflict, so only the shared location keeps them serial. The object
  * key is derived exactly as before, so a record an older build holds still
- * blocks this build on the same object. Every caller acquires the sorted set
- * at once, which keeps one global acquisition order.
+ * blocks this build on the same object. Each call acquires its sorted set at
+ * once, so any two calls take the keys they share in the same order.
+ * (`SharedWorkspaceActions` takes two sets, under separate owners, with
+ * disjoint keys and a deadline.)
  */
 export function mutationFencePartitionKeys(
   claims: readonly CanonicalWorkspaceLockClaim[]

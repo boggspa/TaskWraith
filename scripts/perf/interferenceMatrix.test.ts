@@ -209,6 +209,116 @@ describe('paired interference evidence', () => {
   })
 })
 
+describe('derived light-alone cell pairing', () => {
+  const besideName = 'large/2/warm/codex_profiles_solo_ensemble_mesh/none'
+  const aloneName = 'small/1/warm/codex_profiles_solo_ensemble_mesh/none'
+  const aloneRun = () => run('light-alone', { cellName: aloneName })
+  const besideRun = (overrides: Record<string, unknown> = {}) =>
+    run('light-beside', { cellName: besideName, ...overrides })
+
+  it('keys the pair and its report by beside while retaining each exact role cell', () => {
+    const besideCell = enumerateMatrixCells().find(
+      (cell: { name: string }) => cell.name === besideName
+    )
+    expect(lightAloneCellFor(besideCell).name).toBe(aloneName)
+    const pairing = pairRuns(aloneRun(), besideRun())
+    expect(pairing.ok).toBe(true)
+    expect(pairing.pair.cellName).toBe(besideName)
+    expect(pairing.pair.lightAlone.cellName).toBe(aloneName)
+    expect(pairing.pair.lightBeside.cellName).toBe(besideName)
+    const report = createInterferenceReport({
+      environment: environment().value,
+      cells: [besideCell],
+      pairs: [pairing.pair]
+    })
+    expect(validateInterferenceReport(report)).toEqual({ ok: true, errors: [] })
+    report.pairs[0].cellName = aloneName
+    expect(validateInterferenceReport(report).ok).toBe(false)
+  })
+
+  it.each([
+    'large/1/warm/codex_profiles_solo_ensemble_mesh/none',
+    'small/2/warm/codex_profiles_solo_ensemble_mesh/none',
+    'small/1/cold/codex_profiles_solo_ensemble_mesh/none',
+    'small/1/warm/codex_bridge_disabled/none',
+    'small/1/warm/codex_profiles_solo_ensemble_mesh/ensemble_pool_30_join',
+    'small/01/warm/codex_profiles_solo_ensemble_mesh/none'
+  ])('refuses a different alone cell: %s', (cellName) => {
+    const pairing = pairRuns(run('light-alone', { cellName }), besideRun())
+    expect(pairing.ok).toBe(false)
+    expect(pairing.reasons.join(' ')).toContain('cell')
+  })
+
+  it('refuses a noncanonical beside cell and the reversed cell assignment', () => {
+    expect(
+      pairRuns(aloneRun(), besideRun({ cellName: besideName.replace('/2/', '/02/') })).ok
+    ).toBe(false)
+    expect(
+      pairRuns(run('light-alone', { cellName: besideName }), besideRun({ cellName: aloneName })).ok
+    ).toBe(false)
+  })
+
+  it.each([
+    { fixtureVersions: { fixture: 2, schedule: 2 } },
+    { fixtureVersions: {} },
+    { fixtureFingerprint: 'different' },
+    { workload: 'different-workload' },
+    { seed: 43 },
+    { buildId: 'different-build' },
+    { windowMs: 60_000 },
+    { repetitions: 2 },
+    { signals: { differentSignal: { count: 3, p50: 10, p95: 20, p99: 30 } } }
+  ])('keeps the identity and signal comparisons for derived cells: %j', (change) => {
+    expect(pairRuns(aloneRun(), besideRun(change)).ok).toBe(false)
+  })
+
+  it('still requires the same identified light population', () => {
+    const changed = besideRun()
+    changed.evidence.lightChatId = 'other-light'
+    changed.evidence.populations = changed.evidence.populations.map((population) =>
+      population.role === 'light' ? { ...population, chatId: 'other-light' } : population
+    )
+    for (const window of changed.evidence.windows) {
+      window.lanes = window.lanes.map((lane) =>
+        lane.role === 'light' ? { ...lane, chatId: 'other-light' } : lane
+      )
+    }
+    const pairing = pairRuns(aloneRun(), changed)
+    expect(pairing.ok).toBe(false)
+    expect(pairing.reasons).toContain(
+      'paired runs must measure the same identified light population'
+    )
+  })
+
+  it('still compares the light replay basis', () => {
+    const changed = besideRun()
+    changed.evidence.populations = changed.evidence.populations.map((population) =>
+      population.role === 'light'
+        ? {
+            ...population,
+            replay: { basis: 'seeded_tail', seededRecordBytes: SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES }
+          }
+        : population
+    )
+    const pairing = pairRuns(aloneRun(), changed)
+    expect(pairing.ok).toBe(false)
+    expect(pairing.reasons.join(' ')).toContain('paired light replay bases differ')
+  })
+
+  it('still compares light coverage within each repetition', () => {
+    const changed = besideRun()
+    const light = changed.evidence.windows[0].lanes[0]
+    light.plannedEvents = 2
+    light.startedEvents = 2
+    light.completedEvents = 2
+    light.measuredSamples = 2
+    changed.signals.roundStartMs.count = 4
+    const pairing = pairRuns(aloneRun(), changed)
+    expect(pairing.ok).toBe(false)
+    expect(pairing.reasons).toContain('paired light coverage differs in repetition 0')
+  })
+})
+
 describe('standalone interferenceReport', () => {
   it('validates its own environment, cells and recomputable pairs', () => {
     const cells = enumerateMatrixCells()

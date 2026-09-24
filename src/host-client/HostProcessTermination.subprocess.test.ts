@@ -1,5 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -14,6 +22,7 @@ import {
 import {
   listProcessCommandLines,
   observeProcessBirthIdentity,
+  observeProcessCommandLine,
   type ProcessBirthObservation
 } from '../host-runtime/ProcessBirthIdentity'
 import {
@@ -23,6 +32,7 @@ import {
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
 import { terminateHostProcess, type HostTerminationTimings } from './HostProcessTermination'
+import { HostShutdownClient } from './HostShutdownClient'
 import { stopAllHosts } from './HostStopAll'
 
 /**
@@ -45,7 +55,7 @@ const FAST: Partial<HostTerminationTimings> = {
   exitMs: 400
 }
 
-/** A stand-in Host: binds the profile's socket, never answers, optionally ignores SIGTERM. */
+/** A stand-in Host: binds the socket, optionally answers authenticated lifecycle/status requests. */
 const FAKE_HOST_SOURCE = `'use strict'
 const fs = require('node:fs')
 const net = require('node:net')
@@ -53,7 +63,46 @@ const path = require('node:path')
 const socketPath = process.env.FAKE_HOST_SOCKET
 fs.mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 })
 try { fs.unlinkSync(socketPath) } catch {}
-const server = net.createServer(() => {})
+const startedAt = new Date().toISOString()
+const server = net.createServer((socket) => {
+  if (process.env.FAKE_HOST_AUTH !== '1') return
+  let buffer = ''
+  let authenticated = false
+  const send = (frame) => socket.write(JSON.stringify({ transportVersion: 1, ...frame }) + '\\n')
+  socket.on('data', (chunk) => {
+    buffer += String(chunk)
+    let newline
+    while ((newline = buffer.indexOf('\\n')) >= 0) {
+      const frame = JSON.parse(buffer.slice(0, newline)); buffer = buffer.slice(newline + 1)
+      if (frame.type === 'hello' && frame.token === '7'.repeat(64)) {
+        authenticated = true
+        send({ type: 'welcome', welcome: {
+          type: 'host.welcome', protocolVersion: 2, projectionVersion: 2,
+          controlProtocolCompat: 1, hostId: 'fake-host', hostVersion: 'node-host-v1',
+          sessionId: 'session-1', generation: 1, cursor: 0, freshness: 'live',
+          authenticatedClient: frame.hello.client,
+          capabilities: process.env.FAKE_HOST_LEGACY === 'missing-health'
+            ? ['bootstrap', 'host-lifecycle'] : ['bootstrap', 'host-lifecycle', 'health']
+        } })
+      } else if (authenticated && frame.kind === 'host.status') {
+        if (process.env.FAKE_HOST_LEGACY === 'unsupported-status') {
+          send({ type: 'response', id: frame.id, ok: false, error: { code: 'unknown_request_kind' } })
+          continue
+        }
+        send({ type: 'response', id: frame.id, ok: true, result: { kind: 'host.status', status: {
+          pid: process.pid, startedAt, uptimeMs: 0, hostId: 'fake-host',
+          profilePath: process.env.FAKE_HOST_PROFILE, persist: true,
+          lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 },
+          liveWork: { runs: 0 }, clients: []
+        } } })
+      } else if (authenticated && frame.kind === 'host.shutdown') {
+        fs.writeFileSync(process.env.FAKE_HOST_SHUTDOWN_RECORD, 'shutdown received\\n')
+        send({ type: 'response', id: frame.id, ok: true, result: { kind: 'host.shutdown', state: 'stopping' } })
+        setImmediate(() => process.exit(0))
+      }
+    }
+  })
+})
 if (process.env.FAKE_HOST_TERM === 'ignore') process.on('SIGTERM', () => {})
 else process.on('SIGTERM', () => { server.close(); process.exit(0) })
 server.listen(socketPath, () => process.stdout.write('ready\\n'))
@@ -117,7 +166,8 @@ function payloadCli(base: string): string {
 async function startFakeHost(
   base: string,
   profile: string,
-  term: 'exit' | 'ignore'
+  term: 'exit' | 'ignore',
+  authenticated: boolean | 'missing-health' | 'unsupported-status' = false
 ): Promise<Tracked> {
   const socketPath = taskWraithHostSocketPath(profile)
   temporary.push(dirname(socketPath))
@@ -125,7 +175,15 @@ async function startFakeHost(
     process.execPath,
     [payloadCli(base), 'serve', '--mode', 'production', '--profile', profile],
     {
-      env: { ...process.env, FAKE_HOST_SOCKET: socketPath, FAKE_HOST_TERM: term },
+      env: {
+        ...process.env,
+        FAKE_HOST_SOCKET: socketPath,
+        FAKE_HOST_TERM: term,
+        FAKE_HOST_AUTH: authenticated ? '1' : '0',
+        FAKE_HOST_LEGACY: typeof authenticated === 'string' ? authenticated : '',
+        FAKE_HOST_PROFILE: profile,
+        FAKE_HOST_SHUTDOWN_RECORD: join(base, 'shutdown-observed')
+      },
       stdio: ['ignore', 'pipe', 'ignore']
     }
   )
@@ -281,6 +339,31 @@ function publishRegistryEntry(
   })
 }
 
+/**
+ * `successor` takes the profile over from `dead` the way a starting Host
+ * does: it reclaims the dead owner's authority lease, recording its birth as
+ * a digest (a current build) or a nonce (a build from before birth identity).
+ */
+function takeOverProfile(
+  profile: string,
+  dead: Tracked,
+  successor: Tracked,
+  build: 'current' | 'legacy'
+): void {
+  HostProfileAuthorityLease.acquire({
+    profilePath: profile,
+    processPort: {
+      current: {
+        pid: successor.pid,
+        processStartIdentity:
+          build === 'current' ? successor.birth.birthIdentity : `node:${successor.pid}:5e1b`,
+        processStartedAt: new Date(successor.birth.startedAtMs ?? Date.now()).toISOString()
+      },
+      inspectOwner: (owner) => (owner.pid === dead.pid ? 'stale' : 'unknown')
+    }
+  })
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -290,7 +373,167 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * The Host command line a refusal's advice describes, read the way an
+ * operator reads it: `…` stands for any run of the command line, none at all
+ * included, and the rest is literal.
+ */
+function describedHostCommand(detail: string): RegExp {
+  const described = /\(`?([^`()]* serve [^`()]*?)`?\)/.exec(detail)?.[1]
+  if (!described) throw new Error(`the advice describes no Host command: ${detail}`)
+  const source = described
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/^…/, '.*')
+    .replace(/ …$/, '(?: .*)?')
+    .replace(/ … /g, ' (?:.* )?')
+  return new RegExp(`^${source}$`)
+}
+
+/** The pid a record file names now, or null when it names none. */
+function recordPid(file: string): number | null {
+  try {
+    const { pid } = JSON.parse(readFileSync(file, 'utf8')) as { readonly pid?: unknown }
+    return typeof pid === 'number' ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * An operator who follows a reused-pid refusal to the letter. Unless pid N
+ * runs the Host command the advice describes (no process in this suite is
+ * the TaskWraith app), each file it names is removed, only while that file
+ * still names pid N when the advice says so, and the stop is run again once
+ * any was. The command line observed is only compared, never printed.
+ */
+async function followRefusalAdvice<T>(
+  detail: string,
+  stopAgain: () => Promise<T>
+): Promise<{ readonly removed: readonly string[]; readonly again: T | null }> {
+  const pid = Number(/If pid (\d+) is /.exec(detail)?.[1])
+  if (!Number.isSafeInteger(pid)) throw new Error(`the advice names no pid: ${detail}`)
+  const command = await observeProcessCommandLine(pid)
+  if (command.state === 'live' && describedHostCommand(detail).test(command.commandLine)) {
+    return { removed: [], again: null }
+  }
+  const whileNaming = detail.includes(`still names pid ${pid}`)
+  const named = [
+    ...detail.matchAll(/the (?:registry entry|authority lease|discovery) (\/\S+?)(?=\.? )/g)
+  ].map((match) => match[1])
+  if (!named.length) throw new Error(`the advice names no file: ${detail}`)
+  const removed = named.filter((file) => !whileNaming || recordPid(file) === pid)
+  for (const file of removed) rmSync(file)
+  return { removed, again: removed.length ? await stopAgain() : null }
+}
+
 describe.skipIf(process.platform === 'win32')('verified termination against real processes', () => {
+  it.each(['lease-only', 'all records'] as const)(
+    'N1: skips shutdown and cleans a dead Host with %s without a drain wait',
+    async (records) => {
+      const base = scratch('host-dead-fast-')
+      const profile = scratch('host-dead-fast-profile-')
+      const root = join(base, 'hosts')
+      const host = await startFakeHost(base, profile, 'ignore')
+      publishArtefacts(profile, root, host)
+      process.kill(host.pid, 'SIGKILL')
+      await host.exited
+      if (records === 'lease-only') {
+        rmSync(taskWraithHostDiscoveryPath(profile))
+        rmSync(taskWraithHostTokenPath(profile))
+        rmSync(hostRegistryEntryPath(root, profile))
+      }
+      expect(existsSync(taskWraithHostAuthorityLeasePath(profile))).toBe(true)
+      const operations: string[] = []
+      const outcome = await terminateHostProcess({
+        profilePath: profile,
+        registryRoot: root,
+        ports: {
+          shutdown: async () => {
+            operations.push('shutdown')
+            throw new Error('a dead Host must not enter the socket drain')
+          },
+          signal: () => {
+            operations.push('signal')
+          },
+          delay: async () => {
+            operations.push('delay')
+          }
+        }
+      })
+      expect(outcome).toMatchObject({ kind: 'already_gone', pid: host.pid })
+      expect(outcome.steps[0]).toBe('observe:dead')
+      expect(operations).toEqual([])
+      expect(outcome.swept).toEqual([
+        ...(records === 'all records' ? ['registry', 'discovery', 'token'] : []),
+        'lease',
+        'socket',
+        'socket-directory'
+      ])
+      expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
+      expect(readHostRegistryEntry(root, profile).kind).toBe('missing')
+      expect(existsSync(dirname(taskWraithHostSocketPath(profile)))).toBe(false)
+    },
+    30_000
+  )
+
+  it('N1: a successor that takes the profile during the dead-pid observation keeps its socket and every record', async () => {
+    const base = scratch('host-dead-swap-a-')
+    const other = scratch('host-dead-swap-b-')
+    const profile = scratch('host-dead-swap-profile-')
+    const root = join(base, 'hosts')
+    const hostA = await startFakeHost(base, profile, 'ignore')
+    publishArtefacts(profile, root, hostA)
+    process.kill(hostA.pid, 'SIGKILL')
+    await hostA.exited
+    let hostB: Tracked | undefined
+    const operations: string[] = []
+    const outcome = await terminateHostProcess({
+      profilePath: profile,
+      registryRoot: root,
+      timings: FAST,
+      ports: {
+        observe: async (pid) => {
+          const observed = await observeProcessBirthIdentity(pid)
+          if (!hostB && pid === hostA.pid && observed.state === 'dead') {
+            hostB = await startFakeHost(other, profile, 'exit', true)
+            takeOverProfile(profile, hostA, hostB, 'current')
+            publishDiscovery(profile, hostB)
+            publishRegistryEntry(profile, root, hostB)
+          }
+          return observed
+        },
+        shutdown: async (selectedProfile, budgets, expected) => {
+          operations.push('shutdown')
+          return new HostShutdownClient({
+            profilePath: selectedProfile,
+            expected,
+            timeoutMs: budgets.ackMs,
+            removalTimeoutMs: budgets.drainMs
+          }).shutdown()
+        },
+        signal: () => {
+          operations.push('signal')
+        }
+      }
+    })
+    expect(hostB).toBeDefined()
+    expect(outcome).toEqual({
+      kind: 'already_gone',
+      pid: hostA.pid,
+      steps: ['observe:dead'],
+      swept: []
+    })
+    expect(operations).toEqual([])
+    expect(alive(hostB!.pid)).toBe(true)
+    expect(existsSync(join(other, 'shutdown-observed'))).toBe(false)
+    expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+    expect(recordPid(taskWraithHostDiscoveryPath(profile))).toBe(hostB!.pid)
+    expect(recordPid(taskWraithHostAuthorityLeasePath(profile))).toBe(hostB!.pid)
+    expect(recordPid(hostRegistryEntryPath(root, profile))).toBe(hostB!.pid)
+    expect(existsSync(taskWraithHostSocketPath(profile))).toBe(true)
+    expect(contenderAcquires(profile)).toBe(false)
+  }, 30_000)
+
   it('kills a wedged Host: the ack times out, birth and argv are verified, TERM is ignored, KILL lands, artefacts are swept', async () => {
     const base = scratch('host-termination-sub-')
     const profile = scratch('host-termination-profile-')
@@ -588,16 +831,26 @@ describe.skipIf(process.platform === 'win32')(
         'verify:mismatch',
         'evidence:inconsistent'
       ])
-      expect(outcome.detail).toBe(
-        'a record naming the pid is not contradicted by the process now at it: the discovery ' +
-          `${taskWraithHostDiscoveryPath(profile)}. If pid ${host.pid} is neither this profile's ` +
-          `Host (host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove ` +
-          'that file and stop again'
+
+      // E1: the advice describes a Host the way this one's command line reads,
+      // so an operator who follows it leaves the Host and its records alone.
+      // Removing the discovery and stopping again would read the lease alone
+      // as a reused pid and sweep it from under the running Host.
+      const followed = await followRefusalAdvice(outcome.detail ?? '', () =>
+        terminateHostProcess({ profilePath: profile, registryRoot: root, timings: FAST })
       )
       expect(alive(host.pid)).toBe(true)
       expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
       // Still the profile's owner: no contender takes the lease from it.
       expect(contenderAcquires(profile)).toBe(false)
+      expect(followed).toEqual({ removed: [], again: null })
+      expect(outcome.detail).toBe(
+        'a record naming the pid is not contradicted by the process now at it: the discovery ' +
+          `${taskWraithHostDiscoveryPath(profile)}. If pid ${host.pid} is not a TaskWraith Host ` +
+          `serving this profile (\`…/host-runtime/cli.js serve … --profile ${profile} …\`) or ` +
+          `the TaskWraith app, and that file still names pid ${host.pid}, remove it and run ` +
+          'stop-all again'
+      )
     }, 30_000)
 
     it('D1: stop-all --profile refuses a reused pid beside a registry entry without a birth while that process lives, and clears once the file it names is removed', async () => {
@@ -629,9 +882,9 @@ describe.skipIf(process.platform === 'win32')(
 
       const refusal =
         'a record naming the pid is not contradicted by the process now at it: the registry ' +
-        `entry ${entryPath}. If pid ${decoy.pid} is neither this profile's Host ` +
-        `(host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove that ` +
-        'file and stop again'
+        `entry ${entryPath}. If pid ${decoy.pid} is not a TaskWraith Host serving this profile ` +
+        `(\`…/host-runtime/cli.js serve … --profile ${profile} …\`) or the TaskWraith app, and ` +
+        `that file still names pid ${decoy.pid}, remove it and run stop-all again`
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const report = await stop()
         expect(report.exitCode).toBe(1)
@@ -646,17 +899,85 @@ describe.skipIf(process.platform === 'win32')(
         expect(contenderAcquires(profile)).toBe(false)
       }
 
-      // The operator confirms the pid runs no Host, removes that file, stops again.
-      rmSync(entryPath)
-      const cleared = await stop()
-      expect(cleared.exitCode).toBe(0)
-      expect(cleared.hosts).toMatchObject([
+      // An operator following the advice finds that the pid runs no Host and
+      // that the entry still names it, removes the entry and stops again.
+      const followed = await followRefusalAdvice(refusal, stop)
+      expect(followed.removed).toEqual([entryPath])
+      const cleared = followed.again
+      expect(cleared?.exitCode).toBe(0)
+      expect(cleared?.hosts).toMatchObject([
         { pid: decoy.pid, outcome: { kind: 'pid_reused', swept: ['discovery', 'token', 'lease'] } }
       ])
       expect(alive(decoy.pid)).toBe(true)
       expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
       expect(contenderAcquires(profile)).toBe(true)
     }, 60_000)
+
+    it('E1: a refusal that has gone stale never leads an operator to remove a record that now names another pid', async () => {
+      const base = scratch('host-termination-e1-')
+      for (const survivors of ['entry', 'entry and discovery'] as const) {
+        const variant = survivors === 'entry' ? 'one' : 'two'
+        const root = join(base, `hosts-${variant}`)
+        const profile = scratch(`host-termination-e1-${variant}-`)
+        // As in D1, but the Host that died was a current build: the process
+        // now at its pid contradicts the birth digest in its lease, so a Host
+        // that starts for the profile may reclaim it. A discovery written
+        // after that process started is not contradicted either.
+        const decoy = await startDecoy([])
+        HostProfileAuthorityLease.acquire({
+          profilePath: profile,
+          processPort: {
+            current: {
+              pid: decoy.pid,
+              processStartIdentity: 'c'.repeat(64),
+              processStartedAt: new Date(
+                (decoy.birth.startedAtMs ?? Date.now()) - 60_000
+              ).toISOString()
+            },
+            inspectOwner: () => 'unknown'
+          }
+        })
+        publishDiscovery(profile, decoy, survivors === 'entry' ? -60_000 : 4_000)
+        publishRegistryEntry(profile, root, decoy, { registryBirth: null })
+        const named =
+          `the registry entry ${hostRegistryEntryPath(root, profile)}` +
+          (survivors === 'entry'
+            ? ''
+            : ` and the discovery ${taskWraithHostDiscoveryPath(profile)}`)
+        const stop = () =>
+          stopAllHosts({
+            scope: { kind: 'profile', profilePath: profile },
+            registryRoot: root,
+            ports: { terminate: (input) => terminateHostProcess({ ...input, timings: FAST }) }
+          })
+
+        const refused = await stop()
+        expect(refused.exitCode).toBe(1)
+        expect(refused.hosts).toMatchObject([
+          { pid: decoy.pid, outcome: { kind: 'inconsistent', swept: [] } }
+        ])
+        const advice = refused.hosts[0]?.outcome?.detail ?? ''
+        expect(advice).toContain(`: ${named}. If pid ${decoy.pid} is `)
+
+        // Before the operator acts on it, a Host starts for the profile: it
+        // reclaims the lease and rewrites the same discovery and registry entry.
+        const successor = await startFakeHost(base, profile, 'exit')
+        takeOverProfile(profile, decoy, successor, 'current')
+        publishDiscovery(profile, successor)
+        publishRegistryEntry(profile, root, successor)
+
+        const followed = await followRefusalAdvice(advice, stop)
+        expect(readHostRegistryEntry(root, profile)).toMatchObject({
+          kind: 'present',
+          entry: { pid: successor.pid }
+        })
+        expect(recordPid(taskWraithHostDiscoveryPath(profile))).toBe(successor.pid)
+        expect(alive(successor.pid)).toBe(true)
+        expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+        expect(contenderAcquires(profile)).toBe(false)
+        expect(followed).toEqual({ removed: [], again: null })
+      }
+    }, 30_000)
 
     it("N12-e/i: a registry entry naming another profile's Host is refused, and a legacy lease beside the Host's own digest is stopped", async () => {
       const base = scratch('host-termination-n12ei-')
@@ -697,6 +1018,251 @@ describe.skipIf(process.platform === 'win32')(
       await expect(host.exited).resolves.toBe(0)
       expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
       expect(readHostRegistryEntry(root, profile).kind).toBe('missing')
+    }, 60_000)
+  }
+)
+
+/**
+ * S1b: `--payload-root` selects registry entries by the CLI they recorded,
+ * and each entry names one Host by pid and birth. Termination by profile acts
+ * on whichever Host holds the profile now, so a selected entry whose Host has
+ * gone must never reach another Host that took the profile over.
+ */
+describe.skipIf(process.platform === 'win32')(
+  'stop-all --payload-root acts only on the Host each selected entry names',
+  () => {
+    it.each(['missing-health', 'unsupported-status'] as const)(
+      'terminates the verified expected legacy Host with %s without sending socket shutdown',
+      async (legacy) => {
+        const base = scratch('host-socket-legacy-')
+        const profile = scratch('host-socket-legacy-profile-')
+        const root = join(base, 'hosts')
+        const host = await startFakeHost(base, profile, 'exit', legacy)
+        publishArtefacts(profile, root, host)
+        const signals: Array<{ pid: number; signal: string }> = []
+        const outcome = await terminateHostProcess({
+          profilePath: profile,
+          registryRoot: root,
+          expected: { pid: host.pid, birthIdentity: host.birth.birthIdentity },
+          timings: { ...FAST, ackMs: 5_000 },
+          ports: {
+            signal: (pid, signal) => {
+              signals.push({ pid, signal })
+              process.kill(pid, signal)
+            }
+          }
+        })
+        expect(outcome).toMatchObject({ kind: 'terminated', pid: host.pid })
+        expect(signals).toEqual([{ pid: host.pid, signal: 'SIGTERM' }])
+        expect(outcome.steps).toContain('verify:match')
+        expect(existsSync(join(base, 'shutdown-observed'))).toBe(false)
+        expect(alive(host.pid)).toBe(false)
+      },
+      30_000
+    )
+
+    it.each(['missing-health', 'unsupported-status'] as const)(
+      'leaves a legacy successor with %s untouched when it replaces A before connection',
+      async (legacy) => {
+        const base = scratch('host-socket-legacy-a-')
+        const other = scratch('host-socket-legacy-b-')
+        const profile = scratch('host-socket-legacy-swap-')
+        const root = join(base, 'hosts')
+        const hostA = await startFakeHost(base, profile, 'exit', true)
+        publishArtefacts(profile, root, hostA)
+        let hostB: Tracked | undefined
+        const signals: number[] = []
+        const outcome = await terminateHostProcess({
+          profilePath: profile,
+          registryRoot: root,
+          expected: { pid: hostA.pid, birthIdentity: hostA.birth.birthIdentity },
+          timings: { ...FAST, ackMs: 5_000 },
+          ports: {
+            shutdown: async (selectedProfile, budgets, expected) => {
+              process.kill(hostA.pid, 'SIGKILL')
+              await hostA.exited
+              hostB = await startFakeHost(other, profile, 'exit', legacy)
+              takeOverProfile(profile, hostA, hostB, 'legacy')
+              publishDiscovery(profile, hostB)
+              return new HostShutdownClient({
+                profilePath: selectedProfile,
+                expected,
+                timeoutMs: budgets.ackMs,
+                removalTimeoutMs: budgets.drainMs
+              }).shutdown()
+            },
+            signal: (pid) => {
+              signals.push(pid)
+            }
+          }
+        })
+        expect(hostB).toBeDefined()
+        expect(outcome).toMatchObject({ kind: 'already_gone', pid: hostA.pid })
+        expect(signals).toEqual([])
+        expect(alive(hostB!.pid)).toBe(true)
+        expect(existsSync(join(other, 'shutdown-observed'))).toBe(false)
+        expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+        expect(recordPid(taskWraithHostDiscoveryPath(profile))).toBe(hostB!.pid)
+        expect(recordPid(taskWraithHostAuthorityLeasePath(profile))).toBe(hostB!.pid)
+        expect(contenderAcquires(profile)).toBe(false)
+      },
+      30_000
+    )
+
+    it('refuses the actual successor socket when Host A is swapped for B after the initial expected observation', async () => {
+      const base = scratch('host-socket-fence-a-')
+      const other = scratch('host-socket-fence-b-')
+      const profile = scratch('host-socket-fence-profile-')
+      const root = join(base, 'hosts')
+      const hostA = await startFakeHost(base, profile, 'exit', true)
+      publishArtefacts(profile, root, hostA)
+      let hostB: Tracked | undefined
+      const signals: number[] = []
+      const expected = { pid: hostA.pid, birthIdentity: hostA.birth.birthIdentity }
+      const outcome = await terminateHostProcess({
+        profilePath: profile,
+        registryRoot: root,
+        expected,
+        timings: { ...FAST, ackMs: 5_000 },
+        ports: {
+          shutdown: async (selectedProfile, budgets, selected) => {
+            expect(selected).toEqual(expected)
+            process.kill(hostA.pid, 'SIGKILL')
+            await hostA.exited
+            hostB = await startFakeHost(other, profile, 'exit', true)
+            takeOverProfile(profile, hostA, hostB, 'current')
+            publishDiscovery(profile, hostB)
+            return new HostShutdownClient({
+              profilePath: selectedProfile,
+              expected: selected,
+              timeoutMs: budgets.ackMs,
+              removalTimeoutMs: budgets.drainMs
+            }).shutdown()
+          },
+          signal: (pid) => {
+            signals.push(pid)
+          }
+        }
+      })
+      expect(hostB).toBeDefined()
+      expect(outcome).toMatchObject({
+        kind: 'inconsistent',
+        pid: hostA.pid,
+        heldBy: hostB!.pid,
+        swept: []
+      })
+      expect(outcome.steps[0]).toBe('expected:match')
+      expect(signals).toEqual([])
+      expect(alive(hostB!.pid)).toBe(true)
+      expect(existsSync(join(other, 'shutdown-observed'))).toBe(false)
+      expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+      expect(recordPid(taskWraithHostDiscoveryPath(profile))).toBe(hostB!.pid)
+      expect(recordPid(taskWraithHostAuthorityLeasePath(profile))).toBe(hostB!.pid)
+      expect(contenderAcquires(profile)).toBe(false)
+    }, 30_000)
+
+    it('S1b: a dead entry whose profile another Host now holds is swept, and that Host keeps running with its lease, discovery and token', async () => {
+      const base = scratch('host-stop-all-s1b-')
+      const root = join(base, 'hosts')
+      const cli = payloadCli(base)
+      const payloadRoot = dirname(dirname(cli))
+      for (const build of ['current', 'legacy'] as const) {
+        const profile = scratch(`host-stop-all-s1b-${build}-`)
+        // Host A, served from the selected payload root, published its entry and died.
+        const hostA = await startFakeHost(base, profile, 'exit')
+        publishArtefacts(profile, root, hostA, { cliPath: cli })
+        process.kill(hostA.pid, 'SIGKILL')
+        await hostA.exited
+        // Host B, from another payload root, took the profile over and published
+        // no entry (its registry write failed, or it predates the registry).
+        const hostB = await startFakeHost(scratch('host-stop-all-s1b-other-'), profile, 'exit')
+        takeOverProfile(profile, hostA, hostB, build)
+        publishDiscovery(profile, hostB)
+
+        const report = await stopAllHosts({
+          scope: { kind: 'payload-root', payloadRoot },
+          registryRoot: root,
+          sweep: true,
+          ports: { terminate: (input) => terminateHostProcess({ ...input, timings: FAST }) }
+        })
+
+        expect({
+          hostB: alive(hostB.pid) ? 'running' : 'stopped',
+          artefacts: profileArtefacts(profile),
+          socket: existsSync(taskWraithHostSocketPath(profile)),
+          outcome: report.hosts.map((host) => [host.pid, host.outcome?.kind, host.outcome?.pid])
+        }).toEqual({
+          hostB: 'running',
+          artefacts: { lease: true, discovery: true, token: true },
+          socket: true,
+          outcome: [[hostA.pid, 'already_gone', hostA.pid]]
+        })
+        expect(report.exitCode).toBe(0)
+        expect(report.hosts).toMatchObject([
+          {
+            pid: hostA.pid,
+            liveness: 'dead',
+            selected: true,
+            outcome: { heldBy: hostB.pid, swept: ['registry'] },
+            note: `another Host (pid ${hostB.pid}) holds the profile now, outside this scope`
+          }
+        ])
+        expect(report.hosts[0]?.outcome?.steps.some((step) => step.startsWith('signal:'))).toBe(
+          false
+        )
+        // B still owns the profile, and only A's own entry is gone.
+        expect(contenderAcquires(profile)).toBe(false)
+        expect(readHostRegistryEntry(root, profile).kind).toBe('missing')
+      }
+    }, 60_000)
+
+    it('S1b race: a Host running when listed but replaced before its stop is refused (exit 1), and the new Host keeps running', async () => {
+      const base = scratch('host-stop-all-s1b-race-')
+      const root = join(base, 'hosts')
+      const cli = payloadCli(base)
+      const payloadRoot = dirname(dirname(cli))
+      const profile = scratch('host-stop-all-s1b-race-profile-')
+      const hostA = await startFakeHost(base, profile, 'exit')
+      publishArtefacts(profile, root, hostA, { cliPath: cli })
+      const swapped: { host?: Tracked } = {}
+
+      const report = await stopAllHosts({
+        scope: { kind: 'payload-root', payloadRoot },
+        registryRoot: root,
+        ports: {
+          terminate: async (input) => {
+            // Listed live; before its stop, A dies and B takes the profile over.
+            process.kill(hostA.pid, 'SIGKILL')
+            await hostA.exited
+            const hostB = await startFakeHost(scratch('host-stop-all-s1b-race-b-'), profile, 'exit')
+            takeOverProfile(profile, hostA, hostB, 'current')
+            publishDiscovery(profile, hostB)
+            swapped.host = hostB
+            return terminateHostProcess({ ...input, timings: FAST })
+          }
+        }
+      })
+
+      const hostB = swapped.host!
+      expect({
+        hostB: alive(hostB.pid) ? 'running' : 'stopped',
+        artefacts: profileArtefacts(profile),
+        outcome: report.hosts.map((host) => [host.liveness, host.outcome?.kind])
+      }).toEqual({
+        hostB: 'running',
+        artefacts: { lease: true, discovery: true, token: true },
+        outcome: [['live', 'inconsistent']]
+      })
+      expect(report.exitCode).toBe(1)
+      expect(report.hosts).toMatchObject([
+        {
+          pid: hostA.pid,
+          outcome: { pid: hostA.pid, heldBy: hostB.pid, swept: ['registry'] },
+          note: `another Host (pid ${hostB.pid}) holds the profile now, not the expected one; it was left running`
+        }
+      ])
+      expect(report.hosts[0]?.outcome?.steps.some((step) => step.startsWith('signal:'))).toBe(false)
+      expect(contenderAcquires(profile)).toBe(false)
     }, 60_000)
   }
 )

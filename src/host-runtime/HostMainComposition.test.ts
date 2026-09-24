@@ -847,6 +847,7 @@ describe('HostMainComposition', () => {
       expect(() => open({ queuedStartStartedBind: () => {} })).toThrow(bindError)
       expect(() => open({ queuedStartDispatchSettledBind: () => {} })).toThrow(bindError)
       expect(() => open({ queuedStartAbortBind: () => {} })).toThrow(bindError)
+      expect(() => open({ queuedStartBeforeShutdown: async () => {} })).toThrow(bindError)
 
       // The same binds are accepted once the publication executor is supplied,
       // so the refusal is about the missing coordinator, not the binds.
@@ -856,7 +857,8 @@ describe('HostMainComposition', () => {
           queuedStartStartingBind: () => {},
           queuedStartStartedBind: () => {},
           queuedStartDispatchSettledBind: () => {},
-          queuedStartAbortBind: () => {}
+          queuedStartAbortBind: () => {},
+          queuedStartBeforeShutdown: async () => {}
         })
       ).not.toThrow()
     })
@@ -879,6 +881,12 @@ describe('HostMainComposition', () => {
       expect(() =>
         open({ queuedComposerSend: queuedAck, queuedStartAbortBind: notAFunction })
       ).toThrow('HostMainComposition requires an injected queuedStartAbortBind')
+      expect(() =>
+        open({
+          queuedComposerSend: queuedAck,
+          queuedStartBeforeShutdown: 'nope' as unknown as () => Promise<void>
+        })
+      ).toThrow('HostMainComposition requires an injected queuedStartBeforeShutdown')
     })
 
     it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {
@@ -1057,6 +1065,73 @@ describe('HostMainComposition', () => {
         releaseHeld()
         await composition.shutdown()
       }
+    })
+
+    it.each(['composition', 'protocol'] as const)(
+      '%s shutdown waits for producer work before publication and durable flush',
+      async (route) => {
+        let releaseProducer!: () => void
+        const producerWork = new Promise<void>((resolve) => {
+          releaseProducer = resolve
+        })
+        const beforeShutdown = vi.fn(() => producerWork)
+        const onShutdown = vi.fn()
+        composition = open({
+          queuedComposerSend: queuedAck,
+          queuedStartBeforeShutdown: beforeShutdown,
+          onShutdown
+        })
+        const drain = vi.spyOn(
+          composition.authority as unknown as { drainQueuedStartPublication(): Promise<void> },
+          'drainQueuedStartPublication'
+        )
+        const stopped =
+          route === 'protocol'
+            ? composition.authority.shutdown(contextFor(ACTOR_A))
+            : composition.shutdown()
+        try {
+          await vi.waitFor(() => expect(beforeShutdown).toHaveBeenCalledOnce())
+          expect(drain).not.toHaveBeenCalled()
+          expect(receiptCheckpointExists()).toBe(false)
+          expect(onShutdown).not.toHaveBeenCalled()
+        } finally {
+          releaseProducer()
+        }
+        await stopped
+        expect(drain).toHaveBeenCalledOnce()
+        expect(receiptCheckpointExists()).toBe(true)
+        expect(onShutdown).toHaveBeenCalledOnce()
+        await composition.shutdown()
+        expect(beforeShutdown).toHaveBeenCalledOnce()
+      }
+    )
+
+    it('retries a rejected producer drain without flushing or publishing prematurely', async () => {
+      const refusal = new Error('producer drain refused')
+      const beforeShutdown = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(refusal)
+        .mockResolvedValue(undefined)
+      const onShutdown = vi.fn()
+      composition = open({
+        queuedComposerSend: queuedAck,
+        queuedStartBeforeShutdown: beforeShutdown,
+        onShutdown
+      })
+      const drain = vi.spyOn(
+        composition.authority as unknown as { drainQueuedStartPublication(): Promise<void> },
+        'drainQueuedStartPublication'
+      )
+      const first = composition.shutdown()
+      expect(composition.shutdown()).toBe(first)
+      await expect(first).rejects.toBe(refusal)
+      expect(drain).not.toHaveBeenCalled()
+      expect(receiptCheckpointExists()).toBe(false)
+      expect(onShutdown).not.toHaveBeenCalled()
+      await composition.shutdown()
+      expect(beforeShutdown).toHaveBeenCalledTimes(2)
+      expect(drain).toHaveBeenCalledOnce()
+      expect(onShutdown).toHaveBeenCalledOnce()
     })
 
     it('drains start publications before stopping the reconciler, flushing, and onShutdown', async () => {

@@ -983,14 +983,17 @@ export class HostNodeProductionServer {
    * through `endProcess`, live handles or not. That is crash-equivalent: the
    * cleanup it could do has run, and the authority lease names this pid and
    * its birth, so the next Host takes the profile over once this process is
-   * gone.
+   * gone. A stop still running at the deadline can yet finish while the
+   * process ends (endProcess waits for stderr), releasing the authority the
+   * deadline's line called retained; the Host then says that too.
    */
   private stopWithoutRetry(action: string): void {
     const deadlineMs = this.options.lifetimeStopDeadlineMs ?? this.lifetimeStopDeadlineMs
-    let settled = false
+    // Whichever comes first ends 'running': the stop settling, or giving up.
+    let state: 'running' | 'settled' | 'gave-up' = 'running'
     const giveUp = (line: string, error: Error): void => {
-      if (settled) return
-      settled = true
+      if (state !== 'running') return
+      state = 'gave-up'
       writeHostStderr(`taskwraith-host: ${line}\n`)
       this.shutdown.reject(error)
       this.options.endProcess?.(1)
@@ -1007,8 +1010,15 @@ export class HostNodeProductionServer {
     )
     void this.stop().then(
       () => {
-        settled = true
         clearTimeout(deadline)
+        if (state === 'gave-up') {
+          // Only promise hops separate this from the release at the end of
+          // cleanup(), so the process cannot end between the two.
+          writeHostStderr(
+            `taskwraith-host: ${action} finished after its ${deadlineMs} ms deadline, profile authority released\n`
+          )
+        }
+        state = 'settled'
       },
       (error: unknown) => {
         clearTimeout(deadline)

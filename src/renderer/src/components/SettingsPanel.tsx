@@ -118,6 +118,7 @@ import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { ArchivedThreadsSettings } from './ArchivedThreadsSettings'
 import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
+import { HostSettingsCard } from './HostSettingsCard'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { NotificationBannerSettings } from './NotificationBannerSettings'
 import { ModelUsageCard } from './ModelUsageCard'
@@ -7829,6 +7830,9 @@ export function SettingsPanel({
         )}
 
         {activeTab === 'about' && <ThirdPartyNoticesSettings />}
+
+        {/* ── TaskWraith Host (the independent Host process) ─────────────── */}
+        {activeTab === 'host' && <HostSettingsCard />}
 
         {/* ── Safety & Privacy ─────────────────────────────── */}
         {activeTab === 'safety-privacy' && (

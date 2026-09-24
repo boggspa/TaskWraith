@@ -36,17 +36,17 @@ import {
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
-import { HostShutdownClient } from './HostShutdownClient'
+import { HostShutdownClient, HostShutdownIdentityError } from './HostShutdownClient'
 
 /**
  * Verified termination of one production Host, by profile.
  *
- * Order: authenticated socket stop (ACK budget, then a drain budget for the
- * Host to remove its ownership artefacts, the authority lease last) → read the
- * pid evidence (discovery, authority lease, registry entry) → observe the
- * pid's birth identity → confirm the pid runs `host-runtime/cli.js serve` for
- * this profile → SIGTERM → SIGKILL, re-verifying birth and command line
- * immediately before every signal.
+ * Order: read the pid evidence (discovery, authority lease, registry entry)
+ * → observe the pid, finishing as already_gone if dead → authenticated socket
+ * stop (ACK budget, then a drain budget for the Host to remove its ownership
+ * artefacts, the authority lease last) → verify the pid's birth identity and
+ * confirm it runs `host-runtime/cli.js serve` for this profile → SIGTERM →
+ * SIGKILL, re-verifying birth and command line immediately before every signal.
  *
  * Refusals, all without a signal:
  *  - the evidence names more than one pid, or two birth digests for one pid,
@@ -67,8 +67,10 @@ import { HostShutdownClient } from './HostShutdownClient'
  * carries, the records disagree about whose pid it is: that is refused as
  * `inconsistent`, and nothing is swept. The refusal names each such record's
  * file: only that process's exit can prove a registry entry that recorded no
- * birth stale, so an operator who confirms the process is neither this
- * profile's Host nor the TaskWraith app removes the file and stops again.
+ * birth stale, so an operator who confirms the process is neither a Host
+ * serving this profile nor the TaskWraith app removes each file that still
+ * names that pid, and stops again. A file that names another pid by then was
+ * rewritten by a Host that has since started, and is left alone.
  * After death the socket file and directory, discovery, token, lease and
  * registry entry are removed — each only while it still carries exactly the
  * record read before termination (never by pid alone: a successor may have
@@ -77,6 +79,25 @@ import { HostShutdownClient } from './HostShutdownClient'
  * birth), and the profile-side artefacts only while no other owner holds the
  * profile's authority lease — so the next launch neither waits on a stale
  * socket nor loses a successor's or a live owner's state.
+ *
+ * All of the above acts on whichever Host the profile's records name when
+ * termination runs. A caller that selected one Host (`stop-all
+ * --payload-root`) passes it as `expected`. Once the evidence is resolved,
+ * and before the socket stop (which reaches whichever Host serves the
+ * profile) or any signal, the records must name that Host's pid, and that
+ * pid must be observed alive with that Host's birth, which the records do not
+ * contradict; only when it cannot be observed do the records stand in, and
+ * then they must carry that very birth digest. Every later observation
+ * re-checks the birth. The socket stop additionally authenticates host.status
+ * on that same connection, verifies its pid/profile and optional listener
+ * start, and observes the expected birth before sending host.shutdown. A
+ * connected Host whose identity differs or cannot be verified is refused
+ * without falling back to signals. Otherwise nothing is stopped or signalled: the
+ * expected Host proven gone is `already_gone` (its pid is dead) or
+ * `pid_reused` (another process has it), and only records naming its pid
+ * are swept, each once proven stale; anything else is refused. Another Host
+ * the records name instead is reported in `heldBy` and left alone, and its
+ * records are never offered to an operator as ones to remove.
  *
  * Electron-free: shared by Electron main, the TUI, `cli.js stop-all` and the
  * build script.
@@ -137,12 +158,23 @@ export interface HostTerminationExpectation {
   readonly startedAtMs?: number | null
 }
 
+/**
+ * One Host by pid and birth: a birth digest, else a process start matched
+ * within PROCESS_BIRTH_START_TOLERANCE_MS. See HostTerminationInput.expected.
+ */
+export interface HostTerminationExpectedHost extends HostTerminationExpectation {
+  readonly pid: number
+  /** Listener start from host.status, distinct from the OS process start. */
+  readonly startedAt?: string
+}
+
 export type HostTerminationSignal = 'SIGTERM' | 'SIGKILL'
 
 export interface HostTerminationPorts {
   shutdown(
     profilePath: string,
-    budgets: { readonly ackMs: number; readonly drainMs: number }
+    budgets: { readonly ackMs: number; readonly drainMs: number },
+    expected?: HostTerminationExpectedHost
   ): Promise<'stopping' | 'already_stopping'>
   readEvidence(profilePath: string, registryRoot: string): HostTerminationEvidence
   observe(pid: number): Promise<ProcessBirthObservation>
@@ -182,6 +214,12 @@ export interface HostTerminationOutcome {
   /** Artefacts removed after the Host was proven gone. */
   readonly swept: readonly string[]
   readonly detail?: string
+  /**
+   * With `expected` only: the pid of another Host the profile's records name
+   * now, when termination did not act because it is not the expected Host.
+   * Nothing of that Host is stopped, signalled or swept.
+   */
+  readonly heldBy?: number
 }
 
 /** Outcomes after which the Host is proven gone (or never ran). */
@@ -199,6 +237,20 @@ export interface HostTerminationInput {
   readonly platform?: NodeJS.Platform
   readonly timings?: Partial<HostTerminationTimings>
   readonly ports?: Partial<HostTerminationPorts>
+  /**
+   * The only Host termination may act on. Without it, termination acts on
+   * whichever Host the profile's records name when it runs (`stop-all
+   * --profile`). With it, before the socket stop or any signal, the resolved
+   * records must name this pid and the pid must be observed alive with this
+   * birth (records carrying this very birth digest stand in only when it
+   * cannot be observed); every later observation re-checks the birth.
+   * Otherwise nothing is stopped or signalled: a Host proven gone is
+   * `already_gone` (dead) or `pid_reused`, with only records naming its pid
+   * swept, each once proven stale, and anything else is refused. Another Host
+   * the records name is reported in `heldBy`, and every outcome reports this
+   * Host's pid.
+   */
+  readonly expected?: HostTerminationExpectedHost
 }
 
 /** A peek port that reads the owner record without observing anything. */
@@ -335,8 +387,16 @@ function recordFile(
 
 /**
  * Why a reused pid is refused, and how an operator clears it: each record the
- * process now at the pid cannot contradict, by file. The in-process lane
- * records the TaskWraith app's own pid, so the app is excluded as well.
+ * process now at the pid cannot contradict, by file. The advice holds only
+ * while a file still names that pid: a Host that starts for the profile
+ * rewrites the same files, and removing its registry entry or its lease
+ * stops it or lets a second Host start. A Host is described the way its
+ * command line reads: every launcher runs `<node> …/host-runtime/cli.js
+ * serve --mode production --profile <path>`, the packaged one with its
+ * caller's options after the profile. The in-process lane records the
+ * TaskWraith app's own pid, so the app is excluded as well. The process is
+ * named by pid alone: a command line can carry secrets, and this text
+ * reaches terminals and logs.
  */
 function survivorRefusal(
   pid: number,
@@ -347,11 +407,15 @@ function survivorRefusal(
   const named = survivors
     .map((record) => `the ${RECORD_NOUNS[record]} ${recordFile(record, profilePath, registryRoot)}`)
     .join(' and ')
-  const files = survivors.length === 1 ? 'that file' : 'those files'
+  const clear =
+    survivors.length === 1
+      ? `and that file still names pid ${pid}, remove it`
+      : `remove whichever of those files still names pid ${pid}`
   return (
     `a record naming the pid is not contradicted by the process now at it: ${named}. ` +
-    `If pid ${pid} is neither this profile's Host (host-runtime/cli.js serve --profile ` +
-    `${profilePath}) nor the TaskWraith app, remove ${files} and stop again`
+    `If pid ${pid} is not a TaskWraith Host serving this profile ` +
+    `(\`…/host-runtime/cli.js serve … --profile ${profilePath} …\`) or the TaskWraith app, ` +
+    `${clear} and run stop-all again`
   )
 }
 
@@ -360,6 +424,15 @@ const NO_EVIDENCE: HostTerminationEvidence = Object.freeze({
   lease: null,
   registry: null
 })
+
+/** Only the records that name `pid`: with an expected Host, nothing else is swept. */
+function recordsNaming(evidence: HostTerminationEvidence, pid: number): HostTerminationEvidence {
+  return {
+    registry: evidence.registry?.pid === pid ? evidence.registry : null,
+    lease: evidence.lease?.pid === pid ? evidence.lease : null,
+    discovery: evidence.discovery?.pid === pid ? evidence.discovery : null
+  }
+}
 
 /**
  * Whether an observation of the pid a record names proves that record stale.
@@ -724,9 +797,10 @@ export async function sweepHostArtefacts(
 
 function defaultPorts(platform: NodeJS.Platform): HostTerminationPorts {
   return {
-    shutdown: (profilePath, budgets) =>
+    shutdown: (profilePath, budgets, expected) =>
       new HostShutdownClient({
         profilePath,
+        expected,
         timeoutMs: budgets.ackMs,
         removalTimeoutMs: budgets.drainMs
       }).shutdown(),
@@ -747,11 +821,14 @@ type SignalVerdict = Verdict | 'not_a_host'
 async function verify(
   ports: HostTerminationPorts,
   pid: number,
-  expected: HostTerminationExpectation
+  expected: HostTerminationExpectation,
+  expectedHost: HostTerminationExpectation | null
 ): Promise<Verdict> {
   const observation = await ports.observe(pid)
   if (observation.state === 'dead') return 'dead'
   if (observation.state === 'identity_unavailable') return 'unavailable'
+  // A process born other than the expected Host is never that Host.
+  if (expectedHost && matchProcessBirth(observation, expectedHost) === 'mismatch') return 'mismatch'
   return matchProcessBirth(observation, expected)
 }
 
@@ -760,10 +837,11 @@ async function verifyForSignal(
   ports: HostTerminationPorts,
   pid: number,
   expected: HostTerminationExpectation,
+  expectedHost: HostTerminationExpectation | null,
   profilePath: string,
   platform: NodeJS.Platform
 ): Promise<SignalVerdict> {
-  const birth = await verify(ports, pid, expected)
+  const birth = await verify(ports, pid, expected, expectedHost)
   if (birth !== 'match') return birth
   const command = await ports.observeCommand(pid)
   if (command.state === 'dead') return 'dead'
@@ -775,6 +853,7 @@ async function pollUntilGone(
   ports: HostTerminationPorts,
   pid: number,
   expected: HostTerminationExpectation,
+  expectedHost: HostTerminationExpectation | null,
   budgetMs: number,
   pollMs: number
 ): Promise<'dead' | 'mismatch' | 'alive' | 'unavailable'> {
@@ -782,7 +861,7 @@ async function pollUntilGone(
   let unavailable = false
   while (ports.now() < deadline) {
     await ports.delay(Math.max(1, Math.min(pollMs, deadline - ports.now())))
-    const verdict = await verify(ports, pid, expected)
+    const verdict = await verify(ports, pid, expected, expectedHost)
     if (verdict === 'dead') return 'dead'
     if (verdict === 'mismatch') return 'mismatch'
     unavailable = verdict === 'unavailable'
@@ -800,6 +879,8 @@ export async function terminateHostProcess(
   const profilePath = canonicalHostProfilePath(input.profilePath)
   const steps: string[] = []
   const log = (line: string): void => ports.log?.(`[host-termination] ${profilePath}: ${line}`)
+  // With an expected Host every outcome is about it, so each reports its pid.
+  const expectedHost = input.expected ?? null
 
   // `judged` is what the termination acts on; `stale` holds the records
   // already proven stale on the way in. Nothing is swept that is not proven
@@ -817,7 +898,7 @@ export async function terminateHostProcess(
     if (target.inconsistent) {
       steps.push('evidence:inconsistent')
       log('evidence names more than one Host and none is provably stale; refusing to signal')
-      return { kind: 'inconsistent', pid: null, steps, swept: [] }
+      return { kind: 'inconsistent', pid: expectedHost?.pid ?? null, steps, swept: [] }
     }
   }
   const pid = target.pid
@@ -856,12 +937,14 @@ export async function terminateHostProcess(
   const finish = async (
     kind: HostTerminationOutcomeKind,
     sweep: boolean,
-    detail?: string
+    detail?: string,
+    heldBy: number | null = null
   ): Promise<HostTerminationOutcome> => {
     let swept: readonly string[] = []
     if (sweep) {
       const judgement = await finalJudgement()
-      if (kind === 'pid_reused' && judgement.refusal !== null) {
+      // With `heldBy` the surviving records are known to be the holder's own.
+      if (kind === 'pid_reused' && heldBy === null && judgement.refusal !== null) {
         // One record reads the pid as reused, another as the live process's
         // own (a legacy lease taken after a wall-clock step reads as another
         // birth beside the discovery that process wrote): the evidence
@@ -871,11 +954,84 @@ export async function terminateHostProcess(
         log(`inconsistent (${judgement.refusal}) after ${steps.join(' -> ')}`)
         return { kind: 'inconsistent', pid, steps, swept: [], detail: judgement.refusal }
       }
-      swept = await ports.sweep(profilePath, judgement.stale, registryRoot)
+      const dead = expectedHost ? recordsNaming(judgement.stale, expectedHost.pid) : judgement.stale
+      swept = await ports.sweep(profilePath, dead, registryRoot)
     }
     if (swept.length) steps.push(`swept:${swept.join(',')}`)
     log(`${kind}${detail ? ` (${detail})` : ''} after ${steps.join(' -> ') || 'no steps'}`)
-    return { kind, pid, steps, swept, ...(detail ? { detail } : {}) }
+    return {
+      kind,
+      pid: expectedHost?.pid ?? pid,
+      steps,
+      swept,
+      ...(detail ? { detail } : {}),
+      ...(heldBy !== null ? { heldBy } : {})
+    }
+  }
+
+  /**
+   * With an expected Host: null when the resolved records name it and it is
+   * alive — the same pid, a live process there born as it was, and nothing
+   * in the records contradicting that birth. Alive, it still holds the
+   * profile's authority lease, so no other Host can be serving the profile.
+   * When it cannot be observed, the records must carry its very birth digest.
+   * Otherwise the outcome, reached with no socket stop and no signal;
+   * `heldBy` is the Host the records name instead, unless an observation
+   * proves them all stale.
+   */
+  const refuseAnotherHost = async (
+    host: HostTerminationExpectedHost,
+    named: number
+  ): Promise<HostTerminationOutcome | null> => {
+    const observation = await ports.observe(host.pid)
+    const verdict: Verdict =
+      observation.state === 'dead'
+        ? 'dead'
+        : observation.state === 'identity_unavailable'
+          ? 'unavailable'
+          : matchProcessBirth(observation, host)
+    steps.push(`expected:${verdict}`)
+    if (
+      named === host.pid &&
+      (verdict === 'match'
+        ? matchProcessBirth(observation, expected) !== 'mismatch'
+        : verdict === 'unavailable' &&
+          isProcessBirthIdentityDigest(host.birthIdentity) &&
+          expected.birthIdentity === host.birthIdentity)
+    ) {
+      return null
+    }
+    const gone = verdict === 'dead' || verdict === 'mismatch'
+    let heldBy: number | null = null
+    if (named !== host.pid || gone) {
+      const holder = named === host.pid ? observation : await ports.observe(named)
+      const current = RECORDS.some(
+        (record) => judged[record] !== null && !recordIsStale(judged, record, holder)
+      )
+      if (current) heldBy = named
+    }
+    const held = heldBy === null ? null : `another Host (pid ${heldBy}) holds the profile now`
+    if (gone) {
+      const kind = verdict === 'dead' ? 'already_gone' : 'pid_reused'
+      return finish(kind, true, held ?? undefined, heldBy)
+    }
+    if (verdict === 'match') {
+      const reason =
+        named === host.pid
+          ? `the profile's records name pid ${named} with another birth than the expected Host`
+          : `the expected Host (pid ${host.pid}) is still running, but ${held ?? `the profile's records name pid ${named}`}`
+      return finish('inconsistent', false, reason, heldBy)
+    }
+    const reason =
+      verdict === 'unavailable'
+        ? `the expected Host (pid ${host.pid}) cannot be observed`
+        : `the expected Host (pid ${host.pid}) carries no birth to compare with`
+    return finish(
+      verdict === 'unavailable' ? 'identity_unavailable' : 'unverifiable',
+      false,
+      held ? `${reason}; ${held}` : reason,
+      heldBy
+    )
   }
 
   if (!judged.discovery && !judged.lease && !judged.registry) {
@@ -883,23 +1039,55 @@ export async function terminateHostProcess(
     return finish('already_gone', true)
   }
 
+  // 0. An expected Host: termination acts on it or on none. Checked here,
+  // before the socket stop (which reaches whichever Host serves the profile)
+  // and any signal; verify() re-checks its birth at every later observation.
+  if (expectedHost && pid !== null) {
+    const refused = await refuseAnotherHost(expectedHost, pid)
+    if (refused) return refused
+  }
+
   // 1. The Host's own graceful path. With neither discovery nor a lease in the
   // profile (only a registry entry names the pid) there is no socket to ask.
   if (judged.discovery || judged.lease) {
+    // The expected-Host guard already observes death above. An unguarded
+    // profile stop must also skip the socket drain for a dead lease owner.
+    // finish() observes again before cleanup; this observation alone never
+    // authorizes removing a record whose owner can no longer be verified.
+    if (!expectedHost && pid !== null && (await ports.observe(pid)).state === 'dead') {
+      steps.push('observe:dead')
+      return finish('already_gone', true)
+    }
     try {
-      const state = await ports.shutdown(profilePath, {
-        ackMs: timings.ackMs,
-        drainMs: timings.drainMs
-      })
+      const state = await ports.shutdown(
+        profilePath,
+        { ackMs: timings.ackMs, drainMs: timings.drainMs },
+        expectedHost ?? undefined
+      )
       steps.push(`socket:${state}`)
       if (pid === null) return finish('stopped', true)
-      const gone = await pollUntilGone(ports, pid, expected, timings.exitMs, timings.pollMs)
+      const gone = await pollUntilGone(
+        ports,
+        pid,
+        expected,
+        expectedHost,
+        timings.exitMs,
+        timings.pollMs
+      )
       if (gone === 'dead') return finish('stopped', true)
       if (gone === 'mismatch') return finish('stopped', true, 'pid reused after exit')
       if (gone === 'unavailable') return finish('identity_unavailable', false, 'after socket stop')
       steps.push('socket:process-lingering')
     } catch (error) {
       steps.push(`socket:failed:${describe(error)}`)
+      if (error instanceof HostShutdownIdentityError) {
+        return finish(
+          error.reason === 'mismatch' ? 'inconsistent' : 'identity_unavailable',
+          false,
+          error.message,
+          error.actualPid
+        )
+      }
     }
   } else {
     steps.push('socket:skipped')
@@ -909,7 +1097,14 @@ export async function terminateHostProcess(
   // immediately before.
   if (pid === null) return finish('unverifiable', false, 'no pid evidence')
 
-  const beforeTerm = await verifyForSignal(ports, pid, expected, profilePath, platform)
+  const beforeTerm = await verifyForSignal(
+    ports,
+    pid,
+    expected,
+    expectedHost,
+    profilePath,
+    platform
+  )
   steps.push(`verify:${beforeTerm}`)
   if (beforeTerm === 'dead') return finish('already_gone', true)
   if (beforeTerm === 'mismatch') return finish('pid_reused', true)
@@ -918,13 +1113,27 @@ export async function terminateHostProcess(
   if (beforeTerm === 'not_a_host') return finish('not_a_host', false)
   ports.signal(pid, 'SIGTERM')
   steps.push('signal:SIGTERM')
-  const afterTerm = await pollUntilGone(ports, pid, expected, timings.termMs, timings.pollMs)
+  const afterTerm = await pollUntilGone(
+    ports,
+    pid,
+    expected,
+    expectedHost,
+    timings.termMs,
+    timings.pollMs
+  )
   if (afterTerm === 'dead') return finish('terminated', true)
   if (afterTerm === 'mismatch') return finish('pid_reused', true, 'identity changed after SIGTERM')
   if (afterTerm === 'unavailable') return finish('identity_unavailable', false, 'after SIGTERM')
 
   // 3. SIGKILL, re-verified immediately before.
-  const beforeKill = await verifyForSignal(ports, pid, expected, profilePath, platform)
+  const beforeKill = await verifyForSignal(
+    ports,
+    pid,
+    expected,
+    expectedHost,
+    profilePath,
+    platform
+  )
   if (beforeKill !== 'match') {
     steps.push(`verify:${beforeKill}`)
     if (beforeKill === 'dead') return finish('terminated', true)
@@ -935,7 +1144,14 @@ export async function terminateHostProcess(
   }
   ports.signal(pid, 'SIGKILL')
   steps.push('signal:SIGKILL')
-  const afterKill = await pollUntilGone(ports, pid, expected, timings.killMs, timings.pollMs)
+  const afterKill = await pollUntilGone(
+    ports,
+    pid,
+    expected,
+    expectedHost,
+    timings.killMs,
+    timings.pollMs
+  )
   if (afterKill === 'dead') return finish('killed', true)
   if (afterKill === 'mismatch') return finish('pid_reused', true, 'identity changed after SIGKILL')
   if (afterKill === 'unavailable') return finish('identity_unavailable', false, 'after SIGKILL')

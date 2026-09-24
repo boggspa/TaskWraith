@@ -192,6 +192,10 @@ import {
 import type { EnsembleHostAdmissionSnapshot } from './EnsembleHostAdmissionScheduler'
 import { EnsembleHostAdmissionRuntime } from './EnsembleHostAdmissionRuntime'
 import {
+  createEnsembleRoundStartObservation,
+  type EnsembleRoundStartObserver
+} from './EnsembleRoundStartObserver'
+import {
   beginEnsembleRoundStart,
   recordEnsembleRoundStartDispatch
 } from '../perf/ensembleRoundStartSpan'
@@ -1382,6 +1386,7 @@ interface PendingParticipantSeatChange {
 interface ActiveRoundRuntime {
   chatId: string
   roundId: string
+  roundStartObservation?: ReturnType<typeof createEnsembleRoundStartObservation>
   sender: Electron.WebContents
   prompt: string
   /** Single participant selected when the user originally opened this round. */
@@ -3398,6 +3403,8 @@ export class EnsembleOrchestrator {
      * Runs after the runtime reservation is installed and before `runRound`.
      */
     onRoundReserved?: (roundId: string) => void
+    /** Observes only a fresh round, after durability and before participant work. */
+    roundStartObserver?: EnsembleRoundStartObserver
     /**
      * Main-owned scheduled snapshot transform. It is evaluated only after all
      * fresh-round busy checks pass, inside the same synchronous stack that
@@ -3617,7 +3624,8 @@ export class EnsembleOrchestrator {
       // Rewind hints ride only with an explicit steer-mode restart; a normal
       // send never carries them (the IPC handler enforces the same split).
       input.mode === 'steer' ? input.rewind : undefined,
-      input.origin
+      input.origin,
+      input.roundStartObserver
     )
     return { status: 'started', roundId }
   }
@@ -14251,7 +14259,8 @@ export class EnsembleOrchestrator {
      */
     rewind?: EnsembleRewindRoundOptions,
     /** Host-stamped provenance for the round's user row (see startRound). */
-    origin?: ChatMessageOrigin
+    origin?: ChatMessageOrigin,
+    roundStartObserver?: EnsembleRoundStartObserver
   ): string {
     const storedChat = this.deps.getChat(chatId)
     if (!storedChat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -14477,6 +14486,9 @@ export class EnsembleOrchestrator {
     const runtime: ActiveRoundRuntime = {
       chatId,
       roundId,
+      ...(roundStartObserver
+        ? { roundStartObservation: createEnsembleRoundStartObservation(roundStartObserver, roundId) }
+        : {}),
       sender,
       prompt: promptForParticipants,
       ...(dmTargetParticipant ? { dmTargetParticipantId: dmTargetParticipant.id } : {}),
@@ -14519,6 +14531,7 @@ export class EnsembleOrchestrator {
       roundId,
       startedAt: this.deps.now()
     })
+    runtime.roundStartObservation?.reserved()
     try {
       onRoundReserved?.(roundId)
       for (const mention of backgroundMentionResolution.ambiguities) {
@@ -14606,6 +14619,7 @@ export class EnsembleOrchestrator {
   }
 
   private failUnexpectedRound(runtime: ActiveRoundRuntime, error: unknown): void {
+    runtime.roundStartObservation?.unproven()
     const current = this.roundsByChatId.get(runtime.chatId)
     const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
     if (
@@ -14747,18 +14761,23 @@ export class EnsembleOrchestrator {
       promptOverride?: string
     } = {}
   ): Promise<void> {
-    if (this.hostAdmissionStopping) return
+    if (this.hostAdmissionStopping) {
+      runtime.roundStartObservation?.unproven()
+      return
+    }
     if (this.deps.persistChatBarrier) {
       // Durability barrier: the round-started save (and every queued save
       // before it) must be durable in the journal before the first
-      // participant dispatch; the full Host write drains behind it. A
-      // rejection here rejects runRound; the startRound
-      // kickoff's catch fails the round loudly rather than dispatching on
-      // unpersisted state. A Host revision conflict is deliberately NOT one of
-      // those rejections: the Host record is intact and the barrier re-anchors
-      // onto it, so a bookkeeping conflict can never be the reason a round
-      // refuses to start.
-      await this.deps.persistChatBarrier(runtime.chatId)
+      // participant dispatch; the full Host write normally drains behind it.
+      // If the journal failed, the barrier instead requires the fallback Host
+      // acknowledgement. Any rejection fails the detached round before it
+      // dispatches participants, including an unconfirmed fallback revision.
+      try {
+        await this.deps.persistChatBarrier(runtime.chatId)
+      } catch (error) {
+        runtime.roundStartObservation?.unproven()
+        throw error
+      }
     }
     if (runtime.startAfterCancellation) {
       await runtime.startAfterCancellation.catch(() => undefined)
@@ -14766,6 +14785,7 @@ export class EnsembleOrchestrator {
         runtime.cancelled ||
         this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
       ) {
+        runtime.roundStartObservation?.unproven()
         return
       }
       // The interrupted round's cancellation has settled and this replacement
@@ -14780,7 +14800,19 @@ export class EnsembleOrchestrator {
     // turn that created them. The round can close while one is queued. Fence
     // before the first maintenance await so a stale callback cannot spend up
     // to the seat-compaction timeout looking like a live but frozen pass.
-    if (!this.ownsRunningRound(runtime)) return
+    if (!this.ownsRunningRound(runtime)) {
+      runtime.roundStartObservation?.unproven()
+      return
+    }
+    if (runtime.roundStartObservation) {
+      // This detached task owns the await; startRound and the Bridge ACK do
+      // not wait for receipt publication. Observer faults cannot stop a run.
+      await runtime.roundStartObservation.beforeParticipants()
+      if (this.hostAdmissionStopping || !this.ownsRunningRound(runtime)) {
+        runtime.roundStartObservation.unproven()
+        return
+      }
+    }
     // Slice C extension (1.0.3) — convert the fixed for-loop into a
     // mutable remaining-queue so `ensemble_yield(target:...)` can
     // reorder upcoming turns after each completion. The original

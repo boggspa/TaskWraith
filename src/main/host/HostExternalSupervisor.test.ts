@@ -4,9 +4,21 @@ import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChildProcess } from 'node:child_process'
+import * as termination from '../../host-client/HostProcessTermination'
+import {
+  HostProjectionClient,
+  HostProjectionTransportError
+} from '../../host-client/HostProjectionClient'
+import {
+  HostShutdownClient,
+  HostShutdownIdentityError,
+  HostShutdownUnsupportedError
+} from '../../host-client/HostShutdownClient'
+import * as registry from '../../host-runtime/HostRegistry'
+import * as processBirth from '../../host-runtime/ProcessBirthIdentity'
 import { HOST_LIFETIME_STOP_DEADLINE_MS } from '../../host-node/HostNodeProductionServer'
 import { HostProfileAuthorityLeaseBusyError } from '../../host-runtime/HostProfileAuthorityLease'
-import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
+import type { HostBootstrapWelcome, HostStatusProjection } from '../../shared/hostProtocol'
 import {
   hasExternalHostBootHold,
   releaseAllExternalHostBootHolds,
@@ -35,6 +47,11 @@ const welcome = {
 } as HostBootstrapWelcome
 const CURRENT_PAYLOAD = `sha256:${'a'.repeat(64)}`
 const OLD_PAYLOAD = `sha256:${'b'.repeat(64)}`
+const EXPECTED_HOST = {
+  pid: 4242,
+  birthIdentity: 'c'.repeat(64),
+  startedAt: '2026-09-23T10:00:00.000Z'
+}
 // resolve() keeps the fixture canonical on win32 too (the constructor guard
 // requires resolve(profilePath) === profilePath, which a POSIX literal fails).
 const PROFILE = resolve('/p')
@@ -258,7 +275,7 @@ describe('HostExternalSupervisor', () => {
     }) as unknown as ChildProcess
     const probe = vi
       .fn()
-      .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD })
+      .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD, expected: EXPECTED_HOST })
       .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD })
     const supervisor = new HostExternalSupervisor({
       profilePath: PROFILE,
@@ -366,7 +383,12 @@ describe('HostExternalSupervisor', () => {
         profilePath: PROFILE,
         probe: vi
           .fn()
-          .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD, connection: old })
+          .mockResolvedValueOnce({
+            welcome,
+            payloadVersion: OLD_PAYLOAD,
+            expected: EXPECTED_HOST,
+            connection: old
+          })
           .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD, connection: replacement }),
         resolveLaunch: async () => launch,
         shutdownExisting: async () => {
@@ -518,6 +540,101 @@ describe('HostExternalSupervisor', () => {
       payloadVersion: CURRENT_PAYLOAD
     }
 
+    it('re-probes a successor after launch resolution without stopping or signalling it', async () => {
+      let resolveLaunch!: (value: typeof launch) => void
+      const launchPending = new Promise<typeof launch>((resolve) => {
+        resolveLaunch = resolve
+      })
+      const successor = {
+        welcome,
+        payloadVersion: CURRENT_PAYLOAD,
+        process: { pid: 5252, startedAt: '2026-09-23T11:00:00.000Z' }
+      }
+      const probe = vi
+        .fn()
+        .mockResolvedValueOnce({
+          welcome,
+          payloadVersion: OLD_PAYLOAD,
+          expected: EXPECTED_HOST
+        })
+        .mockResolvedValue(successor)
+      const shutdownExisting = vi.fn(async () => {
+        throw new HostShutdownIdentityError('successor owns the socket', 'mismatch', 5252)
+      })
+      const terminateExisting = vi.fn()
+      const spawn = vi.fn()
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe,
+        resolveLaunch: () => launchPending,
+        shutdownExisting,
+        terminateExisting,
+        spawn
+      })
+      const result = supervisor.ensureAvailable()
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
+      resolveLaunch(launch)
+      await expect(result).resolves.toMatchObject({ kind: 'existing', welcome })
+      expect(shutdownExisting).toHaveBeenCalledExactlyOnceWith(PROFILE, EXPECTED_HOST)
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(terminateExisting).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      supervisor.close()
+    })
+
+    it('refuses payload replacement when the probe cannot pin the original process', async () => {
+      const shutdownExisting = vi.fn()
+      const terminateExisting = vi.fn()
+      const spawn = vi.fn()
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe: async () => ({ welcome, payloadVersion: OLD_PAYLOAD }),
+        resolveLaunch: async () => launch,
+        shutdownExisting,
+        terminateExisting,
+        spawn
+      })
+      await expect(supervisor.ensureAvailable()).rejects.toThrow('identity could not be verified')
+      expect(shutdownExisting).not.toHaveBeenCalled()
+      expect(terminateExisting).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      supervisor.close()
+    })
+
+    it('gives the default replacement client ten seconds to acknowledge and 45 seconds to drain', async () => {
+      const shutdown = vi
+        .spyOn(HostShutdownClient.prototype, 'shutdown')
+        .mockImplementation(async function (this: HostShutdownClient) {
+          expect(this).toMatchObject({
+            expected: EXPECTED_HOST,
+            timeoutMs: 10_000,
+            removalTimeoutMs: 45_000
+          })
+          return 'stopping'
+        })
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe: vi
+          .fn()
+          .mockResolvedValueOnce({
+            welcome,
+            payloadVersion: OLD_PAYLOAD,
+            expected: EXPECTED_HOST
+          })
+          .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD }),
+        resolveLaunch: async () => launch,
+        spawn: () =>
+          Object.assign(new EventEmitter(), { pid: 91, unref: vi.fn() }) as unknown as ChildProcess
+      })
+      try {
+        await expect(supervisor.ensureAvailable()).resolves.toMatchObject({ kind: 'launched' })
+        expect(shutdown).toHaveBeenCalledOnce()
+      } finally {
+        supervisor.close()
+        shutdown.mockRestore()
+      }
+    })
+
     it('falls back to verified termination when the stale Host refuses its authenticated stop, then relaunches', async () => {
       const order: string[] = []
       const refused = new Error('Timed out waiting for the Host to acknowledge shutdown.')
@@ -529,7 +646,7 @@ describe('HostExternalSupervisor', () => {
         profilePath: PROFILE,
         probe: vi
           .fn()
-          .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD })
+          .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD, expected: EXPECTED_HOST })
           .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD }),
         resolveLaunch: async () => launch,
         shutdownExisting: async () => {
@@ -551,14 +668,14 @@ describe('HostExternalSupervisor', () => {
         pid: 91
       })
       expect(order).toEqual(['shutdown', 'terminate', 'spawn'])
-      expect(terminateExisting).toHaveBeenCalledWith(PROFILE, refused)
+      expect(terminateExisting).toHaveBeenCalledWith(PROFILE, refused, EXPECTED_HOST)
     })
 
     it('never spawns over a stale Host that verified termination could not prove gone', async () => {
       const spawn = vi.fn()
       const supervisor = new HostExternalSupervisor({
         profilePath: PROFILE,
-        probe: async () => ({ welcome, payloadVersion: OLD_PAYLOAD }),
+        probe: async () => ({ welcome, payloadVersion: OLD_PAYLOAD, expected: EXPECTED_HOST }),
         resolveLaunch: async () => launch,
         shutdownExisting: async () => {
           throw new Error('connect ECONNREFUSED')
@@ -575,6 +692,353 @@ describe('HostExternalSupervisor', () => {
       )
       expect(supervisor.status).toBe('failed')
       expect(spawn).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('default probe identity for authenticated legacy Hosts', () => {
+    const listener = {
+      pid: EXPECTED_HOST.pid,
+      startedAt: EXPECTED_HOST.startedAt,
+      hostId: 'legacy-host',
+      payloadVersion: OLD_PAYLOAD
+    }
+    const processStartedAt = '2026-09-23T09:59:55.000Z'
+    const launch = {
+      executable: '/node',
+      args: [],
+      cwd: '/',
+      env: {},
+      payloadVersion: CURRENT_PAYLOAD
+    }
+    const recorded = (): termination.HostTerminationEvidence => ({
+      discovery: { pid: listener.pid, startedAt: listener.startedAt, socketPath: '/unit/socket' },
+      lease: {
+        pid: listener.pid,
+        processStartIdentity: EXPECTED_HOST.birthIdentity,
+        processStartedAt,
+        acquiredAt: processStartedAt
+      },
+      registry: { pid: listener.pid, birthIdentity: EXPECTED_HOST.birthIdentity, bootEpoch: null }
+    })
+    function mockProbe(evidence = recorded()) {
+      vi.spyOn(HostProjectionClient.prototype, 'connect').mockResolvedValue({
+        ...welcome,
+        hostId: listener.hostId
+      })
+      const discovery = vi
+        .spyOn(HostProjectionClient.prototype, 'discoveryProcessIdentity', 'get')
+        .mockReturnValue(listener)
+      const status = vi
+        .spyOn(HostProjectionClient.prototype, 'getHostStatus')
+        .mockRejectedValue(new HostProjectionTransportError('unknown_request_kind'))
+      vi.spyOn(HostProjectionClient.prototype, 'close').mockImplementation(() => {})
+      vi.spyOn(registry, 'resolveHostRegistryRoot').mockReturnValue(resolve('/unit/registry'))
+      const read = vi.spyOn(termination, 'readHostTerminationEvidence').mockReturnValue(evidence)
+      const observe = vi.spyOn(processBirth, 'observeProcessBirthIdentity').mockResolvedValue({
+        state: 'live',
+        birthIdentity: EXPECTED_HOST.birthIdentity,
+        startedAtMs: Date.parse(processStartedAt)
+      })
+      const signal = vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('unit test must never signal a process')
+      })
+      return { discovery, status, read, observe, signal }
+    }
+    afterEach(() => {
+      releaseAllExternalHostBootHolds()
+      vi.restoreAllMocks()
+    })
+
+    it.each(['digest', 'legacy process start'] as const)(
+      'replaces an explicitly unsupported Host using consistent %s evidence',
+      async (recordKind) => {
+        const evidence = recorded()
+        const probe = mockProbe(
+          recordKind === 'digest'
+            ? evidence
+            : {
+                ...evidence,
+                registry: null,
+                lease: { ...evidence.lease!, processStartIdentity: 'legacy-process-nonce' }
+              }
+        )
+        const next = { ...listener, pid: 5252, payloadVersion: CURRENT_PAYLOAD }
+        probe.discovery.mockReturnValueOnce(listener).mockReturnValue(next)
+        probe.status
+          .mockRejectedValueOnce(new HostProjectionTransportError('unknown_request_kind'))
+          .mockResolvedValue({ ...next, profilePath: PROFILE } as HostStatusProjection)
+        const unsupported = new HostShutdownUnsupportedError('Host status request is unsupported')
+        const shutdown = vi
+          .spyOn(HostShutdownClient.prototype, 'shutdown')
+          .mockRejectedValue(unsupported)
+        const terminate = vi.spyOn(termination, 'terminateHostProcess').mockResolvedValue({
+          kind: 'terminated',
+          pid: listener.pid,
+          steps: [],
+          swept: []
+        })
+        const supervisor = new HostExternalSupervisor({
+          profilePath: PROFILE,
+          resolveLaunch: async () => launch,
+          spawn: () =>
+            Object.assign(new EventEmitter(), {
+              pid: next.pid,
+              unref: vi.fn()
+            }) as unknown as ChildProcess,
+          delay: async () => {}
+        })
+        try {
+          await expect(supervisor.ensureAvailable()).resolves.toMatchObject({ kind: 'launched' })
+          expect(shutdown).toHaveBeenCalledOnce()
+          expect(terminate).toHaveBeenCalledExactlyOnceWith({
+            profilePath: PROFILE,
+            expected: EXPECTED_HOST,
+            ports: { shutdown: expect.any(Function) }
+          })
+          await expect(
+            terminate.mock.calls[0][0].ports!.shutdown!(PROFILE, { ackMs: 1, drainMs: 1 })
+          ).rejects.toBe(unsupported)
+          expect(probe.signal).not.toHaveBeenCalled()
+        } finally {
+          supervisor.close()
+        }
+      }
+    )
+
+    it.each(['digest', 'legacy process start'] as const)(
+      'captures consistent %s birth on legacy attachment for a later explicit stop',
+      async (recordKind) => {
+        const evidence = recorded()
+        const probe = mockProbe(
+          recordKind === 'digest'
+            ? evidence
+            : {
+                ...evidence,
+                registry: null,
+                lease: { ...evidence.lease!, processStartIdentity: 'legacy-process-nonce' }
+              }
+        )
+        probe.discovery.mockReturnValue({ ...listener, payloadVersion: CURRENT_PAYLOAD })
+        const supervisor = new HostExternalSupervisor({
+          profilePath: PROFILE,
+          resolveLaunch: async () => launch,
+          spawn: vi.fn()
+        })
+        try {
+          await expect(supervisor.ensureAvailable()).resolves.toMatchObject({
+            kind: 'existing',
+            host: { ...EXPECTED_HOST, hostId: listener.hostId }
+          })
+          expect(probe.observe).toHaveBeenCalledTimes(2)
+          expect(probe.signal).not.toHaveBeenCalled()
+        } finally {
+          supervisor.close()
+        }
+      }
+    )
+
+    it('pins a modern Host reached through an alias and shuts down its canonical profile first', async () => {
+      const probe = mockProbe()
+      const canonical = vi
+        .spyOn(registry, 'canonicalHostProfilePath')
+        .mockReturnValue(OTHER_PROFILE)
+      const next = { ...listener, pid: 5252, payloadVersion: CURRENT_PAYLOAD }
+      probe.discovery.mockReturnValueOnce(listener).mockReturnValue(next)
+      probe.status
+        .mockResolvedValueOnce({ ...listener, profilePath: OTHER_PROFILE } as HostStatusProjection)
+        .mockResolvedValue({ ...next, profilePath: OTHER_PROFILE } as HostStatusProjection)
+      const shutdown = vi
+        .spyOn(HostShutdownClient.prototype, 'shutdown')
+        .mockImplementation(async function (this: HostShutdownClient) {
+          expect(this).toMatchObject({
+            profilePath: OTHER_PROFILE,
+            expected: EXPECTED_HOST,
+            timeoutMs: 10_000,
+            removalTimeoutMs: 45_000
+          })
+          return 'stopping'
+        })
+      const terminateExisting = vi.fn()
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        resolveLaunch: async () => launch,
+        terminateExisting,
+        spawn: () =>
+          Object.assign(new EventEmitter(), {
+            pid: next.pid,
+            unref: vi.fn()
+          }) as unknown as ChildProcess,
+        delay: async () => {}
+      })
+      try {
+        await expect(supervisor.ensureAvailable()).resolves.toMatchObject({ kind: 'launched' })
+        expect(canonical).toHaveBeenCalledWith(PROFILE)
+        expect(shutdown).toHaveBeenCalledOnce()
+        expect(terminateExisting).not.toHaveBeenCalled()
+        expect(probe.signal).not.toHaveBeenCalled()
+      } finally {
+        supervisor.close()
+      }
+    })
+
+    it.each([
+      'timeout',
+      'malformed status',
+      'transport failure',
+      'untyped unsupported',
+      'status mismatch'
+    ])('does not turn %s into legacy permission to replace', async (failure) => {
+      const probe = mockProbe()
+      if (failure === 'status mismatch') {
+        probe.status.mockResolvedValue({
+          ...listener,
+          pid: 5252,
+          profilePath: PROFILE
+        } as HostStatusProjection)
+      } else {
+        probe.status.mockRejectedValue(
+          failure === 'transport failure'
+            ? new HostProjectionTransportError('host_unavailable')
+            : Object.assign(new Error(failure), { code: 'unknown_request_kind' })
+        )
+      }
+      const shutdownExisting = vi.fn()
+      const terminateExisting = vi.fn()
+      const spawn = vi.fn()
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        resolveLaunch: async () => launch,
+        shutdownExisting,
+        terminateExisting,
+        spawn
+      })
+      await expect(supervisor.ensureAvailable()).rejects.toThrow('identity could not be verified')
+      expect(probe.read).toHaveBeenCalledOnce()
+      expect(shutdownExisting).not.toHaveBeenCalled()
+      expect(terminateExisting).not.toHaveBeenCalled()
+      expect(probe.signal).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      supervisor.close()
+    })
+
+    it.each(['modern status', 'explicit legacy unsupported'] as const)(
+      'refuses a reused pid that changes birth during %s on the original socket',
+      async (reply) => {
+        let evidence = recorded()
+        let birthIdentity = EXPECTED_HOST.birthIdentity
+        const probe = mockProbe()
+        probe.read.mockImplementation(() => evidence)
+        probe.observe.mockImplementation(async () => ({
+          state: 'live',
+          birthIdentity,
+          startedAtMs: Date.parse(processStartedAt)
+        }))
+        probe.status.mockImplementation(async () => {
+          // A answered this socket, but B replaces its lease and registry
+          // before the caller can check OS birth. A's discovery lingers.
+          birthIdentity = 'd'.repeat(64)
+          evidence = {
+            ...evidence,
+            lease: { ...evidence.lease!, processStartIdentity: birthIdentity },
+            registry: { ...evidence.registry!, birthIdentity }
+          }
+          if (reply === 'explicit legacy unsupported') {
+            throw new HostProjectionTransportError('unknown_request_kind')
+          }
+          return { ...listener, profilePath: PROFILE } as HostStatusProjection
+        })
+        const shutdown = vi
+          .spyOn(HostShutdownClient.prototype, 'shutdown')
+          .mockRejectedValue(new Error('pre-welcome socket failure'))
+        const terminate = vi.spyOn(termination, 'terminateHostProcess').mockResolvedValue({
+          kind: 'identity_unavailable',
+          pid: listener.pid,
+          steps: [],
+          swept: []
+        })
+        const spawn = vi.fn()
+        const supervisor = new HostExternalSupervisor({
+          profilePath: PROFILE,
+          resolveLaunch: async () => launch,
+          spawn
+        })
+        try {
+          await expect(supervisor.ensureAvailable()).rejects.toThrow(
+            'identity could not be verified'
+          )
+          expect(probe.observe).toHaveBeenCalledTimes(2)
+          expect(probe.observe.mock.invocationCallOrder[0]).toBeLessThan(
+            probe.status.mock.invocationCallOrder[0]
+          )
+          expect(shutdown).not.toHaveBeenCalled()
+          expect(terminate).not.toHaveBeenCalled()
+          expect(probe.signal).not.toHaveBeenCalled()
+          expect(spawn).not.toHaveBeenCalled()
+        } finally {
+          supervisor.close()
+        }
+      }
+    )
+
+    it.each([
+      'successor pid',
+      'new listener',
+      'conflicting recorded births',
+      'reused pid',
+      'missing birth',
+      'conflicting legacy start'
+    ])('refuses legacy replacement with %s evidence', async (change) => {
+      let evidence = recorded()
+      if (change === 'successor pid')
+        evidence = { ...evidence, discovery: { ...evidence.discovery!, pid: 5252 } }
+      if (change === 'new listener')
+        evidence = {
+          ...evidence,
+          discovery: { ...evidence.discovery!, startedAt: '2026-09-23T11:00:00.000Z' }
+        }
+      if (change === 'conflicting recorded births')
+        evidence = {
+          ...evidence,
+          registry: { ...evidence.registry!, birthIdentity: 'd'.repeat(64) }
+        }
+      if (change === 'missing birth')
+        evidence = {
+          ...evidence,
+          lease: null,
+          registry: { ...evidence.registry!, birthIdentity: null }
+        }
+      if (change === 'conflicting legacy start')
+        evidence = {
+          ...evidence,
+          lease: {
+            ...evidence.lease!,
+            processStartIdentity: 'legacy-process-nonce',
+            processStartedAt: '2026-09-23T08:00:00.000Z'
+          }
+        }
+      const probe = mockProbe(evidence)
+      if (change === 'reused pid')
+        probe.observe.mockResolvedValue({
+          state: 'live',
+          birthIdentity: 'd'.repeat(64),
+          startedAtMs: Date.parse(processStartedAt)
+        })
+      const shutdownExisting = vi.fn()
+      const terminateExisting = vi.fn()
+      const spawn = vi.fn()
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        resolveLaunch: async () => launch,
+        shutdownExisting,
+        terminateExisting,
+        spawn
+      })
+      await expect(supervisor.ensureAvailable()).rejects.toThrow('identity could not be verified')
+      expect(shutdownExisting).not.toHaveBeenCalled()
+      expect(terminateExisting).not.toHaveBeenCalled()
+      expect(probe.signal).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      supervisor.close()
     })
   })
 

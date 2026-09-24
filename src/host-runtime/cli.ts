@@ -56,8 +56,11 @@ export interface HostRegistryPublisherInput {
   readonly log: (line: string) => void
 }
 
-/** How long an ending Host waits for its last stderr lines to reach the reader. */
-const HOST_END_PROCESS_FLUSH_MS = 1_000
+/**
+ * How long an ending Host waits for its last stderr lines to reach the reader.
+ * It is all that ends a Host whose reader is alive but has stopped reading.
+ */
+export const HOST_END_PROCESS_FLUSH_MS = 1_000
 
 /**
  * Ends this Host's process after a stop nobody retries (one it decided on, or
@@ -246,6 +249,7 @@ export async function runHostStopAllCli(
   const log = runtime.log ?? ((line: string) => void process.stderr.write(`${line}\n`))
   const report = await stopAll({
     scope: command.scope,
+    ...(command.expected ? { expected: command.expected } : {}),
     scanArgv: command.scanArgv,
     sweep: command.sweep,
     env: runtime.env ?? process.env,

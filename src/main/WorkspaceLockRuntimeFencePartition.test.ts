@@ -36,6 +36,17 @@ import type {
 } from './workLocks/WorkspaceLockTypes'
 
 const BIRTH = 'fence-partition-birth'
+
+/** Whether the temporary volume folds case, as macOS's default APFS does. */
+const caseInsensitiveTmp = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-case-probe-'))
+  try {
+    fs.writeFileSync(path.join(dir, 'a'), '')
+    return fs.existsSync(path.join(dir, 'A'))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})()
 const cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
@@ -223,6 +234,22 @@ describe('two same-run writers to one file serialize on the commit fence', () =>
       const alias = await w.admit('c-link.ts')
       expect(alias.claims[0].objectIdentity).toBe(first.claims[0].objectIdentity)
       w.runtime.releaseMutationFence(await w.expectSerialized(firstFence, alias))
+    }
+  )
+
+  it.skipIf(!caseInsensitiveTmp)(
+    'when the second call spells the file in another case after it was created',
+    async () => {
+      const w = await world()
+      // Call 1 is admitted while the file is absent, spelled new.ts.
+      const first = await w.admit('new.ts')
+      expect(first.claims[0].objectIdentity).toMatch(/^planned:/)
+      const firstFence = await w.fence(first)
+      // A sibling call or an editor creates it as NEW.ts: the same file here.
+      fs.writeFileSync(w.target('NEW.ts'), 'created\n')
+      const second = await w.admit('NEW.ts')
+      expect(second.claims[0].objectIdentity).toMatch(/^dev:/)
+      w.runtime.releaseMutationFence(await w.expectSerialized(firstFence, second))
     }
   )
 

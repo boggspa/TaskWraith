@@ -101,8 +101,9 @@ afterEach(() => {
 })
 
 describe('runT2PairedReplay', () => {
-  it('runs light-alone then light-beside against one fixture and qualifies the pair', async () => {
-    const result = await measured()
+  it.each(['small', 'large'])('derives alone for a %s beside cell', async (history) => {
+    const besideCell = { ...CELL, history }
+    const result = await measured({ cellName: cellName(besideCell) })
     expect(result.alone.pairingRole).toBe('light-alone')
     expect(result.beside.pairingRole).toBe('light-beside')
     expect(result.alone.repetitions).toBe(3)
@@ -115,6 +116,8 @@ describe('runT2PairedReplay', () => {
     expect(validateRunEvidence(result.beside.run)).toEqual([])
     expect(result.alone.run.role).toBe('light-alone')
     expect(result.beside.run.role).toBe('light-beside')
+    expect(result.alone.run.cellName).toBe('small/1/warm/codex_profiles_solo_ensemble_mesh/none')
+    expect(result.beside.run.cellName).toBe(cellName(besideCell))
     expect(result.alone.run.fixtureFingerprint).toBe(result.beside.run.fixtureFingerprint)
     expect(result.alone.run.seed).toBe(4242)
     expect(result.beside.run.seed).toBe(4242)
@@ -130,20 +133,44 @@ describe('runT2PairedReplay', () => {
       { role: 'light', chatId: 'perf-chat-01' }
     ])
     expect(result.pairing.ok).toBe(true)
-    expect(result.pairing.pair.cellName).toBe(cellName(CELL))
+    expect(result.pairing.pair.cellName).toBe(cellName(besideCell))
     expect(result.pairing.pair.deltas['light.applyLatencyMs']).toBeTruthy()
 
     const report = createInterferenceReport({
       environment,
-      cells: [{ ...CELL, name: cellName(CELL), ...cellReachability(CELL) }],
+      cells: [{ ...besideCell, name: cellName(besideCell), ...cellReachability(besideCell) }],
       pairs: [result.pairing.pair]
     })
     expect(report.pairs).toHaveLength(1)
     expect(validateInterferenceReport(report)).toEqual({ ok: true, errors: [] })
   })
 
+  it('derives both role names from the cell object when it takes precedence over cellName', async () => {
+    const besideCell = { ...CELL, history: 'large', path: 'cold' }
+    const result = await measured({ cell: besideCell })
+    expect(result.alone.run.cellName).toBe('small/1/cold/codex_profiles_solo_ensemble_mesh/none')
+    expect(result.beside.run.cellName).toBe(cellName(besideCell))
+    expect(result.pairing.ok).toBe(true)
+    expect(result.pairing.pair.cellName).toBe(cellName(besideCell))
+  })
+
+  it.each([undefined, 'small/02/warm/codex_profiles_solo_ensemble_mesh/none'])(
+    'keeps an absent or noncanonical cell ineligible without inventing either role identity: %s',
+    async (cellName) => {
+      const result = await measured({ cellName })
+      expect(result.alone.run.cellName).toBe(cellName)
+      expect(result.beside.run.cellName).toBe(cellName)
+      expect(result.alone.evidenceEligible).toBe(false)
+      expect(result.beside.evidenceEligible).toBe(false)
+      expect(result.pairing.ok).toBe(false)
+      expect(result.pairing.pair).toBeUndefined()
+    }
+  )
+
   it('keeps short windows ineligible and never manufactures a pair', async () => {
     const result = await measured({ windowMs: 1000 })
+    expect(result.alone.run.cellName).toBe('small/1/warm/codex_profiles_solo_ensemble_mesh/none')
+    expect(result.beside.run.cellName).toBe(cellName(CELL))
     expect(result.alone.evidenceEligible).toBe(false)
     expect(result.beside.evidenceEligible).toBe(false)
     expect(result.pairing.ok).toBe(false)

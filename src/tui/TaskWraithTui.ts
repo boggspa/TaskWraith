@@ -129,11 +129,12 @@ import {
   parseTuiHostCommand,
   type TuiHostLeaseState
 } from './hostLens'
-import type {
-  EnsureTuiHostAvailableResult,
-  TuiHostControl,
-  TuiHostStopAllPlan,
-  TuiHostStopAllRequest
+import {
+  tuiHostTerminationExpectation,
+  type EnsureTuiHostAvailableResult,
+  type TuiHostControl,
+  type TuiHostStopAllPlan,
+  type TuiHostStopAllRequest
 } from './hostProcessManager'
 import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 import {
@@ -482,10 +483,14 @@ export class TaskWraithTui {
   /** An armed /host confirmation. Only an explicit `y` acts on it; any other input cancels. */
   private hostConfirmation:
     | { readonly kind: 'stop-all'; readonly plan: TuiHostStopAllPlan }
-    | { readonly kind: 'restart' }
+    | {
+        readonly kind: 'restart'
+        readonly expected: ReturnType<typeof tuiHostTerminationExpectation>
+      }
     | undefined
   /** A restart or stop-all is running: the reconnect loop must not relaunch meanwhile. */
   private hostOperation: 'restart' | 'stop-all' | undefined
+  private restartNotice: TaskWraithTuiState['notice']
   /** `/host stop-all` stopped this TUI's own Host: reconnect, but never relaunch it unasked. */
   private hostStoppedByUser = false
   private hostPanelGeneration = 0
@@ -681,7 +686,16 @@ export class TaskWraithTui {
       // Every welcome, including a reconnect to a replaced Host, takes a lease:
       // while this TUI is connected its Host does not exit at last-lease grace.
       this.acquireHostLease()
-      this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
+      if (
+        !this.restartNotice ||
+        this.state.notice?.text !== this.restartNotice.text ||
+        (this.restartNotice.expiresAt ?? 0) <= this.options.now()
+      ) {
+        this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
+        this.restartNotice = undefined
+      } else {
+        this.state.notice = this.restartNotice
+      }
       this.render()
     })
     this.client.on('deltas', (frame) => {
@@ -696,6 +710,7 @@ export class TaskWraithTui {
     })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
+      this.connectionEpoch += 1
       const cancelled = this.cancelHostConfirmation()
       this.hostLeaseState = 'none'
       // The host was reachable before, so this is a drop-and-retry rather
@@ -761,6 +776,7 @@ export class TaskWraithTui {
     const cancelled = this.cancelHostConfirmation()
     this.hostLeaseState = 'none'
     this.hostLeaseFailures += 1
+    this.connectionEpoch += 1
     client.close()
     this.state.connection = 'reconnecting'
     this.reconnectAttempts = Math.max(this.reconnectAttempts, this.hostLeaseFailures)
@@ -993,6 +1009,12 @@ export class TaskWraithTui {
   private hostOperationNotice(): string | undefined {
     if (this.hostOperation === 'restart') return 'Restarting the TaskWraith Host…'
     if (this.hostOperation === 'stop-all') return 'Stopping TaskWraith Hosts…'
+    if (
+      this.restartNotice &&
+      this.state.notice?.text === this.restartNotice.text &&
+      (this.restartNotice.expiresAt ?? 0) > this.options.now()
+    )
+      return this.restartNotice.text
     if (this.hostStoppedByUser) return 'TaskWraith Host stopped · /host restart starts it again'
     return undefined
   }
@@ -1118,6 +1140,7 @@ export class TaskWraithTui {
       const command = this.buildMutation('thread.select', { threadId }, {})
       if (!command) return
       await this.runHostMutation(command, {
+        preserveSuccessNotice: reattach && this.state.notice === this.restartNotice,
         onSucceeded: async () => {
           await this.refreshHostSnapshot()
           this.applyLocalThread(threadId, { previewNotice: !reattach, preserveView: reattach })
@@ -4445,7 +4468,7 @@ export class TaskWraithTui {
     this.hostConfirmation = undefined
     if (!key.ctrl && !key.meta && (input === 'y' || input === 'Y')) {
       void (confirmation.kind === 'restart'
-        ? this.restartHost()
+        ? this.restartHost(confirmation.expected)
         : this.runHostStopAll(confirmation.plan))
       return
     }
@@ -4462,15 +4485,25 @@ export class TaskWraithTui {
     this.render()
   }
 
-  /** Live runs and rounds across every thread, from the Host itself when it answers. */
-  private async liveHostWorkCount(): Promise<number> {
+  /** Missing Host status leaves impact unknown, even when the projection is empty. */
+  private async hostRestartImpact(): Promise<{
+    liveRuns: number | null
+    otherHolders: number | null
+  }> {
+    const read = await this.readHostStatus()
+    if (!read.status) return { liveRuns: null, otherHolders: null }
     const snapshot = this.hostSnapshot
     const projected = snapshot
       ? new Set(snapshot.threads.flatMap((thread) => projectedThreadWorkIds(snapshot, thread.id)))
           .size
       : 0
-    const read = await this.readHostStatus()
-    return Math.max(projected, read.status?.liveWork.runs ?? 0)
+    return {
+      liveRuns: Math.max(projected, read.status.liveWork.runs),
+      otherHolders: Math.max(
+        0,
+        read.status.lifetime.holders - (this.hostLeaseState === 'held' ? 1 : 0)
+      )
+    }
   }
 
   private async requestHostRestart(): Promise<void> {
@@ -4484,27 +4517,52 @@ export class TaskWraithTui {
       this.render()
       return
     }
-    const liveRuns = await this.liveHostWorkCount()
-    if (this.stopped) return
-    if (liveRuns === 0) {
-      await this.restartHost()
+    let expected = tuiHostTerminationExpectation(this.client?.discoveryProcessIdentity ?? null)
+    const connectionEpoch = this.connectionEpoch
+    this.hostOperation = 'restart'
+    let impact: Awaited<ReturnType<TaskWraithTui['hostRestartImpact']>>
+    try {
+      expected = this.options.hostControl.prepareRestart
+        ? await this.options.hostControl.prepareRestart(expected)
+        : expected
+      if (this.stopped || connectionEpoch !== this.connectionEpoch) return
+      impact = await this.hostRestartImpact()
+    } catch (error) {
+      if (this.stopped || connectionEpoch !== this.connectionEpoch) return
+      this.setNotice(
+        `Host restart unavailable · ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+        6_000
+      )
+      this.render()
+      return
+    } finally {
+      this.hostOperation = undefined
+    }
+    const { liveRuns, otherHolders } = impact
+    if (this.stopped || connectionEpoch !== this.connectionEpoch) return
+    if (liveRuns === 0 && otherHolders === 0) {
+      await this.restartHost(expected)
       return
     }
     this.hostPanelGeneration += 1
     this.state.hostPanel = buildRestartConfirmPanel({
-      pid: this.client?.discoveryProcessIdentity?.pid ?? null,
+      pid: expected?.pid ?? null,
       profilePath: this.profilePath(),
-      liveRuns
+      liveRuns,
+      otherHolders
     })
     this.state.overlay = 'host'
-    this.hostConfirmation = { kind: 'restart' }
+    this.hostConfirmation = { kind: 'restart', expected }
     this.render()
   }
 
-  private async restartHost(): Promise<void> {
+  private async restartHost(
+    expected: ReturnType<typeof tuiHostTerminationExpectation>
+  ): Promise<void> {
     const restart = this.options.hostControl?.restart
     if (!restart || this.hostOperation) return
-    const pid = this.client?.discoveryProcessIdentity?.pid ?? null
+    const pid = expected?.pid ?? null
     this.hostOperation = 'restart'
     this.hostPanelGeneration += 1
     this.state.overlay = this.state.overlay === 'host' ? 'none' : this.state.overlay
@@ -4512,18 +4570,18 @@ export class TaskWraithTui {
     this.setNotice(`Restarting the TaskWraith Host${pid ? ` (pid ${pid})` : ''}…`, 'warning')
     this.render()
     try {
-      const result = await restart(pid)
+      const result = await restart(expected)
       if (this.stopped) return
       const launch = result.launch
       if (!launch) {
         const refusal = result.termination.detail
           ? `${result.termination.kind}, ${result.termination.detail}`
           : result.termination.kind
-        this.setNotice(
-          `Host restart refused (${refusal}) · the Host${pid ? ` (pid ${pid})` : ''} keeps running`,
-          'error',
-          10_000
-        )
+        const retained =
+          result.termination.heldBy !== undefined
+            ? `the replacement Host (pid ${result.termination.heldBy}) was not in the request and keeps running`
+            : `the Host${pid ? ` (pid ${pid})` : ''} keeps running`
+        this.setNotice(`Host restart refused (${refusal}) · ${retained}`, 'error', 10_000)
         return
       }
       if (launch.kind === 'launched') this.replaceFullAccessPresence(launch.fullAccessPresence)
@@ -4534,6 +4592,7 @@ export class TaskWraithTui {
         'good',
         6_000
       )
+      this.restartNotice = this.state.notice
     } catch (error) {
       if (this.stopped) return
       this.setNotice(
@@ -4612,6 +4671,7 @@ export class TaskWraithTui {
         outcome.results.some(
           (result) =>
             result.host.profilePath === ownProfile &&
+            result.outcome.heldBy === undefined &&
             HOST_TERMINATION_SUCCESS_KINDS.has(result.outcome.kind)
         )
       ) {
@@ -5449,6 +5509,7 @@ export class TaskWraithTui {
     command: HostCommand,
     options: {
       composerRestore?: string
+      preserveSuccessNotice?: boolean
       onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
       onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     } = {}
@@ -5521,6 +5582,7 @@ export class TaskWraithTui {
     receipt: HostCommandReceipt,
     options: {
       composerRestore?: string
+      preserveSuccessNotice?: boolean
       onSucceeded?: (receipt: HostCommandReceipt) => Promise<void> | void
       onTerminalReceipt?: (receipt: HostCommandReceipt) => void
     }
@@ -5537,7 +5599,7 @@ export class TaskWraithTui {
       await options.onSucceeded?.(receipt)
       // Prefer a specific notice from onSucceeded (e.g. "Opened …") over the
       // generic "Host accepted <name>" so the HUD still names the thread.
-      if (this.state.notice === noticeBefore) {
+      if (this.state.notice === noticeBefore && !options.preserveSuccessNotice) {
         const ok = describeHostReceipt(receipt)
         this.setNotice(ok.text, ok.tone, 2_500)
       }
