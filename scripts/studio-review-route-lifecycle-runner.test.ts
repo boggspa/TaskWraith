@@ -401,10 +401,11 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
     expect(fixture.assets.primary.probe.frameCount).toBe(60)
   })
 
-  it('ffprobes both live speech variants and honors configured duration/audio', async () => {
+  it('resizes both live speech variants before probing while preserving duration and copied audio', async () => {
     const root = await temporaryRoot()
     const basePath = path.join(root, 'base.mp4')
     await fsPromises.writeFile(basePath, 'base')
+    const convertedVariants: string[] = []
     const fixture = await runner.generateReviewSpeechFixtures(
       { artifactRoot: root, durationSeconds: 8 },
       {
@@ -412,10 +413,24 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
         realpathTool: async (filePath: string) => filePath,
         execFile: async (command: string, args: string[]) => {
           if (command.includes('ffmpeg')) {
-            await fsPromises.writeFile(
-              args.at(-1) as string,
-              args.includes('hue=h=45:s=1') ? 'secondary-video-audio' : 'primary-video-audio'
+            const variant = args.at(-1)?.includes('secondary') ? 'secondary' : 'primary'
+            const filter = args[args.indexOf('-vf') + 1]
+            expect(filter).toBe(
+              variant === 'secondary'
+                ? 'scale=640:360:flags=lanczos,hue=h=45:s=1'
+                : 'scale=640:360:flags=lanczos'
             )
+            expect(args[args.indexOf('-i') + 1]).toBe(basePath)
+            expect(args[args.indexOf('-c:a') + 1]).toBe('copy')
+            expect(args[args.indexOf('-t') + 1]).toBe('8')
+            expect(args.filter((_, index) => args[index - 1] === '-map')).toEqual([
+              '0:v:0',
+              '0:a:0'
+            ])
+            expect(args).not.toContain('-r')
+            expect(args).not.toContain('-af')
+            convertedVariants.push(variant)
+            await fsPromises.writeFile(args.at(-1) as string, `${variant}-video-audio`)
             return { stdout: '', stderr: '' }
           }
           return {
@@ -438,6 +453,7 @@ describe('Outcome 3/4 review-route plan and fixture contract', () => {
         }
       }
     )
+    expect(convertedVariants).toEqual(['primary', 'secondary'])
     expect(fixture.assets.primary.durationSeconds).toBe(8)
     expect(fixture.assets.secondary.probe).toMatchObject({
       videoStreamCount: 1,

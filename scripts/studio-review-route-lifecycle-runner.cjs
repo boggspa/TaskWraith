@@ -382,7 +382,11 @@ async function generateReviewSpeechFixtures(options = {}, adapters = {}) {
   for (const variant of ['primary', 'secondary']) {
     const outputPath = path.join(fixtureRoot, `${variant}-speech.mp4`)
     const manifestPath = path.join(fixtureRoot, `${variant}-speech.json`)
-    const filter = variant === 'secondary' ? 'hue=h=45:s=1' : 'null'
+    // The 1920x1080 speech base and 640x360 review contract share a 16:9 aspect ratio.
+    const filter =
+      variant === 'secondary'
+        ? 'scale=640:360:flags=lanczos,hue=h=45:s=1'
+        : 'scale=640:360:flags=lanczos'
     const ffmpegArgs = [
       '-hide_banner',
       '-loglevel',
