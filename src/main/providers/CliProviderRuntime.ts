@@ -752,18 +752,30 @@ export async function getCliProviderStatus(
     const probeEnv = scrubMistralCredentialEnv(
       createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolved.binaryPath, deps)
     )
-    const authProbe = await (deps?.probeMistralAuthStatus || probeMistralVibeAuthStatus)({
-      binaryPath: resolved.binaryPath,
-      env: probeEnv
-    }).catch(
-      (): MistralVibeAuthProbeResult => ({
+    let authProbe: MistralVibeAuthProbeResult
+    if (app.commandLine.hasSwitch('use-mock-keychain')) {
+      // Vibe's native keyring lookup is outside Electron's mock keychain.
+      authProbe = {
         authState: 'unknown',
         credentialPresent: null,
         authSource: null,
         version: null,
-        probeStatus: 'failed'
-      })
-    )
+        probeStatus: 'skipped'
+      }
+    } else {
+      authProbe = await (deps?.probeMistralAuthStatus || probeMistralVibeAuthStatus)({
+        binaryPath: resolved.binaryPath,
+        env: probeEnv
+      }).catch(
+        (): MistralVibeAuthProbeResult => ({
+          authState: 'unknown',
+          credentialPresent: null,
+          authSource: null,
+          version: null,
+          probeStatus: 'failed'
+        })
+      )
+    }
     version = authProbe.version || (await readResolvedCliVersion(resolved, deps))
     authState = authProbe.authState
     mistralAuthMetadata = {

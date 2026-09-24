@@ -10,7 +10,7 @@ export const MISTRAL_AUTH_STATUS_METHOD = '_auth/status'
 export const MISTRAL_AUTH_STATUS_TIMEOUT_MS = 5_000
 
 export type MistralVibeAuthState = 'authenticated' | 'missing' | 'unknown'
-export type MistralVibeAuthProbeStatus = 'verified' | 'unsupported' | 'failed'
+export type MistralVibeAuthProbeStatus = 'verified' | 'unsupported' | 'failed' | 'skipped'
 
 export interface MistralVibeAuthProbeResult {
   authState: MistralVibeAuthState
