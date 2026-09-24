@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 
 import {
@@ -18,6 +18,75 @@ import {
 } from './HostCommandReceiptStore'
 
 // The durable receipt contract is runtime-owned; moving this suite preserves its coverage.
+
+type FsActual = typeof import('node:fs')
+
+/**
+ * Injectable fs faults for durable-before-witness tests. Each hook runs before
+ * the real call; throwing from it simulates the corresponding I/O failure.
+ * `trace` (when non-null) records fsync/rename/unlink order for ordering proofs.
+ */
+const fsFaults = vi.hoisted(() => ({
+  fsyncSync: null as null | ((fd: number, actual: typeof import('node:fs')) => void),
+  closeSync: null as null | ((fd: number) => void),
+  ftruncateSync: null as null | (() => void),
+  renameSync: null as null | (() => void),
+  unlinkSync: null as null | ((path: string) => void),
+  readFileSync: null as null | ((path: string) => void),
+  trace: null as null | string[]
+}))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<FsActual>()
+  const isDirectory = (fd: number): boolean => {
+    try {
+      return actual.fstatSync(fd).isDirectory()
+    } catch {
+      return false
+    }
+  }
+  return {
+    ...actual,
+    fsyncSync: (fd: number): void => {
+      fsFaults.trace?.push(isDirectory(fd) ? 'fsync:dir' : 'fsync:file')
+      fsFaults.fsyncSync?.(fd, actual)
+      actual.fsyncSync(fd)
+    },
+    closeSync: (fd: number): void => {
+      // A close can release the descriptor before reporting an error.
+      fsFaults.trace?.push(`close:${fd}`)
+      actual.closeSync(fd)
+      fsFaults.closeSync?.(fd)
+    },
+    ftruncateSync: ((fd: number, len?: number): void => {
+      fsFaults.ftruncateSync?.()
+      actual.ftruncateSync(fd, len)
+    }) as FsActual['ftruncateSync'],
+    renameSync: ((from: string, to: string): void => {
+      fsFaults.trace?.push('rename')
+      fsFaults.renameSync?.()
+      actual.renameSync(from, to)
+    }) as FsActual['renameSync'],
+    unlinkSync: ((path: string): void => {
+      fsFaults.trace?.push('unlink')
+      fsFaults.unlinkSync?.(String(path))
+      actual.unlinkSync(path)
+    }) as FsActual['unlinkSync'],
+    readFileSync: ((...args: unknown[]): unknown => {
+      fsFaults.readFileSync?.(String(args[0]))
+      return (actual.readFileSync as (...a: unknown[]) => unknown)(...args)
+    }) as unknown as FsActual['readFileSync']
+  }
+})
+
+function once<T extends unknown[]>(fn: (...args: T) => void): (...args: T) => void {
+  let fired = false
+  return (...args) => {
+    if (fired) return
+    fired = true
+    fn(...args)
+  }
+}
 
 const DEFAULT_INDETERMINATE_CODE: HostCommandReceiptIndeterminateCode =
   'deferred_envelope_unavailable'
@@ -80,6 +149,13 @@ describe('HostCommandReceiptStore', () => {
   })
 
   afterEach(() => {
+    fsFaults.fsyncSync = null
+    fsFaults.closeSync = null
+    fsFaults.ftruncateSync = null
+    fsFaults.renameSync = null
+    fsFaults.unlinkSync = null
+    fsFaults.readFileSync = null
+    fsFaults.trace = null
     rmSync(dataDir, { recursive: true, force: true })
   })
 
@@ -353,6 +429,8 @@ describe('HostCommandReceiptStore', () => {
     const reopened = openStore({ compactAfterRecords: 1000 })
     expect(reopened.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
     expect(reopened.size).toBe(0)
+    expect(reopened.durabilityStatus.kind).toBe('unavailable')
+    expect(() => reopened.begin(baseInput())).toThrow(/durable journal state is uncertain/)
   })
 
   it('drops a malformed stored claim cursor while retaining the conservative receipt', () => {
@@ -534,14 +612,15 @@ describe('HostCommandReceiptStore', () => {
     expect(store.spanChatIdCacheSize).toBe(0)
   })
 
-  it('forgets span chatIds when complete journal compaction throws', () => {
+  it('keeps a durable completion when inline compaction throws and still forgets span chatIds', () => {
     const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 8 })
     const store = new HostCommandReceiptStore({
       dataDir,
       getPosition: () => ({ ...position }),
       now: () => clock,
       spans: recorder,
-      resolveSpanChatId: () => 'thread-from-approval'
+      resolveSpanChatId: () => 'thread-from-approval',
+      compactAfterRecords: 1
     })
     expect(
       store.begin(
@@ -554,14 +633,21 @@ describe('HostCommandReceiptStore', () => {
       ).kind
     ).toBe('created')
     expect(store.spanChatIdCacheSize).toBe(1)
-    const throwing = store as unknown as { maybeCompact: () => void }
-    throwing.maybeCompact = () => {
+    const throwing = store as unknown as { writeCheckpointAndResetJournal: () => void }
+    throwing.writeCheckpointAndResetJournal = () => {
       throw new Error('compact failed')
     }
-    expect(() => store.complete({ commandId: 'cmd-appr-throw', status: 'succeeded' })).toThrow(
-      'compact failed'
+    // The terminal event is already durable in the journal; compaction is
+    // housekeeping and must not undo or hide that witness.
+    expect(store.complete({ commandId: 'cmd-appr-throw', status: 'succeeded' })?.status).toBe(
+      'succeeded'
     )
     expect(store.spanChatIdCacheSize).toBe(0)
+    expectFound(store.getByCommandId('cmd-appr-throw', OWNER_ACTOR), 'succeeded')
+    expectFound(
+      openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-appr-throw', OWNER_ACTOR),
+      'succeeded'
+    )
   })
 
   it('contains a throwing recorder so complete still succeeds', () => {
@@ -936,6 +1022,7 @@ describe('HostCommandReceiptStore', () => {
     const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
     const compactEvent = JSON.stringify({
       op: 'compact',
+      seq: 4,
       retainedCommandIds: ['cmd-1'],
       at: '2026-08-03T17:00:50.000Z'
     })
@@ -1000,7 +1087,7 @@ describe('HostCommandReceiptStore', () => {
     ).toThrow(/actor\.clientClass/)
   })
 
-  it('skips legacy/malformed fingerprint records on reopen honestly', () => {
+  it('blocks recovery on a malformed fingerprint instead of forgetting the receipt', () => {
     const store = openStore({ compactAfterRecords: 1000 })
     store.begin(baseInput())
     store.complete({ commandId: 'cmd-1', status: 'succeeded' })
@@ -1025,9 +1112,14 @@ describe('HostCommandReceiptStore', () => {
     })
     writeFileSync(journalPath, `${readFileSync(journalPath, 'utf8')}${malformed}\n`)
 
-    const reopened = openStore({ compactAfterRecords: 1000 })
-    expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
-    expect(reopened.getByCommandId('cmd-bad-fp', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+    const journalBefore = readFileSync(journalPath, 'utf8')
+    expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(/journal/)
+    expect(() => store.reopen()).toThrow(/journal/)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expect(() =>
+      store.begin(baseInput({ commandId: 'cmd-bad-fp', idempotencyKey: 'idem-bad-fp' }))
+    ).toThrow(/durable journal state is uncertain/)
+    expect(readFileSync(journalPath, 'utf8')).toBe(journalBefore)
   })
 
   it('retains incomplete legacy rows without inventing identity/position; access fails closed', () => {
@@ -1053,7 +1145,8 @@ describe('HostCommandReceiptStore', () => {
         completedAt: '2026-08-03T16:00:00.000Z'
       }
     })
-    writeFileSync(journalPath, `${readFileSync(journalPath, 'utf8')}${legacy}\n`)
+    // A legitimate legacy prefix precedes the upgraded writer's sequenced suffix.
+    writeFileSync(journalPath, `${legacy}\n${readFileSync(journalPath, 'utf8')}`)
 
     const reopened = openStore({ compactAfterRecords: 1000 })
     // Retained on disk / in list — not silently deleted.
@@ -1561,7 +1654,7 @@ describe('HostCommandReceiptStore', () => {
     expect(reopened.getByCommandId('cmd-torn', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
   })
 
-  it('skips a corrupt interior journal line without losing later valid receipts', () => {
+  it('blocks recovery on a corrupt interior journal line and preserves durable memory', () => {
     const store = openStore({ compactAfterRecords: 1000 })
     store.begin(baseInput())
     store.complete({ commandId: 'cmd-1', status: 'succeeded' })
@@ -1587,9 +1680,14 @@ describe('HostCommandReceiptStore', () => {
     const corrupted = [...lines.slice(0, 2), 'NOT-JSON', ...lines.slice(2)].join('\n') + '\n'
     writeFileSync(journalPath, corrupted)
 
-    const reopened = openStore({ compactAfterRecords: 1000 })
-    expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
-    expectFound(reopened.getByCommandId('cmd-2', OWNER_ACTOR), 'failed')
+    expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(/journal/)
+    expect(() => store.reopen()).toThrow(/journal/)
+    expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    expectFound(store.getByCommandId('cmd-2', OWNER_ACTOR), 'failed')
+    expect(() => store.begin(baseInput({ commandId: 'cmd-3', idempotencyKey: 'idem-3' }))).toThrow(
+      /durable journal state is uncertain/
+    )
+    expect(readFileSync(journalPath, 'utf8')).toBe(corrupted)
   })
 
   it('does not store unrestricted argument or credential fields on the receipt', () => {
@@ -2175,5 +2273,876 @@ describe('HostCommandReceiptStore', () => {
       })
     )
     expect(created.kind).toBe('created')
+  })
+
+  describe('durable-before-witness ordering under fs faults', () => {
+    const journalFile = () => join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const checkpointFile = () => join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const UNAVAILABLE = /durable journal state is uncertain/
+    const ping = (n: number) =>
+      baseInput({
+        commandId: `cmd-${n}`,
+        idempotencyKey: `idem-${n}`,
+        commandName: 'ping',
+        commandFingerprint: hostCommandFingerprint({
+          type: 'ping',
+          targetKind: 'host',
+          targetId: `n-${n}`
+        }),
+        target: { kind: 'host', id: `n-${n}` }
+      })
+
+    it('never witnesses a terminal receipt whose journal fsync failed; a proven rollback leaves the writer usable', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+
+      fsFaults.fsyncSync = once(() => {
+        throw new Error('EIO: journal fsync failed')
+      })
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(
+        'EIO: journal fsync failed'
+      )
+
+      // Memory only ever reflects durable state: still pending, never succeeded.
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      expectFound(store.getByIdempotencyKey('idem-1', OWNER_ACTOR), 'pending')
+      // Rollback proven (truncate + fsync on the same journal): exact prior bytes.
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+      expect(store.durabilityStatus).toEqual({ kind: 'ok' })
+
+      // A proven rollback leaves the writer usable: the retry is an ordinary durable write.
+      expect(store.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe('succeeded')
+      expect(readFileSync(journalFile(), 'utf8').length).toBeGreaterThan(journalBefore.length)
+      expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-1', OWNER_ACTOR),
+        'succeeded'
+      )
+    })
+
+    it('poisons writes after an unproven rollback, keeps durable reads, survives same-instance reopen, and lets a fresh instance recover', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+
+      fsFaults.fsyncSync = () => {
+        throw new Error('EIO: fsync keeps failing')
+      }
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(
+        'EIO: fsync keeps failing'
+      )
+      fsFaults.fsyncSync = null
+
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      expect(store.durabilityStatus).toEqual({
+        kind: 'unavailable',
+        code: 'journal_append_uncertain'
+      })
+      // A same-id retry is refused rather than answered from memory.
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(UNAVAILABLE)
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      // Exact durable identity stays readable; every write path refuses.
+      expect(store.begin(baseInput()).kind).toBe('existing')
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+      expect(() => store.updatePhase('cmd-1', 'queued')).toThrow(UNAVAILABLE)
+      expect(() => store.markIndeterminate(markInput())).toThrow(UNAVAILABLE)
+      expect(() => store.compact()).toThrow(UNAVAILABLE)
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+
+      // Same-instance reopen preserves the poison verdict (matching HostDeltaStore).
+      clock = '2026-08-03T17:00:02.000Z'
+      store.reopen()
+      expect(store.durabilityStatus).toEqual({
+        kind: 'unavailable',
+        code: 'journal_append_uncertain'
+      })
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(UNAVAILABLE)
+
+      // A fresh instance recovers from repaired durable state; no outcome is invented.
+      const fresh = openStore({ compactAfterRecords: 1000 })
+      expect(fresh.durabilityStatus).toEqual({ kind: 'ok' })
+      const recovered = expectFound(fresh.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+      expect(recovered?.recoveryState).toBe('recoverable-indeterminate')
+      expect(fresh.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe('succeeded')
+    })
+
+    it('never adopts an unproven terminal row when the poisoned instance reopens', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      const durable = store.getByCommandId('cmd-1', OWNER_ACTOR)
+      const failure = new Error('EIO: terminal fsync failed')
+      fsFaults.fsyncSync = once(() => {
+        throw failure
+      })
+      fsFaults.ftruncateSync = () => {
+        throw new Error('EIO: rollback failed before truncation')
+      }
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(failure)
+      fsFaults.fsyncSync = null
+      fsFaults.ftruncateSync = null
+      const rows = readFileSync(journalFile(), 'utf8')
+        .trimEnd()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(rows.at(-1).record.status).toBe('succeeded')
+      expect(store.durabilityStatus).toEqual({
+        kind: 'unavailable',
+        code: 'journal_append_uncertain'
+      })
+
+      fsFaults.readFileSync = () => {
+        throw new Error('a poisoned instance must not adopt new disk evidence')
+      }
+      expect(() => store.reopen()).not.toThrow()
+      fsFaults.readFileSync = null
+      expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual(durable)
+      expect(store.getByIdempotencyKey('idem-1', OWNER_ACTOR)).toEqual(durable)
+      expect(store.begin(baseInput())).toMatchObject({
+        kind: 'existing',
+        receipt: { status: 'pending' }
+      })
+      expect(() => store.complete({ commandId: 'cmd-1', status: 'succeeded' })).toThrow(UNAVAILABLE)
+
+      const recovered = openStore({ compactAfterRecords: 1000 })
+      expectFound(recovered.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual(durable)
+    })
+
+    it.each(['journal', 'checkpoint'] as const)(
+      'syncs recovered %s evidence before returning any terminal witness',
+      (source) => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        if (source === 'checkpoint') store.compact()
+        const file = source === 'journal' ? journalFile() : checkpointFile()
+        const bytes = readFileSync(file, 'utf8')
+        const failure = new Error('EIO: recovered evidence sync failed')
+        fsFaults.fsyncSync = once(() => {
+          throw failure
+        })
+        expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(failure)
+        fsFaults.fsyncSync = null
+        expect(readFileSync(file, 'utf8')).toBe(bytes)
+
+        fsFaults.trace = []
+        const recovered = openStore({ compactAfterRecords: 1000 })
+        expectFound(recovered.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+        expect(fsFaults.trace).toContain('fsync:file')
+        if (process.platform !== 'win32') {
+          expect(fsFaults.trace.indexOf('fsync:dir')).toBeGreaterThan(
+            fsFaults.trace.indexOf('fsync:file')
+          )
+        }
+      }
+    )
+
+    it.each(['journal', 'checkpoint'] as const)(
+      'preserves the previous durable view when recovered %s evidence cannot be synced',
+      (source) => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        const durable = store.getByCommandId('cmd-1', OWNER_ACTOR)
+        // Model disk evidence advancing while this instance retains its old view.
+        // The fixture writer is finished before reopen; there are no concurrent writes.
+        const fixture = openStore({ compactAfterRecords: 1000 })
+        fixture.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        if (source === 'checkpoint') fixture.compact()
+        const file = source === 'journal' ? journalFile() : checkpointFile()
+        const bytes = readFileSync(file, 'utf8')
+        const failure = new Error('EIO: recovered evidence sync failed')
+        fsFaults.fsyncSync = once(() => {
+          throw failure
+        })
+        expect(() => store.reopen()).toThrow(failure)
+        fsFaults.fsyncSync = null
+        expect(readFileSync(file, 'utf8')).toBe(bytes)
+        expect(store.durabilityStatus).toEqual({ kind: 'unavailable', code: 'reopen_failed' })
+        expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual(durable)
+        expect(store.getByIdempotencyKey('idem-1', OWNER_ACTOR)).toEqual(durable)
+        store.reopen()
+        expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual(durable)
+        expectFound(openStore().getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      }
+    )
+
+    it.skipIf(process.platform === 'win32')(
+      'fails fresh recovery when the directory witness cannot be synced',
+      () => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        const failure = new Error('EIO: recovered directory sync failed')
+        fsFaults.fsyncSync = (fd, actual) => {
+          if (actual.fstatSync(fd).isDirectory()) throw failure
+        }
+        expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(failure)
+        fsFaults.fsyncSync = null
+        expectFound(openStore().getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      }
+    )
+
+    it('begin leaves no receipt or idempotency owner behind a torn journal write', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      fsFaults.fsyncSync = once(() => {
+        throw new Error('EIO: begin')
+      })
+      expect(() => store.begin(baseInput())).toThrow('EIO: begin')
+      expect(store.size).toBe(0)
+      expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expect(store.getByIdempotencyKey('idem-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expect(existsSync(journalFile()) ? readFileSync(journalFile(), 'utf8') : '').toBe('')
+      expect(store.durabilityStatus).toEqual({ kind: 'ok' })
+
+      expect(store.begin(baseInput()).kind).toBe('created')
+      expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-1', OWNER_ACTOR),
+        'indeterminate'
+      )
+    })
+
+    it('a torn durable conflict write never disturbs the idempotency owner', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+      const otherFp = hostCommandFingerprint({
+        type: 'composer.send',
+        targetKind: 'thread',
+        targetId: 'thread-1',
+        argsDigest: 'other'
+      })
+
+      fsFaults.fsyncSync = once(() => {
+        throw new Error('EIO: conflict')
+      })
+      expect(() =>
+        store.begin(baseInput({ commandId: 'cmd-2', commandFingerprint: otherFp }))
+      ).toThrow('EIO: conflict')
+      expect(store.getByCommandId('cmd-2', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expect(
+        expectFound(store.getByIdempotencyKey('idem-1', OWNER_ACTOR), 'succeeded')?.commandId
+      ).toBe('cmd-1')
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+
+      const retry = store.begin(baseInput({ commandId: 'cmd-2', commandFingerprint: otherFp }))
+      expect(retry.kind).toBe('conflict')
+      if (retry.kind !== 'conflict') return
+      expect(retry.receipt?.status).toBe('conflict')
+      expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-2', OWNER_ACTOR),
+        'conflict'
+      )
+    })
+
+    it('never witnesses a phase whose journal event did not fsync', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+
+      fsFaults.fsyncSync = once(() => {
+        throw new Error('EIO: phase')
+      })
+      expect(() => store.updatePhase('cmd-1', 'queued')).toThrow('EIO: phase')
+      const after = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      expect(after?.phase).toBeUndefined()
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+
+      expect(store.updatePhase('cmd-1', 'queued').kind).toBe('updated')
+      const reopened = openStore({ compactAfterRecords: 1000 })
+      const recovered = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+      expect(recovered?.phase).toBe('queued')
+    })
+
+    it('never witnesses an explicit indeterminate promotion whose journal event did not fsync', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+
+      fsFaults.fsyncSync = once(() => {
+        throw new Error('EIO: mark')
+      })
+      expect(() => store.markIndeterminate(markInput())).toThrow('EIO: mark')
+      const after = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+      expect(after?.recoveryState).toBeUndefined()
+      expect(after?.errorCode).toBeUndefined()
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+
+      expect(store.markIndeterminate(markInput()).kind).toBe('marked')
+      const recovered = expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-1', OWNER_ACTOR),
+        'indeterminate'
+      )
+      expect(recovered?.errorCode).toBe(DEFAULT_INDETERMINATE_CODE)
+    })
+
+    it('reopen fails closed without witnessing a promotion whose journal event did not fsync', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      expect(store.begin(baseInput()).kind).toBe('created')
+      const journalBefore = readFileSync(journalFile(), 'utf8')
+
+      let promotionReached = false
+      fsFaults.fsyncSync = (fd, actual) => {
+        const stat = actual.fstatSync(fd)
+        if (!promotionReached && stat.isFile() && stat.size > Buffer.byteLength(journalBefore)) {
+          promotionReached = true
+          throw new Error('EIO: reopen')
+        }
+      }
+      expect(() => openStore({ compactAfterRecords: 1000 })).toThrow('EIO: reopen')
+      expect(promotionReached).toBe(true)
+      expect(readFileSync(journalFile(), 'utf8')).toBe(journalBefore)
+
+      // Fault consumed: a later reopen promotes durably and reads back.
+      store.reopen()
+      expect(store.durabilityStatus).toEqual({ kind: 'ok' })
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+      expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-1', OWNER_ACTOR),
+        'indeterminate'
+      )
+    })
+
+    it('repairs a torn journal tail durably on reopen and never accepts a newline-less final record', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      const durable = readFileSync(journalFile(), 'utf8')
+      const lines = durable.split('\n').filter(Boolean)
+      const lastEvent = JSON.parse(lines[lines.length - 1]!) as {
+        record: Record<string, unknown>
+      }
+      // A fully parseable succeeded record whose newline never landed.
+      const unterminated = JSON.stringify({
+        op: 'upsert',
+        record: {
+          ...lastEvent.record,
+          commandId: 'cmd-2',
+          idempotencyKey: 'idem-2',
+          commandName: 'ping',
+          commandFingerprint: hostCommandFingerprint({
+            type: 'ping',
+            targetKind: 'host',
+            targetId: 'n-2'
+          }),
+          target: { kind: 'host', id: 'n-2' }
+        }
+      })
+      writeFileSync(journalFile(), `${durable}${unterminated}`)
+
+      const reopened = openStore({ compactAfterRecords: 1000 })
+      expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(reopened.getByCommandId('cmd-2', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      // The discarded suffix is truncated on disk, not merely skipped in memory.
+      expect(readFileSync(journalFile(), 'utf8')).toBe(durable)
+
+      // The next append lands on the repaired tail, so the discarded suffix can
+      // never be concatenated into an accepted terminal record.
+      expect(reopened.begin(ping(2)).kind).toBe('created')
+      expectFound(
+        openStore({ compactAfterRecords: 1000 }).getByCommandId('cmd-2', OWNER_ACTOR),
+        'indeterminate'
+      )
+    })
+
+    it('blocks authority when the torn tail cannot be repaired instead of appending over it', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      const durable = readFileSync(journalFile(), 'utf8')
+      const torn = `${durable}{"op":"upsert","record":{"schemaVersion":1,"commandId":"cmd-torn`
+      writeFileSync(journalFile(), torn)
+
+      fsFaults.ftruncateSync = () => {
+        throw new Error('EIO: truncate')
+      }
+      expect(() => openStore({ compactAfterRecords: 1000 })).toThrow('EIO: truncate')
+      expect(() => store.reopen()).toThrow('EIO: truncate')
+      expect(readFileSync(journalFile(), 'utf8')).toBe(torn)
+      // Prior durable reads survive on the failed instance; writes are refused.
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(store.durabilityStatus).toEqual({ kind: 'unavailable', code: 'reopen_failed' })
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+
+      fsFaults.ftruncateSync = null
+      const fresh = openStore({ compactAfterRecords: 1000 })
+      expect(fresh.durabilityStatus).toEqual({ kind: 'ok' })
+      expect(readFileSync(journalFile(), 'utf8')).toBe(durable)
+      expectFound(fresh.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    })
+
+    it.skipIf(process.platform === 'win32')(
+      'fsyncs the data directory after journal creation and after checkpoint rename, before the journal is unlinked',
+      () => {
+        fsFaults.trace = []
+        const store = openStore({ compactAfterRecords: 1000 })
+        expect(store.begin(baseInput()).kind).toBe('created')
+        const fileSync = fsFaults.trace.indexOf('fsync:file')
+        expect(fileSync).toBeGreaterThanOrEqual(0)
+        expect(fsFaults.trace.indexOf('fsync:dir')).toBeGreaterThan(fileSync)
+
+        fsFaults.trace = []
+        store.compact()
+        const rename = fsFaults.trace.indexOf('rename')
+        const dirSync = fsFaults.trace.indexOf('fsync:dir', rename)
+        const unlink = fsFaults.trace.indexOf('unlink')
+        expect(rename).toBeGreaterThanOrEqual(0)
+        expect(dirSync).toBeGreaterThan(rename)
+        expect(unlink).toBeGreaterThan(dirSync)
+      }
+    )
+
+    it.skipIf(process.platform === 'win32')(
+      'treats a failed directory fsync after journal creation as an unwitnessed, uncertain write',
+      () => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        fsFaults.fsyncSync = (fd, actual) => {
+          if (actual.fstatSync(fd).isDirectory()) throw new Error('EIO: directory fsync')
+        }
+        expect(() => store.begin(baseInput())).toThrow('EIO: directory fsync')
+        fsFaults.fsyncSync = null
+
+        expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+        expect(store.size).toBe(0)
+        // The rollback's own directory witness failed too, so the verdict is uncertain.
+        expect(store.durabilityStatus).toEqual({
+          kind: 'unavailable',
+          code: 'journal_append_uncertain'
+        })
+        expect(() => store.begin(baseInput())).toThrow(UNAVAILABLE)
+
+        const fresh = openStore({ compactAfterRecords: 1000 })
+        expect(fresh.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+        expect(fresh.begin(baseInput()).kind).toBe('created')
+      }
+    )
+
+    it('defers a failed inline compaction after a durable append without undoing the witness', () => {
+      const store = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
+      for (let i = 1; i <= 2; i += 1) {
+        clock = `2026-08-03T17:00:0${i}.000Z`
+        expect(store.begin(ping(i)).kind).toBe('created')
+        store.complete({ commandId: `cmd-${i}`, status: 'succeeded' })
+      }
+      clock = '2026-08-03T17:00:03.000Z'
+
+      // Third begin appends durably, then over-bound inline compaction fails.
+      fsFaults.renameSync = once(() => {
+        throw new Error('EIO: checkpoint rename failed')
+      })
+      expect(store.begin(ping(3)).kind).toBe('created')
+
+      // The journal remains the durable truth: nothing evicted, nothing undone.
+      expect(store.durabilityStatus).toEqual({ kind: 'ok' })
+      expect(store.size).toBe(3)
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expectFound(store.getByCommandId('cmd-3', OWNER_ACTOR), 'pending')
+      expect(existsSync(checkpointFile())).toBe(false)
+      expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+
+      // The store stays usable: the next durable event compacts successfully.
+      expect(store.complete({ commandId: 'cmd-3', status: 'succeeded' })?.status).toBe('succeeded')
+      expect(store.size).toBe(2)
+      expect(existsSync(checkpointFile())).toBe(true)
+
+      const reopened = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
+      expectFound(reopened.getByCommandId('cmd-3', OWNER_ACTOR), 'succeeded')
+      expect(reopened.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+    })
+
+    it('keeps memory and the journal when a durable checkpoint cannot retire the journal, and never replays retired events', () => {
+      const store = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
+      for (let i = 1; i <= 2; i += 1) {
+        clock = `2026-08-03T17:00:0${i}.000Z`
+        expect(store.begin(ping(i)).kind).toBe('created')
+        store.complete({ commandId: `cmd-${i}`, status: 'succeeded' })
+      }
+      clock = '2026-08-03T17:00:03.000Z'
+
+      fsFaults.unlinkSync = (path) => {
+        if (path.endsWith(HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)) throw new Error('EIO: unlink')
+      }
+      expect(store.begin(ping(3)).kind).toBe('created')
+      expect(store.complete({ commandId: 'cmd-3', status: 'succeeded' })?.status).toBe('succeeded')
+      fsFaults.unlinkSync = null
+
+      // Checkpoint durable, journal not retired: memory and count are preserved,
+      // nothing was evicted from memory, and the call never failed.
+      expect(store.durabilityStatus).toEqual({ kind: 'ok' })
+      expect(store.size).toBe(3)
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(existsSync(checkpointFile())).toBe(true)
+      expect(readFileSync(journalFile(), 'utf8').split('\n').filter(Boolean)).toHaveLength(6)
+      const checkpoint = JSON.parse(readFileSync(checkpointFile(), 'utf8')) as {
+        records: Array<{ commandId: string }>
+      }
+      expect(checkpoint.records.map((r) => r.commandId).sort()).toEqual(['cmd-2', 'cmd-3'])
+
+      // One more durable event lands after the checkpoint while its compaction is deferred.
+      clock = '2026-08-03T17:00:04.000Z'
+      fsFaults.renameSync = once(() => {
+        throw new Error('EIO: rename')
+      })
+      expect(store.begin(ping(4)).kind).toBe('created')
+      expect(readFileSync(journalFile(), 'utf8').split('\n').filter(Boolean)).toHaveLength(7)
+
+      // Reopen with headroom: retired events (cmd-1) must not resurrect; the
+      // post-checkpoint event (cmd-4) must replay.
+      clock = '2026-08-03T17:00:05.000Z'
+      const reopened = openStore({ maxRecords: 4, compactAfterRecords: 1000 })
+      expect(reopened.size).toBe(3)
+      expect(reopened.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expectFound(reopened.getByCommandId('cmd-2', OWNER_ACTOR), 'succeeded')
+      expectFound(reopened.getByCommandId('cmd-3', OWNER_ACTOR), 'succeeded')
+      expectFound(reopened.getByCommandId('cmd-4', OWNER_ACTOR), 'indeterminate')
+      reopened.compact()
+      expect(existsSync(journalFile())).toBe(false)
+    })
+
+    it('retires the legacy prefix covered by a zero-sequence checkpoint before journal unlink', () => {
+      const seed = openStore({ compactAfterRecords: 1000 })
+      for (let i = 1; i <= 2; i += 1) {
+        clock = `2026-08-03T17:00:0${i}.000Z`
+        seed.begin(ping(i))
+        seed.complete({ commandId: `cmd-${i}`, status: 'succeeded' })
+      }
+      const legacy =
+        readFileSync(journalFile(), 'utf8')
+          .trimEnd()
+          .split('\n')
+          .map((line) => {
+            const event = JSON.parse(line) as { seq?: number }
+            delete event.seq
+            return JSON.stringify(event)
+          })
+          .join('\n') + '\n'
+      writeFileSync(journalFile(), legacy)
+      const upgraded = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
+      fsFaults.unlinkSync = (path) => {
+        if (path === journalFile()) throw new Error('EIO: unlink')
+      }
+      upgraded.compact()
+      fsFaults.unlinkSync = null
+      expect(JSON.parse(readFileSync(checkpointFile(), 'utf8')).journalSeq).toBe(0)
+      expect(readFileSync(journalFile(), 'utf8')).toBe(legacy)
+
+      const recovered = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
+      expect(recovered.size).toBe(1)
+      expect(recovered.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expect(recovered.begin(ping(2))).toMatchObject({
+        kind: 'existing',
+        receipt: { status: 'succeeded' }
+      })
+      recovered.compact()
+      expect(openStore({ maxRecords: 1 }).begin(ping(2))).toEqual(recovered.begin(ping(2)))
+    })
+
+    it('does not let a covered legacy pending row regress an acknowledged terminal after upgrade', () => {
+      const seed = openStore({ compactAfterRecords: 1000 })
+      seed.begin(ping(1))
+      seed.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      clock = '2026-08-03T17:00:01.000Z'
+      seed.begin(ping(2))
+      const legacy =
+        readFileSync(journalFile(), 'utf8')
+          .trimEnd()
+          .split('\n')
+          .map((line) => {
+            const event = JSON.parse(line) as { seq?: number }
+            delete event.seq
+            return JSON.stringify(event)
+          })
+          .join('\n') + '\n'
+      writeFileSync(journalFile(), legacy)
+      const upgraded = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
+      clock = '2026-08-03T17:00:02.000Z'
+      upgraded.complete({ commandId: 'cmd-2', status: 'succeeded' })
+      fsFaults.unlinkSync = (path) => {
+        if (path === journalFile()) throw new Error('EIO: unlink')
+      }
+      clock = '2026-08-03T17:00:03.000Z'
+      upgraded.begin(ping(3))
+      upgraded.complete({ commandId: 'cmd-3', status: 'succeeded' })
+      fsFaults.unlinkSync = null
+      expect(JSON.parse(readFileSync(checkpointFile(), 'utf8')).journalSeq).toBe(4)
+
+      const recovered = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
+      expect(recovered.size).toBe(2)
+      expect(recovered.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+      expect(recovered.begin(ping(2))).toMatchObject({
+        kind: 'existing',
+        receipt: { status: 'succeeded' }
+      })
+      expectFound(recovered.getByCommandId('cmd-3', OWNER_ACTOR), 'succeeded')
+      recovered.compact()
+      expect(openStore({ maxRecords: 2 }).begin(ping(2))).toEqual(recovered.begin(ping(2)))
+    })
+
+    it.each([null, -1, 0.5, '2', Number.MAX_SAFE_INTEGER + 1])(
+      'blocks a present invalid checkpoint sequence %j without discarding durable memory',
+      (journalSeq) => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        store.compact()
+        const checkpoint = JSON.parse(readFileSync(checkpointFile(), 'utf8'))
+        checkpoint.journalSeq = journalSeq
+        const bytes = JSON.stringify(checkpoint) + '\n'
+        writeFileSync(checkpointFile(), bytes)
+
+        const fresh = openStore({ compactAfterRecords: 1000 })
+        expect(fresh.durabilityStatus.kind).toBe('unavailable')
+        expect(() => fresh.begin(baseInput())).toThrow(UNAVAILABLE)
+        store.reopen()
+        expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+        expect(store.begin(baseInput()).kind).toBe('existing')
+        expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+        expect(() => store.compact()).toThrow(UNAVAILABLE)
+        expect(readFileSync(checkpointFile(), 'utf8')).toBe(bytes)
+        expect(existsSync(journalFile())).toBe(false)
+      }
+    )
+
+    it.each([null, -1, 0, 1.5, '2', Number.MAX_SAFE_INTEGER + 1])(
+      'rejects a present invalid journal sequence %j instead of reading it as legacy',
+      (seq) => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        const lines = readFileSync(journalFile(), 'utf8').trimEnd().split('\n')
+        const last = JSON.parse(lines[1]!)
+        last.seq = seq
+        const bytes = lines[0] + '\n' + JSON.stringify(last) + '\n'
+        writeFileSync(journalFile(), bytes)
+
+        expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(/journal/)
+        expect(() => store.reopen()).toThrow(/journal/)
+        expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+        expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+        expect(readFileSync(journalFile(), 'utf8')).toBe(bytes)
+      }
+    )
+
+    it.each([
+      { sequences: [1, 1] },
+      { sequences: [2, 1] },
+      { sequences: [1, undefined] },
+      { sequences: [1, 2, 1] },
+      { sequences: [1, undefined, 2] }
+    ])('rejects ambiguous journal ordering $sequences', ({ sequences }) => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      const terminal = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      // The checkpoint must not make a later regression appear to be a harmless retired row.
+      store.compact()
+      const bytes =
+        sequences.map((seq) => JSON.stringify({ op: 'upsert', seq, record: terminal })).join('\n') +
+        '\n'
+      writeFileSync(journalFile(), bytes)
+      expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(/journal/)
+      expect(() => store.reopen()).toThrow(/journal/)
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+      expect(readFileSync(journalFile(), 'utf8')).toBe(bytes)
+    })
+
+    it.each([null, { commandId: 'forgotten', status: 'pending' }, { schemaVersion: 999 }])(
+      'blocks malformed checkpoint records %j rather than reopening writable',
+      (badRecord) => {
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        store.compact()
+        const checkpoint = JSON.parse(readFileSync(checkpointFile(), 'utf8'))
+        checkpoint.records.push(badRecord)
+        const bytes = JSON.stringify(checkpoint) + '\n'
+        writeFileSync(checkpointFile(), bytes)
+
+        const fresh = openStore({ compactAfterRecords: 1000 })
+        expect(() => fresh.begin(baseInput())).toThrow(UNAVAILABLE)
+        store.reopen()
+        expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+        expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+        expect(readFileSync(checkpointFile(), 'utf8')).toBe(bytes)
+      }
+    )
+
+    it.each([
+      '{"privatePayload":"must-not-appear-in-errors",BROKEN}',
+      JSON.stringify({ op: 'upsert', record: null }),
+      JSON.stringify({ op: 'unknown' }),
+      JSON.stringify({ op: 'compact', retainedCommandIds: ['cmd-1', 17], at: 'now' })
+    ])('blocks complete corrupt journal evidence without exposing its contents: %j', (line) => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      const bytes = readFileSync(journalFile(), 'utf8') + line + '\n'
+      writeFileSync(journalFile(), bytes)
+      expect(() => openStore({ compactAfterRecords: 1000 })).toThrow(/journal/)
+      try {
+        store.reopen()
+      } catch (error) {
+        expect(String(error)).not.toContain('privatePayload')
+        expect(String(error)).not.toContain('must-not-appear-in-errors')
+      }
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+      expect(readFileSync(journalFile(), 'utf8')).toBe(bytes)
+    })
+
+    it.each(['checkpoint', 'directory', 'tail-repair'] as const)(
+      'preserves the original %s fsync error when closing also fails',
+      (boundary) => {
+        if (boundary === 'directory' && process.platform === 'win32') return
+        const store = openStore({ compactAfterRecords: 1000 })
+        store.begin(baseInput())
+        store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+        if (boundary === 'tail-repair') {
+          writeFileSync(journalFile(), readFileSync(journalFile(), 'utf8') + '{"torn":')
+        }
+        let failedDescriptor: number | undefined
+        const closeCalls: number[] = []
+        fsFaults.trace = []
+        const original = new Error(`EIO: ${boundary} fsync`)
+        fsFaults.fsyncSync = (fd, actual) => {
+          const directory = actual.fstatSync(fd).isDirectory()
+          if (directory === (boundary === 'directory')) {
+            failedDescriptor = fd
+            // Earlier successful closes may have released this same fd number.
+            fsFaults.trace = []
+            throw original
+          }
+        }
+        fsFaults.closeSync = (fd) => {
+          if (fd === failedDescriptor) {
+            closeCalls.push(fd)
+            throw new Error('EIO: cleanup close')
+          }
+        }
+        expect(() => (boundary === 'tail-repair' ? store.reopen() : store.compact())).toThrow(
+          original
+        )
+        expect(closeCalls).toHaveLength(1)
+        expect(
+          fsFaults.trace.filter((entry) => entry === `close:${failedDescriptor}`)
+        ).toHaveLength(1)
+        expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+        expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      }
+    )
+
+    it('does not retry a checkpoint descriptor close that has already released the fd', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      const closes = vi.fn((_fd: number) => {
+        throw new Error('EIO: close')
+      })
+      fsFaults.trace = []
+      fsFaults.closeSync = closes
+      expect(() => store.compact()).toThrow('EIO: close')
+      expect(closes).toHaveBeenCalledTimes(1)
+      expect(fsFaults.trace).toContain(`close:${closes.mock.calls[0]![0]}`)
+      expect(fsFaults.trace.filter((entry) => entry.startsWith('close:'))).toHaveLength(1)
+      expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+    })
+
+    it.each(['rename', 'unlink'] as const)(
+      'keeps durable admission and completion honest when %s and the logger both throw',
+      (boundary) => {
+        const log = vi.fn(() => {
+          throw new Error('logger failed')
+        })
+        const store = new HostCommandReceiptStore({
+          dataDir,
+          getPosition: () => position,
+          compactAfterRecords: 1,
+          log
+        })
+        if (boundary === 'rename') {
+          fsFaults.renameSync = () => {
+            throw new Error('EIO: rename')
+          }
+        } else {
+          fsFaults.unlinkSync = (path) => {
+            if (path === journalFile()) throw new Error('EIO: unlink')
+          }
+        }
+        expect(store.begin(baseInput()).kind).toBe('created')
+        expect(store.complete({ commandId: 'cmd-1', status: 'succeeded' })?.status).toBe(
+          'succeeded'
+        )
+        expect(log).toHaveBeenCalledTimes(2)
+        fsFaults.renameSync = null
+        fsFaults.unlinkSync = null
+        expectFound(openStore().getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      }
+    )
+
+    it('blocks write authority when the checkpoint exists but cannot be read as a document', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+      store.compact()
+      writeFileSync(checkpointFile(), 'NOT-JSON\n')
+
+      const reopened = openStore({ compactAfterRecords: 1000 })
+      expect(reopened.durabilityStatus).toEqual({
+        kind: 'unavailable',
+        code: 'checkpoint_unreadable'
+      })
+      expect(reopened.size).toBe(0)
+      expect(() => reopened.begin(ping(2))).toThrow(UNAVAILABLE)
+      expect(readFileSync(checkpointFile(), 'utf8')).toBe('NOT-JSON\n')
+      expect(existsSync(journalFile())).toBe(false)
+
+      store.reopen()
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(store.begin(baseInput()).kind).toBe('existing')
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+    })
+
+    it('uses content-free checkpoint parse diagnostics and survives a throwing logger', () => {
+      const payload = 'privatePayload-must-not-appear'
+      writeFileSync(checkpointFile(), `{"${payload}":BROKEN}\n`)
+      const messages: string[] = []
+      const store = new HostCommandReceiptStore({
+        dataDir,
+        getPosition: () => position,
+        log: (message) => {
+          messages.push(message)
+          throw new Error('logger failed')
+        }
+      })
+      expect(messages).toHaveLength(1)
+      expect(messages[0]).not.toContain(payload)
+      expect(store.durabilityStatus.kind).toBe('unavailable')
+      expect(() => store.begin(baseInput())).toThrow(UNAVAILABLE)
+    })
+
+    it('fails closed on a journal read error instead of starting an empty writable store', () => {
+      const store = openStore({ compactAfterRecords: 1000 })
+      store.begin(baseInput())
+      store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+      fsFaults.readFileSync = (path) => {
+        if (path.endsWith(HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)) {
+          throw Object.assign(new Error('EACCES: journal'), { code: 'EACCES' })
+        }
+      }
+      expect(() => openStore({ compactAfterRecords: 1000 })).toThrow('EACCES: journal')
+      expect(() => store.reopen()).toThrow('EACCES: journal')
+      fsFaults.readFileSync = null
+
+      expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+      expect(store.durabilityStatus).toEqual({ kind: 'unavailable', code: 'reopen_failed' })
+      expect(() => store.begin(ping(2))).toThrow(UNAVAILABLE)
+
+      const fresh = openStore({ compactAfterRecords: 1000 })
+      expect(fresh.durabilityStatus).toEqual({ kind: 'ok' })
+      expectFound(fresh.getByCommandId('cmd-1', OWNER_ACTOR), 'succeeded')
+    })
   })
 })
