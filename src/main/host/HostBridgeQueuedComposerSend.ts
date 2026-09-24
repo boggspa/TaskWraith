@@ -1,14 +1,16 @@
 /**
  * In-main Bridge queued-start ACK executor. Register the exact Host action
  * before the single Bridge dispatch. Queue reservations may publish queued;
- * an early appRunId ACK never publishes prepared or asserts persistence.
- * HostBridgeQueuedStartProducer owns that proof after adapter invocation.
+ * an early appRunId or Ensemble roundId ACK never publishes prepared or asserts
+ * persistence. The detached producers own that proof after observing a start.
  *
- * Ensemble steering retains the legacy lane without queued-start registration.
- * Bridge-proven rejection/cancellation settles once; uncertain dispatches and
- * refused publication abandon proof through abortQueuedStart. Their succeeded
- * ACK with run_queued_unproven is internal acknowledgement only, so it cannot
- * race a false failed settlement against the indeterminate receipt.
+ * Solo rejection/cancellation without prepared proof settles once. Ensemble outcomes
+ * other than an exact fresh started round remain unproven; queued, steered or
+ * absorbed ACKs cannot certify a new round. Uncertain ACKs in both modes preserve
+ * exact producer proof while Authority publication is pending; without proof
+ * they abandon through abortQueuedStart. Their succeeded ACK with
+ * run_queued_unproven is internal acknowledgement only, so it cannot race a
+ * false failed settlement against the original receipt.
  *
  * An abort port can mutate then throw. That never proves failure: the receipt
  * may remain pending until shutdown/restart recovery marks it indeterminate.
@@ -92,20 +94,14 @@ function failResult(errorCode: string, errorMessage: string): HostCommandExecuti
 }
 
 /**
- * Internal ACK after abandoning proof. The Authority projects indeterminate
- * through abortQueuedStart; if that port fails, shutdown/restart owns recovery.
- * Returning a failed ACK here could race that abort and falsely fail a prompt
- * which took effect. This ACK never certifies a start or reaches the wire.
+ * Internal ACK without start evidence from Bridge. Existing producer proof
+ * continues publishing; otherwise abortQueuedStart projects indeterminate and
+ * shutdown/restart owns recovery if that port fails. Returning a failed ACK
+ * here could falsely fail a prompt which took effect. This ACK never certifies
+ * a start or reaches the wire.
  */
 function unprovenResult(): HostCommandExecutionResult {
   return { status: 'succeeded', resultSummary: 'run_queued_unproven' }
-}
-
-function boundText(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  if (!trimmed) return undefined
-  return trimmed.length <= 200 ? trimmed : trimmed.slice(0, 200)
 }
 
 export function createHostBridgeQueuedComposerSend(
@@ -160,11 +156,9 @@ export function createHostBridgeQueuedComposerSend(
     }
   }
 
-  const alreadyPrepared = (actionId: string, threadId: string, runId: string): boolean => {
-    const view = getView(actionId)
+  const alreadyPrepared = (view: HostBridgeQueuedStartView | undefined, runId: string): boolean => {
     return Boolean(
-      view?.hostCommandActionId === actionId &&
-      view.threadId === threadId &&
+      view &&
       (view.phase === 'prepared' || view.phase === 'settled') &&
       (!view.queued || (view.queued.queueId === runId && view.queued.reservedRunId === runId)) &&
       view.prepared?.start.kind === 'solo' &&
@@ -199,7 +193,9 @@ export function createHostBridgeQueuedComposerSend(
     const operation = (async (): Promise<boolean> => {
       try {
         const result = await adapter.settled(event)
-        if (result.kind === 'applied' || result.kind === 'unchanged') return true
+        // A prepared event can win the adapter queue after the prior lookup.
+        // Its proof still owns publication even if this settlement was applied.
+        if (result.kind === 'applied' || result.kind === 'unchanged') return !result.view.prepared
         const view = getView(hostCommandActionId)
         return Boolean(
           view?.hostCommandActionId === hostCommandActionId &&
@@ -269,27 +265,7 @@ export function createHostBridgeQueuedComposerSend(
     }
     const ctx = resolved.value
 
-    // Ensemble steer stays on the legacy lane: no registration, no adapter
-    // event, byte-compatible with HostBridgeCommandExecutor.executeComposerSend.
-    if (ctx.mode === 'ensemble') {
-      const action: BridgeEnsembleSteerAction = {
-        kind: 'ensembleSteer',
-        ...meta,
-        workspaceId: ctx.workspaceId,
-        threadId,
-        text: String(command.arguments?.text ?? ''),
-        message: 'Sent via Host protocol',
-        ...(ctx.roundId ? { roundId: ctx.roundId } : {})
-      }
-      try {
-        return mapBridgeExecutionResult(await bridge.executeEnsembleSteer(action))
-      } catch (error) {
-        const message = error instanceof Error ? boundText(error.message) : undefined
-        return failResult('bridge_adapter_threw', message || 'bridge adapter threw')
-      }
-    }
-
-    // Solo: fingerprint BEFORE registration so the adapter's authority record
+    // Fingerprint BEFORE registration so the adapter's authority record
     // carries the exact canonical fingerprint the receipt store holds.
     let fingerprint: string
     try {
@@ -321,6 +297,79 @@ export function createHostBridgeQueuedComposerSend(
       return failResult('queued_start_registration_refused', registered.reason)
     }
 
+    const getRegisteredView = (): HostBridgeQueuedStartView | undefined => {
+      const view = getView(actionId)
+      return view?.hostCommandActionId === registration.hostCommandActionId &&
+        view.threadId === registration.threadId &&
+        view.authority.actorId === registration.authority.actorId &&
+        view.authority.clientId === registration.authority.clientId &&
+        view.authority.clientClass === registration.authority.clientClass &&
+        view.authority.commandFingerprint === registration.authority.commandFingerprint
+        ? view
+        : undefined
+    }
+    const unprovenAck = (): HostCommandExecutionResult => {
+      const view = getRegisteredView()
+      const hasPreparedStart =
+        (view?.phase === 'prepared' || view?.phase === 'settled') &&
+        (ctx.mode === 'ensemble'
+          ? view.prepared?.start.kind === 'ensemble' &&
+            isSafeHostIdentifier(view.prepared.start.roundId)
+          : view.prepared?.start.kind === 'solo' &&
+            isSafeHostIdentifier(view.prepared.start.runId) &&
+            (!view.queued || view.queued.reservedRunId === view.prepared.start.runId))
+      // The adapter can hold exact proof while Authority publication is
+      // still queued. A later Bridge ACK cannot invalidate that producer.
+      if (!hasPreparedStart) abortOnce(commandId)
+      return unprovenResult()
+    }
+
+    if (ctx.mode === 'ensemble') {
+      const action: BridgeEnsembleSteerAction = {
+        kind: 'ensembleSteer',
+        ...meta,
+        workspaceId: ctx.workspaceId,
+        threadId,
+        text: String(command.arguments?.text ?? ''),
+        message: 'Sent via Host protocol',
+        ...(ctx.roundId ? { roundId: ctx.roundId } : {})
+      }
+      let raw: BridgeActionExecutionResult
+      try {
+        raw = await bridge.executeEnsembleSteer(action)
+      } catch {
+        return unprovenAck()
+      }
+      // The production Bridge wraps the root's result under data.result.
+      // This is only an ACK: the round producer proves persistence separately.
+      const data = raw?.data
+      const result = data?.result
+      if (
+        mapBridgeExecutionResult(raw).status === 'succeeded' &&
+        data?.actionKind === 'ensembleSteer' &&
+        result !== null &&
+        typeof result === 'object' &&
+        !Array.isArray(result) &&
+        'status' in result &&
+        result.status === 'started' &&
+        'roundId' in result &&
+        isSafeHostIdentifier(result.roundId)
+      ) {
+        const view = getRegisteredView()
+        if (
+          view &&
+          (!view.prepared ||
+            (view.prepared.start.kind === 'ensemble' &&
+              view.prepared.start.roundId === result.roundId))
+        ) {
+          return { status: 'succeeded', resultSummary: 'run_queued' }
+        }
+      }
+      // Even a failed/throwing Bridge result may follow round effects. Never
+      // settle it as no-start or abort an exact start awaiting publication.
+      return unprovenAck()
+    }
+
     const action: BridgeComposerPromptAction = {
       kind: 'composerPrompt',
       ...meta,
@@ -340,13 +389,9 @@ export function createHostBridgeQueuedComposerSend(
     try {
       raw = await bridge.executeComposerPrompt(action)
     } catch {
-      // Unproven: a throwing Bridge call cannot certify "no execution", so the
-      // receipt goes indeterminate and the ACK must not re-fail it. The error
-      // text is deliberately dropped — it would describe a transport fault, not
-      // the receipt outcome, and nothing reads an errorMessage off a succeeded
-      // ACK.
-      abortOnce(commandId)
-      return unprovenResult()
+      // A throwing Bridge call cannot certify no execution or invalidate
+      // exact producer proof awaiting Authority publication.
+      return unprovenAck()
     }
 
     const mapped = mapBridgeExecutionResult(raw)
@@ -370,8 +415,7 @@ export function createHostBridgeQueuedComposerSend(
         try {
           queuedResult = await adapter.queued(event)
         } catch {
-          abortOnce(commandId)
-          return unprovenResult()
+          return unprovenAck()
         }
         if (queuedResult.kind === 'refused' || queuedResult.kind === 'failed') {
           // Queue flushing can invoke and persist the exact reserved run
@@ -379,43 +423,38 @@ export function createHostBridgeQueuedComposerSend(
           if (
             queuedResult.kind === 'refused' &&
             (queuedResult.reason === 'regression' || queuedResult.reason === 'terminal') &&
-            alreadyPrepared(actionId, threadId, data.queueId)
+            alreadyPrepared(getRegisteredView(), data.queueId)
           ) {
             return { status: 'succeeded', resultSummary: 'run_queued' }
           }
-          // Audit N3: a refused event leaves the receipt pending forever.
-          // Abort (indeterminate) instead of reporting a false success.
-          abortOnce(commandId)
-          return unprovenResult()
+          // Without exact producer proof a refused event cannot leave the
+          // receipt pending forever; an existing proof keeps publishing.
+          return unprovenAck()
         }
         return { status: 'succeeded', resultSummary: 'run_queued' }
       }
       if (isSafeHostIdentifier(data?.appRunId)) {
         // Dispatch is still asynchronous. Only the producer may certify the
         // original persisted prompt/start after observing adapter invocation.
-        const view = getView(actionId)
+        const view = getRegisteredView()
         if (
           !view ||
-          view.hostCommandActionId !== actionId ||
-          view.threadId !== threadId ||
           (view.queued && view.queued.reservedRunId !== data.appRunId) ||
           (view.prepared &&
             (view.prepared.start.kind !== 'solo' || view.prepared.start.runId !== data.appRunId))
         ) {
-          abortOnce(commandId)
-          return unprovenResult()
+          return unprovenAck()
         }
         return { status: 'succeeded', resultSummary: 'run_queued' }
       }
       // Case 2 (ruling): Bridge success with neither run identity nor queue
       // reservation. The prompt may have been delivered; `failed` would be a
-      // lie. Abort once, never settle, never handleQueuedStartDispatchSettled.
-      abortOnce(commandId)
-      return unprovenResult()
+      // lie. Preserve exact proof if present, otherwise abort once.
+      return unprovenAck()
     }
 
-    // Bridge-reported failure/cancelled: settle the adapter record exactly
-    // once so the glue terminalizes the original receipt.
+    // Settle a Bridge-reported failure/cancellation only without prepared
+    // proof. A producer which wins the adapter queue keeps its publication.
     const applied = await settleOnce(
       actionId,
       threadId,
@@ -423,8 +462,7 @@ export function createHostBridgeQueuedComposerSend(
       mapped.errorCode
     )
     if (!applied) {
-      abortOnce(commandId)
-      return unprovenResult()
+      return unprovenAck()
     }
     return mapped
   }

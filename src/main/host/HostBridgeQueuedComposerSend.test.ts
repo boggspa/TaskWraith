@@ -13,14 +13,53 @@ import type {
   HostBridgeQueuedComposerSendAuthorityPort
 } from './HostBridgeQueuedComposerSend'
 import type { HostBridgeActionPort, HostBridgeContextResolvers } from './HostBridgeCommandExecutor'
-import type { HostBridgeQueuedStartView } from './HostBridgeQueuedStartAdapter'
+import {
+  createHostBridgeQueuedStartAdapter,
+  type HostBridgeQueuedStartView
+} from './HostBridgeQueuedStartAdapter'
 import type { HostCommand } from '../../shared/hostProtocol'
 import type { HostAuthorityCallContext } from '../../host-runtime/HostAuthority'
+import { fingerprintHostCommand } from '../../host-runtime/HostCommandFingerprint'
+import { createHostProjectionSerialQueue } from '../../host-runtime/HostProjectionSerialQueue'
+import type { HostCommandReceiptRecord } from '../../host-runtime/HostCommandReceiptStore'
+import {
+  createHostMutationObservationScope,
+  type HostMutationObservationFamilies
+} from '../../host-runtime/HostMutationObservationScope'
+import {
+  createHostQueuedStartPublication,
+  type HostQueuedStartPublicationPorts
+} from '../../host-runtime/HostQueuedStartPublication'
+import { createHostBridgeQueuedStartPublicationBridge } from './HostBridgeQueuedStartPublicationBridge'
 
 const COMMAND_ID = '11111111-1111-4111-8111-111111111111'
 const ACTION_ID = `host:command:${COMMAND_ID}`
 const THREAD_ID = 'thread-a'
 const RUN_ID = 'run-a'
+const ROUND_ID = 'round-a'
+
+type EnsembleBridgeResult = Awaited<ReturnType<HostBridgeActionPort['executeEnsembleSteer']>>
+
+function ensembleReply(result: unknown): EnsembleBridgeResult {
+  return {
+    executed: true,
+    message: 'Ensemble action "ensembleSteer" applied',
+    data: { actionKind: 'ensembleSteer', result }
+  }
+}
+
+function ensembleResolvers(roundId?: string): Partial<ResolversStub> {
+  return {
+    resolveComposerSend: vi.fn<HostBridgeContextResolvers['resolveComposerSend']>(async () => ({
+      ok: true,
+      value: {
+        mode: 'ensemble',
+        workspaceId: 'workspace-1',
+        ...(roundId ? { roundId } : {})
+      }
+    }))
+  }
+}
 
 function command(overrides: Partial<HostCommand> = {}): HostCommand {
   return {
@@ -119,7 +158,7 @@ const VIEW: HostBridgeQueuedStartView = {
     actorId: 'actor-a',
     clientId: 'client-a',
     clientClass: 'desktop',
-    commandFingerprint: 'fingerprint-a'
+    commandFingerprint: fingerprintHostCommand(command()).fingerprint
   },
   phase: 'registered'
 }
@@ -179,6 +218,157 @@ function build(
     authority: authorityPort
   })
   return { execute, bridgePort, adapterPort, authorityPort }
+}
+
+function deferredStartPublication(mode: 'solo' | 'ensemble') {
+  const cmd = command()
+  const fingerprint = fingerprintHostCommand(cmd).fingerprint
+  let receipt: HostCommandReceiptRecord = {
+    schemaVersion: 1,
+    commandId: COMMAND_ID,
+    idempotencyKey: cmd.idempotencyKey,
+    commandName: cmd.name,
+    commandFingerprint: fingerprint,
+    actor: context().actor,
+    target: { kind: 'thread', id: THREAD_ID },
+    authority: { decision: 'allowed' },
+    status: 'pending',
+    createdAt: cmd.issuedAt,
+    updatedAt: cmd.issuedAt,
+    generation: 1,
+    cursor: 1
+  }
+  const before: HostMutationObservationFamilies = {
+    health: { hostStatus: 'ok', connectionPhase: 'live', supervised: false, freshness: 'live' },
+    threads: [
+      {
+        id: THREAD_ID,
+        workspaceId: 'workspace-1',
+        title: mode === 'solo' ? 'Solo' : 'Ensemble',
+        chatKind: mode,
+        archived: false,
+        pinned: false,
+        updatedAt: 0,
+        messageCount: 0
+      }
+    ],
+    workspaces: [],
+    runs: [],
+    missions: [],
+    rounds: [],
+    participants: [],
+    providers: [],
+    questions: [],
+    approvals: [],
+    schedules: [],
+    artifacts: [],
+    warnings: [],
+    usage: { availability: 'unavailable' }
+  }
+  const after: HostMutationObservationFamilies = {
+    ...before,
+    threads: [
+      {
+        ...before.threads[0],
+        updatedAt: 1,
+        messageCount: 1,
+        ...(mode === 'ensemble' ? { activeRoundId: ROUND_ID } : {})
+      }
+    ],
+    runs:
+      mode === 'solo'
+        ? [{ runId: RUN_ID, threadId: THREAD_ID, providerId: 'codex', providerOutcome: 'running' }]
+        : [],
+    rounds:
+      mode === 'ensemble'
+        ? [
+            {
+              roundId: ROUND_ID,
+              threadId: THREAD_ID,
+              status: 'running',
+              participantIds: [],
+              providerRunIds: []
+            }
+          ]
+        : []
+  }
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const queue = createHostProjectionSerialQueue()
+  const blockingPublication = queue(async () => {
+    await barrier
+  })
+  const completeReceipt = vi.fn<HostQueuedStartPublicationPorts['completeReceipt']>((input) => {
+    if (receipt.status !== 'pending') return null
+    receipt = { ...receipt, ...input }
+    return receipt
+  })
+  const markIndeterminate = vi.fn<HostQueuedStartPublicationPorts['markIndeterminate']>((input) => {
+    receipt = { ...receipt, status: 'indeterminate', errorCode: input.errorCode }
+    return { kind: 'marked', receipt }
+  })
+  const publishEffects = vi.fn<HostQueuedStartPublicationPorts['publishEffects']>((effects) => ({
+    kind: 'published',
+    position: { generation: 1, cursor: 2 },
+    count: effects.length,
+    results: []
+  }))
+  const publication = createHostQueuedStartPublication({
+    getReceipt: () => ({ kind: 'found', receipt }),
+    completeReceipt,
+    markIndeterminate,
+    updateReceiptPhase: (_commandId, phase) => {
+      if (receipt.status !== 'pending') return { kind: 'status_refused', status: receipt.status }
+      receipt = { ...receipt, phase }
+      return { kind: 'updated', receipt }
+    },
+    readScopedFamilies: () => after,
+    publishEffects,
+    getPosition: () => ({ generation: 1, cursor: 1 }),
+    runProjectionOperation: queue
+  })
+  publication.register({
+    commandId: COMMAND_ID,
+    actor: context().actor,
+    fingerprint,
+    command: cmd,
+    beforeScoped: before,
+    scope: createHostMutationObservationScope(cmd, before)
+  })
+  const abortQueuedStart = vi.fn((commandId: string) => publication.abort(commandId))
+  const glue = createHostBridgeQueuedStartPublicationBridge({
+    authority: {
+      handleQueuedStartStarting: (view) => {
+        publication.onStarting(view)
+      },
+      handleQueuedStartDispatchSettled: (commandId, _result, entities) => {
+        publication.completeStart(commandId, entities)
+      },
+      abortQueuedStart
+    }
+  })
+  const adapterPort = createHostBridgeQueuedStartAdapter({
+    runProjectionOperation: createHostProjectionSerialQueue(),
+    onPrepared: (view) => {
+      glue.onPrepared(view)
+    },
+    onSettled: (view) => {
+      glue.onSettled(view)
+    }
+  })
+  return {
+    adapterPort,
+    authorityPort: { abortQueuedStart },
+    publication,
+    receipt: () => receipt,
+    completeReceipt,
+    markIndeterminate,
+    publishEffects,
+    release,
+    blockingPublication
+  }
 }
 
 describe('HostBridgeQueuedComposerSend', () => {
@@ -309,32 +499,293 @@ describe('HostBridgeQueuedComposerSend', () => {
     })
   })
 
-  it('does not replace a producer-proven start with a contradictory late Bridge failure', async () => {
-    const { execute, adapterPort, authorityPort } = build({
-      adapter: {
-        get: vi.fn(() => ({
-          ...VIEW,
-          phase: 'prepared',
-          prepared: {
-            start: { kind: 'solo', runId: RUN_ID },
+  it.each(
+    (['prepared', 'settled'] as const).flatMap((phase) =>
+      (
+        [
+          'success',
+          'failed',
+          'cancelled',
+          'throws',
+          'missing identity',
+          'wrong run',
+          'queued',
+          'wrong queue',
+          'queue throws',
+          'queue fails'
+        ] as const
+      ).map((outcome) => ({ phase, outcome }))
+    )
+  )(
+    'keeps Authority publication pending after $phase evidence and a late $outcome solo ACK',
+    async ({ phase, outcome }) => {
+      const start = { kind: 'solo' as const, runId: RUN_ID }
+      const h = deferredStartPublication('solo')
+      const { adapterPort, authorityPort } = h
+      const prepared = vi.spyOn(adapterPort, 'prepared')
+      const settled = vi.spyOn(adapterPort, 'settled')
+      const queued = vi.spyOn(adapterPort, 'queued')
+      if (outcome === 'queue throws')
+        queued.mockRejectedValueOnce(new Error('late queue publication failed'))
+      if (outcome === 'queue fails')
+        queued.mockResolvedValueOnce({ kind: 'failed', reason: 'publication_failed' })
+      const bridgePort = bridge({
+        executeComposerPrompt: vi.fn<HostBridgeActionPort['executeComposerPrompt']>(async () => {
+          expect(adapterPort.get(ACTION_ID)?.phase).toBe('registered')
+          await adapterPort.prepared({
+            kind: 'prepared',
+            hostCommandActionId: ACTION_ID,
+            threadId: THREAD_ID,
+            durablePromptAndStartPersisted: true,
+            start,
             effectRefs: [
               { family: 'thread', entityId: THREAD_ID },
               { family: 'run', entityId: RUN_ID }
             ]
+          })
+          if (phase === 'settled')
+            await adapterPort.settled({
+              kind: 'settled',
+              hostCommandActionId: ACTION_ID,
+              threadId: THREAD_ID,
+              status: 'started',
+              start
+            })
+          if (outcome === 'throws') throw new Error('Bridge failed after durable solo start')
+          if (outcome === 'failed') return { executed: false, message: 'late failure' }
+          if (outcome === 'cancelled')
+            return { executed: false, message: 'late cancellation', reasonCode: 'userDeclined' }
+          if (outcome === 'missing identity') return { executed: true, message: 'sent' }
+          if (
+            outcome === 'queued' ||
+            outcome === 'wrong queue' ||
+            outcome === 'queue throws' ||
+            outcome === 'queue fails'
+          )
+            return {
+              executed: true,
+              message: 'queued',
+              data: {
+                queuedBehindActiveRun: true,
+                queueId: outcome === 'wrong queue' ? 'other-run' : RUN_ID
+              }
+            }
+          return {
+            executed: true,
+            message: 'sent',
+            data: { appRunId: outcome === 'wrong run' ? 'other-run' : RUN_ID }
           }
-        }))
-      },
-      bridge: {
-        executeComposerPrompt: vi.fn(async () => ({ executed: false, message: 'late failure' }))
+        })
+      })
+      const execute = createHostBridgeQueuedComposerSend({
+        bridge: bridgePort,
+        adapter: adapterPort,
+        authority: authorityPort,
+        resolvers: resolvers()
+      })
+      try {
+        expect(await execute(command(), context())).toEqual({
+          status: 'succeeded',
+          resultSummary:
+            outcome === 'success' || outcome === 'queued' ? 'run_queued' : 'run_queued_unproven'
+        })
+        expect(bridgePort.executeComposerPrompt).toHaveBeenCalledOnce()
+        expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.completeReceipt).not.toHaveBeenCalled()
+        expect(h.publishEffects).not.toHaveBeenCalled()
+        expect(h.receipt()).toMatchObject({ status: 'pending', phase: 'started' })
+        expect(h.publication.pendingCount()).toBe(1)
+        expect(h.publication.inFlightCount()).toBe(1)
+        expect(prepared).toHaveBeenCalledOnce()
+        expect(settled).toHaveBeenCalledTimes(phase === 'settled' ? 1 : 0)
+        expect(adapterPort.get(ACTION_ID)).toMatchObject({
+          phase,
+          prepared: { start },
+          ...(phase === 'settled' ? { settled: { status: 'started', start } } : {})
+        })
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
+        expect(h.receipt()).toMatchObject({
+          commandId: COMMAND_ID,
+          status: 'succeeded',
+          resultSummary: 'run_started'
+        })
+        expect(h.completeReceipt).toHaveBeenCalledOnce()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.publishEffects).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({ family: 'run', entityId: RUN_ID }),
+          expect.objectContaining({ family: 'thread', entityId: THREAD_ID })
+        ])
+      } finally {
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
       }
-    })
-    expect(await execute(command(), context())).toEqual({
-      status: 'succeeded',
-      resultSummary: 'run_queued_unproven'
-    })
-    expect(adapterPort.settled).not.toHaveBeenCalled()
-    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
-  })
+    }
+  )
+
+  it.each(['applied', 'throws'] as const)(
+    'keeps exact solo proof prepared while the late failure settlement %s',
+    async (outcome) => {
+      const h = deferredStartPublication('solo')
+      const { adapterPort, authorityPort } = h
+      const originalSettled = adapterPort.settled.bind(adapterPort)
+      const settled = vi.spyOn(adapterPort, 'settled').mockImplementationOnce(async (event) => {
+        await adapterPort.prepared({
+          kind: 'prepared',
+          hostCommandActionId: ACTION_ID,
+          threadId: THREAD_ID,
+          durablePromptAndStartPersisted: true,
+          start: { kind: 'solo', runId: RUN_ID },
+          effectRefs: [
+            { family: 'thread', entityId: THREAD_ID },
+            { family: 'run', entityId: RUN_ID }
+          ]
+        })
+        if (outcome === 'throws') throw new Error('late settlement failed')
+        return originalSettled(event)
+      })
+      const execute = createHostBridgeQueuedComposerSend({
+        bridge: bridge({
+          executeComposerPrompt: vi.fn(async () => ({ executed: false, message: 'late failure' }))
+        }),
+        adapter: adapterPort,
+        authority: authorityPort,
+        resolvers: resolvers()
+      })
+      try {
+        expect(await execute(command(), context())).toEqual({
+          status: 'succeeded',
+          resultSummary: 'run_queued_unproven'
+        })
+        expect(settled).toHaveBeenCalledOnce()
+        expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.completeReceipt).not.toHaveBeenCalled()
+        expect(h.publishEffects).not.toHaveBeenCalled()
+        expect(h.receipt()).toMatchObject({ status: 'pending', phase: 'started' })
+        expect(h.publication.pendingCount()).toBe(1)
+        expect(h.publication.inFlightCount()).toBe(1)
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
+        expect(h.receipt()).toMatchObject({
+          commandId: COMMAND_ID,
+          status: 'succeeded',
+          resultSummary: 'run_started'
+        })
+        expect(h.completeReceipt).toHaveBeenCalledOnce()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.publishEffects).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({ family: 'run', entityId: RUN_ID }),
+          expect.objectContaining({ family: 'thread', entityId: THREAD_ID })
+        ])
+      } finally {
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
+      }
+    }
+  )
+
+  it.each(
+    (
+      [
+        'missing',
+        'action',
+        'thread',
+        'kind',
+        'phase',
+        'actor',
+        'client',
+        'client class',
+        'fingerprint',
+        'unsafe run',
+        'reservation',
+        'throws'
+      ] as const
+    ).flatMap((mismatch) =>
+      (['failed', 'throws', 'missing identity', 'wrong run', 'queued'] as const).map((outcome) => ({
+        mismatch,
+        outcome
+      }))
+    )
+  )(
+    'abandons a $outcome solo ACK with mismatched $mismatch evidence',
+    async ({ mismatch, outcome }) => {
+      let view: HostBridgeQueuedStartView | undefined = {
+        ...VIEW,
+        phase: 'prepared',
+        prepared: {
+          start: { kind: 'solo', runId: RUN_ID },
+          effectRefs: [
+            { family: 'thread', entityId: THREAD_ID },
+            { family: 'run', entityId: RUN_ID }
+          ]
+        }
+      }
+      if (mismatch === 'missing') view = undefined
+      if (mismatch === 'action' && view)
+        view = {
+          ...view,
+          hostCommandActionId: 'host:command:33333333-3333-4333-8333-333333333333'
+        }
+      if (mismatch === 'thread' && view) view = { ...view, threadId: 'other-thread' }
+      if (mismatch === 'phase' && view) view = { ...view, phase: 'registered' }
+      if (mismatch === 'actor' && view)
+        view = { ...view, authority: { ...view.authority, actorId: 'other-actor' } }
+      if (mismatch === 'client' && view)
+        view = { ...view, authority: { ...view.authority, clientId: 'other-client' } }
+      if (mismatch === 'client class' && view)
+        view = { ...view, authority: { ...view.authority, clientClass: 'other-class' } }
+      if (mismatch === 'fingerprint' && view)
+        view = { ...view, authority: { ...view.authority, commandFingerprint: 'other-command' } }
+      if (mismatch === 'reservation' && view)
+        view = { ...view, queued: { queueId: 'other-run', reservedRunId: 'other-run' } }
+      if ((mismatch === 'kind' || mismatch === 'unsafe run') && view)
+        view = {
+          ...view,
+          prepared: {
+            start:
+              mismatch === 'kind'
+                ? { kind: 'ensemble', roundId: ROUND_ID, participantRunIds: [] }
+                : { kind: 'solo', runId: ' padded-run' },
+            effectRefs: []
+          }
+        }
+      const { execute, adapterPort, authorityPort } = build({
+        adapter: {
+          queued: vi.fn(async () => ({ kind: 'refused', reason: 'regression' })),
+          get: vi.fn<HostBridgeQueuedComposerSendAdapterPort['get']>(() => {
+            if (mismatch === 'throws') throw new Error('lookup failed')
+            return view
+          })
+        },
+        bridge: {
+          executeComposerPrompt: vi.fn<HostBridgeActionPort['executeComposerPrompt']>(async () => {
+            if (outcome === 'throws') throw new Error('Bridge failed')
+            return {
+              executed: outcome !== 'failed',
+              message: 'late ACK',
+              ...(outcome === 'wrong run' ? { data: { appRunId: 'other-run' } } : {}),
+              ...(outcome === 'queued'
+                ? { data: { queuedBehindActiveRun: true, queueId: RUN_ID } }
+                : {})
+            }
+          })
+        }
+      })
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued_unproven'
+      })
+      expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+      expect(adapterPort.prepared).not.toHaveBeenCalled()
+      expect(adapterPort.settled).not.toHaveBeenCalled()
+    }
+  )
 
   it('R5: Bridge success with neither run identity nor queue reservation aborts once and never settles', async () => {
     const { execute, adapterPort, authorityPort } = build({
@@ -474,23 +925,326 @@ describe('HostBridgeQueuedComposerSend', () => {
     expect(adapterPort.settled).toHaveBeenCalledTimes(1)
   })
 
-  it('steers an ensemble send through the legacy lane without registration', async () => {
-    const { execute, bridgePort, adapterPort } = build({
-      resolvers: {
-        resolveComposerSend: vi.fn(async () => ({
-          ok: true,
-          value: { mode: 'ensemble', workspaceId: 'workspace-1', roundId: 'round-1' }
+  it.each([undefined, ROUND_ID])(
+    'registers before one unchanged Ensemble steer payload with round target %s',
+    async (roundId) => {
+      const order: string[] = []
+      const { execute, bridgePort, adapterPort, authorityPort } = build({
+        resolvers: ensembleResolvers(roundId),
+        adapter: {
+          register: vi.fn<HostBridgeQueuedComposerSendAdapterPort['register']>(() => {
+            order.push('register')
+            return { kind: 'registered', view: VIEW }
+          })
+        },
+        bridge: {
+          executeEnsembleSteer: vi.fn<HostBridgeActionPort['executeEnsembleSteer']>(async () => {
+            order.push('steer')
+            return ensembleReply({ ok: true, status: 'started', roundId: ROUND_ID })
+          })
+        }
+      })
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued'
+      })
+      expect(order).toEqual(['register', 'steer'])
+      expect(adapterPort.register).toHaveBeenCalledExactlyOnceWith({
+        hostCommandActionId: ACTION_ID,
+        threadId: THREAD_ID,
+        authority: {
+          ...context().actor,
+          commandFingerprint: fingerprintHostCommand(command()).fingerprint
+        }
+      })
+      const action = bridgePort.executeEnsembleSteer.mock.calls[0][0]
+      if (action.issuedAt === undefined) throw new Error('Host action requires issuedAt')
+      expect(bridgePort.executeEnsembleSteer).toHaveBeenCalledExactlyOnceWith({
+        kind: 'ensembleSteer',
+        actionId: ACTION_ID,
+        issuedAt: action.issuedAt,
+        expiresAt: action.issuedAt + 120_000,
+        workspaceId: 'workspace-1',
+        threadId: THREAD_ID,
+        text: 'hello from Host',
+        message: 'Sent via Host protocol',
+        ...(roundId ? { roundId } : {})
+      })
+      expect(bridgePort.executeComposerPrompt).not.toHaveBeenCalled()
+      expect(adapterPort.queued).not.toHaveBeenCalled()
+      expect(adapterPort.prepared).not.toHaveBeenCalled()
+      expect(adapterPort.settled).not.toHaveBeenCalled()
+      expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { label: 'queued', raw: ensembleReply({ status: 'queued', roundId: ROUND_ID }) },
+    { label: 'steered', raw: ensembleReply({ status: 'steered', roundId: ROUND_ID }) },
+    { label: 'absorbed', raw: ensembleReply({ status: 'absorbed', roundId: ROUND_ID }) },
+    { label: 'missing status', raw: ensembleReply({ roundId: ROUND_ID }) },
+    { label: 'missing identity', raw: ensembleReply({ status: 'started' }) },
+    { label: 'empty identity', raw: ensembleReply({ status: 'started', roundId: '' }) },
+    { label: 'padded identity', raw: ensembleReply({ status: 'started', roundId: ' round-a' }) },
+    { label: 'non-string identity', raw: ensembleReply({ status: 'started', roundId: 4 }) },
+    { label: 'undefined result', raw: ensembleReply(undefined) },
+    { label: 'null result', raw: ensembleReply(null) },
+    { label: 'array result', raw: ensembleReply([{ status: 'started', roundId: ROUND_ID }]) },
+    { label: 'no data', raw: { executed: true, message: 'sent' } },
+    {
+      label: 'wrong action kind',
+      raw: {
+        executed: true,
+        message: 'sent',
+        data: { actionKind: 'other', result: { status: 'started', roundId: ROUND_ID } }
+      }
+    },
+    {
+      label: 'failed after start-shaped data',
+      raw: { ...ensembleReply({ status: 'started', roundId: ROUND_ID }), executed: false }
+    },
+    {
+      label: 'declined',
+      raw: { executed: false, message: 'declined', reasonCode: 'userDeclined' as const }
+    }
+  ])('abandons an uncertain Ensemble $label ACK without claiming no-start', async ({ raw }) => {
+    const { execute, bridgePort, adapterPort, authorityPort } = build({
+      resolvers: ensembleResolvers(),
+      bridge: {
+        executeEnsembleSteer: vi.fn<HostBridgeActionPort['executeEnsembleSteer']>(async () => raw)
+      }
+    })
+    expect(await execute(command(), context())).toEqual({
+      status: 'succeeded',
+      resultSummary: 'run_queued_unproven'
+    })
+    expect(bridgePort.executeEnsembleSteer).toHaveBeenCalledOnce()
+    expect(bridgePort.executeComposerPrompt).not.toHaveBeenCalled()
+    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    expect(adapterPort.queued).not.toHaveBeenCalled()
+    expect(adapterPort.prepared).not.toHaveBeenCalled()
+    expect(adapterPort.settled).not.toHaveBeenCalled()
+  })
+
+  it('contains a throwing Ensemble Bridge and abandons proof once across repeated ACK attempts', async () => {
+    const { execute, bridgePort, adapterPort, authorityPort } = build({
+      resolvers: ensembleResolvers(),
+      bridge: {
+        executeEnsembleSteer: vi.fn<HostBridgeActionPort['executeEnsembleSteer']>(async () => {
+          throw new Error('round effect may already exist')
+        })
+      }
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await execute(command(), context())).toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_queued_unproven'
+      })
+      expect(bridgePort.executeEnsembleSteer).toHaveBeenCalledTimes(attempt + 1)
+    }
+    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    expect(adapterPort.prepared).not.toHaveBeenCalled()
+    expect(adapterPort.settled).not.toHaveBeenCalled()
+  })
+
+  it.each(['refused', 'throws'] as const)(
+    'does not dispatch Ensemble when registration %s',
+    async (failure) => {
+      const { execute, bridgePort, authorityPort } = build({
+        resolvers: ensembleResolvers(),
+        adapter: {
+          register: vi.fn<HostBridgeQueuedComposerSendAdapterPort['register']>(() => {
+            if (failure === 'throws') throw new Error('registration failed')
+            return { kind: 'refused', reason: 'shutting_down' }
+          })
+        }
+      })
+      expect(await execute(command(), context())).toMatchObject({
+        status: 'failed',
+        errorCode:
+          failure === 'throws'
+            ? 'queued_start_registration_threw'
+            : 'queued_start_registration_refused'
+      })
+      expect(bridgePort.executeEnsembleSteer).not.toHaveBeenCalled()
+      expect(bridgePort.executeComposerPrompt).not.toHaveBeenCalled()
+      expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    'missing',
+    'action',
+    'thread',
+    'kind',
+    'phase',
+    'actor',
+    'client',
+    'client class',
+    'fingerprint',
+    'unsafe round',
+    'throws'
+  ] as const)('abandons an Ensemble start ACK with mismatched %s evidence', async (mismatch) => {
+    let view: HostBridgeQueuedStartView | undefined = {
+      ...VIEW,
+      authority: {
+        ...context().actor,
+        commandFingerprint: fingerprintHostCommand(command()).fingerprint
+      },
+      phase: 'prepared',
+      prepared: {
+        start: { kind: 'ensemble', roundId: ROUND_ID, participantRunIds: [] },
+        effectRefs: [
+          { family: 'thread', entityId: THREAD_ID },
+          { family: 'round', entityId: ROUND_ID }
+        ]
+      }
+    }
+    if (mismatch === 'missing') view = undefined
+    if (mismatch === 'action' && view)
+      view = {
+        ...view,
+        hostCommandActionId: 'host:command:33333333-3333-4333-8333-333333333333'
+      }
+    if (mismatch === 'thread' && view) view = { ...view, threadId: 'other-thread' }
+    if (mismatch === 'phase' && view) view = { ...view, phase: 'registered' }
+    if (mismatch === 'actor' && view)
+      view = { ...view, authority: { ...view.authority, actorId: 'other-actor' } }
+    if (mismatch === 'client' && view)
+      view = { ...view, authority: { ...view.authority, clientId: 'other-client' } }
+    if (mismatch === 'client class' && view)
+      view = { ...view, authority: { ...view.authority, clientClass: 'other-class' } }
+    if (mismatch === 'fingerprint' && view)
+      view = { ...view, authority: { ...view.authority, commandFingerprint: 'other-command' } }
+    if ((mismatch === 'kind' || mismatch === 'unsafe round') && view)
+      view = {
+        ...view,
+        prepared: {
+          start:
+            mismatch === 'kind'
+              ? { kind: 'solo', runId: RUN_ID }
+              : { kind: 'ensemble', roundId: ' padded-round', participantRunIds: [] },
+          effectRefs: []
+        }
+      }
+    const { execute, adapterPort, authorityPort } = build({
+      resolvers: ensembleResolvers(),
+      adapter: {
+        get: vi.fn<HostBridgeQueuedComposerSendAdapterPort['get']>(() => {
+          if (mismatch === 'throws') throw new Error('lookup failed')
+          return view
+        })
+      },
+      bridge: {
+        executeEnsembleSteer: vi.fn<HostBridgeActionPort['executeEnsembleSteer']>(async () => ({
+          ...ensembleReply({ status: 'started', roundId: ROUND_ID }),
+          executed: false
         }))
       }
     })
-    const result = await execute(command(), context())
-    expect(result.status).toBe('succeeded')
-    expect(bridgePort.executeEnsembleSteer).toHaveBeenCalledTimes(1)
-    expect(bridgePort.executeComposerPrompt).not.toHaveBeenCalled()
-    expect(adapterPort.register).not.toHaveBeenCalled()
-    expect(adapterPort.queued).not.toHaveBeenCalled()
+    expect(await execute(command(), context())).toEqual({
+      status: 'succeeded',
+      resultSummary: 'run_queued_unproven'
+    })
+    expect(authorityPort.abortQueuedStart).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
     expect(adapterPort.prepared).not.toHaveBeenCalled()
+    expect(adapterPort.settled).not.toHaveBeenCalled()
   })
+
+  it.each(
+    (['prepared', 'settled'] as const).flatMap((phase) =>
+      (['success', 'failed', 'throws', 'wrong round', 'steered', 'undefined'] as const).map(
+        (outcome) => ({ phase, outcome })
+      )
+    )
+  )(
+    'keeps Authority publication pending after $phase evidence and a late $outcome Ensemble ACK',
+    async ({ phase, outcome }) => {
+      const start = { kind: 'ensemble' as const, roundId: ROUND_ID, participantRunIds: [] }
+      const h = deferredStartPublication('ensemble')
+      const { adapterPort, authorityPort } = h
+      const prepared = vi.spyOn(adapterPort, 'prepared')
+      const settled = vi.spyOn(adapterPort, 'settled')
+      const bridgePort = bridge({
+        executeEnsembleSteer: vi.fn<HostBridgeActionPort['executeEnsembleSteer']>(async () => {
+          expect(adapterPort.get(ACTION_ID)?.phase).toBe('registered')
+          await adapterPort.prepared({
+            kind: 'prepared',
+            hostCommandActionId: ACTION_ID,
+            threadId: THREAD_ID,
+            durablePromptAndStartPersisted: true,
+            start,
+            effectRefs: [
+              { family: 'thread', entityId: THREAD_ID },
+              { family: 'round', entityId: ROUND_ID }
+            ]
+          })
+          if (phase === 'settled')
+            await adapterPort.settled({
+              kind: 'settled',
+              hostCommandActionId: ACTION_ID,
+              threadId: THREAD_ID,
+              status: 'started',
+              start
+            })
+          if (outcome === 'throws') throw new Error('Bridge failed after durable round start')
+          if (outcome === 'undefined') return ensembleReply(undefined)
+          return {
+            ...ensembleReply({
+              status: outcome === 'steered' ? 'steered' : 'started',
+              roundId: outcome === 'wrong round' ? 'other-round' : ROUND_ID
+            }),
+            executed: outcome !== 'failed'
+          }
+        })
+      })
+      const execute = createHostBridgeQueuedComposerSend({
+        bridge: bridgePort,
+        adapter: adapterPort,
+        authority: authorityPort,
+        resolvers: resolvers(ensembleResolvers())
+      })
+      try {
+        expect(await execute(command(), context())).toEqual({
+          status: 'succeeded',
+          resultSummary: outcome === 'success' ? 'run_queued' : 'run_queued_unproven'
+        })
+        expect(bridgePort.executeEnsembleSteer).toHaveBeenCalledOnce()
+        expect(authorityPort.abortQueuedStart).not.toHaveBeenCalled()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.completeReceipt).not.toHaveBeenCalled()
+        expect(h.publishEffects).not.toHaveBeenCalled()
+        expect(h.receipt()).toMatchObject({ status: 'pending', phase: 'started' })
+        expect(h.publication.pendingCount()).toBe(1)
+        expect(h.publication.inFlightCount()).toBe(1)
+        expect(prepared).toHaveBeenCalledOnce()
+        expect(settled).toHaveBeenCalledTimes(phase === 'settled' ? 1 : 0)
+        expect(adapterPort.get(ACTION_ID)).toMatchObject({
+          phase,
+          prepared: { start },
+          ...(phase === 'settled' ? { settled: { status: 'started', start } } : {})
+        })
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
+        expect(h.receipt()).toMatchObject({
+          commandId: COMMAND_ID,
+          status: 'succeeded',
+          resultSummary: 'run_started'
+        })
+        expect(h.completeReceipt).toHaveBeenCalledOnce()
+        expect(h.markIndeterminate).not.toHaveBeenCalled()
+        expect(h.publishEffects).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({ family: 'thread', entityId: THREAD_ID }),
+          expect.objectContaining({ family: 'round', entityId: ROUND_ID })
+        ])
+      } finally {
+        h.release()
+        await h.blockingPublication
+        await h.publication.drain()
+      }
+    }
+  )
 
   it('never throws when the resolver throws', async () => {
     const { execute } = build({
@@ -623,7 +1377,7 @@ describe('HostBridgeQueuedComposerSend', () => {
     }
   )
 
-  it.each(['thread', 'run', 'action', 'reservation'] as const)(
+  it.each(['thread', 'action', 'reservation'] as const)(
     'does not accept a prepared queue race with mismatched %s identity',
     async (mismatch) => {
       const { execute, authorityPort } = build({
@@ -641,7 +1395,7 @@ describe('HostBridgeQueuedComposerSend', () => {
               ? { queued: { queueId: 'other-run', reservedRunId: 'other-run' } }
               : {}),
             prepared: {
-              start: { kind: 'solo', runId: mismatch === 'run' ? 'other-run' : RUN_ID },
+              start: { kind: 'solo', runId: RUN_ID },
               effectRefs: [
                 { family: 'run', entityId: RUN_ID },
                 { family: 'thread', entityId: THREAD_ID }
