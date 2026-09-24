@@ -10,6 +10,7 @@ export type HostBridgeStartRef =
   | {
       readonly kind: 'ensemble'
       readonly roundId: string
+      /** Empty when only the round start is proven; no participant run is implied. */
       readonly participantRunIds: readonly string[]
     }
 
@@ -165,7 +166,6 @@ function normalizeStartRef(value: HostBridgeStartRef | undefined): HostBridgeSta
     value.kind !== 'ensemble' ||
     !validId(value.roundId) ||
     !Array.isArray(value.participantRunIds) ||
-    value.participantRunIds.length === 0 ||
     value.participantRunIds.some((runId) => !validId(runId)) ||
     new Set(value.participantRunIds).size !== value.participantRunIds.length
   ) {

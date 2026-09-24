@@ -334,6 +334,191 @@ describe('HostBridgeQueuedStartAdapter', () => {
     ).toEqual({ kind: 'refused', reason: 'invalid' })
   })
 
+  it.each([
+    { label: 'round-only', participantRunIds: [] },
+    { label: 'with participant runs', participantRunIds: [RUN_B, RUN_A] }
+  ])(
+    'publishes an Ensemble start $label through prepared and settled exactly once',
+    async ({ participantRunIds }) => {
+      const onPrepared = vi.fn()
+      const onSettled = vi.fn()
+      const adapter = createHostBridgeQueuedStartAdapter({
+        runProjectionOperation: createHostProjectionSerialQueue(),
+        onPrepared,
+        onSettled
+      })
+      adapter.register(registration())
+      const start: HostBridgeStartRef = { kind: 'ensemble', roundId: ROUND_A, participantRunIds }
+      const event: HostBridgePreparedEvent = {
+        kind: 'prepared',
+        hostCommandActionId: ACTION_A,
+        threadId: THREAD_A,
+        durablePromptAndStartPersisted: true,
+        start,
+        effectRefs: [
+          { family: 'round', entityId: ROUND_A },
+          { family: 'thread', entityId: THREAD_A },
+          ...participantRunIds.map((entityId) => ({ family: 'run' as const, entityId }))
+        ]
+      }
+      const settled = {
+        kind: 'settled' as const,
+        hostCommandActionId: ACTION_A,
+        threadId: THREAD_A,
+        status: 'started' as const,
+        start
+      }
+      expect(await adapter.settled(settled)).toEqual({ kind: 'refused', reason: 'regression' })
+      const prepared = await adapter.prepared(event)
+      expect(prepared.kind).toBe('applied')
+      const expectedStart = { ...start, participantRunIds: [...participantRunIds].sort() }
+      const expectedEffects = [
+        { family: 'thread', entityId: THREAD_A },
+        ...[...participantRunIds].sort().map((entityId) => ({ family: 'run', entityId })),
+        { family: 'round', entityId: ROUND_A }
+      ]
+      expect(resultView(prepared).prepared).toEqual({
+        start: expectedStart,
+        effectRefs: expectedEffects
+      })
+      expect(adapter.pendingCount()).toBe(1)
+      expect((await adapter.prepared(event)).kind).toBe('unchanged')
+      expect(onPrepared).toHaveBeenCalledOnce()
+
+      const changedStart = { ...start, participantRunIds: [...participantRunIds, 'other-run'] }
+      expect(
+        await adapter.prepared({
+          ...event,
+          start: changedStart,
+          effectRefs: [...event.effectRefs, { family: 'run', entityId: 'other-run' }]
+        })
+      ).toEqual({ kind: 'refused', reason: 'mismatch' })
+      expect(await adapter.settled({ ...settled, start: changedStart })).toEqual({
+        kind: 'refused',
+        reason: 'mismatch'
+      })
+      const started = await adapter.settled(settled)
+      expect(started.kind).toBe('applied')
+      expect(resultView(started).settled).toEqual({ status: 'started', start: expectedStart })
+      expect((await adapter.settled({ ...settled, start: undefined })).kind).toBe('unchanged')
+      expect(adapter.pendingCount()).toBe(0)
+      expect(await adapter.prepared(event)).toEqual({ kind: 'refused', reason: 'terminal' })
+      expect(await adapter.settled({ ...settled, start: changedStart })).toEqual({
+        kind: 'refused',
+        reason: 'terminal'
+      })
+      expect(onPrepared).toHaveBeenCalledOnce()
+      expect(onSettled).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          phase: 'settled',
+          prepared: { start: expectedStart, effectRefs: expectedEffects },
+          settled: { status: 'started', start: expectedStart }
+        })
+      )
+    }
+  )
+
+  it.each([
+    'missing-thread',
+    'missing-round',
+    'extra-run',
+    'duplicate-round',
+    'missing-declared-run'
+  ] as const)(
+    'refuses %s effects without publishing or poisoning a subsequent round-only start',
+    async (caseName) => {
+      const onPrepared = vi.fn()
+      const onSettled = vi.fn()
+      const adapter = createHostBridgeQueuedStartAdapter({
+        runProjectionOperation: createHostProjectionSerialQueue(),
+        onPrepared,
+        onSettled
+      })
+      adapter.register(registration())
+      const event: HostBridgePreparedEvent = {
+        kind: 'prepared',
+        hostCommandActionId: ACTION_A,
+        threadId: THREAD_A,
+        durablePromptAndStartPersisted: true,
+        start: { kind: 'ensemble', roundId: ROUND_A, participantRunIds: [] },
+        effectRefs: [
+          { family: 'thread', entityId: THREAD_A },
+          { family: 'round', entityId: ROUND_A }
+        ]
+      }
+      const effectRefs = [...event.effectRefs]
+      if (caseName === 'missing-thread') effectRefs.shift()
+      if (caseName === 'missing-round') effectRefs.pop()
+      if (caseName === 'extra-run') effectRefs.push({ family: 'run', entityId: RUN_A })
+      if (caseName === 'duplicate-round') effectRefs.push({ family: 'round', entityId: ROUND_A })
+      const start: HostBridgeStartRef = {
+        kind: 'ensemble',
+        roundId: ROUND_A,
+        participantRunIds: caseName === 'missing-declared-run' ? [RUN_A] : []
+      }
+      expect(await adapter.prepared({ ...event, start, effectRefs })).toEqual({
+        kind: 'refused',
+        reason: 'invalid'
+      })
+      expect(adapter.get(ACTION_A)).toEqual({ ...registration(), phase: 'registered' })
+      expect(onPrepared).not.toHaveBeenCalled()
+      expect(onSettled).not.toHaveBeenCalled()
+      expect((await adapter.prepared(event)).kind).toBe('applied')
+      expect(onPrepared).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          phase: 'prepared',
+          prepared: { start: event.start, effectRefs: event.effectRefs }
+        })
+      )
+    }
+  )
+
+  it.each(['omitted array', 'empty ID', 'duplicate IDs'] as const)(
+    'refuses an Ensemble start with %s while retaining the required array schema',
+    async (invalid) => {
+      const onPrepared = vi.fn()
+      const onSettled = vi.fn()
+      const adapter = createHostBridgeQueuedStartAdapter({
+        runProjectionOperation: createHostProjectionSerialQueue(),
+        onPrepared,
+        onSettled
+      })
+      adapter.register(registration())
+      const start = {
+        kind: 'ensemble',
+        roundId: ROUND_A,
+        ...(invalid === 'omitted array'
+          ? {}
+          : { participantRunIds: invalid === 'empty ID' ? [''] : [RUN_A, RUN_A] })
+      } as HostBridgeStartRef
+      const event: HostBridgePreparedEvent = {
+        kind: 'prepared',
+        hostCommandActionId: ACTION_A,
+        threadId: THREAD_A,
+        durablePromptAndStartPersisted: true,
+        start,
+        effectRefs: [
+          { family: 'thread', entityId: THREAD_A },
+          { family: 'round', entityId: ROUND_A },
+          ...(invalid === 'duplicate IDs' ? [{ family: 'run' as const, entityId: RUN_A }] : [])
+        ]
+      }
+      expect(await adapter.prepared(event)).toEqual({ kind: 'refused', reason: 'invalid' })
+      expect(
+        await adapter.settled({
+          kind: 'settled',
+          hostCommandActionId: ACTION_A,
+          threadId: THREAD_A,
+          status: 'started',
+          start
+        })
+      ).toEqual({ kind: 'refused', reason: 'invalid' })
+      expect(adapter.get(ACTION_A)).toEqual({ ...registration(), phase: 'registered' })
+      expect(onPrepared).not.toHaveBeenCalled()
+      expect(onSettled).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not start before prepared proof and refuses regressions, mismatches, and late events', async () => {
     const adapter = createHostBridgeQueuedStartAdapter({
       runProjectionOperation: async (operation) => operation()
