@@ -268,9 +268,10 @@ function parseS10Cli(argv = []) {
 
 function normalizeS10Options(options = {}) {
   const repoRoot = originallyAbsolute(options.repoRoot || acceptanceSession.repoRoot, 'repoRoot')
+  const instanceId = String(options.instanceId || `s10-${crypto.randomBytes(6).toString('hex')}`)
   const artifactRoot = originallyAbsolute(
     options.artifactRoot ||
-      path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance', `s10-${Date.now()}`),
+      path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance', instanceId),
     'artifactRoot'
   )
   const args = {
@@ -280,7 +281,7 @@ function normalizeS10Options(options = {}) {
     acceptBoundedForegroundLoopSetup: options.acceptBoundedForegroundLoopSetup === true,
     repoRoot,
     artifactRoot,
-    instanceId: String(options.instanceId || `s10-${Date.now()}`),
+    instanceId,
     packagedExecutablePath: options.packagedExecutablePath
       ? originallyAbsolute(options.packagedExecutablePath, 'packagedExecutablePath')
       : null,
@@ -293,15 +294,15 @@ function normalizeS10Options(options = {}) {
       : null,
     secondaryMimeType: options.secondaryMimeType || null,
     loopStartTicks:
-      options.loopStartTicks === undefined
+      options.loopStartTicks == null
         ? null
         : parseInteger(options.loopStartTicks, 'loopStartTicks', 0, Number.MAX_SAFE_INTEGER),
     loopEndTicks:
-      options.loopEndTicks === undefined
+      options.loopEndTicks == null
         ? null
         : parseInteger(options.loopEndTicks, 'loopEndTicks', 1, Number.MAX_SAFE_INTEGER),
     loopTimebaseTicks:
-      options.loopTimebaseTicks === undefined
+      options.loopTimebaseTicks == null
         ? null
         : parseInteger(options.loopTimebaseTicks, 'loopTimebaseTicks', 1, Number.MAX_SAFE_INTEGER),
     timeoutMs: parseInteger(

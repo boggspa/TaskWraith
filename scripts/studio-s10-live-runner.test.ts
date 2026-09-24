@@ -1,5 +1,6 @@
 import * as fsPromises from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -503,6 +504,65 @@ describe('S10 final custody joins', () => {
 })
 
 describe('S10 plan and launch gates', () => {
+  it('accepts generated IDs and joins each default artifact directory to its instance', () => {
+    const repoRoot = path.resolve(os.tmpdir(), 's10-default-plan')
+    const first = runner.normalizeS10Options({ repoRoot })
+    const second = runner.normalizeS10Options({ repoRoot })
+    for (const args of [first, second]) {
+      expect(args.launch).toBe(false)
+      expect(args.instanceId).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]{1,15}$/)
+      expect(args.artifactRoot).toBe(
+        path.join(
+          repoRoot,
+          '.local-only',
+          'taskwraith-studio',
+          'acceptance',
+          String(args.instanceId)
+        )
+      )
+    }
+    expect(first.instanceId).not.toBe(second.instanceId)
+    const explicit = runner.normalizeS10Options({ repoRoot, instanceId: 's10Owner01' })
+    expect(explicit.instanceId).toBe('s10Owner01')
+    expect(path.basename(String(explicit.artifactRoot))).toBe('s10Owner01')
+  })
+
+  it('prints a non-launching plan when the CLI receives no options', () => {
+    const result = JSON.parse(
+      execFileSync(process.execPath, [require.resolve('./studio-s10-live-runner.cjs')], {
+        encoding: 'utf8',
+        timeout: 10_000
+      })
+    )
+    expect(result).toMatchObject({ launched: false, plan: { launch: false } })
+    expect(result.plan.instanceId).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]{1,15}$/)
+    expect(path.basename(result.plan.artifactRoot)).toBe(result.plan.instanceId)
+  })
+
+  it('returns a plan through repeated normalization with omitted loop ticks', async () => {
+    const result = await runner.runS10Acceptance({}, {})
+    expect(result).toMatchObject({ launched: false, plan: { launch: false } })
+    const plan = result.plan as Record<string, unknown>
+    expect(path.basename(String(plan.artifactRoot))).toBe(plan.instanceId)
+  })
+
+  it.each([null, undefined])('still requires launch loop ticks when omitted as %s', (missing) => {
+    expect(() =>
+      runner.normalizeS10Options({
+        launch: true,
+        acceptLaunch: true,
+        ownerConfirmsOrphansCleared: true,
+        acceptBoundedForegroundLoopSetup: true,
+        packagedExecutablePath: '/tmp/TaskWraith.app/Contents/MacOS/TaskWraith',
+        primaryMediaPath: '/tmp/a.mp4',
+        secondaryMediaPath: '/tmp/b.mp4',
+        loopStartTicks: missing,
+        loopEndTicks: missing,
+        loopTimebaseTicks: missing
+      })
+    ).toThrow(/S10 launch requires exact --loop-start-ticks/)
+  })
+
   it('is plan-only by default and exposes every exact workload count', () => {
     const plan = runner.buildS10Plan({
       repoRoot: '/Users/chrisizatt/Documents/AGBench-studio-continuation',
