@@ -249,6 +249,7 @@ export async function runHostStopAllCli(
   const log = runtime.log ?? ((line: string) => void process.stderr.write(`${line}\n`))
   const report = await stopAll({
     scope: command.scope,
+    ...(command.expected ? { expected: command.expected } : {}),
     scanArgv: command.scanArgv,
     sweep: command.sweep,
     env: runtime.env ?? process.env,

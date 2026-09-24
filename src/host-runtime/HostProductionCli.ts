@@ -4,7 +4,8 @@ export const HOST_PRODUCTION_USAGE = [
   'Usage: taskwraith-host serve --profile <absolute canonical non-root path> --mode production [--muse-binary <absolute canonical path>]',
   '       taskwraith-host stop --profile <absolute canonical non-root path>',
   '       taskwraith-host status [--profile <absolute canonical non-root path>] [--scan-argv] [--json]',
-  '       taskwraith-host stop-all [--all | --profile <absolute canonical non-root path> | --payload-root <absolute canonical non-root path>] [--scan-argv] [--sweep] [--json]'
+  '       taskwraith-host stop-all [--all | --profile <absolute canonical non-root path> | --payload-root <absolute canonical non-root path>] [--scan-argv] [--sweep] [--json]',
+  '       stop-all --profile also accepts the paired --expect-pid <positive integer> --expect-birth <64-hex digest>.'
 ].join('\n')
 
 export interface HostProductionServeCommand {
@@ -41,6 +42,7 @@ export type HostProductionStopAllScope =
 export interface HostProductionStopAllCommand {
   readonly command: 'stop-all'
   readonly scope: HostProductionStopAllScope
+  readonly expected?: { readonly pid: number; readonly birthIdentity: string }
   readonly scanArgv: boolean
   readonly sweep: boolean
   readonly json: boolean
@@ -88,6 +90,8 @@ function parseRegistryCommand(
 ): HostProductionStatusCommand | HostProductionStopAllCommand {
   let profilePath: string | undefined
   let payloadRoot: string | undefined
+  let expectedPid: number | undefined
+  let expectedBirth: string | undefined
   let all = false
   let scanArgv = false
   let sweep = false
@@ -108,6 +112,22 @@ function parseRegistryCommand(
     } else if (option === '--all' && command === 'stop-all') {
       once(all, option)
       all = true
+    } else if (option === '--expect-pid' && command === 'stop-all') {
+      once(expectedPid !== undefined, option)
+      const raw = value(argv, index, option)
+      expectedPid = Number(raw)
+      if (!Number.isSafeInteger(expectedPid) || expectedPid <= 0 || String(expectedPid) !== raw)
+        throw new HostProductionCliError('--expect-pid must be a positive safe integer.')
+      index += 1
+    } else if (option === '--expect-birth' && command === 'stop-all') {
+      once(expectedBirth !== undefined, option)
+      const raw = value(argv, index, option)
+      if (raw.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(raw))
+        throw new HostProductionCliError(
+          '--expect-birth must be exactly 64 hexadecimal characters.'
+        )
+      expectedBirth = raw.toLowerCase()
+      index += 1
     } else if (option === '--sweep' && command === 'stop-all') {
       once(sweep, option)
       sweep = true
@@ -139,11 +159,24 @@ function parseRegistryCommand(
       : payloadRoot
         ? { kind: 'payload-root', payloadRoot }
         : { kind: 'list' }
+  if ((expectedPid === undefined) !== (expectedBirth === undefined))
+    throw new HostProductionCliError('--expect-pid and --expect-birth must be supplied together.')
+  if (expectedPid !== undefined && scope.kind !== 'profile')
+    throw new HostProductionCliError('--expect-pid and --expect-birth require --profile.')
   if (sweep && scope.kind === 'list')
     throw new HostProductionCliError(
       '--sweep needs a scope: --all, --profile <path> or --payload-root <dir>.'
     )
-  return { command, scope, scanArgv, sweep, json }
+  return {
+    command,
+    scope,
+    ...(expectedPid !== undefined && expectedBirth !== undefined
+      ? { expected: { pid: expectedPid, birthIdentity: expectedBirth } }
+      : {}),
+    scanArgv,
+    sweep,
+    json
+  }
 }
 
 export function parseHostProductionCli(argv: readonly string[]): HostProductionCommand {

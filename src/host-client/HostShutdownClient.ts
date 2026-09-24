@@ -3,9 +3,15 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { isAbsolute, parse, resolve } from 'node:path'
 
 import {
+  matchProcessBirth,
+  observeProcessBirthIdentity,
+  type ProcessBirthObservation
+} from '../host-runtime/ProcessBirthIdentity'
+import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
-  type HostBootstrapHello
+  type HostBootstrapHello,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
 import {
   decodeHostLocalTransportHostFrame,
@@ -25,9 +31,13 @@ import {
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
+import type { HostTerminationExpectedHost } from './HostProcessTermination'
 
 export interface HostShutdownClientOptions {
   readonly profilePath: string
+  /** Bind shutdown to this Host using status and birth on the connected socket. */
+  readonly expected?: HostTerminationExpectedHost
+  readonly observe?: (pid: number) => Promise<ProcessBirthObservation>
   readonly connect?: (path: string) => Socket
   readonly exists?: (path: string) => boolean
   readonly delay?: (ms: number) => Promise<void>
@@ -43,6 +53,26 @@ export interface HostShutdownClientOptions {
 
 export type HostShutdownState = 'stopping' | 'already_stopping'
 
+/** A guarded socket could not prove it belongs to the selected Host. */
+export class HostShutdownIdentityError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'mismatch' | 'unavailable',
+    readonly actualPid: number | null = null
+  ) {
+    super(message)
+    this.name = 'HostShutdownIdentityError'
+  }
+}
+
+/** An authenticated legacy Host explicitly lacks same-socket status support. */
+export class HostShutdownUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HostShutdownUnsupportedError'
+  }
+}
+
 const CLIENT_ID = 'taskwraith-host-cli'
 
 function encodeFrame(frame: HostLocalTransportClientFrame): string {
@@ -53,6 +83,8 @@ function encodeFrame(frame: HostLocalTransportClientFrame): string {
 
 export class HostShutdownClient {
   private readonly profilePath: string
+  private readonly expected: HostTerminationExpectedHost | undefined
+  private readonly observe: (pid: number) => Promise<ProcessBirthObservation>
   private readonly connect: (path: string) => Socket
   private readonly exists: (path: string) => boolean
   private readonly delay: (ms: number) => Promise<void>
@@ -68,6 +100,13 @@ export class HostShutdownClient {
     )
       throw new Error('HostShutdownClient requires an absolute profile')
     this.profilePath = options.profilePath
+    if (
+      options.expected &&
+      (!Number.isSafeInteger(options.expected.pid) || options.expected.pid < 1)
+    )
+      throw new Error('HostShutdownClient expected pid is invalid')
+    this.expected = options.expected ? { ...options.expected } : undefined
+    this.observe = options.observe ?? observeProcessBirthIdentity
     if (existsSync(this.profilePath)) this.assertCanonicalProfile()
     this.connect = options.connect ?? createConnection
     this.exists = options.exists ?? existsSync
@@ -136,11 +175,39 @@ export class HostShutdownClient {
     }
   }
 
+  private async verifyExpectedHost(status: HostStatusProjection, hostId: string): Promise<void> {
+    const expected = this.expected!
+    if (
+      status.pid !== expected.pid ||
+      status.profilePath !== this.profilePath ||
+      status.hostId !== hostId ||
+      (expected.startedAt !== undefined && status.startedAt !== expected.startedAt)
+    ) {
+      throw new HostShutdownIdentityError(
+        `Connected Host does not match expected pid ${expected.pid}, profile and listener identity`,
+        'mismatch',
+        status.pid
+      )
+    }
+    const observation = await this.observe(status.pid)
+    const match = matchProcessBirth(observation, expected)
+    if (match !== 'match') {
+      throw new HostShutdownIdentityError(
+        `Connected Host birth ${match === 'mismatch' ? 'differs from' : 'cannot verify'} expected pid ${expected.pid}`,
+        match === 'mismatch' || observation.state === 'dead' ? 'mismatch' : 'unavailable',
+        status.pid
+      )
+    }
+  }
+
   private request(socketPath: string, token: string): Promise<HostShutdownState> {
     return new Promise((resolve, reject) => {
       const socket = this.connect(socketPath)
       let buffer = ''
       let welcomed = false
+      let hostId = ''
+      let verifying = false
+      let shutdownSent = false
       let settled = false
       const timer = setTimeout(() => {
         fail(new Error('Host shutdown request timed out'))
@@ -154,13 +221,39 @@ export class HostShutdownClient {
         if (settled) return
         settled = true
         cleanup()
-        reject(error)
+        // Silent sockets and explicit legacy capability refusals retain verified
+        // signal fallback. Other unproven identities after welcome are refusals.
+        reject(
+          this.expected &&
+            welcomed &&
+            !shutdownSent &&
+            !(error instanceof HostShutdownIdentityError) &&
+            !(error instanceof HostShutdownUnsupportedError)
+            ? new HostShutdownIdentityError(
+                `Connected Host identity could not be verified: ${error.message}`,
+                'unavailable'
+              )
+            : error
+        )
       }
       const finish = (value: HostShutdownState) => {
         if (settled) return
         settled = true
         cleanup()
         resolve(value)
+      }
+      const sendShutdown = () => {
+        if (settled) return
+        shutdownSent = true
+        socket.write(
+          encodeFrame({
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: 'shutdown',
+            kind: 'host.shutdown',
+            params: {}
+          })
+        )
       }
       socket.once('error', fail)
       socket.once('close', () => fail(new Error('Host closed before acknowledging shutdown')))
@@ -173,7 +266,9 @@ export class HostShutdownClient {
           clientClass: 'host-cli',
           clientVersion: '1.0.0'
         },
-        capabilities: ['bootstrap', 'host-lifecycle']
+        capabilities: this.expected
+          ? ['bootstrap', 'host-lifecycle', 'health']
+          : ['bootstrap', 'host-lifecycle']
       }
       socket.once('connect', () =>
         socket.write(
@@ -186,6 +281,7 @@ export class HostShutdownClient {
         )
       )
       socket.on('data', (chunk) => {
+        if (settled) return
         buffer += String(chunk)
         let index = buffer.indexOf('\n')
         while (index >= 0) {
@@ -219,16 +315,48 @@ export class HostShutdownClient {
               return
             }
             welcomed = true
-            socket.write(
-              encodeFrame({
-                type: 'request',
-                transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
-                id: 'shutdown',
-                kind: 'host.shutdown',
-                params: {}
-              })
-            )
-          } else if (frame.type === 'response' && welcomed && frame.id === 'shutdown') {
+            hostId = frame.welcome.hostId
+            if (this.expected) {
+              if (!frame.welcome.capabilities.includes('health')) {
+                fail(new HostShutdownUnsupportedError('Host health capability was not granted'))
+                return
+              }
+              socket.write(
+                encodeFrame({
+                  type: 'request',
+                  transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+                  id: 'identity',
+                  kind: 'host.status',
+                  params: {}
+                })
+              )
+            } else sendShutdown()
+          } else if (
+            frame.type === 'response' &&
+            welcomed &&
+            this.expected &&
+            frame.id === 'identity'
+          ) {
+            if (!verifying && !frame.ok && frame.error.code === 'unknown_request_kind') {
+              fail(new HostShutdownUnsupportedError('Host status request is unsupported'))
+              return
+            }
+            if (verifying || !frame.ok || frame.result.kind !== 'host.status') {
+              fail(
+                new HostShutdownIdentityError(
+                  'Host status identity was not acknowledged',
+                  'unavailable'
+                )
+              )
+              return
+            }
+            verifying = true
+            void this.verifyExpectedHost(frame.result.status, hostId)
+              .then(sendShutdown)
+              .catch((error) =>
+                fail(error instanceof Error ? error : new Error('Host birth observation failed'))
+              )
+          } else if (frame.type === 'response' && shutdownSent && frame.id === 'shutdown') {
             if (!frame.ok || frame.result.kind !== 'host.shutdown') {
               fail(new Error('Host shutdown was not acknowledged'))
               return

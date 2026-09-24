@@ -237,6 +237,95 @@ it('parses stop-all with one explicit scope and lists only without one', () => {
   expect(() => parseHostProductionCli(['stop-all', '--payload-root'])).toThrow(/requires one value/)
 })
 
+it('parses one paired expected identity only for a profile stop', () => {
+  const birth = 'a1'.repeat(32)
+  expect(
+    parseHostProductionCli([
+      'stop-all',
+      '--profile',
+      REGISTRY_PROFILE,
+      '--expect-pid',
+      '4242',
+      '--expect-birth',
+      birth,
+      '--json'
+    ])
+  ).toEqual({
+    command: 'stop-all',
+    scope: { kind: 'profile', profilePath: REGISTRY_PROFILE },
+    expected: { pid: 4242, birthIdentity: birth },
+    scanArgv: false,
+    sweep: false,
+    json: true
+  })
+  expect(
+    parseHostProductionCli([
+      'stop-all',
+      '--expect-birth',
+      birth.toUpperCase(),
+      '--expect-pid',
+      String(Number.MAX_SAFE_INTEGER),
+      '--profile',
+      REGISTRY_PROFILE
+    ])
+  ).toMatchObject({ expected: { pid: Number.MAX_SAFE_INTEGER, birthIdentity: birth } })
+  expect(parseHostProductionCli(['stop-all', '--profile', REGISTRY_PROFILE])).not.toHaveProperty(
+    'expected'
+  )
+})
+
+it('rejects incomplete, duplicate, misplaced or malformed expected-identity flags', () => {
+  const birth = 'a'.repeat(64)
+  const profile = ['stop-all', '--profile', REGISTRY_PROFILE]
+  const pair = ['--expect-pid', '4242', '--expect-birth', birth]
+  const rejected = [
+    [...profile, '--expect-pid'],
+    [...profile, '--expect-birth'],
+    [...profile, '--expect-pid', '4242'],
+    [...profile, '--expect-birth', birth],
+    [...profile, '--expect-pid', '--expect-birth', birth],
+    [...profile, ...pair, '--expect-pid', '4242'],
+    [...profile, ...pair, '--expect-birth', birth],
+    ['stop-all', ...pair],
+    ['stop-all', '--all', ...pair],
+    ['stop-all', '--payload-root', PAYLOAD_ROOT, ...pair],
+    ['status', '--profile', REGISTRY_PROFILE, ...pair],
+    ['stop', '--profile', REGISTRY_PROFILE, ...pair],
+    ['serve', '--profile', REGISTRY_PROFILE, '--mode', 'production', ...pair],
+    ...[
+      '0',
+      '-1',
+      '+1',
+      '01',
+      '1.5',
+      '1e3',
+      '0x10',
+      'NaN',
+      'Infinity',
+      '9007199254740992',
+      '42junk',
+      ' 42',
+      '42 ',
+      '42\n',
+      ''
+    ].map((pid) => [...profile, '--expect-pid', pid, '--expect-birth', birth]),
+    ...[
+      '',
+      'a'.repeat(63),
+      'a'.repeat(65),
+      'g'.repeat(64),
+      `sha256:${birth}`,
+      ` ${birth}`,
+      `${birth} `,
+      `${birth}\n`,
+      `node:4242:nonce`
+    ].map((digest) => [...profile, '--expect-pid', '4242', '--expect-birth', digest])
+  ]
+  for (const argv of rejected) {
+    expect(() => parseHostProductionCli(argv), JSON.stringify(argv)).toThrow(HostProductionCliError)
+  }
+})
+
 it('refuses --sweep without a scope: a listing changes nothing', () => {
   for (const argv of [
     ['stop-all', '--sweep'],

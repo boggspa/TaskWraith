@@ -8,7 +8,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import {
   HOST_CONTROL_PROTOCOL_COMPAT_VERSION,
   HOST_PROTOCOL_VERSION,
-  HOST_PROJECTION_VERSION
+  HOST_PROJECTION_VERSION,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
 import {
   taskWraithHostAuthorityLeasePath,
@@ -16,7 +17,12 @@ import {
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
-import { HostShutdownClient } from './HostShutdownClient'
+import type { ProcessBirthObservation } from '../host-runtime/ProcessBirthIdentity'
+import {
+  HostShutdownClient,
+  HostShutdownIdentityError,
+  HostShutdownUnsupportedError
+} from './HostShutdownClient'
 
 const paths: string[] = []
 afterEach(() => {
@@ -217,11 +223,21 @@ function seedLiveProfile(prefix: string): {
   }
 }
 
+interface SocketIdentity {
+  health: boolean
+  status: HostStatusProjection | null
+  statusError?: 'unknown_request_kind' | 'unauthorized'
+  ignoreStatus?: boolean
+}
+
 class AckingSocket extends EventEmitter {
   readonly lines: string[] = []
   destroyed = false
 
-  constructor(private readonly onAck: () => void) {
+  constructor(
+    private readonly onAck: () => void,
+    private readonly identity?: SocketIdentity
+  ) {
     super()
   }
 
@@ -250,9 +266,31 @@ class AckingSocket extends EventEmitter {
                 clientClass: 'host-cli',
                 clientVersion: '1.0.0'
               },
-              capabilities: ['bootstrap', 'host-lifecycle'],
+              capabilities: this.identity?.health
+                ? ['bootstrap', 'host-lifecycle', 'health']
+                : ['bootstrap', 'host-lifecycle'],
               freshness: 'live'
             }
+          })}\n`
+        )
+      )
+    } else if (frame.kind === 'host.status') {
+      if (this.identity?.ignoreStatus) return true
+      queueMicrotask(() =>
+        this.emit(
+          'data',
+          `${JSON.stringify({
+            type: 'response',
+            transportVersion: 1,
+            id: frame.id,
+            ...(this.identity?.statusError
+              ? { ok: false, error: { code: this.identity.statusError } }
+              : {
+                  ok: true,
+                  result: this.identity?.status
+                    ? { kind: 'host.status', status: this.identity.status }
+                    : { kind: 'host.shutdown', state: 'stopping' }
+                })
           })}\n`
         )
       )
@@ -338,4 +376,148 @@ it('times out the removal wait on the removal budget alone', async () => {
   expect(() => new HostShutdownClient({ profilePath: profile, removalTimeoutMs: 0 })).toThrow(
     /removal timeout is invalid/
   )
+})
+
+const EXPECTED_BIRTH = 'a'.repeat(64)
+const LISTENER_START = '2026-09-24T01:00:00.000Z'
+
+function identityFixture() {
+  const { profile, present } = seedLiveProfile('host-shutdown-identity-')
+  const status: HostStatusProjection = {
+    pid: process.pid,
+    startedAt: LISTENER_START,
+    uptimeMs: 10,
+    hostId: 'host-1',
+    profilePath: profile,
+    persist: true,
+    lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 0 },
+    liveWork: { runs: 0 },
+    clients: []
+  }
+  const identity: SocketIdentity = { health: true, status }
+  const socket = new AckingSocket(() => present.clear(), identity)
+  const observe = vi.fn(
+    async (): Promise<ProcessBirthObservation> => ({
+      state: 'live',
+      birthIdentity: EXPECTED_BIRTH,
+      // A listener can start much later than the process that owns it.
+      startedAtMs: Date.parse(LISTENER_START) - 60_000
+    })
+  )
+  const connect = vi.fn(() => {
+    queueMicrotask(() => socket.emit('connect'))
+    return socket as unknown as Socket
+  })
+  const options = {
+    profilePath: profile,
+    expected: { pid: process.pid, birthIdentity: EXPECTED_BIRTH, startedAt: LISTENER_START },
+    exists: (path: string) => present.has(path),
+    connect,
+    observe
+  }
+  return { socket, status, identity, options, observe, connect }
+}
+
+it('authenticates status, observes birth, then shuts down on the same socket', async () => {
+  const fixture = identityFixture()
+  await expect(new HostShutdownClient(fixture.options).shutdown()).resolves.toBe('stopping')
+  expect(fixture.connect).toHaveBeenCalledTimes(1)
+  expect(fixture.observe).toHaveBeenCalledExactlyOnceWith(process.pid)
+  const frames = fixture.socket.lines.map((line) => JSON.parse(line))
+  expect(frames[0].hello.capabilities).toEqual(['bootstrap', 'host-lifecycle', 'health'])
+  expect(frames.slice(1).map((frame) => frame.kind)).toEqual(['host.status', 'host.shutdown'])
+})
+
+it.each(['pid', 'profilePath', 'startedAt', 'hostId'] as const)(
+  'refuses a connected successor with a different %s before observing or stopping it',
+  async (field) => {
+    const fixture = identityFixture()
+    if (field === 'pid') fixture.status.pid += 1
+    else if (field === 'startedAt') fixture.status.startedAt = '2026-09-24T01:00:01.000Z'
+    else fixture.status[field] += '-successor'
+    await expect(new HostShutdownClient(fixture.options).shutdown()).rejects.toMatchObject({
+      name: 'HostShutdownIdentityError',
+      reason: 'mismatch',
+      actualPid: fixture.status.pid
+    })
+    expect(fixture.observe).not.toHaveBeenCalled()
+    expect(fixture.socket.lines.some((line) => JSON.parse(line).kind === 'host.shutdown')).toBe(
+      false
+    )
+  }
+)
+
+it.each([
+  {
+    observation: { state: 'live', birthIdentity: 'b'.repeat(64), startedAtMs: null },
+    reason: 'mismatch'
+  },
+  { observation: { state: 'dead' }, reason: 'mismatch' },
+  { observation: { state: 'identity_unavailable' }, reason: 'unavailable' }
+] as const)(
+  'refuses guarded shutdown when observed birth is $observation.state/$reason',
+  async ({ observation, reason }) => {
+    const fixture = identityFixture()
+    fixture.observe.mockResolvedValue(observation)
+    await expect(new HostShutdownClient(fixture.options).shutdown()).rejects.toMatchObject({
+      name: 'HostShutdownIdentityError',
+      reason
+    })
+    expect(fixture.socket.lines.some((line) => JSON.parse(line).kind === 'host.shutdown')).toBe(
+      false
+    )
+  }
+)
+
+it.each(['health', 'status'] as const)(
+  'skips socket shutdown with an explicit unsupported result for legacy %s support',
+  async (missing) => {
+    const fixture = identityFixture()
+    if (missing === 'health') fixture.identity.health = false
+    else fixture.identity.statusError = 'unknown_request_kind'
+    await expect(new HostShutdownClient(fixture.options).shutdown()).rejects.toBeInstanceOf(
+      HostShutdownUnsupportedError
+    )
+    expect(fixture.observe).not.toHaveBeenCalled()
+    expect(fixture.socket.lines.some((line) => JSON.parse(line).kind === 'host.shutdown')).toBe(
+      false
+    )
+  }
+)
+
+it.each(['malformed', 'unauthorized', 'timeout'] as const)(
+  'keeps %s status after welcome as an identity refusal, not legacy unsupported',
+  async (response) => {
+    const fixture = identityFixture()
+    if (response === 'malformed') fixture.identity.status = null
+    else if (response === 'unauthorized') fixture.identity.statusError = 'unauthorized'
+    else fixture.identity.ignoreStatus = true
+    await expect(
+      new HostShutdownClient({ ...fixture.options, timeoutMs: 20 }).shutdown()
+    ).rejects.toBeInstanceOf(HostShutdownIdentityError)
+    expect(fixture.observe).not.toHaveBeenCalled()
+    expect(fixture.socket.lines.some((line) => JSON.parse(line).kind === 'host.shutdown')).toBe(
+      false
+    )
+  }
+)
+
+it('does not send shutdown if birth observation completes after its socket budget', async () => {
+  const fixture = identityFixture()
+  let complete!: (observation: ProcessBirthObservation) => void
+  fixture.observe.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve
+      })
+  )
+  await expect(
+    new HostShutdownClient({ ...fixture.options, timeoutMs: 20 }).shutdown()
+  ).rejects.toMatchObject({
+    name: 'HostShutdownIdentityError',
+    reason: 'unavailable'
+  })
+  complete({ state: 'live', birthIdentity: EXPECTED_BIRTH, startedAtMs: null })
+  await new Promise((resolve) => setImmediate(resolve))
+  expect(fixture.socket.lines.some((line) => JSON.parse(line).kind === 'host.shutdown')).toBe(false)
 })

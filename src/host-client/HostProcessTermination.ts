@@ -36,7 +36,7 @@ import {
   taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
-import { HostShutdownClient } from './HostShutdownClient'
+import { HostShutdownClient, HostShutdownIdentityError } from './HostShutdownClient'
 
 /**
  * Verified termination of one production Host, by profile.
@@ -88,7 +88,11 @@ import { HostShutdownClient } from './HostShutdownClient'
  * pid must be observed alive with that Host's birth, which the records do not
  * contradict; only when it cannot be observed do the records stand in, and
  * then they must carry that very birth digest. Every later observation
- * re-checks the birth. Otherwise nothing is stopped or signalled: the
+ * re-checks the birth. The socket stop additionally authenticates host.status
+ * on that same connection, verifies its pid/profile and optional listener
+ * start, and observes the expected birth before sending host.shutdown. A
+ * connected Host whose identity differs or cannot be verified is refused
+ * without falling back to signals. Otherwise nothing is stopped or signalled: the
  * expected Host proven gone is `already_gone` (its pid is dead) or
  * `pid_reused` (another process has it), and only records naming its pid
  * are swept, each once proven stale; anything else is refused. Another Host
@@ -160,6 +164,8 @@ export interface HostTerminationExpectation {
  */
 export interface HostTerminationExpectedHost extends HostTerminationExpectation {
   readonly pid: number
+  /** Listener start from host.status, distinct from the OS process start. */
+  readonly startedAt?: string
 }
 
 export type HostTerminationSignal = 'SIGTERM' | 'SIGKILL'
@@ -167,7 +173,8 @@ export type HostTerminationSignal = 'SIGTERM' | 'SIGKILL'
 export interface HostTerminationPorts {
   shutdown(
     profilePath: string,
-    budgets: { readonly ackMs: number; readonly drainMs: number }
+    budgets: { readonly ackMs: number; readonly drainMs: number },
+    expected?: HostTerminationExpectedHost
   ): Promise<'stopping' | 'already_stopping'>
   readEvidence(profilePath: string, registryRoot: string): HostTerminationEvidence
   observe(pid: number): Promise<ProcessBirthObservation>
@@ -790,9 +797,10 @@ export async function sweepHostArtefacts(
 
 function defaultPorts(platform: NodeJS.Platform): HostTerminationPorts {
   return {
-    shutdown: (profilePath, budgets) =>
+    shutdown: (profilePath, budgets, expected) =>
       new HostShutdownClient({
         profilePath,
+        expected,
         timeoutMs: budgets.ackMs,
         removalTimeoutMs: budgets.drainMs
       }).shutdown(),
@@ -1043,10 +1051,11 @@ export async function terminateHostProcess(
   // profile (only a registry entry names the pid) there is no socket to ask.
   if (judged.discovery || judged.lease) {
     try {
-      const state = await ports.shutdown(profilePath, {
-        ackMs: timings.ackMs,
-        drainMs: timings.drainMs
-      })
+      const state = await ports.shutdown(
+        profilePath,
+        { ackMs: timings.ackMs, drainMs: timings.drainMs },
+        expectedHost ?? undefined
+      )
       steps.push(`socket:${state}`)
       if (pid === null) return finish('stopped', true)
       const gone = await pollUntilGone(
@@ -1063,6 +1072,14 @@ export async function terminateHostProcess(
       steps.push('socket:process-lingering')
     } catch (error) {
       steps.push(`socket:failed:${describe(error)}`)
+      if (error instanceof HostShutdownIdentityError) {
+        return finish(
+          error.reason === 'mismatch' ? 'inconsistent' : 'identity_unavailable',
+          false,
+          error.message,
+          error.actualPid
+        )
+      }
     }
   } else {
     steps.push('socket:skipped')

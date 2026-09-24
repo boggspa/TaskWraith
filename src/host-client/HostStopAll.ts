@@ -37,7 +37,9 @@ import {
  * never signals a pid whose birth or command line it cannot confirm.
  *
  * Termination by profile acts on whichever Host holds the profile when it
- * runs, which is what `--profile` means. `--payload-root` does not work that
+ * runs, unless the caller supplies `expected` (the CLI's paired
+ * `--expect-pid` and `--expect-birth`). An explicit expectation confines a
+ * profile stop to that one Host and refuses a replacement. `--payload-root` does not work that
  * way: each selected entry names one Host by pid and birth, and termination
  * acts on that Host or on none (HostTerminationInput.expected), so it never
  * reaches the installed app's Host, a build that publishes no entry, or a
@@ -89,6 +91,8 @@ export interface HostStopAllHost {
   readonly source: HostStopAllSource
   readonly profilePath: string
   readonly pid: number | null
+  /** The registry's recorded birth, or the birth observed for a scanned Host. */
+  readonly birthIdentity: string | null
   readonly cliPath: string | null
   readonly payloadVersion: string | null
   readonly startedAt: string | null
@@ -121,7 +125,7 @@ export interface HostStopAllPorts {
   terminate(input: {
     readonly profilePath: string
     readonly registryRoot: string
-    /** Under `--payload-root`: the one Host this termination may act on. */
+    /** The one Host this termination may act on, when identity-bound. */
     readonly expected?: HostTerminationExpectedHost
   }): Promise<HostTerminationOutcome>
   /** The registry sweep over these profiles' records only, or machine-wide when null. */
@@ -133,6 +137,8 @@ export interface HostStopAllPorts {
 
 export interface HostStopAllOptions {
   readonly scope: HostStopAllScope
+  /** Only with profile scope: stop this Host, refusing a replacement. */
+  readonly expected?: HostTerminationExpectedHost
   readonly scanArgv?: boolean
   readonly sweep?: boolean
   readonly registryRoot?: string
@@ -249,6 +255,7 @@ async function registryCandidates(
         source: 'registry',
         profilePath: entry.profilePath,
         pid: entry.pid,
+        birthIdentity: entry.birthIdentity,
         cliPath: entry.cliPath,
         payloadVersion: entry.payloadVersion,
         startedAt: entry.startedAt,
@@ -309,6 +316,7 @@ async function scannedCandidates(
       source: 'argv',
       profilePath: parsed.profilePath,
       pid: process_.pid,
+      birthIdentity: observation.state === 'live' ? observation.birthIdentity : null,
       cliPath: parsed.cliPath,
       payloadVersion: null,
       startedAt: evidence.discovery?.pid === process_.pid ? evidence.discovery.startedAt : null,
@@ -337,6 +345,7 @@ function reportedHost(
     source: candidate.source,
     profilePath: candidate.profilePath,
     pid: candidate.pid,
+    birthIdentity: candidate.birthIdentity,
     cliPath: candidate.cliPath,
     payloadVersion: candidate.payloadVersion,
     startedAt: candidate.startedAt,
@@ -402,6 +411,8 @@ function selects(
 }
 
 export async function stopAllHosts(options: HostStopAllOptions): Promise<HostStopAllReport> {
+  if (options.expected && options.scope.kind !== 'profile')
+    throw new Error('An expected Host requires profile scope.')
   const platform = options.platform ?? process.platform
   const ports: HostStopAllPorts = { ...defaultPorts(platform, options.log), ...options.ports }
   const registryRoot = options.registryRoot ?? resolveHostRegistryRoot(options.env ?? process.env)
@@ -426,15 +437,29 @@ export async function stopAllHosts(options: HostStopAllOptions): Promise<HostSto
     // An explicit profile is stopped by its own artefacts even when it has no
     // registry entry (a pre-registry Host, or one whose entry was removed).
     const evidence = ports.readEvidence(options.scope.profilePath, registryRoot)
-    const pid = evidence.registry?.pid ?? evidence.lease?.pid ?? evidence.discovery?.pid ?? null
+    const pid =
+      options.expected?.pid ??
+      evidence.registry?.pid ??
+      evidence.lease?.pid ??
+      evidence.discovery?.pid ??
+      null
+    const observation = pid === null ? null : await ports.observe(pid)
+    const birthIdentity = options.expected
+      ? (options.expected.birthIdentity ?? null)
+      : evidence.registry?.pid === pid
+        ? evidence.registry.birthIdentity
+        : observation?.state === 'live'
+          ? observation.birthIdentity
+          : null
     candidates.push({
       key: canonical(options.scope.profilePath, platform),
       source: 'profile',
       profilePath: options.scope.profilePath,
       pid,
+      birthIdentity,
       cliPath: null,
       payloadVersion: null,
-      startedAt: evidence.discovery?.startedAt ?? null,
+      startedAt: options.expected ? null : (evidence.discovery?.startedAt ?? null),
       holders: null,
       implicitHolders: null,
       persist: null,
@@ -448,16 +473,37 @@ export async function stopAllHosts(options: HostStopAllOptions): Promise<HostSto
       if (!selects(candidate, options.scope, platform)) {
         return reportedHost(candidate, false, undefined)
       }
-      const expected = payloadRoot ? candidate.identity : undefined
+      const expected = options.expected ?? (payloadRoot ? candidate.identity : undefined)
       const outcome = await ports.terminate({
         profilePath: candidate.profilePath,
         registryRoot,
         ...(expected ? { expected } : {})
       })
       if (!expected) return reportedHost(candidate, true, outcome)
-      const gone = candidate.liveness === 'dead' || candidate.liveness === 'pid_reused'
+      // An explicit caller expectation names the action's target even if its
+      // records have vanished or now describe a successor. Do not report that
+      // successor's pid or metadata as though it were the Host we acted on.
+      const reported =
+        options.expected &&
+        (candidate.pid !== expected.pid || candidate.birthIdentity !== expected.birthIdentity)
+          ? {
+              ...candidate,
+              source: 'profile' as const,
+              pid: expected.pid,
+              birthIdentity: expected.birthIdentity ?? null,
+              cliPath: null,
+              payloadVersion: null,
+              startedAt: null,
+              holders: null,
+              implicitHolders: null,
+              persist: null,
+              liveness: 'unknown' as const
+            }
+          : candidate
+      const gone =
+        !options.expected && (candidate.liveness === 'dead' || candidate.liveness === 'pid_reused')
       const scoped = expectedHostOutcome(outcome, gone)
-      return reportedHost(candidate, true, scoped.outcome, scoped.note)
+      return reportedHost(reported, true, scoped.outcome, scoped.note)
     })
   )
   // A listing changes nothing, a sweep included. A scoped sweep stays in its

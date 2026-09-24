@@ -49,6 +49,7 @@ import {
   type HostTerminationPorts,
   type HostTerminationSignal
 } from './HostProcessTermination'
+import { HostShutdownIdentityError, HostShutdownUnsupportedError } from './HostShutdownClient'
 
 const PROFILE = '/profiles/host-termination-p'
 const PID = 4242
@@ -813,6 +814,81 @@ describe('terminateHostProcess with an expected Host', () => {
     registry: REGISTRY_EVIDENCE.registry
   }
   const ownEntry: HostTerminationEvidence = { ...NO_RECORDS, registry: REGISTRY_EVIDENCE.registry }
+
+  it.each(['mismatch', 'unavailable'] as const)(
+    'forwards the selected identity and refuses socket identity %s without signals or cleanup',
+    async (reason) => {
+      const run = harness({ observe: () => live(BORN) })
+      const expected = { ...EXPECTED, startedAt: REGISTRY_EVIDENCE.discovery!.startedAt }
+      const shutdown = vi.fn(async () => {
+        throw new HostShutdownIdentityError('socket identity refused', reason, HOLDER)
+      })
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: { ...run.ports, shutdown },
+        expected
+      })
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith(
+        PROFILE,
+        {
+          ackMs: DEFAULT_HOST_TERMINATION_TIMINGS.ackMs,
+          drainMs: DEFAULT_HOST_TERMINATION_TIMINGS.drainMs
+        },
+        expected
+      )
+      expect(outcome).toMatchObject({
+        kind: reason === 'mismatch' ? 'inconsistent' : 'identity_unavailable',
+        pid: PID,
+        heldBy: HOLDER,
+        swept: [],
+        detail: 'socket identity refused'
+      })
+      expect(run.signals).toEqual([])
+      expect(run.sweeps).toEqual([])
+    }
+  )
+
+  it('falls back from explicit legacy status unsupported only after verifying the expected birth and command', async () => {
+    const command = vi.fn(() => hostCommand())
+    const run = harness({
+      shutdown: async () => {
+        throw new HostShutdownUnsupportedError('Host status request is unsupported')
+      },
+      observe: (_call, _clock, signals) => (signals.length ? { state: 'dead' } : live(BORN)),
+      command
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports, expected: EXPECTED })
+    expect(outcome).toMatchObject({ kind: 'terminated', pid: PID })
+    expect(command).toHaveBeenCalledTimes(1)
+    expect(run.signals.map(({ pid, signal }) => ({ pid, signal }))).toEqual([
+      { pid: PID, signal: 'SIGTERM' }
+    ])
+    expect(outcome.steps).toContain('verify:match')
+  })
+
+  it.each(['birth', 'command'] as const)(
+    'does not signal a successor whose %s changes after legacy status is unsupported',
+    async (changed) => {
+      const run = harness({
+        shutdown: async () => {
+          throw new HostShutdownUnsupportedError('Host status request is unsupported')
+        },
+        observe: (call) => (changed === 'birth' && call > 1 ? live(OTHER) : live(BORN)),
+        command: () =>
+          changed === 'command' ? hostCommand('/usr/local/bin/node unrelated.js') : hostCommand()
+      })
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: run.ports,
+        expected: EXPECTED
+      })
+      expect(outcome).toMatchObject({
+        kind: changed === 'birth' ? 'inconsistent' : 'not_a_host',
+        pid: PID
+      })
+      expect(run.signals).toEqual([])
+    }
+  )
 
   it('stops the expected Host as before while the records name it and it is alive', async () => {
     const run = harness({
