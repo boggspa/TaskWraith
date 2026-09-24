@@ -687,6 +687,21 @@ function validateReviewRouteJourney(evidence, assets) {
   validateGhostDifferenceProof(proposal.currentPixels, 'Current-at-cut')
   validateGhostDifferenceProof(proposal.proposedPixels, 'Proposed-at-cut')
   validateGhostDifferenceProof(proposal.ghostPixels, 'ghost')
+  // The ghost proof runs pre-ghost baseline -> post-proposal Current. The two
+  // version proofs must both be rooted in that same post-proposal Current
+  // capture and mirror each other against the Proposed capture; a proof that
+  // reaches back to the baseline lets the ghost alone manufacture a
+  // Current/Proposed difference when switching versions changed nothing.
+  invariant(
+    proposal.currentPixels.captureSha256 === proposal.ghostPixels.counterpartSha256,
+    'Current-at-cut pixels were not taken from the post-proposal Current capture'
+  )
+  invariant(
+    proposal.currentPixels.captureSha256 !== proposal.currentPixels.counterpartSha256 &&
+      proposal.proposedPixels.captureSha256 === proposal.currentPixels.counterpartSha256 &&
+      proposal.proposedPixels.counterpartSha256 === proposal.currentPixels.captureSha256,
+    'Current-at-cut and Proposed-at-cut pixels do not mirror the same two version captures'
+  )
 
   const loop = evidence.reviewLoop
   invariant(
@@ -1794,14 +1809,30 @@ async function defaultDriveReviewRouteJourney(plan, target, journeyAdapters, con
     journeyAdapters
   )
   const proposedPath = screenshotFromReceipt(proposedCapture)
+  // Version distinctness is proven from the post-proposal Current capture
+  // (ghostPath), never from the pre-ghost baseline (currentPath): the baseline
+  // already differs from Proposed by the ghost alone, which would let an inert
+  // Current -> Proposed switch pass. The mirrored comparison is a second real
+  // receipt so each version proof carries its own provenance.
   const comparison = compareCaptures(
-    currentPath,
+    ghostPath,
     proposedPath,
     currentTarget.window.bounds,
     'review-host',
     proposedWorkspace.workspace.timelineHost.frame
   )
   invariant(comparison.ok === true, 'Current/Proposed review pixels are not distinct and clean')
+  const proposedComparison = compareCaptures(
+    proposedPath,
+    ghostPath,
+    currentTarget.window.bounds,
+    'review-host',
+    proposedWorkspace.workspace.timelineHost.frame
+  )
+  invariant(
+    proposedComparison.ok === true,
+    'Proposed/Current review pixels are not distinct and clean'
+  )
   await runReviewDriver(plan, currentTarget, [{ type: 'key', key: 'c' }], journeyAdapters)
   const rangeReceipt = await runReviewDriver(
     plan,
@@ -2229,7 +2260,7 @@ async function defaultDriveReviewRouteJourney(plan, target, journeyAdapters, con
       op: proposal.op,
       visibleGhost: ghostComparison.ok === true,
       currentPixels: ghostDifferenceProof(comparison),
-      proposedPixels: ghostDifferenceProof(comparison),
+      proposedPixels: ghostDifferenceProof(proposedComparison),
       ghostPixels: ghostDifferenceProof(ghostComparison)
     },
     reviewLoop: {

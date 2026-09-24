@@ -1,3 +1,5 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -43,19 +45,19 @@ function fixtureAssets() {
   }
 }
 
-function ghostPixel() {
+function ghostPixel(captureSha256 = 'a'.repeat(64), counterpartSha256 = 'b'.repeat(64)) {
   return {
     schemaVersion: 1,
     kind: 'taskwraith-studio-ghost-difference',
     region: 'review-host',
     route: 'review',
-    captureSha256: 'a'.repeat(64),
-    counterpartSha256: 'b'.repeat(64),
+    captureSha256,
+    counterpartSha256,
     comparison: {
       ok: true,
       region: 'review-host',
-      beforeSha256: 'a'.repeat(64),
-      afterSha256: 'b'.repeat(64)
+      beforeSha256: captureSha256,
+      afterSha256: counterpartSha256
     }
   }
 }
@@ -201,8 +203,10 @@ function goodEvidence() {
         at: { n: 1200, d: 600 }
       },
       visibleGhost: true,
-      currentPixels: ghostPixel(),
-      proposedPixels: ghostPixel(),
+      // ghostPixels: pre-ghost baseline (a) -> post-proposal Current (b).
+      // currentPixels/proposedPixels: post-proposal Current (b) <-> Proposed (c).
+      currentPixels: ghostPixel('b'.repeat(64), 'c'.repeat(64)),
+      proposedPixels: ghostPixel('c'.repeat(64), 'b'.repeat(64)),
       ghostPixels: ghostPixel()
     },
     reviewLoop: {
@@ -630,6 +634,31 @@ describe('Outcome 3/4 fail-closed evidence validation', () => {
     )
   })
 
+  it('rejects Current/Proposed proofs built from the baseline or identical captures', () => {
+    const baseline = 'a'.repeat(64)
+    const currentWithGhost = 'b'.repeat(64)
+    const proposedWithGhost = 'c'.repeat(64)
+    // The original defect: the version comparison ran against the pre-ghost
+    // baseline, so the ghost alone made "Current vs Proposed" look distinct.
+    const staleBaseline = goodEvidence()
+    staleBaseline.proposal.currentPixels = ghostPixel(baseline, proposedWithGhost)
+    staleBaseline.proposal.proposedPixels = ghostPixel(proposedWithGhost, baseline)
+    expect(() => runner.validateReviewRouteJourney(staleBaseline, fixtureAssets())).toThrow(
+      /post-proposal Current capture/
+    )
+    const identical = goodEvidence()
+    identical.proposal.currentPixels = ghostPixel(currentWithGhost, currentWithGhost)
+    identical.proposal.proposedPixels = ghostPixel(currentWithGhost, currentWithGhost)
+    expect(() => runner.validateReviewRouteJourney(identical, fixtureAssets())).toThrow(
+      /same two version captures/
+    )
+    const unpaired = goodEvidence()
+    unpaired.proposal.proposedPixels = ghostPixel('d'.repeat(64), currentWithGhost)
+    expect(() => runner.validateReviewRouteJourney(unpaired, fixtureAssets())).toThrow(
+      /same two version captures/
+    )
+  })
+
   it('keeps ghost-difference and decoded-material pixel schemas non-interchangeable', () => {
     const forgedGhost = goodEvidence()
     forgedGhost.proposal.ghostPixels = decodedPixel()
@@ -787,11 +816,24 @@ describe('Outcome 3/4 fail-closed evidence validation', () => {
     ).rejects.toThrow(/does not exactly equal/)
   })
 
-  it('executes the default review journey through exact deterministic adapters', async () => {
+  async function driveDeterministicJourney(options: { proposedMatchesCurrent?: boolean } = {}) {
     const root = await temporaryRoot()
     const ids = assetIds()
     const screenshot = path.join(root, 'capture.png')
     await fsPromises.writeFile(screenshot, 'capture')
+    // Distinct bytes per review capture so the comparison adapter can hash
+    // exactly what the runner handed it, the way the harness hashes bytes.
+    const capturePaths: Record<string, string> = {
+      'review-current-before-ghost': path.join(root, 'review-current-before-ghost.png'),
+      'review-current-with-ghost': path.join(root, 'review-current-with-ghost.png'),
+      'review-proposed-with-ghost': path.join(root, 'review-proposed-with-ghost.png')
+    }
+    await fsPromises.writeFile(capturePaths['review-current-before-ghost'], 'current baseline')
+    await fsPromises.writeFile(capturePaths['review-current-with-ghost'], 'current with ghost')
+    await fsPromises.writeFile(
+      capturePaths['review-proposed-with-ghost'],
+      options.proposedMatchesCurrent ? 'current with ghost' : 'proposed with ghost'
+    )
     const primaryAsset = { sha256: ids.primary, assetPath: path.join(root, 'primary.mp4') }
     const secondaryAsset = { sha256: ids.secondary, assetPath: path.join(root, 'secondary.mp4') }
     await fsPromises.writeFile(primaryAsset.assetPath, 'primary')
@@ -914,7 +956,11 @@ describe('Outcome 3/4 fail-closed evidence validation', () => {
               'tm1 kind=markOrLoop route=source preSrc=machine postSrc=machine host=0.000000 prevHost=- preAnchorT=0 preAnchorH=0.000000 prePos=0 preDur=4800 prePlay=0 preRate=0.000 postAnchorT=0 postAnchorH=0.000000 postPos=0 postDur=4800 postPlay=0 postRate=0.000 crossedDomain=0 clamped=0'
           }
         if (action.type === 'screenshot')
-          return { index, type: action.type, screenshotPath: screenshot }
+          return {
+            index,
+            type: action.type,
+            screenshotPath: capturePaths[action.name] || screenshot
+          }
         if (action.type === 'read-review-range')
           return {
             index,
@@ -973,12 +1019,16 @@ describe('Outcome 3/4 fail-closed evidence validation', () => {
               ? secondaryProposal
               : resolution,
         readStudioJournalOperations: async () => [primaryProposal],
-        compareStudioJourneyCaptures: () => ({
-          ok: true,
-          region: 'review-host',
-          beforeSha256: 'a'.repeat(64),
-          afterSha256: 'b'.repeat(64)
-        }),
+        compareStudioJourneyCaptures: (beforePath: string, afterPath: string) => {
+          const before = fs.readFileSync(beforePath)
+          const after = fs.readFileSync(afterPath)
+          return {
+            ok: !before.equals(after),
+            region: 'review-host',
+            beforeSha256: crypto.createHash('sha256').update(before).digest('hex'),
+            afterSha256: crypto.createHash('sha256').update(after).digest('hex')
+          }
+        },
         restartAcceptedCompanion: async (options: {
           acceptAndWaitResolution: () => Promise<unknown>
         }) => {
@@ -1060,14 +1110,35 @@ describe('Outcome 3/4 fail-closed evidence validation', () => {
       },
       { secondaryAsset, fixtures, openAsset: async () => undefined }
     )
+    return { journey, fixtures, routePresses, routeSelectors }
+  }
+
+  it('executes the default review journey through exact deterministic adapters', async () => {
+    const { journey, fixtures, routePresses, routeSelectors } = await driveDeterministicJourney()
     expect(runner.validateReviewRouteJourney(journey, fixtures.assets)).toMatchObject({
       acceptance: { resolutionRevision: 6 }
     })
+    const proposal = journey.proposal
+    // ghostPixels keeps the baseline -> Current-with-ghost evidence; the two
+    // version proofs share the post-proposal Current capture and mirror each other.
+    expect(proposal.currentPixels.captureSha256).toBe(proposal.ghostPixels.counterpartSha256)
+    expect(proposal.currentPixels.captureSha256).not.toBe(proposal.ghostPixels.captureSha256)
+    expect(proposal.proposedPixels.captureSha256).toBe(proposal.currentPixels.counterpartSha256)
+    expect(proposal.proposedPixels.counterpartSha256).toBe(proposal.currentPixels.captureSha256)
     expect(routePresses.some((press) => press.selectedAfter === true)).toBe(true)
     expect(
       routeSelectors
         .filter((entry) => entry.name.includes('-hidden'))
         .every((entry) => entry.selector !== entry.active)
     ).toBe(true)
+  })
+
+  it('rejects Proposed pixels identical to post-proposal Current despite a visible ghost', async () => {
+    // Baseline differs from both later captures (the ghost is real), but
+    // switching Current -> Proposed changes nothing. Only a comparison rooted in
+    // the post-proposal Current capture can see that.
+    await expect(driveDeterministicJourney({ proposedMatchesCurrent: true })).rejects.toThrow(
+      /Current\/Proposed review pixels are not distinct/
+    )
   })
 })
