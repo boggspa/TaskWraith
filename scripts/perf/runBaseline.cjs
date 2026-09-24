@@ -142,6 +142,14 @@ function runBaselineCli(argv = process.argv.slice(2), options = {}) {
     lean: Boolean(args.lean),
     scaleDown
   })
+  // A live-round workload has no replay schedule; real rounds drive it.
+  if (fixture.shape && fixture.shape.liveSeats) {
+    const liveErr = new Error(
+      `Refusing ${workload}: a live-round workload runs only under runT2Baseline --live-rounds`
+    )
+    liveErr.code = 'PERF_LIVE_ROUNDS_WORKLOAD'
+    throw liveErr
+  }
   const fingerprint = fixtureFingerprint(fixture)
   const launchPlan = buildIsolatedLaunchPlan({
     instanceId,

@@ -66,6 +66,13 @@ const PROVIDERS = Object.freeze([
   'pi'
 ])
 
+/**
+ * Seat of a live-round workload (M1 live driver). Every seat runs the
+ * production Ollama adapter against the harness's scripted Ollama daemon
+ * (`scriptedOllamaDaemon.cjs`), which the runner configures to serve this tag.
+ */
+const LIVE_ROUND_SEAT = Object.freeze({ provider: 'ollama', model: 'scripted-llama:latest' })
+
 const TOOL_NAMES = Object.freeze([
   'read_file',
   'write_file',
@@ -297,7 +304,7 @@ function deriveToolByteBudgets(toolCount, toolSerializedTargetBytes) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'} options.workload
  */
 function resolveWorkloadShape(options) {
   const workload = options.workload
@@ -488,6 +495,16 @@ function resolveWorkloadShape(options) {
         concurrencyCalibration: { ...RUN_CONCURRENCY_CALIBRATION }
       }
     }
+    case 'light_beside_large_live': {
+      // M1 live driver: the light_beside_large chats with every seat on the
+      // scripted Ollama tag and every run settled, so the app boots with no
+      // run to reconcile and real rounds, not replayed saves, drive D1.
+      return {
+        ...resolveWorkloadShape({ workload: 'light_beside_large' }),
+        workload,
+        liveSeats: LIVE_ROUND_SEAT
+      }
+    }
     default: {
       const err = new Error(`Unknown workload: ${workload}`)
       throw err
@@ -674,7 +691,7 @@ function buildReplaySchedule(fixture) {
 
 /**
  * @param {object} options
- * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'} options.workload
+ * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'|'large_history'|'light_beside_large'|'light_beside_large_live'} options.workload
  * @param {number} [options.seed=42]
  * @param {number} [options.baseTimestamp]
  * @param {boolean} [options.includeHotRaw=true]
@@ -753,11 +770,11 @@ function generatePerfFixture(options) {
 
   const participants = []
   for (let i = 0; i < scaledShape.seatCount; i++) {
-    const provider = PROVIDERS[i % PROVIDERS.length]
+    const provider = scaledShape.liveSeats?.provider ?? PROVIDERS[i % PROVIDERS.length]
     participants.push({
       id: `perf-seat-${pad(i + 1, 2)}`,
       provider,
-      model: `${provider}-perf-model`,
+      model: scaledShape.liveSeats?.model ?? `${provider}-perf-model`,
       role: i === 0 ? 'Boss' : i === 1 ? 'Captain' : `Seat${i + 1}`,
       order: i,
       enabled: true
@@ -805,7 +822,10 @@ function generatePerfFixture(options) {
         : scaledShape.dualConcurrentRuns
     const generatedRunHistory = chatShape.runHistory?.generated
     const runCount = generatedRunHistory?.accumulatedRuns ?? (useDual ? 2 : 1)
-    const activeRunCount = generatedRunHistory?.activeRuns ?? (useDual ? 2 : 0)
+    // A live workload boots with every run settled: its rounds are real.
+    const activeRunCount = scaledShape.liveSeats
+      ? 0
+      : (generatedRunHistory?.activeRuns ?? (useDual ? 2 : 0))
     const linkedRoundIdCount = generatedRunHistory?.linkedRoundIds ?? 1
     const recordEndAt = t + cExpectedAssistants * (chatShape.toolsPerAssistant * 15 + 40)
     const runs = buildSyntheticRunHistory({
@@ -1039,7 +1059,8 @@ function generatePerfFixture(options) {
   }
   fixture.totals.chatSerializedBytes = chatBytes
   fixture.totals.toolSerializedBytes = toolBytes
-  fixture.replaySchedule = buildReplaySchedule(fixture)
+  // Live workloads are driven by real rounds; no save schedule exists to replay.
+  fixture.replaySchedule = scaledShape.liveSeats ? null : buildReplaySchedule(fixture)
   return fixture
 }
 
@@ -1087,6 +1108,7 @@ module.exports = {
   OBSERVED_30SEAT,
   OBSERVED_50SEAT,
   createPrng,
+  LIVE_ROUND_SEAT,
   resolveWorkloadShape,
   buildSyntheticRunHistory,
   deriveToolByteBudgets,

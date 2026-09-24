@@ -53,6 +53,45 @@ function assertIsolatedUserDataDir(userDataDir) {
 }
 
 /**
+ * A live-round profile points the production Ollama adapter at the harness's
+ * scripted daemon. Only `http://127.0.0.1:<port>` is accepted, so the profile
+ * can never reach a real Ollama or the network; any other workload refuses
+ * the option.
+ * @param {object} fixture
+ * @param {unknown} ollamaBaseUrl
+ */
+function liveOllamaSettings(fixture, ollamaBaseUrl) {
+  const live = fixture.shape && fixture.shape.liveSeats
+  if (!live) {
+    if (ollamaBaseUrl !== undefined) {
+      throw new Error('ollamaBaseUrl applies to live-round workloads only')
+    }
+    return null
+  }
+  let url = null
+  try {
+    url = new URL(String(ollamaBaseUrl))
+  } catch {
+    url = null
+  }
+  if (
+    !url ||
+    url.protocol !== 'http:' ||
+    url.hostname !== '127.0.0.1' ||
+    !(Number(url.port) >= 1) ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
+    // The refused value is not echoed: it may carry userinfo.
+    throw new Error('a live-round workload requires ollamaBaseUrl http://127.0.0.1:<port>')
+  }
+  return { ollamaBaseUrl: `http://127.0.0.1:${url.port}`, ollamaDefaultModel: live.model }
+}
+
+/**
  * Strip harness-only `_perfMeta` before writing chat JSON the app can load.
  * @param {object} chat
  */
@@ -414,8 +453,17 @@ function materializePerfUserData(options) {
       scaleDown: options.scaleDown
     })
   const pretty = options.pretty === true
+  // Refuse a bad live URL before writing anything.
+  const liveSettings = liveOllamaSettings(fixture, options.ollamaBaseUrl)
   const chatsDir = path.join(userDataDir, 'chats')
   fs.mkdirSync(chatsDir, { recursive: true })
+  if (liveSettings) {
+    fs.writeFileSync(
+      path.join(userDataDir, 'settings.json'),
+      `${JSON.stringify(liveSettings, null, 2)}\n`,
+      'utf8'
+    )
+  }
 
   /** @type {object[]} */
   const listItems = []
@@ -453,17 +501,21 @@ function materializePerfUserData(options) {
     'utf8'
   )
 
-  const replayPath = path.join(userDataDir, 'perf-replay-schedule.json')
-  const replayDoc = {
-    schemaVersion: 1,
-    kind: 'taskwraith-perf-replay-schedule',
-    workload: fixture.workload,
-    seed: fixture.seed,
-    fingerprint: fixtureFingerprint(fixture),
-    eventCount: Array.isArray(fixture.replaySchedule) ? fixture.replaySchedule.length : 0,
-    events: fixture.replaySchedule || []
+  // A live workload has no save schedule. Writing an empty one would let a
+  // replay driver "succeed" while measuring nothing, so none is written.
+  const replayPath = liveSettings ? null : path.join(userDataDir, 'perf-replay-schedule.json')
+  if (replayPath) {
+    const replayDoc = {
+      schemaVersion: 1,
+      kind: 'taskwraith-perf-replay-schedule',
+      workload: fixture.workload,
+      seed: fixture.seed,
+      fingerprint: fixtureFingerprint(fixture),
+      eventCount: Array.isArray(fixture.replaySchedule) ? fixture.replaySchedule.length : 0,
+      events: fixture.replaySchedule || []
+    }
+    fs.writeFileSync(replayPath, `${JSON.stringify(replayDoc)}\n`, 'utf8')
   }
-  fs.writeFileSync(replayPath, `${JSON.stringify(replayDoc)}\n`, 'utf8')
 
   const indexBytes = fs.statSync(indexPath).size
   const checkpointBytes = fs.statSync(checkpointPath).size
@@ -504,7 +556,8 @@ function materializePerfUserData(options) {
             onDiskShape: 'raw-array'
           },
     chatFiles: fixture.chats.map((c) => `chats/${c.appChatId}.json`),
-    replayScheduleFile: 'perf-replay-schedule.json',
+    replayScheduleFile: replayPath ? 'perf-replay-schedule.json' : null,
+    ...(liveSettings ? { live: { seat: fixture.shape.liveSeats, settings: liveSettings } } : {}),
     userDataDir,
     materializedAt: new Date().toISOString()
   }

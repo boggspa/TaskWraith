@@ -51,6 +51,17 @@ const {
 } = require('./electronChildSession.cjs')
 const { resolveRolloutFlags, pinRolloutFlagsOnSpawnPlan } = require('./rolloutFlags.cjs')
 const {
+  buildScriptedDaemonConfig,
+  daemonStopFailures,
+  liveSeatsOf,
+  neutralizeOllamaEnvironmentOnSpawnPlan,
+  readScriptedDaemonState,
+  runLiveRoundSequence,
+  startScriptedDaemonChild,
+  t2RunOk,
+  withDaemonStopFailures
+} = require('./liveRounds.cjs')
+const {
   attachRendererCdpSession,
   attachMainInspectorSession,
   discoverMainInspectorUrl
@@ -1409,6 +1420,20 @@ function createWindowedRateTracker(windowMs, options = {}) {
   return { push, snapshot }
 }
 
+/**
+ * Whether a launch may claim an authoritative baseline: a real build from an
+ * authoritative checkout, and never a live-round run, which is a diagnostic
+ * smoke.
+ */
+function claimsAuthoritativeBaseline({ skipBuild, provenanceAuthoritative, liveRounds }) {
+  return !skipBuild && Boolean(provenanceAuthoritative) && !liveRounds
+}
+
+/** Replay events a fixture schedules; a live-round fixture schedules none. */
+function scheduledReplayEvents(fixture) {
+  return Array.isArray(fixture.replaySchedule) ? fixture.replaySchedule.length : 0
+}
+
 function parseArgs(argv) {
   /** @type {Record<string, string | boolean | number>} */
   const out = {
@@ -1422,7 +1447,8 @@ function parseArgs(argv) {
     lean: false,
     skipBuild: false,
     windowedReplay: false,
-    pairedRuns: false
+    pairedRuns: false,
+    liveRounds: false
   }
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
@@ -1438,6 +1464,7 @@ function parseArgs(argv) {
     else if (arg === '--accept-in-process-host') out.acceptInProcessHost = true
     else if (arg === '--accept-unfolded-cross-thread') out.acceptUnfoldedCrossThread = true
     else if (arg === '--paired-runs') out.pairedRuns = true
+    else if (arg === '--live-rounds') out.liveRounds = true
     else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
     else if (arg.startsWith('--out-dir=')) out.outDir = arg.slice('--out-dir='.length)
@@ -1552,6 +1579,10 @@ Options:
                                   --role and --max-replay-events; a single-chat fixture cannot pair
                                   --cell describes the full beside fixture; alone derives small/1
                                   with the same path, provider mix and saturation
+  --live-rounds                   Drive a live-round workload (light_beside_large_live) with real
+                                  Ensemble rounds against the harness's scripted Ollama daemon instead
+                                  of replayed saves. Smoke increment: one warm-up and one smoke round
+                                  on the light chat; diagnostic only, refuses windowed/paired/role
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1753,8 +1784,16 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     platform: options.platform || process.platform,
     extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined
   })
+  // No operator Ollama variable reaches the measured child: an exported Cloud
+  // key would put an unbounded ollama.com catalog request, made with that
+  // key, on the Host's startup path, and a live round's seats must reach only
+  // the scripted daemon. The report records which were set, never a value.
+  const ollamaEnvironment = neutralizeOllamaEnvironmentOnSpawnPlan(
+    unpinnedSpawnPlan,
+    options.env || process.env
+  )
   // The measured child and its external Host run exactly the pinned state.
-  const spawnPlan = pinRolloutFlagsOnSpawnPlan(unpinnedSpawnPlan, rolloutFlags)
+  const spawnPlan = pinRolloutFlagsOnSpawnPlan(ollamaEnvironment.spawnPlan, rolloutFlags)
 
   const generatedFixture = generatePerfFixture({
     workload,
@@ -1762,6 +1801,31 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     lean: Boolean(args.lean),
     scaleDown
   })
+
+  // M1 live driver (S6): a live-round workload is driven by real rounds, never
+  // by the replay path, and --live-rounds needs one. Until the live lanes (S5)
+  // run fenced windows, --live-rounds is a diagnostic smoke only. Checked
+  // before anything derives from the replay schedule a live fixture lacks.
+  const liveWorkload = Boolean(generatedFixture.shape && generatedFixture.shape.liveSeats)
+  if (liveWorkload !== Boolean(args.liveRounds)) {
+    const liveErr = new Error(
+      liveWorkload
+        ? `Refusing ${workload}: a live-round workload has no replay schedule; pass --live-rounds`
+        : `Refusing --live-rounds: ${workload} is a replay workload`
+    )
+    liveErr.code = 'T2_LIVE_ROUNDS_WORKLOAD'
+    throw liveErr
+  }
+  if (args.liveRounds) {
+    liveSeatsOf(generatedFixture)
+    if (args.windowedReplay || args.pairedRuns || args.maxReplayEvents != null || args.role) {
+      const liveErr = new Error(
+        'Refusing --live-rounds with --windowed-replay, --paired-runs, --max-replay-events or --role: live windows arrive with the live lanes driver'
+      )
+      liveErr.code = 'T2_LIVE_ROUNDS_MODE'
+      throw liveErr
+    }
+  }
 
   // Wall 2c — the light_alone reachability wiring (fence-final Ruling 2). A
   // standalone --role=light-alone run on a PAIRED workload (two or more
@@ -1835,6 +1899,18 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let materializeResult = null
   let materializeDir = null
 
+  // The live profile points Ollama at this daemon, so it starts before the
+  // profile is written. The launch's finally stops it; if the runner dies
+  // first, the daemon exits when its stdin pipe closes.
+  /** @type {Awaited<ReturnType<typeof startScriptedDaemonChild>>|null} */
+  let liveDaemon = null
+  if (willLaunch && args.liveRounds) {
+    liveDaemon = await (options.startScriptedDaemon || startScriptedDaemonChild)({
+      dir: path.join(artifactDir, 'scripted-ollama'),
+      config: buildScriptedDaemonConfig(fixture, { seed })
+    })
+  }
+
   if (args.materializeInstanceUserData) {
     materializeDir = userDataResolved.userDataPath
     if (!willLaunch && !options.allowInstanceMaterializeWithoutLaunch) {
@@ -1849,7 +1925,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       pretty: Boolean(args.pretty),
       mode,
       lean: Boolean(args.lean),
-      scaleDown
+      scaleDown,
+      ...(liveDaemon ? { ollamaBaseUrl: liveDaemon.baseUrl } : {})
     })
     if (willLaunch && homeResolved.authoritativeHome) {
       // Blocker G: re-prove component + canonical containment after materialize.
@@ -1935,11 +2012,15 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
 
   const metrics = applyUnsupportedAnnotations(createEmptyPerfMetrics())
   const report = createPerfReport(env, metrics)
+  report.ollamaEnvironment = ollamaEnvironment.record
+  if (liveDaemon) {
+    report.liveRounds = { daemon: { pid: liveDaemon.pid, baseUrl: liveDaemon.baseUrl } }
+  }
   report.fixture = {
     fingerprint,
     totals: fixture.totals,
     shape: fixture.shape,
-    replayEventCount: fixture.replaySchedule.length,
+    replayEventCount: scheduledReplayEvents(fixture),
     mode,
     // Provenance when this run's fixture is the derived light half of a
     // paired fixture (fence-final Ruling 2): null for a directly generated
@@ -1988,7 +2069,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           gitSha,
           instanceId: userDataResolved.sanitizedInstanceId,
           workload,
-          totalEvents: fixture.replaySchedule.length,
+          totalEvents: scheduledReplayEvents(fixture),
           stallTimeoutMs: replayStallTimeoutMs,
           startedAt,
           note: 'Diagnostic progress only; never satisfies authoritativeBaseline or metricsCollected.'
@@ -2411,7 +2492,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         note: 'main inspector proved lexical + canonical isolated HOME + TaskWraith Dev <id> userData before replay'
       }
       report.isolation = isolationVerification
-      if (!skipBuild && provenance.authoritativeBaseline) {
+      if (
+        claimsAuthoritativeBaseline({
+          skipBuild,
+          provenanceAuthoritative: provenance.authoritativeBaseline,
+          liveRounds: args.liveRounds
+        })
+      ) {
         authoritativeBaseline = true
         report.environment.authoritativeBaseline = true
         env.authoritativeBaseline = true
@@ -2445,8 +2532,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         args.maxReplayEvents == null ? undefined : Number(args.maxReplayEvents)
       const replayEventTotal =
         maxReplayEvents == null
-          ? fixture.replaySchedule.length
-          : Math.min(fixture.replaySchedule.length, maxReplayEvents)
+          ? scheduledReplayEvents(fixture)
+          : Math.min(scheduledReplayEvents(fixture), maxReplayEvents)
       const replayNowMs =
         typeof options.replayNowMs === 'function'
           ? options.replayNowMs
@@ -2478,17 +2565,44 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       const windowedRate = createWindowedRateTracker(windowedRateMs, {
         nowMs: replayNowMs
       })
-      setCapturePhase(
-        'replay',
-        {
-          totalEvents: replayEventTotal,
-          completedEvents: 0,
-          currentEvent: null,
-          replayStartedAt: new Date(replayStartedAtMs).toISOString()
-        },
-        { log: true }
-      )
-      if (args.windowedReplay) {
+      if (!args.liveRounds) {
+        setCapturePhase(
+          'replay',
+          {
+            totalEvents: replayEventTotal,
+            completedEvents: 0,
+            currentEvent: null,
+            replayStartedAt: new Date(replayStartedAtMs).toISOString()
+          },
+          { log: true }
+        )
+      }
+      if (args.liveRounds) {
+        // M1 live driver (S6 smoke increment): an unmeasured warm-up round (a
+        // model's first use writes settings), then one smoke round on the
+        // light chat once the warm-up has settled, sent through the page API
+        // as a user's send is. Diagnostic only; the live lanes (S5) own
+        // measured windows. A failed verdict makes the run's result not ok.
+        setCapturePhase('live_rounds', {}, { log: true })
+        const readDaemonState =
+          options.liveDaemonState || (() => readScriptedDaemonState(liveDaemon.baseUrl))
+        const { rounds, verdict } = await runLiveRoundSequence({
+          ...(options.liveSmokeRound ? { runRound: options.liveSmokeRound } : {}),
+          roundOptions: {
+            page,
+            chatId: fixture.chats[0].appChatId,
+            readDaemonState,
+            nowMs: replayNowMs,
+            callTimeoutMs: replayStallTimeoutMs
+          },
+          onRound: (purpose, round) =>
+            updateProgress(
+              { liveRound: { purpose, outcome: round.outcome, turns: round.turnsFinished } },
+              { log: true }
+            )
+        })
+        report.liveRounds = { ...report.liveRounds, rounds, verdict }
+      } else if (args.windowedReplay) {
         if (args.maxReplayEvents != null) {
           throw new Error(
             '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
@@ -2968,6 +3082,29 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
       }
       if (childTermination) report.childTermination = childTermination
+      // The app is down before its model goes: stop the daemon last.
+      if (liveDaemon) {
+        try {
+          const stopped = await liveDaemon.stop()
+          report.liveRounds = {
+            ...report.liveRounds,
+            daemonStop: { exit: stopped.exit, forced: stopped.forced, summary: stopped.summary }
+          }
+          const stopFailures = daemonStopFailures(stopped)
+          for (const error of stopFailures) {
+            cleanupFailures.push({ phase: 'liveDaemon.stop', error })
+          }
+          report.liveRounds.verdict = withDaemonStopFailures(
+            report.liveRounds.verdict,
+            stopFailures
+          )
+        } catch (error) {
+          cleanupFailures.push({
+            phase: 'liveDaemon.stop',
+            error: String(error && error.message ? error.message : error)
+          })
+        }
+      }
       if (cleanupFailures.length) {
         report.cleanupFailures = cleanupFailures
         if (launchError) {
@@ -3247,7 +3384,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
 
   return {
-    ok: true,
+    ok: t2RunOk(report),
     dryRun: Boolean(args.dryRun),
     launched: willLaunch,
     fingerprint,
@@ -3320,7 +3457,7 @@ if (require.main === module) {
       console.log(
         JSON.stringify(
           {
-            ok: true,
+            ok: result.ok,
             dryRun: result.dryRun,
             launched: result.launched,
             fingerprint: result.fingerprint,
@@ -3332,12 +3469,16 @@ if (require.main === module) {
             progressPath: result.progressPath,
             shellCommand: result.spawnPlan.shellCommand,
             gatesEvaluated: result.gateProbe.gates && result.gateProbe.gates.evaluated,
-            replaySaveCount: result.replayResult ? result.replayResult.saveCount : null
+            replaySaveCount: result.replayResult ? result.replayResult.saveCount : null,
+            ...(result.report && result.report.liveRounds
+              ? { liveRoundsVerdict: result.report.liveRounds.verdict }
+              : {})
           },
           null,
           2
         )
       )
+      if (!result.ok) process.exitCode = 1
     })
     .catch((error) => {
       console.error(String(error && error.message ? error.message : error))
@@ -3350,6 +3491,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  claimsAuthoritativeBaseline,
   DEFAULT_REPLAY_STALL_TIMEOUT_MS,
   DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL,
   DEFAULT_REPLAY_PROGRESS_INTERVAL_MS,

@@ -18,7 +18,8 @@ const WORKLOADS = Object.freeze([
   'dual_run',
   '455_soak',
   '50_chat_switch',
-  'light_beside_large'
+  'light_beside_large',
+  'light_beside_large_live'
 ])
 
 const FX_POSTURES = Object.freeze([
