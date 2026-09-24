@@ -204,6 +204,21 @@ async function finalEvidenceFixture(launchMode = 'direct') {
   const secondary = { sourcePath: path.join(root, 'secondary.mp4') }
   await fsPromises.writeFile(primary.sourcePath, 'primary bytes')
   await fsPromises.writeFile(secondary.sourcePath, 'secondary bytes')
+  const launchServicesProof =
+    launchMode === 'launch-services'
+      ? {
+          launchServicesExecutable: '/exact/Studio.app/Contents/MacOS/Studio',
+          launchServicesAdoption: {
+            requestId: 's10-adoption',
+            pid: 20,
+            pgid: 20,
+            executable: '/exact/Studio.app/Contents/MacOS/Studio',
+            startedAt: 'Thu Sep 24 02:00:00 2026',
+            acknowledged: true,
+            groupExitVerified: true
+          }
+        }
+      : {}
   const watchdog = {
     schemaVersion: 2,
     kind: 'taskwraith-studio-acceptance-watchdog',
@@ -214,8 +229,11 @@ async function finalEvidenceFixture(launchMode = 'direct') {
     detachedGroupExitVerified: true,
     childPid: 10,
     childPgid: 10,
+    ...launchServicesProof,
     detachedProcessGroups:
-      launchMode === 'launch-services' ? [{ pgid: 20, memberPids: [20, 21] }] : []
+      launchMode === 'launch-services'
+        ? [{ pgid: 20, evidencePids: [20], memberPids: [20, 21] }]
+        : []
   }
   const journey = {
     phasesComplete: true,
@@ -245,6 +263,7 @@ async function finalEvidenceFixture(launchMode = 'direct') {
       childPgid: watchdog.childPgid,
       groupExitVerified: watchdog.groupExitVerified,
       detachedGroupExitVerified: watchdog.detachedGroupExitVerified,
+      ...structuredClone(launchServicesProof),
       detachedProcessGroups: structuredClone(watchdog.detachedProcessGroups)
     }
   }
@@ -297,6 +316,58 @@ async function finalEvidenceFixture(launchMode = 'direct') {
 }
 
 describe('S10 final custody joins', () => {
+  it.each(['both', 'disk', 'terminal'])(
+    'rejects stripped LaunchServices adoption proof from %s receipts',
+    async (side) => {
+      const fixture = await finalEvidenceFixture('launch-services')
+      for (const receipt of [
+        ...(side !== 'terminal' ? [fixture.watchdog] : []),
+        ...(side !== 'disk' ? [fixture.baseEvidence.watchdogTerminal] : [])
+      ]) {
+        delete receipt.launchServicesExecutable
+        delete receipt.launchServicesAdoption
+      }
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/adoption/)
+    }
+  )
+
+  it.each(['requestId', 'startedAt', 'executable'] as const)(
+    'rejects a different terminal adoption %s even when each receipt is valid alone',
+    async (field) => {
+      const fixture = await finalEvidenceFixture('launch-services')
+      const terminal = fixture.baseEvidence.watchdogTerminal
+      const adoption = terminal.launchServicesAdoption!
+      if (field === 'requestId') adoption.requestId = 'another-request'
+      else if (field === 'startedAt') adoption.startedAt = 'Thu Sep 24 02:00:01 2026'
+      else adoption.executable = terminal.launchServicesExecutable = '/other/Studio'
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/adoption/)
+    }
+  )
+
+  it.each(['pid', 'pgid'] as const)(
+    'rejects adoption of a different Electron %s despite a matching detached group',
+    async (field) => {
+      const fixture = await finalEvidenceFixture('launch-services')
+      if (field === 'pid') fixture.baseEvidence.electron.pid = 21
+      else {
+        for (const receipt of [fixture.watchdog, fixture.baseEvidence.watchdogTerminal]) {
+          receipt.launchServicesAdoption!.pgid = 30
+          receipt.detachedProcessGroups.push({ pgid: 30, evidencePids: [20], memberPids: [20] })
+        }
+      }
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/adoption/)
+    }
+  )
+
   it.each(['direct', 'launch-services'])(
     'seals evidence for the exact %s launch owner',
     async (mode) => {

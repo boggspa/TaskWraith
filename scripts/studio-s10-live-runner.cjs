@@ -18,6 +18,7 @@ const path = require('node:path')
 
 const mediaLimits = require('../src/shared/mediaLimits.json')
 const harness = require('./studio-acceptance-harness.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
 const acceptanceSession = require('./studio-acceptance-session.cjs')
 const diagnostics = require('./studio-bounded-diagnostics-runner.cjs')
 const avAcceptance = require('./studio-av-endurance-acceptance-runner.cjs')
@@ -2070,8 +2071,22 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
           ).length === 1,
         'S10 watchdog does not bind the exact reaped detached Electron group'
       )
+      invariant(
+        isRecord(receipt.launchServicesAdoption) &&
+          hasVerifiedLaunchServicesExit(receipt) &&
+          receipt.launchServicesAdoption.pid === electron.pid &&
+          receipt.launchServicesAdoption.pgid === electron.pgid,
+        'S10 watchdog LaunchServices adoption does not bind the exact reaped Electron identity'
+      )
     }
   }
+  invariant(
+    watchdogReceipt.launchServicesExecutable ===
+      baseEvidence.watchdogTerminal.launchServicesExecutable &&
+      JSON.stringify(watchdogReceipt.launchServicesAdoption) ===
+        JSON.stringify(baseEvidence.watchdogTerminal.launchServicesAdoption),
+    'S10 watchdog LaunchServices adoption does not exactly match the terminal acknowledgment'
+  )
   const runnerBefore = assets.runnerCustodyBefore
   invariant(
     isRecord(runnerBefore) &&
