@@ -265,19 +265,19 @@ describe('terminateHostProcess', () => {
   })
 
   it('never signals a pid whose identity changed between TERM and KILL', async () => {
-    // Calls: 1 the verify before TERM, 2-5 the four TERM polls (1 s at
-    // 250 ms), 6 the re-verify before KILL — where the pid turns out to
+    // Calls: 1 before the socket stop, 2 the verify before TERM, 3-6 the four
+    // TERM polls (1 s at 250 ms), 7 the re-verify before KILL — where the pid turns out to
     // belong to a process born at another time.
     const run = harness({
-      observe: (call) => (call >= 6 ? live(OTHER, REUSED_START) : live(BORN))
+      observe: (call) => (call >= 7 ? live(OTHER, REUSED_START) : live(BORN))
     })
     const outcome = await terminate({
       profilePath: PROFILE,
       timings: { termMs: 1_000, killMs: 1_000 },
       ports: run.ports
     })
-    // Call 7 observes the pid again to prove each record stale before the sweep.
-    expect(run.observeCalls()).toBe(7)
+    // Call 8 observes the pid again to prove each record stale before the sweep.
+    expect(run.observeCalls()).toBe(8)
     expect(outcome).toMatchObject({ kind: 'pid_reused', detail: 'identity changed before SIGKILL' })
     expect(run.signals.map((entry) => entry.signal)).toEqual(['SIGTERM'])
     expect(run.sweeps).toEqual([REGISTRY_EVIDENCE])
@@ -388,8 +388,7 @@ describe('terminateHostProcess', () => {
 
     // An observation that fails before the sweep proves nothing: nothing is swept.
     const blind = harness({
-      observe: (call) =>
-        call === 1 ? live(OTHER, REUSED_START) : { state: 'identity_unavailable' }
+      observe: (call) => (call <= 2 ? live(OTHER, REUSED_START) : { state: 'identity_unavailable' })
     })
     await expect(terminate({ profilePath: PROFILE, ports: blind.ports })).resolves.toMatchObject({
       kind: 'pid_reused'
@@ -464,7 +463,7 @@ describe('terminateHostProcess', () => {
     const terminated = harness({
       evidence,
       observe: (call) =>
-        call === 1 ? live(BORN) : call === 2 ? { state: 'dead' } : live(OTHER, REUSED_START)
+        call <= 2 ? live(BORN) : call === 3 ? { state: 'dead' } : live(OTHER, REUSED_START)
     })
     await expect(terminate({ profilePath: PROFILE, ports: terminated.ports })).resolves.toEqual({
       kind: 'terminated',
@@ -620,14 +619,53 @@ describe('terminateHostProcess', () => {
     expect(run.sweeps).toEqual([evidence])
   })
 
-  it('sweeps a dead Host without signalling and reports no Host when nothing names one', async () => {
-    const dead = harness({ observe: () => ({ state: 'dead' }) })
-    await expect(terminate({ profilePath: PROFILE, ports: dead.ports })).resolves.toMatchObject({
-      kind: 'already_gone',
-      pid: PID
+  it.each([
+    { name: 'all ownership records', evidence: REGISTRY_EVIDENCE },
+    { name: 'only a lease', evidence: { ...NO_RECORDS, lease: REGISTRY_EVIDENCE.lease } },
+    { name: 'only discovery', evidence: { ...NO_RECORDS, discovery: REGISTRY_EVIDENCE.discovery } }
+  ])('N1: skips the socket and drain when $name names a dead pid', async ({ evidence }) => {
+    const command = vi.fn(() => hostCommand())
+    const dead = harness({
+      evidence,
+      shutdown: async () => 'stopping',
+      observe: () => ({ state: 'dead' }),
+      command
     })
+    const outcome = await terminate({ profilePath: PROFILE, ports: dead.ports })
+    expect(outcome).toMatchObject({ kind: 'already_gone', pid: PID })
+    expect(outcome.steps).toEqual(['observe:dead', 'swept:registry'])
+    expect(dead.budgets).toEqual([])
     expect(dead.signals).toEqual([])
-    expect(dead.sweeps).toEqual([REGISTRY_EVIDENCE])
+    expect(dead.delays).toEqual([])
+    expect(dead.clock()).toBe(0)
+    expect(command).not.toHaveBeenCalled()
+    expect(dead.observeCalls()).toBe(2)
+    expect(dead.sweeps).toEqual([evidence])
+  })
+
+  it.each([{ state: 'identity_unavailable' } as const, live(BORN)])(
+    'N1: does not claim record cleanup after the final observation becomes $state',
+    async (final) => {
+      const dead = harness({ observe: (call) => (call === 1 ? { state: 'dead' } : final) })
+      const sweep = vi.fn(async () => [])
+      const outcome = await terminate({
+        profilePath: PROFILE,
+        ports: { ...dead.ports, sweep }
+      })
+      expect(outcome).toEqual({
+        kind: 'already_gone',
+        pid: PID,
+        steps: ['observe:dead'],
+        swept: []
+      })
+      expect(sweep).toHaveBeenCalledExactlyOnceWith(PROFILE, NO_RECORDS, REGISTRY_ROOT)
+      expect(dead.budgets).toEqual([])
+      expect(dead.signals).toEqual([])
+      expect(dead.delays).toEqual([])
+    }
+  )
+
+  it('reports no Host when nothing names one', async () => {
     const empty = harness({
       evidence: { discovery: null, lease: null, registry: null },
       observe: () => live(BORN)

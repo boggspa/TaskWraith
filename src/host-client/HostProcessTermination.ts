@@ -41,12 +41,12 @@ import { HostShutdownClient, HostShutdownIdentityError } from './HostShutdownCli
 /**
  * Verified termination of one production Host, by profile.
  *
- * Order: authenticated socket stop (ACK budget, then a drain budget for the
- * Host to remove its ownership artefacts, the authority lease last) → read the
- * pid evidence (discovery, authority lease, registry entry) → observe the
- * pid's birth identity → confirm the pid runs `host-runtime/cli.js serve` for
- * this profile → SIGTERM → SIGKILL, re-verifying birth and command line
- * immediately before every signal.
+ * Order: read the pid evidence (discovery, authority lease, registry entry)
+ * → observe the pid, finishing as already_gone if dead → authenticated socket
+ * stop (ACK budget, then a drain budget for the Host to remove its ownership
+ * artefacts, the authority lease last) → verify the pid's birth identity and
+ * confirm it runs `host-runtime/cli.js serve` for this profile → SIGTERM →
+ * SIGKILL, re-verifying birth and command line immediately before every signal.
  *
  * Refusals, all without a signal:
  *  - the evidence names more than one pid, or two birth digests for one pid,
@@ -1050,6 +1050,14 @@ export async function terminateHostProcess(
   // 1. The Host's own graceful path. With neither discovery nor a lease in the
   // profile (only a registry entry names the pid) there is no socket to ask.
   if (judged.discovery || judged.lease) {
+    // The expected-Host guard already observes death above. An unguarded
+    // profile stop must also skip the socket drain for a dead lease owner.
+    // finish() observes again before cleanup; this observation alone never
+    // authorizes removing a record whose owner can no longer be verified.
+    if (!expectedHost && pid !== null && (await ports.observe(pid)).state === 'dead') {
+      steps.push('observe:dead')
+      return finish('already_gone', true)
+    }
     try {
       const state = await ports.shutdown(
         profilePath,
