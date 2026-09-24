@@ -430,7 +430,35 @@ describe('mutationFencePartitionKeys', () => {
     expect(mutationFencePartitionKeys([claim, hunk])).toEqual(keys)
   })
 
-  it('returns one sorted, deduplicated set, the single order every caller acquires in', () => {
+  it('keys the location on the case-folded comparison path, not the spelling', () => {
+    // On a case-insensitive volume, new.ts admitted while absent and NEW.ts
+    // admitted once a sibling created it are one file. The spelling survives in
+    // targetCanonicalPath and the fold in comparisonTargetPath; only the fold
+    // gives the two calls a shared key.
+    const absent = mutationFencePartitionKeys([
+      {
+        ...claim,
+        targetCanonicalPath: '/ws/src/new.ts',
+        comparisonTargetPath: '/ws/src/new.ts',
+        objectIdentity: 'planned:dev:1:ino:11:new.ts',
+        physicalTargetIdentity: '/ws/src/new.ts',
+        relativeTargetPath: 'src/new.ts'
+      }
+    ])
+    const created = mutationFencePartitionKeys([
+      {
+        ...claim,
+        targetCanonicalPath: '/ws/src/NEW.ts',
+        comparisonTargetPath: '/ws/src/new.ts',
+        objectIdentity: 'dev:1:ino:30',
+        physicalTargetIdentity: '/ws/src/NEW.ts',
+        relativeTargetPath: 'src/NEW.ts'
+      }
+    ])
+    expect(created.filter((key) => absent.includes(key))).toHaveLength(1)
+  })
+
+  it('returns one sorted, deduplicated set, the single order each call acquires in', () => {
     const other: CanonicalWorkspaceLockClaim = {
       ...claim,
       targetCanonicalPath: '/ws/src/b.ts',
