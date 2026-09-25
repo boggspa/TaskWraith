@@ -106,6 +106,7 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   // whatever the flag says.
   'minimax/MiniMax-M3': BOOLEAN,
   'minimax/MiniMax-M2.7': ALWAYS_ON,
+  'minimax/MiniMax-M2.7-highspeed': ALWAYS_ON,
 
   // MiMo is `thinking.type` enabled/disabled with no effort control. V2.6 keeps
   // that toggle (Xiaomi's V2.6 Pro and Flash model pages, read 2026-09-22).

@@ -93,6 +93,7 @@ public enum PiBrandTable {
         "qwen-token-plan/qwen3.8-max": "Qwen3.8 Max",
         "minimax/MiniMax-M3": "M3",
         "minimax/MiniMax-M2.7": "M2.7",
+        "minimax/MiniMax-M2.7-highspeed": "M2.7 Highspeed",
         "xiaomi-token-plan-cn/mimo-v2-pro": "MiMo V2 Pro (CN)",
         "xiaomi-token-plan-cn/mimo-v2.5": "MiMo V2.5 (CN)",
         "xiaomi-token-plan-cn/mimo-v2.5-pro": "MiMo V2.5 Pro (CN)",

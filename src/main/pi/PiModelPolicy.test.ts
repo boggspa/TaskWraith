@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveContextWindow } from '../../shared/contextWindows'
+import { resolvePiModelLabel, resolvePiUpstreamBrand } from '../../shared/piBrandTable'
+import { resolvePiReasoningSupport } from '../../shared/piReasoning'
 import {
   PI_ALLOWED_UPSTREAMS,
   PI_OPENROUTER_ALLOWED_MODEL_IDS,
@@ -117,6 +119,29 @@ describe('piModelPolicyVerdict', () => {
 })
 
 describe('catalog/policy lockstep', () => {
+  it('offers MiniMax Highspeed with the maker accent and fixed thinking', () => {
+    const wireId = 'minimax/MiniMax-M2.7-highspeed'
+    const offered = piModelsForConfiguredUpstreams(new Set(['minimax']))
+    expect(offered.map((model) => model.wireId)).toEqual([
+      'minimax/MiniMax-M3',
+      'minimax/MiniMax-M2.7',
+      wireId
+    ])
+    expect(offered.find((model) => model.wireId === wireId)).toMatchObject({
+      modelId: 'MiniMax-M2.7-highspeed',
+      contextWindow: 204_800,
+      maxOutputTokens: 131_072,
+      thinking: true,
+      images: false
+    })
+    expect(piModelPolicyVerdict('minimax', 'MiniMax-M2.7-highspeed').allowed).toBe(true)
+    expect(resolveContextWindow('pi', wireId)).toBe(204_800)
+    expect(resolvePiModelLabel(wireId)).toBe('M2.7 Highspeed')
+    expect(resolvePiUpstreamBrand(wireId)).toEqual({ label: 'MiniMax', hueClass: 'minimax' })
+    expect(resolvePiReasoningSupport(wireId)).toMatchObject({ canDisable: false })
+    expect(resolvePiReasoningSupport(wireId).efforts).not.toContain('off')
+  })
+
   it('offers the new Cerebras model beside GPT-OSS with exact context and policy support', () => {
     const offered = piModelsForConfiguredUpstreams(new Set(['cerebras']))
     expect(offered.map((model) => model.wireId)).toEqual([

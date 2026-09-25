@@ -149,6 +149,16 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     thinking: true,
     images: false
   },
+  {
+    wireId: 'minimax/MiniMax-M2.7-highspeed',
+    upstream: 'minimax',
+    modelId: 'MiniMax-M2.7-highspeed',
+    label: 'M2.7 Highspeed',
+    contextWindow: 204_800,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: false
+  },
   // Xiaomi token plan — three regional deployments of the SAME catalog; the
   // Settings card's region picker files the key under exactly one of them.
   // V2 Pro, V2.5 and V2.5 Pro metadata is from pi 0.84.2's bundled

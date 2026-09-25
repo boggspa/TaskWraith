@@ -48,6 +48,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'qwen-token-plan/qwen3.8-max-preview': 1_000_000,
   'minimax/MiniMax-M3': 1_000_000,
   'minimax/MiniMax-M2.7': 204_800,
+  'minimax/MiniMax-M2.7-highspeed': 204_800,
   // Xiaomi token plan — three regional deployments of the same catalog.
   'xiaomi-token-plan-cn/mimo-v2-pro': 1_048_576,
   'xiaomi-token-plan-cn/mimo-v2.5': 1_048_576,

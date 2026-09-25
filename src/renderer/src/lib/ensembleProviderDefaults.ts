@@ -504,6 +504,7 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'qwen-token-plan/qwen3.8-max', label: 'Qwen3.8 Max' },
   { id: 'minimax/MiniMax-M3', label: 'M3' },
   { id: 'minimax/MiniMax-M2.7', label: 'M2.7' },
+  { id: 'minimax/MiniMax-M2.7-highspeed', label: 'M2.7 Highspeed' },
   { id: 'xiaomi-token-plan-cn/mimo-v2-pro', label: 'MiMo V2 Pro (CN)' },
   { id: 'xiaomi-token-plan-cn/mimo-v2.5', label: 'MiMo V2.5 (CN)' },
   { id: 'xiaomi-token-plan-cn/mimo-v2.5-pro', label: 'MiMo V2.5 Pro (CN)' },
