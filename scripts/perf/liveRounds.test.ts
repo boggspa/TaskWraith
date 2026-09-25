@@ -23,6 +23,10 @@ const live = require('./liveRounds.cjs') as {
     baseUrl: string,
     options?: Record<string, unknown>
   ) => Promise<{ inFlight: number; turnsDone: number }>
+  readScriptedDaemonActivity: (
+    baseUrl: string,
+    options: unknown
+  ) => Promise<{ started: number; done: number; busyMs: number; maxQuietMs: number }>
   roundStateExpression: (chatId: string) => string
   runLiveSmokeRound: (options: Record<string, unknown>) => Promise<Record<string, unknown>>
   runLiveRoundSequence: (options: Record<string, unknown>) => Promise<{
@@ -76,16 +80,27 @@ describe('live-round fixtures and daemon config', () => {
       seed: 42,
       scaleDown: 50
     })
-    expect(live.buildScriptedDaemonConfig(fixture)).toEqual({
-      seed: 42,
-      models: [{ name: 'scripted-llama:latest' }]
-    })
+    // Every tag a live chat's seats use, the light chat's first.
+    const models = [{ name: 'scripted-llama:latest' }, { name: 'scripted-llama:heavy' }]
+    expect(live.buildScriptedDaemonConfig(fixture)).toEqual({ seed: 42, models })
     expect(
       live.buildScriptedDaemonConfig(fixture, { seed: 7, shape: { chunkIntervalMs: 0 } })
     ).toEqual({
       seed: 7,
-      models: [{ name: 'scripted-llama:latest' }],
+      models,
       shape: { chunkIntervalMs: 0 }
+    })
+    // A fixture without per-chat tags serves its one seat tag.
+    const oneTag = {
+      ...fixture,
+      shape: {
+        ...(fixture.shape as Record<string, unknown>),
+        liveSeats: { provider: 'ollama', model: 'scripted-llama:latest' }
+      }
+    }
+    expect(live.buildScriptedDaemonConfig(oneTag)).toEqual({
+      seed: 42,
+      models: [{ name: 'scripted-llama:latest' }]
     })
     const replay = generatePerfFixture({ workload: 'light_beside_large', seed: 42, scaleDown: 50 })
     expect(() => live.buildScriptedDaemonConfig(replay)).toThrow(/live-round workload/)
@@ -129,6 +144,134 @@ describe('the daemon state read', () => {
       code: 'T2_LIVE_DAEMON_STATE',
       message: expect.stringMatching(/ECONNREFUSED/)
     })
+  })
+})
+
+describe('the daemon activity read', () => {
+  const RANGE = { model: 'scripted-llama:heavy', fromMs: 1_000, toMs: 61_000 }
+  const RECORD = { ...RANGE, started: 5, done: 4, busyMs: 9_000, maxQuietMs: 12_000 }
+  const answer = (status: number, body: unknown) => {
+    const calls: Array<{ url: string; init: { signal?: AbortSignal } }> = []
+    return {
+      calls,
+      fetch: async (url: string, init: { signal?: AbortSignal }) => {
+        calls.push({ url, init })
+        return { ok: status === 200, status, json: async () => body }
+      }
+    }
+  }
+
+  it('reads one tag’s turns over a range from a running daemon', async () => {
+    const daemon = createScriptedOllamaDaemon({
+      seed: 1,
+      models: [{ name: 'scripted-llama:latest' }, { name: 'scripted-llama:heavy' }]
+    })
+    const { baseUrl } = await daemon.listen()
+    try {
+      await expect(live.readScriptedDaemonActivity(baseUrl, RANGE)).resolves.toEqual({
+        started: 0,
+        done: 0,
+        busyMs: 0,
+        maxQuietMs: 60_000
+      })
+    } finally {
+      await daemon.close()
+    }
+  })
+
+  it('asks for the tag, encoded, and the range, with a bound', async () => {
+    const fake = answer(200, RECORD)
+    await expect(
+      live.readScriptedDaemonActivity('http://127.0.0.1:43998', { ...RANGE, fetch: fake.fetch })
+    ).resolves.toEqual({ started: 5, done: 4, busyMs: 9_000, maxQuietMs: 12_000 })
+    expect(fake.calls.map((call) => call.url)).toEqual([
+      'http://127.0.0.1:43998/_scripted/activity?model=scripted-llama%3Aheavy&from=1000&to=61000'
+    ])
+    expect(fake.calls[0].init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('refuses a bad address or range before asking', async () => {
+    const fake = answer(200, RECORD)
+    const read = (baseUrl: string, extra: Record<string, unknown>) =>
+      live.readScriptedDaemonActivity(baseUrl, { ...RANGE, ...extra, fetch: fake.fetch })
+    await expect(read('http://localhost:1', {})).rejects.toThrow(/loopback base URL/)
+    for (const extra of [
+      { model: undefined },
+      { model: 7 },
+      { fromMs: 1.5 },
+      { fromMs: -1 },
+      { toMs: '61000' },
+      { toMs: RANGE.fromMs },
+      { toMs: RANGE.fromMs - 1 }
+    ]) {
+      await expect(read('http://127.0.0.1:1', extra)).rejects.toThrow(/tag and a range/)
+    }
+    await expect(live.readScriptedDaemonActivity('http://127.0.0.1:1', null)).rejects.toThrow(
+      /tag and a range/
+    )
+    expect(fake.calls).toEqual([])
+  })
+
+  it('fails loudly on an answer that is not this tag’s record for this range', async () => {
+    const span = RANGE.toMs - RANGE.fromMs
+    const bodies = [
+      { ...RECORD, model: 'scripted-llama:latest' },
+      { ...RECORD, fromMs: RANGE.fromMs + 1 },
+      { ...RECORD, toMs: RANGE.toMs + 1 },
+      { ...RECORD, started: '5' },
+      { ...RECORD, busyMs: -1 },
+      { ...RECORD, maxQuietMs: 0.5 },
+      { ...RECORD, done: 6 },
+      { ...RECORD, busyMs: span + 1 },
+      { ...RECORD, maxQuietMs: span + 1 },
+      null
+    ]
+    for (const body of bodies) {
+      await expect(
+        live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+          ...RANGE,
+          fetch: answer(200, body).fetch
+        })
+      ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE' })
+    }
+    // At the limits the record is whole.
+    await expect(
+      live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: answer(200, { ...RECORD, done: 5, busyMs: span, maxQuietMs: span }).fetch
+      })
+    ).resolves.toMatchObject({ done: 5, busyMs: span, maxQuietMs: span })
+    await expect(
+      live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: answer(404, { error: 'unknown model' }).fetch
+      })
+    ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE', message: /HTTP 404/ })
+    await expect(
+      live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: async () => {
+          throw new Error('connect ECONNREFUSED')
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'T2_LIVE_DAEMON_STATE',
+      message: expect.stringMatching(/ECONNREFUSED/)
+    })
+  })
+
+  it('gives up on a daemon that never answers', async () => {
+    const hanging = (_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason))
+      })
+    await expect(
+      live.readScriptedDaemonActivity('http://127.0.0.1:1', {
+        ...RANGE,
+        fetch: hanging,
+        timeoutMs: 20
+      })
+    ).rejects.toMatchObject({ code: 'T2_LIVE_DAEMON_STATE' })
   })
 })
 

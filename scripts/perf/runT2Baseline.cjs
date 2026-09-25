@@ -55,6 +55,7 @@ const {
   daemonStopFailures,
   liveSeatsOf,
   neutralizeOllamaEnvironmentOnSpawnPlan,
+  readScriptedDaemonActivity,
   readScriptedDaemonState,
   runLiveRoundSequence,
   startScriptedDaemonChild,
@@ -94,6 +95,12 @@ const {
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const { runT2WindowedReplay } = require('./t2WindowOrchestration.cjs')
 const { runT2PairedReplay } = require('./t2PairedRuns.cjs')
+const {
+  liveLaneChatsOf,
+  liveLanesTeardownFailures,
+  runT2LiveLanes,
+  withLiveLanesVerdict
+} = require('./t2LiveLanes.cjs')
 const { awaitWithTimeout } = require('./boundedAwait.cjs')
 const {
   runDeterministicReplay,
@@ -746,6 +753,10 @@ const DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS = 1_000
  * @param {number} [options.maxAgeMs]
  * @param {number} [options.pollIntervalMs]
  * @param {object} [options.timers] — { setInterval, clearInterval } DI
+ * @param {{ add(sample: object): { ok: boolean, reason?: string } }} [options.recentSpanUnion]
+ *   — M1 S5d: reads then carry the Host's recent-span tail, and each accepted
+ *   read is added to this S3b union as it arrives; the tail is never retained
+ *   in `samples` (about 200 KB a read).
  */
 function createT2HostWindowSampler(options) {
   const probe = typeof options.probe === 'function' ? options.probe : probeHostBootstrapIdentity
@@ -764,6 +775,10 @@ function createT2HostWindowSampler(options) {
           clearInterval: (handle) => clearInterval(handle)
         }
   const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  const recentSpanUnion =
+    isObject(options.recentSpanUnion) && typeof options.recentSpanUnion.add === 'function'
+      ? options.recentSpanUnion
+      : null
   const summary = {
     status: 'created',
     marker: null,
@@ -834,7 +849,8 @@ function createT2HostWindowSampler(options) {
         requiredChatIds: Array.isArray(options.requiredChatIds) ? options.requiredChatIds : [],
         ...(options.snapshotFs === undefined ? {} : { fs: options.snapshotFs }),
         ...(options.now === undefined ? {} : { now: options.now }),
-        ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs })
+        ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs }),
+        ...(recentSpanUnion === null ? {} : { keepRecentSpans: true })
       })
     } catch (error) {
       noteRefusal(
@@ -865,7 +881,21 @@ function createT2HostWindowSampler(options) {
     if (summary.firstSequence === null) summary.firstSequence = result.sequence
     summary.lastSequence = result.sequence
     summary.accepted += 1
-    samples.push(result)
+    if (recentSpanUnion === null) {
+      samples.push(result)
+      return true
+    }
+    // The union's first refusal is sticky and its fold reports it; counting
+    // it here names it in the sampler summary too.
+    const added = recentSpanUnion.add(result)
+    if (!isObject(added) || added.ok !== true) {
+      noteRefusal(
+        `host_window_union_refused: ${isObject(added) && added.reason ? added.reason : 'no_result'}`
+      )
+    }
+    const workSpans = isObject(result.workSpans) ? { ...result.workSpans } : result.workSpans
+    if (isObject(workSpans)) delete workSpans.recentSpans
+    samples.push({ ...result, workSpans })
     return true
   }
 
@@ -1448,7 +1478,8 @@ function parseArgs(argv) {
     skipBuild: false,
     windowedReplay: false,
     pairedRuns: false,
-    liveRounds: false
+    liveRounds: false,
+    liveLanes: false
   }
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') out.help = true
@@ -1465,7 +1496,10 @@ function parseArgs(argv) {
     else if (arg === '--accept-unfolded-cross-thread') out.acceptUnfoldedCrossThread = true
     else if (arg === '--paired-runs') out.pairedRuns = true
     else if (arg === '--live-rounds') out.liveRounds = true
-    else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
+    else if (arg === '--live-lanes') {
+      out.liveRounds = true
+      out.liveLanes = true
+    } else if (arg.startsWith('--workload=')) out.workload = arg.slice('--workload='.length)
     else if (arg.startsWith('--seed=')) out.seed = arg.slice('--seed='.length)
     else if (arg.startsWith('--out-dir=')) out.outDir = arg.slice('--out-dir='.length)
     else if (arg.startsWith('--artifact-dir='))
@@ -1583,6 +1617,10 @@ Options:
                                   Ensemble rounds against the harness's scripted Ollama daemon instead
                                   of replayed saves. Smoke increment: one warm-up and one smoke round
                                   on the light chat; diagnostic only, refuses windowed/paired/role
+  --live-lanes                    --live-rounds, then M1's measured live windows once the smoke
+                                  settled: a round kept streaming on the heavy chat, light rounds
+                                  beside it (3 x 120 s, every third cancelled), main, D1 and Host
+                                  span evidence per window (implies --live-rounds; ≥9 min)
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -1818,6 +1856,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
   if (args.liveRounds) {
     liveSeatsOf(generatedFixture)
+    if (args.liveLanes) liveLaneChatsOf(generatedFixture)
     if (args.windowedReplay || args.pairedRuns || args.maxReplayEvents != null || args.role) {
       const liveErr = new Error(
         'Refusing --live-rounds with --windowed-replay, --paired-runs, --max-replay-events or --role: live windows arrive with the live lanes driver'
@@ -2577,6 +2616,27 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           { log: true }
         )
       }
+      // One Host window sampler configuration, for windowed replay and the
+      // live lanes alike.
+      const hostWindowSamplerOptions = () => ({
+        userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
+        hostPerfSnapshotPath: hostSnapshotPath,
+        requiredChatIds: fixture.chats.map((chat) => chat.appChatId),
+        probe: options.hostWelcomeProbe,
+        read: options.hostWindowSnapshotRead,
+        fs: options.hostDiscoveryFs,
+        snapshotFs: options.hostSnapshotFs,
+        connect: options.hostSocketConnect,
+        sleep: options.hostDiscoverySleep,
+        nowMs: options.hostDiscoveryNowMs,
+        maxWaitMs: options.hostDiscoveryMaxWaitMs,
+        intervalMs: options.hostDiscoveryIntervalMs,
+        welcomeTimeoutMs: options.hostWelcomeTimeoutMs,
+        now: options.hostNow,
+        maxAgeMs: options.hostSnapshotMaxAgeMs,
+        pollIntervalMs: options.hostWindowPollIntervalMs,
+        timers: options.hostWindowSamplerTimers
+      })
       if (args.liveRounds) {
         // M1 live driver (S6 smoke increment): an unmeasured warm-up round (a
         // model's first use writes settings), then one smoke round on the
@@ -2602,6 +2662,56 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             )
         })
         report.liveRounds = { ...report.liveRounds, rounds, verdict }
+        if (args.liveLanes) {
+          // M1 S5d: the measured live windows, started only once the warm-up
+          // and the smoke settled. The Host window sampler feeds the S3b
+          // union as it reads, and the scripted daemon reports each lane's
+          // model turns by the lane chat's own tag; the lanes' verdict joins
+          // the smoke's, so a censored or missing window makes the run's
+          // result not ok.
+          let lanes = null
+          if (verdict.ok) {
+            setCapturePhase('live_lanes', {}, { log: true })
+            const chats = liveLaneChatsOf(fixture)
+            lanes = await (options.runLiveLanes || runT2LiveLanes)({
+              page,
+              mainSession: mainInspector,
+              lightChatId: chats.light,
+              lightChatTitle: chats.lightTitle,
+              heavyChatId: chats.heavy,
+              laneModels: { light: chats.lightModel, heavy: chats.heavyModel },
+              readDaemonActivity:
+                options.liveDaemonActivity ||
+                ((query) => readScriptedDaemonActivity(liveDaemon.baseUrl, query)),
+              nowMs: replayNowMs,
+              createHostSampler: (union) =>
+                createT2HostWindowSampler({
+                  ...hostWindowSamplerOptions(),
+                  recentSpanUnion: union
+                }),
+              // A window's reasons as it closes: the Host fold, after the
+              // last window, may still censor it.
+              onWindow: (window) =>
+                updateProgress(
+                  {
+                    liveLaneWindow: {
+                      repetition: window.repetition,
+                      reasonsBeforeHostFold: window.reasons
+                    }
+                  },
+                  { log: true }
+                )
+            })
+            for (const error of liveLanesTeardownFailures(lanes)) {
+              cleanupFailures.push({ phase: 'liveLanes.teardown', error })
+            }
+          }
+          report.liveRounds = {
+            ...report.liveRounds,
+            lanes,
+            verdict: withLiveLanesVerdict(verdict, lanes)
+          }
+        }
       } else if (args.windowedReplay) {
         if (args.maxReplayEvents != null) {
           throw new Error(
@@ -2614,25 +2724,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         // sampler reads a file from the runner's own loop: no CDP traffic on
         // the measured processes, the same posture as T9a/T9b. A probe or
         // read failure degrades to a counted marker, never a thrown run.
-        hostWindowSampler = createT2HostWindowSampler({
-          userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
-          hostPerfSnapshotPath: hostSnapshotPath,
-          requiredChatIds: fixture.chats.map((chat) => chat.appChatId),
-          probe: options.hostWelcomeProbe,
-          read: options.hostWindowSnapshotRead,
-          fs: options.hostDiscoveryFs,
-          snapshotFs: options.hostSnapshotFs,
-          connect: options.hostSocketConnect,
-          sleep: options.hostDiscoverySleep,
-          nowMs: options.hostDiscoveryNowMs,
-          maxWaitMs: options.hostDiscoveryMaxWaitMs,
-          intervalMs: options.hostDiscoveryIntervalMs,
-          welcomeTimeoutMs: options.hostWelcomeTimeoutMs,
-          now: options.hostNow,
-          maxAgeMs: options.hostSnapshotMaxAgeMs,
-          pollIntervalMs: options.hostWindowPollIntervalMs,
-          timers: options.hostWindowSamplerTimers
-        })
+        hostWindowSampler = createT2HostWindowSampler({ ...hostWindowSamplerOptions() })
         await hostWindowSampler.start()
         try {
           await runWindowedOrPairedReplay(api, {

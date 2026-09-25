@@ -19,6 +19,16 @@
  * - The Host's spans, from the S3b union the runner feeds as it samples,
  *   folded once at the end with a settle time per lane (S5c-1).
  *
+ * - The scripted daemon's own record of each lane's model turns (every chat
+ *   has its own tag), read from the harness's loopback route after the
+ *   settle: a round can end `completed` with every seat failed, and the page
+ *   observer can miss a round's end, so neither the statuses nor the observer
+ *   alone proves the lanes did model work throughout. Each completed light
+ *   round is judged on its own turns: light rounds run one at a time, so the
+ *   turns started between a round's send and its end are that round's. The
+ *   heavy lane is judged over the window and its settle, which it streams
+ *   through.
+ *
  * A window is eligible only when every one of these holds and the heavy lane
  * ran throughout it. Every reason it is not is named; a failed lane stops the
  * windows that would follow. The light lane's own page-side times (round
@@ -38,10 +48,17 @@ const DEFAULT_OPTIONS = Object.freeze({
   windows: 3,
   windowMs: 120_000,
   fenceMs: 2_000,
+  // Light work on the Host can queue behind heavy commits (capture-01's heavy
+  // durable_commit p95 was about 10 s), so the light lane gets the same margin.
+  lightSettleMarginMs: 30_000,
   heavySettleMarginMs: 30_000,
-  maxHeavyIdleMs: 2_000,
+  // Between two heavy rounds: an observer poll plus a send on a 45 MiB chat.
+  maxHeavyIdleMs: 10_000,
+  // The longest stretch inside a window with no heavy seat streaming.
+  maxHeavyQuietMs: 30_000,
   hostCaptureWaitMs: 7_000
 })
+const LANE_ACTIVITY_FIELDS = Object.freeze(['started', 'done', 'busyMs', 'maxQuietMs'])
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -186,31 +203,42 @@ function positiveOption(options, name) {
  *   lightChatId: string, heavyChatId: string,
  *   readMainWindow: (query: object) => Promise<unknown>,
  *   readD1Counters: () => Promise<{ deferredAppends: number, normalSaves: number } | null>,
+ *   readLaneActivity: (lane: 'light' | 'heavy', range: { fromMs: number, toMs: number }) =>
+ *     Promise<{ started: number, done: number, busyMs: number, maxQuietMs: number }>,
  *   hostUnion?: { evaluate(windows: object[], lanes: object): any } | null,
  *   nowMs?: () => number, sleep?: (ms: number) => Promise<void>,
+ *   onWindow?: (window: object) => void,
  *   windows?: number, windowMs?: number, fenceMs?: number,
- *   heavySettleMarginMs?: number, maxHeavyIdleMs?: number, hostCaptureWaitMs?: number
+ *   lightSettleMarginMs?: number, heavySettleMarginMs?: number,
+ *   maxHeavyIdleMs?: number, maxHeavyQuietMs?: number, hostCaptureWaitMs?: number
  * }} options
  */
 async function runLiveLaneWindows(options) {
   if (!isPlainObject(options) || !isPlainObject(options.lanes)) {
     throw new Error('runLiveLaneWindows needs lanes')
   }
-  const { lanes, readMainWindow, readD1Counters } = options
-  if (typeof readMainWindow !== 'function' || typeof readD1Counters !== 'function') {
-    throw new Error('runLiveLaneWindows needs main window and D1 readers')
+  const { lanes, readMainWindow, readD1Counters, readLaneActivity } = options
+  if (
+    typeof readMainWindow !== 'function' ||
+    typeof readD1Counters !== 'function' ||
+    typeof readLaneActivity !== 'function'
+  ) {
+    throw new Error('runLiveLaneWindows needs main window, D1 and lane activity readers')
   }
   const laneChats = { light: options.lightChatId, heavy: options.heavyChatId }
   const count = options.windows === undefined ? DEFAULT_OPTIONS.windows : options.windows
   if (!Number.isSafeInteger(count) || count <= 0) throw new Error('windows must be positive')
   const windowMs = positiveOption(options, 'windowMs')
   const fenceMs = positiveOption(options, 'fenceMs')
+  const lightSettleMarginMs = positiveOption(options, 'lightSettleMarginMs')
   const heavySettleMarginMs = positiveOption(options, 'heavySettleMarginMs')
   const maxHeavyIdleMs = positiveOption(options, 'maxHeavyIdleMs')
+  const maxHeavyQuietMs = positiveOption(options, 'maxHeavyQuietMs')
   const hostCaptureWaitMs = positiveOption(options, 'hostCaptureWaitMs')
   const nowMs = options.nowMs || Date.now
   const sleep = options.sleep || defaultSleep
   const hostUnion = options.hostUnion || null
+  const onWindow = typeof options.onWindow === 'function' ? options.onWindow : null
 
   const sleepUntil = async (atMs) => {
     const wait = atMs - nowMs()
@@ -221,6 +249,19 @@ async function runLiveLaneWindows(options) {
       return parseMainWorkSpanWindow(await readMainWindow({ lanes: laneChats, sinceMs, untilMs }))
     } catch {
       return { ok: false, reason: 'main_read_failed' }
+    }
+  }
+  const readActivity = async (lane, fromMs, toMs) => {
+    try {
+      const activity = await readLaneActivity(lane, { fromMs, toMs })
+      return isPlainObject(activity) &&
+        LANE_ACTIVITY_FIELDS.every(
+          (field) => Number.isSafeInteger(activity[field]) && activity[field] >= 0
+        )
+        ? Object.fromEntries(LANE_ACTIVITY_FIELDS.map((field) => [field, activity[field]]))
+        : null
+    } catch {
+      return null
     }
   }
   const readD1 = async () => {
@@ -241,25 +282,54 @@ async function runLiveLaneWindows(options) {
   if (hostUnion !== null) await sleep(hostCaptureWaitMs)
   const baselineAtMs = nowMs()
   const baseline = await readMain(baselineAtMs - 1, baselineAtMs)
+  // Main's stride sampler never resets once engaged, so every window after
+  // this would be censored `main_spans_sampled`: refuse to start them.
+  if (baseline.ok && baseline.window.ring.sampledOut > 0) {
+    return { windows: [], verdict: liveLaneWindowsVerdict([], count, ['main_sampler_engaged']) }
+  }
   let previousRing = baseline.ok ? baseline.window.ring : null
   const windows = []
+  const runReasons = []
 
   for (let repetition = 0; repetition < count; repetition += 1) {
     const before = lanes.snapshot()
     const stopped = before.observer.failure ?? before.light.failure ?? before.heavy.failure ?? null
-    if (stopped !== null) break
+    if (stopped !== null) {
+      runReasons.push(`lanes_stopped:${stopped}`)
+      break
+    }
 
     const reasons = []
     const d1Before = await readD1()
     const startedAtMs = nowMs()
     const endedAtMs = startedAtMs + windowMs
     const light = await lanes.runLight({ untilMs: endedAtMs })
+    const lightDrainedAtMs = Math.max(endedAtMs, light.drainedAtMs ?? endedAtMs)
     const lightSettledAtMs =
-      light.drainedAtMs === null ? null : Math.max(endedAtMs, light.drainedAtMs) + fenceMs
+      light.drainedAtMs === null ? null : lightDrainedAtMs + lightSettleMarginMs
     const heavySettledAtMs = endedAtMs + heavySettleMarginMs
     await sleepUntil(Math.max(lightSettledAtMs ?? endedAtMs, heavySettledAtMs) + fenceMs)
     const main = await readMain(startedAtMs, endedAtMs)
     const d1After = await readD1()
+    // Each lane's model turns: the light lane's over its rounds, the heavy
+    // lane's over the window and the settle it must have streamed through.
+    const activity = {
+      light: await readActivity('light', startedAtMs, lightDrainedAtMs + fenceMs),
+      heavy: await readActivity('heavy', startedAtMs, heavySettledAtMs)
+    }
+    // And each completed light round's own: its turns started after its send
+    // and before its end was seen (the end inclusive). Aligned with the
+    // rounds: undefined for a round not judged, null for a failed read (a
+    // range the reader refuses reads the same way).
+    const roundTurns = []
+    for (const round of light.rounds) {
+      roundTurns.push(
+        round.status === 'completed'
+          ? await readActivity('light', round.sentAtMs, round.endedAtMs + 1)
+          : undefined
+      )
+    }
+    const judgedTurns = roundTurns.filter((turns) => turns !== undefined)
     const after = lanes.snapshot()
 
     // The lanes.
@@ -268,6 +338,48 @@ async function runLiveLaneWindows(options) {
     if (after.heavy.failure !== null) reasons.push(`heavy_lane_failed:${after.heavy.failure}`)
     const heavyIdleMs = heavyIdleWithin(after.heavy, startedAtMs, endedAtMs)
     if (heavyIdleMs > maxHeavyIdleMs) reasons.push('heavy_lane_idle')
+    // A light round must complete, or end cancelled by the lane's own cancel.
+    const completedLight = light.rounds.filter((round) => round.status === 'completed').length
+    const roundProblems = new Set()
+    for (const round of light.rounds) {
+      if (round.status === 'completed') continue
+      if (round.status === 'cancelled' && round.control && round.control.cancelled === true) {
+        continue
+      }
+      roundProblems.add(`light_round_${round.status ?? 'unended'}`)
+    }
+    // A heavy round that ended while its window was being measured completed.
+    const heavyEnded = after.heavy.rounds.filter(
+      (round) =>
+        round.endedAtMs !== null &&
+        round.endedAtMs >= startedAtMs &&
+        round.endedAtMs < heavySettledAtMs
+    )
+    for (const round of heavyEnded) {
+      if (round.status !== 'completed') roundProblems.add(`heavy_round_${round.status}`)
+    }
+    reasons.push(...roundProblems)
+    // The observer's own health: a fault, or a lane's chat whose changes
+    // reached the page on the other channel, can hide a round's end.
+    const rose = (field, lane) =>
+      (lane ? after.observer[field]?.[lane] : after.observer[field]) >
+      (lane ? before.observer[field]?.[lane] : before.observer[field])
+    if (rose('faults')) reasons.push('observer_faults')
+    if (rose('otherSource', 'light')) reasons.push('light_updates_rerouted')
+    if (rose('otherSource', 'heavy')) reasons.push('heavy_updates_rerouted')
+
+    // The daemon's record of each lane's model turns.
+    if (
+      activity.light === null ||
+      activity.heavy === null ||
+      judgedTurns.some((turns) => turns === null)
+    ) {
+      reasons.push('daemon_activity_unavailable')
+    } else {
+      if (judgedTurns.some((turns) => turns.done === 0)) reasons.push('light_turns_missing')
+      if (activity.heavy.done === 0) reasons.push('heavy_turns_missing')
+      if (activity.heavy.maxQuietMs > maxHeavyQuietMs) reasons.push('heavy_lane_quiet')
+    }
 
     // D1: real rounds reached the deferred journal inside the fences.
     const d1 =
@@ -305,6 +417,9 @@ async function runLiveLaneWindows(options) {
       }
       if (heavySpans.length === 0) reasons.push('main_heavy_spans_missing')
       mainEvidence = {
+        // A span is recorded when its work completes: one still open at the
+        // read is absent, so the heavy lane's timings are lower bounds.
+        basis: 'spans completed by the read, after both lanes settled',
         ringRise: rise,
         lanes: { light: timingsByKind(lightSpans), heavy: timingsByKind(heavySpans) }
       }
@@ -312,6 +427,7 @@ async function runLiveLaneWindows(options) {
     }
 
     const controls = light.rounds.filter((round) => round.control && !round.control.skipped)
+    const answered = controls.filter((round) => round.control.ok === true)
     windows.push({
       role: 'light-beside',
       repetition,
@@ -321,17 +437,30 @@ async function runLiveLaneWindows(options) {
       reasons,
       light: {
         rounds: light.rounds.length,
+        completed: completedLight,
         drainedAtMs: light.drainedAtMs,
         statuses: light.rounds.map((round) => round.status),
         roundStartPage: pageTimings(light.rounds.map((round) => round.pageMs)),
-        cancelPage: pageTimings(controls.map((round) => round.control.pageMs)),
-        cancels: controls.length
+        cancelPage: pageTimings(answered.map((round) => round.control.pageMs)),
+        cancels: controls.length,
+        cancelsFailed: controls.length - answered.length,
+        // Beside `statuses`: the turns each completed round finished, null
+        // for a round not judged or a read that failed.
+        turnsDone: roundTurns.map((turns) => (turns ? turns.done : null))
       },
-      heavy: { idleMs: heavyIdleMs },
+      heavy: { idleMs: heavyIdleMs, roundsEnded: heavyEnded.length },
+      activity,
       d1,
       main: mainEvidence,
       host: null
     })
+    if (onWindow !== null) {
+      try {
+        onWindow({ ...windows[windows.length - 1], reasons: [...reasons] })
+      } catch {
+        // Progress only: a failing observer never costs a window.
+      }
+    }
   }
 
   // The Host's spans, folded once with a settle time per lane.
@@ -368,17 +497,30 @@ async function runLiveLaneWindows(options) {
           window.reasons.push(
             ...evidence.lanes.light.reasons.map((reason) => `host_light_${reason}`)
           )
+        } else if (window.light.rounds > 0 && spanCount(evidence.lanes.light.byKind) === 0) {
+          // A mis-keyed chat reads as an empty lane, as on main.
+          window.reasons.push('host_light_spans_missing')
         }
       })
     }
   }
 
-  return { windows, verdict: liveLaneWindowsVerdict(windows, count) }
+  return { windows, verdict: liveLaneWindowsVerdict(windows, count, runReasons) }
 }
 
-/** Every window run, and every one eligible; each reason names its window. */
-function liveLaneWindowsVerdict(windows, expected) {
-  const reasons = []
+/** How many spans a lane's per-kind timings count. */
+function spanCount(byKind) {
+  return isPlainObject(byKind)
+    ? Object.values(byKind).reduce((sum, timings) => sum + (timings?.count ?? 0), 0)
+    : 0
+}
+
+/**
+ * Every window run, and every one eligible; each reason names its window.
+ * `runReasons` are why no window could start, listed first.
+ */
+function liveLaneWindowsVerdict(windows, expected, runReasons = []) {
+  const reasons = [...runReasons]
   const list = Array.isArray(windows) ? windows : []
   if (list.length < expected) reasons.push(`windows_run:${list.length}/${expected}`)
   for (const window of list) {

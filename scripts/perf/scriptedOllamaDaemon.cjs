@@ -17,7 +17,8 @@
  * - Records every streamed turn (tag, index, chunk count, bytes, SHA-256 of
  *   the streamed content, outcome) so a report can name exactly what the app
  *   received. Request bodies are never retained. `GET /_scripted/state` gives
- *   the harness live counts; it is not an Ollama route and is never counted.
+ *   the harness live counts, and `GET /_scripted/activity` one tag's turns
+ *   over a time range; neither is an Ollama route and neither is counted.
  *
  * Run as a child process with `--config=<json> --ready-file=<json>`; it
  * writes `{ pid, port, baseUrl }` to the ready file once listening, and on
@@ -107,6 +108,48 @@ function resolveShape(shape) {
     chunkBytes: merged.chunkBytes,
     chunkIntervalMs: merged.chunkIntervalMs
   })
+}
+
+/**
+ * One model's turns over [fromMs, toMs): how many started in it, how many of
+ * those completed, how long at least one was streaming, and the longest
+ * stretch in which none was. A turn still streaming runs until `nowMs`.
+ */
+function scriptedActivity(turns, model, fromMs, toMs, nowMs) {
+  const covered = []
+  let started = 0
+  let done = 0
+  for (const turn of turns) {
+    if (turn.model !== model) continue
+    if (turn.startedAtMs >= fromMs && turn.startedAtMs < toMs) {
+      started += 1
+      if (turn.outcome === 'done') done += 1
+    }
+    const endMs = turn.endedAtMs === null ? nowMs : turn.endedAtMs
+    if (turn.startedAtMs < toMs && endMs >= fromMs) {
+      covered.push([Math.max(fromMs, turn.startedAtMs), Math.min(toMs, endMs)])
+    }
+  }
+  covered.sort((a, b) => a[0] - b[0])
+  let cursor = fromMs
+  let busyMs = 0
+  let maxQuietMs = 0
+  for (const [from, to] of covered) {
+    if (from > cursor) maxQuietMs = Math.max(maxQuietMs, from - cursor)
+    if (to > cursor) {
+      busyMs += to - Math.max(from, cursor)
+      cursor = to
+    }
+  }
+  maxQuietMs = Math.max(maxQuietMs, toMs - cursor)
+  return { model, fromMs, toMs, started, done, busyMs, maxQuietMs }
+}
+
+/** A millisecond query parameter: digits only, or null. */
+function msParam(url, name) {
+  const raw = url.searchParams.get(name)
+  if (raw === null || !/^\d{1,15}$/.test(raw)) return null
+  return Number(raw)
 }
 
 function resolveModels(models) {
@@ -365,6 +408,19 @@ function createScriptedOllamaDaemon(options) {
     const url = new URL(request.url || '/', `http://${LOOPBACK_HOST}`)
     const route = `${request.method} ${url.pathname}`
     if (route === 'GET /_scripted/state') return sendJson(response, 200, state())
+    if (route === 'GET /_scripted/activity') {
+      const model = url.searchParams.get('model')
+      const fromMs = msParam(url, 'from')
+      const toMs = msParam(url, 'to')
+      if (!models.has(model)) return unknownModel(response, model)
+      if (fromMs === null || toMs === null || toMs <= fromMs) {
+        return sendJson(response, 400, { error: 'from and to must be milliseconds, from < to' })
+      }
+      // A range still open would count the time not yet elapsed as quiet.
+      const nowMs = now()
+      if (toMs > nowMs) return sendJson(response, 400, { error: 'to must not be in the future' })
+      return sendJson(response, 200, scriptedActivity(turns, model, fromMs, toMs, nowMs))
+    }
     count(route)
     switch (route) {
       case 'GET /api/version':
@@ -541,6 +597,7 @@ module.exports = {
   MIN_TURN_CHARS,
   SCRIPTED_OLLAMA_VERSION,
   createScriptedOllamaDaemon,
+  scriptedActivity,
   scriptedTurnChunks,
   summary
 }

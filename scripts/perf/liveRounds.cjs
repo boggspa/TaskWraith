@@ -88,14 +88,21 @@ function liveSeatsOf(fixture) {
   return live
 }
 
-/** Daemon config for a live fixture: its one scripted tag and the run's seed. */
-function buildScriptedDaemonConfig(fixture, options = {}) {
+/** Every scripted tag a live fixture's seats use: its seat tag, then one per chat. */
+function liveModelsOf(fixture) {
   const live = liveSeatsOf(fixture)
+  const chatModels = Array.isArray(live.chatModels) ? live.chatModels : []
+  return [...new Set([live.model, ...chatModels])]
+}
+
+/** Daemon config for a live fixture: its scripted tags and the run's seed. */
+function buildScriptedDaemonConfig(fixture, options = {}) {
+  const models = liveModelsOf(fixture)
   const seed = options.seed === undefined ? fixture.seed : options.seed
   if (!Number.isSafeInteger(seed)) throw new Error('scripted daemon seed must be a safe integer')
   return {
     seed,
-    models: [{ name: live.model }],
+    models: models.map((name) => ({ name })),
     ...(options.shape === undefined ? {} : { shape: options.shape })
   }
 }
@@ -257,6 +264,66 @@ async function readScriptedDaemonState(baseUrl, options = {}) {
     )
   }
   return { inFlight: body.inFlight, turnsDone: body.turnsDone }
+}
+
+const ACTIVITY_FIELDS = Object.freeze(['started', 'done', 'busyMs', 'maxQuietMs'])
+
+/**
+ * One scripted tag's turns over [fromMs, toMs) from the daemon's harness-only
+ * route: how many started, how many of those completed, how long one was
+ * streaming, and the longest stretch in which none was. Read with a bound.
+ */
+async function readScriptedDaemonActivity(baseUrl, options) {
+  if (typeof baseUrl !== 'string' || !LOOPBACK_BASE_URL.test(baseUrl)) {
+    throw new Error('readScriptedDaemonActivity needs the daemon loopback base URL')
+  }
+  const { model, fromMs, toMs } = isPlainObject(options) ? options : {}
+  if (
+    typeof model !== 'string' ||
+    !Number.isSafeInteger(fromMs) ||
+    !Number.isSafeInteger(toMs) ||
+    fromMs < 0 ||
+    toMs <= fromMs
+  ) {
+    throw new Error('readScriptedDaemonActivity needs a tag and a range of whole milliseconds')
+  }
+  const fetchImpl = options.fetch || fetch
+  const query = `model=${encodeURIComponent(model)}&from=${fromMs}&to=${toMs}`
+  let response = null
+  let body = null
+  try {
+    response = await fetchImpl(`${baseUrl}/_scripted/activity?${query}`, {
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_STATE_TIMEOUT_MS)
+    })
+    body = response.ok ? await response.json() : null
+  } catch (error) {
+    throw liveError(
+      `scripted Ollama daemon activity read failed: ${String(error?.message || error)}`,
+      'T2_LIVE_DAEMON_STATE'
+    )
+  }
+  const span = toMs - fromMs
+  if (
+    !isPlainObject(body) ||
+    body.model !== model ||
+    body.fromMs !== fromMs ||
+    body.toMs !== toMs ||
+    ACTIVITY_FIELDS.some((field) => !Number.isSafeInteger(body[field]) || body[field] < 0) ||
+    body.done > body.started ||
+    body.busyMs > span ||
+    body.maxQuietMs > span
+  ) {
+    throw liveError(
+      `scripted Ollama daemon activity read failed (HTTP ${response.status})`,
+      'T2_LIVE_DAEMON_STATE'
+    )
+  }
+  return {
+    started: body.started,
+    done: body.done,
+    busyMs: body.busyMs,
+    maxQuietMs: body.maxQuietMs
+  }
 }
 
 /**
@@ -536,9 +603,11 @@ module.exports = {
   buildScriptedDaemonConfig,
   daemonStopFailures,
   liveRoundsVerdict,
+  liveModelsOf,
   liveSeatsOf,
   neutralizeOllamaEnvironmentOnSpawnPlan,
   readD1Counters,
+  readScriptedDaemonActivity,
   readScriptedDaemonState,
   roundStateExpression,
   runLiveRoundSequence,

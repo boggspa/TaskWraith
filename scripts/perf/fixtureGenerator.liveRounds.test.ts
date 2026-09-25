@@ -11,9 +11,10 @@ import type { ChatRecord } from '../../src/main/store/types'
 const require = createRequire(import.meta.url)
 const generator = require('./fixtureGenerator.cjs') as {
   LIVE_ROUND_SEAT: { provider: string; model: string }
+  LIVE_LANE_MODELS: string[]
   generatePerfFixture: (options: Record<string, unknown>) => {
     workload: string
-    shape: { liveSeats?: { provider: string; model: string } }
+    shape: { liveSeats?: { provider: string; model: string; chatModels?: string[] } }
     chats: Array<ChatRecord & { ensemble: { activeRound: { status: string } } }>
     replaySchedule: unknown[] | null
   }
@@ -55,17 +56,25 @@ function settledAtBoot(chats: readonly ChatRecord[]): number {
 }
 
 describe('light_beside_large_live workload', () => {
-  it('is a declared workload whose seats all run the scripted Ollama tag', () => {
+  it('is a declared workload whose chats each run their own scripted Ollama tag', () => {
     expect(WORKLOADS).toContain('light_beside_large_live')
     // The daemon serves this tag unless the runner configures another.
     expect(generator.LIVE_ROUND_SEAT).toEqual({ provider: 'ollama', model: DEFAULT_MODEL.name })
+    // The light chat keeps the smoke's tag; the heavy chat's turns are told apart.
+    expect(generator.LIVE_LANE_MODELS).toEqual([DEFAULT_MODEL.name, 'scripted-llama:heavy'])
     const live = fixture('light_beside_large_live')
-    expect(live.shape.liveSeats).toEqual(generator.LIVE_ROUND_SEAT)
-    const seats = live.chats.flatMap((chat) => chat.ensemble.participants ?? [])
-    expect(seats.length).toBeGreaterThan(0)
-    for (const seat of seats) {
-      expect(seat).toMatchObject({ provider: 'ollama', model: DEFAULT_MODEL.name })
-    }
+    expect(live.shape.liveSeats).toEqual({
+      ...generator.LIVE_ROUND_SEAT,
+      chatModels: generator.LIVE_LANE_MODELS
+    })
+    expect(live.chats).toHaveLength(2)
+    live.chats.forEach((chat, index) => {
+      const seats = chat.ensemble.participants ?? []
+      expect(seats.length).toBeGreaterThan(0)
+      for (const seat of seats) {
+        expect(seat).toMatchObject({ provider: 'ollama', model: generator.LIVE_LANE_MODELS[index] })
+      }
+    })
     expect(live.replaySchedule).toBeNull()
   })
 

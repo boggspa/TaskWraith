@@ -15,6 +15,13 @@ const daemonModule = require('./scriptedOllamaDaemon.cjs') as {
   DEFAULT_MODEL: { name: string }
   MIN_TURN_CHARS: number
   createScriptedOllamaDaemon: (options: Record<string, unknown>) => ScriptedDaemon
+  scriptedActivity: (
+    turns: Array<Record<string, unknown>>,
+    model: string,
+    fromMs: number,
+    toMs: number,
+    nowMs: number
+  ) => Record<string, unknown>
   scriptedTurnChunks: (options: {
     seed: number
     model: string
@@ -206,6 +213,128 @@ describe('scripted Ollama daemon', () => {
       // Drain the turn.
     }
     await expect(state()).resolves.toEqual({ inFlight: 0, turnsDone: 1, turnsStarted: 1 })
+    expect(daemon.requestCounts()).toEqual({ 'POST /api/chat': 1 })
+  })
+})
+
+describe('scripted Ollama daemon activity per tag', () => {
+  const turn = (
+    model: string,
+    startedAtMs: number,
+    endedAtMs: number | null,
+    outcome = 'done'
+  ) => ({
+    model,
+    startedAtMs,
+    endedAtMs,
+    outcome
+  })
+
+  it('counts one tag’s turns started in the range, their completions, and the gaps', () => {
+    const turns = [
+      turn('light:latest', 900, 1_100),
+      turn('heavy:latest', 1_000, 1_500),
+      turn('heavy:latest', 1_400, 2_000),
+      turn('heavy:latest', 2_000, 2_000, 'aborted'),
+      turn('heavy:latest', 2_600, 3_100),
+      turn('heavy:latest', 3_900, null, 'streaming')
+    ]
+    expect(daemonModule.scriptedActivity(turns, 'heavy:latest', 1_000, 4_000, 4_200)).toEqual({
+      model: 'heavy:latest',
+      fromMs: 1_000,
+      toMs: 4_000,
+      started: 5,
+      done: 3,
+      // Overlapping turns count once; the one still streaming runs to the end.
+      busyMs: 1_000 + 500 + 100,
+      maxQuietMs: 800
+    })
+    // The light tag's turn began before the range: it covers, but did not start, in it.
+    expect(daemonModule.scriptedActivity(turns, 'light:latest', 1_000, 4_000, 4_200)).toEqual({
+      model: 'light:latest',
+      fromMs: 1_000,
+      toMs: 4_000,
+      started: 0,
+      done: 0,
+      busyMs: 100,
+      maxQuietMs: 2_900
+    })
+    // The fold does not rely on the turns arriving in start order.
+    expect(
+      daemonModule.scriptedActivity([...turns].reverse(), 'heavy:latest', 1_000, 4_000, 4_200)
+    ).toEqual(daemonModule.scriptedActivity(turns, 'heavy:latest', 1_000, 4_000, 4_200))
+  })
+
+  it('takes the range as start-inclusive and end-exclusive, and splits quiet at an instant turn', () => {
+    const turns = [
+      turn('m:latest', 1_000, 1_000),
+      turn('m:latest', 5_000, 6_000),
+      turn('m:latest', 999, 999)
+    ]
+    expect(daemonModule.scriptedActivity(turns, 'm:latest', 1_000, 5_000, 9_000)).toEqual({
+      model: 'm:latest',
+      fromMs: 1_000,
+      toMs: 5_000,
+      started: 1,
+      done: 1,
+      busyMs: 0,
+      maxQuietMs: 4_000
+    })
+    expect(
+      daemonModule.scriptedActivity(
+        [turn('m:latest', 3_000, 3_000)],
+        'm:latest',
+        1_000,
+        5_000,
+        9_000
+      )
+    ).toMatchObject({ started: 1, busyMs: 0, maxQuietMs: 2_000 })
+    expect(daemonModule.scriptedActivity([], 'm:latest', 1_000, 5_000, 9_000)).toMatchObject({
+      started: 0,
+      done: 0,
+      busyMs: 0,
+      maxQuietMs: 4_000
+    })
+  })
+
+  it('answers the harness over its own route, uncounted, and refuses a bad query', async () => {
+    const { daemon, baseUrl } = await openDaemon()
+    const fromMs = Date.now() - 1_000
+    await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ model: MODEL, stream: true })
+    }).then((response) => response.text())
+    // The range is end-exclusive: close it after the turn's start millisecond.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const toMs = Date.now()
+    const activity = await fetch(
+      `${baseUrl}/_scripted/activity?model=${encodeURIComponent(MODEL)}&from=${fromMs}&to=${toMs}`
+    )
+    expect(activity.status).toBe(200)
+    await expect(activity.json()).resolves.toMatchObject({
+      model: MODEL,
+      fromMs,
+      toMs,
+      started: 1,
+      done: 1
+    })
+    const status = async (query: string) =>
+      (await fetch(`${baseUrl}/_scripted/activity?${query}`)).status
+    expect(await status(`model=other:latest&from=1&to=2`)).toBe(404)
+    for (const query of [
+      `model=${MODEL}&from=1`,
+      `model=${MODEL}&to=2`,
+      `model=${MODEL}&from=2&to=2`,
+      `model=${MODEL}&from=3&to=2`,
+      `model=${MODEL}&from=-1&to=2`,
+      `model=${MODEL}&from=1.5&to=2`,
+      `model=${MODEL}&from=&to=2`,
+      `model=${MODEL}&from=0x10&to=20`,
+      // A range that has not closed yet would read its future as quiet.
+      `model=${MODEL}&from=1&to=${Date.now() + 60_000}`
+    ]) {
+      expect(await status(query)).toBe(400)
+    }
     expect(daemon.requestCounts()).toEqual({ 'POST /api/chat': 1 })
   })
 })

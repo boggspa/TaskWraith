@@ -237,7 +237,10 @@ describe('runT2Baseline --live-rounds launch', () => {
     expect(daemonStarts).toEqual([
       {
         dir: path.join(artifacts, 'scripted-ollama'),
-        config: { seed: 42, models: [{ name: 'scripted-llama:latest' }] }
+        config: {
+          seed: 42,
+          models: [{ name: 'scripted-llama:latest' }, { name: 'scripted-llama:heavy' }]
+        }
       }
     ])
     expect(settingsUnder(home)).toEqual([

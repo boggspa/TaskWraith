@@ -72,6 +72,11 @@ const PROVIDERS = Object.freeze([
  * (`scriptedOllamaDaemon.cjs`), which the runner configures to serve this tag.
  */
 const LIVE_ROUND_SEAT = Object.freeze({ provider: 'ollama', model: 'scripted-llama:latest' })
+/**
+ * The live lanes' scripted tags, one per chat (light, then heavy): the
+ * daemon keeps turns per tag, so each lane's model work is told apart.
+ */
+const LIVE_LANE_MODELS = Object.freeze(['scripted-llama:latest', 'scripted-llama:heavy'])
 
 const TOOL_NAMES = Object.freeze([
   'read_file',
@@ -502,7 +507,7 @@ function resolveWorkloadShape(options) {
       return {
         ...resolveWorkloadShape({ workload: 'light_beside_large' }),
         workload,
-        liveSeats: LIVE_ROUND_SEAT
+        liveSeats: Object.freeze({ ...LIVE_ROUND_SEAT, chatModels: LIVE_LANE_MODELS })
       }
     }
     default: {
@@ -785,7 +790,13 @@ function generatePerfFixture(options) {
   const chats = []
   for (let c = 0; c < scaledShape.chatCount; c++) {
     const chatShape = scaledShape.chatShapes ? scaledShape.chatShapes[c] : scaledShape
-    const chatParticipants = participants.slice(0, chatShape.seatCount)
+    // A live chat's seats run its own scripted tag (LIVE_LANE_MODELS).
+    const chatModel = scaledShape.liveSeats?.chatModels?.[c]
+    const chatParticipants = participants
+      .slice(0, chatShape.seatCount)
+      .map((participant) =>
+        chatModel === undefined ? participant : { ...participant, model: chatModel }
+      )
     const cExpectedAssistants = shapeAssistants(chatShape)
     const cExpectedTools =
       chatShape.expectedTools ||
@@ -1114,6 +1125,7 @@ module.exports = {
   OBSERVED_30SEAT,
   OBSERVED_50SEAT,
   createPrng,
+  LIVE_LANE_MODELS,
   LIVE_ROUND_SEAT,
   resolveWorkloadShape,
   buildSyntheticRunHistory,
