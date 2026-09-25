@@ -99,6 +99,9 @@ type CollectionFamily = Exclude<
   'routing' | 'usage' | 'recovery' | 'health' | 'snapshot-meta'
 >
 
+/** The delta families whose entities the diff indexes by id. */
+export type HostSnapshotCollectionFamily = CollectionFamily
+
 type SingletonFamily = 'routing' | 'usage' | 'recovery' | 'health'
 
 type DiffFamily = CollectionFamily | SingletonFamily
@@ -230,43 +233,78 @@ export function diffHostSnapshotDomainEffects(
       return incoherent(afterIndex.failure.reason, afterIndex.failure.detail)
     }
 
-    const entityIds = uniqueSortedIds(beforeIndex.index.keys(), afterIndex.index.keys())
-    for (const entityId of entityIds) {
-      const left = beforeIndex.index.get(entityId)
-      const right = afterIndex.index.get(entityId)
-      if (left === undefined && right !== undefined) {
-        effects.push({
-          kind: 'upsert',
-          family,
-          entityId,
-          payload: clonePayload(right)
-        })
-        continue
-      }
-      if (left !== undefined && right === undefined) {
-        effects.push({
-          kind: 'tombstone',
-          family,
-          entityId
-        })
-        continue
-      }
-      if (
-        left !== undefined &&
-        right !== undefined &&
-        !equalProjection(comparableProjection(family, left), comparableProjection(family, right))
-      ) {
-        effects.push({
-          kind: 'upsert',
-          family,
-          entityId,
-          payload: clonePayload(right)
-        })
-      }
-    }
+    effects.push(...diffHostEntityFamily(family, beforeIndex.index, afterIndex.index))
   }
 
   return { kind: 'effects', effects }
+}
+
+/**
+ * The effects that turn one family's entities, keyed by entity id, into
+ * another's: upserts for new and changed entities, tombstones for missing
+ * ones, in entity id order.
+ */
+export function diffHostEntityFamily(
+  family: HostSnapshotCollectionFamily,
+  before: ReadonlyMap<string, unknown>,
+  after: ReadonlyMap<string, unknown>
+): HostDomainEffectDto[] {
+  const effects: HostDomainEffectDto[] = []
+  const entityIds = uniqueSortedIds(before.keys(), after.keys())
+  for (const entityId of entityIds) {
+    const left = before.get(entityId)
+    const right = after.get(entityId)
+    if (left === undefined && right !== undefined) {
+      effects.push({
+        kind: 'upsert',
+        family,
+        entityId,
+        payload: clonePayload(right)
+      })
+      continue
+    }
+    if (left !== undefined && right === undefined) {
+      effects.push({
+        kind: 'tombstone',
+        family,
+        entityId
+      })
+      continue
+    }
+    if (
+      left !== undefined &&
+      right !== undefined &&
+      !equalProjection(comparableProjection(family, left), comparableProjection(family, right))
+    ) {
+      effects.push({
+        kind: 'upsert',
+        family,
+        entityId,
+        payload: clonePayload(right)
+      })
+    }
+  }
+  return effects
+}
+
+/** Whether an entity is unchanged for the diff: equal once live clock fields are set aside. */
+export function hostProjectionUnchanged(
+  family: HostDeltaFamily,
+  before: unknown,
+  after: unknown
+): boolean {
+  return equalProjection(comparableProjection(family, before), comparableProjection(family, after))
+}
+
+/** A wire entity's id in its delta family, or why the diff cannot index it. */
+export function hostSnapshotEntityId(
+  family: HostSnapshotCollectionFamily,
+  entity: unknown
+):
+  | { ok: true; entityId: string }
+  | { ok: false; reason: HostSnapshotDomainEffectDiffIncoherenceReason; detail: string } {
+  const result = entityIdOf(family, entity)
+  return result.ok ? result : { ok: false, ...result.failure }
 }
 
 function incoherent(
@@ -512,10 +550,7 @@ function entityIdOf(
   return { ok: true, entityId: raw }
 }
 
-function uniqueSortedIds(
-  left: IterableIterator<string>,
-  right: IterableIterator<string>
-): string[] {
+function uniqueSortedIds(left: Iterable<string>, right: Iterable<string>): string[] {
   const set = new Set<string>()
   for (const id of left) set.add(id)
   for (const id of right) set.add(id)

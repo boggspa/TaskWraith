@@ -11,6 +11,11 @@
  * The fast tier replays seeded records against a reference catalogue read
  * from the files the store wrote. The slow tier indexes the same files with
  * the real decoder and SQLite index, which proves the reference.
+ *
+ * The public window index (slice 5) is driven change by change against the
+ * same donor: after each persist or delete, a client that applied its effects
+ * holds the donor's settled snapshot, and the effects are the legacy snapshot
+ * diff's.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,12 +35,20 @@ import {
 import { scopeHostMutationObservationFamilies } from '../host-runtime/HostMutationObservationScope'
 import { projectHostSnapshot } from '../host-runtime/HostSnapshotProjector'
 import {
-  compareHostThreadRecordRuns,
-  hostThreadRecordRoundRow,
-  hostThreadRecordThreadRow,
   modelHostThreadRecordEffects,
   type HostThreadRecordModelled
 } from '../host-runtime/HostThreadRecordEffectModel'
+import type { HostDomainEffectDto } from '../host-runtime/HostDomainDeltaPublisher'
+import {
+  assembleHostPublicWindowFamilies,
+  hostPublicRunWindow,
+  HostPublicWindowIndex,
+  type HostPublicWindowChange
+} from '../host-runtime/HostPublicWindowIndex'
+import {
+  diffHostSnapshotDomainEffects,
+  hostSnapshotEntityId
+} from '../host-runtime/HostSnapshotDomainEffectDiff'
 import {
   decodeHostThreadRecordTransferBody,
   publishHostThreadRecordTransfer,
@@ -50,7 +63,7 @@ import { ThreadCatalogueWorkerService } from '../main/store/ThreadCatalogueWorke
 import {
   HOST_WARNING_PROJECTION_WINDOWED,
   type HostHealthProjection,
-  type HostWarningProjection
+  type HostSnapshot
 } from '../shared/hostProtocol'
 import { hostCatalogueSummaries, projectHostCatalogueThread } from './ThreadCatalogueHostMirror'
 
@@ -350,12 +363,19 @@ function openProfile(): Profile {
 type PersistOutcome = 'committed' | 'refused' | 'invalid'
 
 function persistNew(profile: Profile, record: Record<string, unknown>): PersistOutcome {
+  expect(profile.committed.has(record.appChatId as string)).toBe(false)
+  return persistRecord(profile, record)
+}
+
+/** Persist over the thread's committed revision, as a client's save does. */
+function persistRecord(profile: Profile, record: Record<string, unknown>): PersistOutcome {
+  const threadId = record.appChatId as string
   profile.lastPublished = null
   try {
     profile.store.persistThreadRecord({
-      threadId: record.appChatId as string,
+      threadId,
       record,
-      expectedRevision: 0
+      expectedRevision: profile.committed.get(threadId)?.persistenceRevision ?? 0
     })
     return 'committed'
   } catch (error) {
@@ -363,6 +383,23 @@ function persistNew(profile: Profile, record: Record<string, unknown>): PersistO
     expect(profile.lastPublished).toBeNull()
     return 'invalid'
   }
+}
+
+/** Delete an idle thread through the store; the mirror observes it gone. */
+function deleteThread(profile: Profile, threadId: string): boolean {
+  try {
+    const deleted = profile.store.deleteThreadRecord({
+      threadId,
+      expectedRevision: profile.committed.get(threadId)!.persistenceRevision ?? 0
+    })
+    expect(deleted).toBe(true)
+  } catch (error) {
+    if ((error as Error).message === 'Thread is active') return false
+    throw error
+  }
+  profile.mirrorRows.delete(threadId)
+  profile.committed.delete(threadId)
+  return true
 }
 
 /**
@@ -382,6 +419,13 @@ function publishCanonical(profile: Profile, thread: Record<string, unknown>): vo
   )
   profile.mirrorRows.set(committed.appChatId, projectHostCatalogueThread(committed))
   profile.committed.set(committed.appChatId, committed)
+}
+
+/** Remove a thread published by publishCanonical, as its deletion would. */
+function unpublish(profile: Profile, threadId: string): void {
+  rmSync(join(profile.path, HOST_PROFILE_CHATS_DIRECTORY, `${threadId}.json`))
+  profile.mirrorRows.delete(threadId)
+  profile.committed.delete(threadId)
 }
 
 // ── the reference catalogue (what the decoder and index store) ───────────────
@@ -447,106 +491,14 @@ interface WindowKey {
 
 /** The run window from the models alone: every thread's candidates, merged. */
 function modelWindow(models: readonly HostThreadRecordModelled[]): WindowKey[] {
-  return models
-    .flatMap((model) =>
-      model.runs.candidates.map((candidate) => ({ ...candidate, threadId: model.threadId }))
-    )
-    .sort(compareHostThreadRecordRuns)
-    .slice(0, WINDOW)
-    .map((candidate) => ({ threadId: candidate.threadId, runId: candidate.runId }))
+  return hostPublicRunWindow(models).map((entry) => ({
+    threadId: entry.threadId,
+    runId: entry.candidate.runId
+  }))
 }
 
 type Families = ReturnType<typeof projectHostProfileDomainSnapshot>
 type ModelledFamilies = Pick<Families, 'threads' | 'runs' | 'rounds' | 'participants' | 'warnings'>
-
-/**
- * The profile families from the models, given the run window's membership:
- * the non-incremental statement of what the public window index maintains.
- */
-function assembleFamilies(
-  models: readonly HostThreadRecordModelled[],
-  window: readonly WindowKey[],
-  total: number,
-  complete: boolean
-): ModelledFamilies {
-  const byThread = new Map(models.map((model) => [model.threadId, model]))
-  const windowed = new Map<string, Set<string>>()
-  for (const key of window) {
-    const set = windowed.get(key.threadId) ?? new Set<string>()
-    set.add(key.runId)
-    windowed.set(key.threadId, set)
-  }
-  const candidateOf = (key: WindowKey) =>
-    byThread.get(key.threadId)!.runs.candidates.find((candidate) => candidate.runId === key.runId)!
-
-  const roundCandidates = models.flatMap((model) =>
-    model.round
-      ? [
-          {
-            model,
-            live: model.round.live,
-            recency: model.round.recency,
-            row: hostThreadRecordRoundRow(
-              model.round,
-              model.runs.candidates
-                .filter(
-                  (candidate) =>
-                    candidate.roundMember && windowed.get(model.threadId)?.has(candidate.runId)
-                )
-                .map((candidate) => candidate.runId)
-            )
-          }
-        ]
-      : []
-  )
-  const warnings: HostWarningProjection[] = []
-  const omitted = models.reduce((count, model) => count + model.participants.omitted, 0)
-  if (omitted > 0) {
-    warnings.push({
-      warningId: 'projection_rows_omitted:participants',
-      severity: 'warning',
-      code: 'projection_rows_omitted',
-      message: `family participants omitted ${omitted} decoder-invalid row${omitted === 1 ? '' : 's'}`,
-      at: models.reduce((latest, model) => Math.max(latest, model.participants.warningAt), 0)
-    })
-  }
-  let rounds = roundCandidates
-  if (roundCandidates.length > WINDOW) {
-    rounds = [...roundCandidates]
-      .sort((left, right) => {
-        if (left.live !== right.live) return left.live ? -1 : 1
-        if (left.recency !== right.recency) return right.recency - left.recency
-        return left.row.roundId.localeCompare(right.row.roundId)
-      })
-      .slice(0, WINDOW)
-    warnings.push({
-      warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:rounds`,
-      severity: 'warning',
-      code: HOST_WARNING_PROJECTION_WINDOWED,
-      message: `family rounds intentionally windowed from ${roundCandidates.length} to ${WINDOW}; live rows precede recent terminal rows`,
-      at: roundCandidates.reduce((latest, candidate) => Math.max(latest, candidate.recency), 0)
-    })
-  }
-  if (!complete || total > WINDOW) {
-    warnings.push({
-      warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
-      severity: 'warning',
-      code: HOST_WARNING_PROJECTION_WINDOWED,
-      message:
-        `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${total} to ` +
-        `${WINDOW}; possibly-live rows precede recent terminal rows`,
-      at: window.reduce((latest, key) => Math.max(latest, candidateOf(key).recency), 0)
-    })
-  }
-  const included = new Set(rounds.map((candidate) => candidate.model.threadId))
-  return {
-    threads: models.map((model) => hostThreadRecordThreadRow(model, included.has(model.threadId))),
-    runs: window.map((key) => candidateOf(key).row),
-    rounds: rounds.map((candidate) => candidate.row),
-    participants: models.flatMap((model) => [...model.participants.rows]),
-    warnings
-  }
-}
 
 function donorFamilies(profile: Profile): Families {
   return projectHostProfileDomainSnapshot({ store: profile.store, health: HEALTH, providers: [] })
@@ -614,7 +566,7 @@ function expectEquivalent(profile: Profile): HostThreadRecordModelled[] {
     complete: true
   }
   const donor = donorFamilies(profile)
-  const assembled = assembleFamilies(models, window, indexed.length, true)
+  const assembled = assembleHostPublicWindowFamilies(models)
   for (const family of ['threads', 'runs', 'rounds', 'participants', 'warnings'] as const) {
     expect(JSON.stringify(assembled[family]), family).toBe(JSON.stringify(donor[family]))
   }
@@ -656,7 +608,7 @@ describe('thread record effect model ≡ donor pipeline (reference catalogue)', 
       }
       if (profile.mirrorRows.size === 0) continue
       const models = expectEquivalent(profile)
-      if (!wire(assembleFamilies(models, modelWindow(models), 0, true)).ok) privacyFailures += 1
+      if (!wire(assembleHostPublicWindowFamilies(models)).ok) privacyFailures += 1
     }
     // The corpus reaches every class it claims to.
     expect(committed).toBeGreaterThan(500)
@@ -788,12 +740,7 @@ describe('thread record effect model ≡ donor pipeline (reference catalogue)', 
       useFullSnapshot: false
     }
     const scoped = scopeHostMutationObservationFamilies(donor, scope)
-    const assembled = assembleFamilies(
-      models,
-      modelWindow(models),
-      models.reduce((n, m) => n + m.runs.total, 0),
-      true
-    )
+    const assembled = assembleHostPublicWindowFamilies(models)
     const own = <T extends { threadId?: string; id?: string }>(rows: readonly T[]) =>
       rows.filter((row) => (row.threadId ?? row.id) === 'chat-b')
     expect(scoped.threads).toEqual(own(assembled.threads))
@@ -927,6 +874,398 @@ describe('thread record effect model ≡ donor pipeline (reference catalogue)', 
     const [model] = expectEquivalent(profile)
     expect(model!.runs.candidates.map((candidate) => candidate.runId)).toEqual(['run-2', 'run-1'])
   })
+})
+
+// ── the public window index, change by change (slice 5) ───────────────────────
+
+type ClientState = Map<string, Map<string, unknown>>
+
+const DELTA_FAMILIES = [
+  ['threads', 'thread'],
+  ['runs', 'run'],
+  ['rounds', 'round'],
+  ['participants', 'participant'],
+  ['warnings', 'warning']
+] as const
+
+/** What a client holds after a snapshot: the five families by entity id. */
+function snapshotState(snapshot: HostSnapshot): ClientState {
+  return new Map(
+    DELTA_FAMILIES.map(([family, delta]) => [
+      delta,
+      new Map(
+        (snapshot[family] as readonly unknown[]).map((row) => {
+          const identity = hostSnapshotEntityId(delta, row)
+          if (!identity.ok) throw new Error(identity.detail)
+          return [identity.entityId, row]
+        })
+      )
+    ])
+  )
+}
+
+function applyEffects(state: ClientState, effects: readonly HostDomainEffectDto[]): ClientState {
+  const next: ClientState = new Map([...state].map(([family, rows]) => [family, new Map(rows)]))
+  for (const effect of effects) {
+    const rows = next.get(effect.family)!
+    if (effect.kind === 'upsert') rows.set(effect.entityId, effect.payload)
+    else rows.delete(effect.entityId)
+  }
+  return next
+}
+
+function fromIndex(index: HostPublicWindowIndex): ClientState {
+  return new Map([...index.wire()].map(([family, rows]) => [family, new Map(rows)]))
+}
+
+/** The donor's wire snapshot once its catalogue settles on the profile's files. */
+function settledSnapshot(profile: Profile) {
+  expectEquivalent(profile)
+  return wire(donorFamilies(profile))
+}
+
+interface Published {
+  readonly snapshot: HostSnapshot
+  readonly client: ClientState
+}
+
+function initiallyPublished(profile: Profile): Published {
+  const snapshot = settledSnapshot(profile)
+  if (!snapshot.ok) throw new Error(snapshot.error)
+  return { snapshot: snapshot.value, client: snapshotState(snapshot.value) }
+}
+
+function modelChange(profile: Profile, threadId: string): HostPublicWindowChange {
+  const model = modelHostThreadRecordEffects(profile.committed.get(threadId)!)
+  if (model.kind !== 'modelled') throw new Error(`committed thread ${threadId} was refused`)
+  return { kind: 'model', model }
+}
+
+const PUBLICATION = { generatedAt: POSITION.generatedAt }
+
+/**
+ * A short window is what the donor shows while its catalogue has indexed
+ * only those runs: the same rows, members and still-loading warning.
+ */
+function expectLoadingDonor(
+  profile: Profile,
+  index: HostPublicWindowIndex,
+  client: ClientState
+): void {
+  const indexed = new Map(
+    [...profile.mirrorRows.keys()]
+      .flatMap((threadId) => referenceIndexedRuns(profile, threadId))
+      .map((run) => [run.runId, run])
+  )
+  const settled = profile.runWindow
+  profile.runWindow = {
+    entries: index.families().runs.map((row) => {
+      const run = indexed.get(row.runId)!
+      return { chatId: run.threadId, run: run.summary as unknown as HostProfileRun }
+    }),
+    total: indexed.size,
+    complete: false
+  }
+  const loading = wire(donorFamilies(profile))
+  profile.runWindow = settled
+  if (!loading.ok) throw new Error(loading.error)
+  expect(client).toEqual(snapshotState(loading.value))
+  expect(client.get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)).toMatchObject({
+    message: expect.stringContaining('still loading')
+  })
+}
+
+/**
+ * Apply one change, answering each refill from the committed records. A
+ * client that applies the effects holds the donor's settled snapshot; with no
+ * refill, the effects are exactly the legacy snapshot diff's.
+ */
+function publishChange(
+  profile: Profile,
+  index: HostPublicWindowIndex,
+  change: HostPublicWindowChange,
+  prior: Published
+): { published: Published; effects: HostDomainEffectDto[]; refills: number } {
+  const next = settledSnapshot(profile)
+  if (!next.ok) throw new Error(next.error)
+  const effects: HostDomainEffectDto[] = []
+  let client = prior.client
+  let refills = 0
+  let result = index.apply(change, PUBLICATION)
+  for (;;) {
+    if (result.kind !== 'effects') throw new Error(`index refused: ${result.detail}`)
+    effects.push(...result.effects)
+    client = applyEffects(client, result.effects)
+    if (result.complete) break
+    expectLoadingDonor(profile, index, client)
+    expect(result.refill).toHaveLength(1)
+    refills += 1
+    expect(refills).toBeLessThan(20)
+    result = index.apply(modelChange(profile, result.refill[0]!), PUBLICATION)
+  }
+  expect(client).toEqual(snapshotState(next.value))
+  if (refills === 0) {
+    const legacy = diffHostSnapshotDomainEffects(prior.snapshot, next.value)
+    if (legacy.kind !== 'effects') throw new Error(`legacy diff ${legacy.kind}`)
+    expect(JSON.stringify(effects)).toBe(JSON.stringify(legacy.effects))
+  }
+  return { published: { snapshot: next.value, client }, effects, refills }
+}
+
+/** The seeded record with its run and round ids its thread's own. */
+function ownIds(record: Record<string, unknown>, prefix: string): Record<string, unknown> {
+  const own = (value: unknown): unknown => (typeof value === 'string' ? `${prefix}${value}` : value)
+  const owned: Record<string, unknown> = { ...record }
+  if (Array.isArray(record.runs)) {
+    owned.runs = (record.runs as Record<string, unknown>[]).map((run) => ({
+      ...run,
+      runId: own(run.runId),
+      ...('ensembleRoundId' in run ? { ensembleRoundId: own(run.ensembleRoundId) } : {})
+    }))
+  }
+  const ensemble = record.ensemble as Record<string, unknown> | undefined
+  const round = ensemble?.activeRound as Record<string, unknown> | undefined
+  if (ensemble && round) {
+    owned.ensemble = {
+      ...ensemble,
+      activeRound: {
+        ...round,
+        ...('roundId' in round ? { roundId: own(round.roundId) } : {}),
+        ...('id' in round ? { id: own(round.id) } : {}),
+        participants: (round.participants as Record<string, unknown>[]).map((seat) =>
+          'runId' in seat ? { ...seat, runId: own(seat.runId) } : seat
+        )
+      }
+    }
+  }
+  return owned
+}
+
+function heavyEnsemble(appChatId: string, runs: number, at: (ordinal: number) => number) {
+  return {
+    appChatId,
+    scope: 'global',
+    title: appChatId,
+    updatedAt: T0,
+    createdAt: 1,
+    archived: false,
+    chatKind: 'ensemble',
+    ensemble: {
+      orchestrationMode: 'sequential',
+      fanoutPolicy: 'all',
+      participants: [{ id: 'p1', provider: 'codex', role: 'worker', order: 0, enabled: true }],
+      activeRound: {
+        roundId: `${appChatId}-round`,
+        status: 'running',
+        participants: [{ participantId: 'p1', runId: `${appChatId}-seat` }]
+      }
+    },
+    messages: [],
+    runs: Array.from({ length: runs }, (_, ordinal) => ({
+      runId: `${appChatId}-run-${ordinal}`,
+      provider: 'codex',
+      status: 'success',
+      startedAt: iso(at(ordinal)),
+      endedAt: iso(at(ordinal) + 1),
+      ...(ordinal % 2 === 0 ? { ensembleRoundId: `${appChatId}-round` } : {})
+    }))
+  }
+}
+
+describe('public window index ≡ donor, change by change', () => {
+  it('publishes each persist and delete as the legacy snapshot diff does over the donor', () => {
+    const tally = { changes: 0, exact: 0, deletes: 0, refused: 0 }
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const r = mulberry32(seed * 131)
+      const profile = openProfile()
+      const index = new HostPublicWindowIndex({ band: 2 })
+      let published = initiallyPublished(profile)
+      const publish = (change: HostPublicWindowChange): void => {
+        const outcome = publishChange(profile, index, change, published)
+        published = outcome.published
+        tally.changes += 1
+        if (outcome.refills === 0) tally.exact += 1
+      }
+      for (let step = 0; step < 10; step += 1) {
+        const slot = int(r, 0, THREAD_IDS.length - 1)
+        const threadId = THREAD_IDS[slot]!
+        const committed = profile.committed.get(threadId)
+        if (committed && chance(r, 0.25)) {
+          if (!deleteThread(profile, threadId)) {
+            // Its runs finish first: the client saves them settled, then deletes.
+            const runs = (committed.runs ?? []).map((run) => ({
+              ...run,
+              status: 'completed',
+              endedAt: iso(0)
+            }))
+            expect(persistRecord(profile, { ...committed, runs })).toBe('committed')
+            publish(modelChange(profile, threadId))
+            expect(deleteThread(profile, threadId)).toBe(true)
+          }
+          publish({ kind: 'delete', threadId })
+          tally.deletes += 1
+          continue
+        }
+        const record = ownIds(seededRecord(r, threadId, int(r, 0, 30)), `t${slot}-`)
+        if (persistRecord(profile, record) !== 'committed') continue
+        if (!settledSnapshot(profile).ok) {
+          // The donor's snapshot fails its privacy scan: the index refuses
+          // this change alone and keeps what it published. The client saves
+          // again without the credential-shaped message.
+          expect(index.apply(modelChange(profile, threadId), PUBLICATION)).toMatchObject({
+            kind: 'refused',
+            reason: 'privacy_failed'
+          })
+          tally.refused += 1
+          const messages = (record.messages as { content: string }[]).filter(
+            (message) => message.content !== 'ghp_secret'
+          )
+          expect(persistRecord(profile, { ...record, messages })).toBe('committed')
+        }
+        publish(modelChange(profile, threadId))
+      }
+    }
+    // The sequences reach what they are meant to prove.
+    expect(tally.changes).toBeGreaterThan(250)
+    expect(tally.exact).toBe(tally.changes)
+    expect(tally.deletes).toBeGreaterThan(20)
+    expect(tally.refused).toBeGreaterThan(2)
+  }, 120_000)
+
+  it('publishes displacement: newer runs push a round’s members out, and a delete refills them', () => {
+    const profile = openProfile()
+    mkdirSync(join(profile.path, HOST_PROFILE_CHATS_DIRECTORY), { recursive: true })
+    const index = new HostPublicWindowIndex({ band: 16 })
+    let published = initiallyPublished(profile)
+    const shrunk = (before: Published, effects: readonly HostDomainEffectDto[]) =>
+      effects.filter((effect) => {
+        if (effect.family !== 'round' || effect.kind !== 'upsert') return false
+        const prior = before.client.get('round')!.get(effect.entityId) as
+          | { providerRunIds: string[] }
+          | undefined
+        const next = effect.payload as { providerRunIds: string[] }
+        return prior !== undefined && next.providerRunIds.length < prior.providerRunIds.length
+      }).length
+    // Three ensembles of 700 interleaved runs: the third pushes out the
+    // oldest 100 of each, and the first two rounds lose members.
+    for (const [offset, id] of ['heavy-a', 'heavy-b', 'heavy-c'].entries()) {
+      publishCanonical(
+        profile,
+        heavyEnsemble(id, 700, (ordinal) => ordinal * 3 + offset)
+      )
+      const before = published
+      const outcome = publishChange(profile, index, modelChange(profile, id), before)
+      expect(outcome.refills).toBe(0)
+      published = outcome.published
+      if (id === 'heavy-c') expect(shrunk(before, outcome.effects)).toBe(2)
+    }
+    expect(published.client.get('run')!.size).toBe(WINDOW)
+    // A fourth thread's 300 newer runs push 100 more out of each.
+    publishCanonical(
+      profile,
+      heavyEnsemble('light', 300, (ordinal) => 10_000 + ordinal)
+    )
+    const before = published
+    const pushed = publishChange(profile, index, modelChange(profile, 'light'), before)
+    expect(pushed.refills).toBe(0)
+    expect(shrunk(before, pushed.effects)).toBe(3)
+    expect(
+      pushed.effects.filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
+    ).toHaveLength(300)
+    published = pushed.published
+    // Deleting it frees 300 slots, more than each thread's band: every heavy
+    // thread is modelled again, and no run a client holds is retracted.
+    unpublish(profile, 'light')
+    const freed = publishChange(profile, index, { kind: 'delete', threadId: 'light' }, published)
+    expect(freed.refills).toBe(3)
+    const retracted = freed.effects
+      .filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
+      .map((effect) => effect.entityId)
+    expect(retracted).toHaveLength(300)
+    expect(retracted.every((runId) => runId.startsWith('light-'))).toBe(true)
+    expect(freed.published.client.get('run')!.size).toBe(WINDOW)
+    // Deleting a second leaves 1,400 runs, all inside the window: the short
+    // window still loads, then the warning goes.
+    unpublish(profile, 'heavy-b')
+    const emptied = publishChange(
+      profile,
+      index,
+      { kind: 'delete', threadId: 'heavy-b' },
+      freed.published
+    )
+    expect(emptied.refills).toBe(2)
+    expect(emptied.published.client.get('run')!.size).toBe(1_400)
+    expect(
+      emptied.published.client.get('warning')!.has(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
+    ).toBe(false)
+  }, 60_000)
+
+  it('publishes the windows’ bounds: at exactly 1,800 neither warns, and a live round moves in', () => {
+    const profile = openProfile()
+    mkdirSync(join(profile.path, HOST_PROFILE_CHATS_DIRECTORY), { recursive: true })
+    // 1,801 live rounds with one running run each, and two terminal rounds.
+    const live = (index: number): boolean => index % 1_000 !== 1
+    const id = (index: number): string => `round-thread-${String(index).padStart(4, '0')}`
+    for (let index = 0; index < WINDOW + 3; index += 1) {
+      publishCanonical(profile, {
+        ...heavyEnsemble(id(index), 0, () => 0),
+        ensemble: {
+          orchestrationMode: 'sequential',
+          fanoutPolicy: 'all',
+          participants: [{ id: 'p1', provider: 'codex', role: 'worker', order: 0, enabled: true }],
+          activeRound: {
+            roundId: `round-${index}`,
+            status: live(index) ? 'running' : 'completed',
+            startedAt: iso(index % 50),
+            participants: [{ participantId: 'p1' }]
+          }
+        },
+        runs: live(index)
+          ? [{ runId: `r-${index}`, provider: 'codex', status: 'running', startedAt: iso(0) }]
+          : []
+      })
+    }
+    const index = new HostPublicWindowIndex()
+    expect(index.seed(modelsOf(profile), PUBLICATION)).toMatchObject({
+      kind: 'seeded',
+      complete: true
+    })
+    let published = initiallyPublished(profile)
+    expect(fromIndex(index)).toEqual(published.client)
+    const warningIds = () => [...published.client.get('warning')!.keys()]
+    expect(warningIds()).toEqual([
+      `${HOST_WARNING_PROJECTION_WINDOWED}:rounds`,
+      `${HOST_WARNING_PROJECTION_WINDOWED}:runs`
+    ])
+    const outside = [...published.client.get('thread')!.values()].filter(
+      (row) => (row as { activeRoundId?: string }).activeRoundId === undefined
+    ) as { id: string }[]
+    expect(outside).toHaveLength(3)
+    // One live thread goes: 1,800 runs fit, and the round window takes in the
+    // live round it dropped, naming it on a thread that did not change.
+    unpublish(profile, id(0))
+    const first = publishChange(profile, index, { kind: 'delete', threadId: id(0) }, published)
+    published = first.published
+    expect(warningIds()).toEqual([`${HOST_WARNING_PROJECTION_WINDOWED}:rounds`])
+    const named = first.effects.filter(
+      (effect) =>
+        effect.family === 'thread' &&
+        effect.kind === 'upsert' &&
+        (effect.payload as { activeRoundId?: string }).activeRoundId !== undefined
+    )
+    expect(named).toHaveLength(1)
+    // The two terminal threads go: exactly 1,800 rounds, no window.
+    for (const terminal of [id(1), id(1_001)]) {
+      unpublish(profile, terminal)
+      published = publishChange(
+        profile,
+        index,
+        { kind: 'delete', threadId: terminal },
+        published
+      ).published
+    }
+    expect(warningIds()).toEqual([])
+  }, 120_000)
 })
 
 // ── slow tier: the real decoder and index ───────────────────────────────────
@@ -1064,7 +1403,7 @@ describe('thread record effect model ≡ the real catalogue index', () => {
         complete: true
       }
       const donor = donorFamilies(profile)
-      const assembled = assembleFamilies(models, window, total, true)
+      const assembled = assembleHostPublicWindowFamilies(models)
       for (const family of ['threads', 'runs', 'rounds', 'participants', 'warnings'] as const) {
         expect(JSON.stringify(assembled[family]), family).toBe(JSON.stringify(donor[family]))
       }

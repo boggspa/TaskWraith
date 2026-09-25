@@ -343,6 +343,25 @@ function stableSortById<T>(items: T[], idOf: (item: T) => string): T[] {
   })
 }
 
+/** The warning a family capped at the collection bound carries. */
+export function hostProjectionTruncatedWarning(
+  family: string,
+  count: number,
+  at: number
+): HostWarningProjection {
+  const dropped = count - HOST_PROTOCOL_MAX_COLLECTION
+  return {
+    warningId: `projection_truncated:${family}`,
+    severity: 'warning',
+    code: 'projection_truncated',
+    message: truncatePresentation(
+      `family ${family} truncated from ${count} to ${HOST_PROTOCOL_MAX_COLLECTION} (dropped ${dropped})`,
+      HOST_PROTOCOL_MAX_WARNING
+    ).text,
+    at
+  }
+}
+
 function capCollection<T>(
   family: string,
   items: T[],
@@ -353,17 +372,7 @@ function capCollection<T>(
     return items
   }
   const kept = items.slice(0, HOST_PROTOCOL_MAX_COLLECTION)
-  const dropped = items.length - HOST_PROTOCOL_MAX_COLLECTION
-  warnings.push({
-    warningId: `projection_truncated:${family}`,
-    severity: 'warning',
-    code: 'projection_truncated',
-    message: truncatePresentation(
-      `family ${family} truncated from ${items.length} to ${HOST_PROTOCOL_MAX_COLLECTION} (dropped ${dropped})`,
-      HOST_PROTOCOL_MAX_WARNING
-    ).text,
-    at
-  })
+  warnings.push(hostProjectionTruncatedWarning(family, items.length, at))
   return kept
 }
 
@@ -1250,14 +1259,13 @@ function decodeProjectedFamilyRow<T>(family: HostSnapshotArrayFamily, row: T): H
   return { ok: true, value: familyRows[0] as T }
 }
 
-function warnRowsOmitted(
-  family: HostSnapshotArrayFamily,
+/** The warning a family carries for rows the projector omitted. */
+export function hostProjectionRowsOmittedWarning(
+  family: string,
   count: number,
-  warnings: HostWarningProjection[],
   at: number
-): void {
-  if (count <= 0) return
-  warnings.push({
+): HostWarningProjection {
+  return {
     warningId: `projection_rows_omitted:${family}`,
     severity: 'warning',
     code: 'projection_rows_omitted',
@@ -1266,7 +1274,17 @@ function warnRowsOmitted(
       HOST_PROTOCOL_MAX_WARNING
     ).text,
     at
-  })
+  }
+}
+
+function warnRowsOmitted(
+  family: HostSnapshotArrayFamily,
+  count: number,
+  warnings: HostWarningProjection[],
+  at: number
+): void {
+  if (count <= 0) return
+  warnings.push(hostProjectionRowsOmittedWarning(family, count, at))
 }
 
 function projectArrayFamily<TIn, TOut>(
@@ -1295,6 +1313,40 @@ function projectArrayFamily<TIn, TOut>(
   warnRowsOmitted(family, omitted, truncationWarnings, at)
   const sorted = stableSortById(projected, idOf)
   return { ok: true, value: capCollection(family, sorted, truncationWarnings, at) }
+}
+
+/** The families a thread record's model derives. */
+export type HostRecordDerivedFamily = 'threads' | 'runs' | 'rounds' | 'participants' | 'warnings'
+
+/**
+ * One row as projectHostSnapshot publishes it, or null where the projector
+ * omits it (and counts it in `projection_rows_omitted:<family>`). The
+ * projector treats each row alone: a row's wire form never depends on the
+ * rows around it.
+ */
+export function projectHostSnapshotRow(family: HostRecordDerivedFamily, row: unknown): unknown {
+  const one = projectRecordDerivedRow(family, row)
+  if (!one.ok) return null
+  const decoded = decodeProjectedFamilyRow(family, one.value)
+  return decoded.ok ? decoded.value : null
+}
+
+function projectRecordDerivedRow(
+  family: HostRecordDerivedFamily,
+  row: unknown
+): HostDecodeResult<unknown> {
+  switch (family) {
+    case 'threads':
+      return projectThread(row as HostThreadProjection, 0)
+    case 'runs':
+      return projectRun(row as HostRunProjection, 0)
+    case 'rounds':
+      return projectRound(row as HostRoundProjection, 0)
+    case 'participants':
+      return projectParticipant(row as HostParticipantProjection, 0)
+    case 'warnings':
+      return projectWarning(row as HostWarningProjection, 0)
+  }
 }
 
 /**
