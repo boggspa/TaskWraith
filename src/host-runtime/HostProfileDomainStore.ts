@@ -732,6 +732,24 @@ function decodeMessage(value: unknown): HostProfileMessage {
   return item as unknown as HostProfileMessage
 }
 
+/**
+ * The decoder `persistThreadRecord` runs, for the transfer worker's prepare
+ * stage (M4 slice 11), which must refuse and repair exactly as the store does.
+ */
+export function decodeHostProfileThread(value: unknown): CanonicalHostProfileThread {
+  return decodeThread(value)
+}
+
+/** The id check `persistThreadRecord` applies to its thread id. */
+export function isHostProfileId(value: unknown): value is string {
+  return safeId(value)
+}
+
+/** The summary the store caches for a thread, for the prepare stage's descriptor. */
+export function summarizeHostProfileThread(thread: HostProfileThread): HostProfileThreadSummary {
+  return summarizeThread(thread)
+}
+
 function decodeThread(value: unknown): CanonicalHostProfileThread {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid profile chat')

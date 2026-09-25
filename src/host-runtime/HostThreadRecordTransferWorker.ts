@@ -39,12 +39,18 @@ import {
   type HostThreadRecordTransferIdentity,
   type HostThreadRecordTransferPublishOptions
 } from './HostThreadRecordTransfer'
+import {
+  prepareHostThreadRecord,
+  type HostThreadRecordPrepareInput,
+  type HostThreadRecordPrepareResult
+} from './HostThreadRecordPrepare'
 
 type PublishInput = Pick<
   HostThreadRecordTransferPublishOptions,
   'profilePath' | 'transferId' | 'record'
 >
 type ReadInput = Pick<HostThreadRecordTransferConsumeOptions, 'profilePath' | 'descriptor'>
+type PrepareInput = HostThreadRecordPrepareInput
 
 export interface DecodedHostThreadRecordTransfer {
   readonly record: Record<string, unknown>
@@ -56,13 +62,17 @@ export interface DecodedHostThreadRecordTransfer {
 export type HostThreadRecordTransferWorkerRequest = { readonly id: number } & (
   | { readonly kind: 'publish'; readonly input: PublishInput }
   | { readonly kind: 'read'; readonly input: ReadInput }
+  | { readonly kind: 'prepare'; readonly input: PrepareInput }
 )
 
 export type HostThreadRecordTransferWorkerReply =
   | {
       readonly id: number
       readonly ok: true
-      readonly value: HostThreadRecordTransferDescriptor | DecodedHostThreadRecordTransfer
+      readonly value:
+        | HostThreadRecordTransferDescriptor
+        | DecodedHostThreadRecordTransfer
+        | HostThreadRecordPrepareResult
     }
   | {
       readonly id: number
@@ -106,7 +116,9 @@ export function handleHostThreadRecordTransferRequest(
     const value =
       request.kind === 'publish'
         ? publishHostThreadRecordTransfer(request.input)
-        : readHostThreadRecordTransfer(request.input)
+        : request.kind === 'read'
+          ? readHostThreadRecordTransfer(request.input)
+          : prepareHostThreadRecord(request.input)
     return { id: request.id, ok: true, value }
   } catch (error) {
     return {
@@ -355,6 +367,12 @@ export class HostThreadRecordTransferWorker {
     { resolve(value: unknown): void; reject(error: Error): void }
   >()
   private readonly idle = new Set<() => void>()
+  /**
+   * Pending jobs that are prepares. They carry no record, so they are not what
+   * MAX_PENDING_JOBS bounds, and they must not push a publish or read onto the
+   * synchronous path.
+   */
+  private readonly preparing = new Set<number>()
 
   constructor(
     private readonly entryPath = defaultEntryPath,
@@ -363,7 +381,7 @@ export class HostThreadRecordTransferWorker {
 
   publish(input: PublishInput): Promise<HostThreadRecordTransferDescriptor> {
     if (this.closed) return this.request({ kind: 'publish', input })
-    if (this.pending.size < MAX_PENDING_JOBS && canCloneRecord(input.record)) {
+    if (this.recordJobs() < MAX_PENDING_JOBS && canCloneRecord(input.record)) {
       // A transport that cannot accept the job (spawn failure, a message the
       // channel refuses) still has the unmutated record in hand right now.
       try {
@@ -383,7 +401,7 @@ export class HostThreadRecordTransferWorker {
 
   read(input: ReadInput): Promise<DecodedHostThreadRecordTransfer> {
     if (this.closed) return this.request({ kind: 'read', input })
-    if (this.pending.size < MAX_PENDING_JOBS) {
+    if (this.recordJobs() < MAX_PENDING_JOBS) {
       try {
         return this.request({ kind: 'read', input })
       } catch {
@@ -397,12 +415,29 @@ export class HostThreadRecordTransferWorker {
     }
   }
 
+  /**
+   * The prepare stage of a transactional persist (M4 slice 11). Always runs on
+   * the worker: there is no synchronous fallback, so saturation queues it on
+   * the worker and a transport that cannot take it rejects.
+   */
+  prepare(input: PrepareInput): Promise<HostThreadRecordPrepareResult> {
+    try {
+      return this.request({ kind: 'prepare', input })
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
+
   /** Stop accepting jobs, finish every acknowledged durability barrier, then exit. */
   async close(): Promise<void> {
     this.closed = true
     if (this.pending.size > 0) await new Promise<void>((resolve) => this.idle.add(resolve))
     const worker = this.worker
     if (worker) await worker.terminate()
+  }
+
+  private recordJobs(): number {
+    return this.pending.size - this.preparing.size
   }
 
   private settleIdle(): void {
@@ -421,6 +456,7 @@ export class HostThreadRecordTransferWorker {
       const pending = this.pending.get(reply.id)
       if (!pending) return
       this.pending.delete(reply.id)
+      this.preparing.delete(reply.id)
       if (reply.ok) pending.resolve(reply.value)
       else pending.reject(decodeError(reply.error))
       this.settleIdle()
@@ -441,6 +477,7 @@ export class HostThreadRecordTransferWorker {
       )
       for (const pending of this.pending.values()) pending.reject(error)
       this.pending.clear()
+      this.preparing.clear()
       this.settleIdle()
     })
     return worker
@@ -455,6 +492,7 @@ export class HostThreadRecordTransferWorker {
     request:
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'publish' }>, 'id'>
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'read' }>, 'id'>
+      | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'prepare' }>, 'id'>
   ): Promise<T> {
     if (this.closed) {
       return Promise.reject(
@@ -473,10 +511,12 @@ export class HostThreadRecordTransferWorker {
     try {
       const worker = this.getWorker()
       this.pending.set(id, settle)
+      if (request.kind === 'prepare') this.preparing.add(id)
       worker.ref()
       worker.post({ ...request, id } satisfies HostThreadRecordTransferWorkerRequest)
     } catch (cause) {
       this.pending.delete(id)
+      this.preparing.delete(id)
       this.settleIdle()
       throw new HostThreadRecordTransferError(
         'Thread-record transfer job could not be dispatched.',
@@ -513,4 +553,20 @@ export function readHostThreadRecordTransferOffLoop(
   input: ReadInput
 ): DecodedHostThreadRecordTransfer | Promise<DecodedHostThreadRecordTransfer> {
   return sharedHostThreadRecordTransferWorker()?.read(input) ?? readHostThreadRecordTransfer(input)
+}
+
+/**
+ * The shared worker's prepare. Never runs on the caller: with no compiled
+ * entry it rejects instead of preparing inline.
+ */
+export function prepareHostThreadRecordOffLoop(
+  input: PrepareInput
+): Promise<HostThreadRecordPrepareResult> {
+  const worker = sharedHostThreadRecordTransferWorker()
+  if (!worker) {
+    return Promise.reject(
+      new HostThreadRecordTransferError('Thread-record transfer worker entry is unavailable.')
+    )
+  }
+  return worker.prepare(input)
 }
