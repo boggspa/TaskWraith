@@ -689,7 +689,7 @@ describe('HostPublicWindowIndex', () => {
     expect(
       runEffects.filter((effect) => effect.kind === 'upsert').map((effect) => effect.entityId)
     ).toEqual(['newer-1796', 'newer-1797', 'newer-1798', 'newer-1799'])
-    // Deleting it frees 1,800 slots: the older thread's band covers five, then
+    // Deleting it frees 1,800 slots: the band kept five of the older thread's, then
     // the window is short until the older thread is modelled again.
     const freed = applyNow(index, { kind: 'delete', threadId: 'newer' }, { generatedAt })
     expect(freed).toMatchObject({ complete: false, refill: ['older'] })
@@ -723,7 +723,8 @@ describe('HostPublicWindowIndex', () => {
       runs: Array.from({ length: 300 }, (_, n) => run(`light-${n}`, 10_000 + n))
     })
     seed(index, [...heavy.values(), light], { generatedAt })
-    // Deleting the newer runs frees 300 slots; each thread's band holds 16.
+    // Deleting the newer runs frees 300 slots; the index kept 1,816 candidates
+    // in all, so 1,516 remain and the window stops at the first dropped one.
     let result = applyNow(index, { kind: 'delete', threadId: 'light' }, { generatedAt })
     const refilled: string[] = []
     const retracted: string[] = []
@@ -740,7 +741,9 @@ describe('HostPublicWindowIndex', () => {
         { generatedAt }
       )
     }
-    expect(refilled).toEqual(['c', 'b', 'a'])
+    // Each refill lifts the lowest floor: the thread holding the first
+    // dropped candidate (runs interleave c, b, a, newest first).
+    expect(refilled).toEqual(['b', 'a', 'c'])
     expect(retracted).toHaveLength(300)
     expect(retracted.every((runId) => runId.startsWith('light-'))).toBe(true)
     expect(index.wire().get('run')!.size).toBe(1_800)

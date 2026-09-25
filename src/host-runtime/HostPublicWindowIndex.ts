@@ -20,7 +20,8 @@
  *   and inside the round window.
  * - Warnings: omitted participants, and the windowed rounds and runs.
  *
- * Unwired in this slice.
+ * Wired since slice 12 (the transaction) and 13c (the feeder); incremental
+ * since slice 13d.
  */
 
 import {
@@ -51,7 +52,10 @@ import {
   hostThreadRecordRoundRow,
   hostThreadRecordThreadRow,
   type HostThreadRecordModelled,
-  type HostThreadRecordRunCandidate
+  type HostThreadRecordParticipants,
+  type HostThreadRecordRound,
+  type HostThreadRecordRunCandidate,
+  type HostThreadRecordThreadRow
 } from './HostThreadRecordEffectModel'
 
 /** The families the profile projection derives from thread records. */
@@ -228,11 +232,12 @@ function assembleFromWindow(
 // ── the index ───────────────────────────────────────────────────────────────
 
 /**
- * Candidates each thread keeps past its runs in the run window. A change that
- * frees more slots than a thread's band can fill leaves the window short until
- * that thread is modelled again.
+ * Run candidates the index keeps past the run window, across every thread
+ * (slice 13d; it was 128 per thread). A change that frees more slots than
+ * the kept candidates can fill leaves the window short until the thread
+ * holding the first dropped candidate is modelled again.
  */
-export const HOST_PUBLIC_WINDOW_BAND = 128
+export const HOST_PUBLIC_WINDOW_BAND = HOST_PROFILE_RUN_PROJECTION_LIMIT
 
 /** The code of the warning that counts rows the index withheld. */
 export const HOST_WARNING_PROJECTION_WITHHELD = 'projection_rows_withheld'
@@ -271,8 +276,8 @@ export interface HostPublicWindowIgnored {
 /**
  * Prepared changes: their effects against what the index last published,
  * held until the caller commits them (once their group is durable) or
- * aborts. Nothing changes until `commit()`, and no other transaction can be
- * prepared while this one is open.
+ * aborts. Nothing published changes until `commit()`, and no other
+ * transaction can be prepared while this one is open.
  */
 export interface HostPublicWindowTransaction {
   /** Wire effects for the record-derived families, in the snapshot diff's order. */
@@ -292,6 +297,15 @@ export type HostPublicWindowWire = ReadonlyMap<
   ReadonlyMap<string, unknown>
 >
 
+/** What the index holds: for the bench and the band bound. */
+export interface HostPublicWindowDiagnostics {
+  readonly threads: number
+  /** Run candidates kept across every thread: at most 1,800 plus the band. */
+  readonly keptRuns: number
+  /** Threads with candidates the index dropped. */
+  readonly trimmedThreads: number
+}
+
 type HostPublicWindowDeltaFamily = 'thread' | 'run' | 'round' | 'participant' | 'warning'
 
 /** The projector's family and the delta family, in the projector's and the diff's order. */
@@ -303,30 +317,6 @@ const WIRE_FAMILIES: readonly (readonly [HostRecordDerivedFamily, HostPublicWind
     ['participants', 'participant'],
     ['warnings', 'warning']
   ]
-
-interface ThreadEntry {
-  /** The thread's model, its candidates cut to those the index keeps. */
-  readonly model: HostThreadRecordModelled
-  /** Whether candidates past the kept ones exist. */
-  readonly truncated: boolean
-}
-
-interface WireRow {
-  /** The row as published, or null where the projector omits it. */
-  readonly wire: unknown
-  readonly privacyClean: boolean
-}
-
-interface Computed {
-  readonly entries: Map<string, ThreadEntry>
-  /** Every thread this incarnation deleted. */
-  readonly deleted: Set<string>
-  readonly window: readonly HostPublicRunWindowEntry[]
-  readonly families: HostPublicWindowFamilies
-  readonly wire: Map<HostPublicWindowDeltaFamily, Map<string, unknown>>
-  readonly complete: boolean
-  readonly refill: readonly string[]
-}
 
 function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
@@ -352,6 +342,97 @@ export function hostPublicRowsWithheldWarning(
   }
 }
 
+/**
+ * The thread a run, round or participant row belongs to. Thread rows are one
+ * per thread and warnings the index's own, so neither can share an id.
+ */
+function rowThreadId(row: object): string {
+  const value = (row as { threadId?: unknown }).threadId
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * A run's place in the catalogue order. The thread id is held as its UTF-8
+ * bytes, one char per byte, so plain string order is SQLite's BINARY order
+ * and no comparison allocates.
+ */
+interface RunPlace {
+  readonly active: 0 | 1
+  readonly recency: number
+  readonly threadKey: string
+  readonly ordinal: number
+}
+
+interface KeptRun extends RunPlace {
+  readonly threadId: string
+  /** The candidate; once kept, with its catalogue summary dropped. */
+  readonly candidate: HostThreadRecordRunCandidate
+}
+
+function compareRunPlaces(left: RunPlace, right: RunPlace): number {
+  if (left.active !== right.active) return left.active === 1 ? -1 : 1
+  if (left.recency !== right.recency) return left.recency > right.recency ? -1 : 1
+  if (left.threadKey !== right.threadKey) return left.threadKey < right.threadKey ? -1 : 1
+  return left.ordinal - right.ordinal
+}
+
+function threadKeyOf(threadId: string): string {
+  return Buffer.from(threadId, 'utf8').toString('latin1')
+}
+
+function placeOf(run: RunPlace): RunPlace {
+  return {
+    active: run.active,
+    recency: run.recency,
+    threadKey: run.threadKey,
+    ordinal: run.ordinal
+  }
+}
+
+/** The summary every kept candidate carries: the index never reads it. */
+const DROPPED_SUMMARY: Readonly<Record<string, unknown>> = Object.freeze({})
+
+/** A model's candidates as runs to merge; only those kept are copied (`keptCopy`). */
+function keptRunsOf(model: HostThreadRecordModelled, threadKey: string): KeptRun[] {
+  return model.runs.candidates.map((candidate) => ({
+    threadId: model.threadId,
+    threadKey,
+    active: candidate.rank.active,
+    recency: candidate.rank.recency,
+    ordinal: candidate.ordinal,
+    candidate
+  }))
+}
+
+/** The run as kept: its candidate's catalogue summary dropped. */
+function keptCopy(run: KeptRun): KeptRun {
+  const candidate = run.candidate
+  if (candidate.summary === DROPPED_SUMMARY || !('summary' in candidate)) return run
+  if (candidate.summary === undefined) return run
+  return { ...run, candidate: { ...candidate, summary: DROPPED_SUMMARY } }
+}
+
+/**
+ * What the index keeps of a thread: never its catalogue projection, and its
+ * run candidates only in the one kept array.
+ */
+interface ThreadEntry {
+  readonly threadId: string
+  readonly threadKey: string
+  readonly revision: number
+  readonly thread: HostThreadRecordThreadRow
+  readonly round: HostThreadRecordRound | null
+  readonly participants: HostThreadRecordParticipants
+  readonly runsTotal: number
+  /**
+   * A model with fewer candidates than its share of the window: its unknown
+   * runs rank after its last candidate, so nothing past that can be placed.
+   */
+  readonly cutFloor: RunPlace | null
+  /** The first candidate the index dropped: nothing from it on can be placed. */
+  readonly dropped: RunPlace | null
+}
+
 /** Whether a model holds fewer candidates than its thread's share of the window. */
 function modelIsCut(model: HostThreadRecordModelled): boolean {
   return (
@@ -359,8 +440,29 @@ function modelIsCut(model: HostThreadRecordModelled): boolean {
   )
 }
 
-function entryOf(change: HostPublicWindowModelChange): ThreadEntry {
-  return { model: change.model, truncated: modelIsCut(change.model) }
+function entryOf(model: HostThreadRecordModelled, threadKey: string): ThreadEntry {
+  const revision = model.projection.revision
+  const candidates = model.runs.candidates
+  const last = candidates[candidates.length - 1]
+  return {
+    threadId: model.threadId,
+    threadKey,
+    revision,
+    thread: model.thread,
+    round: model.round,
+    participants: model.participants,
+    runsTotal: model.runs.total,
+    cutFloor:
+      last !== undefined && modelIsCut(model)
+        ? {
+            active: last.rank.active,
+            recency: last.rank.recency,
+            threadKey,
+            ordinal: last.ordinal
+          }
+        : null,
+    dropped: null
+  }
 }
 
 /** Why a change is set aside, or null to apply it. */
@@ -376,69 +478,345 @@ function staleness(
   if (
     change.kind === 'model' &&
     held !== undefined &&
-    held.model.projection.revision > change.model.projection.revision
+    held.revision > change.model.projection.revision
   ) {
     return 'older'
   }
   return null
 }
 
-/**
- * The thread a run, round or participant row belongs to. Thread rows are one
- * per thread and warnings the index's own, so neither can share an id.
- */
-function rowThreadId(row: object): string {
-  const value = (row as { threadId?: unknown }).threadId
-  return typeof value === 'string' ? value : ''
+interface WireRow {
+  /** The row as published, or null where the projector omits it. */
+  readonly wire: unknown
+  readonly privacyClean: boolean
+  /** The row's entity id, or null where no diff can key it (or it is withheld or omitted). */
+  readonly entityId: string | null
 }
 
-/** The model with its candidates cut and their catalogue summaries dropped. */
-function keptModel(
-  model: HostThreadRecordModelled,
-  candidates: readonly HostThreadRecordRunCandidate[]
-): HostThreadRecordModelled {
-  return {
-    ...model,
-    runs: {
-      total: model.runs.total,
-      candidates: candidates.map((candidate) =>
-        'summary' in candidate && candidate.summary !== undefined
-          ? { ...candidate, summary: {} }
-          : candidate
-      )
+function buildWireRow(
+  family: HostRecordDerivedFamily,
+  deltaFamily: HostPublicWindowDeltaFamily,
+  row: object
+): WireRow {
+  const wire = projectHostSnapshotRow(family, row)
+  const privacyClean = inspectHostSnapshotPrivacy(row).ok
+  let entityId: string | null = null
+  if (privacyClean && wire !== null) {
+    const identity = hostSnapshotEntityId(deltaFamily, wire)
+    if (identity.ok) entityId = identity.entityId
+  }
+  return { wire, privacyClean, entityId }
+}
+
+interface SourcedRow {
+  readonly row: WireRow
+  /** The source row's own thread id: the tie-break between rows sharing an id. */
+  readonly rowThreadId: string
+}
+
+/** A thread's rows in a capped family, as the projector counts them. */
+interface Contribution {
+  readonly omitted: number
+  /** Rows the privacy scan refused, and rows no diff can key. */
+  readonly withheld: number
+  readonly rows: readonly { readonly entityId: string; readonly wire: unknown }[]
+}
+
+function contributionOf(rows: readonly SourcedRow[]): Contribution {
+  let omitted = 0
+  let withheld = 0
+  const valid: { entityId: string; wire: unknown }[] = []
+  for (const { row } of rows) {
+    if (!row.privacyClean) withheld += 1
+    else if (row.wire === null) omitted += 1
+    else if (row.entityId === null) withheld += 1
+    else valid.push({ entityId: row.entityId, wire: row.wire })
+  }
+  return { omitted, withheld, rows: valid }
+}
+
+/**
+ * The projector over a family small enough to settle whole on every
+ * prepare (runs, rounds, warnings): omitted, withheld and duplicate rows
+ * counted, the rest by id with the lowest thread's row of a shared id, up to
+ * the collection bound.
+ */
+function settleFamily(
+  family: HostRecordDerivedFamily,
+  rows: readonly SourcedRow[],
+  at: number,
+  own: HostWarningProjection[]
+): { entityId: string; wire: unknown }[] {
+  const valid: { entityId: string; threadId: string; wire: unknown }[] = []
+  let omitted = 0
+  let withheld = 0
+  for (const { row, rowThreadId: owner } of rows) {
+    if (!row.privacyClean) withheld += 1
+    else if (row.wire === null) omitted += 1
+    else if (row.entityId === null) withheld += 1
+    else valid.push({ entityId: row.entityId, threadId: owner, wire: row.wire })
+  }
+  if (omitted > 0) own.push(hostProjectionRowsOmittedWarning(family, omitted, at))
+  valid.sort(
+    (left, right) =>
+      compareIds(left.entityId, right.entityId) || compareIds(left.threadId, right.threadId)
+  )
+  const unique = valid.filter(
+    (entry, index) => index === 0 || entry.entityId !== valid[index - 1]!.entityId
+  )
+  withheld += valid.length - unique.length
+  if (withheld > 0) own.push(hostPublicRowsWithheldWarning(family, withheld, at))
+  if (unique.length > HOST_PROTOCOL_MAX_COLLECTION) {
+    own.push(hostProjectionTruncatedWarning(family, unique.length, at))
+    unique.length = HOST_PROTOCOL_MAX_COLLECTION
+  }
+  return unique
+}
+
+/** The first index whose id sorts after `id`. */
+function upperBound(ids: readonly string[], id: string): number {
+  let low = 0
+  let high = ids.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (ids[middle]! <= id) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+/** The first index whose id sorts at or after `id`. */
+function lowerBound(ids: readonly string[], id: string): number {
+  let low = 0
+  let high = ids.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (ids[middle]! < id) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+type Journal = (undo: () => void) => void
+
+/**
+ * A row of an id. A participant's id carries its thread and a thread row
+ * carries none, so rows sharing an id come from one thread, or (from models
+ * no record gives) threads whose rows claim one id: the lower thread id wins,
+ * where the donor fell back on the order threads were listed.
+ */
+interface Holder {
+  readonly threadId: string
+  readonly order: number
+  readonly wire: unknown
+}
+
+function holderBefore(left: Holder, right: Holder): boolean {
+  return (compareIds(left.threadId, right.threadId) || left.order - right.order) < 0
+}
+
+/**
+ * A family with a row or more per thread and no window of its own (threads,
+ * participants): kept as each thread's contribution, the rows of each id in
+ * tie-break order, and the distinct ids sorted, so a change touches only its
+ * own ids and those it moves across the collection bound.
+ */
+class CappedFamily {
+  private readonly contributions = new Map<string, Contribution>()
+  private readonly groups = new Map<string, Holder[]>()
+  private ids: string[] = []
+  private bulk = false
+  omitted = 0
+  withheld = 0
+  duplicates = 0
+  private readonly touched = new Set<string>()
+  private boundaryBefore: string | null = null
+
+  constructor(
+    readonly family: HostRecordDerivedFamily,
+    private readonly journal: Journal
+  ) {}
+
+  get distinct(): number {
+    return this.ids.length
+  }
+
+  /** Start a prepare: what was published is the committed state. */
+  begin(): void {
+    this.touched.clear()
+    this.boundaryBefore = this.boundary()
+  }
+
+  /** Add many threads to an empty family, sorting the ids once. */
+  startBulk(): void {
+    this.bulk = true
+  }
+
+  endBulk(): void {
+    this.bulk = false
+    this.ids.sort(compareIds)
+  }
+
+  set(threadId: string, next: Contribution | undefined): void {
+    const prior = this.contributions.get(threadId)
+    if (prior === next) return
+    if (prior !== undefined) this.withdraw(threadId, prior)
+    if (next === undefined) this.contributions.delete(threadId)
+    else {
+      this.contributions.set(threadId, next)
+      this.add(threadId, next)
     }
+    this.journal(() => this.set(threadId, prior))
+  }
+
+  /** The published rows, in id order: for a seed. */
+  materialize(): Map<string, unknown> {
+    const rows = new Map<string, unknown>()
+    const count = Math.min(this.ids.length, HOST_PROTOCOL_MAX_COLLECTION)
+    for (let index = 0; index < count; index += 1) {
+      const id = this.ids[index]!
+      rows.set(id, this.groups.get(id)![0]!.wire)
+    }
+    return rows
+  }
+
+  /**
+   * The published rows that change: every touched id, and every id the
+   * change moved across the collection bound, with its row after (or
+   * undefined where it leaves).
+   */
+  changes(published: ReadonlyMap<string, unknown>): Map<string, unknown> {
+    const after = this.boundary()
+    const candidates = new Set(this.touched)
+    const before = this.boundaryBefore
+    if (before !== null || after !== null) {
+      // An untouched id changes side only between the two boundaries.
+      const low =
+        before === null ? after! : after === null ? before : before < after ? before : after
+      const high = before === null || after === null ? null : before < after ? after : before
+      for (let index = upperBound(this.ids, low); index < this.ids.length; index += 1) {
+        const id = this.ids[index]!
+        if (high !== null && id > high) break
+        candidates.add(id)
+      }
+    }
+    const changes = new Map<string, unknown>()
+    for (const id of candidates) {
+      const group = this.groups.get(id)
+      const next =
+        group !== undefined && (after === null || id <= after) ? group[0]!.wire : undefined
+      if (published.get(id) !== next) changes.set(id, next)
+    }
+    return changes
+  }
+
+  private boundary(): string | null {
+    return this.ids.length > HOST_PROTOCOL_MAX_COLLECTION
+      ? this.ids[HOST_PROTOCOL_MAX_COLLECTION - 1]!
+      : null
+  }
+
+  private withdraw(threadId: string, contribution: Contribution): void {
+    this.omitted -= contribution.omitted
+    this.withheld -= contribution.withheld
+    contribution.rows.forEach((row, order) => {
+      const group = this.groups.get(row.entityId)!
+      const at = group.findIndex((holder) => holder.threadId === threadId && holder.order === order)
+      group.splice(at, 1)
+      this.touched.add(row.entityId)
+      if (group.length > 0) {
+        this.duplicates -= 1
+        return
+      }
+      this.groups.delete(row.entityId)
+      this.ids.splice(lowerBound(this.ids, row.entityId), 1)
+    })
+  }
+
+  private add(threadId: string, contribution: Contribution): void {
+    this.omitted += contribution.omitted
+    this.withheld += contribution.withheld
+    contribution.rows.forEach((row, order) => {
+      const holder: Holder = { threadId, order, wire: row.wire }
+      this.touched.add(row.entityId)
+      const group = this.groups.get(row.entityId)
+      if (group === undefined) {
+        this.groups.set(row.entityId, [holder])
+        if (this.bulk) this.ids.push(row.entityId)
+        else this.ids.splice(lowerBound(this.ids, row.entityId), 0, row.entityId)
+        return
+      }
+      let at = group.length
+      while (at > 0 && holderBefore(holder, group[at - 1]!)) at -= 1
+      group.splice(at, 0, holder)
+      this.duplicates += 1
+    })
   }
 }
 
-/**
- * The run window over the kept candidates. A thread whose kept candidates
- * are cut ranks its unknown runs below its last kept one, so once the merge
- * takes that run nothing after it can be placed: the window stops short and
- * the thread must be modelled again.
- */
-function keptRunWindow(entries: ReadonlyMap<string, ThreadEntry>): {
-  window: HostPublicRunWindowEntry[]
-  exhausted: string | null
-} {
-  const models = [...entries.values()].map((entry) => entry.model)
-  const window = hostPublicRunWindow(models)
-  if (window.length === 0) return { window, exhausted: null }
-  const taken = new Map<string, number>()
-  for (let index = 0; index < window.length; index += 1) {
-    const threadId = window[index]!.threadId
-    const count = (taken.get(threadId) ?? 0) + 1
-    taken.set(threadId, count)
-    const entry = entries.get(threadId)!
-    if (
-      entry.truncated &&
-      count === entry.model.runs.candidates.length &&
-      index + 1 < HOST_PROFILE_RUN_PROJECTION_LIMIT
-    ) {
-      return { window: window.slice(0, index + 1), exhausted: threadId }
-    }
+/** The largest of a multiset of numbers, 0 when empty, as the donor's reduce from 0. */
+class CountedMax {
+  private readonly counts = new Map<number, number>()
+  private cached: number | null = 0
+
+  add(value: number): void {
+    this.counts.set(value, (this.counts.get(value) ?? 0) + 1)
+    if (this.cached !== null && value > this.cached) this.cached = value
   }
-  return { window, exhausted: null }
+
+  remove(value: number): void {
+    const count = this.counts.get(value)!
+    if (count > 1) {
+      this.counts.set(value, count - 1)
+      return
+    }
+    this.counts.delete(value)
+    if (value === this.cached) this.cached = null
+  }
+
+  value(): number {
+    if (this.cached === null) {
+      let latest = 0
+      for (const value of this.counts.keys()) latest = Math.max(latest, value)
+      this.cached = latest
+    }
+    return this.cached
+  }
 }
+
+interface RoundSlot {
+  readonly threadId: string
+  readonly round: HostThreadRecordRound
+}
+
+const roundCollator = new Intl.Collator()
+
+/**
+ * The round window's order: live rounds first, then the most recent, then
+ * the round id (`localeCompare`, as the donor), then the thread id where the
+ * donor fell back on the order threads were listed.
+ */
+function compareRoundSlots(left: RoundSlot, right: RoundSlot): number {
+  if (left.round.live !== right.round.live) return left.round.live ? -1 : 1
+  if (left.round.recency !== right.round.recency) {
+    return right.round.recency - left.round.recency
+  }
+  return (
+    roundCollator.compare(left.round.roundId, right.round.roundId) ||
+    compareIds(left.threadId, right.threadId)
+  )
+}
+
+interface Scalars {
+  runsTotal: number
+  omittedParticipants: number
+  /** Every kept run candidate, in catalogue order: at most 1,800 plus the band after a prepare. */
+  kept: readonly KeptRun[]
+  /** At or below every thread's first dropped candidate, while any thread has one. */
+  trimFloor: RunPlace | null
+}
+
+type Updates = Map<HostPublicWindowDeltaFamily, Map<string, unknown>>
 
 /**
  * The single authority for the families a thread record derives: it holds
@@ -453,16 +831,42 @@ function keptRunWindow(entries: ReadonlyMap<string, ThreadEntry>): {
  * index's own warnings (the projector's, and the withheld count) are
  * republished only when they change beyond their time. Snapshots of these
  * families are served from `wire()`, which never holds a withheld row.
- * Unwired in this slice.
+ *
+ * Since slice 13d a prepare costs what its changes touch, not what the
+ * index holds: the run candidates are one array of at most 1,800 plus the
+ * band, the threads and participants families are kept sorted by id, and
+ * the rest (runs, rounds, warnings: 1,800 rows at most) are settled whole
+ * from cached rows. A prepare mutates under an undo journal; abort replays
+ * it.
  */
 export class HostPublicWindowIndex {
   private entries = new Map<string, ThreadEntry>()
-  private deleted = new Set<string>()
+  private readonly deleted = new Set<string>()
+  private readonly threadKeys = new Map<string, string>()
   private published = new Map<HostPublicWindowDeltaFamily, Map<string, unknown>>(
     WIRE_FAMILIES.map(([, family]) => [family, new Map<string, unknown>()])
   )
+  private view: HostPublicWindowWire | null = null
   private open: object | null = null
-  private readonly band: number
+  private readonly keep: number
+  private undo: (() => void)[] | null = null
+  private readonly journal: Journal = (undo) => {
+    this.undo?.push(undo)
+  }
+
+  private scalars: Scalars = { runsTotal: 0, omittedParticipants: 0, kept: [], trimFloor: null }
+  /** Threads whose cut floor stands (a cut model none of whose candidates were dropped). */
+  private cut = new Set<string>()
+  private trimmedThreads = 0
+  private roundOrder: RoundSlot[] = []
+  private readonly roundSlots = new Map<string, RoundSlot>()
+  private roundRecency = new CountedMax()
+  private warningAt = new CountedMax()
+  /** Threads whose round the committed round window holds. */
+  private selected = new Set<string>()
+  private threads = new CappedFamily('threads', this.journal)
+  private participants = new CappedFamily('participants', this.journal)
+
   /** Run and participant rows, by the row. */
   private readonly rows = new WeakMap<object, WireRow>()
   /** Thread rows, by the model's thread row: without, and with, the round it names. */
@@ -471,23 +875,40 @@ export class HostPublicWindowIndex {
     object,
     { readonly activeRoundId: string; readonly row: WireRow }
   >()
-  /** Round rows, by the model's round and the run ids the row carries. */
-  private readonly roundRows = new WeakMap<object, { runIds: string; row: WireRow }>()
+  /** Round rows, by the model's round and the member runs the window gives it. */
+  private readonly roundRows = new WeakMap<object, { members: string; row: WireRow }>()
+  private readonly participantContributions = new WeakMap<object, Contribution>()
 
   constructor(options: { readonly band?: number } = {}) {
     const band = options.band ?? HOST_PUBLIC_WINDOW_BAND
     if (!Number.isSafeInteger(band) || band < 1) {
       throw new TypeError('HostPublicWindowIndex needs a band of at least one candidate')
     }
-    this.band = band
+    this.keep = Math.min(HOST_PROFILE_RUN_PROJECTION_LIMIT + band, Number.MAX_SAFE_INTEGER)
   }
 
   /**
-   * The wire rows the index last published: what a snapshot of these
-   * families serves. A withheld row is never among them.
+   * The wire rows the index last published, each family in id order: what a
+   * snapshot of these families serves. A withheld row is never among them.
    */
   wire(): HostPublicWindowWire {
-    return this.published
+    if (this.view === null) {
+      this.view = new Map(
+        [...this.published].map(([family, rows]) => [
+          family,
+          new Map([...rows].sort(([left], [right]) => compareIds(left, right)))
+        ])
+      )
+    }
+    return this.view
+  }
+
+  diagnostics(): HostPublicWindowDiagnostics {
+    return {
+      threads: this.entries.size,
+      keptRuns: this.scalars.kept.length,
+      trimmedThreads: this.trimmedThreads
+    }
   }
 
   /**
@@ -506,17 +927,58 @@ export class HostPublicWindowIndex {
     readonly ignored: readonly HostPublicWindowIgnored[]
   } {
     this.assertClosed()
-    const entries = new Map<string, ThreadEntry>()
+    const accepted = new Map<string, HostThreadRecordModelled>()
+    const revisions = new Map<string, ThreadEntry>()
     const ignored: HostPublicWindowIgnored[] = []
     for (const change of models) {
       const threadId = change.model.threadId
-      const reason = staleness(change, entries.get(threadId), this.deleted.has(threadId))
-      if (reason === null) entries.set(threadId, entryOf(change))
-      else ignored.push({ threadId, reason })
+      const reason = staleness(change, revisions.get(threadId), this.deleted.has(threadId))
+      if (reason !== null) {
+        ignored.push({ threadId, reason })
+        continue
+      }
+      accepted.set(threadId, change.model)
+      revisions.set(threadId, entryOf(change.model, ''))
     }
-    const computed = this.compute(entries, new Set(this.deleted), publication)
-    this.commit(computed)
-    return { complete: computed.complete, refill: computed.refill, ignored }
+
+    this.entries = new Map()
+    this.scalars = { runsTotal: 0, omittedParticipants: 0, kept: [], trimFloor: null }
+    this.cut = new Set()
+    this.trimmedThreads = 0
+    this.roundOrder = []
+    this.roundSlots.clear()
+    this.roundRecency = new CountedMax()
+    this.warningAt = new CountedMax()
+    this.selected = new Set()
+    this.threads = new CappedFamily('threads', this.journal)
+    this.participants = new CappedFamily('participants', this.journal)
+
+    this.participants.startBulk()
+    const slots: RoundSlot[] = []
+    for (const [threadId, model] of accepted) {
+      this.replaceThread(threadId, model, slots)
+    }
+    this.participants.endBulk()
+    this.roundOrder = slots.sort(compareRoundSlots)
+    this.rebuildKept(accepted)
+
+    const settled = this.settle(new Set(accepted.keys()), publication, true)
+    const published = this.published
+    this.published = new Map(
+      WIRE_FAMILIES.map(([, family]) => {
+        if (family === 'thread') return [family, this.threads.materialize()]
+        if (family === 'participant') return [family, this.participants.materialize()]
+        const rows = new Map(published.get(family)!)
+        for (const [id, row] of settled.updates.get(family)!) {
+          if (row === undefined) rows.delete(id)
+          else rows.set(id, row)
+        }
+        return [family, rows]
+      })
+    )
+    this.selected = settled.selected
+    this.view = null
+    return { complete: settled.complete, refill: settled.refill, ignored }
   }
 
   /** Prepare changes, in order, as one transaction. */
@@ -525,28 +987,55 @@ export class HostPublicWindowIndex {
     publication: HostPublicWindowPublication
   ): HostPublicWindowTransaction {
     this.assertClosed()
-    const entries = new Map(this.entries)
-    const deleted = new Set(this.deleted)
+    const undo: (() => void)[] = []
+    this.undo = undo
+    this.threads.begin()
+    this.participants.begin()
+    let settled: ReturnType<HostPublicWindowIndex['settle']>
     const ignored: HostPublicWindowIgnored[] = []
-    for (const change of changes) {
-      const threadId = change.kind === 'model' ? change.model.threadId : change.threadId
-      const reason = staleness(change, entries.get(threadId), deleted.has(threadId))
-      if (reason !== null) {
-        ignored.push({ threadId, reason })
-      } else if (change.kind === 'model') {
-        entries.set(threadId, entryOf(change))
-      } else {
-        entries.delete(threadId)
-        deleted.add(threadId)
+    try {
+      const changed = new Map<string, HostThreadRecordModelled | null>()
+      for (const change of changes) {
+        const threadId = change.kind === 'model' ? change.model.threadId : change.threadId
+        const reason = staleness(change, this.entries.get(threadId), this.deleted.has(threadId))
+        if (reason !== null) {
+          ignored.push({ threadId, reason })
+          continue
+        }
+        if (change.kind === 'model') {
+          this.replaceThread(threadId, change.model, null)
+          changed.set(threadId, change.model)
+        } else {
+          this.replaceThread(threadId, null, null)
+          this.deleted.add(threadId)
+          this.journal(() => this.deleted.delete(threadId))
+          changed.set(threadId, null)
+        }
       }
+      this.rebuildKept(changed)
+      settled = this.settle(new Set(changed.keys()), publication, false)
+    } catch (error) {
+      this.undo = null
+      this.rollback(undo)
+      throw error
     }
-    const computed = this.compute(entries, deleted, publication)
+    this.undo = null
+
     const effects: HostDomainEffectDto[] = []
     for (const [, family] of WIRE_FAMILIES) {
-      effects.push(
-        ...diffHostEntityFamily(family, this.published.get(family)!, computed.wire.get(family)!)
-      )
+      const updates = settled.updates.get(family)!
+      if (updates.size === 0) continue
+      const published = this.published.get(family)!
+      const before = new Map<string, unknown>()
+      const after = new Map<string, unknown>()
+      for (const [id, row] of updates) {
+        const prior = published.get(id)
+        if (prior !== undefined) before.set(id, prior)
+        if (row !== undefined) after.set(id, row)
+      }
+      effects.push(...diffHostEntityFamily(family, before, after))
     }
+
     const token = {}
     this.open = token
     const settle = (): void => {
@@ -555,14 +1044,25 @@ export class HostPublicWindowIndex {
     }
     return {
       effects,
-      complete: computed.complete,
-      refill: computed.refill,
+      complete: settled.complete,
+      refill: settled.refill,
       ignored,
       commit: () => {
         settle()
-        this.commit(computed)
+        for (const [family, updates] of settled.updates) {
+          const rows = this.published.get(family)!
+          for (const [id, row] of updates) {
+            if (row === undefined) rows.delete(id)
+            else rows.set(id, row)
+          }
+        }
+        this.selected = settled.selected
+        this.view = null
       },
-      abort: settle
+      abort: () => {
+        settle()
+        this.rollback(undo)
+      }
     }
   }
 
@@ -570,100 +1070,392 @@ export class HostPublicWindowIndex {
     if (this.open !== null) throw new Error('HostPublicWindowIndex has a transaction open')
   }
 
-  private commit(computed: Computed): void {
-    // A short window keeps every candidate it was given until its refills
-    // complete it: trimming a refilled thread back to its band would exhaust
-    // it again a band later.
-    this.entries = computed.complete ? this.trimmed(computed) : computed.entries
-    this.deleted = computed.deleted
-    this.published = computed.wire
+  private rollback(undo: readonly (() => void)[]): void {
+    for (let index = undo.length - 1; index >= 0; index -= 1) undo[index]!()
   }
 
-  /** Each thread cut to its windowed candidates and its band. */
-  private trimmed(computed: Computed): Map<string, ThreadEntry> {
-    const taken = new Map<string, number>()
-    for (const entry of computed.window) {
-      taken.set(entry.threadId, (taken.get(entry.threadId) ?? 0) + 1)
-    }
-    const entries = new Map<string, ThreadEntry>()
-    for (const [threadId, entry] of computed.entries) {
-      const candidates = entry.model.runs.candidates
-      const keep = Math.min(candidates.length, (taken.get(threadId) ?? 0) + this.band)
-      entries.set(threadId, {
-        model:
-          keep === candidates.length && entry.model === this.entries.get(threadId)?.model
-            ? entry.model
-            : keptModel(entry.model, candidates.slice(0, keep)),
-        truncated: entry.truncated || keep < candidates.length
-      })
-    }
-    return entries
+  private assign<K extends keyof Scalars>(key: K, value: Scalars[K]): void {
+    const prior = this.scalars[key]
+    if (prior === value) return
+    this.scalars[key] = value
+    this.journal(() => {
+      this.scalars[key] = prior
+    })
   }
 
-  private compute(
-    entries: Map<string, ThreadEntry>,
-    deleted: Set<string>,
-    publication: HostPublicWindowPublication
-  ): Computed {
-    const { window, exhausted } = keptRunWindow(entries)
-    const complete = exhausted === null
-    const models = [...entries.values()].map((entry) => entry.model)
-    const families = assembleFromWindow(models, window, complete)
-    const at = projectorAt(publication.generatedAt)
-    // The projector's warnings and the withheld counts: stamped with the publication.
-    const own: HostWarningProjection[] = []
-    const wire = new Map<HostPublicWindowDeltaFamily, Map<string, unknown>>()
-    let donorWarnings: HostWarningProjection[] = []
+  private threadKey(threadId: string): string {
+    let key = this.threadKeys.get(threadId)
+    if (key === undefined) {
+      key = threadKeyOf(threadId)
+      this.threadKeys.set(threadId, key)
+    }
+    return key
+  }
 
-    for (const [family, deltaFamily] of WIRE_FAMILIES) {
-      const valid: { entityId: string; threadId: string; wire: unknown }[] = []
-      let omitted = 0
-      let withheld = 0
-      const rows = families[family] as readonly object[]
-      for (let index = 0; index < rows.length; index += 1) {
-        const row = rows[index]!
-        const projected = this.project(family, row, models[index], entries)
-        if (!projected.privacyClean) {
-          withheld += 1
-          continue
-        }
-        if (projected.wire === null) {
-          omitted += 1
-          continue
-        }
-        const identity = hostSnapshotEntityId(deltaFamily, projected.wire)
-        if (!identity.ok) {
-          withheld += 1
-          continue
-        }
-        valid.push({
-          entityId: identity.entityId,
-          threadId: rowThreadId(row),
-          wire: projected.wire
-        })
+  private putEntry(threadId: string, entry: ThreadEntry | undefined): void {
+    const prior = this.entries.get(threadId)
+    if (prior === entry) return
+    if (prior?.dropped) this.trimmedThreads -= 1
+    if (entry?.dropped) this.trimmedThreads += 1
+    if (entry === undefined) this.entries.delete(threadId)
+    else this.entries.set(threadId, entry)
+    if (entry !== undefined && entry.cutFloor !== null && entry.dropped === null) {
+      this.cut.add(threadId)
+    } else {
+      this.cut.delete(threadId)
+    }
+    this.journal(() => this.putEntry(threadId, prior))
+  }
+
+  /** Put or take a thread's round in the round order; `bulk` collects them unsorted. */
+  private putRound(
+    threadId: string,
+    round: HostThreadRecordRound | null,
+    bulk: RoundSlot[] | null
+  ): void {
+    const prior = this.roundSlots.get(threadId)
+    if (prior?.round === round || (prior === undefined && round === null)) return
+    if (prior !== undefined) {
+      this.roundSlots.delete(threadId)
+      this.roundRecency.remove(prior.round.recency)
+      let low = 0
+      let high = this.roundOrder.length
+      while (low < high) {
+        const middle = (low + high) >> 1
+        if (compareRoundSlots(this.roundOrder[middle]!, prior) < 0) low = middle + 1
+        else high = middle
       }
-      if (omitted > 0) own.push(hostProjectionRowsOmittedWarning(family, omitted, at))
-      // The projector sorts each family by id and keeps the first rows up to
-      // the bound. Of rows sharing an id, the lowest thread's is kept.
-      valid.sort(
-        (left, right) =>
-          compareIds(left.entityId, right.entityId) || compareIds(left.threadId, right.threadId)
-      )
-      const unique = valid.filter(
-        (entry, index) => index === 0 || entry.entityId !== valid[index - 1]!.entityId
-      )
-      withheld += valid.length - unique.length
-      if (withheld > 0) own.push(hostPublicRowsWithheldWarning(family, withheld, at))
-      if (unique.length > HOST_PROTOCOL_MAX_COLLECTION) {
-        own.push(hostProjectionTruncatedWarning(family, unique.length, at))
-        unique.length = HOST_PROTOCOL_MAX_COLLECTION
+      this.roundOrder.splice(low, 1)
+    }
+    if (round !== null) {
+      const slot: RoundSlot = { threadId, round }
+      this.roundSlots.set(threadId, slot)
+      this.roundRecency.add(round.recency)
+      if (bulk !== null) bulk.push(slot)
+      else {
+        let low = 0
+        let high = this.roundOrder.length
+        while (low < high) {
+          const middle = (low + high) >> 1
+          if (compareRoundSlots(this.roundOrder[middle]!, slot) < 0) low = middle + 1
+          else high = middle
+        }
+        this.roundOrder.splice(low, 0, slot)
       }
-      if (family === 'warnings') {
-        donorWarnings = unique.map((entry) => entry.wire as HostWarningProjection)
+    }
+    this.journal(() => this.putRound(threadId, prior?.round ?? null, null))
+  }
+
+  private putWarningAt(prior: number | null, next: number | null): void {
+    if (prior !== null) this.warningAt.remove(prior)
+    if (next !== null) this.warningAt.add(next)
+    this.journal(() => this.putWarningAt(next, prior))
+  }
+
+  /** Everything but the kept runs and the thread row: those wait for the window. */
+  private replaceThread(
+    threadId: string,
+    model: HostThreadRecordModelled | null,
+    bulkRounds: RoundSlot[] | null
+  ): void {
+    const prior = this.entries.get(threadId)
+    const entry = model === null ? undefined : entryOf(model, this.threadKey(threadId))
+    this.putRound(threadId, entry?.round ?? null, bulkRounds)
+    this.assign(
+      'runsTotal',
+      this.scalars.runsTotal - (prior?.runsTotal ?? 0) + (entry?.runsTotal ?? 0)
+    )
+    this.assign(
+      'omittedParticipants',
+      this.scalars.omittedParticipants -
+        (prior?.participants.omitted ?? 0) +
+        (entry?.participants.omitted ?? 0)
+    )
+    this.putWarningAt(prior?.participants.warningAt ?? null, entry?.participants.warningAt ?? null)
+    this.participants.set(
+      threadId,
+      entry === undefined ? undefined : this.participantContribution(entry.participants)
+    )
+    if (entry === undefined) this.threads.set(threadId, undefined)
+    this.putEntry(threadId, entry)
+  }
+
+  /**
+   * The kept candidates without the changed threads', merged with their new
+   * ones, cut to 1,800 plus the band. Each thread the cut reaches records
+   * its first dropped candidate.
+   */
+  private rebuildKept(changed: ReadonlyMap<string, HostThreadRecordModelled | null>): void {
+    const kept = this.scalars.kept
+    const base = changed.size === 0 ? kept : kept.filter((run) => !changed.has(run.threadId))
+    const lists: { runs: readonly KeptRun[]; index: number; base: boolean }[] = []
+    if (base.length > 0) lists.push({ runs: base, index: 0, base: true })
+    for (const [threadId, model] of changed) {
+      if (model === null || model.runs.candidates.length === 0) continue
+      lists.push({ runs: keptRunsOf(model, this.threadKey(threadId)), index: 0, base: false })
+    }
+
+    const before = (
+      left: { runs: readonly KeptRun[]; index: number },
+      right: { runs: readonly KeptRun[]; index: number }
+    ): boolean => compareRunPlaces(left.runs[left.index]!, right.runs[right.index]!) < 0
+    const heap = lists.slice()
+    const down = (start: number): void => {
+      let parent = start
+      for (;;) {
+        const left = parent * 2 + 1
+        const right = left + 1
+        let first = parent
+        if (left < heap.length && before(heap[left]!, heap[first]!)) first = left
+        if (right < heap.length && before(heap[right]!, heap[first]!)) first = right
+        if (first === parent) return
+        ;[heap[parent], heap[first]] = [heap[first]!, heap[parent]!]
+        parent = first
+      }
+    }
+    for (let index = (heap.length >> 1) - 1; index >= 0; index -= 1) down(index)
+    const next: KeptRun[] = []
+    while (next.length < this.keep && heap.length > 0) {
+      const head = heap[0]!
+      next.push(head.base ? head.runs[head.index]! : keptCopy(head.runs[head.index]!))
+      head.index += 1
+      if (head.index >= head.runs.length) {
+        const last = heap.pop()!
+        if (heap.length === 0) break
+        heap[0] = last
+      }
+      down(0)
+    }
+
+    const lowest: { place: RunPlace | null } = { place: null }
+    const drop = (run: KeptRun): void => {
+      const entry = this.entries.get(run.threadId)!
+      if (entry.dropped !== null && compareRunPlaces(entry.dropped, run) <= 0) return
+      const place = placeOf(run)
+      this.putEntry(run.threadId, { ...entry, dropped: place })
+      if (lowest.place === null || compareRunPlaces(place, lowest.place) < 0) lowest.place = place
+    }
+    for (const list of lists) {
+      if (list.index >= list.runs.length) continue
+      if (!list.base) {
+        drop(list.runs[list.index]!)
         continue
       }
-      wire.set(deltaFamily, new Map(unique.map((entry) => [entry.entityId, entry.wire])))
+      const seen = new Set<string>()
+      for (let index = list.index; index < list.runs.length; index += 1) {
+        const run = list.runs[index]!
+        if (seen.has(run.threadId)) continue
+        seen.add(run.threadId)
+        drop(run)
+      }
     }
+    this.assign('kept', next)
+    if (lowest.place !== null) {
+      const floor = this.scalars.trimFloor
+      if (floor === null || compareRunPlaces(lowest.place, floor) < 0) {
+        this.assign('trimFloor', lowest.place)
+      }
+    }
+    if (this.trimmedThreads === 0 && this.scalars.trimFloor !== null) {
+      this.assign('trimFloor', null)
+    }
+  }
+
+  /** The thread holding the lowest dropped candidate: a scan, off the common path. */
+  private lowestDropped(): { place: RunPlace; threadId: string } | null {
+    let lowest: { place: RunPlace; threadId: string } | null = null
+    for (const [threadId, entry] of this.entries) {
+      if (entry.dropped === null) continue
+      if (lowest === null || compareRunPlaces(entry.dropped, lowest.place) < 0) {
+        lowest = { place: entry.dropped, threadId }
+      }
+    }
+    return lowest
+  }
+
+  /**
+   * The run window over the kept candidates. It stops, short, at the first
+   * run past the lowest floor: a cut model's last candidate (exclusive) or a
+   * dropped candidate (inclusive), naming that thread for refill.
+   */
+  private walk(): { window: KeptRun[]; exhausted: string | null } {
+    let cut: { place: RunPlace; threadId: string } | null = null
+    for (const threadId of this.cut) {
+      const floor = this.entries.get(threadId)!.cutFloor!
+      if (cut === null || compareRunPlaces(floor, cut.place) < 0) cut = { place: floor, threadId }
+    }
+    type Floor = { readonly place: RunPlace; readonly threadId: string }
+    // The trimmed floors: a lower bound, made exact by one scan when a run reaches it.
+    const trimmed: { bound: RunPlace | null; exact: Floor | null } = {
+      bound: this.trimmedThreads > 0 ? this.scalars.trimFloor : null,
+      exact: null
+    }
+    const exact = (): Floor => {
+      if (trimmed.exact === null) {
+        trimmed.exact = this.lowestDropped()!
+        this.assign('trimFloor', trimmed.exact.place)
+        trimmed.bound = trimmed.exact.place
+      }
+      return trimmed.exact
+    }
+    const window: KeptRun[] = []
+    for (const run of this.scalars.kept) {
+      if (window.length >= HOST_PROFILE_RUN_PROJECTION_LIMIT) break
+      const pastCut = cut !== null && compareRunPlaces(run, cut.place) > 0
+      const pastDropped =
+        trimmed.bound !== null &&
+        compareRunPlaces(run, trimmed.bound) >= 0 &&
+        compareRunPlaces(run, exact().place) >= 0
+      if (pastCut || pastDropped) {
+        return {
+          window,
+          exhausted: this.lowerFloor(pastCut ? cut : null, pastDropped ? exact() : null)
+        }
+      }
+      window.push(run)
+    }
+    if (window.length < HOST_PROFILE_RUN_PROJECTION_LIMIT) {
+      const owner = this.lowerFloor(cut, this.trimmedThreads > 0 ? exact() : null)
+      if (owner !== null) return { window, exhausted: owner }
+    }
+    return { window, exhausted: null }
+  }
+
+  private lowerFloor(
+    cut: { place: RunPlace; threadId: string } | null,
+    dropped: { place: RunPlace; threadId: string } | null
+  ): string | null {
+    if (cut === null) return dropped?.threadId ?? null
+    if (dropped === null) return cut.threadId
+    return compareRunPlaces(cut.place, dropped.place) <= 0 ? cut.threadId : dropped.threadId
+  }
+
+  /**
+   * The window, the round window, and the published rows that change: the
+   * threads the changes touched and those the round window moved.
+   */
+  private settle(
+    changed: ReadonlySet<string>,
+    publication: HostPublicWindowPublication,
+    seeding: boolean
+  ): {
+    complete: boolean
+    refill: readonly string[]
+    selected: Set<string>
+    updates: Updates
+  } {
+    const { window, exhausted } = this.walk()
+    const complete = exhausted === null
+    const at = projectorAt(publication.generatedAt)
+    const own: HostWarningProjection[] = []
+    const updates: Updates = new Map()
+
+    // The round window, and the thread rows it names a round in.
+    const rounds =
+      this.roundOrder.length > HOST_PROFILE_ROUND_PROJECTION_LIMIT
+        ? this.roundOrder.slice(0, HOST_PROFILE_ROUND_PROJECTION_LIMIT)
+        : this.roundOrder
+    const selected = new Set(rounds.map((slot) => slot.threadId))
+    const rethread = new Set<string>()
+    for (const threadId of changed) rethread.add(threadId)
+    for (const threadId of selected) if (!this.selected.has(threadId)) rethread.add(threadId)
+    for (const threadId of this.selected) if (!selected.has(threadId)) rethread.add(threadId)
+    if (seeding) this.threads.startBulk()
+    for (const threadId of rethread) {
+      const entry = this.entries.get(threadId)
+      if (entry === undefined) continue
+      this.threads.set(threadId, this.threadContribution(entry, selected.has(threadId)))
+    }
+    if (seeding) this.threads.endBulk()
+
+    // Threads.
+    this.cappedWarnings(this.threads, at, own)
+    if (!seeding) updates.set('thread', this.threads.changes(this.published.get('thread')!))
+
+    // Runs, and the members each round carries.
+    const members = new Map<string, string[]>()
+    const runRows: SourcedRow[] = []
+    let runsAt = 0
+    for (const run of window) {
+      const candidate = run.candidate
+      runsAt = Math.max(runsAt, candidate.recency)
+      if (candidate.roundMember) {
+        const list = members.get(run.threadId)
+        if (list === undefined) members.set(run.threadId, [candidate.runId])
+        else list.push(candidate.runId)
+      }
+      let row = this.rows.get(candidate.row)
+      if (row === undefined) {
+        row = buildWireRow('runs', 'run', candidate.row)
+        this.rows.set(candidate.row, row)
+      }
+      runRows.push({ row, rowThreadId: rowThreadId(candidate.row) })
+    }
+    updates.set('run', this.wholeFamily('run', settleFamily('runs', runRows, at, own)))
+
+    // Rounds.
+    const roundRows: SourcedRow[] = rounds.map((slot) => {
+      const runIds = members.get(slot.threadId) ?? []
+      const key = runIds.join('\u0000')
+      const cached = this.roundRows.get(slot.round)
+      if (cached && cached.members === key) {
+        return { row: cached.row, rowThreadId: rowThreadId(slot.round.row) }
+      }
+      const source = hostThreadRecordRoundRow(slot.round, runIds)
+      const row = buildWireRow('rounds', 'round', source)
+      this.roundRows.set(slot.round, { members: key, row })
+      return { row, rowThreadId: rowThreadId(source) }
+    })
+    updates.set('round', this.wholeFamily('round', settleFamily('rounds', roundRows, at, own)))
+
+    // Participants.
+    this.cappedWarnings(this.participants, at, own)
+    if (!seeding) {
+      updates.set('participant', this.participants.changes(this.published.get('participant')!))
+    }
+
+    // The donor's warnings, then the warnings family as the projector settles it.
+    const donor: HostWarningProjection[] = []
+    const omitted = this.scalars.omittedParticipants
+    if (omitted > 0) {
+      donor.push({
+        warningId: 'projection_rows_omitted:participants',
+        severity: 'warning',
+        code: 'projection_rows_omitted',
+        message: `family participants omitted ${omitted} decoder-invalid row${omitted === 1 ? '' : 's'}`,
+        at: this.warningAt.value()
+      })
+    }
+    if (this.roundOrder.length > HOST_PROFILE_ROUND_PROJECTION_LIMIT) {
+      donor.push({
+        warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:rounds`,
+        severity: 'warning',
+        code: HOST_WARNING_PROJECTION_WINDOWED,
+        message:
+          `family rounds intentionally windowed from ${this.roundOrder.length} to ` +
+          `${HOST_PROFILE_ROUND_PROJECTION_LIMIT}; live rows precede recent terminal rows`,
+        at: this.roundRecency.value()
+      })
+    }
+    const total = this.scalars.runsTotal
+    if (!complete || total > HOST_PROFILE_RUN_PROJECTION_LIMIT) {
+      donor.push({
+        warningId: `${HOST_WARNING_PROJECTION_WINDOWED}:runs`,
+        severity: 'warning',
+        code: HOST_WARNING_PROJECTION_WINDOWED,
+        message:
+          `family runs ${complete ? 'intentionally windowed' : 'still loading'} from ${total} to ` +
+          `${HOST_PROFILE_RUN_PROJECTION_LIMIT}; possibly-live rows precede recent terminal rows`,
+        at: runsAt
+      })
+    }
+    const donorRows = donor.map((warning) => ({
+      row: buildWireRow('warnings', 'warning', warning),
+      rowThreadId: rowThreadId(warning)
+    }))
+    const donorWarnings = settleFamily('warnings', donorRows, at, own).map(
+      (entry) => entry.wire as HostWarningProjection
+    )
 
     // Donor warnings and the index's own, in warning id order: at most three
     // donor warnings and three per family, far inside the projector's re-cap.
@@ -676,73 +1468,82 @@ export class HostPublicWindowIndex {
     )
     // The index's own warnings change only when they say something new: their
     // time is the publication's, not news.
-    const published = this.published.get('warning')!
+    const priorWarnings = this.published.get('warning')!
     for (const warning of own) {
-      const prior = published.get(warning.warningId) as HostWarningProjection | undefined
+      const prior = priorWarnings.get(warning.warningId) as HostWarningProjection | undefined
       if (prior && hostProjectionUnchanged('warning', { ...prior, at: 0 }, { ...warning, at: 0 })) {
         warnings.set(warning.warningId, prior)
       }
     }
-    wire.set('warning', warnings)
+    updates.set('warning', this.wholeChanges('warning', warnings))
 
-    return {
-      entries,
-      deleted,
-      window,
-      families,
-      wire,
-      complete,
-      refill: exhausted === null ? [] : [exhausted]
+    return { complete, refill: exhausted === null ? [] : [exhausted], selected, updates }
+  }
+
+  private cappedWarnings(family: CappedFamily, at: number, own: HostWarningProjection[]): void {
+    if (family.omitted > 0) {
+      own.push(hostProjectionRowsOmittedWarning(family.family, family.omitted, at))
+    }
+    const withheld = family.withheld + family.duplicates
+    if (withheld > 0) own.push(hostPublicRowsWithheldWarning(family.family, withheld, at))
+    if (family.distinct > HOST_PROTOCOL_MAX_COLLECTION) {
+      own.push(hostProjectionTruncatedWarning(family.family, family.distinct, at))
     }
   }
 
-  /**
-   * The row's wire form and privacy, cached against what the row is built
-   * from: a thread row by its model's row (threads are listed in model
-   * order), a round by its model's round and carried run ids, anything else
-   * by the row itself.
-   */
-  private project(
-    family: HostRecordDerivedFamily,
-    row: object,
-    model: HostThreadRecordModelled | undefined,
-    entries: ReadonlyMap<string, ThreadEntry>
-  ): WireRow {
-    const build = (): WireRow => ({
-      wire: projectHostSnapshotRow(family, row),
-      privacyClean: inspectHostSnapshotPrivacy(row).ok
-    })
-    if (family === 'warnings') return build()
-    if (family === 'threads') {
-      // A model can keep its thread row while its round changes, so the row
-      // naming a round is cached against the round it names.
-      const activeRoundId = (row as { activeRoundId?: string }).activeRoundId
-      if (activeRoundId !== undefined) {
-        const cached = this.activeThreadRows.get(model!.thread)
-        if (cached && cached.activeRoundId === activeRoundId) return cached.row
-        const built = build()
-        this.activeThreadRows.set(model!.thread, { activeRoundId, row: built })
-        return built
+  private wholeFamily(
+    family: HostPublicWindowDeltaFamily,
+    unique: readonly { entityId: string; wire: unknown }[]
+  ): Map<string, unknown> {
+    return this.wholeChanges(family, new Map(unique.map((entry) => [entry.entityId, entry.wire])))
+  }
+
+  /** A family settled whole: its rows that differ from the published ones. */
+  private wholeChanges(
+    family: HostPublicWindowDeltaFamily,
+    next: ReadonlyMap<string, unknown>
+  ): Map<string, unknown> {
+    const published = this.published.get(family)!
+    const changes = new Map<string, unknown>()
+    for (const [id, row] of next) if (published.get(id) !== row) changes.set(id, row)
+    for (const id of published.keys()) if (!next.has(id)) changes.set(id, undefined)
+    return changes
+  }
+
+  private threadContribution(entry: ThreadEntry, roundInWindow: boolean): Contribution {
+    const round = entry.round
+    if (roundInWindow && round?.live) {
+      const cached = this.activeThreadRows.get(entry.thread)
+      if (cached && cached.activeRoundId === round.roundId) {
+        return contributionOf([{ row: cached.row, rowThreadId: rowThreadId(entry.thread) }])
       }
-      const cached = this.threadRows.get(model!.thread)
-      if (cached) return cached
-      const built = build()
-      this.threadRows.set(model!.thread, built)
-      return built
+      const source = { ...entry.thread, activeRoundId: round.roundId }
+      const row = buildWireRow('threads', 'thread', source)
+      this.activeThreadRows.set(entry.thread, { activeRoundId: round.roundId, row })
+      return contributionOf([{ row, rowThreadId: rowThreadId(source) }])
     }
-    if (family === 'rounds') {
-      const round = entries.get((row as { threadId: string }).threadId)!.model.round!
-      const runIds = (row as { providerRunIds: readonly string[] }).providerRunIds.join('\u0000')
-      const cached = this.roundRows.get(round)
-      if (cached && cached.runIds === runIds) return cached.row
-      const built = build()
-      this.roundRows.set(round, { runIds, row: built })
-      return built
+    let row = this.threadRows.get(entry.thread)
+    if (row === undefined) {
+      row = buildWireRow('threads', 'thread', entry.thread)
+      this.threadRows.set(entry.thread, row)
     }
-    const cached = this.rows.get(row)
+    return contributionOf([{ row, rowThreadId: rowThreadId(entry.thread) }])
+  }
+
+  private participantContribution(participants: HostThreadRecordParticipants): Contribution {
+    const cached = this.participantContributions.get(participants)
     if (cached) return cached
-    const built = build()
-    this.rows.set(row, built)
-    return built
+    const contribution = contributionOf(
+      participants.rows.map((source) => {
+        let row = this.rows.get(source)
+        if (row === undefined) {
+          row = buildWireRow('participants', 'participant', source)
+          this.rows.set(source, row)
+        }
+        return { row, rowThreadId: rowThreadId(source) }
+      })
+    )
+    this.participantContributions.set(participants, contribution)
+    return contribution
   }
 }
