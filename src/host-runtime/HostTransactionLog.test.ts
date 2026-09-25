@@ -881,3 +881,53 @@ describe('HostTransactionLog compaction', () => {
     expect(log.get('pending')).toEqual({ prepare: prepare('pending'), terminal: abort('pending') })
   })
 })
+
+// Independent review of slices 7a-8 (design §18): each case is the probe that
+// found the defect.
+describe('HostTransactionLog, review fixes', () => {
+  it('keeps a command prepared while a compaction was writing, so its terminal record lands', async () => {
+    const dataDir = directory()
+    const io = seams(dataDir)
+    const log = HostTransactionLog.open(io.options)
+    expect(await log.append(prepare('done'))).toEqual(DURABLE)
+    expect(await log.append(published('done'))).toEqual(DURABLE)
+
+    const renameHeld = deferred()
+    io.beforeRename = () => renameHeld.promise
+    const compaction = log.compact(() => receipt('succeeded'))
+    await until(() => io.writes.some(({ path }) => path.endsWith('.tmp')), 'the compaction write')
+
+    // Prepared mid-compaction: its batch waits behind the compaction's I/O.
+    const prepared = log.append(prepare('later'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    renameHeld.resolve()
+    expect(await compaction).toMatchObject({ kind: 'compacted', dropped: 1 })
+    expect(await prepared).toEqual(DURABLE)
+
+    // The rules still see the durable prepare: the terminal lands, and a
+    // second, different prepare is refused rather than written as a conflict.
+    expect(await log.append(published('later'))).toEqual(DURABLE)
+    expect(await log.append(prepare('later', { preparedAt: 2_000 }))).toMatchObject({
+      kind: 'rejected',
+      reason: 'already_prepared'
+    })
+    expect(HostTransactionLog.open({ dataDir }).stats()).toMatchObject({ conflicts: 0 })
+  })
+
+  it('fails only the compaction whose receipt lookup throws, and never wedges later I/O', async () => {
+    const dataDir = directory()
+    const log = HostTransactionLog.open(seams(dataDir).options)
+    expect(await log.append(prepare('one'))).toEqual(DURABLE)
+
+    const failed = await settledWithin(
+      log.compact(() => {
+        throw new Error('receipt store unavailable')
+      })
+    )
+    expect(failed).toMatchObject({ kind: 'failed', detail: 'receipt store unavailable' })
+
+    expect(await settledWithin(log.append(prepare('two')))).toEqual(DURABLE)
+    expect(log.getFailure()).toBeNull()
+    expect(await settledWithin(log.compact(() => null))).toMatchObject({ kind: 'compacted' })
+  })
+})

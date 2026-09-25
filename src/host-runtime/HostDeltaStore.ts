@@ -395,6 +395,7 @@ interface HostDeltaGroupEntry {
 
 interface HostDeltaDurabilityWaiter {
   target: HostCursor
+  writeSeq: number
   generation: HostGeneration
   resolve: (result: HostDeltaDurabilityResult) => void
 }
@@ -442,8 +443,18 @@ export class HostDeltaStore {
   private durabilityWaiters: HostDeltaDurabilityWaiter[] = []
   private flushInFlight = false
   private flushRequested = false
-  /** A group write created the journal; its name is not durable yet. */
-  private journalCreatedSinceFlush = false
+  /**
+   * Group writes are numbered. A write is durable once a flush, or a legacy
+   * synchronous fsync, covers its number: the cursor alone cannot say so,
+   * because an empty group writes a line without moving it.
+   */
+  private writeSeq = 0
+  private durableWriteSeq = 0
+  /** The latest group write that created the journal (0: none). */
+  private journalCreatedAtSeq = 0
+  /** Every journal create at or below this write has a durable directory entry. */
+  private dirSyncedSeq = 0
+  private groupWriteSeq = new Map<string, number>()
   private recordsByCursor = new Map<HostCursor, HostDeltaStoredRecord>()
   private orderedCursors: HostCursor[] = []
   private retainedBytes = 0
@@ -497,7 +508,11 @@ export class HostDeltaStore {
     this.durableCursor = 0
     this.lowestRetainedCursor = 0
     this.groupsByCommand = new Map()
-    this.journalCreatedSinceFlush = false
+    this.groupWriteSeq = new Map()
+    this.writeSeq = 0
+    this.durableWriteSeq = 0
+    this.journalCreatedAtSeq = 0
+    this.dirSyncedSeq = 0
     this.recordsByCursor = new Map()
     this.orderedCursors = []
     this.retainedBytes = 0
@@ -821,11 +836,14 @@ export class HostDeltaStore {
         recovery
       }
     }
+    this.writeSeq += 1
+    if (write.created) this.journalCreatedAtSeq = this.writeSeq
     for (const record of records) {
       this.indexRecord(record, { recomputeBytes: false })
       this.cursor = record.envelope.cursor
       if (this.recordsByCursor.size === 1) this.lowestRetainedCursor = record.envelope.cursor
     }
+    this.groupWriteSeq.set(commandId, this.writeSeq)
     const entry: HostDeltaGroupEntry = {
       commandId,
       count: records.length,
@@ -844,11 +862,16 @@ export class HostDeltaStore {
   awaitDurable(): Promise<HostDeltaDurabilityResult> {
     if (this.failStop)
       return Promise.resolve({ kind: 'fail-stopped', detail: this.failStop.detail })
-    if (this.cursor <= this.durableCursor) {
+    if (this.everythingDurable()) {
       return Promise.resolve({ kind: 'durable', position: this.getPosition() })
     }
     return new Promise((resolve) => {
-      this.durabilityWaiters.push({ target: this.cursor, generation: this.generation, resolve })
+      this.durabilityWaiters.push({
+        target: this.cursor,
+        writeSeq: this.writeSeq,
+        generation: this.generation,
+        resolve
+      })
       this.requestFlush()
     })
   }
@@ -1004,8 +1027,14 @@ export class HostDeltaStore {
   /** Force compaction enforcing maxRecords / maxBytes. */
   compact(): void {
     if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
+    // Retention may cut records not yet notified; they are durable in the
+    // checkpoint, so notify them from the map as it was before the cut.
+    const before = new Map(this.recordsByCursor)
+    const cursor = this.cursor
     // The checkpoint holds every appended record and was fsynced.
-    if (this.writeCheckpointAndResetJournal()) this.settleDurableThrough(this.cursor)
+    if (this.writeCheckpointAndResetJournal()) {
+      this.settleDurableThrough(cursor, this.writeSeq, before)
+    }
   }
 
   /**
@@ -1013,6 +1042,7 @@ export class HostDeltaStore {
    * `findGroup` and the next checkpoint.
    */
   releaseGroup(commandId: string): boolean {
+    this.groupWriteSeq.delete(commandId)
     return this.groupsByCommand.delete(commandId)
   }
 
@@ -1093,6 +1123,7 @@ export class HostDeltaStore {
     this.orderedCursors = []
     this.retainedBytes = 0
     this.groupsByCommand = new Map()
+    this.groupWriteSeq = new Map()
     this.generation = nextGeneration
     this.indexRecord(record, { recomputeBytes: false })
     this.cursor = nextCursor
@@ -1207,8 +1238,14 @@ export class HostDeltaStore {
       setDigest: entry.setDigest,
       start: { generation: this.generation, cursor: entry.start },
       end: { generation: this.generation, cursor: entry.end },
-      durable: entry.end <= this.durableCursor
+      durable:
+        entry.end <= this.durableCursor &&
+        (this.groupWriteSeq.get(entry.commandId) ?? 0) <= this.durableWriteSeq
     }
+  }
+
+  private everythingDurable(): boolean {
+    return this.cursor <= this.durableCursor && this.writeSeq <= this.durableWriteSeq
   }
 
   /**
@@ -1217,11 +1254,16 @@ export class HostDeltaStore {
    * satisfies. A waiter from an earlier generation was made durable before
    * the reset that ended it.
    */
-  private settleDurableThrough(target: HostCursor): void {
+  private settleDurableThrough(
+    target: HostCursor,
+    writeSeq: number = this.writeSeq,
+    records: ReadonlyMap<HostCursor, HostDeltaStoredRecord> = this.recordsByCursor
+  ): void {
+    if (writeSeq > this.durableWriteSeq) this.durableWriteSeq = writeSeq
     if (target > this.durableCursor) {
       const results: Array<Extract<HostDeltaAppendResult, { kind: 'appended' }>> = []
       for (let cursor = this.durableCursor + 1; cursor <= target; cursor += 1) {
-        const record = this.recordsByCursor.get(cursor)
+        const record = records.get(cursor)
         if (!record) continue
         results.push({
           kind: 'appended',
@@ -1235,7 +1277,10 @@ export class HostDeltaStore {
     const waiting = this.durabilityWaiters
     this.durabilityWaiters = []
     for (const waiter of waiting) {
-      if (waiter.generation !== this.generation || waiter.target <= this.durableCursor) {
+      if (
+        waiter.generation !== this.generation ||
+        (waiter.target <= this.durableCursor && waiter.writeSeq <= this.durableWriteSeq)
+      ) {
         waiter.resolve({ kind: 'durable', position: this.getPosition() })
       } else {
         this.durabilityWaiters.push(waiter)
@@ -1255,15 +1300,20 @@ export class HostDeltaStore {
     }
     const generation = this.generation
     const target = this.cursor
-    const createdJournal = this.journalCreatedSinceFlush
-    this.journalCreatedSinceFlush = false
+    const targetSeq = this.writeSeq
+    // A created journal's name is owed until a directory fsync covers it; the
+    // debt is settled only when that fsync succeeds, never when a flush starts.
+    const owesDirectory = this.journalCreatedAtSeq > this.dirSyncedSeq
     this.flushInFlight = true
     this.flushRequested = false
     const flush = async (): Promise<void> => {
       await this.groupFsync(this.journalPath)
-      if (createdJournal && process.platform !== 'win32') await this.groupFsync(this.dataDir)
+      if (owesDirectory && process.platform !== 'win32') await this.groupFsync(this.dataDir)
+      if (targetSeq > this.dirSyncedSeq) this.dirSyncedSeq = targetSeq
     }
-    const coveredElsewhere = () => generation !== this.generation || target <= this.durableCursor
+    const coveredElsewhere = () =>
+      generation !== this.generation ||
+      (target <= this.durableCursor && targetSeq <= this.durableWriteSeq)
     const done = (error: unknown): void => {
       this.flushInFlight = false
       if (this.failStop) {
@@ -1274,14 +1324,13 @@ export class HostDeltaStore {
         // Nothing says which of the unflushed bytes reached the disk, so
         // none of them is published: they complete at a generation reset.
         const detail = error instanceof Error ? error.message : String(error)
-        // The reset line lands in the same journal; if a group created it,
-        // the reset's fsync must make its name durable too.
-        if (createdJournal) this.journalCreatedSinceFlush = true
+        // The directory debt is still owed, so the reset's own fsync pays it:
+        // the reset line lands in the journal the group created.
         this.recoverFromGroupFailure(`group fsync failed: ${detail}`)
         return
       }
-      if (generation === this.generation) this.settleDurableThrough(target)
-      else this.settleDurableThrough(this.durableCursor)
+      if (generation === this.generation) this.settleDurableThrough(target, targetSeq)
+      else this.settleDurableThrough(this.durableCursor, this.durableWriteSeq)
       if (this.flushRequested || this.durabilityWaiters.length > 0) this.requestFlush()
       // Compaction starts here, after a flush, and never inside an append.
       else this.maybeCompactInBackground()
@@ -1332,7 +1381,11 @@ export class HostDeltaStore {
     this.cursor = this.durableCursor
     this.recomputeLowest()
     for (const [commandId, entry] of this.groupsByCommand) {
-      if (entry.end > this.durableCursor) this.groupsByCommand.delete(commandId)
+      const seq = this.groupWriteSeq.get(commandId) ?? 0
+      if (entry.end > this.durableCursor || seq > this.durableWriteSeq) {
+        this.groupsByCommand.delete(commandId)
+        this.groupWriteSeq.delete(commandId)
+      }
     }
   }
 
@@ -1702,12 +1755,12 @@ export class HostDeltaStore {
     this.compactionInFlight = true
     let tmpPath: string | null = null
     try {
-      if (this.cursor > this.durableCursor) {
+      if (!this.everythingDurable()) {
         const durable = await this.awaitDurable()
         if (durable.kind === 'fail-stopped' || this.failStop) {
           return { kind: 'skipped', reason: 'fail-stopped' }
         }
-        if (durable.kind !== 'durable' || this.cursor > this.durableCursor) {
+        if (durable.kind !== 'durable' || !this.everythingDurable()) {
           return { kind: 'skipped', reason: 'not-durable' }
         }
       }
@@ -1817,8 +1870,10 @@ export class HostDeltaStore {
   private appendJournalBatch(
     events: readonly JournalEvent[],
     options: { fsync: boolean } = { fsync: true }
-  ): { ok: true } | { ok: false; error: unknown; detail: string; rolledBack: boolean } {
-    if (events.length === 0) return { ok: true }
+  ):
+    | { ok: true; created: boolean }
+    | { ok: false; error: unknown; detail: string; rolledBack: boolean } {
+    if (events.length === 0) return { ok: true, created: false }
     mkdirSync(this.dataDir, { recursive: true })
     const existed = existsSync(this.journalPath)
     let descriptor: number | null = null
@@ -1846,15 +1901,14 @@ export class HostDeltaStore {
         this.batchFsync(descriptor)
         // A pending group may have created the journal: this fsync settles
         // that group too, so its name must be durable before it does.
-        if ((!existed || this.journalCreatedSinceFlush) && process.platform !== 'win32') {
+        const owesDirectory = this.journalCreatedAtSeq > this.dirSyncedSeq
+        if ((!existed || owesDirectory) && process.platform !== 'win32') {
           this.syncDataDirectory()
         }
-        this.journalCreatedSinceFlush = false
-      } else if (!existed) {
-        this.journalCreatedSinceFlush = true
+        this.dirSyncedSeq = this.writeSeq
       }
       this.journalRecordCount += events.length
-      return { ok: true }
+      return { ok: true, created: !existed }
     } catch (error) {
       let rolledBack = descriptor === null
       if (descriptor !== null && previousLength !== null) {

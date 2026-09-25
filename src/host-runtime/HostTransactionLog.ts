@@ -85,6 +85,11 @@ export class HostTransactionLog {
   /** Durable plus queued: the rules judge a new record against this. */
   private accepted = new Map<string, HostTransactionLogEntry>()
   private queue: QueuedRecord[] = []
+  /**
+   * Commands with a record taken off `queue` into a batch not yet written. A
+   * compaction running meanwhile must not drop them from the rules.
+   */
+  private inFlight = new Map<string, number>()
   private flushScheduled = false
   /** The single I/O queue: batches and compactions run one at a time, in order. */
   private io: Promise<void> = Promise.resolve()
@@ -177,7 +182,30 @@ export class HostTransactionLog {
     receiptOf: (commandId: string) => HostTransactionRecoveryInput['receipt']
   ): Promise<HostTransactionLogCompaction> {
     return new Promise((resolve) => {
-      this.io = this.io.then(async () => resolve(await this.compactNow(receiptOf)))
+      this.enqueueIo(async () => {
+        try {
+          resolve(await this.compactNow(receiptOf))
+        } catch (error) {
+          resolve({
+            kind: 'failed',
+            detail: error instanceof Error ? error.message : String(error)
+          })
+        }
+      })
+    })
+  }
+
+  /**
+   * Chain one unit of I/O. A unit that throws can never stop the ones after
+   * it: each unit settles its own callers, and the chain itself never rejects.
+   */
+  private enqueueIo(unit: () => Promise<void>): void {
+    this.io = this.io.then(unit).catch((error: unknown) => {
+      try {
+        this.failStop(error instanceof Error ? error.message : String(error))
+      } catch {
+        // Nothing may break the chain.
+      }
     })
   }
 
@@ -189,7 +217,26 @@ export class HostTransactionLog {
       this.flushScheduled = false
       const batch = this.queue.splice(0)
       if (batch.length === 0) return
-      this.io = this.io.then(() => this.writeBatch(batch))
+      for (const { record } of batch) {
+        this.inFlight.set(record.commandId, (this.inFlight.get(record.commandId) ?? 0) + 1)
+      }
+      this.enqueueIo(async () => {
+        try {
+          await this.writeBatch(batch)
+        } finally {
+          for (const { record, resolve } of batch) {
+            const left = (this.inFlight.get(record.commandId) ?? 1) - 1
+            if (left > 0) this.inFlight.set(record.commandId, left)
+            else this.inFlight.delete(record.commandId)
+            // A no-op once writeBatch settled it; a batch that threw first
+            // fails its callers here instead of leaving them waiting.
+            resolve({
+              kind: 'failed',
+              detail: this.failure?.detail ?? 'transaction log write failed'
+            })
+          }
+        }
+      })
     })
   }
 
@@ -236,21 +283,23 @@ export class HostTransactionLog {
     const kept = new Map<string, HostTransactionLogEntry>()
     let dropped = 0
     let keptIndeterminate = 0
-    for (const [commandId, entry] of this.durable) {
-      if (hostTransactionRecordsCompactable(receiptOf(commandId))) {
-        dropped += 1
-        continue
-      }
-      kept.set(commandId, entry)
-      if (entry.terminal?.kind === 'indeterminate') keptIndeterminate += 1
-    }
-    const lines: string[] = []
-    for (const entry of kept.values()) {
-      if (entry.prepare) lines.push(`${JSON.stringify(entry.prepare)}\n`)
-      if (entry.terminal) lines.push(`${JSON.stringify(entry.terminal)}\n`)
-    }
     const tmpPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`
     try {
+      // The caller's predicate runs inside the try: a throw fails this
+      // compaction and nothing else.
+      for (const [commandId, entry] of this.durable) {
+        if (hostTransactionRecordsCompactable(receiptOf(commandId))) {
+          dropped += 1
+          continue
+        }
+        kept.set(commandId, entry)
+        if (entry.terminal?.kind === 'indeterminate') keptIndeterminate += 1
+      }
+      const lines: string[] = []
+      for (const entry of kept.values()) {
+        if (entry.prepare) lines.push(`${JSON.stringify(entry.prepare)}\n`)
+        if (entry.terminal) lines.push(`${JSON.stringify(entry.terminal)}\n`)
+      }
       await this.write(tmpPath, lines.join(''))
       await this.fsync(tmpPath)
       await this.rename(tmpPath, this.path)
@@ -266,6 +315,7 @@ export class HostTransactionLog {
       // is still to be written.
       if (
         !kept.has(commandId) &&
+        !this.inFlight.has(commandId) &&
         !this.queue.some(({ record }) => record.commandId === commandId)
       ) {
         this.accepted.delete(commandId)

@@ -83,6 +83,35 @@ describe('HostDeltaStore group journal name durability (M4 slice 7a)', () => {
     expect(synced.paths).toEqual([join(dataDir, HOST_DELTA_JOURNAL_FILENAME), dataDir])
   })
 
+  it('fsyncs the directory for a legacy append that settles a group while its own flush is still running', async () => {
+    if (process.platform === 'win32') return
+    // Review fix (design §18): the directory debt was cleared when the async
+    // flush started, so a legacy fsync in that window skipped the directory
+    // and acknowledged the group's records anyway.
+    let started = false
+    const store = new HostDeltaStore({
+      dataDir,
+      now,
+      groupFsync: () => {
+        started = true
+        return new Promise(() => {})
+      }
+    })
+    store.appendGroup({
+      commandId: 'cmd',
+      effects: [{ kind: 'upsert', family: 'thread', entityId: 'thread-0' }]
+    })
+    void store.awaitDurable()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(started).toBe(true)
+
+    synced.paths.length = 0
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'legacy' })
+
+    expect(synced.paths).toEqual([join(dataDir, HOST_DELTA_JOURNAL_FILENAME), dataDir])
+    expect(store.findGroup('cmd')?.durable).toBe(true)
+  })
+
   it('leaves the directory alone for a legacy append to a journal that was already durable', () => {
     const store = new HostDeltaStore({ dataDir, now })
     store.append({ kind: 'upsert', family: 'thread', entityId: 'first' })

@@ -847,3 +847,44 @@ describe('HostDeltaStore group append (M4 slice 7a)', () => {
     expect(new HostDeltaStore({ dataDir: withSeam, now }).getPosition()).toEqual(position(2, 2))
   })
 })
+
+// Independent review of slices 7a-8 (design §18): each case is the probe that
+// found the defect.
+describe('HostDeltaStore group durability, review fixes', () => {
+  it('never reports an empty group durable, or resolves awaitDurable, before an fsync covers its line', async () => {
+    const dataDir = directory()
+    const fsyncs: string[] = []
+    const store = new HostDeltaStore({
+      dataDir,
+      now,
+      compactAfterRecords: 10000,
+      groupFsync: recordingFsync(fsyncs)
+    })
+    const result = store.appendGroup({ commandId: 'empty', effects: [] })
+    expect(result.kind).toBe('appended')
+    if (result.kind !== 'appended') return
+    // Its line is written but not flushed, although no cursor moved.
+    expect(result.group.durable).toBe(false)
+    expect(store.findGroup('empty')?.durable).toBe(false)
+
+    await expect(store.awaitDurable()).resolves.toMatchObject({ kind: 'durable' })
+    expect(fsyncs).toContain(journalPath(dataDir))
+    expect(store.findGroup('empty')?.durable).toBe(true)
+  })
+
+  it('notifies every record an inline compact() makes durable, even ones retention cuts', () => {
+    const dataDir = directory()
+    const store = new HostDeltaStore({ dataDir, now, maxRecords: 2, compactAfterRecords: 10000 })
+    const seen: number[] = []
+    store.subscribe((event) => seen.push(event.position.cursor))
+    store.appendGroup({ commandId: 'four', effects: effects(4) })
+    expect(seen).toEqual([])
+
+    store.compact()
+
+    // Retention kept only the newest two, but all four are durable in the
+    // checkpoint's head: listeners must not see a chain gap.
+    expect(seen).toEqual([1, 2, 3, 4])
+    expect(store.getPosition()).toEqual(position(1, 4))
+  })
+})
