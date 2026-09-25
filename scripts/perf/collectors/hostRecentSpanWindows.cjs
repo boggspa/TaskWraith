@@ -513,5 +513,6 @@ function foldHostRecentSpanWindows(options) {
 module.exports = {
   HOST_RECENT_SPAN_WINDOWS_SCHEMA_VERSION,
   createHostRecentSpanUnion,
-  foldHostRecentSpanWindows
+  foldHostRecentSpanWindows,
+  timingsByKind
 }
