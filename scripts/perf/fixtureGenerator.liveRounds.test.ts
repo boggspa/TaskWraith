@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { reconcileStaleChatRuns } from '../../src/main/ChatRunReconciler'
+import { normalizeCatalogueChatRecord } from '../../src/main/store/ThreadCatalogueNormalize'
 import type { ChatRecord } from '../../src/main/store/types'
 
 const require = createRequire(import.meta.url)
@@ -79,6 +80,26 @@ describe('light_beside_large_live workload', () => {
         message: expect.stringMatching(/runs only under runT2Baseline --live-rounds/)
       })
     )
+  })
+
+  it('loads as Ensemble chats with a Boss, as a user’s Ensemble chats do', () => {
+    const load = (chat: ChatRecord) => normalizeCatalogueChatRecord(chat, () => 'ollama')
+    const live = fixture('light_beside_large_live')
+    expect(live.chats.map((chat) => chat.chatKind)).toEqual(['ensemble', 'ensemble'])
+    for (const chat of live.chats) {
+      const loaded = load(chat)
+      expect(loaded.chatKind).toBe('ensemble')
+      expect(loaded.ensemble?.participants).toEqual(chat.ensemble.participants)
+      expect(loaded.ensemble?.bossmanParticipantId).toBe(chat.ensemble.participants?.[0]?.id)
+      expect(loaded.ensemble?.activeRound?.status).toBe('completed')
+    }
+    // Control: the replay workload keeps its recorded shape, which loads as
+    // a solo chat whose block is never normalised.
+    const replay = fixture('light_beside_large')
+    expect(replay.chats.map((chat) => chat.chatKind)).toEqual([undefined, undefined])
+    const loadedReplay = load(replay.chats[0])
+    expect(loadedReplay.chatKind).toBe('single')
+    expect(loadedReplay.ensemble?.bossmanParticipantId).toBeUndefined()
   })
 
   it('boots with nothing to reconcile, unlike the replay workload it mirrors', () => {

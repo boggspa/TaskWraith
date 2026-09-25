@@ -926,6 +926,12 @@ function generatePerfFixture(options) {
       appChatId,
       title: `Perf fixture ${scaledShape.workload} #${c + 1}`,
       provider: chatParticipants[0].provider,
+      // Live rounds run through the orchestrator, which reads the loaded
+      // chat: only an Ensemble chat's block is normalised on load (a Boss,
+      // merged defaults), and the Host and renderer show a round only on an
+      // Ensemble chat. A user's Ensemble chat always carries the kind. The
+      // replay workloads keep the shape their recorded captures used.
+      ...(scaledShape.liveSeats ? { chatKind: 'ensemble' } : {}),
       // Global scope, deliberately: sanitizeChatForSave rejects any
       // non-global chat without a REGISTERED workspace id+path, and the
       // harness materializes no workspace registry. Without this, every T2
