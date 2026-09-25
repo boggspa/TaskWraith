@@ -237,21 +237,19 @@ export const HOST_PUBLIC_WINDOW_BAND = 128
 /** The code of the warning that counts rows the index withheld. */
 export const HOST_WARNING_PROJECTION_WITHHELD = 'projection_rows_withheld'
 
-/**
- * A thread's model, read under its delete epoch: the scope ledger's delete
- * counter for the thread when its record was read.
- */
+/** A thread's model, read from its committed record. */
 export interface HostPublicWindowModelChange {
   readonly kind: 'model'
   readonly model: HostThreadRecordModelled
-  readonly epoch: number
 }
 
-/** A committed delete of the thread as it stood at `epoch`. */
+/**
+ * A committed delete. It is final for the incarnation, as the scope ledger
+ * closes the thread's lane: nothing for the thread lands after it.
+ */
 export interface HostPublicWindowDeleteChange {
   readonly kind: 'delete'
   readonly threadId: string
-  readonly epoch: number
 }
 
 export type HostPublicWindowChange = HostPublicWindowModelChange | HostPublicWindowDeleteChange
@@ -263,7 +261,7 @@ export interface HostPublicWindowPublication {
 
 /**
  * A change the index set aside: a model older than the one it holds, or
- * anything of an epoch already deleted.
+ * anything for a thread deleted in this incarnation.
  */
 export interface HostPublicWindowIgnored {
   readonly threadId: string
@@ -309,8 +307,6 @@ const WIRE_FAMILIES: readonly (readonly [HostRecordDerivedFamily, HostPublicWind
 interface ThreadEntry {
   /** The thread's model, its candidates cut to those the index keeps. */
   readonly model: HostThreadRecordModelled
-  /** The delete epoch its record was read under. */
-  readonly epoch: number
   /** Whether candidates past the kept ones exist. */
   readonly truncated: boolean
 }
@@ -323,8 +319,8 @@ interface WireRow {
 
 interface Computed {
   readonly entries: Map<string, ThreadEntry>
-  /** The last epoch deleted, per thread this incarnation deleted. */
-  readonly deleted: Map<string, number>
+  /** Every thread this incarnation deleted. */
+  readonly deleted: Set<string>
   readonly window: readonly HostPublicRunWindowEntry[]
   readonly families: HostPublicWindowFamilies
   readonly wire: Map<HostPublicWindowDeltaFamily, Map<string, unknown>>
@@ -364,21 +360,22 @@ function modelIsCut(model: HostThreadRecordModelled): boolean {
 }
 
 function entryOf(change: HostPublicWindowModelChange): ThreadEntry {
-  return { model: change.model, epoch: change.epoch, truncated: modelIsCut(change.model) }
+  return { model: change.model, truncated: modelIsCut(change.model) }
 }
 
 /** Why a change is set aside, or null to apply it. */
 function staleness(
   change: HostPublicWindowChange,
   held: ThreadEntry | undefined,
-  deletedEpoch: number | undefined
+  deleted: boolean
 ): HostPublicWindowIgnored['reason'] | null {
-  if (deletedEpoch !== undefined && change.epoch <= deletedEpoch) return 'deleted'
-  if (held === undefined) return null
-  if (held.epoch > change.epoch) return 'older'
+  // A delete is final for the incarnation: a refill or a late model read
+  // before it, or after it from a source that still lists the thread, never
+  // brings the thread back.
+  if (deleted) return 'deleted'
   if (
     change.kind === 'model' &&
-    held.epoch === change.epoch &&
+    held !== undefined &&
     held.model.projection.revision > change.model.projection.revision
   ) {
     return 'older'
@@ -449,23 +446,18 @@ function keptRunWindow(entries: ReadonlyMap<string, ThreadEntry>): {
  * rows it last published, and turns changes into the effects a
  * before-and-after snapshot diff would publish for those families.
  *
- * It never refuses. A change older than the model it holds, or of a deleted
- * epoch, is set aside. A row no snapshot can carry is withheld and counted:
- * one that fails the privacy scan, one whose id no diff can key, and all but
- * the lowest thread's of rows sharing an id. The index's own warnings (the
- * projector's, and the withheld count) are republished only when they change
- * beyond their time. Unwired in this slice.
+ * It never refuses. A change older than the model it holds, or for a thread
+ * deleted in this incarnation, is set aside. A row no snapshot can carry is
+ * withheld and counted: one that fails the privacy scan, one whose id no
+ * diff can key, and all but the lowest thread's of rows sharing an id. The
+ * index's own warnings (the projector's, and the withheld count) are
+ * republished only when they change beyond their time. Snapshots of these
+ * families are served from `wire()`, which never holds a withheld row.
+ * Unwired in this slice.
  */
 export class HostPublicWindowIndex {
   private entries = new Map<string, ThreadEntry>()
-  private deleted = new Map<string, number>()
-  private current: HostPublicWindowFamilies = {
-    threads: [],
-    runs: [],
-    rounds: [],
-    participants: [],
-    warnings: []
-  }
+  private deleted = new Set<string>()
   private published = new Map<HostPublicWindowDeltaFamily, Map<string, unknown>>(
     WIRE_FAMILIES.map(([, family]) => [family, new Map<string, unknown>()])
   )
@@ -473,9 +465,12 @@ export class HostPublicWindowIndex {
   private readonly band: number
   /** Run and participant rows, by the row. */
   private readonly rows = new WeakMap<object, WireRow>()
-  /** Thread rows, by the model's thread row: without and with its active round. */
+  /** Thread rows, by the model's thread row: without, and with, the round it names. */
   private readonly threadRows = new WeakMap<object, WireRow>()
-  private readonly activeThreadRows = new WeakMap<object, WireRow>()
+  private readonly activeThreadRows = new WeakMap<
+    object,
+    { readonly activeRoundId: string; readonly row: WireRow }
+  >()
   /** Round rows, by the model's round and the run ids the row carries. */
   private readonly roundRows = new WeakMap<object, { runIds: string; row: WireRow }>()
 
@@ -487,12 +482,10 @@ export class HostPublicWindowIndex {
     this.band = band
   }
 
-  /** The donor families for a snapshot, as the profile projection would build them. */
-  families(): HostPublicWindowFamilies {
-    return this.current
-  }
-
-  /** The wire rows the index last published. */
+  /**
+   * The wire rows the index last published: what a snapshot of these
+   * families serves. A withheld row is never among them.
+   */
   wire(): HostPublicWindowWire {
     return this.published
   }
@@ -501,7 +494,8 @@ export class HostPublicWindowIndex {
    * Replace every thread at once, publishing nothing: the state a client's
    * next snapshot starts from. A model with fewer candidates than its share
    * of the window counts as cut, and the window may start short. It forgets
-   * no delete: a model of a deleted epoch is set aside, as a change's is.
+   * no delete, and of two models of one thread keeps the newer: what it sets
+   * aside it reports, as `prepare` does.
    */
   seed(
     models: readonly HostPublicWindowModelChange[],
@@ -516,11 +510,11 @@ export class HostPublicWindowIndex {
     const ignored: HostPublicWindowIgnored[] = []
     for (const change of models) {
       const threadId = change.model.threadId
-      const reason = staleness(change, undefined, this.deleted.get(threadId))
+      const reason = staleness(change, entries.get(threadId), this.deleted.has(threadId))
       if (reason === null) entries.set(threadId, entryOf(change))
       else ignored.push({ threadId, reason })
     }
-    const computed = this.compute(entries, new Map(this.deleted), publication)
+    const computed = this.compute(entries, new Set(this.deleted), publication)
     this.commit(computed)
     return { complete: computed.complete, refill: computed.refill, ignored }
   }
@@ -532,18 +526,18 @@ export class HostPublicWindowIndex {
   ): HostPublicWindowTransaction {
     this.assertClosed()
     const entries = new Map(this.entries)
-    const deleted = new Map(this.deleted)
+    const deleted = new Set(this.deleted)
     const ignored: HostPublicWindowIgnored[] = []
     for (const change of changes) {
       const threadId = change.kind === 'model' ? change.model.threadId : change.threadId
-      const reason = staleness(change, entries.get(threadId), deleted.get(threadId))
+      const reason = staleness(change, entries.get(threadId), deleted.has(threadId))
       if (reason !== null) {
         ignored.push({ threadId, reason })
       } else if (change.kind === 'model') {
         entries.set(threadId, entryOf(change))
       } else {
         entries.delete(threadId)
-        deleted.set(threadId, change.epoch)
+        deleted.add(threadId)
       }
     }
     const computed = this.compute(entries, deleted, publication)
@@ -582,7 +576,6 @@ export class HostPublicWindowIndex {
     // it again a band later.
     this.entries = computed.complete ? this.trimmed(computed) : computed.entries
     this.deleted = computed.deleted
-    this.current = computed.families
     this.published = computed.wire
   }
 
@@ -601,7 +594,6 @@ export class HostPublicWindowIndex {
           keep === candidates.length && entry.model === this.entries.get(threadId)?.model
             ? entry.model
             : keptModel(entry.model, candidates.slice(0, keep)),
-        epoch: entry.epoch,
         truncated: entry.truncated || keep < candidates.length
       })
     }
@@ -610,7 +602,7 @@ export class HostPublicWindowIndex {
 
   private compute(
     entries: Map<string, ThreadEntry>,
-    deleted: Map<string, number>,
+    deleted: Set<string>,
     publication: HostPublicWindowPublication
   ): Computed {
     const { window, exhausted } = keptRunWindow(entries)
@@ -722,11 +714,20 @@ export class HostPublicWindowIndex {
     })
     if (family === 'warnings') return build()
     if (family === 'threads') {
-      const cache = 'activeRoundId' in row ? this.activeThreadRows : this.threadRows
-      const cached = cache.get(model!.thread)
+      // A model can keep its thread row while its round changes, so the row
+      // naming a round is cached against the round it names.
+      const activeRoundId = (row as { activeRoundId?: string }).activeRoundId
+      if (activeRoundId !== undefined) {
+        const cached = this.activeThreadRows.get(model!.thread)
+        if (cached && cached.activeRoundId === activeRoundId) return cached.row
+        const built = build()
+        this.activeThreadRows.set(model!.thread, { activeRoundId, row: built })
+        return built
+      }
+      const cached = this.threadRows.get(model!.thread)
       if (cached) return cached
       const built = build()
-      cache.set(model!.thread, built)
+      this.threadRows.set(model!.thread, built)
       return built
     }
     if (family === 'rounds') {

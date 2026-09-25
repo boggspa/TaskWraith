@@ -323,8 +323,6 @@ interface Profile {
   /** The thread the last publication received, committed or not. */
   lastPublished: HostProfileThread | null
   runWindow: HostCatalogueRunWindow | null
-  /** Each thread's delete epoch, as the scope ledger counts deletes. */
-  readonly epochs: Map<string, number>
 }
 
 function openProfile(): Profile {
@@ -335,7 +333,6 @@ function openProfile(): Profile {
     committed: new Map(),
     lastPublished: null,
     runWindow: null,
-    epochs: new Map(),
     store: undefined as unknown as HostProfileDomainStore
   }
   const mirror = {
@@ -943,14 +940,15 @@ function initiallyPublished(profile: Profile): Published {
 function modelChange(profile: Profile, threadId: string): HostPublicWindowChange {
   const model = modelHostThreadRecordEffects(profile.committed.get(threadId)!)
   if (model.kind !== 'modelled') throw new Error(`committed thread ${threadId} was refused`)
-  return { kind: 'model', model, epoch: profile.epochs.get(threadId) ?? 0 }
+  return { kind: 'model', model }
 }
 
-/** A delete of the thread's current epoch; a thread created again later is the next one. */
-function deleteChange(profile: Profile, threadId: string): HostPublicWindowChange {
-  const epoch = profile.epochs.get(threadId) ?? 0
-  profile.epochs.set(threadId, epoch + 1)
-  return { kind: 'delete', threadId, epoch }
+/**
+ * A committed delete. The scope ledger closes the thread's lane for the
+ * incarnation, so nothing writes the thread again.
+ */
+function deleteChange(threadId: string): HostPublicWindowChange {
+  return { kind: 'delete', threadId }
 }
 
 const PUBLICATION = { generatedAt: POSITION.generatedAt }
@@ -971,10 +969,10 @@ function expectLoadingDonor(
   )
   const settled = profile.runWindow
   profile.runWindow = {
-    entries: index.families().runs.map((row) => {
-      const run = indexed.get(row.runId)!
-      return { chatId: run.threadId, run: run.summary as unknown as HostProfileRun }
-    }),
+    entries: [...index.wire().get('run')!.keys()]
+      .map((runId) => indexed.get(runId)!)
+      .sort(referenceOrder)
+      .map((run) => ({ chatId: run.threadId, run: run.summary as unknown as HostProfileRun })),
     total: indexed.size,
     complete: false
   }
@@ -1124,9 +1122,13 @@ describe('public window index ≡ donor, change by change', () => {
         tally.changes += 1
         if (outcome.exact) tally.exact += 1
       }
+      // A deleted thread never comes back in the incarnation, so its slot
+      // goes on as a new thread under a fresh id.
+      const deaths = new Map<number, number>()
+      const life = (slot: number): number => deaths.get(slot) ?? 0
       for (let step = 0; step < 10; step += 1) {
         const slot = int(r, 0, THREAD_IDS.length - 1)
-        const threadId = THREAD_IDS[slot]!
+        const threadId = life(slot) === 0 ? THREAD_IDS[slot]! : `${THREAD_IDS[slot]!}.${life(slot)}`
         const committed = profile.committed.get(threadId)
         if (committed && chance(r, 0.25)) {
           if (!deleteThread(profile, threadId)) {
@@ -1140,11 +1142,12 @@ describe('public window index ≡ donor, change by change', () => {
             publish(modelChange(profile, threadId))
             expect(deleteThread(profile, threadId)).toBe(true)
           }
-          publish(deleteChange(profile, threadId))
+          publish(deleteChange(threadId))
+          deaths.set(slot, life(slot) + 1)
           tally.deletes += 1
           continue
         }
-        const record = ownIds(seededRecord(r, threadId, int(r, 0, 30)), `t${slot}-`)
+        const record = ownIds(seededRecord(r, threadId, int(r, 0, 30)), `t${slot}.${life(slot)}-`)
         if (persistRecord(profile, record) !== 'committed') continue
         if (!settledSnapshot(profile).ok) {
           // The donor's snapshot fails its privacy scan, and with it every
@@ -1236,7 +1239,7 @@ describe('public window index ≡ donor, change by change', () => {
       // Deleting it frees 300 slots, more than each thread's band: every heavy
       // thread is modelled again, and no run a client holds is retracted.
       unpublish(profile, 'light')
-      const freed = publishChange(profile, index, deleteChange(profile, 'light'), published, mode)
+      const freed = publishChange(profile, index, deleteChange('light'), published, mode)
       expect(freed.refills).toBe(3)
       expect(freed.exact).toBe(mode === 'absorb')
       const retracted = freed.effects
@@ -1248,13 +1251,7 @@ describe('public window index ≡ donor, change by change', () => {
       // Deleting a second leaves 1,400 runs, all inside the window: the short
       // window still loads, then the warning goes.
       unpublish(profile, 'heavy-b')
-      const emptied = publishChange(
-        profile,
-        index,
-        deleteChange(profile, 'heavy-b'),
-        freed.published,
-        mode
-      )
+      const emptied = publishChange(profile, index, deleteChange('heavy-b'), freed.published, mode)
       expect(emptied.refills).toBe(2)
       expect(emptied.published.client.get('run')!.size).toBe(1_400)
       expect(
@@ -1292,7 +1289,7 @@ describe('public window index ≡ donor, change by change', () => {
     const index = new HostPublicWindowIndex()
     expect(
       index.seed(
-        modelsOf(profile).map((model) => ({ kind: 'model' as const, model, epoch: 0 })),
+        modelsOf(profile).map((model) => ({ kind: 'model' as const, model })),
         PUBLICATION
       )
     ).toMatchObject({ complete: true, refill: [] })
@@ -1310,7 +1307,7 @@ describe('public window index ≡ donor, change by change', () => {
     // One live thread goes: 1,800 runs fit, and the round window takes in the
     // live round it dropped, naming it on a thread that did not change.
     unpublish(profile, id(0))
-    const first = publishChange(profile, index, deleteChange(profile, id(0)), published)
+    const first = publishChange(profile, index, deleteChange(id(0)), published)
     published = first.published
     expect(warningIds()).toEqual([`${HOST_WARNING_PROJECTION_WINDOWED}:rounds`])
     const named = first.effects.filter(
@@ -1323,12 +1320,7 @@ describe('public window index ≡ donor, change by change', () => {
     // The two terminal threads go: exactly 1,800 rounds, no window.
     for (const terminal of [id(1), id(1_001)]) {
       unpublish(profile, terminal)
-      published = publishChange(
-        profile,
-        index,
-        deleteChange(profile, terminal),
-        published
-      ).published
+      published = publishChange(profile, index, deleteChange(terminal), published).published
     }
     expect(warningIds()).toEqual([])
   }, 120_000)

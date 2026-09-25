@@ -280,31 +280,24 @@ function fromWire(wire: HostPublicWindowWire): ClientState {
   return new Map([...wire].map(([family, rows]) => [family, new Map(rows)]))
 }
 
-type Unversioned =
-  | { readonly kind: 'model'; readonly model: HostThreadRecordModelled }
-  | { readonly kind: 'delete'; readonly threadId: string }
-
 function seed(
   index: HostPublicWindowIndex,
   models: readonly HostThreadRecordModelled[],
   publication: HostPublicWindowPublication
 ) {
   return index.seed(
-    models.map((model) => ({ kind: 'model' as const, model, epoch: 0 })),
+    models.map((model) => ({ kind: 'model' as const, model })),
     publication
   )
 }
 
-/** Prepare one change (epoch 0 unless given) and commit it at once. */
+/** Prepare one change and commit it at once. */
 function applyNow(
   index: HostPublicWindowIndex,
-  change: Unversioned | HostPublicWindowChange,
+  change: HostPublicWindowChange,
   publication: HostPublicWindowPublication
 ) {
-  const transaction = index.prepare(
-    ['epoch' in change ? change : { ...change, epoch: 0 }],
-    publication
-  )
+  const transaction = index.prepare([change], publication)
   transaction.commit()
   return transaction
 }
@@ -394,23 +387,27 @@ function randomModel(r: () => number, appChatId: string, step: number): HostThre
 interface Step {
   readonly change: HostPublicWindowChange
   readonly generatedAt: string
-  /** Every thread's full model, with its epoch, once the change is made. */
+  /** Every thread's full model once the change is made. */
   readonly models: ReadonlyMap<string, HostPublicWindowModelChange>
 }
 
-/** Deletes advance a thread's epoch, as the scope ledger's delete counter does. */
-function epochs() {
-  const counters = new Map<string, number>()
+/**
+ * A deleted thread never comes back in the incarnation (the scope ledger
+ * closes its lane), so a slot whose thread is deleted goes on as a new
+ * thread under a fresh id.
+ */
+function lives() {
+  const deaths = new Map<string, number>()
+  const id = (slot: string): string => {
+    const count = deaths.get(slot) ?? 0
+    return count === 0 ? slot : `${slot}.${count}`
+  }
   return {
-    model: (model: HostThreadRecordModelled): HostPublicWindowModelChange => ({
-      kind: 'model',
-      model,
-      epoch: counters.get(model.threadId) ?? 0
-    }),
-    delete: (threadId: string): HostPublicWindowChange => {
-      const epoch = counters.get(threadId) ?? 0
-      counters.set(threadId, epoch + 1)
-      return { kind: 'delete', threadId, epoch }
+    id,
+    delete: (slot: string): HostPublicWindowChange => {
+      const threadId = id(slot)
+      deaths.set(slot, (deaths.get(slot) ?? 0) + 1)
+      return { kind: 'delete', threadId }
     }
   }
 }
@@ -556,16 +553,17 @@ function replay(
 function busySteps(r: () => number): Step[] {
   const runsByThread = new Map<string, Record<string, unknown>[]>()
   const models = new Map<string, HostPublicWindowModelChange>()
-  const versions = epochs()
+  const threads = lives()
   const steps: Step[] = []
   let clock = 0
   for (let step = 0; step < 14; step += 1) {
-    const threadId = ['a', 'b', 'c', 'd'][Math.floor(r() * 4)]!
+    const slot = ['a', 'b', 'c', 'd'][Math.floor(r() * 4)]!
+    const threadId = threads.id(slot)
     let change: HostPublicWindowChange
     if (models.has(threadId) && r() < 0.2) {
       runsByThread.delete(threadId)
       models.delete(threadId)
-      change = versions.delete(threadId)
+      change = threads.delete(slot)
     } else {
       let runs = (runsByThread.get(threadId) ?? []).map((stored) =>
         stored.status === 'running' && r() < 0.5
@@ -595,13 +593,14 @@ function busySteps(r: () => number): Step[] {
         appChatId: threadId,
         updatedAt: T0 + step,
         // Two ensembles, so displacement also changes their rounds' members.
-        ...(threadId === 'a' || threadId === 'c'
+        ...(slot === 'a' || slot === 'c'
           ? ensemble(`round-${threadId}`, r() < 0.7 ? 'running' : 'completed')
           : {}),
         runs
       })
-      change = versions.model(model)
-      models.set(threadId, change)
+      const modelled: HostPublicWindowModelChange = { kind: 'model', model }
+      change = modelled
+      models.set(threadId, modelled)
     }
     steps.push({ change, generatedAt: iso(step * 60_000), models: new Map(models) })
   }
@@ -614,13 +613,16 @@ describe('HostPublicWindowIndex', () => {
     for (let seed = 1; seed <= 25; seed += 1) {
       const r = mulberry32(seed)
       const models = new Map<string, HostPublicWindowModelChange>()
-      const versions = epochs()
-      const ids = ['a', 'b', 'B', 'c', 'd', 'e']
+      const threads = lives()
+      const slots = ['a', 'b', 'B', 'c', 'd', 'e']
       const steps: Step[] = []
       for (let step = 0; step < 40; step += 1) {
-        const threadId = ids[Math.floor(r() * ids.length)]!
-        const change =
-          r() < 0.2 ? versions.delete(threadId) : versions.model(randomModel(r, threadId, step))
+        const slot = slots[Math.floor(r() * slots.length)]!
+        const threadId = threads.id(slot)
+        const change: HostPublicWindowChange =
+          r() < 0.2
+            ? threads.delete(slot)
+            : { kind: 'model', model: randomModel(r, threadId, step) }
         if (change.kind === 'delete') models.delete(threadId)
         else models.set(threadId, change)
         steps.push({ change, generatedAt: iso(step * 60_000), models: new Map(models) })
@@ -1018,82 +1020,91 @@ describe('HostPublicWindowIndex', () => {
     expect(index.wire().get('run')!.get('shared')).toMatchObject({ threadId: 'b' })
   })
 
-  it('sets aside a model older than the one it holds, and anything of a deleted epoch', () => {
+  it('sets aside a model older than the one it holds, and anything for a deleted thread', () => {
     const index = new HostPublicWindowIndex()
     const titled = (title: string, persistenceRevision: number) =>
       modelOf({ appChatId: 'x', title, persistenceRevision, runs: [run('x-0', 0)] })
     const publication = { generatedAt: iso(0) }
-    applyNow(index, { kind: 'model', model: titled('second', 2), epoch: 0 }, publication)
+    applyNow(index, { kind: 'model', model: titled('second', 2) }, publication)
     // A stale refill read at revision 1 changes nothing.
-    const stale = applyNow(
-      index,
-      { kind: 'model', model: titled('first', 1), epoch: 0 },
-      publication
-    )
+    const stale = applyNow(index, { kind: 'model', model: titled('first', 1) }, publication)
     expect(stale.ignored).toEqual([{ threadId: 'x', reason: 'older' }])
     expect(stale.effects).toEqual([])
     expect(index.wire().get('thread')!.get('x')).toMatchObject({ title: 'second' })
     // The same revision is a refill, and lands.
     expect(
-      applyNow(index, { kind: 'model', model: titled('second', 2), epoch: 0 }, publication).ignored
+      applyNow(index, { kind: 'model', model: titled('second', 2) }, publication).ignored
     ).toEqual([])
-    // Deleted at epoch 0: a model read before the delete cannot bring it back.
-    applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication)
-    const resurrected = applyNow(
-      index,
-      { kind: 'model', model: titled('second', 2), epoch: 0 },
-      publication
-    )
-    expect(resurrected.ignored).toEqual([{ threadId: 'x', reason: 'deleted' }])
+    // Once deleted, nothing brings the thread back in this incarnation: not a
+    // model read before the delete, nor one a source that still lists the
+    // thread returns after it, at any revision.
+    applyNow(index, { kind: 'delete', threadId: 'x' }, publication)
+    for (const model of [titled('second', 2), titled('again', 1), titled('newer', 9)]) {
+      const resurrected = applyNow(index, { kind: 'model', model }, publication)
+      expect(resurrected.ignored).toEqual([{ threadId: 'x', reason: 'deleted' }])
+      expect(resurrected.effects).toEqual([])
+    }
     expect(index.wire().get('thread')!.has('x')).toBe(false)
     expect(index.wire().get('run')!.has('x-0')).toBe(false)
+    // A second delete finds nothing to publish.
+    expect(applyNow(index, { kind: 'delete', threadId: 'x' }, publication).ignored).toEqual([
+      { threadId: 'x', reason: 'deleted' }
+    ])
+    // A delete of a thread the index never held closes it all the same.
+    applyNow(index, { kind: 'delete', threadId: 'never' }, publication)
     expect(
-      applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication).ignored
-    ).toEqual([{ threadId: 'x', reason: 'deleted' }])
-    // A later epoch is a new thread under the same id.
-    applyNow(index, { kind: 'model', model: titled('again', 1), epoch: 1 }, publication)
-    expect(index.wire().get('thread')!.get('x')).toMatchObject({ title: 'again' })
-    // A delete of an epoch older than the one held changes nothing.
-    expect(
-      applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication).ignored
-    ).toEqual([{ threadId: 'x', reason: 'deleted' }])
-    const older = new HostPublicWindowIndex()
-    applyNow(older, { kind: 'model', model: titled('new', 1), epoch: 3 }, publication)
-    expect(
-      applyNow(older, { kind: 'delete', threadId: 'x', epoch: 2 }, publication).ignored
-    ).toEqual([{ threadId: 'x', reason: 'older' }])
-    expect(
-      applyNow(older, { kind: 'model', model: titled('newer', 9), epoch: 2 }, publication).ignored
-    ).toEqual([{ threadId: 'x', reason: 'older' }])
-    expect(older.wire().get('thread')!.get('x')).toMatchObject({ title: 'new' })
+      applyNow(index, { kind: 'model', model: modelOf({ appChatId: 'never' }) }, publication)
+        .ignored
+    ).toEqual([{ threadId: 'never', reason: 'deleted' }])
   })
 
-  it('forgets no delete when it seeds again', () => {
+  it('forgets no delete when it seeds again, and keeps the newer of two models', () => {
     const index = new HostPublicWindowIndex()
     const publication = { generatedAt: iso(0) }
     const x = modelOf({ appChatId: 'x', runs: [run('x-0', 0)] })
     const y = modelOf({ appChatId: 'y', runs: [run('y-0', 0)] })
     seed(index, [x, y], publication)
-    applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication)
+    applyNow(index, { kind: 'delete', threadId: 'x' }, publication)
     // A seed read before the delete cannot bring the thread back.
     expect(seed(index, [x, y], publication).ignored).toEqual([{ threadId: 'x', reason: 'deleted' }])
     expect([...index.wire().get('thread')!.keys()]).toEqual(['y'])
-    // Nor can a model read before it that lands after the seed.
-    expect(applyNow(index, { kind: 'model', model: x, epoch: 0 }, publication).ignored).toEqual([
+    // Nor can a model that lands after the seed.
+    expect(applyNow(index, { kind: 'model', model: x }, publication).ignored).toEqual([
       { threadId: 'x', reason: 'deleted' }
     ])
     expect(index.wire().get('run')!.has('x-0')).toBe(false)
-    // A later epoch is a new thread under the same id, in a seed as in a change.
-    expect(
-      index.seed(
-        [
-          { kind: 'model', model: x, epoch: 1 },
-          { kind: 'model', model: y, epoch: 0 }
-        ],
-        publication
-      ).ignored
-    ).toEqual([])
-    expect([...index.wire().get('thread')!.keys()]).toEqual(['x', 'y'])
+    // Of two models of one thread, the newer stands, in either order.
+    const titled = (title: string, persistenceRevision: number) =>
+      modelOf({ appChatId: 'y', title, persistenceRevision, runs: [run('y-0', 0)] })
+    expect(seed(index, [titled('old', 1), titled('new', 2)], publication).ignored).toEqual([])
+    expect(index.wire().get('thread')!.get('y')).toMatchObject({ title: 'new' })
+    expect(seed(index, [titled('new', 2), titled('old', 1)], publication).ignored).toEqual([
+      { threadId: 'y', reason: 'older' }
+    ])
+    expect(index.wire().get('thread')!.get('y')).toMatchObject({ title: 'new' })
+  })
+
+  it('names a thread’s new round when a model keeps its thread row', () => {
+    // An incremental update can keep the thread row object across a change
+    // of round; the row that names the round must follow the round.
+    const index = new HostPublicWindowIndex()
+    const publication = { generatedAt: iso(0) }
+    const live = (roundId: string, persistenceRevision: number) =>
+      modelOf({
+        appChatId: 'x',
+        persistenceRevision,
+        ...ensemble(roundId, 'running'),
+        runs: [run(`${roundId}-run`, 0, { status: 'running', endedAt: undefined })]
+      })
+    const first = live('round-a', 1)
+    applyNow(index, { kind: 'model', model: first }, publication)
+    expect(index.wire().get('thread')!.get('x')).toMatchObject({ activeRoundId: 'round-a' })
+    const next = { ...live('round-b', 2), thread: first.thread }
+    applyNow(index, { kind: 'model', model: next }, publication)
+    const fresh = new HostPublicWindowIndex()
+    seed(fresh, [next], publication)
+    expect(index.wire().get('thread')!.get('x')).toMatchObject({ activeRoundId: 'round-b' })
+    expect(comparable(fromWire(index.wire()))).toEqual(comparable(fromWire(fresh.wire())))
   })
 
   it('changes nothing until a transaction commits, and holds one at a time', () => {
@@ -1102,7 +1113,7 @@ describe('HostPublicWindowIndex', () => {
     seed(index, [modelOf({ appChatId: 'a' })], publication)
     const before = comparable(fromWire(index.wire()))
     const aborted = index.prepare(
-      [{ kind: 'model', model: modelOf({ appChatId: 'b' }), epoch: 0 }],
+      [{ kind: 'model', model: modelOf({ appChatId: 'b' }) }],
       publication
     )
     expect(aborted.effects.map((effect) => effect.entityId)).toEqual(['b'])
@@ -1115,9 +1126,9 @@ describe('HostPublicWindowIndex', () => {
     // Changes in one transaction apply in order, and diff once.
     const both = index.prepare(
       [
-        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'first' }), epoch: 0 },
-        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'second' }), epoch: 0 },
-        { kind: 'delete', threadId: 'a', epoch: 0 }
+        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'first' }) },
+        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'second' }) },
+        { kind: 'delete', threadId: 'a' }
       ],
       publication
     )
@@ -1141,9 +1152,11 @@ describe('HostPublicWindowIndex', () => {
       ...full,
       runs: { ...full.runs, candidates: full.runs.candidates.slice(0, 5) }
     }
-    expect(
-      index.seed([{ kind: 'model', model: partial, epoch: 0 }], { generatedAt: iso(0) })
-    ).toEqual({ complete: false, refill: ['x'], ignored: [] })
+    expect(index.seed([{ kind: 'model', model: partial }], { generatedAt: iso(0) })).toEqual({
+      complete: false,
+      refill: ['x'],
+      ignored: []
+    })
     expect(index.wire().get('run')!.size).toBe(5)
     expect(applyNow(index, { kind: 'model', model: full }, { generatedAt: iso(0) })).toMatchObject({
       complete: true,
