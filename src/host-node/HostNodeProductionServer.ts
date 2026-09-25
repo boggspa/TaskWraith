@@ -67,7 +67,10 @@ import {
   assertHostMayOpenProfileWriters,
   writeHostProfileWriterFence
 } from '../host-runtime/HostProfileWriterFence'
-import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import {
+  HostProfileDomainStore,
+  type HostProfileDomainStoreOptions
+} from '../host-runtime/HostProfileDomainStore'
 import {
   createHostStandaloneComposition,
   type HostStandaloneComposition,
@@ -220,6 +223,7 @@ export interface HostNodeProductionServerOptions {
     profilePath: string
     authority: { assertProfileAuthority(): void }
     onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+    onThreadRecordWritten?: HostProfileDomainStoreOptions['onThreadRecordWritten']
   }) => HostProfileDomainStore
   readonly createDomain?: (options: HostNodeDomainPortsOptions) => HostNodeDomainPorts
   readonly createComposition?: (input: HostStandaloneCompositionInput) => HostStandaloneComposition
@@ -564,7 +568,8 @@ export class HostNodeProductionServer {
           },
           incarnation: writerId,
           assertAuthority: () => this.lease!.assertHeld(),
-          hasLiveWork: (chatId) => !this.domain || this.domain.hasRuntimeWorkForThread(chatId)
+          hasLiveWork: (chatId) => !this.domain || this.domain.hasRuntimeWorkForThread(chatId),
+          onAdopted: (chatId) => this.composition?.markThreadRecord?.(chatId, 'record')
         })
         this.hostRunWindow = new ThreadCatalogueHostRunWindow(this.threadCatalogueMirror, () =>
           this.queueReconciliation()
@@ -573,6 +578,10 @@ export class HostNodeProductionServer {
       }
       const store = (this.options.createStore ?? ((input) => new HostProfileDomainStore(input)))({
         profilePath: this.lease.path,
+        // M4 slice 13c1: every chat-file write reaches the public window
+        // feeder, which exists only while the transactional persist is on.
+        onThreadRecordWritten: (threadId, kind) =>
+          this.composition?.markThreadRecord?.(threadId, kind),
         authority: { assertProfileAuthority: () => this.lease!.assertHeld() },
         ...(this.threadCatalogueMirror
           ? {

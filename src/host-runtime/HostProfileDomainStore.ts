@@ -246,6 +246,13 @@ export interface HostProfileDomainStoreOptions {
    *  a skipped record is announced through the caller — without it the skip is
    *  as silent as the whole-Host failure it replaced. */
   readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+  /**
+   * M4 slice 13c: called after a chat file was replaced or removed, so the
+   * public window index can follow every writer. `run` marks the three
+   * run-port writes, `deleted` the unlink, `record` everything else. A
+   * throwing hook is swallowed: it never fails the write.
+   */
+  readonly onThreadRecordWritten?: (threadId: string, kind: HostThreadRecordWrittenKind) => void
   /** Summary bytes `listThreadSummaries()` may hold resident. Measured on the
    *  summaries themselves rather than on the records they came from, since the
    *  transcript is 95% of a record and none of it is held. 0 disables the cache
@@ -732,6 +739,9 @@ function decodeMessage(value: unknown): HostProfileMessage {
   return item as unknown as HostProfileMessage
 }
 
+/** What a chat-file write was, for `onThreadRecordWritten` (M4 slice 13c). */
+export type HostThreadRecordWrittenKind = 'record' | 'run' | 'deleted'
+
 /**
  * The identity the store's caches key a record file by: every field a
  * rewrite can change, in place or by rename. A transaction's live CAS
@@ -851,6 +861,7 @@ export class HostProfileDomainStore {
   private readonly beforeAtomicPublish?: (targetPath: string) => void
   private readonly quarantinedThreads = new Set<string>()
   private readonly onThreadQuarantined?: (threadId: string, reason: 'record-too-large') => void
+  private readonly onThreadRecordWritten?: HostProfileDomainStoreOptions['onThreadRecordWritten']
   /** Stray `chats/` entry names already reported, so a persistent stray file
    *  (a `.DS_Store`, a leftover symlink) is audited once, not once per sweep —
    *  the sweep runs on the reconciler's 1s timer. */
@@ -889,6 +900,7 @@ export class HostProfileDomainStore {
     this.idFactory = options.idFactory ?? randomUUID
     this.beforeAtomicPublish = options.beforeAtomicPublish
     this.onThreadQuarantined = options.onThreadQuarantined
+    this.onThreadRecordWritten = options.onThreadRecordWritten
     this.runSummarySource = options.runSummarySource
     this.threadSummarySource = options.threadSummarySource
     this.beginThreadPublication = options.beginThreadPublication
@@ -1771,6 +1783,7 @@ export class HostProfileDomainStore {
       }
       unlinkSync(path)
       this.dropThreadRevision(input.threadId)
+      this.notifyThreadRecordWritten(input.threadId, 'deleted')
       fsyncDirectory(this.chatsPath)
       return true
     } finally {
@@ -1917,6 +1930,7 @@ export class HostProfileDomainStore {
       throw error
     }
     publication?.commit()
+    this.notifyThreadRecordWritten(input.threadId, 'record')
     return published
   }
 
@@ -2014,7 +2028,7 @@ export class HostProfileDomainStore {
       persistenceRevision: this.nextRevision(current),
       updatedAt: this.now()
     }
-    this.writeThread(next)
+    this.writeThread(next, 'run')
     return next
   }
 
@@ -2118,7 +2132,7 @@ export class HostProfileDomainStore {
       persistenceRevision: this.nextRevision(current),
       updatedAt: this.now()
     }
-    this.writeThread(next)
+    this.writeThread(next, 'run')
     return next
   }
 
@@ -2259,7 +2273,7 @@ export class HostProfileDomainStore {
       persistenceRevision: this.nextRevision(current),
       updatedAt: this.now()
     }
-    this.writeThread(next)
+    this.writeThread(next, 'run')
     return next
   }
 
@@ -2393,7 +2407,18 @@ export class HostProfileDomainStore {
     return thread
   }
 
-  private writeThread(thread: CanonicalHostProfileThread): void {
+  private notifyThreadRecordWritten(threadId: string, kind: HostThreadRecordWrittenKind): void {
+    try {
+      this.onThreadRecordWritten?.(threadId, kind)
+    } catch {
+      // The index follows on the next write; the write itself stands.
+    }
+  }
+
+  private writeThread(
+    thread: CanonicalHostProfileThread,
+    kind: Exclude<HostThreadRecordWrittenKind, 'deleted'> = 'record'
+  ): void {
     this.assertAuthority()
     this.requireId(thread.appChatId)
     if (peopleDonorMutationOwned(this.profilePath))
@@ -2407,6 +2432,7 @@ export class HostProfileDomainStore {
     }
     publication?.commit()
     this.cacheThreadRevision(thread.appChatId, thread.persistenceRevision ?? 0)
+    this.notifyThreadRecordWritten(thread.appChatId, kind)
   }
 
   private chatPath(threadId: string): string {

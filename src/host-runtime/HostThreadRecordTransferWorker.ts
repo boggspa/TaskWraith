@@ -44,6 +44,11 @@ import {
   type HostThreadRecordPrepareInput,
   type HostThreadRecordPrepareResult
 } from './HostThreadRecordPrepare'
+import {
+  modelHostThreadRecordFile,
+  type HostThreadRecordFileModel,
+  type HostThreadRecordModelInput
+} from './HostThreadRecordModel'
 
 type PublishInput = Pick<
   HostThreadRecordTransferPublishOptions,
@@ -63,6 +68,7 @@ export type HostThreadRecordTransferWorkerRequest = { readonly id: number } & (
   | { readonly kind: 'publish'; readonly input: PublishInput }
   | { readonly kind: 'read'; readonly input: ReadInput }
   | { readonly kind: 'prepare'; readonly input: PrepareInput }
+  | { readonly kind: 'model'; readonly input: HostThreadRecordModelInput }
 )
 
 export type HostThreadRecordTransferWorkerReply =
@@ -73,6 +79,7 @@ export type HostThreadRecordTransferWorkerReply =
         | HostThreadRecordTransferDescriptor
         | DecodedHostThreadRecordTransfer
         | HostThreadRecordPrepareResult
+        | HostThreadRecordFileModel
     }
   | {
       readonly id: number
@@ -118,7 +125,9 @@ export function handleHostThreadRecordTransferRequest(
         ? publishHostThreadRecordTransfer(request.input)
         : request.kind === 'read'
           ? readHostThreadRecordTransfer(request.input)
-          : prepareHostThreadRecord(request.input)
+          : request.kind === 'prepare'
+            ? prepareHostThreadRecord(request.input)
+            : modelHostThreadRecordFile(request.input)
     return { id: request.id, ok: true, value }
   } catch (error) {
     return {
@@ -428,6 +437,19 @@ export class HostThreadRecordTransferWorker {
     }
   }
 
+  /**
+   * A thread's model from its committed file (M4 slice 13c1). Like prepare,
+   * it always runs on the worker and carries no record, so it neither falls
+   * back to the caller nor counts toward publish/read's pending cap.
+   */
+  model(input: HostThreadRecordModelInput): Promise<HostThreadRecordFileModel> {
+    try {
+      return this.request({ kind: 'model', input })
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
+
   /** Stop accepting jobs, finish every acknowledged durability barrier, then exit. */
   async close(): Promise<void> {
     this.closed = true
@@ -493,6 +515,7 @@ export class HostThreadRecordTransferWorker {
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'publish' }>, 'id'>
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'read' }>, 'id'>
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'prepare' }>, 'id'>
+      | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'model' }>, 'id'>
   ): Promise<T> {
     if (this.closed) {
       return Promise.reject(
@@ -511,7 +534,7 @@ export class HostThreadRecordTransferWorker {
     try {
       const worker = this.getWorker()
       this.pending.set(id, settle)
-      if (request.kind === 'prepare') this.preparing.add(id)
+      if (request.kind === 'prepare' || request.kind === 'model') this.preparing.add(id)
       worker.ref()
       worker.post({ ...request, id } satisfies HostThreadRecordTransferWorkerRequest)
     } catch (cause) {
@@ -569,4 +592,17 @@ export function prepareHostThreadRecordOffLoop(
     )
   }
   return worker.prepare(input)
+}
+
+/** The shared worker's file model; rejects instead of modelling inline. */
+export function modelHostThreadRecordOffLoop(
+  input: HostThreadRecordModelInput
+): Promise<HostThreadRecordFileModel> {
+  const worker = sharedHostThreadRecordTransferWorker()
+  if (!worker) {
+    return Promise.reject(
+      new HostThreadRecordTransferError('Thread-record transfer worker entry is unavailable.')
+    )
+  }
+  return worker.model(input)
 }

@@ -72,7 +72,13 @@ import {
   type HostThreadRecordCommitPort,
   type HostThreadRecordTransactionPorts
 } from './HostThreadRecordTransaction'
-import { prepareHostThreadRecordOffLoop } from './HostThreadRecordTransferWorker'
+import {
+  modelHostThreadRecordOffLoop,
+  prepareHostThreadRecordOffLoop
+} from './HostThreadRecordTransferWorker'
+import type { HostThreadRecordWrittenKind } from './HostProfileDomainStore'
+import { HostPublicWindowFeeder } from './HostPublicWindowFeeder'
+import type { HostThreadRecordFileModel, HostThreadRecordModelInput } from './HostThreadRecordModel'
 import { HostTransactionLog } from './HostTransactionLog'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { randomBytes } from 'node:crypto'
@@ -135,6 +141,8 @@ export interface HostStandaloneThreadRecordTransactionInput {
   readonly records: HostThreadRecordCommitPort
   /** Defaults to the transfer worker's prepare; tests pass an in-process one. */
   readonly prepare?: HostThreadRecordTransactionPorts['prepare']
+  /** Defaults to the transfer worker's file model; tests pass an in-process one. */
+  readonly model?: (input: HostThreadRecordModelInput) => Promise<HostThreadRecordFileModel>
   readonly now?: () => number
 }
 
@@ -212,6 +220,11 @@ export interface HostStandaloneComposition {
   reconcileProjection(): Promise<HostProjectionReconcileResult>
   stopProjectionReconciliation(): Promise<void>
   shutdown(): Promise<void>
+  /**
+   * M4 slice 13c1: a chat-file write for the public window feeder. Present
+   * only while the transactional persist is wired.
+   */
+  markThreadRecord?(threadId: string, kind: HostThreadRecordWrittenKind): void
 }
 
 function requireFunction(value: unknown, label: string): void {
@@ -374,6 +387,8 @@ export function createHostStandaloneComposition(
       // prepare aborts at the closed gate; one past it publishes. Either way
       // it settles before the stores below are flushed.
       await threadRecordTransaction?.close()
+      // Feeds already marked publish before the stores flush.
+      await threadRecordTransaction?.feeder.close()
       // Fence is domain.beginShutdown (ProductionServer calls domain.shutdown
       // first). Drain start publications after dispatches have quiesced and
       // before runtime.flush so a snapshot-only drain cannot miss work.
@@ -514,7 +529,13 @@ export function createHostStandaloneComposition(
     startProjectionReconciliation: () => reconciler!.start(),
     reconcileProjection: () => reconciler!.reconcileNow(),
     stopProjectionReconciliation: () => reconciler!.stop(),
-    shutdown
+    shutdown,
+    ...(threadRecordTransaction
+      ? {
+          markThreadRecord: (threadId: string, kind: HostThreadRecordWrittenKind) =>
+            threadRecordTransaction.feeder.mark(threadId, kind)
+        }
+      : {})
   }
 }
 
@@ -544,6 +565,7 @@ function createThreadRecordTransaction(
 ): {
   port: AppStoreHostAuthorityThreadRecordTransaction
   gate: HostCommitGate
+  feeder: HostPublicWindowFeeder
   close(): Promise<void>
 } {
   const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
@@ -553,8 +575,17 @@ function createThreadRecordTransaction(
   const publicationLock = createSerialLock()
   const now = options.now ?? (() => Date.now())
   const inFlight = new Set<Promise<unknown>>()
+  const model = options.model ?? modelHostThreadRecordOffLoop
+  const feeder = new HostPublicWindowFeeder({
+    index,
+    publicationLock,
+    deltas: runtime.deltaStore,
+    model: (threadId) => model({ profilePath: options.profilePath, threadId }),
+    now
+  })
   return {
     gate,
+    feeder,
     port: {
       ledger,
       // Only the manifest's health: a closed ledger routes here and refuses

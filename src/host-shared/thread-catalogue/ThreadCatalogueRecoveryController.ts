@@ -84,6 +84,12 @@ export class ThreadCatalogueRecoveryController {
       incarnation: string
       assertAuthority(): void
       hasLiveWork(chatId: string): boolean
+      /**
+       * Called after an adoption renamed the prepared record into place, so
+       * the Host's public window index can follow it (M4 slice 13c1). A
+       * throwing callback never fails the adoption.
+       */
+      onAdopted?(chatId: string): void
     }
   ) {
     options.assertAuthority()
@@ -332,6 +338,11 @@ export class ThreadCatalogueRecoveryController {
     } catch (error) {
       this.options.publisher.fail(ticket)
       throw error
+    }
+    try {
+      this.options.onAdopted?.(chatId)
+    } catch {
+      // The index follows on the thread's next write; the adoption stands.
     }
     void this.options.client
       .query({ method: 'discard-prepared', preparedId })
