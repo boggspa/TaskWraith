@@ -60,6 +60,29 @@ describe('HostDeltaStore group journal name durability (M4 slice 7a)', () => {
     expect(store.findGroup('cmd')?.durable).toBe(true)
   })
 
+  it('fsyncs the directory for the reset that follows a failed flush of a group-created journal', async () => {
+    if (process.platform === 'win32') return
+    const store = new HostDeltaStore({
+      dataDir,
+      now,
+      groupFsync: async () => {
+        throw new Error('injected group fsync failure')
+      }
+    })
+    store.appendGroup({
+      commandId: 'cmd',
+      effects: [{ kind: 'upsert', family: 'thread', entityId: 'thread-0' }]
+    })
+    synced.paths.length = 0
+
+    const result = await store.awaitDurable()
+
+    // The reset line lands in the journal the failed group created, so the
+    // reset's own fsync has to make that journal's name durable.
+    expect(result.kind).toBe('reset')
+    expect(synced.paths).toEqual([join(dataDir, HOST_DELTA_JOURNAL_FILENAME), dataDir])
+  })
+
   it('leaves the directory alone for a legacy append to a journal that was already durable', () => {
     const store = new HostDeltaStore({ dataDir, now })
     store.append({ kind: 'upsert', family: 'thread', entityId: 'first' })

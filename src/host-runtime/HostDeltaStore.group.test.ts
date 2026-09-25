@@ -356,36 +356,46 @@ describe('HostDeltaStore group append (M4 slice 7a)', () => {
     expect(writes).toBe(1)
   })
 
-  it('rolls a failed group write back as appendBatch does and reuses the cursor', async () => {
+  it('rolls a failed group write back as appendBatch does, then resets the generation (7b)', async () => {
     const dataDir = directory()
-    let failing = false
+    let failNextWrite = false
     const store = new HostDeltaStore({
       dataDir,
       now,
       compactAfterRecords: 10000,
       batchWrite: (fd, bytes, offset, length) => {
-        if (failing) throw new Error('injected group write failure')
+        if (failNextWrite) {
+          // Only the group line fails; the reset that follows goes through
+          // the same seam and must succeed.
+          failNextWrite = false
+          throw new Error('injected group write failure')
+        }
         return writeSync(fd, bytes, offset, length, null)
       }
     })
     store.append(legacy('seed'))
     const before = readFileSync(journalPath(dataDir))
-    failing = true
+    failNextWrite = true
     expect(store.appendGroup({ commandId: 'cmd', effects: effects(2) })).toMatchObject({
       kind: 'write-failed',
       rollback: 'proven',
-      position: position(1, 1)
+      recovery: { kind: 'reset', position: position(2, 1) }
     })
-    expect(readFileSync(journalPath(dataDir))).toEqual(before)
+    // The rollback restored the earlier bytes; the reset chained after them.
+    expect(readFileSync(journalPath(dataDir)).subarray(0, before.length)).toEqual(before)
+    expect(journalLines(dataDir).map((line) => line.op)).toEqual([
+      'append',
+      'generation-reset',
+      'append'
+    ])
     expect(store.findGroup('cmd')).toBeNull()
-    expect(store.getAppendedPosition()).toEqual(position(1, 1))
-    failing = false
+    expect(store.getAppendedPosition()).toEqual(position(2, 1))
     expect(store.appendGroup({ commandId: 'cmd', effects: effects(1) })).toMatchObject({
       kind: 'appended',
-      group: { start: position(1, 2), end: position(1, 2) }
+      group: { start: position(2, 2), end: position(2, 2) }
     })
     await store.awaitDurable()
-    expect(new HostDeltaStore({ dataDir, now }).getPosition()).toEqual(position(1, 2))
+    expect(new HostDeltaStore({ dataDir, now }).getPosition()).toEqual(position(2, 2))
   })
 
   it('accepts the empty group: count 0, start and end at the head, one journal line', async () => {
@@ -636,7 +646,7 @@ describe('HostDeltaStore group append (M4 slice 7a)', () => {
     expect(existingFsyncs).toEqual([journalPath(existing)])
   })
 
-  it('resolves failed for a failed fsync and then blocks append authority', async () => {
+  it('resolves reset for a failed fsync and keeps append authority open (7b)', async () => {
     const dataDir = directory()
     const store = new HostDeltaStore({
       dataDir,
@@ -651,20 +661,23 @@ describe('HostDeltaStore group append (M4 slice 7a)', () => {
     const first = store.awaitDurable()
     const second = store.awaitDurable()
     await expect(first).resolves.toMatchObject({
-      kind: 'failed',
+      kind: 'reset',
+      position: position(2, 1),
       detail: expect.stringContaining('injected group fsync failure')
     })
-    await expect(second).resolves.toMatchObject({ kind: 'failed' })
-    expect(store.getPosition()).toEqual(position(1, 1))
+    await expect(second).resolves.toMatchObject({ kind: 'reset', position: position(2, 1) })
+    expect(store.getPosition()).toEqual(position(2, 1))
     expect(store.getByCursor(2)).toBeNull()
-    expect(() => store.appendGroup({ commandId: 'next', effects: effects(1) })).toThrow(
-      'Host delta append authority is blocked'
-    )
-    expect(() => store.append(legacy('next'))).toThrow('Host delta append authority is blocked')
-    expect(() => store.appendBatch(effects(1))).toThrow('Host delta append authority is blocked')
-    expect(() => store.resetGeneration('after failure')).toThrow(
-      'Host delta append authority is blocked'
-    )
+    expect(store.findGroup('cmd')).toBeNull()
+    expect(store.getFailStop()).toBeNull()
+    expect(store.appendGroup({ commandId: 'next', effects: effects(1) })).toMatchObject({
+      kind: 'appended',
+      group: { start: position(2, 2), end: position(2, 2) }
+    })
+    expect(store.append(legacy('next'))).toMatchObject({
+      kind: 'appended',
+      position: position(2, 3)
+    })
   })
 
   it('reopens a whole group as durable records that chain with later appends', async () => {

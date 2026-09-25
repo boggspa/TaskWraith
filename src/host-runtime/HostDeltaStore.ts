@@ -238,11 +238,21 @@ export type HostDeltaGroupAppendResult =
       detail: string
       position: HostCursorPosition
       rollback: 'proven' | 'uncertain'
+      recovery: HostDeltaGroupFailureRecovery
     }
+
+/** What the store did after a group write or fsync failed (M4 slice 7b). */
+export type HostDeltaGroupFailureRecovery =
+  | { kind: 'reset'; position: HostCursorPosition }
+  | { kind: 'fail-stopped' }
 
 export type HostDeltaDurabilityResult =
   | { kind: 'durable'; position: HostCursorPosition }
-  | { kind: 'failed'; detail: string }
+  /** The group was not made durable; it completes at this reset (as D1). */
+  | { kind: 'reset'; position: HostCursorPosition; detail: string }
+  | { kind: 'fail-stopped'; detail: string }
+
+export const HOST_DELTA_GROUP_FAILURE_RESET_REASON = 'group durability failed'
 
 /**
  * Post-commit notification emitted only after an append is durable in the
@@ -298,6 +308,11 @@ export interface HostDeltaStoreOptions {
    * and close.
    */
   groupFsync?: (path: string) => Promise<void>
+  /**
+   * Called once when the store fail-stops: a group failed and the generation
+   * reset that should have followed failed too. The Host exits here.
+   */
+  onFailStop?: (detail: string) => void
 }
 
 interface CheckpointDocument {
@@ -364,6 +379,9 @@ export class HostDeltaStore {
   private readonly batchFsync: NonNullable<HostDeltaStoreOptions['batchFsync']>
   private readonly batchTruncate: NonNullable<HostDeltaStoreOptions['batchTruncate']>
   private readonly groupFsync: NonNullable<HostDeltaStoreOptions['groupFsync']>
+  private readonly onFailStop: HostDeltaStoreOptions['onFailStop']
+  /** Sticky for this instance: only a new store (boot recovery) moves on. */
+  private failStop: { detail: string } | null = null
 
   private generation: HostGeneration = 1
   /** The appended head: the next append chains after it. */
@@ -412,6 +430,7 @@ export class HostDeltaStore {
     this.batchFsync = options.batchFsync ?? fsyncSync
     this.batchTruncate = options.batchTruncate ?? ftruncateSync
     this.groupFsync = options.groupFsync ?? fsyncPath
+    this.onFailStop = options.onFailStop
     this.reopen()
   }
 
@@ -720,12 +739,17 @@ export class HostDeltaStore {
       { fsync: false }
     )
     if (!write.ok) {
-      if (!write.rolledBack) this.appendAuthorityBlocked = true
+      // A reset written after bytes that may be torn could itself be
+      // concatenated into a corrupt line, so an unproven rollback stops.
+      const recovery: HostDeltaGroupFailureRecovery = write.rolledBack
+        ? this.recoverFromGroupFailure(`group write failed: ${write.detail}`)
+        : this.failStopWith(`group write failed and its rollback is uncertain: ${write.detail}`)
       return {
         kind: 'write-failed',
         detail: write.detail,
         position: initial,
-        rollback: write.rolledBack ? 'proven' : 'uncertain'
+        rollback: write.rolledBack ? 'proven' : 'uncertain',
+        recovery
       }
     }
     for (const record of records) {
@@ -749,6 +773,8 @@ export class HostDeltaStore {
    * coalesce: one async fsync covers every group appended before it started.
    */
   awaitDurable(): Promise<HostDeltaDurabilityResult> {
+    if (this.failStop)
+      return Promise.resolve({ kind: 'fail-stopped', detail: this.failStop.detail })
     if (this.cursor <= this.durableCursor) {
       return Promise.resolve({ kind: 'durable', position: this.getPosition() })
     }
@@ -756,6 +782,11 @@ export class HostDeltaStore {
       this.durabilityWaiters.push({ target: this.cursor, generation: this.generation, resolve })
       this.requestFlush()
     })
+  }
+
+  /** Why the store fail-stopped, or null while it is running. */
+  getFailStop(): { detail: string } | null {
+    return this.failStop ? { ...this.failStop } : null
   }
 
   /** The command's group in the current generation, or null. */
@@ -1145,14 +1176,18 @@ export class HostDeltaStore {
     const coveredElsewhere = () => generation !== this.generation || target <= this.durableCursor
     const done = (error: unknown): void => {
       this.flushInFlight = false
+      if (this.failStop) {
+        this.resolveWaiters({ kind: 'fail-stopped', detail: this.failStop.detail })
+        return
+      }
       if (error !== null && !coveredElsewhere()) {
-        // 7a: fail closed. Slice 7b replaces this with a generation reset.
-        if (createdJournal) this.journalCreatedSinceFlush = true
-        this.appendAuthorityBlocked = true
+        // Nothing says which of the unflushed bytes reached the disk, so
+        // none of them is published: they complete at a generation reset.
         const detail = error instanceof Error ? error.message : String(error)
-        const waiting = this.durabilityWaiters
-        this.durabilityWaiters = []
-        for (const waiter of waiting) waiter.resolve({ kind: 'failed', detail })
+        // The reset line lands in the same journal; if a group created it,
+        // the reset's fsync must make its name durable too.
+        if (createdJournal) this.journalCreatedSinceFlush = true
+        this.recoverFromGroupFailure(`group fsync failed: ${detail}`)
         return
       }
       if (generation === this.generation) this.settleDurableThrough(target)
@@ -1164,6 +1199,75 @@ export class HostDeltaStore {
       () => done(null),
       (error: unknown) => done(error ?? new Error('Host delta group fsync failed'))
     )
+  }
+
+  /**
+   * A group write or fsync failed (RR-7). Everything not yet durable leaves
+   * memory and is never notified; the generation resets, and every pending
+   * waiter completes at the reset. If the reset fails too, the store
+   * fail-stops (§13 SF-2).
+   */
+  private recoverFromGroupFailure(detail: string): HostDeltaGroupFailureRecovery {
+    if (this.failStop) return { kind: 'fail-stopped' }
+    this.dropUndurable()
+    let reset: HostDeltaAppendResult
+    try {
+      reset = this.appendGenerationReset({
+        kind: 'generation-reset',
+        family: 'snapshot-meta',
+        payload: { reason: HOST_DELTA_GROUP_FAILURE_RESET_REASON },
+        at: this.now()
+      })
+    } catch (error) {
+      return this.failStopWith(
+        `${detail}; generation reset failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    if (reset.kind !== 'appended') {
+      return this.failStopWith(`${detail}; generation reset was ${reset.kind}`)
+    }
+    const position = this.getPosition()
+    this.flushRequested = false
+    this.resolveWaiters({ kind: 'reset', position, detail })
+    return { kind: 'reset', position }
+  }
+
+  /** Forget every record and group past the durable head. */
+  private dropUndurable(): void {
+    for (const cursor of [...this.orderedCursors]) {
+      if (cursor > this.durableCursor) this.dropRecord(cursor)
+    }
+    this.cursor = this.durableCursor
+    this.recomputeLowest()
+    for (const [commandId, entry] of this.groupsByCommand) {
+      if (entry.end > this.durableCursor) this.groupsByCommand.delete(commandId)
+    }
+  }
+
+  private failStopWith(detail: string): { kind: 'fail-stopped' } {
+    if (!this.failStop) {
+      this.failStop = { detail }
+      this.appendAuthorityBlocked = true
+      this.dropUndurable()
+      this.flushRequested = false
+      this.resolveWaiters({ kind: 'fail-stopped', detail })
+      try {
+        this.onFailStop?.(detail)
+      } catch (error) {
+        try {
+          this.log(`[host-delta-store] fail-stop handler failed: ${String(error)}`)
+        } catch {
+          // Diagnostics cannot undo a fail-stop.
+        }
+      }
+    }
+    return { kind: 'fail-stopped' }
+  }
+
+  private resolveWaiters(result: HostDeltaDurabilityResult): void {
+    const waiting = this.durabilityWaiters
+    this.durabilityWaiters = []
+    for (const waiter of waiting) waiter.resolve(result)
   }
 
   private notifyAppend(result: Extract<HostDeltaAppendResult, { kind: 'appended' }>): void {
