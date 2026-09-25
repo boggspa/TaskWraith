@@ -5,9 +5,12 @@ import type { HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type { HostProfileThread } from './HostProfileDomainStore'
 import {
   assembleHostPublicWindowFamilies,
+  HOST_WARNING_PROJECTION_WITHHELD,
   hostPublicRunWindow,
   HostPublicWindowIndex,
   type HostPublicWindowChange,
+  type HostPublicWindowModelChange,
+  type HostPublicWindowPublication,
   type HostPublicWindowWire
 } from './HostPublicWindowIndex'
 import { hostSnapshotEntityId } from './HostSnapshotDomainEffectDiff'
@@ -256,7 +259,8 @@ describe('assembleHostPublicWindowFamilies', () => {
 
 type ClientState = Map<string, Map<string, unknown>>
 const FAMILIES = ['thread', 'run', 'round', 'participant', 'warning'] as const
-const PROJECTOR_WARNING = /^projection_(rows_omitted|truncated):/
+/** The index's own warnings: stamped with the publication, not the data. */
+const PROJECTOR_WARNING = /^projection_(rows_omitted|truncated|rows_withheld):/
 
 function emptyClient(): ClientState {
   return new Map(FAMILIES.map((family) => [family, new Map<string, unknown>()]))
@@ -274,6 +278,35 @@ function applyEffects(state: ClientState, effects: readonly HostDomainEffectDto[
 
 function fromWire(wire: HostPublicWindowWire): ClientState {
   return new Map([...wire].map(([family, rows]) => [family, new Map(rows)]))
+}
+
+type Unversioned =
+  | { readonly kind: 'model'; readonly model: HostThreadRecordModelled }
+  | { readonly kind: 'delete'; readonly threadId: string }
+
+function seed(
+  index: HostPublicWindowIndex,
+  models: readonly HostThreadRecordModelled[],
+  publication: HostPublicWindowPublication
+) {
+  return index.seed(
+    models.map((model) => ({ kind: 'model' as const, model, epoch: 0 })),
+    publication
+  )
+}
+
+/** Prepare one change (epoch 0 unless given) and commit it at once. */
+function applyNow(
+  index: HostPublicWindowIndex,
+  change: Unversioned | HostPublicWindowChange,
+  publication: HostPublicWindowPublication
+) {
+  const transaction = index.prepare(
+    ['epoch' in change ? change : { ...change, epoch: 0 }],
+    publication
+  )
+  transaction.commit()
+  return transaction
 }
 
 /** The snapshot a fresh projection of every full model publishes, by family and entity id. */
@@ -361,8 +394,25 @@ function randomModel(r: () => number, appChatId: string, step: number): HostThre
 interface Step {
   readonly change: HostPublicWindowChange
   readonly generatedAt: string
-  /** Every thread's full model once the change is made. */
-  readonly models: ReadonlyMap<string, HostThreadRecordModelled>
+  /** Every thread's full model, with its epoch, once the change is made. */
+  readonly models: ReadonlyMap<string, HostPublicWindowModelChange>
+}
+
+/** Deletes advance a thread's epoch, as the scope ledger's delete counter does. */
+function epochs() {
+  const counters = new Map<string, number>()
+  return {
+    model: (model: HostThreadRecordModelled): HostPublicWindowModelChange => ({
+      kind: 'model',
+      model,
+      epoch: counters.get(model.threadId) ?? 0
+    }),
+    delete: (threadId: string): HostPublicWindowChange => {
+      const epoch = counters.get(threadId) ?? 0
+      counters.set(threadId, epoch + 1)
+      return { kind: 'delete', threadId, epoch }
+    }
+  }
 }
 
 function masked(family: string, entityId: string, row: unknown): unknown {
@@ -395,10 +445,15 @@ function expectMinimalEffects(before: ClientState, effects: readonly HostDomainE
 /**
  * Apply each step, answer every refill, and after each step compare what a
  * client holds with a fresh projection of every thread's full model.
+ * - `absorb`: a short window is aborted and prepared again with the named
+ *   threads modelled in full, so one transaction publishes the change;
+ * - `publish-short`: the short window is committed (still loading) and each
+ *   refill is its own transaction.
  */
 function replay(
   steps: readonly Step[],
   index: HostPublicWindowIndex,
+  mode: 'absorb' | 'publish-short',
   seen?: { omitted: number; activeRound: number; roundMembers: number; deletes: number }
 ): { refills: number; displaced: number; shrunk: number } {
   let client = emptyClient()
@@ -407,25 +462,24 @@ function replay(
   let shrunk = 0
   for (const step of steps) {
     const publication = { generatedAt: step.generatedAt }
-    let result = index.apply(step.change, publication)
-    let guard = 0
-    for (;;) {
-      if (result.kind !== 'effects') throw new Error(`refused: ${result.detail}`)
-      expectMinimalEffects(client, result.effects)
+    const publish = (transaction: ReturnType<HostPublicWindowIndex['prepare']>): void => {
+      expect(transaction.ignored).toEqual([])
+      expectMinimalEffects(client, transaction.effects)
       const before = client
-      client = applyEffects(client, result.effects)
+      client = applyEffects(client, transaction.effects)
+      transaction.commit()
       expect(comparable(client)).toEqual(comparable(fromWire(index.wire())))
-      displaced += result.effects.filter(
+      displaced += transaction.effects.filter(
         (effect) =>
           effect.kind === 'tombstone' &&
           effect.family === 'run' &&
-          [...step.models.values()].some((model) =>
+          [...step.models.values()].some(({ model }) =>
             model.runs.candidates.some((candidate) => candidate.runId === effect.entityId)
           ) &&
           before.get('run')!.has(effect.entityId)
       ).length
       // Rounds whose members another thread's runs pushed out.
-      shrunk += result.effects.filter((effect) => {
+      shrunk += transaction.effects.filter((effect) => {
         if (effect.family !== 'round' || effect.kind !== 'upsert') return false
         const prior = before.get('round')!.get(effect.entityId) as
           | { providerRunIds: string[] }
@@ -433,26 +487,45 @@ function replay(
         const next = (effect.payload as { providerRunIds: string[] }).providerRunIds
         return prior !== undefined && prior.providerRunIds.some((runId) => !next.includes(runId))
       }).length
-      if (result.complete) {
-        expect(result.refill).toEqual([])
-        break
+    }
+    let guard = 0
+    if (mode === 'absorb') {
+      const changes: HostPublicWindowChange[] = [step.change]
+      let transaction = index.prepare(changes, publication)
+      while (!transaction.complete) {
+        transaction.abort()
+        for (const threadId of transaction.refill) {
+          refills += 1
+          changes.push(step.models.get(threadId)!)
+        }
+        transaction = index.prepare(changes, publication)
+        guard += 1
+        expect(guard).toBeLessThan(20)
       }
-      // A short window names a thread to model again; doing so completes it.
-      expect(result.refill.length).toBeGreaterThan(0)
-      expect(
-        index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
-      ).toMatchObject({
-        message: expect.stringContaining('still loading')
-      })
-      for (const threadId of result.refill) {
+      expect(transaction.refill).toEqual([])
+      publish(transaction)
+    } else {
+      let transaction = index.prepare([step.change], publication)
+      for (;;) {
+        const { complete, refill } = transaction
+        publish(transaction)
+        if (complete) {
+          expect(refill).toEqual([])
+          break
+        }
+        // A short window names a thread to model again; doing so completes it.
+        expect(refill).toHaveLength(1)
+        expect(
+          index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
+        ).toMatchObject({ message: expect.stringContaining('still loading') })
         refills += 1
-        result = index.apply({ kind: 'model', model: step.models.get(threadId)! }, publication)
+        transaction = index.prepare([step.models.get(refill[0]!)!], publication)
+        guard += 1
+        expect(guard).toBeLessThan(20)
       }
-      guard += 1
-      expect(guard).toBeLessThan(20)
     }
     // Any order of the full models projects the same snapshot.
-    const reference = [...step.models.values()].reverse()
+    const reference = [...step.models.values()].map(({ model }) => model).reverse()
     expect(comparable(client)).toEqual(comparable(freshClient(reference, step.generatedAt)))
     if (seen) {
       if (step.change.kind === 'delete') seen.deletes += 1
@@ -482,7 +555,8 @@ function replay(
  */
 function busySteps(r: () => number): Step[] {
   const runsByThread = new Map<string, Record<string, unknown>[]>()
-  const models = new Map<string, HostThreadRecordModelled>()
+  const models = new Map<string, HostPublicWindowModelChange>()
+  const versions = epochs()
   const steps: Step[] = []
   let clock = 0
   for (let step = 0; step < 14; step += 1) {
@@ -491,7 +565,7 @@ function busySteps(r: () => number): Step[] {
     if (models.has(threadId) && r() < 0.2) {
       runsByThread.delete(threadId)
       models.delete(threadId)
-      change = { kind: 'delete', threadId }
+      change = versions.delete(threadId)
     } else {
       let runs = (runsByThread.get(threadId) ?? []).map((stored) =>
         stored.status === 'running' && r() < 0.5
@@ -526,8 +600,8 @@ function busySteps(r: () => number): Step[] {
           : {}),
         runs
       })
-      models.set(threadId, model)
-      change = { kind: 'model', model }
+      change = versions.model(model)
+      models.set(threadId, change)
     }
     steps.push({ change, generatedAt: iso(step * 60_000), models: new Map(models) })
   }
@@ -539,20 +613,19 @@ describe('HostPublicWindowIndex', () => {
     const seen = { omitted: 0, activeRound: 0, roundMembers: 0, deletes: 0 }
     for (let seed = 1; seed <= 25; seed += 1) {
       const r = mulberry32(seed)
-      const models = new Map<string, HostThreadRecordModelled>()
+      const models = new Map<string, HostPublicWindowModelChange>()
+      const versions = epochs()
       const ids = ['a', 'b', 'B', 'c', 'd', 'e']
       const steps: Step[] = []
       for (let step = 0; step < 40; step += 1) {
         const threadId = ids[Math.floor(r() * ids.length)]!
-        const change: HostPublicWindowChange =
-          r() < 0.2
-            ? { kind: 'delete', threadId }
-            : { kind: 'model', model: randomModel(r, threadId, step) }
+        const change =
+          r() < 0.2 ? versions.delete(threadId) : versions.model(randomModel(r, threadId, step))
         if (change.kind === 'delete') models.delete(threadId)
-        else models.set(threadId, change.model)
+        else models.set(threadId, change)
         steps.push({ change, generatedAt: iso(step * 60_000), models: new Map(models) })
       }
-      const final = replay(steps, new HostPublicWindowIndex(), seen)
+      const final = replay(steps, new HostPublicWindowIndex(), 'absorb', seen)
       expect(final.refills).toBe(0)
     }
     // The sequences reach the paths they are meant to prove.
@@ -563,19 +636,23 @@ describe('HostPublicWindowIndex', () => {
   })
 
   it('keeps a full run window through displacement and refills, whatever the band', () => {
-    const totals = new Map<number, { refills: number; displaced: number; shrunk: number }>()
+    const totals = new Map<string, { refills: number; displaced: number; shrunk: number }>()
     for (let seed = 1; seed <= 4; seed += 1) {
       const steps = busySteps(mulberry32(seed * 7_919))
       for (const band of [1, 7, 128]) {
-        const replayed = replay(steps, new HostPublicWindowIndex({ band }))
-        const total = totals.get(band) ?? { refills: 0, displaced: 0, shrunk: 0 }
-        totals.set(band, {
-          refills: total.refills + replayed.refills,
-          displaced: total.displaced + replayed.displaced,
-          shrunk: total.shrunk + replayed.shrunk
-        })
+        for (const mode of ['absorb', 'publish-short'] as const) {
+          const replayed = replay(steps, new HostPublicWindowIndex({ band }), mode)
+          const key = `${band}/${mode}`
+          const total = totals.get(key) ?? { refills: 0, displaced: 0, shrunk: 0 }
+          totals.set(key, {
+            refills: total.refills + replayed.refills,
+            displaced: total.displaced + replayed.displaced,
+            shrunk: total.shrunk + replayed.shrunk
+          })
+        }
       }
     }
+    expect(totals.size).toBe(6)
     for (const [, total] of totals) {
       expect(total.refills).toBeGreaterThan(0)
       expect(total.displaced).toBeGreaterThan(0)
@@ -594,16 +671,15 @@ describe('HostPublicWindowIndex', () => {
       appChatId: 'newer',
       runs: Array.from({ length: 1_796 }, (_, i) => run(`newer-${i}`, 1_000 + i))
     })
-    index.seed([older, newer], { generatedAt })
+    seed(index, [older, newer], { generatedAt })
     expect(index.wire().get('run')!.size).toBe(1_800)
     // The window held the older thread's four newest; four more new runs push them out.
     const busier = modelOf({
       appChatId: 'newer',
       runs: Array.from({ length: 1_800 }, (_, i) => run(`newer-${i}`, 1_000 + i))
     })
-    const pushed = index.apply({ kind: 'model', model: busier }, { generatedAt })
-    expect(pushed).toMatchObject({ kind: 'effects', complete: true, refill: [] })
-    if (pushed.kind !== 'effects') return
+    const pushed = applyNow(index, { kind: 'model', model: busier }, { generatedAt })
+    expect(pushed).toMatchObject({ complete: true, refill: [] })
     const runEffects = pushed.effects.filter((effect) => effect.family === 'run')
     expect(
       runEffects.filter((effect) => effect.kind === 'tombstone').map((effect) => effect.entityId)
@@ -613,17 +689,16 @@ describe('HostPublicWindowIndex', () => {
     ).toEqual(['newer-1796', 'newer-1797', 'newer-1798', 'newer-1799'])
     // Deleting it frees 1,800 slots: the older thread's band covers five, then
     // the window is short until the older thread is modelled again.
-    const freed = index.apply({ kind: 'delete', threadId: 'newer' }, { generatedAt })
-    expect(freed).toMatchObject({ kind: 'effects', complete: false, refill: ['older'] })
-    if (freed.kind !== 'effects') return
+    const freed = applyNow(index, { kind: 'delete', threadId: 'newer' }, { generatedAt })
+    expect(freed).toMatchObject({ complete: false, refill: ['older'] })
     expect(index.wire().get('run')!.size).toBe(5)
     expect(
       index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
     ).toMatchObject({
       message: expect.stringContaining('still loading')
     })
-    const refilled = index.apply({ kind: 'model', model: older }, { generatedAt })
-    expect(refilled).toMatchObject({ kind: 'effects', complete: true, refill: [] })
+    const refilled = applyNow(index, { kind: 'model', model: older }, { generatedAt })
+    expect(refilled).toMatchObject({ complete: true, refill: [] })
     expect(index.wire().get('run')!.size).toBe(10)
     expect(index.wire().get('warning')!.has(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)).toBe(false)
   })
@@ -645,19 +720,23 @@ describe('HostPublicWindowIndex', () => {
       appChatId: 'light',
       runs: Array.from({ length: 300 }, (_, n) => run(`light-${n}`, 10_000 + n))
     })
-    index.seed([...heavy.values(), light], { generatedAt })
+    seed(index, [...heavy.values(), light], { generatedAt })
     // Deleting the newer runs frees 300 slots; each thread's band holds 16.
-    let result = index.apply({ kind: 'delete', threadId: 'light' }, { generatedAt })
+    let result = applyNow(index, { kind: 'delete', threadId: 'light' }, { generatedAt })
     const refilled: string[] = []
     const retracted: string[] = []
     for (;;) {
-      if (result.kind !== 'effects') throw new Error('refused')
       for (const effect of result.effects) {
         if (effect.family === 'run' && effect.kind === 'tombstone') retracted.push(effect.entityId)
       }
       if (result.complete) break
       refilled.push(...result.refill)
-      result = index.apply({ kind: 'model', model: heavy.get(result.refill[0]!)! }, { generatedAt })
+      expect(refilled.length).toBeLessThan(10)
+      result = applyNow(
+        index,
+        { kind: 'model', model: heavy.get(result.refill[0]!)! },
+        { generatedAt }
+      )
     }
     expect(refilled).toEqual(['c', 'b', 'a'])
     expect(retracted).toHaveLength(300)
@@ -668,21 +747,24 @@ describe('HostPublicWindowIndex', () => {
   it('republishes the projector’s own warning only when it says something new', () => {
     const index = new HostPublicWindowIndex()
     const invalid = (id: string) => modelOf({ appChatId: id, updatedAt: -1 })
-    index.seed([invalid('a')], { generatedAt: iso(0) })
+    seed(index, [invalid('a')], { generatedAt: iso(0) })
     expect(index.wire().get('warning')!.get('projection_rows_omitted:threads')).toMatchObject({
       message: 'family threads omitted 1 decoder-invalid row',
       at: T0
     })
-    const later = index.apply(
+    const later = applyNow(
+      index,
       { kind: 'model', model: modelOf({ appChatId: 'b' }) },
       { generatedAt: iso(5_000) }
     )
-    if (later.kind !== 'effects') throw new Error('refused')
     expect(
       later.effects.map((effect) => `${effect.kind}:${effect.family}:${effect.entityId}`)
     ).toEqual(['upsert:thread:b'])
-    const more = index.apply({ kind: 'model', model: invalid('c') }, { generatedAt: iso(9_000) })
-    if (more.kind !== 'effects') throw new Error('refused')
+    const more = applyNow(
+      index,
+      { kind: 'model', model: invalid('c') },
+      { generatedAt: iso(9_000) }
+    )
     expect(more.effects).toEqual([
       {
         kind: 'upsert',
@@ -701,14 +783,14 @@ describe('HostPublicWindowIndex', () => {
     const ids = Array.from({ length: 2_000 }, (_, i) => `t-${String(i).padStart(4, '0')}`)
     // Listed newest first, so the bound keeps rows by id, not by position.
     const models = ids.map((appChatId) => modelOf({ appChatId })).reverse()
-    index.seed(models, { generatedAt: iso(0) })
+    seed(index, models, { generatedAt: iso(0) })
     expect(index.wire().get('thread')!.size).toBe(2_000)
     expect(index.wire().get('warning')!.size).toBe(0)
-    const added = index.apply(
+    const added = applyNow(
+      index,
       { kind: 'model', model: modelOf({ appChatId: 't-2000' }) },
       { generatedAt: iso(1) }
     )
-    if (added.kind !== 'effects') throw new Error('refused')
     expect(added.effects).toEqual([
       {
         kind: 'upsert',
@@ -719,8 +801,7 @@ describe('HostPublicWindowIndex', () => {
         })
       }
     ])
-    const deleted = index.apply({ kind: 'delete', threadId: 't-0000' }, { generatedAt: iso(2) })
-    if (deleted.kind !== 'effects') throw new Error('refused')
+    const deleted = applyNow(index, { kind: 'delete', threadId: 't-0000' }, { generatedAt: iso(2) })
     expect(
       deleted.effects.map((effect) => `${effect.kind}:${effect.family}:${effect.entityId}`)
     ).toEqual([
@@ -750,7 +831,7 @@ describe('HostPublicWindowIndex', () => {
         }
       })
     ).reverse()
-    index.seed(models, { generatedAt: iso(0) })
+    seed(index, models, { generatedAt: iso(0) })
     const participants = [...index.wire().get('participant')!.values()] as { threadId: string }[]
     expect(participants).toHaveLength(2_000)
     expect(participants.filter((row) => row.threadId === 't-40')).toHaveLength(0)
@@ -768,13 +849,12 @@ describe('HostPublicWindowIndex', () => {
         runs: [run(`r-${i}`, 0, { status: 'running', endedAt: undefined })]
       })
     )
-    index.seed(models, { generatedAt: iso(0) })
+    seed(index, models, { generatedAt: iso(0) })
     // Every round is live and started together: the window drops the last by round id.
     expect(index.wire().get('round')!.has('round-999')).toBe(false)
     expect(index.wire().get('thread')!.get('t-0999')).not.toHaveProperty('activeRoundId')
     expect(index.wire().get('thread')!.get('t-0998')).toMatchObject({ activeRoundId: 'round-998' })
-    const deleted = index.apply({ kind: 'delete', threadId: 't-0000' }, { generatedAt: iso(1) })
-    if (deleted.kind !== 'effects') throw new Error('refused')
+    const deleted = applyNow(index, { kind: 'delete', threadId: 't-0000' }, { generatedAt: iso(1) })
     expect(
       deleted.effects
         .filter((effect) => effect.family !== 'participant')
@@ -805,10 +885,10 @@ describe('HostPublicWindowIndex', () => {
         runs: Array.from({ length: count }, (_, i) => run(`newer-${i}`, 1_000 + i))
       })
     // The window holds the older thread's four newest; it keeps nine.
-    index.seed([older, newer(1_796)], { generatedAt })
+    seed(index, [older, newer(1_796)], { generatedAt })
     // Five fewer newer runs: the ninth fills the window's last slot exactly.
-    const result = index.apply({ kind: 'model', model: newer(1_791) }, { generatedAt })
-    expect(result).toMatchObject({ kind: 'effects', complete: true, refill: [] })
+    const result = applyNow(index, { kind: 'model', model: newer(1_791) }, { generatedAt })
+    expect(result).toMatchObject({ complete: true, refill: [] })
     expect(index.wire().get('run')!.size).toBe(1_800)
     expect(index.wire().get('run')!.has('older-1')).toBe(true)
     expect(index.wire().get('run')!.has('older-0')).toBe(false)
@@ -821,62 +901,255 @@ describe('HostPublicWindowIndex', () => {
       [iso(1_500), T0 + 1_500]
     ] as const) {
       const index = new HostPublicWindowIndex()
-      index.seed([modelOf({ appChatId: 'a', updatedAt: -1 })], { generatedAt })
+      seed(index, [modelOf({ appChatId: 'a', updatedAt: -1 })], { generatedAt })
       expect(index.wire().get('warning')!.get('projection_rows_omitted:threads')).toMatchObject({
         at
       })
     }
   })
 
-  it('refuses a change that would fail the privacy scan, and keeps what it published', () => {
+  it('withholds a row the privacy scan refuses, and publishes the rest of the change', () => {
     const index = new HostPublicWindowIndex()
-    index.seed([modelOf({ appChatId: 'a', runs: [run('r1', 0)] })], { generatedAt: iso(0) })
-    const before = comparable(fromWire(index.wire()))
+    seed(index, [modelOf({ appChatId: 'a', runs: [run('r1', 0)] })], { generatedAt: iso(0) })
     const leaked = modelOf({
       appChatId: 'b',
+      runs: [run('r2', 5)],
       messages: [{ id: 'm', role: 'user', content: 'token ghp_abc', timestamp: iso(0) }]
     })
-    expect(index.apply({ kind: 'model', model: leaked }, { generatedAt: iso(1) })).toMatchObject({
-      kind: 'refused',
-      reason: 'privacy_failed'
+    const withheld = applyNow(index, { kind: 'model', model: leaked }, { generatedAt: iso(1) })
+    // The thread row carries the preview; its run is clean and published.
+    expect(
+      withheld.effects.map((effect) => `${effect.kind}:${effect.family}:${effect.entityId}`)
+    ).toEqual(['upsert:run:r2', `upsert:warning:${HOST_WARNING_PROJECTION_WITHHELD}:threads`])
+    expect(
+      index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WITHHELD}:threads`)
+    ).toMatchObject({
+      code: HOST_WARNING_PROJECTION_WITHHELD,
+      message: 'family threads withheld 1 row no snapshot can carry',
+      at: T0 + 1
     })
-    expect(comparable(fromWire(index.wire()))).toEqual(before)
-    expect(index.families().threads.map((row) => row.id)).toEqual(['a'])
-    // A seed is all or nothing too.
-    expect(index.seed([leaked], { generatedAt: iso(2) })).toMatchObject({
-      kind: 'refused',
-      reason: 'privacy_failed'
+    // Unchanged beyond its time, the count is not published again.
+    const unrelated = applyNow(
+      index,
+      { kind: 'model', model: modelOf({ appChatId: 'c' }) },
+      { generatedAt: iso(9) }
+    )
+    expect(unrelated.effects.map((effect) => effect.entityId)).toEqual(['c'])
+    expect(
+      index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WITHHELD}:threads`)
+    ).toMatchObject({
+      at: T0 + 1
     })
+    // Once clean, the row is published and the count goes.
+    const clean = applyNow(
+      index,
+      { kind: 'model', model: modelOf({ appChatId: 'b', runs: [run('r2', 5)] }) },
+      { generatedAt: iso(2) }
+    )
+    expect(
+      clean.effects.map((effect) => `${effect.kind}:${effect.family}:${effect.entityId}`)
+    ).toEqual(['upsert:thread:b', `tombstone:warning:${HOST_WARNING_PROJECTION_WITHHELD}:threads`])
+    // A seed withholds the same way; it never refuses.
+    expect(seed(index, [leaked], { generatedAt: iso(3) })).toEqual({
+      complete: true,
+      refill: [],
+      ignored: []
+    })
+    expect([...index.wire().get('thread')!.keys()]).toEqual([])
+    expect([...index.wire().get('run')!.keys()]).toEqual(['r2'])
+  })
+
+  it('never loses another change to a withheld row: the delete that pulls it in still lands', () => {
+    const index = new HostPublicWindowIndex()
+    // d fills the window; a's leaked run ranks just below it.
+    const d = modelOf({
+      appChatId: 'd',
+      runs: Array.from({ length: 1_800 }, (_, i) => run(`d-${i}`, 1_000 + i))
+    })
+    const a = modelOf({
+      appChatId: 'a',
+      runs: [run('a-0', 0, { status: 'failed', warningSummaries: ['token ghp_abc'] })]
+    })
+    seed(index, [d, a], { generatedAt: iso(0) })
+    expect(index.wire().get('run')!.has('a-0')).toBe(false)
+    const deleted = applyNow(index, { kind: 'delete', threadId: 'd' }, { generatedAt: iso(1) })
+    expect(deleted.ignored).toEqual([])
+    expect(index.wire().get('thread')!.has('d')).toBe(false)
+    expect(index.wire().get('run')!.size).toBe(0)
+    expect(
+      index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WITHHELD}:runs`)
+    ).toMatchObject({
+      message: 'family runs withheld 1 row no snapshot can carry'
+    })
+  })
+
+  it('withholds rows no diff can key: all but the lowest thread’s of a shared id, and unsafe ids', () => {
+    const index = new HostPublicWindowIndex()
+    seed(index, [modelOf({ appChatId: 'b', runs: [run('shared', 5)] })], { generatedAt: iso(0) })
+    expect(index.wire().get('run')!.get('shared')).toMatchObject({ threadId: 'b' })
+    // A lower thread's run with the same id replaces it, though it ranks lower.
+    const shared = applyNow(
+      index,
+      { kind: 'model', model: modelOf({ appChatId: 'a', runs: [run('shared', 0)] }) },
+      { generatedAt: iso(1) }
+    )
+    expect(index.wire().get('run')!.get('shared')).toMatchObject({ threadId: 'a' })
+    expect(
+      shared.effects.map((effect) => `${effect.kind}:${effect.family}:${effect.entityId}`)
+    ).toEqual([
+      'upsert:thread:a',
+      'upsert:run:shared',
+      `upsert:warning:${HOST_WARNING_PROJECTION_WITHHELD}:runs`
+    ])
+    // The projector publishes a padded run id, but no diff can key it.
+    applyNow(
+      index,
+      { kind: 'model', model: modelOf({ appChatId: 'c', runs: [run(' padded', 5)] }) },
+      { generatedAt: iso(2) }
+    )
+    expect(
+      index.wire().get('warning')!.get(`${HOST_WARNING_PROJECTION_WITHHELD}:runs`)
+    ).toMatchObject({
+      message: 'family runs withheld 2 rows no snapshot can carry'
+    })
+    expect([...index.wire().get('thread')!.keys()].sort()).toEqual(['a', 'b', 'c'])
+    // With the lower thread gone, the other's run is published again.
+    applyNow(index, { kind: 'delete', threadId: 'a' }, { generatedAt: iso(3) })
+    expect(index.wire().get('run')!.get('shared')).toMatchObject({ threadId: 'b' })
+  })
+
+  it('sets aside a model older than the one it holds, and anything of a deleted epoch', () => {
+    const index = new HostPublicWindowIndex()
+    const titled = (title: string, persistenceRevision: number) =>
+      modelOf({ appChatId: 'x', title, persistenceRevision, runs: [run('x-0', 0)] })
+    const publication = { generatedAt: iso(0) }
+    applyNow(index, { kind: 'model', model: titled('second', 2), epoch: 0 }, publication)
+    // A stale refill read at revision 1 changes nothing.
+    const stale = applyNow(
+      index,
+      { kind: 'model', model: titled('first', 1), epoch: 0 },
+      publication
+    )
+    expect(stale.ignored).toEqual([{ threadId: 'x', reason: 'older' }])
+    expect(stale.effects).toEqual([])
+    expect(index.wire().get('thread')!.get('x')).toMatchObject({ title: 'second' })
+    // The same revision is a refill, and lands.
+    expect(
+      applyNow(index, { kind: 'model', model: titled('second', 2), epoch: 0 }, publication).ignored
+    ).toEqual([])
+    // Deleted at epoch 0: a model read before the delete cannot bring it back.
+    applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication)
+    const resurrected = applyNow(
+      index,
+      { kind: 'model', model: titled('second', 2), epoch: 0 },
+      publication
+    )
+    expect(resurrected.ignored).toEqual([{ threadId: 'x', reason: 'deleted' }])
+    expect(index.wire().get('thread')!.has('x')).toBe(false)
+    expect(index.wire().get('run')!.has('x-0')).toBe(false)
+    expect(
+      applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication).ignored
+    ).toEqual([{ threadId: 'x', reason: 'deleted' }])
+    // A later epoch is a new thread under the same id.
+    applyNow(index, { kind: 'model', model: titled('again', 1), epoch: 1 }, publication)
+    expect(index.wire().get('thread')!.get('x')).toMatchObject({ title: 'again' })
+    // A delete of an epoch older than the one held changes nothing.
+    expect(
+      applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication).ignored
+    ).toEqual([{ threadId: 'x', reason: 'deleted' }])
+    const older = new HostPublicWindowIndex()
+    applyNow(older, { kind: 'model', model: titled('new', 1), epoch: 3 }, publication)
+    expect(
+      applyNow(older, { kind: 'delete', threadId: 'x', epoch: 2 }, publication).ignored
+    ).toEqual([{ threadId: 'x', reason: 'older' }])
+    expect(
+      applyNow(older, { kind: 'model', model: titled('newer', 9), epoch: 2 }, publication).ignored
+    ).toEqual([{ threadId: 'x', reason: 'older' }])
+    expect(older.wire().get('thread')!.get('x')).toMatchObject({ title: 'new' })
+  })
+
+  it('forgets no delete when it seeds again', () => {
+    const index = new HostPublicWindowIndex()
+    const publication = { generatedAt: iso(0) }
+    const x = modelOf({ appChatId: 'x', runs: [run('x-0', 0)] })
+    const y = modelOf({ appChatId: 'y', runs: [run('y-0', 0)] })
+    seed(index, [x, y], publication)
+    applyNow(index, { kind: 'delete', threadId: 'x', epoch: 0 }, publication)
+    // A seed read before the delete cannot bring the thread back.
+    expect(seed(index, [x, y], publication).ignored).toEqual([{ threadId: 'x', reason: 'deleted' }])
+    expect([...index.wire().get('thread')!.keys()]).toEqual(['y'])
+    // Nor can a model read before it that lands after the seed.
+    expect(applyNow(index, { kind: 'model', model: x, epoch: 0 }, publication).ignored).toEqual([
+      { threadId: 'x', reason: 'deleted' }
+    ])
+    expect(index.wire().get('run')!.has('x-0')).toBe(false)
+    // A later epoch is a new thread under the same id, in a seed as in a change.
+    expect(
+      index.seed(
+        [
+          { kind: 'model', model: x, epoch: 1 },
+          { kind: 'model', model: y, epoch: 0 }
+        ],
+        publication
+      ).ignored
+    ).toEqual([])
+    expect([...index.wire().get('thread')!.keys()]).toEqual(['x', 'y'])
+  })
+
+  it('changes nothing until a transaction commits, and holds one at a time', () => {
+    const index = new HostPublicWindowIndex()
+    const publication = { generatedAt: iso(0) }
+    seed(index, [modelOf({ appChatId: 'a' })], publication)
+    const before = comparable(fromWire(index.wire()))
+    const aborted = index.prepare(
+      [{ kind: 'model', model: modelOf({ appChatId: 'b' }), epoch: 0 }],
+      publication
+    )
+    expect(aborted.effects.map((effect) => effect.entityId)).toEqual(['b'])
     expect(comparable(fromWire(index.wire()))).toEqual(before)
-    // A clean seed replaces every thread and publishes nothing.
-    expect(index.seed([modelOf({ appChatId: 'c' })], { generatedAt: iso(3) })).toEqual({
-      kind: 'seeded',
+    expect(() => index.prepare([], publication)).toThrow('transaction open')
+    expect(() => seed(index, [], publication)).toThrow('transaction open')
+    aborted.abort()
+    expect(() => aborted.commit()).toThrow('already settled')
+    expect(comparable(fromWire(index.wire()))).toEqual(before)
+    // Changes in one transaction apply in order, and diff once.
+    const both = index.prepare(
+      [
+        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'first' }), epoch: 0 },
+        { kind: 'model', model: modelOf({ appChatId: 'b', title: 'second' }), epoch: 0 },
+        { kind: 'delete', threadId: 'a', epoch: 0 }
+      ],
+      publication
+    )
+    expect(both.effects.map((effect) => `${effect.kind}:${effect.entityId}`)).toEqual([
+      'tombstone:a',
+      'upsert:b'
+    ])
+    both.commit()
+    expect(() => both.abort()).toThrow('already settled')
+    expect(index.wire().get('thread')!.get('b')).toMatchObject({ title: 'second' })
+  })
+
+  it('counts a model with fewer candidates than its share of the window as cut', () => {
+    const index = new HostPublicWindowIndex({ band: 3 })
+    const full = modelOf({
+      appChatId: 'x',
+      runs: Array.from({ length: 20 }, (_, i) => run(`x-${i}`, i))
+    })
+    // A seed from a partial source: the first five candidates of twenty.
+    const partial = {
+      ...full,
+      runs: { ...full.runs, candidates: full.runs.candidates.slice(0, 5) }
+    }
+    expect(
+      index.seed([{ kind: 'model', model: partial, epoch: 0 }], { generatedAt: iso(0) })
+    ).toEqual({ complete: false, refill: ['x'], ignored: [] })
+    expect(index.wire().get('run')!.size).toBe(5)
+    expect(applyNow(index, { kind: 'model', model: full }, { generatedAt: iso(0) })).toMatchObject({
       complete: true,
       refill: []
     })
-    expect([...index.wire().get('thread')!.keys()]).toEqual(['c'])
-    expect(index.wire().get('run')!.size).toBe(0)
-  })
-
-  it('refuses what the snapshot diff cannot index: a run id two threads share, or an unsafe one', () => {
-    const index = new HostPublicWindowIndex()
-    index.seed([modelOf({ appChatId: 'a', runs: [run('shared', 0)] })], { generatedAt: iso(0) })
-    const before = comparable(fromWire(index.wire()))
-    expect(
-      index.apply(
-        { kind: 'model', model: modelOf({ appChatId: 'b', runs: [run('shared', 5)] }) },
-        { generatedAt: iso(1) }
-      )
-    ).toMatchObject({ kind: 'refused', reason: 'duplicate_entity_id' })
-    // The projector publishes a padded run id, but no diff can key it.
-    expect(
-      index.apply(
-        { kind: 'model', model: modelOf({ appChatId: 'c', runs: [run(' padded', 5)] }) },
-        { generatedAt: iso(1) }
-      )
-    ).toMatchObject({ kind: 'refused', reason: 'unsafe_entity_id' })
-    expect(comparable(fromWire(index.wire()))).toEqual(before)
-    expect(index.families().threads.map((row) => row.id)).toEqual(['a'])
+    expect(index.wire().get('run')!.size).toBe(20)
   })
 
   it('stops a short window at the exhausted thread, publishing nothing it would retract', () => {
@@ -889,14 +1162,13 @@ describe('HostPublicWindowIndex', () => {
       })
     // x keeps its newest seven of 1,900; y's ten are older than all of x's.
     const x = spread('x', 1_900, 100)
-    index.seed([x, spread('y', 10, 0), spread('z', 1_795, 10_000)], { generatedAt })
-    const short = index.apply({ kind: 'delete', threadId: 'z' }, { generatedAt })
-    expect(short).toMatchObject({ kind: 'effects', complete: false, refill: ['x'] })
+    seed(index, [x, spread('y', 10, 0), spread('z', 1_795, 10_000)], { generatedAt })
+    const short = applyNow(index, { kind: 'delete', threadId: 'z' }, { generatedAt })
+    expect(short).toMatchObject({ complete: false, refill: ['x'] })
     expect([...index.wire().get('run')!.keys()].sort()).toEqual(
       Array.from({ length: 7 }, (_, i) => `x-${1_893 + i}`)
     )
-    const refilled = index.apply({ kind: 'model', model: x }, { generatedAt })
-    if (refilled.kind !== 'effects') throw new Error('refused')
+    const refilled = applyNow(index, { kind: 'model', model: x }, { generatedAt })
     expect(refilled.complete).toBe(true)
     expect(
       refilled.effects.filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')

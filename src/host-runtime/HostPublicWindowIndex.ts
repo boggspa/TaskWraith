@@ -24,7 +24,6 @@
  */
 
 import {
-  encodeHostParticipantEntityId,
   HOST_PROTOCOL_MAX_COLLECTION,
   HOST_WARNING_PROJECTION_WINDOWED,
   type HostWarningProjection
@@ -38,9 +37,7 @@ import {
 import {
   diffHostEntityFamily,
   hostProjectionUnchanged,
-  hostSnapshotEntityId,
-  type HostSnapshotCollectionFamily,
-  type HostSnapshotDomainEffectDiffIncoherenceReason
+  hostSnapshotEntityId
 } from './HostSnapshotDomainEffectDiff'
 import {
   hostProjectionRowsOmittedWarning,
@@ -237,31 +234,59 @@ function assembleFromWindow(
  */
 export const HOST_PUBLIC_WINDOW_BAND = 128
 
-export type HostPublicWindowChange =
-  | { readonly kind: 'model'; readonly model: HostThreadRecordModelled }
-  | { readonly kind: 'delete'; readonly threadId: string }
+/** The code of the warning that counts rows the index withheld. */
+export const HOST_WARNING_PROJECTION_WITHHELD = 'projection_rows_withheld'
+
+/**
+ * A thread's model, read under its delete epoch: the scope ledger's delete
+ * counter for the thread when its record was read.
+ */
+export interface HostPublicWindowModelChange {
+  readonly kind: 'model'
+  readonly model: HostThreadRecordModelled
+  readonly epoch: number
+}
+
+/** A committed delete of the thread as it stood at `epoch`. */
+export interface HostPublicWindowDeleteChange {
+  readonly kind: 'delete'
+  readonly threadId: string
+  readonly epoch: number
+}
+
+export type HostPublicWindowChange = HostPublicWindowModelChange | HostPublicWindowDeleteChange
 
 export interface HostPublicWindowPublication {
-  /** The publication's time: the `at` of the projector's own warnings. */
+  /** The publication's time: the `at` of the index's own warnings. */
   readonly generatedAt: string
 }
 
-export type HostPublicWindowResult =
-  | {
-      readonly kind: 'effects'
-      /** Wire effects for the record-derived families, in the snapshot diff's order. */
-      readonly effects: readonly HostDomainEffectDto[]
-      /** False while the run window is short of runs it should hold. */
-      readonly complete: boolean
-      /** Threads whose kept candidates ran out: model each again to fill the window. */
-      readonly refill: readonly string[]
-    }
-  | {
-      /** Nothing changed: publishing would fail as the snapshot diff fails. */
-      readonly kind: 'refused'
-      readonly reason: 'privacy_failed' | HostSnapshotDomainEffectDiffIncoherenceReason
-      readonly detail: string
-    }
+/**
+ * A change the index set aside: a model older than the one it holds, or
+ * anything of an epoch already deleted.
+ */
+export interface HostPublicWindowIgnored {
+  readonly threadId: string
+  readonly reason: 'older' | 'deleted'
+}
+
+/**
+ * Prepared changes: their effects against what the index last published,
+ * held until the caller commits them (once their group is durable) or
+ * aborts. Nothing changes until `commit()`, and no other transaction can be
+ * prepared while this one is open.
+ */
+export interface HostPublicWindowTransaction {
+  /** Wire effects for the record-derived families, in the snapshot diff's order. */
+  readonly effects: readonly HostDomainEffectDto[]
+  /** False while the run window is short of runs it should hold. */
+  readonly complete: boolean
+  /** Threads whose kept candidates ran out: model each again to fill the window. */
+  readonly refill: readonly string[]
+  readonly ignored: readonly HostPublicWindowIgnored[]
+  commit(): void
+  abort(): void
+}
 
 /** Published wire rows by delta family and entity id. */
 export type HostPublicWindowWire = ReadonlyMap<
@@ -284,6 +309,8 @@ const WIRE_FAMILIES: readonly (readonly [HostRecordDerivedFamily, HostPublicWind
 interface ThreadEntry {
   /** The thread's model, its candidates cut to those the index keeps. */
   readonly model: HostThreadRecordModelled
+  /** The delete epoch its record was read under. */
+  readonly epoch: number
   /** Whether candidates past the kept ones exist. */
   readonly truncated: boolean
 }
@@ -296,14 +323,14 @@ interface WireRow {
 
 interface Computed {
   readonly entries: Map<string, ThreadEntry>
+  /** The last epoch deleted, per thread this incarnation deleted. */
+  readonly deleted: Map<string, number>
   readonly window: readonly HostPublicRunWindowEntry[]
   readonly families: HostPublicWindowFamilies
   readonly wire: Map<HostPublicWindowDeltaFamily, Map<string, unknown>>
   readonly complete: boolean
   readonly refill: readonly string[]
 }
-
-type ComputeFailure = Extract<HostPublicWindowResult, { kind: 'refused' }>
 
 function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
@@ -312,6 +339,60 @@ function compareIds(left: string, right: string): number {
 function projectorAt(generatedAt: string): number {
   const parsed = Date.parse(generatedAt)
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0
+}
+
+/** The warning that counts a family's rows the index withheld. */
+export function hostPublicRowsWithheldWarning(
+  family: string,
+  count: number,
+  at: number
+): HostWarningProjection {
+  return {
+    warningId: `${HOST_WARNING_PROJECTION_WITHHELD}:${family}`,
+    severity: 'warning',
+    code: HOST_WARNING_PROJECTION_WITHHELD,
+    message: `family ${family} withheld ${count} row${count === 1 ? '' : 's'} no snapshot can carry`,
+    at
+  }
+}
+
+/** Whether a model holds fewer candidates than its thread's share of the window. */
+function modelIsCut(model: HostThreadRecordModelled): boolean {
+  return (
+    model.runs.candidates.length < Math.min(model.runs.total, HOST_PROFILE_RUN_PROJECTION_LIMIT)
+  )
+}
+
+function entryOf(change: HostPublicWindowModelChange): ThreadEntry {
+  return { model: change.model, epoch: change.epoch, truncated: modelIsCut(change.model) }
+}
+
+/** Why a change is set aside, or null to apply it. */
+function staleness(
+  change: HostPublicWindowChange,
+  held: ThreadEntry | undefined,
+  deletedEpoch: number | undefined
+): HostPublicWindowIgnored['reason'] | null {
+  if (deletedEpoch !== undefined && change.epoch <= deletedEpoch) return 'deleted'
+  if (held === undefined) return null
+  if (held.epoch > change.epoch) return 'older'
+  if (
+    change.kind === 'model' &&
+    held.epoch === change.epoch &&
+    held.model.projection.revision > change.model.projection.revision
+  ) {
+    return 'older'
+  }
+  return null
+}
+
+/**
+ * The thread a run, round or participant row belongs to. Thread rows are one
+ * per thread and warnings the index's own, so neither can share an id.
+ */
+function rowThreadId(row: object): string {
+  const value = (row as { threadId?: unknown }).threadId
+  return typeof value === 'string' ? value : ''
 }
 
 /** The model with its candidates cut and their catalogue summaries dropped. */
@@ -365,16 +446,19 @@ function keptRunWindow(entries: ReadonlyMap<string, ThreadEntry>): {
 /**
  * The single authority for the families a thread record derives: it holds
  * every thread's model, the run and round windows over them, and the wire
- * rows it last published, and turns each thread's change into the effects a
+ * rows it last published, and turns changes into the effects a
  * before-and-after snapshot diff would publish for those families.
  *
- * A change is all or nothing: one that would fail the snapshot's privacy scan,
- * or index an entity twice or under an unsafe id, is refused and leaves the
- * index as it was. The projector's own warnings are republished only when
- * they change beyond their time. Unwired in this slice.
+ * It never refuses. A change older than the model it holds, or of a deleted
+ * epoch, is set aside. A row no snapshot can carry is withheld and counted:
+ * one that fails the privacy scan, one whose id no diff can key, and all but
+ * the lowest thread's of rows sharing an id. The index's own warnings (the
+ * projector's, and the withheld count) are republished only when they change
+ * beyond their time. Unwired in this slice.
  */
 export class HostPublicWindowIndex {
   private entries = new Map<string, ThreadEntry>()
+  private deleted = new Map<string, number>()
   private current: HostPublicWindowFamilies = {
     threads: [],
     runs: [],
@@ -385,6 +469,7 @@ export class HostPublicWindowIndex {
   private published = new Map<HostPublicWindowDeltaFamily, Map<string, unknown>>(
     WIRE_FAMILIES.map(([, family]) => [family, new Map<string, unknown>()])
   )
+  private open: object | null = null
   private readonly band: number
   /** Run and participant rows, by the row. */
   private readonly rows = new WeakMap<object, WireRow>()
@@ -414,47 +499,81 @@ export class HostPublicWindowIndex {
 
   /**
    * Replace every thread at once, publishing nothing: the state a client's
-   * next snapshot starts from.
+   * next snapshot starts from. A model with fewer candidates than its share
+   * of the window counts as cut, and the window may start short. It forgets
+   * no delete: a model of a deleted epoch is set aside, as a change's is.
    */
   seed(
-    models: readonly HostThreadRecordModelled[],
+    models: readonly HostPublicWindowModelChange[],
     publication: HostPublicWindowPublication
-  ):
-    | Exclude<HostPublicWindowResult, { kind: 'effects' }>
-    | {
-        readonly kind: 'seeded'
-        readonly complete: boolean
-        readonly refill: readonly string[]
-      } {
+  ): {
+    readonly complete: boolean
+    readonly refill: readonly string[]
+    readonly ignored: readonly HostPublicWindowIgnored[]
+  } {
+    this.assertClosed()
     const entries = new Map<string, ThreadEntry>()
-    for (const model of models) entries.set(model.threadId, { model, truncated: false })
-    const computed = this.compute(entries, publication)
-    if ('kind' in computed) return computed
+    const ignored: HostPublicWindowIgnored[] = []
+    for (const change of models) {
+      const threadId = change.model.threadId
+      const reason = staleness(change, undefined, this.deleted.get(threadId))
+      if (reason === null) entries.set(threadId, entryOf(change))
+      else ignored.push({ threadId, reason })
+    }
+    const computed = this.compute(entries, new Map(this.deleted), publication)
     this.commit(computed)
-    return { kind: 'seeded', complete: computed.complete, refill: computed.refill }
+    return { complete: computed.complete, refill: computed.refill, ignored }
   }
 
-  /** Apply one thread's new model, or its deletion. */
-  apply(
-    change: HostPublicWindowChange,
+  /** Prepare changes, in order, as one transaction. */
+  prepare(
+    changes: readonly HostPublicWindowChange[],
     publication: HostPublicWindowPublication
-  ): HostPublicWindowResult {
+  ): HostPublicWindowTransaction {
+    this.assertClosed()
     const entries = new Map(this.entries)
-    if (change.kind === 'model') {
-      entries.set(change.model.threadId, { model: change.model, truncated: false })
-    } else {
-      entries.delete(change.threadId)
+    const deleted = new Map(this.deleted)
+    const ignored: HostPublicWindowIgnored[] = []
+    for (const change of changes) {
+      const threadId = change.kind === 'model' ? change.model.threadId : change.threadId
+      const reason = staleness(change, entries.get(threadId), deleted.get(threadId))
+      if (reason !== null) {
+        ignored.push({ threadId, reason })
+      } else if (change.kind === 'model') {
+        entries.set(threadId, entryOf(change))
+      } else {
+        entries.delete(threadId)
+        deleted.set(threadId, change.epoch)
+      }
     }
-    const computed = this.compute(entries, publication)
-    if ('kind' in computed) return computed
+    const computed = this.compute(entries, deleted, publication)
     const effects: HostDomainEffectDto[] = []
     for (const [, family] of WIRE_FAMILIES) {
       effects.push(
         ...diffHostEntityFamily(family, this.published.get(family)!, computed.wire.get(family)!)
       )
     }
-    this.commit(computed)
-    return { kind: 'effects', effects, complete: computed.complete, refill: computed.refill }
+    const token = {}
+    this.open = token
+    const settle = (): void => {
+      if (this.open !== token) throw new Error('HostPublicWindowIndex transaction already settled')
+      this.open = null
+    }
+    return {
+      effects,
+      complete: computed.complete,
+      refill: computed.refill,
+      ignored,
+      commit: () => {
+        settle()
+        this.commit(computed)
+      },
+      abort: settle
+    }
+  }
+
+  private assertClosed(): void {
+    if (this.open !== null) throw new Error('HostPublicWindowIndex has a transaction open')
   }
 
   private commit(computed: Computed): void {
@@ -462,6 +581,7 @@ export class HostPublicWindowIndex {
     // complete it: trimming a refilled thread back to its band would exhaust
     // it again a band later.
     this.entries = computed.complete ? this.trimmed(computed) : computed.entries
+    this.deleted = computed.deleted
     this.current = computed.families
     this.published = computed.wire
   }
@@ -481,6 +601,7 @@ export class HostPublicWindowIndex {
           keep === candidates.length && entry.model === this.entries.get(threadId)?.model
             ? entry.model
             : keptModel(entry.model, candidates.slice(0, keep)),
+        epoch: entry.epoch,
         truncated: entry.truncated || keep < candidates.length
       })
     }
@@ -489,67 +610,82 @@ export class HostPublicWindowIndex {
 
   private compute(
     entries: Map<string, ThreadEntry>,
+    deleted: Map<string, number>,
     publication: HostPublicWindowPublication
-  ): Computed | ComputeFailure {
+  ): Computed {
     const { window, exhausted } = keptRunWindow(entries)
     const complete = exhausted === null
     const models = [...entries.values()].map((entry) => entry.model)
     const families = assembleFromWindow(models, window, complete)
     const at = projectorAt(publication.generatedAt)
-    const projector: HostWarningProjection[] = []
+    // The projector's warnings and the withheld counts: stamped with the publication.
+    const own: HostWarningProjection[] = []
     const wire = new Map<HostPublicWindowDeltaFamily, Map<string, unknown>>()
-    let donorWarnings: unknown[] = []
+    let donorWarnings: HostWarningProjection[] = []
 
     for (const [family, deltaFamily] of WIRE_FAMILIES) {
-      const valid: { sortId: string; wire: unknown }[] = []
+      const valid: { entityId: string; threadId: string; wire: unknown }[] = []
       let omitted = 0
+      let withheld = 0
       const rows = families[family] as readonly object[]
       for (let index = 0; index < rows.length; index += 1) {
-        const projected = this.project(family, rows[index]!, models[index], entries)
+        const row = rows[index]!
+        const projected = this.project(family, row, models[index], entries)
         if (!projected.privacyClean) {
-          return {
-            kind: 'refused',
-            reason: 'privacy_failed',
-            detail: `privacy sentinel in ${family}`
-          }
+          withheld += 1
+          continue
         }
         if (projected.wire === null) {
           omitted += 1
           continue
         }
-        valid.push({ sortId: this.sortId(family, projected.wire), wire: projected.wire })
+        const identity = hostSnapshotEntityId(deltaFamily, projected.wire)
+        if (!identity.ok) {
+          withheld += 1
+          continue
+        }
+        valid.push({
+          entityId: identity.entityId,
+          threadId: rowThreadId(row),
+          wire: projected.wire
+        })
       }
-      if (omitted > 0) projector.push(hostProjectionRowsOmittedWarning(family, omitted, at))
-      // The projector sorts each family by id and keeps the first rows up to the bound.
-      valid.sort((left, right) => compareIds(left.sortId, right.sortId))
-      if (valid.length > HOST_PROTOCOL_MAX_COLLECTION) {
-        projector.push(hostProjectionTruncatedWarning(family, valid.length, at))
-        valid.length = HOST_PROTOCOL_MAX_COLLECTION
+      if (omitted > 0) own.push(hostProjectionRowsOmittedWarning(family, omitted, at))
+      // The projector sorts each family by id and keeps the first rows up to
+      // the bound. Of rows sharing an id, the lowest thread's is kept.
+      valid.sort(
+        (left, right) =>
+          compareIds(left.entityId, right.entityId) || compareIds(left.threadId, right.threadId)
+      )
+      const unique = valid.filter(
+        (entry, index) => index === 0 || entry.entityId !== valid[index - 1]!.entityId
+      )
+      withheld += valid.length - unique.length
+      if (withheld > 0) own.push(hostPublicRowsWithheldWarning(family, withheld, at))
+      if (unique.length > HOST_PROTOCOL_MAX_COLLECTION) {
+        own.push(hostProjectionTruncatedWarning(family, unique.length, at))
+        unique.length = HOST_PROTOCOL_MAX_COLLECTION
       }
       if (family === 'warnings') {
-        donorWarnings = valid.map((entry) => entry.wire)
+        donorWarnings = unique.map((entry) => entry.wire as HostWarningProjection)
         continue
       }
-      const indexed = this.index(
-        deltaFamily,
-        valid.map((entry) => entry.wire)
-      )
-      if ('kind' in indexed) return indexed
-      wire.set(deltaFamily, indexed)
+      wire.set(deltaFamily, new Map(unique.map((entry) => [entry.entityId, entry.wire])))
     }
 
-    // Donor warnings and the projector's own, merged in warning id order. The
-    // projector re-caps the merge, but here it holds at most three donor
-    // warnings and two per family.
-    const merged = [...(donorWarnings as HostWarningProjection[]), ...projector].sort(
-      (left, right) => compareIds(left.warningId, right.warningId)
+    // Donor warnings and the index's own, in warning id order: at most three
+    // donor warnings and three per family, far inside the projector's re-cap.
+    // They never share an id: the one candidate, omitted participants, fails
+    // the same decoder in the donor as in the projector.
+    const warnings = new Map<string, unknown>(
+      [...donorWarnings, ...own]
+        .sort((left, right) => compareIds(left.warningId, right.warningId))
+        .map((warning) => [warning.warningId, warning])
     )
-    const warnings = this.index('warning', merged)
-    if ('kind' in warnings) return warnings
-    // A projector warning changes only when it says something new: its time is
-    // the publication's, not news.
+    // The index's own warnings change only when they say something new: their
+    // time is the publication's, not news.
     const published = this.published.get('warning')!
-    for (const warning of projector) {
+    for (const warning of own) {
       const prior = published.get(warning.warningId) as HostWarningProjection | undefined
       if (prior && hostProjectionUnchanged('warning', { ...prior, at: 0 }, { ...warning, at: 0 })) {
         warnings.set(warning.warningId, prior)
@@ -559,6 +695,7 @@ export class HostPublicWindowIndex {
 
     return {
       entries,
+      deleted,
       window,
       families,
       wire,
@@ -606,44 +743,5 @@ export class HostPublicWindowIndex {
     const built = build()
     this.rows.set(row, built)
     return built
-  }
-
-  private sortId(family: HostRecordDerivedFamily, wire: unknown): string {
-    const row = wire as Record<string, unknown>
-    switch (family) {
-      case 'threads':
-        return row.id as string
-      case 'runs':
-        return row.runId as string
-      case 'rounds':
-        return row.roundId as string
-      case 'participants': {
-        const identity = encodeHostParticipantEntityId(row.threadId, row.id)
-        return identity.ok ? identity.value : (row.id as string)
-      }
-      case 'warnings':
-        return row.warningId as string
-    }
-  }
-
-  /** The family's rows by entity id, refusing what the snapshot diff cannot index. */
-  private index(
-    family: HostSnapshotCollectionFamily,
-    rows: readonly unknown[]
-  ): Map<string, unknown> | ComputeFailure {
-    const indexed = new Map<string, unknown>()
-    for (const row of rows) {
-      const identity = hostSnapshotEntityId(family, row)
-      if (!identity.ok) return { kind: 'refused', reason: identity.reason, detail: identity.detail }
-      if (indexed.has(identity.entityId)) {
-        return {
-          kind: 'refused',
-          reason: 'duplicate_entity_id',
-          detail: `${family} duplicate entityId "${identity.entityId}"`
-        }
-      }
-      indexed.set(identity.entityId, row)
-    }
-    return indexed
   }
 }

@@ -41,6 +41,7 @@ import {
 import type { HostDomainEffectDto } from '../host-runtime/HostDomainDeltaPublisher'
 import {
   assembleHostPublicWindowFamilies,
+  HOST_WARNING_PROJECTION_WITHHELD,
   hostPublicRunWindow,
   HostPublicWindowIndex,
   type HostPublicWindowChange
@@ -322,6 +323,8 @@ interface Profile {
   /** The thread the last publication received, committed or not. */
   lastPublished: HostProfileThread | null
   runWindow: HostCatalogueRunWindow | null
+  /** Each thread's delete epoch, as the scope ledger counts deletes. */
+  readonly epochs: Map<string, number>
 }
 
 function openProfile(): Profile {
@@ -332,6 +335,7 @@ function openProfile(): Profile {
     committed: new Map(),
     lastPublished: null,
     runWindow: null,
+    epochs: new Map(),
     store: undefined as unknown as HostProfileDomainStore
   }
   const mirror = {
@@ -925,7 +929,8 @@ function settledSnapshot(profile: Profile) {
 }
 
 interface Published {
-  readonly snapshot: HostSnapshot
+  /** The donor snapshot the client's state equals, or null where none does. */
+  readonly snapshot: HostSnapshot | null
   readonly client: ClientState
 }
 
@@ -938,7 +943,14 @@ function initiallyPublished(profile: Profile): Published {
 function modelChange(profile: Profile, threadId: string): HostPublicWindowChange {
   const model = modelHostThreadRecordEffects(profile.committed.get(threadId)!)
   if (model.kind !== 'modelled') throw new Error(`committed thread ${threadId} was refused`)
-  return { kind: 'model', model }
+  return { kind: 'model', model, epoch: profile.epochs.get(threadId) ?? 0 }
+}
+
+/** A delete of the thread's current epoch; a thread created again later is the next one. */
+function deleteChange(profile: Profile, threadId: string): HostPublicWindowChange {
+  const epoch = profile.epochs.get(threadId) ?? 0
+  profile.epochs.set(threadId, epoch + 1)
+  return { kind: 'delete', threadId, epoch }
 }
 
 const PUBLICATION = { generatedAt: POSITION.generatedAt }
@@ -976,40 +988,66 @@ function expectLoadingDonor(
 }
 
 /**
- * Apply one change, answering each refill from the committed records. A
- * client that applies the effects holds the donor's settled snapshot; with no
- * refill, the effects are exactly the legacy snapshot diff's.
+ * Apply one change, answering each refill from the committed records, and
+ * check it against the donor: a client that applies the effects holds the
+ * donor's settled snapshot.
+ * - `absorb`: a short window is aborted and prepared again with the named
+ *   threads modelled, so one transaction diffs once, and its effects are
+ *   exactly the legacy snapshot diff's;
+ * - `publish-short`: each short window is committed, checked against the
+ *   donor's still-loading view, and refilled in its own transaction; without
+ *   a refill the effects are exactly the legacy diff's.
  */
 function publishChange(
   profile: Profile,
   index: HostPublicWindowIndex,
   change: HostPublicWindowChange,
-  prior: Published
-): { published: Published; effects: HostDomainEffectDto[]; refills: number } {
+  prior: Published,
+  mode: 'absorb' | 'publish-short' = 'absorb'
+): { published: Published; effects: HostDomainEffectDto[]; refills: number; exact: boolean } {
   const next = settledSnapshot(profile)
   if (!next.ok) throw new Error(next.error)
   const effects: HostDomainEffectDto[] = []
   let client = prior.client
   let refills = 0
-  let result = index.apply(change, PUBLICATION)
-  for (;;) {
-    if (result.kind !== 'effects') throw new Error(`index refused: ${result.detail}`)
-    effects.push(...result.effects)
-    client = applyEffects(client, result.effects)
-    if (result.complete) break
-    expectLoadingDonor(profile, index, client)
-    expect(result.refill).toHaveLength(1)
-    refills += 1
-    expect(refills).toBeLessThan(20)
-    result = index.apply(modelChange(profile, result.refill[0]!), PUBLICATION)
+  if (mode === 'absorb') {
+    const changes = [change]
+    let transaction = index.prepare(changes, PUBLICATION)
+    while (!transaction.complete) {
+      transaction.abort()
+      expect(transaction.refill).toHaveLength(1)
+      refills += 1
+      expect(refills).toBeLessThan(20)
+      changes.push(modelChange(profile, transaction.refill[0]!))
+      transaction = index.prepare(changes, PUBLICATION)
+    }
+    expect(transaction.ignored).toEqual([])
+    effects.push(...transaction.effects)
+    client = applyEffects(client, transaction.effects)
+    transaction.commit()
+  } else {
+    let transaction = index.prepare([change], PUBLICATION)
+    for (;;) {
+      expect(transaction.ignored).toEqual([])
+      effects.push(...transaction.effects)
+      client = applyEffects(client, transaction.effects)
+      transaction.commit()
+      if (transaction.complete) break
+      expectLoadingDonor(profile, index, client)
+      expect(transaction.refill).toHaveLength(1)
+      refills += 1
+      expect(refills).toBeLessThan(20)
+      transaction = index.prepare([modelChange(profile, transaction.refill[0]!)], PUBLICATION)
+    }
   }
   expect(client).toEqual(snapshotState(next.value))
-  if (refills === 0) {
+  const exact = prior.snapshot !== null && (mode === 'absorb' || refills === 0)
+  if (exact) {
     const legacy = diffHostSnapshotDomainEffects(prior.snapshot, next.value)
     if (legacy.kind !== 'effects') throw new Error(`legacy diff ${legacy.kind}`)
     expect(JSON.stringify(effects)).toBe(JSON.stringify(legacy.effects))
   }
-  return { published: { snapshot: next.value, client }, effects, refills }
+  return { published: { snapshot: next.value, client }, effects, refills, exact }
 }
 
 /** The seeded record with its run and round ids its thread's own. */
@@ -1074,7 +1112,7 @@ function heavyEnsemble(appChatId: string, runs: number, at: (ordinal: number) =>
 
 describe('public window index ≡ donor, change by change', () => {
   it('publishes each persist and delete as the legacy snapshot diff does over the donor', () => {
-    const tally = { changes: 0, exact: 0, deletes: 0, refused: 0 }
+    const tally = { changes: 0, exact: 0, deletes: 0, withheld: 0 }
     for (let seed = 1; seed <= 40; seed += 1) {
       const r = mulberry32(seed * 131)
       const profile = openProfile()
@@ -1084,7 +1122,7 @@ describe('public window index ≡ donor, change by change', () => {
         const outcome = publishChange(profile, index, change, published)
         published = outcome.published
         tally.changes += 1
-        if (outcome.refills === 0) tally.exact += 1
+        if (outcome.exact) tally.exact += 1
       }
       for (let step = 0; step < 10; step += 1) {
         const slot = int(r, 0, THREAD_IDS.length - 1)
@@ -1102,21 +1140,40 @@ describe('public window index ≡ donor, change by change', () => {
             publish(modelChange(profile, threadId))
             expect(deleteThread(profile, threadId)).toBe(true)
           }
-          publish({ kind: 'delete', threadId })
+          publish(deleteChange(profile, threadId))
           tally.deletes += 1
           continue
         }
         const record = ownIds(seededRecord(r, threadId, int(r, 0, 30)), `t${slot}-`)
         if (persistRecord(profile, record) !== 'committed') continue
         if (!settledSnapshot(profile).ok) {
-          // The donor's snapshot fails its privacy scan: the index refuses
-          // this change alone and keeps what it published. The client saves
-          // again without the credential-shaped message.
-          expect(index.apply(modelChange(profile, threadId), PUBLICATION)).toMatchObject({
-            kind: 'refused',
-            reason: 'privacy_failed'
-          })
-          tally.refused += 1
+          // The donor's snapshot fails its privacy scan, and with it every
+          // donor publication. The index withholds the thread's row, counts
+          // it, and publishes the rest. The client then saves again without
+          // the credential-shaped message.
+          const transaction = index.prepare([modelChange(profile, threadId)], PUBLICATION)
+          expect(transaction.complete).toBe(true)
+          expect(transaction.effects).toContainEqual(
+            expect.objectContaining({
+              kind: 'upsert',
+              family: 'warning',
+              entityId: `${HOST_WARNING_PROJECTION_WITHHELD}:threads`
+            })
+          )
+          expect(
+            transaction.effects.some(
+              (effect) =>
+                effect.family === 'thread' &&
+                effect.entityId === threadId &&
+                effect.kind === 'upsert'
+            )
+          ).toBe(false)
+          published = {
+            snapshot: null,
+            client: applyEffects(published.client, transaction.effects)
+          }
+          transaction.commit()
+          tally.withheld += 1
           const messages = (record.messages as { content: string }[]).filter(
             (message) => message.content !== 'ghp_secret'
           )
@@ -1127,78 +1184,85 @@ describe('public window index ≡ donor, change by change', () => {
     }
     // The sequences reach what they are meant to prove.
     expect(tally.changes).toBeGreaterThan(250)
-    expect(tally.exact).toBe(tally.changes)
+    // Only the save after a withheld row has no donor snapshot to diff from.
+    expect(tally.exact).toBe(tally.changes - tally.withheld)
     expect(tally.deletes).toBeGreaterThan(20)
-    expect(tally.refused).toBeGreaterThan(2)
+    expect(tally.withheld).toBeGreaterThan(2)
   }, 120_000)
 
-  it('publishes displacement: newer runs push a round’s members out, and a delete refills them', () => {
-    const profile = openProfile()
-    mkdirSync(join(profile.path, HOST_PROFILE_CHATS_DIRECTORY), { recursive: true })
-    const index = new HostPublicWindowIndex({ band: 16 })
-    let published = initiallyPublished(profile)
-    const shrunk = (before: Published, effects: readonly HostDomainEffectDto[]) =>
-      effects.filter((effect) => {
-        if (effect.family !== 'round' || effect.kind !== 'upsert') return false
-        const prior = before.client.get('round')!.get(effect.entityId) as
-          | { providerRunIds: string[] }
-          | undefined
-        const next = effect.payload as { providerRunIds: string[] }
-        return prior !== undefined && next.providerRunIds.length < prior.providerRunIds.length
-      }).length
-    // Three ensembles of 700 interleaved runs: the third pushes out the
-    // oldest 100 of each, and the first two rounds lose members.
-    for (const [offset, id] of ['heavy-a', 'heavy-b', 'heavy-c'].entries()) {
+  it.each(['publish-short', 'absorb'] as const)(
+    'publishes displacement: newer runs push a round’s members out, and a delete refills them (%s)',
+    (mode) => {
+      const profile = openProfile()
+      mkdirSync(join(profile.path, HOST_PROFILE_CHATS_DIRECTORY), { recursive: true })
+      const index = new HostPublicWindowIndex({ band: 16 })
+      let published = initiallyPublished(profile)
+      const shrunk = (before: Published, effects: readonly HostDomainEffectDto[]) =>
+        effects.filter((effect) => {
+          if (effect.family !== 'round' || effect.kind !== 'upsert') return false
+          const prior = before.client.get('round')!.get(effect.entityId) as
+            | { providerRunIds: string[] }
+            | undefined
+          const next = effect.payload as { providerRunIds: string[] }
+          return prior !== undefined && next.providerRunIds.length < prior.providerRunIds.length
+        }).length
+      // Three ensembles of 700 interleaved runs: the third pushes out the
+      // oldest 100 of each, and the first two rounds lose members.
+      for (const [offset, id] of ['heavy-a', 'heavy-b', 'heavy-c'].entries()) {
+        publishCanonical(
+          profile,
+          heavyEnsemble(id, 700, (ordinal) => ordinal * 3 + offset)
+        )
+        const before = published
+        const outcome = publishChange(profile, index, modelChange(profile, id), before, mode)
+        expect(outcome.refills).toBe(0)
+        published = outcome.published
+        if (id === 'heavy-c') expect(shrunk(before, outcome.effects)).toBe(2)
+      }
+      expect(published.client.get('run')!.size).toBe(WINDOW)
+      // A fourth thread's 300 newer runs push 100 more out of each.
       publishCanonical(
         profile,
-        heavyEnsemble(id, 700, (ordinal) => ordinal * 3 + offset)
+        heavyEnsemble('light', 300, (ordinal) => 10_000 + ordinal)
       )
       const before = published
-      const outcome = publishChange(profile, index, modelChange(profile, id), before)
-      expect(outcome.refills).toBe(0)
-      published = outcome.published
-      if (id === 'heavy-c') expect(shrunk(before, outcome.effects)).toBe(2)
-    }
-    expect(published.client.get('run')!.size).toBe(WINDOW)
-    // A fourth thread's 300 newer runs push 100 more out of each.
-    publishCanonical(
-      profile,
-      heavyEnsemble('light', 300, (ordinal) => 10_000 + ordinal)
-    )
-    const before = published
-    const pushed = publishChange(profile, index, modelChange(profile, 'light'), before)
-    expect(pushed.refills).toBe(0)
-    expect(shrunk(before, pushed.effects)).toBe(3)
-    expect(
-      pushed.effects.filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
-    ).toHaveLength(300)
-    published = pushed.published
-    // Deleting it frees 300 slots, more than each thread's band: every heavy
-    // thread is modelled again, and no run a client holds is retracted.
-    unpublish(profile, 'light')
-    const freed = publishChange(profile, index, { kind: 'delete', threadId: 'light' }, published)
-    expect(freed.refills).toBe(3)
-    const retracted = freed.effects
-      .filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
-      .map((effect) => effect.entityId)
-    expect(retracted).toHaveLength(300)
-    expect(retracted.every((runId) => runId.startsWith('light-'))).toBe(true)
-    expect(freed.published.client.get('run')!.size).toBe(WINDOW)
-    // Deleting a second leaves 1,400 runs, all inside the window: the short
-    // window still loads, then the warning goes.
-    unpublish(profile, 'heavy-b')
-    const emptied = publishChange(
-      profile,
-      index,
-      { kind: 'delete', threadId: 'heavy-b' },
-      freed.published
-    )
-    expect(emptied.refills).toBe(2)
-    expect(emptied.published.client.get('run')!.size).toBe(1_400)
-    expect(
-      emptied.published.client.get('warning')!.has(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
-    ).toBe(false)
-  }, 60_000)
+      const pushed = publishChange(profile, index, modelChange(profile, 'light'), before, mode)
+      expect(pushed.refills).toBe(0)
+      expect(shrunk(before, pushed.effects)).toBe(3)
+      expect(
+        pushed.effects.filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
+      ).toHaveLength(300)
+      published = pushed.published
+      // Deleting it frees 300 slots, more than each thread's band: every heavy
+      // thread is modelled again, and no run a client holds is retracted.
+      unpublish(profile, 'light')
+      const freed = publishChange(profile, index, deleteChange(profile, 'light'), published, mode)
+      expect(freed.refills).toBe(3)
+      expect(freed.exact).toBe(mode === 'absorb')
+      const retracted = freed.effects
+        .filter((effect) => effect.family === 'run' && effect.kind === 'tombstone')
+        .map((effect) => effect.entityId)
+      expect(retracted).toHaveLength(300)
+      expect(retracted.every((runId) => runId.startsWith('light-'))).toBe(true)
+      expect(freed.published.client.get('run')!.size).toBe(WINDOW)
+      // Deleting a second leaves 1,400 runs, all inside the window: the short
+      // window still loads, then the warning goes.
+      unpublish(profile, 'heavy-b')
+      const emptied = publishChange(
+        profile,
+        index,
+        deleteChange(profile, 'heavy-b'),
+        freed.published,
+        mode
+      )
+      expect(emptied.refills).toBe(2)
+      expect(emptied.published.client.get('run')!.size).toBe(1_400)
+      expect(
+        emptied.published.client.get('warning')!.has(`${HOST_WARNING_PROJECTION_WINDOWED}:runs`)
+      ).toBe(false)
+    },
+    60_000
+  )
 
   it('publishes the windows’ bounds: at exactly 1,800 neither warns, and a live round moves in', () => {
     const profile = openProfile()
@@ -1226,10 +1290,12 @@ describe('public window index ≡ donor, change by change', () => {
       })
     }
     const index = new HostPublicWindowIndex()
-    expect(index.seed(modelsOf(profile), PUBLICATION)).toMatchObject({
-      kind: 'seeded',
-      complete: true
-    })
+    expect(
+      index.seed(
+        modelsOf(profile).map((model) => ({ kind: 'model' as const, model, epoch: 0 })),
+        PUBLICATION
+      )
+    ).toMatchObject({ complete: true, refill: [] })
     let published = initiallyPublished(profile)
     expect(fromIndex(index)).toEqual(published.client)
     const warningIds = () => [...published.client.get('warning')!.keys()]
@@ -1244,7 +1310,7 @@ describe('public window index ≡ donor, change by change', () => {
     // One live thread goes: 1,800 runs fit, and the round window takes in the
     // live round it dropped, naming it on a thread that did not change.
     unpublish(profile, id(0))
-    const first = publishChange(profile, index, { kind: 'delete', threadId: id(0) }, published)
+    const first = publishChange(profile, index, deleteChange(profile, id(0)), published)
     published = first.published
     expect(warningIds()).toEqual([`${HOST_WARNING_PROJECTION_WINDOWED}:rounds`])
     const named = first.effects.filter(
@@ -1260,7 +1326,7 @@ describe('public window index ≡ donor, change by change', () => {
       published = publishChange(
         profile,
         index,
-        { kind: 'delete', threadId: terminal },
+        deleteChange(profile, terminal),
         published
       ).published
     }
