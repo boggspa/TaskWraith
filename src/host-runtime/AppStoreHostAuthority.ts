@@ -115,6 +115,11 @@ import {
 } from './HostMutationObservationScope'
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import { hostThreadScope, type HostScopeEpoch, type HostScopeLedger } from './HostScopeLedger'
+import type {
+  HostThreadRecordTransactionInput,
+  HostThreadRecordTransactionOutcome
+} from './HostThreadRecordTransaction'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
 import {
   createHostQueuedStartPublication,
@@ -312,6 +317,28 @@ export interface AppStoreHostAuthorityPorts {
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   /** Optional only for pre-cutover compatibility; present enables S2–S5. */
   readonly deferredAsk?: HostDeferredAskPorts
+  /** M4 slice 12b; see the interface. */
+  readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
+}
+
+/**
+ * The transactional `thread.record.persist` (Independent Threads M4, slice
+ * 12b). Wired only by the standalone composition, and only while
+ * `TASKWRAITH_HOST_TXN_PERSIST` is on; absent, every command runs exactly as
+ * before.
+ */
+export interface AppStoreHostAuthorityThreadRecordTransaction {
+  /** The thread lanes: persists and deletes of a thread serialize on them. */
+  readonly ledger: HostScopeLedger
+  /**
+   * False once the manifest has fail-stopped: persists then take today's
+   * path under today's class until the Host restarts.
+   */
+  available(): boolean
+  /** One transaction whose unsupported fallback runs `legacy`, under the lane. */
+  create(legacy: () => Promise<unknown>): {
+    execute(input: HostThreadRecordTransactionInput): Promise<HostThreadRecordTransactionOutcome>
+  }
 }
 
 export interface AppStoreHostAuthorityOptions {
@@ -473,6 +500,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly onBeforeShutdown?: AppStoreHostAuthorityShutdownCallback
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
+  private readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
   private readonly domainPublisher: HostDomainDeltaPublisher
   private readonly completionCoordinator: HostMutationCompletionCoordinator
   private readonly now: () => string
@@ -529,7 +557,12 @@ export class AppStoreHostAuthority implements HostAuthority {
       (ports.onBeforeShutdown !== undefined && typeof ports.onBeforeShutdown !== 'function') ||
       typeof ports.onShutdown !== 'function' ||
       (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk)) ||
-      (options.mode === 'standalone' && ports.deferredAsk !== undefined)
+      (options.mode === 'standalone' && ports.deferredAsk !== undefined) ||
+      (ports.threadRecordTransaction !== undefined &&
+        (options.mode !== 'standalone' ||
+          typeof ports.threadRecordTransaction.create !== 'function' ||
+          typeof ports.threadRecordTransaction.available !== 'function' ||
+          !ports.threadRecordTransaction.ledger))
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
@@ -576,6 +609,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.onBeforeShutdown = ports.onBeforeShutdown
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
+    this.threadRecordTransaction = ports.threadRecordTransaction
     this.now = options.now ?? (() => new Date().toISOString())
     // Scope 2: sole-journal publish + completion ports (allowed branch only).
     // A command's observed effects commit as one journal batch behind one
@@ -931,6 +965,12 @@ export class AppStoreHostAuthority implements HostAuthority {
       ) {
         return await this.executeCommand(context, command)
       }
+      // M4: a command on a thread lane takes the lane before the projection
+      // queue (lock order: lane, legacy FIFO, gate, publication lock). It
+      // enters the queue itself, and only for the legacy window it runs.
+      if (this.takesThreadLane(command)) {
+        return await this.executeCommand(context, command, { queued: false })
+      }
       return await this.runProjectionOperation(
         () => this.executeCommand(context, command),
         projectionQueueLabel(command)
@@ -943,9 +983,32 @@ export class AppStoreHostAuthority implements HostAuthority {
     }
   }
 
+  /** Whether the command takes a thread lane (M4 slice 12b). */
+  private takesThreadLane(command: HostCommand | undefined): boolean {
+    return (
+      this.threadRecordTransaction !== undefined &&
+      (command?.name === 'thread.record.persist' || command?.name === 'thread.record.delete')
+    )
+  }
+
+  /**
+   * Run a legacy window in the projection queue, unless the caller already
+   * holds it. Laned commands reach here outside it (M4 slice 12b).
+   */
+  private inProjectionQueue<T>(
+    queued: boolean,
+    command: HostCommand,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return queued
+      ? operation()
+      : this.runProjectionOperation(operation, projectionQueueLabel(command))
+  }
+
   private async executeCommand(
     context: HostAuthorityCallContext,
-    command: HostCommand
+    command: HostCommand,
+    options: { readonly queued: boolean } = { queued: true }
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {
     const gate = this.gate(context)
     if (!gate.ok) return gate
@@ -1013,6 +1076,9 @@ export class AppStoreHostAuthority implements HostAuthority {
       // action === 'fallthrough' → uncorrelated live Bridge card; verbatim H below.
     }
 
+    // M4: admit a transactional persist under the thread's current epoch. A
+    // delete that commits after this point refuses it as epoch-stale.
+    const transactionalEpoch = this.transactionalPersistEpoch(hostCommand)
     const begin = this.runtime.receiptStore.begin({
       commandId: hostCommand.commandId,
       idempotencyKey: hostCommand.idempotencyKey,
@@ -1025,6 +1091,7 @@ export class AppStoreHostAuthority implements HostAuthority {
         ...(evaluation.reason !== undefined ? { reason: evaluation.reason } : {}),
         ...(evaluation.policy !== undefined ? { policy: evaluation.policy } : {})
       },
+      ...(transactionalEpoch !== null ? { commandClass: 'txn-record-persist' as const } : {}),
       createdAt: this.now()
     })
 
@@ -1090,7 +1157,148 @@ export class AppStoreHostAuthority implements HostAuthority {
     if (this.usesQueuedComposerSend(hostCommand)) {
       return this.executeQueuedComposerSend(hostCommand, context, fingerprintResult.fingerprint)
     }
-    return this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+    if (transactionalEpoch !== null) {
+      return this.executeTransactionalPersist(
+        hostCommand,
+        context,
+        transactionalEpoch,
+        options.queued
+      )
+    }
+    if (hostCommand.name === 'thread.record.delete' && this.threadRecordTransaction) {
+      return this.executeLanedDelete(
+        hostCommand,
+        context,
+        this.threadRecordTransaction,
+        options.queued
+      )
+    }
+    return this.inProjectionQueue(options.queued, hostCommand, () =>
+      this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+    )
+  }
+
+  /** The admit-time epoch of a persist that takes the transactional path; null otherwise. */
+  private transactionalPersistEpoch(hostCommand: HostCommand): HostScopeEpoch | null {
+    const transaction = this.threadRecordTransaction
+    if (!transaction || hostCommand.name !== 'thread.record.persist') return null
+    const threadId = hostCommand.target.threadId
+    if (typeof threadId !== 'string') return null
+    try {
+      if (!transaction.available()) return null
+      return transaction.ledger.view(hostThreadScope(threadId)).epoch
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * M4 slice 12b: a persist through the transaction. The transaction
+   * completes the receipt on every outcome it decides; its unsupported
+   * fallback runs today's observed path, which completes its own.
+   */
+  private async executeTransactionalPersist(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext,
+    epoch: HostScopeEpoch,
+    queued: boolean
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    const transaction = this.threadRecordTransaction
+    if (!transaction) return { ok: false, error: 'host_unavailable' }
+    let legacyAnswer: HostAuthorityResult<HostCommandReceipt> | undefined
+    // The fallback runs under the lane, then in the projection queue.
+    const run = transaction.create(async () => {
+      legacyAnswer = await this.inProjectionQueue(queued, hostCommand, () =>
+        this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+      )
+      return legacyAnswer
+    })
+    const args = hostCommand.arguments
+    let outcome: HostThreadRecordTransactionOutcome
+    try {
+      outcome = await run.execute({
+        commandId: hostCommand.commandId,
+        threadId: hostCommand.target.threadId as string,
+        descriptor: {
+          transferId: args.transferId as string,
+          sha256: args.sha256 as string,
+          byteLength: args.byteLength as number
+        },
+        expectedRevision: args.expectedRevision as number,
+        epoch
+      })
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    if (outcome.kind === 'legacy') return legacyAnswer ?? { ok: false, error: 'host_unavailable' }
+    // A fail-stopped delta store leaves the receipt pending for boot recovery.
+    if (outcome.kind === 'fail-stopped') return { ok: false, error: 'host_unavailable' }
+    const found = this.runtime.receiptStore.getByCommandId(
+      hostCommand.commandId,
+      toReceiptActor(context.actor)
+    )
+    if (found.kind !== 'found') return { ok: false, error: 'host_unavailable' }
+    return projectFoundReceipt(found.receipt)
+  }
+
+  /**
+   * M4 slice 12b: a delete takes its thread's lane, so it orders against
+   * transactional persists. A committed delete closes the lane for the
+   * incarnation: a persist admitted before it fails epoch-stale, one admitted
+   * after fails as gone, and a second delete succeeds as already absent.
+   */
+  private async executeLanedDelete(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext,
+    transaction: AppStoreHostAuthorityThreadRecordTransaction,
+    queued: boolean
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    const threadId = hostCommand.target.threadId
+    if (typeof threadId !== 'string') {
+      return this.inProjectionQueue(queued, hostCommand, () =>
+        this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+      )
+    }
+    const actor = toReceiptActor(context.actor)
+    const acquired = await transaction.ledger.acquire(hostThreadScope(threadId), {
+      owner: hostCommand.commandId
+    })
+    if (!acquired.ok) {
+      const completed =
+        acquired.reason === 'deleted'
+          ? this.runtime.receiptStore.complete({
+              commandId: hostCommand.commandId,
+              status: 'succeeded',
+              completedAt: this.now(),
+              resultSummary: 'thread_record_already_absent'
+            })
+          : this.runtime.receiptStore.complete({
+              commandId: hostCommand.commandId,
+              status: 'failed',
+              completedAt: this.now(),
+              errorCode: 'host_shutting_down'
+            })
+      if (!completed) return { ok: false, error: 'host_unavailable' }
+      return projectFoundReceipt(completed)
+    }
+    const slot = acquired.slot
+    try {
+      // Lane first, then the projection queue for the delete's legacy window.
+      const answer = await this.inProjectionQueue(queued, hostCommand, () =>
+        this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+      )
+      const found = this.runtime.receiptStore.getByCommandId(hostCommand.commandId, actor)
+      if (
+        found.kind === 'found' &&
+        found.receipt.status === 'succeeded' &&
+        found.receipt.resultSummary === 'thread_record_deleted'
+      ) {
+        slot.deleted()
+      }
+      return answer
+    } finally {
+      slot.release()
+    }
   }
 
   private usesQueuedComposerSend(command: HostCommand | undefined): boolean {

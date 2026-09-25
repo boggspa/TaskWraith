@@ -36,6 +36,7 @@ import {
   type AppStoreHostAuthorityThreadCatalogueProvider,
   type AppStoreHostAuthorityThreadCatalogueMaintenanceProvider,
   type AppStoreHostAuthorityThreadOffersProvider,
+  type AppStoreHostAuthorityThreadRecordTransaction,
   type HostStandaloneAuthorityLeasePort
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
@@ -61,6 +62,16 @@ import {
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
+import { createHostCommitGate } from './HostCommitGate'
+import { HostPublicWindowIndex } from './HostPublicWindowIndex'
+import { createHostScopeLedger } from './HostScopeLedger'
+import {
+  HostThreadRecordTransaction,
+  type HostThreadRecordCommitPort,
+  type HostThreadRecordTransactionPorts
+} from './HostThreadRecordTransaction'
+import { prepareHostThreadRecordOffLoop } from './HostThreadRecordTransferWorker'
+import { HostTransactionLog } from './HostTransactionLog'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { randomBytes } from 'node:crypto'
 
@@ -112,8 +123,22 @@ export interface HostStandaloneCompositionPerf {
   readonly snapshotFile: HostPerfSnapshotFileWriter | null
 }
 
+/**
+ * The transactional `thread.record.persist` (M4 slice 12b). The production
+ * server passes this only while `TASKWRAITH_HOST_TXN_PERSIST` is on; absent,
+ * nothing below is built and every command runs as before.
+ */
+export interface HostStandaloneThreadRecordTransactionInput {
+  readonly profilePath: string
+  readonly records: HostThreadRecordCommitPort
+  /** Defaults to the transfer worker's prepare; tests pass an in-process one. */
+  readonly prepare?: HostThreadRecordTransactionPorts['prepare']
+  readonly now?: () => number
+}
+
 export interface HostStandaloneCompositionInput {
   readonly runtimePath: string
+  readonly threadRecordTransaction?: HostStandaloneThreadRecordTransactionInput
   readonly lease: HostStandaloneAuthorityLeasePort
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
@@ -319,6 +344,14 @@ export function createHostStandaloneComposition(
   // Each task's enqueue→start wait is recorded as host_queue_wait on
   // host_chain; the seam changes neither FIFO order nor results.
   const runProjectionOperation = createHostProjectionSerialQueue({ spans: hostPerf.spans })
+  const threadRecordTransaction = input.threadRecordTransaction
+    ? createThreadRecordTransaction(
+        input.threadRecordTransaction,
+        runtime,
+        input.runtimePath,
+        bootEpoch
+      )
+    : null
   let shutdownPromise: Promise<void> | null = null
   let shutdownComplete = false
   let reconciler: HostProjectionReconciler | null = null
@@ -327,6 +360,10 @@ export function createHostStandaloneComposition(
     if (shutdownComplete) return Promise.resolve()
     if (shutdownPromise) return shutdownPromise
     const attempt = async (): Promise<void> => {
+      // Queued and new transactional writers are refused. One still in
+      // prepare aborts at the closed gate; one past it publishes. Either way
+      // it settles before the stores below are flushed.
+      await threadRecordTransaction?.close()
       // Fence is domain.beginShutdown (ProductionServer calls domain.shutdown
       // first). Drain start publications after dispatches have quiesced and
       // before runtime.flush so a snapshot-only drain cannot miss work.
@@ -395,6 +432,7 @@ export function createHostStandaloneComposition(
         ? { threadCatalogueMaintenanceProvider: input.threadCatalogueMaintenanceProvider }
         : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
+      ...(threadRecordTransaction ? { threadRecordTransaction: threadRecordTransaction.port } : {}),
       onShutdown: shutdown
     }
   })
@@ -465,5 +503,79 @@ export function createHostStandaloneComposition(
     reconcileProjection: () => reconciler!.reconcileNow(),
     stopProjectionReconciliation: () => reconciler!.stop(),
     shutdown
+  }
+}
+
+/** A serial queue: each piece of work starts once the one before it settled. */
+function createSerialLock(): <T>(work: () => Promise<T> | T) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(work: () => Promise<T> | T): Promise<T> => {
+    const run = tail.then(work)
+    tail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+}
+
+/**
+ * The transaction's stores and locks for one composition (M4 slice 12b):
+ * the thread lanes, the commit gate, the manifest, the public window index
+ * and the publication lock, over the runtime's delta and receipt stores.
+ */
+function createThreadRecordTransaction(
+  options: HostStandaloneThreadRecordTransactionInput,
+  runtime: HostRuntimeBootstrap,
+  runtimePath: string,
+  bootEpoch: string
+): { port: AppStoreHostAuthorityThreadRecordTransaction; close(): Promise<void> } {
+  const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
+  const gate = createHostCommitGate()
+  const log = HostTransactionLog.open({ dataDir: runtimePath })
+  const index = new HostPublicWindowIndex()
+  const publicationLock = createSerialLock()
+  const now = options.now ?? (() => Date.now())
+  const inFlight = new Set<Promise<unknown>>()
+  return {
+    port: {
+      ledger,
+      // Only the manifest's health: a closed ledger routes here and refuses
+      // (host_shutting_down) rather than falling back to today's path.
+      available: () => log.getFailure() === null,
+      create: (legacy) => {
+        const transaction = new HostThreadRecordTransaction({
+          ledger,
+          gate,
+          log,
+          index,
+          deltas: runtime.deltaStore,
+          receipts: runtime.receiptStore,
+          prepare: options.prepare ?? prepareHostThreadRecordOffLoop,
+          records: options.records,
+          legacy,
+          publicationLock,
+          profilePath: options.profilePath,
+          now
+        })
+        return {
+          execute: (input) => {
+            const running = transaction.execute(input)
+            const settled = running.then(
+              () => undefined,
+              () => undefined
+            )
+            inFlight.add(settled)
+            void settled.then(() => inFlight.delete(settled))
+            return running
+          }
+        }
+      }
+    },
+    close: async () => {
+      ledger.close()
+      gate.close()
+      await Promise.all([...inFlight])
+    }
   }
 }

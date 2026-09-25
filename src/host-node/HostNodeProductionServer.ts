@@ -82,6 +82,11 @@ import {
   type HostNodeDomainPortsOptions
 } from './HostNodeDomainPorts'
 import { createHostQueuedStartStartedSlot } from '../host-runtime/HostQueuedStartPublication'
+import { isHostTxnRecordPersistEnabled } from '../host-runtime/HostCommandExecutionClass'
+import {
+  createHostThreadRecordCommitPort,
+  type HostThreadRecordCommitPort
+} from '../host-runtime/HostThreadRecordTransaction'
 import type { HostCommandReceiptRecord } from '../host-runtime/HostCommandReceiptStore'
 import {
   openHostNodeQueuedStartExecutionClaimStore,
@@ -237,6 +242,33 @@ export interface HostNodeProductionServerOptions {
    * (most tests) does not, and then such a stop only fails waitForShutdown.
    */
   readonly endProcess?: (code: number) => void
+}
+
+/**
+ * The catalogue ticket a transactional persist writes before its rename (M4
+ * slice 12b, §13 MF-1). A ticket that degraded to `untracked` is failed and
+ * refused, so the write never proceeds without one. With no catalogue
+ * configured there is nothing to track, as on today's path.
+ */
+export function hostNodeThreadRecordCatalogueTicket(
+  publisher: Pick<ThreadCatalogueSourcePublisher, 'begin' | 'finishProjection' | 'fail'> | null,
+  mirror: Pick<ThreadCatalogueMirror, 'observe'> | null
+): HostThreadRecordCommitPort['beginTicket'] {
+  return async (threadId, projection) => {
+    if (!publisher) return { finish: () => undefined, fail: () => undefined }
+    const ticket = publisher.begin(threadId)
+    if (ticket.untracked) {
+      publisher.fail(ticket, 'unchanged')
+      return null
+    }
+    return {
+      finish: () => {
+        const witness = publisher.finishProjection(ticket, projection)
+        mirror?.observe(projection, witness)
+      },
+      fail: () => publisher.fail(ticket)
+    }
+  }
 }
 
 function deferred(): {
@@ -592,6 +624,42 @@ export class HostNodeProductionServer {
       const hostPerf = createHostPerfInstrumentation()
       const runtimePath = (this.options.runtimePath ?? defaultRuntimePath)(this.lease.path)
       const queuedStartEnabled = isHostQueuedStartEnabled(this.options.environment ?? process.env)
+      // M4: read once. A harness switch until boot recovery and the index
+      // seed land (slice 14); nothing sets it in production.
+      const txnRecordPersistEnabled = isHostTxnRecordPersistEnabled(
+        this.options.environment ?? process.env
+      )
+      const threadRecordStore = store as Partial<
+        Pick<HostProfileDomainStore, 'threadRecordState' | 'admitCommittedThreadRecord'>
+      >
+      if (
+        txnRecordPersistEnabled &&
+        (typeof threadRecordStore.threadRecordState !== 'function' ||
+          typeof threadRecordStore.admitCommittedThreadRecord !== 'function')
+      ) {
+        writeHostStderr(
+          'taskwraith-host: TASKWRAITH_HOST_TXN_PERSIST=1 ignored: the profile store cannot commit a transaction\n'
+        )
+      }
+      const threadRecordTransaction: HostStandaloneCompositionInput['threadRecordTransaction'] =
+        txnRecordPersistEnabled &&
+        typeof threadRecordStore.threadRecordState === 'function' &&
+        typeof threadRecordStore.admitCommittedThreadRecord === 'function'
+          ? {
+              profilePath: this.lease.path,
+              records: createHostThreadRecordCommitPort({
+                store: threadRecordStore as Pick<
+                  HostProfileDomainStore,
+                  'threadRecordState' | 'admitCommittedThreadRecord'
+                >,
+                profilePath: this.lease.path,
+                beginTicket: hostNodeThreadRecordCatalogueTicket(
+                  this.threadCataloguePublisher,
+                  this.threadCatalogueMirror
+                )
+              })
+            }
+          : undefined
       const queuedStartSlot = queuedStartEnabled ? createHostQueuedStartStartedSlot() : null
       if (queuedStartEnabled) ensureDefaultRuntimePath(this.lease.path, runtimePath)
       const queuedStartExecutionClaimStore = queuedStartEnabled
@@ -749,7 +817,8 @@ export class HostNodeProductionServer {
         ...(this.threadCatalogue
           ? { threadCatalogueMaintenanceProvider: (request) => this.maintainCatalogue(request) }
           : {}),
-        historySinceProvider: (request) => this.domain!.historySince(request)
+        historySinceProvider: (request) => this.domain!.historySince(request),
+        ...(threadRecordTransaction ? { threadRecordTransaction } : {})
       })
       await this.composition.recoverQueuedStarts()
       projectionDirtyRef.current = () => {
