@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
 import {
+  HOST_SCOPE_DELETED_ERROR_CODE,
+  HOST_SCOPE_DELETED_MESSAGE,
   HOST_SCOPE_EPOCH_STALE_ERROR_CODE,
   HOST_SCOPE_EPOCH_STALE_MESSAGE
 } from '../../host-runtime/HostScopeLedger'
@@ -432,6 +434,13 @@ describe('HostThreadRecordPersistClient failure paths', () => {
         errorMessage: HOST_SCOPE_EPOCH_STALE_MESSAGE
       } as unknown as HostCommandReceipt)
     ).toEqual({ code: 'host_rejected', hostErrorCode: HOST_SCOPE_EPOCH_STALE_ERROR_CODE })
+    // Nor one refused after it: the thread stays deleted for the incarnation.
+    expect(
+      classifyHostPersistRejection({
+        errorCode: HOST_SCOPE_DELETED_ERROR_CODE,
+        errorMessage: HOST_SCOPE_DELETED_MESSAGE
+      } as unknown as HostCommandReceipt)
+    ).toEqual({ code: 'host_rejected', hostErrorCode: HOST_SCOPE_DELETED_ERROR_CODE })
   })
 
   it('classifies an unrelated rejection as host_rejected rather than a conflict', () => {

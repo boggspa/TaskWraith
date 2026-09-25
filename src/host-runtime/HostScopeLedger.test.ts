@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  HOST_SCOPE_DELETED_ERROR_CODE,
+  HOST_SCOPE_DELETED_MESSAGE,
   HOST_SCOPE_EPOCH_STALE_ERROR_CODE,
   HOST_SCOPE_EPOCH_STALE_MESSAGE,
   HOST_WINDOW_SCOPE,
@@ -140,7 +142,7 @@ describe('HostScopeLedger lanes', () => {
 })
 
 describe('HostScopeLedger epochs', () => {
-  it('refuses a write admitted before a delete, grants the ones that did not ask, and admits a recreate', async () => {
+  it('refuses every writer of a deleted thread: one admitted before it as stale, any other as deleted', async () => {
     const ledger = createHostScopeLedger({ hostIncarnation: INCARNATION })
     const scope = hostThreadScope('chat-1')
     const admitted = ledger.view(scope).epoch
@@ -159,24 +161,35 @@ describe('HostScopeLedger epochs', () => {
     expect(bumped).toEqual({ hostIncarnation: INCARNATION, deleteCounter: 1 })
     expect(deleting.epoch).toEqual(bumped)
     expect(deleting.version).toBeNull()
-    // The persist admitted before the delete is refused as the delete is
-    // recorded, while the delete still holds the lane; the writer that did
-    // not ask for an epoch keeps its place.
+    // Both queued writers leave as the delete is recorded, while the delete
+    // still holds the lane.
     await settle()
-    expect(log).toEqual(['persist-old:epoch_stale'])
+    expect(log).toEqual(['persist-old:epoch_stale', 'append:deleted'])
     expect(persist.result).toEqual({ ok: false, reason: 'epoch_stale', epoch: bumped })
-    expect(ledger.view(scope)).toMatchObject({ owner: 'delete', waiting: 1 })
+    expect(append.result).toEqual({ ok: false, reason: 'deleted' })
+    expect(ledger.view(scope)).toMatchObject({ owner: 'delete', waiting: 0, deleted: true })
     deleting.release()
-    await settle()
-    expect(log).toEqual(['persist-old:epoch_stale', 'append:granted'])
-    granted(append.result).release()
 
-    const recreate = granted(
-      await ledger.acquire(scope, { owner: 'create', epoch: ledger.view(scope).epoch })
-    )
-    recreate.commit(0)
-    recreate.release()
-    expect(ledger.view(scope)).toMatchObject({ epoch: bumped, version: 0 })
+    // Nothing writes the thread again in this incarnation, not even a create
+    // that read the new epoch: a delayed create cannot bring it back (D6).
+    await expect(
+      ledger.acquire(scope, { owner: 'create', epoch: ledger.view(scope).epoch })
+    ).resolves.toEqual({ ok: false, reason: 'deleted' })
+    await expect(ledger.acquire(scope, { owner: 'append-late' })).resolves.toEqual({
+      ok: false,
+      reason: 'deleted'
+    })
+    expect(ledger.view(scope)).toMatchObject({
+      epoch: bumped,
+      version: null,
+      owner: null,
+      waiting: 0,
+      deleted: true
+    })
+    // Other threads are untouched.
+    const other = hostThreadScope('chat-2')
+    granted(await ledger.acquire(other, { owner: 'w', epoch: ledger.view(other).epoch })).release()
+    expect(ledger.view(other).deleted).toBe(false)
   })
 
   it('refuses a writer already behind a delete at once, without waiting its turn', async () => {
@@ -185,9 +198,7 @@ describe('HostScopeLedger epochs', () => {
     const admitted = ledger.view(scope).epoch
     const deleting = granted(await ledger.acquire(scope, { owner: 'delete' }))
     deleting.deleted()
-    deleting.release()
-    const holder = granted(await ledger.acquire(scope, { owner: 'holder' }))
-
+    // The delete still holds the lane; the stale writer does not queue behind it.
     await expect(ledger.acquire(scope, { owner: 'persist-old', epoch: admitted })).resolves.toEqual(
       {
         ok: false,
@@ -195,8 +206,12 @@ describe('HostScopeLedger epochs', () => {
         epoch: { hostIncarnation: INCARNATION, deleteCounter: 1 }
       }
     )
-    expect(ledger.view(scope)).toMatchObject({ owner: 'holder', waiting: 0 })
-    holder.release()
+    await expect(ledger.acquire(scope, { owner: 'append' })).resolves.toEqual({
+      ok: false,
+      reason: 'deleted'
+    })
+    expect(ledger.view(scope)).toMatchObject({ owner: 'delete', waiting: 0 })
+    deleting.release()
   })
 
   it('treats an epoch from another incarnation as stale', async () => {
@@ -237,11 +252,19 @@ describe('HostScopeLedger epochs', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'epoch_stale' })
   })
 
-  it('names the stale-epoch failure so that no client retries it as a conflict', () => {
+  it('names its refusals so that no client retries them as a conflict', () => {
     expect(HOST_SCOPE_EPOCH_STALE_ERROR_CODE).toBe('thread_record_epoch_stale')
-    // `thread_record_deleted` is the delete's own success summary.
-    expect(HOST_SCOPE_EPOCH_STALE_ERROR_CODE).not.toBe('thread_record_deleted')
-    for (const text of [HOST_SCOPE_EPOCH_STALE_ERROR_CODE, HOST_SCOPE_EPOCH_STALE_MESSAGE]) {
+    expect(HOST_SCOPE_DELETED_ERROR_CODE).toBe('thread_record_gone')
+    for (const code of [HOST_SCOPE_EPOCH_STALE_ERROR_CODE, HOST_SCOPE_DELETED_ERROR_CODE]) {
+      // `thread_record_deleted` is the delete's own success summary.
+      expect(code).not.toBe('thread_record_deleted')
+    }
+    for (const text of [
+      HOST_SCOPE_EPOCH_STALE_ERROR_CODE,
+      HOST_SCOPE_EPOCH_STALE_MESSAGE,
+      HOST_SCOPE_DELETED_ERROR_CODE,
+      HOST_SCOPE_DELETED_MESSAGE
+    ]) {
       expect(text.toLowerCase()).not.toContain('revision')
       expect(text.toLowerCase()).not.toContain('conflict')
     }
@@ -459,7 +482,8 @@ describe('HostScopeLedger inputs', () => {
       version: null,
       publishedCursor: null,
       owner: null,
-      waiting: 0
+      waiting: 0,
+      deleted: false
     })
   })
 })
@@ -474,17 +498,23 @@ describe('HostScopeLedger events', () => {
       now: () => clock
     })
     const scope = hostThreadScope('chat-1')
-    const admitted = ledger.view(scope).epoch
     const first = granted(await ledger.acquire(scope, { owner: 'a' }))
     const second = ledger.acquire(scope, { owner: 'b' })
-    const stale = ledger.acquire(scope, { owner: 'c', epoch: admitted })
     clock = 130
-    first.deleted()
     first.release()
     const slot = granted(await second)
-    await stale
     clock = 145
     slot.release()
+    // A delete refuses the writer admitted before it as stale, the rest as deleted.
+    const doomed = hostThreadScope('chat-2')
+    const admitted = ledger.view(doomed).epoch
+    const deleting = granted(await ledger.acquire(doomed, { owner: 'x' }))
+    const stale = ledger.acquire(doomed, { owner: 'c', epoch: admitted })
+    const gone = ledger.acquire(doomed, { owner: 'g' })
+    deleting.deleted()
+    deleting.release()
+    await stale
+    await gone
     const controller = new AbortController()
     controller.abort()
     await ledger.acquire(scope, { owner: 'd', signal: controller.signal })
@@ -493,10 +523,13 @@ describe('HostScopeLedger events', () => {
 
     expect(events).toEqual([
       { kind: 'granted', scope, owner: 'a', waitMs: 0 },
-      { kind: 'refused', scope, owner: 'c', reason: 'epoch_stale' },
       { kind: 'released', scope, owner: 'a', holdMs: 30 },
       { kind: 'granted', scope, owner: 'b', waitMs: 30 },
       { kind: 'released', scope, owner: 'b', holdMs: 15 },
+      { kind: 'granted', scope: doomed, owner: 'x', waitMs: 0 },
+      { kind: 'refused', scope: doomed, owner: 'c', reason: 'epoch_stale' },
+      { kind: 'refused', scope: doomed, owner: 'g', reason: 'deleted' },
+      { kind: 'released', scope: doomed, owner: 'x', holdMs: 0 },
       { kind: 'refused', scope, owner: 'd', reason: 'aborted' },
       { kind: 'refused', scope, owner: 'e', reason: 'closed' }
     ])

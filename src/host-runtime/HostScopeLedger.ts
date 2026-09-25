@@ -21,6 +21,11 @@
  *   bring back the thread it was meant for (Appendix D, row D6). The
  *   incarnation is this Host's opaque boot identity, compared for equality
  *   only: an epoch from another incarnation is stale;
+ * - `deleted`: a committed delete also closes the thread's lane for the rest
+ *   of the incarnation. Every other writer, queued or later, is refused
+ *   `deleted`, even one that read the new epoch, as Desktop's in-memory
+ *   `deletedChatIds` refuses re-saves: a delayed create at revision 0 cannot
+ *   bring the thread back. Across a restart that guard is gone;
  * - `publishedCursor`: where the scope's last effects were published.
  *
  * Different scopes never wait on each other. A writer that needs a thread
@@ -54,6 +59,10 @@ export const HOST_SCOPE_EPOCH_STALE_ERROR_CODE = 'thread_record_epoch_stale'
 export const HOST_SCOPE_EPOCH_STALE_MESSAGE =
   'The thread was deleted after this write was admitted.'
 
+/** The failure a writer refused `deleted` reports, named for the same reason. */
+export const HOST_SCOPE_DELETED_ERROR_CODE = 'thread_record_gone'
+export const HOST_SCOPE_DELETED_MESSAGE = 'The thread was deleted and cannot be written again.'
+
 export const HOST_WINDOW_SCOPE = 'window' as HostScopeId
 
 const THREAD_SCOPE_PREFIX = 'thread:'
@@ -69,6 +78,8 @@ export interface HostScopeView {
   /** The holder's label, or null when the lane is free. */
   readonly owner: string | null
   readonly waiting: number
+  /** Whether a delete closed the thread's lane in this incarnation. */
+  readonly deleted: boolean
 }
 
 export interface HostScopeSlot {
@@ -85,19 +96,20 @@ export interface HostScopeSlot {
   published(position: HostCursorPosition): void
   /**
    * Record a committed delete of the thread: bump the epoch, forget the
-   * version, and refuse every waiter admitted under the old epoch.
+   * version, refuse every waiter (`epoch_stale` when it carries the old
+   * epoch, `deleted` otherwise) and close the lane for the incarnation.
    */
   deleted(): HostScopeEpoch
   /** Hand the lane to the next writer. Idempotent. */
   release(): void
 }
 
-export type HostScopeRefusal = 'epoch_stale' | 'aborted' | 'closed'
+export type HostScopeRefusal = 'epoch_stale' | 'deleted' | 'aborted' | 'closed'
 
 export type HostScopeAcquireResult =
   | { readonly ok: true; readonly slot: HostScopeSlot }
   | { readonly ok: false; readonly reason: 'epoch_stale'; readonly epoch: HostScopeEpoch }
-  | { readonly ok: false; readonly reason: 'aborted' | 'closed' }
+  | { readonly ok: false; readonly reason: 'deleted' | 'aborted' | 'closed' }
 
 export interface HostScopeAcquireRequest {
   /** A label for the writer, reported while it holds or waits. */
@@ -161,6 +173,7 @@ interface Waiter {
 interface ScopeState {
   readonly scope: HostScopeId
   deleteCounter: number
+  deleted: boolean
   version: number | null
   publishedCursor: HostCursorPosition | null
   holder: { readonly owner: string; readonly grantedAt: number | null } | null
@@ -171,6 +184,7 @@ type HostScopeRefused = Extract<HostScopeAcquireResult, { ok: false }>
 
 const ABORTED: HostScopeRefused = Object.freeze({ ok: false, reason: 'aborted' } as const)
 const CLOSED: HostScopeRefused = Object.freeze({ ok: false, reason: 'closed' } as const)
+const DELETED: HostScopeRefused = Object.freeze({ ok: false, reason: 'deleted' } as const)
 
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -293,6 +307,7 @@ export function createHostScopeLedger(options: HostScopeLedgerOptions): HostScop
       state = {
         scope,
         deleteCounter: 0,
+        deleted: false,
         version: null,
         publishedCursor: null,
         holder: null,
@@ -361,18 +376,22 @@ export function createHostScopeLedger(options: HostScopeLedgerOptions): HostScop
           throw new Error('HostScopeLedger: the window scope is not a record')
         }
         state.deleteCounter += 1
+        state.deleted = true
         state.version = null
         const current = epochOf(state)
-        // Writers admitted before the delete leave the queue now rather
-        // than wait behind writers they will never follow.
+        // Every waiter leaves the queue now: those admitted before the delete
+        // as stale, the rest because nothing is left to write.
         for (const waiter of [...state.waiters]) {
-          if (waiter.epoch === null || sameHostScopeEpoch(waiter.epoch, current)) continue
           // An observer may have taken it out already (an abort it caused).
           const index = state.waiters.indexOf(waiter)
           if (index < 0) continue
           state.waiters.splice(index, 1)
           waiter.detach()
-          waiter.settle(stale(state, waiter.owner))
+          waiter.settle(
+            waiter.epoch === null
+              ? refuse(state.scope, waiter.owner, DELETED)
+              : stale(state, waiter.owner)
+          )
         }
         return current
       },
@@ -429,7 +448,8 @@ export function createHostScopeLedger(options: HostScopeLedgerOptions): HostScop
         version: state ? state.version : null,
         publishedCursor: state ? state.publishedCursor : null,
         owner: state && state.holder ? state.holder.owner : null,
-        waiting: state ? state.waiters.length : 0
+        waiting: state ? state.waiters.length : 0,
+        deleted: state ? state.deleted : false
       }
     },
     acquire(scope: HostScopeId, request: HostScopeAcquireRequest): Promise<HostScopeAcquireResult> {
@@ -447,6 +467,7 @@ export function createHostScopeLedger(options: HostScopeLedgerOptions): HostScop
       if (epoch !== null && !sameHostScopeEpoch(epoch, epochOf(state))) {
         return Promise.resolve(stale(state, owner))
       }
+      if (state.deleted) return Promise.resolve(refuse(scope, owner, DELETED))
       return new Promise<HostScopeAcquireResult>((resolve) => {
         const waiter: Waiter = {
           owner,
