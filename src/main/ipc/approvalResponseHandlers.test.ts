@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import type { ChatRecord, ExternalPathGrant } from '../store/types'
+import { bindMainWorkSpanSink } from '../perf/mainWorkSpanSink'
+import type { WorkSpanRecordInput } from '../perf/WorkSpanRecorder'
 import {
   registerApprovalResponseHandlers,
   type ApprovalResponseHandlerDeps
@@ -103,6 +105,9 @@ function createDeps(order: string[]) {
     assertSenderCanRespond: vi.fn(),
     approvalService: {
       listRendererApprovalRequests: vi.fn(() => []),
+      lookupRoute: vi.fn(
+        (_requestId: string): { provider: string; appChatId?: string } | null => null
+      ),
       getPendingExternalPathDetection: vi.fn(() => {
         order.push('getPendingExternalPathDetection')
         return detection
@@ -613,5 +618,37 @@ describe('registerApprovalResponseHandlers', () => {
 
     expect(order).toEqual(['getPendingExternalPathDetection', 'resolve'])
     expect(vi.mocked(deps.issueExternalPathGrant)).not.toHaveBeenCalled()
+  })
+
+  it('times each decision as an approval control response for the pending card’s chat', async () => {
+    const spans: WorkSpanRecordInput[] = []
+    bindMainWorkSpanSink({ record: (span) => void spans.push(span) })
+    try {
+      const { deps } = createDeps([])
+      // The route table names the chat; an external-path detection stands in
+      // when the route has none, as assertSenderCanRespond reads them.
+      vi.mocked(deps.approvalService.lookupRoute).mockImplementation((requestId) =>
+        requestId === 'req-9' ? { provider: 'ollama', appChatId: 'chat-9' } : null
+      )
+      const detected = vi.mocked(deps.approvalService.getPendingExternalPathDetection)
+      const detection = detected.getMockImplementation()!
+      detected.mockImplementation((requestId: string) =>
+        requestId === 'req-ext' ? detection(requestId) : undefined
+      )
+      registerApprovalResponseHandlers(deps)
+
+      await handlerFor('respond-agent-approval')({}, 'req-9', 'accept')
+      await Promise.resolve(handlerFor('respond-agent-approval')({}, 'req-ext', 'decline')).catch(
+        () => {}
+      )
+      await handlerFor('respond-agent-approval')({}, 'req-gone', 'accept')
+
+      expect(spans.map((span) => [span.chatId, span.kind, span.reason])).toEqual([
+        ['chat-9', 'control_response', 'approval_decision'],
+        ['chat-1', 'control_response', 'approval_decision']
+      ])
+    } finally {
+      bindMainWorkSpanSink(undefined)
+    }
   })
 })

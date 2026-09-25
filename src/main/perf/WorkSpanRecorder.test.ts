@@ -389,6 +389,12 @@ describe('createWorkSpanRecorder', () => {
       'registration_change'
     ])
     expect(WORK_SPAN_REASONS.persist_barrier).toEqual(['barrier', 'receipt_poll'])
+    expect(WORK_SPAN_REASONS.control_response).toEqual([
+      'cancel',
+      'approval_decision',
+      'question_answer',
+      'seat_toggle'
+    ])
   })
 
   it('accepts each kind-specific reason and rejects one from the wrong kind', () => {

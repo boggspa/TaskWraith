@@ -1081,6 +1081,7 @@ import {
 import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
 import { bindMainWorkSpanSink } from './perf/mainWorkSpanSink'
 import { installMainPerfWorkSpanHandle } from './perf/perfWorkSpanHandle'
+import { handleChatControl } from './perf/desktopControlResponseSpan'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import {
@@ -63255,7 +63256,7 @@ if (isGeminiMcpBridgeProcess) {
 
     registerEnsembleControlHandlers(ensembleControlHandlerDeps())
 
-    ipcMain.handle('cancel-ensemble-round', async (event, chatId?: string) => {
+    handleChatControl(ipcMain, 'cancel-ensemble-round', 'cancel', async (event, chatId?: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')
       assertRendererChatScope(event, canonicalChatId)
       const scheduledOwner = scheduledOccurrenceOwners.lookupByChatId(canonicalChatId)

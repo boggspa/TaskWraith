@@ -154,7 +154,8 @@ const WORK_SPAN_REASONS = Object.freeze({
     'rejected',
     'shutdown'
   ]),
-  persist_barrier: Object.freeze(['barrier', 'receipt_poll'])
+  persist_barrier: Object.freeze(['barrier', 'receipt_poll']),
+  control_response: Object.freeze(['cancel', 'approval_decision', 'question_answer', 'seat_toggle'])
 })
 
 /**

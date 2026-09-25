@@ -83,7 +83,10 @@ describe('IpcValidation', () => {
     const handled = new Set<string>()
     const unresolvedConstants = new Set<string>()
     const constantRe = /(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*['"`]([^'"`]+)['"`]/g
-    const handleRe = /\b(?:ipcMain|ipc)\.handle\(\s*(?:['"`]([^'"`]+)['"`]|([A-Z][A-Z0-9_]*))/g
+    // `handleDesktopControl(ipcMain, …)` and `handleChatControl(ipcMain, …)`
+    // (perf/desktopControlResponseSpan.ts) register through `ipcMain.handle`.
+    const handleRe =
+      /\b(?:(?:ipcMain|ipc)\.handle\(|handle(?:DesktopControl|ChatControl)\(\s*(?:ipcMain|ipc)\s*,)\s*(?:['"`]([^'"`]+)['"`]|([A-Z][A-Z0-9_]*))/g
     for (const source of sources) {
       const constants = new Map<string, string>()
       constantRe.lastIndex = 0
@@ -106,6 +109,14 @@ describe('IpcValidation', () => {
     }
     expect([...unresolvedConstants]).toEqual([])
     expect(handled.size).toBeGreaterThan(0)
+    // The timed control channels register through a wrapper; the scan follows it.
+    for (const channel of [
+      'answer-agent-question',
+      'cancel-ensemble-round',
+      'respond-agent-approval'
+    ]) {
+      expect(handled.has(channel)).toBe(true)
+    }
     const missing = [...handled].filter((channel) => !(channel in IPC_ARGUMENT_SCHEMAS)).sort()
     expect(missing).toEqual([])
   })

@@ -82,7 +82,11 @@ export const WORK_SPAN_REASONS = {
   ],
   // A1.2: Desktop awaitChatRecordPersisted wait, separate from Host queue /
   // durable_commit / receipt_delivery and from the 250 ms receipt poll.
-  persist_barrier: ['barrier', 'receipt_poll']
+  persist_barrier: ['barrier', 'receipt_poll'],
+  // M1 S4: which control a control response answered, so a cancel, an
+  // approval decision, a question answer and a seat toggle are never pooled.
+  // The harness's own names (interferenceMatrix.cjs CONTROL_ACTIONS).
+  control_response: ['cancel', 'approval_decision', 'question_answer', 'seat_toggle']
 } as const satisfies Partial<Record<WorkSpanKind, readonly string[]>>
 
 export type WorkSpanReasonKind = keyof typeof WORK_SPAN_REASONS

@@ -3,6 +3,7 @@ import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
   type RemoteQuestionResolutionScope
 } from '../RemoteQuestionRegistry'
+import { handleDesktopControl } from '../perf/desktopControlResponseSpan'
 
 interface QuestionResolutionResult {
   ok: boolean
@@ -18,6 +19,8 @@ interface AgentQuestionRegistryLike {
     isCustom: boolean
   ) => QuestionResolutionResult
   reject: (questionId: string, reason: string) => QuestionResolutionResult
+  /** The pending question's record; its thread is the chat it was asked in. */
+  get: (questionId: string) => { threadId?: string } | null
   rejectScoped: (
     questionId: string,
     scope: RemoteQuestionResolutionScope,
@@ -76,20 +79,27 @@ function resolutionScope(
 }
 
 export function registerAgentQuestionHandlers(deps: AgentQuestionHandlersDeps): void {
-  ipcMain.handle('answer-agent-question', (event, payload: AnswerAgentQuestionPayload) => {
-    const scope = resolutionScope(deps, event, payload)
-    const answer = String(payload.answer || '').slice(0, REMOTE_QUESTION_MAX_ANSWER_CHARS)
-    const result = scope
-      ? deps.registry.answerScoped(
-          payload.questionId,
-          scope,
-          answer,
-          Boolean(payload.isCustom)
-        )
-      : deps.registry.answer(payload.questionId, answer, Boolean(payload.isCustom))
-    if (!result.ok) return { ok: false, error: result.reason || 'no-such-question' }
-    return { ok: true }
-  })
+  // M1 S4: one control_response span per answer, main ingress to result.
+  handleDesktopControl(
+    ipcMain,
+    'answer-agent-question',
+    'question_answer',
+    // Main's own record names the chat, read before the answer resolves it;
+    // the renderer's payload is never trusted for attribution.
+    (_event, payload) => {
+      const questionId = (payload as { questionId?: unknown } | undefined)?.questionId
+      return typeof questionId === 'string' ? deps.registry.get(questionId)?.threadId : undefined
+    },
+    (event, payload: AnswerAgentQuestionPayload) => {
+      const scope = resolutionScope(deps, event, payload)
+      const answer = String(payload.answer || '').slice(0, REMOTE_QUESTION_MAX_ANSWER_CHARS)
+      const result = scope
+        ? deps.registry.answerScoped(payload.questionId, scope, answer, Boolean(payload.isCustom))
+        : deps.registry.answer(payload.questionId, answer, Boolean(payload.isCustom))
+      if (!result.ok) return { ok: false, error: result.reason || 'no-such-question' }
+      return { ok: true }
+    }
+  )
 
   ipcMain.handle('cancel-agent-question', (event, payload: CancelAgentQuestionPayload) => {
     const scope = resolutionScope(deps, event, payload)

@@ -15,6 +15,7 @@ import {
 import type { CommandRuleApprovalFlow } from '../command-rules/CommandRuleApprovalFlow'
 import { commandRuleListItem } from '../command-rules/CommandRuleApprovalFlow'
 import type { CommandRuleListItem } from '../../shared/commandRules'
+import { handleDesktopControl } from '../perf/desktopControlResponseSpan'
 
 /**
  * approvalResponseHandlers — M3-3d approval-cluster extraction (per
@@ -59,7 +60,7 @@ export type RespondAgentApprovalResult = {
 export interface ApprovalResponseHandlerDeps {
   approvalService: Pick<
     ApprovalService,
-    'getPendingExternalPathDetection' | 'listRendererApprovalRequests' | 'resolve'
+    'getPendingExternalPathDetection' | 'listRendererApprovalRequests' | 'lookupRoute' | 'resolve'
   >
   commandRuleApprovalFlow?: Pick<
     CommandRuleApprovalFlow,
@@ -74,6 +75,18 @@ export interface ApprovalResponseHandlerDeps {
   broadcastChatUpdated: (chat: ChatRecord) => void
 }
 
+/** The chat a pending approval belongs to, read before the decision settles it. */
+function pendingApprovalChatId(
+  deps: ApprovalResponseHandlerDeps,
+  requestId: unknown
+): string | undefined {
+  if (typeof requestId !== 'string') return undefined
+  return (
+    deps.approvalService.lookupRoute(requestId)?.appChatId ||
+    deps.approvalService.getPendingExternalPathDetection(requestId)?.appChatId
+  )
+}
+
 export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDeps): void {
   ipcMain.handle('get-pending-agent-approvals', (event): RendererApprovalRequest[] =>
     deps.approvalService.listRendererApprovalRequests().filter((request) => {
@@ -86,8 +99,12 @@ export function registerApprovalResponseHandlers(deps: ApprovalResponseHandlerDe
     })
   )
 
-  ipcMain.handle(
+  // M1 S4: one control_response span per decision, main ingress to result.
+  handleDesktopControl(
+    ipcMain,
     'respond-agent-approval',
+    'approval_decision',
+    (_event, requestId) => pendingApprovalChatId(deps, requestId),
     async (
       event,
       requestId: string,
