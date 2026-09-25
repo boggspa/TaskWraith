@@ -1567,7 +1567,7 @@ describe('HostCommandReceiptStore', () => {
   })
 
   it('markIndeterminate accepts every closed indeterminate code exactly once', () => {
-    expect(HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.size).toBe(18)
+    expect(HOST_COMMAND_RECEIPT_INDETERMINATE_CODES.size).toBe(19)
     const store = openStore({ compactAfterRecords: 1000 })
     let index = 0
     for (const errorCode of HOST_COMMAND_RECEIPT_INDETERMINATE_CODES) {

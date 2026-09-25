@@ -292,7 +292,10 @@ export function parseHostTransactionRecord(
     !isNonNegativeSafeInteger(epoch.deleteCounter) ||
     !isNonNegativeSafeInteger(value.expectedRevision) ||
     !isNonNegativeSafeInteger(value.resultingRevision) ||
-    value.resultingRevision <= value.expectedRevision ||
+    // A persist moves the revision forward, except a create, which lands at
+    // revision 0 over no file (the store's math for a missing record).
+    (value.resultingRevision <= value.expectedRevision &&
+      !(value.prior === null && value.expectedRevision === 0 && value.resultingRevision === 0)) ||
     (value.prior !== null && prior === null) ||
     resulting === null ||
     !isRecord(effects) ||

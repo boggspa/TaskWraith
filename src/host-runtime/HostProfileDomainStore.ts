@@ -1909,6 +1909,50 @@ export class HostProfileDomainStore {
     return published
   }
 
+  /**
+   * The thread's committed revision and the file identity it was read from,
+   * in one call, or null when there is no record (M4 slice 12). A transaction
+   * records that identity as its commit's prior and checks it again before
+   * the rename, so the two must not be read apart. Throws when the record
+   * changed while its revision was being read.
+   */
+  threadRecordState(
+    threadId: string
+  ): { revision: number; identity: { dev: string; ino: string; size: number } } | null {
+    this.assertAuthority()
+    const path = this.chatPath(threadId)
+    const before = this.statRecord(path)
+    if (!before) {
+      this.dropThreadRevision(threadId)
+      return null
+    }
+    const revision = this.threadRevisionFor(threadId)
+    const after = this.statRecord(path)
+    if (revision === null || !after || this.recordIdentity(after) !== this.recordIdentity(before)) {
+      throw new Error('Thread record changed while its revision was read')
+    }
+    return {
+      revision,
+      identity: { dev: String(before.dev), ino: String(before.ino), size: Number(before.size) }
+    }
+  }
+
+  /**
+   * Record a transaction's committed file (M4 slice 12): the revision cache,
+   * and the summary cache when the prepared descriptor carried a summary.
+   */
+  admitCommittedThreadRecord(
+    threadId: string,
+    revision: number,
+    summary: HostProfileThreadSummary | null
+  ): void {
+    this.assertAuthority()
+    this.cacheThreadRevision(threadId, revision)
+    const stat = this.statRecord(this.chatPath(threadId))
+    if (summary && stat) this.admitThreadSummary(threadId, stat, summary)
+    else this.dropThreadSummary(threadId)
+  }
+
   appendTranscript(input: {
     threadId: string
     runId?: string

@@ -307,9 +307,9 @@ describe('compiled thread-record transfer worker: prepare', () => {
         id: request.id,
         ok: true,
         value:
-          request.kind === 'prepare'
-            ? dummy
-            : { transferId: request.input.transferId, sha256: 'scripted', byteLength: 1 }
+          request.kind === 'publish'
+            ? { transferId: request.input.transferId, sha256: 'scripted', byteLength: 1 }
+            : dummy
       })
     }
     expect(await Promise.all(prepares)).toEqual([dummy, dummy, dummy])

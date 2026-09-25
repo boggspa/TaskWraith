@@ -133,6 +133,12 @@ describe('manifest records', () => {
     expect(
       parseHostTransactionRecord(prepareValue({ expectedRevision: 0, resultingRevision: 1 }))
     ).toMatchObject({ ok: true })
+    // A create lands at revision 0 over no file.
+    expect(
+      parseHostTransactionRecord(
+        prepareValue({ prior: null, expectedRevision: 0, resultingRevision: 0 })
+      )
+    ).toMatchObject({ ok: true, record: { prior: null, resultingRevision: 0 } })
 
     for (const record of [
       { kind: 'abort', commandId: 'cmd-1', reason: 'interrupted', at: 5 },
@@ -155,6 +161,10 @@ describe('manifest records', () => {
       [prepareValue({ epoch: { ...EPOCH, deleteCounter: -1 } }), 'prepare_invalid'],
       [prepareValue({ expectedRevision: 1.5 }), 'prepare_invalid'],
       [prepareValue({ resultingRevision: 13 }), 'prepare_invalid'],
+      // Revision 0 is a create only over no file, and only from base 0.
+      [prepareValue({ expectedRevision: 0, resultingRevision: 0 }), 'prepare_invalid'],
+      [prepareValue({ prior: null, expectedRevision: 1, resultingRevision: 1 }), 'prepare_invalid'],
+      [prepareValue({ prior: null, expectedRevision: 1, resultingRevision: 0 }), 'prepare_invalid'],
       [prepareValue({ prior: { ...PRIOR, ino: '01' } }), 'prepare_invalid'],
       [prepareValue({ prior: { ...PRIOR, dev: 16777232 } }), 'prepare_invalid'],
       [prepareValue({ prior: undefined }), 'prepare_invalid'],

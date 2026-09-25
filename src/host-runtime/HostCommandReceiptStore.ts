@@ -243,6 +243,8 @@ export type HostCommandReceiptIndeterminateCode =
   | 'observation_diff_incoherent'
   /** The M4 manifest recovery's `indeterminate` action on a pending receipt. */
   | 'transaction_recovery_indeterminate'
+  /** A live M4 transaction that could not tell whether, or could not publish what, it committed. */
+  | 'transaction_commit_indeterminate'
 
 /** Runtime membership set for HostCommandReceiptIndeterminateCode. */
 export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandReceiptIndeterminateCode> =
@@ -264,7 +266,8 @@ export const HOST_COMMAND_RECEIPT_INDETERMINATE_CODES: ReadonlySet<HostCommandRe
     'observation_diff_generation_mismatch',
     'observation_diff_cursor_mismatch',
     'observation_diff_incoherent',
-    'transaction_recovery_indeterminate'
+    'transaction_recovery_indeterminate',
+    'transaction_commit_indeterminate'
   ])
 
 /**
