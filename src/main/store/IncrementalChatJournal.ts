@@ -400,15 +400,26 @@ export function createIncrementalChatJournal(
     }
   }
 
+  // The journal file is created lazily by its first append (initialize, a
+  // checkpoint, delete, clear and re-anchor all unlink it). Fsyncing the file
+  // makes its bytes durable but not its name, so an append that creates it
+  // also fsyncs the directory, or a power loss can drop an acknowledged
+  // revision with no gap to show for it. An empty file stands in for "created
+  // here": re-fsyncing the directory for a leftover empty file is harmless.
+  const createdByThisAppend = (fd: number): boolean => fs.fstatSync(fd).size === 0
+
   const appendLine = (filePath: string, line: string): number => {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
     const fd = fs.openSync(filePath, 'a', 0o600)
+    let created = false
     try {
+      created = createdByThisAppend(fd)
       fs.writeSync(fd, line)
       fs.fsyncSync(fd)
     } finally {
       fs.closeSync(fd)
     }
+    if (created) fsyncDirectory()
     return Buffer.byteLength(line, 'utf8')
   }
 
@@ -424,7 +435,11 @@ export function createIncrementalChatJournal(
     }
     const entry: PendingDeferredFsync = { fd, settled: false, waiters: [] }
     try {
+      const created = createdByThisAppend(fd)
       fs.writeSync(fd, line)
+      // Only the file's flush is deferred. Its name is made durable here, once
+      // per file, so no later barrier on this path can outrun it.
+      if (created) fsyncDirectory()
       entries.add(entry)
       pendingDeferredCount += 1
       scheduleFsync(fd, (error) => {

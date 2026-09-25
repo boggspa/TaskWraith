@@ -1,5 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as fs from 'fs'
+import fsModule from 'fs'
+import { syncBuiltinESMExports } from 'module'
 import * as os from 'os'
 import * as path from 'path'
 import { deriveChatRecordMutation } from './ChatRecordMutation'
@@ -650,5 +652,99 @@ describe('IncrementalChatJournal', () => {
 
     journal.clear()
     expect(fs.existsSync(baseDir)).toBe(false)
+  })
+
+  describe('journal file creation durability', () => {
+    // Each fsync this journal issues, in order: the file's path, or `baseDir`
+    // for a directory fsync. A file's name is durable only once its directory
+    // is fsynced, so an acknowledged append must not outrun that.
+    function recordFsyncs(): string[] {
+      const pathByFd = new Map<number, string>()
+      const realOpen = fsModule.openSync.bind(fsModule)
+      const realFsync = fsModule.fsyncSync.bind(fsModule)
+      vi.spyOn(fsModule, 'openSync').mockImplementation(((
+        ...args: Parameters<typeof fs.openSync>
+      ) => {
+        const fd = realOpen(...args)
+        pathByFd.set(fd, String(args[0]))
+        return fd
+      }) as typeof fs.openSync)
+      const fsyncs: string[] = []
+      vi.spyOn(fsModule, 'fsyncSync').mockImplementation((fd) => {
+        fsyncs.push(pathByFd.get(fd) ?? `fd:${fd}`)
+        realFsync(fd)
+      })
+      // The journal reads `fs` as a namespace; push the spies through to it.
+      syncBuiltinESMExports()
+      return fsyncs
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+      syncBuiltinESMExports()
+    })
+
+    it('makes a created journal file name durable before a synchronous append returns', () => {
+      const before = chat()
+      journal.initialize('chat-1', before)
+      const journalFile = path.join(baseDir, 'chat-1.mutations.jsonl')
+      expect(fs.existsSync(journalFile)).toBe(false)
+
+      const fsyncs = recordFsyncs()
+      journal.append(deriveChatRecordMutation(before, advance(before, 'acknowledged')))
+
+      expect(fsyncs).toEqual([journalFile, baseDir])
+    })
+
+    it('makes the name durable again when an append recreates the journal after a checkpoint', () => {
+      const before = chat()
+      const middle = advance(before, 'first')
+      journal.initialize('chat-1', before)
+      journal.append(deriveChatRecordMutation(before, middle))
+      journal.checkpoint('chat-1', 'manual')
+      const journalFile = path.join(baseDir, 'chat-1.mutations.jsonl')
+      expect(fs.existsSync(journalFile)).toBe(false)
+
+      const fsyncs = recordFsyncs()
+      journal.append(deriveChatRecordMutation(middle, advance(middle, 'after checkpoint')))
+
+      expect(fsyncs).toEqual([journalFile, baseDir])
+    })
+
+    it('fsyncs the directory synchronously when a deferred append creates the journal', () => {
+      const captured: number[] = []
+      const deferred = createIncrementalChatJournal(baseDir, {
+        now: () => nowMs,
+        scheduleFsync: (fd, done) => {
+          captured.push(fd)
+          done(null)
+        }
+      })
+      const before = chat()
+      deferred.initialize('chat-1', before)
+
+      const fsyncs = recordFsyncs()
+      deferred.append(deriveChatRecordMutation(before, advance(before, 'streamed')), {
+        durability: 'deferred'
+      })
+
+      // The file's own flush stays with the scheduler; only its name is made
+      // durable inline, once, at creation.
+      expect(captured).toHaveLength(1)
+      expect(fsyncs).toEqual([baseDir])
+    })
+
+    it('leaves the directory alone for an append to an existing journal file', () => {
+      const before = chat()
+      const middle = advance(before, 'first')
+      journal.initialize('chat-1', before)
+      journal.append(deriveChatRecordMutation(before, middle))
+      const journalFile = path.join(baseDir, 'chat-1.mutations.jsonl')
+
+      const fsyncs = recordFsyncs()
+      journal.append(deriveChatRecordMutation(middle, advance(middle, 'second')))
+
+      expect(fsyncs).toEqual([journalFile])
+    })
   })
 })
