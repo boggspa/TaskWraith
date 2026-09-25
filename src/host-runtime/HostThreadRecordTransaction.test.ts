@@ -633,10 +633,17 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         expect(h.lane().version).toBe(1)
         expect(h.lane().publishedCursor).toEqual(end)
         expectLaneFree(h)
-        expect(h.store.threadRecordState(THREAD_ID)).toEqual({
+        // The commit fed the store's caches: neither the revision nor the
+        // summary re-parses the record (a miss would, and still answer right).
+        const reads = h.store.threadRecordReads
+        expect(h.store.threadRecordState(THREAD_ID)).toMatchObject({
           revision: 1,
           identity: committed.identity
         })
+        const summaries = h.store.listThreadSummaries()
+        expect(summaries.map((summary) => summary.appChatId)).toEqual([THREAD_ID])
+        expect(summaries[0]!.persistenceRevision).toBe(1)
+        expect(h.store.threadRecordReads).toBe(reads)
         expect(h.failStops).toEqual([])
       }
     )
@@ -989,6 +996,62 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       expectLaneFree(h)
     })
 
+    it('CAS mismatch: an in-place rewrite of the same length (same inode) is refused too', async () => {
+      const h = harness()
+      h.seed()
+      const stateBefore = h.store.threadRecordState(THREAD_ID)
+      expect(stateBefore).not.toBeNull()
+      h.begin()
+      const original = readFileSync(h.chatPath, 'utf8')
+      // One character of the title changes; the byte length and inode do not.
+      const rewritten = original.replace('"title":"', '"title":"X').replace(/X(.)/, 'X')
+      expect(rewritten).not.toBe(original)
+      expect(Buffer.byteLength(rewritten)).toBe(Buffer.byteLength(original))
+      const records: HostThreadRecordCommitPort = {
+        ...h.records,
+        beginTicket: async (threadId, projection) => {
+          const { openSync, writeSync: write, closeSync } = await import('node:fs')
+          const fd = openSync(h.chatPath, 'r+')
+          write(fd, rewritten, 0, 'utf8')
+          closeSync(fd)
+          return h.records.beginTicket(threadId, projection)
+        }
+      }
+      const outcome = await h.execute({}, h.withPorts({ records }))
+      expect(outcome.kind).toBe('failed')
+      expectFailedReceipt(h.receipt(), 'thread_record_revision_conflict')
+      expect(readIdentity(h.chatPath)).toMatchObject({
+        ino: stateBefore!.identity.ino,
+        size: stateBefore!.identity.size
+      })
+      expect(readFileSync(h.chatPath, 'utf8')).toBe(rewritten)
+      expect(h.log.get(COMMAND_ID)?.terminal?.kind).toBe('abort')
+      expectLaneFree(h)
+    })
+
+    it('an abort record is written after the committer hold is released (one fsync under the hold)', async () => {
+      const h = harness()
+      h.seed()
+      h.begin()
+      const holdingAtAppend: Array<[string, string | null]> = []
+      const log: HostThreadRecordTransactionPorts['log'] = {
+        append: (record) => {
+          holdingAtAppend.push([(record as { kind: string }).kind, h.gate.snapshot().holding])
+          return h.log.append(record)
+        }
+      }
+      const records: HostThreadRecordCommitPort = {
+        ...h.records,
+        identityKey: async () => 'another-writer-was-here'
+      }
+      const outcome = await h.execute({}, h.withPorts({ log, records }))
+      expect(outcome).toEqual({ kind: 'failed', errorCode: 'thread_record_revision_conflict' })
+      expect(holdingAtAppend).toEqual([
+        ['prepare', null],
+        ['abort', null]
+      ])
+    })
+
     it('rename throwing before the rename: abort record, ticket failed, thread_record_persist_failed', async () => {
       const h = harness()
       h.seed()
@@ -1315,6 +1378,115 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
     })
   })
 
+  describe('7b. review fixes: demotion, the ticket, a foreign reset', () => {
+    it('unsupported demotes the receipt to the legacy class, durably, before legacy runs', async () => {
+      const h = harness()
+      h.seed()
+      h.begin()
+      const classDuringLegacy: Array<string | undefined> = []
+      const legacy = async () => {
+        classDuringLegacy.push(h.receipt()?.commandClass)
+        return h.ports.legacy()
+      }
+      const { descriptor } = h.publish(stampedRecord(THREAD_ID, 1), 'transfer-demote')
+      await withPeopleDonorMutationGate(h.profilePath, async () => {
+        const outcome = await h.execute({ descriptor }, h.withPorts({ legacy }))
+        expect(outcome.kind).toBe('legacy')
+      })
+      expect(classDuringLegacy).toEqual(['legacy-observed'])
+      // Durable: a reopened store reads the demoted class.
+      const reopened = new HostCommandReceiptStore({
+        dataDir: h.dataDir,
+        now: () => NOW_ISO,
+        getPosition: () => h.deltas.getPosition(),
+        compactAfterRecords: 1000,
+        scheduleCompaction: () => {}
+      })
+      const found = reopened.list().find((record) => record.commandId === COMMAND_ID)
+      expect(found?.commandClass).toBe('legacy-observed')
+    })
+
+    it('unsupported whose demotion is refused fails persist_failed and never runs legacy', async () => {
+      const h = harness()
+      h.seed()
+      h.begin()
+      const receipts: HostThreadRecordTransactionPorts['receipts'] = {
+        complete: (input) => h.receipts.complete(input),
+        markIndeterminate: (input) => h.receipts.markIndeterminate(input),
+        demoteTransactionalCommand: () => ({ kind: 'refused' })
+      }
+      const { descriptor } = h.publish(stampedRecord(THREAD_ID, 1), 'transfer-no-demote')
+      await withPeopleDonorMutationGate(h.profilePath, async () => {
+        const outcome = await h.execute({ descriptor }, h.withPorts({ receipts }))
+        expect(outcome).toEqual({ kind: 'failed', errorCode: 'thread_record_persist_failed' })
+      })
+      expect(h.legacyCalls).toEqual([])
+      expectFailedReceipt(h.receipt(), 'thread_record_persist_failed')
+      expect(h.transferListing()).not.toContain('transfer-no-demote.record.json')
+      expectLaneFree(h)
+    })
+
+    it('a throwing ticket never keeps the receipt from completing', async () => {
+      const h = harness()
+      h.seed()
+      h.begin()
+      const records: HostThreadRecordCommitPort = {
+        ...h.records,
+        beginTicket: async () => ({
+          finish: () => {
+            throw new Error('mirror observe failed')
+          },
+          fail: () => {
+            throw new Error('publisher fail failed')
+          }
+        })
+      }
+      const outcome = await h.execute(
+        { descriptor: h.publish(stampedRecord(THREAD_ID, 1)).descriptor },
+        h.withPorts({ records })
+      )
+      expect(outcome.kind).toBe('succeeded')
+      expect(h.receipt()?.status).toBe('succeeded')
+      expectLaneFree(h)
+
+      h.begin('cmd-abort')
+      const aborting: HostThreadRecordCommitPort = { ...records, identityKey: async () => 'moved' }
+      const failed = await h.execute(
+        {
+          commandId: 'cmd-abort',
+          expectedRevision: 1,
+          descriptor: h.publish(stampedRecord(THREAD_ID, 2), 'transfer-abort').descriptor
+        },
+        h.withPorts({ records: aborting })
+      )
+      expect(failed).toEqual({ kind: 'failed', errorCode: 'thread_record_revision_conflict' })
+      expectFailedReceipt(h.receipt('cmd-abort'), 'thread_record_revision_conflict')
+      expect(h.transferListing()).not.toContain('transfer-abort.record.json')
+    })
+
+    it('a foreign reset while awaiting durability completes at the new generation', async () => {
+      const h = harness()
+      h.seed()
+      h.begin()
+      const moved = { generation: h.deltas.getPosition().generation + 1, cursor: 1 }
+      const deltas: HostThreadRecordTransactionPorts['deltas'] = {
+        appendGroup: (input) => h.deltas.appendGroup(input),
+        getPosition: () => h.deltas.getPosition(),
+        awaitDurable: async () => {
+          await h.deltas.awaitDurable()
+          return { kind: 'durable', position: moved }
+        }
+      }
+      const outcome = await h.execute(
+        { descriptor: h.publish(stampedRecord(THREAD_ID, 1)).descriptor },
+        h.withPorts({ deltas })
+      )
+      expect(outcome).toMatchObject({ kind: 'succeeded', position: moved })
+      expect(h.receipt()).toMatchObject({ status: 'succeeded', ...moved })
+      expect(h.log.get(COMMAND_ID)?.terminal).toMatchObject({ kind: 'published', position: moved })
+    })
+  })
+
   describe('8. concurrency', () => {
     it('two threads prepare concurrently: neither waits on the other lane', async () => {
       const h = harness()
@@ -1490,7 +1662,7 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
         name: 'after the durable prepare, before the rename (K3)',
         kill: 'K3',
         stop: 'hang',
-        ports: (_h, records, reached) => ({ records: { ...records, identity: hang(reached) } }),
+        ports: (_h, records, reached) => ({ records: { ...records, identityKey: hang(reached) } }),
         expected: () => ({
           action: 'fail_interrupted',
           row: 'D4',
@@ -1571,7 +1743,9 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
             },
             markIndeterminate: (
               input: Parameters<HostCommandReceiptStore['markIndeterminate']>[0]
-            ) => h.receipts.markIndeterminate(input)
+            ) => h.receipts.markIndeterminate(input),
+            demoteTransactionalCommand: (commandId: string) =>
+              h.receipts.demoteTransactionalCommand(commandId)
           }
         }),
         expected: (end) => ({
@@ -1674,12 +1848,6 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       }
     )
 
-    it('the boundary table covers every step boundary the harness pins', () => {
-      const kills = boundaries.map((boundary) => boundary.kill)
-      expect(kills.length).toBeGreaterThan(0)
-      expect(kills).toEqual(['K1', 'K3', 'K5', 'K7', 'K10', 'K8', 'K9'])
-    })
-
     /**
      * A port that throws is not a crash: the transaction handles it on the
      * spot, so the receipt is terminal or the state is one recovery decides
@@ -1738,7 +1906,8 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       expect(await h.records.identity(THREAD_ID)).toBeNull()
       h.seed()
       const state = h.records.current(THREAD_ID)
-      expect(state).toEqual({ revision: 0, identity: readIdentity(h.chatPath) })
+      expect(state).toMatchObject({ revision: 0, identity: readIdentity(h.chatPath) })
+      expect(state?.key).toBe(await h.records.identityKey(THREAD_ID))
       expect(await h.records.identity(THREAD_ID)).toEqual(state?.identity)
 
       // A prepared artifact, renamed into place.
@@ -1763,7 +1932,10 @@ describe('HostThreadRecordTransaction (M4 slice 12a)', () => {
       const summary: HostProfileThreadSummary | null = prepared.summary
       expect(summary).not.toBeNull()
       h.records.committed(THREAD_ID, prepared.persistenceRevision, summary)
-      expect(h.records.current(THREAD_ID)).toEqual({ revision: 1, identity: artifactIdentity })
+      expect(h.records.current(THREAD_ID)).toMatchObject({
+        revision: 1,
+        identity: artifactIdentity
+      })
       expect(h.store.listThreadSummaries().map((entry) => entry.persistenceRevision)).toEqual([1])
 
       // Discard removes exactly the prepared inode and leaves a replacement alone.

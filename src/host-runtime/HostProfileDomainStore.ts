@@ -733,6 +733,17 @@ function decodeMessage(value: unknown): HostProfileMessage {
 }
 
 /**
+ * The identity the store's caches key a record file by: every field a
+ * rewrite can change, in place or by rename. A transaction's live CAS
+ * compares this, not the crash witness's `ino` and `size` (M4 slice 12).
+ */
+export function hostProfileRecordIdentityKey(
+  stat: Pick<BigIntStats, 'dev' | 'ino' | 'mtimeNs' | 'size' | 'mode'>
+): string {
+  return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.mode}`
+}
+
+/**
  * The decoder `persistThreadRecord` runs, for the transfer worker's prepare
  * stage (M4 slice 11), which must refuse and repair exactly as the store does.
  */
@@ -1139,7 +1150,7 @@ export class HostProfileDomainStore {
    * inode and the byte length is invisible at millisecond resolution.
    */
   private recordIdentity(stat: BigIntStats): string {
-    return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.mode}`
+    return hostProfileRecordIdentityKey(stat)
   }
 
   private dropThreadRevision(threadId: string): void {
@@ -1916,9 +1927,12 @@ export class HostProfileDomainStore {
    * the rename, so the two must not be read apart. Throws when the record
    * changed while its revision was being read.
    */
-  threadRecordState(
-    threadId: string
-  ): { revision: number; identity: { dev: string; ino: string; size: number } } | null {
+  threadRecordState(threadId: string): {
+    revision: number
+    identity: { dev: string; ino: string; size: number }
+    /** `hostProfileRecordIdentityKey` of the file the revision was read from. */
+    key: string
+  } | null {
     this.assertAuthority()
     const path = this.chatPath(threadId)
     const before = this.statRecord(path)
@@ -1933,7 +1947,8 @@ export class HostProfileDomainStore {
     }
     return {
       revision,
-      identity: { dev: String(before.dev), ino: String(before.ino), size: Number(before.size) }
+      identity: { dev: String(before.dev), ino: String(before.ino), size: Number(before.size) },
+      key: this.recordIdentity(before)
     }
   }
 

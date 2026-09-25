@@ -806,6 +806,38 @@ export class HostCommandReceiptStore {
   }
 
   /**
+   * Move a pending transactional receipt to the legacy class before its
+   * command runs on the legacy path (M4 slice 12: a persist the prepare stage
+   * cannot take). Durable before it returns, so a crash while the legacy
+   * write runs is judged as today's path is (a recoverable indeterminate on
+   * reopen), not by the manifest table, which would call it a clean failure.
+   */
+  demoteTransactionalCommand(
+    commandIdInput: string
+  ): { kind: 'demoted' } | { kind: 'not_found' } | { kind: 'refused' } {
+    let commandId: string
+    try {
+      commandId = normalizeId(commandIdInput, 'commandId')
+    } catch {
+      return { kind: 'not_found' }
+    }
+    const current = this.recordsByCommandId.get(commandId)
+    if (!current) return { kind: 'not_found' }
+    if (current.status !== 'pending' || current.commandClass !== 'txn-record-persist') {
+      return { kind: 'refused' }
+    }
+    const next: HostCommandReceiptRecord = {
+      ...current,
+      commandClass: 'legacy-observed',
+      updatedAt: this.now()
+    }
+    this.appendJournalEvent({ op: 'upsert', record: next })
+    this.indexRecord(next)
+    this.maybeCompact()
+    return { kind: 'demoted' }
+  }
+
+  /**
    * Begin (or look up) a command receipt.
    * - Exact same commandId + fingerprint + idempotencyKey + matching actor:
    *   returns the original receipt.

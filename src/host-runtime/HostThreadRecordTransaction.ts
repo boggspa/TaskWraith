@@ -32,13 +32,13 @@ import { basename, dirname, join } from 'node:path'
 
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { ThreadCatalogueProjection } from '../host-shared/thread-catalogue/ThreadCatalogue'
-import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostCommandReceiptStore } from './HostCommandReceiptStore'
 import type { HostCommitGate } from './HostCommitGate'
 import type { HostDeltaStore } from './HostDeltaStore'
 import { validateHostDomainEffectBatch } from './HostDomainDeltaPublisher'
 import {
   HOST_PROFILE_CHATS_DIRECTORY,
+  hostProfileRecordIdentityKey,
   type HostProfileDomainStore,
   type HostProfileThreadSummary
 } from './HostProfileDomainStore'
@@ -64,7 +64,6 @@ import { removeHostThreadRecordTransfer } from './HostThreadRecordTransfer'
 import type { HostTransactionLog } from './HostTransactionLog'
 import {
   hostCommitWitness,
-  sameHostFileIdentity,
   type HostFileIdentity,
   type HostTransactionPrepareRecord
 } from './HostTransactionManifest'
@@ -81,7 +80,9 @@ export interface HostThreadRecordCommitPort {
    * The committed revision and the identity it was read from, together; null
    * when there is no record. Throws when the record changed while it read.
    */
-  current(threadId: string): { revision: number; identity: HostFileIdentity } | null
+  current(threadId: string): { revision: number; identity: HostFileIdentity; key: string } | null
+  /** `hostProfileRecordIdentityKey` of the chat file now; null when it is absent. */
+  identityKey(threadId: string): Promise<string | null>
   /** Bigint `lstat` of the chat file; null when it is absent. */
   identity(threadId: string): Promise<HostFileIdentity | null>
   /** The catalogue ticket, durable on resolve; null when it would be untracked. */
@@ -109,11 +110,15 @@ export interface HostThreadRecordTransactionPorts {
   readonly log: Pick<HostTransactionLog, 'append'>
   readonly index: Pick<HostPublicWindowIndex, 'prepare'>
   readonly deltas: Pick<HostDeltaStore, 'appendGroup' | 'awaitDurable' | 'getPosition'>
-  readonly receipts: Pick<HostCommandReceiptStore, 'complete' | 'markIndeterminate'>
+  readonly receipts: Pick<
+    HostCommandReceiptStore,
+    'complete' | 'markIndeterminate' | 'demoteTransactionalCommand'
+  >
   readonly prepare: (input: HostThreadRecordPrepareInput) => Promise<HostThreadRecordPrepareResult>
   readonly records: HostThreadRecordCommitPort
   /** Today's path, for a persist prepare cannot take; run while the lane is held. */
-  readonly legacy: () => Promise<HostCommandExecutionResult>
+  /** Its result is the caller's own (the authority's receipt answer); passed through untouched. */
+  readonly legacy: () => Promise<unknown>
   /** A serial queue for the index diff and the group append. */
   readonly publicationLock: <T>(work: () => Promise<T> | T) => Promise<T>
   readonly profilePath: string
@@ -143,10 +148,18 @@ export type HostThreadRecordTransactionOutcome =
   /** The delta store fail-stopped: the receipt stays pending for boot recovery. */
   | { readonly kind: 'fail-stopped'; readonly detail: string }
   /** Prepared as `unsupported`: today's path ran, and the caller completes it. */
-  | { readonly kind: 'legacy'; readonly result: HostCommandExecutionResult }
+  | { readonly kind: 'legacy'; readonly result: unknown }
 
 /** The transfer module's artifact suffix; a prepared artifact always carries it. */
 const ARTIFACT_SUFFIX = '.record.json'
+
+type PublishResult = Awaited<ReturnType<HostThreadRecordTransaction['publish']>>
+
+/** What the gated half of the commit decided; acted on once the gate is released. */
+type CommitStep =
+  | { readonly kind: 'abort'; readonly reason: string; readonly errorCode: string }
+  | { readonly kind: 'indeterminate'; readonly reason: string }
+  | { readonly kind: 'published'; readonly published: PublishResult }
 
 const PERSISTED_SUMMARY = 'thread_record_persisted'
 const PERSIST_FAILED = 'thread_record_persist_failed'
@@ -156,6 +169,20 @@ const COMMIT_INDETERMINATE = 'transaction_commit_indeterminate'
 
 function iso(ms: number): string {
   return new Date(ms).toISOString()
+}
+
+/**
+ * The ticket is catalogue bookkeeping: the receipt never depends on it, so a
+ * throwing ticket is swallowed here (the catalogue recovers an outstanding
+ * ticket from the record).
+ */
+function settleTicket(ticket: HostThreadRecordCatalogueTicket, how: 'finish' | 'fail'): void {
+  try {
+    if (how === 'finish') ticket.finish()
+    else ticket.fail()
+  } catch {
+    // As above.
+  }
 }
 
 /** The prepare record's diagnostic effect set: the model's size and thread row. */
@@ -202,7 +229,7 @@ export class HostThreadRecordTransaction {
     const { records } = this.ports
 
     // Prepare: the revision and the identity it came from, read together.
-    let state: { revision: number; identity: HostFileIdentity } | null
+    let state: ReturnType<HostThreadRecordCommitPort['current']>
     try {
       state = records.current(input.threadId)
     } catch {
@@ -227,6 +254,18 @@ export class HostThreadRecordTransaction {
     }
     if (prepared.kind === 'rejected') return this.fail(input, prepared.errorCode)
     if (prepared.kind === 'unsupported') {
+      // The legacy write is not transactional: its receipt must be judged as
+      // today's are after a crash, so it leaves the transactional class first.
+      let demoted: boolean
+      try {
+        demoted = this.ports.receipts.demoteTransactionalCommand(input.commandId).kind === 'demoted'
+      } catch {
+        demoted = false
+      }
+      if (!demoted) {
+        records.abandon(input.descriptor.transferId)
+        return this.fail(input, PERSIST_FAILED)
+      }
       return { kind: 'legacy', result: await this.ports.legacy() }
     }
     if (prepared.effects.kind === 'refused') {
@@ -265,12 +304,12 @@ export class HostThreadRecordTransaction {
     }
     const logged = await this.appendLog(prepareRecord)
     if (logged !== 'durable') {
-      ticket.fail()
+      settleTicket(ticket, 'fail')
       records.discard(prepared.artifact)
       return this.fail(input, PERSIST_FAILED)
     }
 
-    return this.commit(input, slot, prepared, model, prepareRecord, ticket)
+    return this.commit(input, slot, prepared, model, prepareRecord, state?.key ?? null, ticket)
   }
 
   private async commit(
@@ -279,67 +318,28 @@ export class HostThreadRecordTransaction {
     prepared: HostThreadRecordPrepared,
     model: HostThreadRecordModelled,
     prepareRecord: HostTransactionPrepareRecord,
+    priorKey: string | null,
     ticket: HostThreadRecordCatalogueTicket
   ): Promise<HostThreadRecordTransactionOutcome> {
-    const { records } = this.ports
     const entered = await this.ports.gate.enter('committer', { label: `txn:${input.commandId}` })
     if (!entered.ok) {
       return this.abort(input, prepared, ticket, 'gate_closed', SHUTTING_DOWN)
     }
+    // Decide under the hold; write abort and indeterminate records after it:
+    // the hold covers one fsync, the rename's directory (§13 MF-2).
     const lease = entered.lease
-    let published: Awaited<ReturnType<HostThreadRecordTransaction['publish']>>
+    let step: CommitStep
     try {
-      // CAS by identity: nothing replaced the file since its revision was read.
-      let observed: HostFileIdentity | null
-      try {
-        observed = await records.identity(input.threadId)
-      } catch {
-        return this.abort(input, prepared, ticket, 'identity_unreadable', PERSIST_FAILED)
-      }
-      const unchanged =
-        prepareRecord.prior === null
-          ? observed === null
-          : observed !== null && sameHostFileIdentity(observed, prepareRecord.prior)
-      if (!unchanged) {
-        return this.abort(input, prepared, ticket, 'identity_changed', REVISION_CONFLICT)
-      }
-
-      try {
-        await records.rename(prepared.artifact.path, input.threadId)
-      } catch {
-        let after: HostFileIdentity | null
-        try {
-          after = await records.identity(input.threadId)
-        } catch {
-          return this.indeterminate(input, ticket, 'rename_unverifiable')
-        }
-        const witness = hostCommitWitness(prepareRecord, after)
-        if (witness === 'not_committed') {
-          return this.abort(input, prepared, ticket, 'rename_failed', PERSIST_FAILED)
-        }
-        if (witness === 'indeterminate') {
-          return this.indeterminate(input, ticket, 'rename_indeterminate')
-        }
-        // Committed: the rename landed and only its directory fsync failed.
-      }
-
-      // From here the record is committed: publish or indeterminate, never abort.
-      try {
-        records.committed(input.threadId, prepared.persistenceRevision, prepared.summary)
-      } catch {
-        // The caches re-derive from the file; the commit stands.
-      }
-      try {
-        slot.commit(prepared.persistenceRevision)
-      } catch {
-        // Bookkeeping only: the ledger's version never orders a commit.
-      }
-
-      published = await this.publish(input, model)
+      step = await this.commitUnderGate(input, slot, prepared, model, prepareRecord, priorKey)
     } finally {
       lease.release()
     }
 
+    if (step.kind === 'abort') {
+      return this.abort(input, prepared, ticket, step.reason, step.errorCode)
+    }
+    if (step.kind === 'indeterminate') return this.indeterminate(input, ticket, step.reason)
+    const published = step.published
     if (published.kind === 'unpublishable') {
       return this.indeterminate(input, ticket, published.reason)
     }
@@ -353,9 +353,68 @@ export class HostThreadRecordTransaction {
     } else {
       const durable = await this.ports.deltas.awaitDurable()
       if (durable.kind === 'fail-stopped') return { kind: 'fail-stopped', detail: durable.detail }
-      position = durable.kind === 'durable' ? published.end : durable.position
+      // A reset by another writer settles earlier waiters as durable in the
+      // new generation: complete there, where clients can follow, as D1 does.
+      position =
+        durable.kind === 'durable' && durable.position.generation === published.end.generation
+          ? published.end
+          : durable.position
     }
     return this.complete(input, slot, ticket, position, published)
+  }
+
+  /** The CAS, the rename and the publication; everything that needs the gate. */
+  private async commitUnderGate(
+    input: HostThreadRecordTransactionInput,
+    slot: HostScopeSlot,
+    prepared: HostThreadRecordPrepared,
+    model: HostThreadRecordModelled,
+    prepareRecord: HostTransactionPrepareRecord,
+    priorKey: string | null
+  ): Promise<CommitStep> {
+    const { records } = this.ports
+    // CAS by the store's full identity: nothing rewrote the file, by rename
+    // or in place, since its revision was read.
+    let observedKey: string | null
+    try {
+      observedKey = await records.identityKey(input.threadId)
+    } catch {
+      return { kind: 'abort', reason: 'identity_unreadable', errorCode: PERSIST_FAILED }
+    }
+    if (observedKey !== priorKey) {
+      return { kind: 'abort', reason: 'identity_changed', errorCode: REVISION_CONFLICT }
+    }
+
+    try {
+      await records.rename(prepared.artifact.path, input.threadId)
+    } catch {
+      let after: HostFileIdentity | null
+      try {
+        after = await records.identity(input.threadId)
+      } catch {
+        return { kind: 'indeterminate', reason: 'rename_unverifiable' }
+      }
+      const witness = hostCommitWitness(prepareRecord, after)
+      if (witness === 'not_committed') {
+        return { kind: 'abort', reason: 'rename_failed', errorCode: PERSIST_FAILED }
+      }
+      if (witness === 'indeterminate')
+        return { kind: 'indeterminate', reason: 'rename_indeterminate' }
+      // Committed: the rename landed and only its directory fsync failed.
+    }
+
+    // From here the record is committed: publish or indeterminate, never abort.
+    try {
+      records.committed(input.threadId, prepared.persistenceRevision, prepared.summary)
+    } catch {
+      // The caches re-derive from the file; the commit stands.
+    }
+    try {
+      slot.commit(prepared.persistenceRevision)
+    } catch {
+      // Bookkeeping only: the ledger's version never orders a commit.
+    }
+    return { kind: 'published', published: await this.publish(input, model) }
   }
 
   /** The index diff and the group line, under the publication lock. */
@@ -440,7 +499,7 @@ export class HostThreadRecordTransaction {
       position,
       at: this.ports.now()
     })
-    ticket.finish()
+    settleTicket(ticket, 'finish')
     this.ports.receipts.complete({
       commandId: input.commandId,
       status: 'succeeded',
@@ -476,7 +535,7 @@ export class HostThreadRecordTransaction {
       reason,
       at: this.ports.now()
     })
-    ticket.fail()
+    settleTicket(ticket, 'fail')
     this.ports.records.discard(prepared.artifact)
     return this.fail(input, errorCode)
   }
@@ -492,7 +551,7 @@ export class HostThreadRecordTransaction {
       reason,
       at: this.ports.now()
     })
-    ticket.fail()
+    settleTicket(ticket, 'fail')
     const position = this.ports.deltas.getPosition()
     this.ports.receipts.markIndeterminate({
       commandId: input.commandId,
@@ -559,6 +618,16 @@ export function createHostThreadRecordCommitPort(options: {
   return {
     current: (threadId) => options.store.threadRecordState(threadId),
     identity: (threadId) => lstatIdentity(chatPath(threadId)),
+    identityKey: async (threadId) => {
+      try {
+        return hostProfileRecordIdentityKey(
+          await fsPromises.lstat(chatPath(threadId), { bigint: true })
+        )
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    },
     beginTicket: options.beginTicket,
     rename: async (artifactPath, threadId) => {
       const target = chatPath(threadId)
@@ -566,7 +635,13 @@ export function createHostThreadRecordCommitPort(options: {
       // One fsync under the committer hold (§13 MF-2): the target directory.
       // The transfer directory's entry may reappear after a crash; it names
       // the committed inode, and cleanup removes artifacts by exact inode.
-      await fsyncDirectory(dirname(target))
+      try {
+        await fsyncDirectory(dirname(target))
+      } catch {
+        // One retry: a failure that persists is reported, and the witness
+        // then finds the rename landed.
+        await fsyncDirectory(dirname(target))
+      }
     },
     committed: (threadId, revision, summary) =>
       options.store.admitCommittedThreadRecord(threadId, revision, summary),

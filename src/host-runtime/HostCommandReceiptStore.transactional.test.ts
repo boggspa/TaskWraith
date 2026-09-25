@@ -839,4 +839,39 @@ describe('HostCommandReceiptStore transactional receipts (M4 slice 9)', () => {
       expect(store.getAnchorCounts()).toEqual(counts(0, 0, 0))
     })
   })
+
+  describe('demoteTransactionalCommand (M4 slice 12)', () => {
+    it('moves a pending transactional receipt to the legacy class, durably', () => {
+      const store = openStore()
+      created(store.begin(persistInput('cmd-txn', { commandClass: TXN })))
+      expect(store.demoteTransactionalCommand('cmd-txn')).toEqual({ kind: 'demoted' })
+      expect(byId(store, 'cmd-txn')).toMatchObject({ status: 'pending', commandClass: LEGACY })
+      const upserts = readJournalUpserts().filter((event) => event.record.commandId === 'cmd-txn')
+      expect(upserts.length).toBeGreaterThan(1)
+      expect(upserts.at(-1)!.record.commandClass).toBe(LEGACY)
+      // Reopen now treats it as today's path does: promoted, not left pending.
+      const reopened = openStore()
+      expect(byId(reopened, 'cmd-txn')).toMatchObject({
+        status: 'indeterminate',
+        recoveryState: 'recoverable-indeterminate',
+        commandClass: LEGACY
+      })
+    })
+
+    it('refuses a receipt that is not pending, or not transactional, and writes nothing', () => {
+      const store = openStore()
+      created(store.begin(persistInput('cmd-legacy', { commandClass: LEGACY })))
+      created(store.begin(persistInput('cmd-plain')))
+      created(store.begin(persistInput('cmd-done', { commandClass: TXN })))
+      store.complete({ commandId: 'cmd-done', status: 'succeeded' })
+      const before = readText(journalPath())
+      expect(store.demoteTransactionalCommand('cmd-legacy')).toEqual({ kind: 'refused' })
+      expect(store.demoteTransactionalCommand('cmd-plain')).toEqual({ kind: 'refused' })
+      expect(store.demoteTransactionalCommand('cmd-done')).toEqual({ kind: 'refused' })
+      expect(store.demoteTransactionalCommand('cmd-missing')).toEqual({ kind: 'not_found' })
+      expect(store.demoteTransactionalCommand('')).toEqual({ kind: 'not_found' })
+      expect(readText(journalPath())).toBe(before)
+      expect(byId(store, 'cmd-done')).toMatchObject({ status: 'succeeded', commandClass: TXN })
+    })
+  })
 })
