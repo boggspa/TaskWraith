@@ -60,6 +60,16 @@
  *
  * One Host only: the first read pins the Host's identity and any other
  * refuses the union, because sequences restart with a Host.
+ *
+ * PER-LANE SETTLE (M1 S5c). A lane that never drains (the live heavy lane
+ * keeps a round streaming) cannot share the light lane's settle time: its
+ * spans that start inside W may end long after the light lane settles. A
+ * window may therefore carry `laneSettledAtMs: { <label>: ms }`, and each
+ * lane is then judged on its own settle time: its trailing read, its
+ * lost-span counters, the holes that can hold its spans and its own settle
+ * claim. Only what every lane shares (the window's bounds, its leading
+ * read) is judged once, and a lane is censored alone, keeping its own
+ * reasons. Without it, one settle time judges every lane, as above.
  */
 
 const { WORK_SPAN_KINDS, validateRecentSpans } = require('./hostSpans.cjs')
@@ -261,31 +271,32 @@ function createHostRecentSpanUnion() {
     return { ok: true, tail: true }
   }
 
-  function evaluateWindow(window, lanes, ordered) {
-    const record = {
-      role: window.role,
-      repetition: window.repetition,
-      startedAtMs: finiteOrNull(window.startedAtMs),
-      endedAtMs: finiteOrNull(window.endedAtMs),
-      settledAtMs: finiteOrNull(window.settledAtMs)
+  /** The latest read captured strictly before `start`: the counters' baseline. */
+  function leadingCapture(start) {
+    return captures.filter((capture) => capture.capturedAtMs < start).pop()
+  }
+
+  /** Each lane's spans that started inside [start, end), in acceptance order. */
+  function laneSpansIn(lanes, ordered, start, end) {
+    const labelOf = new Map([...lanes].map(([label, chatId]) => [chatId, label]))
+    const laneSpans = new Map([...lanes.keys()].map((label) => [label, []]))
+    for (const span of ordered) {
+      if (span.startedAt < start || span.startedAt >= end) continue
+      const label = labelOf.get(span.chatId)
+      if (label !== undefined) laneSpans.get(label).push(span)
     }
-    const { startedAtMs: start, endedAtMs: end } = record
-    if (start === null || end === null || start >= end) {
-      return {
-        ...record,
-        censored: true,
-        reasons: ['window_bounds_unavailable'],
-        counters: null,
-        brackets: null,
-        lanes: null
-      }
-    }
-    const reasons = []
-    const settled =
-      record.settledAtMs !== null && record.settledAtMs >= end ? record.settledAtMs : null
+    return laneSpans
+  }
+
+  /**
+   * Judge `spans` against one settle time: the trailing read after it, the
+   * holes that can hold spans accepted by then, the counters between the
+   * leading and trailing reads, and the settle claim itself. Pushes the
+   * reasons it finds onto `reasons`.
+   */
+  function judge({ start, end, settledAtMs, leading, spans, reasons }) {
+    const settled = settledAtMs !== null && settledAtMs >= end ? settledAtMs : null
     if (settled === null) reasons.push('settle_unknown')
-    const leading = captures.filter((capture) => capture.capturedAtMs < start).pop()
-    if (!leading) reasons.push('leading_capture_missing')
     const trailing =
       settled === null
         ? undefined
@@ -311,22 +322,61 @@ function createHostRecentSpanUnion() {
       if (counters.rejected > 0 || counters.degraded > 0) reasons.push('spans_lost')
       if (counters.sampledOut > 0) reasons.push('spans_sampled')
     }
-    const labelOf = new Map([...lanes].map(([label, chatId]) => [chatId, label]))
-    const laneSpans = new Map([...lanes.keys()].map((label) => [label, []]))
-    let settleViolated = false
-    for (const span of ordered) {
-      if (span.startedAt < start || span.startedAt >= end) continue
-      const label = labelOf.get(span.chatId)
-      if (label === undefined) continue
-      if (
-        (trailing && span.seq > trailing.toSeq) ||
-        span.startedAt + span.durationMs > settledOrLatest
-      ) {
-        settleViolated = true
-      }
-      laneSpans.get(label).push(span)
+    if (
+      spans.some(
+        (span) =>
+          (trailing && span.seq > trailing.toSeq) ||
+          span.startedAt + span.durationMs > settledOrLatest
+      )
+    ) {
+      reasons.push('settle_violated')
     }
-    if (settleViolated) reasons.push('settle_violated')
+    return { settled, trailing, counters }
+  }
+
+  function windowRecord(window) {
+    return {
+      role: window.role,
+      repetition: window.repetition,
+      startedAtMs: finiteOrNull(window.startedAtMs),
+      endedAtMs: finiteOrNull(window.endedAtMs)
+    }
+  }
+
+  function boundsUsable(record) {
+    return (
+      record.startedAtMs !== null &&
+      record.endedAtMs !== null &&
+      record.startedAtMs < record.endedAtMs
+    )
+  }
+
+  /** One window, every lane judged on the window's one settle time. */
+  function evaluateWindow(window, lanes, ordered) {
+    const record = { ...windowRecord(window), settledAtMs: finiteOrNull(window.settledAtMs) }
+    if (!boundsUsable(record)) {
+      return {
+        ...record,
+        censored: true,
+        reasons: ['window_bounds_unavailable'],
+        counters: null,
+        brackets: null,
+        lanes: null
+      }
+    }
+    const { startedAtMs: start, endedAtMs: end } = record
+    const reasons = []
+    const leading = leadingCapture(start)
+    if (!leading) reasons.push('leading_capture_missing')
+    const laneSpans = laneSpansIn(lanes, ordered, start, end)
+    const { trailing, counters } = judge({
+      start,
+      end,
+      settledAtMs: record.settledAtMs,
+      leading,
+      spans: [...laneSpans.values()].flat(),
+      reasons
+    })
     const censored = reasons.length > 0
     return {
       ...record,
@@ -342,6 +392,52 @@ function createHostRecentSpanUnion() {
         : Object.fromEntries(
             [...laneSpans].map(([label, list]) => [label, { byKind: timingsByKind(list) }])
           )
+    }
+  }
+
+  /** One window, each lane judged on its own settle time (see PER-LANE SETTLE). */
+  function evaluateWindowPerLane(window, lanes, ordered) {
+    const record = windowRecord(window)
+    if (!boundsUsable(record)) {
+      return {
+        ...record,
+        censored: true,
+        reasons: ['window_bounds_unavailable'],
+        leadingSequence: null,
+        lanes: null
+      }
+    }
+    const { startedAtMs: start, endedAtMs: end } = record
+    const shared = []
+    const leading = leadingCapture(start)
+    if (!leading) shared.push('leading_capture_missing')
+    const evidence = {}
+    for (const [label, spans] of laneSpansIn(lanes, ordered, start, end)) {
+      const reasons = [...shared]
+      const { settled, trailing, counters } = judge({
+        start,
+        end,
+        settledAtMs: finiteOrNull(window.laneSettledAtMs[label]),
+        leading,
+        spans,
+        reasons
+      })
+      const censored = reasons.length > 0
+      evidence[label] = {
+        settledAtMs: settled,
+        censored,
+        reasons,
+        counters,
+        trailingSequence: trailing ? trailing.sequence : null,
+        byKind: censored ? null : timingsByKind(spans)
+      }
+    }
+    return {
+      ...record,
+      censored: Object.values(evidence).some((lane) => lane.censored),
+      reasons: shared,
+      leadingSequence: leading ? leading.sequence : null,
+      lanes: evidence
     }
   }
 
@@ -366,7 +462,18 @@ function createHostRecentSpanUnion() {
       if (!Number.isSafeInteger(window.repetition) || window.repetition < 0) {
         return { ok: false, reason: `windows[${index}].repetition must be a non-negative integer` }
       }
-      evidenceWindows.push(evaluateWindow(window, laneMap, ordered))
+      if (window.laneSettledAtMs === undefined) {
+        evidenceWindows.push(evaluateWindow(window, laneMap, ordered))
+        continue
+      }
+      const settles = window.laneSettledAtMs
+      if (!isPlainObject(settles) || Object.keys(settles).some((label) => !laneMap.has(label))) {
+        return {
+          ok: false,
+          reason: `windows[${index}].laneSettledAtMs must map measured lanes to settle times`
+        }
+      }
+      evidenceWindows.push(evaluateWindowPerLane(window, laneMap, ordered))
     }
     return {
       ok: true,

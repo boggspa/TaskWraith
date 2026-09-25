@@ -732,6 +732,177 @@ describe('foldHostRecentSpanWindows', () => {
   })
 })
 
+describe('per-lane settle times', () => {
+  type LaneEvidence = {
+    settledAtMs: number | null
+    censored: boolean
+    reasons: string[]
+    counters: Record<string, number> | null
+    trailingSequence: number | null
+    byKind: Record<string, Timing> | null
+  }
+  type PerLaneWindow = {
+    censored: boolean
+    reasons: string[]
+    leadingSequence: number | null
+    lanes: Record<string, LaneEvidence> | null
+  }
+  const perLane = (settles: Record<string, number>) => ({
+    ...window(1_000, 2_000, undefined),
+    laneSettledAtMs: Object.fromEntries(
+      Object.entries(settles).map(([label, ms]) => [label, T + ms])
+    )
+  })
+  const foldPerLane = (samples: unknown[], settles: Record<string, number>) =>
+    fold(samples, [perLane(settles)]).windows[0] as unknown as PerLaneWindow
+  const SETTLES = { light: 2_500, heavy: 5_000 }
+
+  it('judges each lane on its own settle time', () => {
+    const host = modelHost()
+    const samples = [host.capture(T + 500)]
+    host.accept(
+      { chatId: LIGHT, startedAt: T + 1_000, durationMs: 100 },
+      // Started after the window: never the window's.
+      { chatId: LIGHT, startedAt: T + 2_000, durationMs: 1 }
+    )
+    samples.push(host.capture(T + 2_600))
+    // A heavy span still running when the light lane settled.
+    host.accept({ chatId: HEAVY, startedAt: T + 1_500, durationMs: 2_000 })
+    samples.push(host.capture(T + 5_100))
+    const evidence = foldPerLane(samples, SETTLES)
+    expect(evidence).toMatchObject({ censored: false, reasons: [], leadingSequence: 1 })
+    expect(evidence.lanes?.light).toMatchObject({
+      settledAtMs: T + 2_500,
+      censored: false,
+      reasons: [],
+      trailingSequence: 2
+    })
+    expect(evidence.lanes?.light.byKind?.host_queue_wait.count).toBe(1)
+    expect(evidence.lanes?.heavy).toMatchObject({
+      settledAtMs: T + 5_000,
+      censored: false,
+      trailingSequence: 3
+    })
+    expect(evidence.lanes?.heavy.byKind?.host_queue_wait).toMatchObject({ count: 1, maxMs: 2_000 })
+    // One settle time for both would have censored the window.
+    expect(fold(samples, [window(1_000, 2_000, 2_500)]).windows[0].reasons).toEqual([
+      'settle_violated'
+    ])
+  })
+
+  it('censors only the lane whose own settle claim breaks', () => {
+    const host = modelHost()
+    const samples = [host.capture(T + 500)]
+    host.accept({ chatId: LIGHT, startedAt: T + 1_000, durationMs: 100 })
+    samples.push(host.capture(T + 5_100))
+    host.accept({ chatId: HEAVY, startedAt: T + 1_500, durationMs: 4_500 })
+    samples.push(host.capture(T + 6_100))
+    const evidence = foldPerLane(samples, SETTLES)
+    expect(evidence.censored).toBe(true)
+    expect(evidence.reasons).toEqual([])
+    expect(evidence.lanes?.light).toMatchObject({ censored: false, reasons: [] })
+    expect(evidence.lanes?.heavy).toMatchObject({
+      censored: true,
+      reasons: ['settle_violated'],
+      byKind: null
+    })
+  })
+
+  it('lets a hole after the light lane settled censor only the heavy lane', () => {
+    const host = modelHost({ limit: 1 })
+    const samples = [host.capture(T + 500)]
+    host.accept({ chatId: LIGHT, startedAt: T + 1_000, durationMs: 1 })
+    samples.push(host.capture(T + 2_600))
+    host.accept(
+      { chatId: HEAVY, startedAt: T + 1_500, durationMs: 2_000 },
+      { chatId: HEAVY, startedAt: T + 3_000, durationMs: 1 }
+    )
+    samples.push(host.capture(T + 5_100))
+    const evidence = foldPerLane(samples, SETTLES)
+    expect(evidence.lanes?.light).toMatchObject({ censored: false })
+    expect(evidence.lanes?.heavy).toMatchObject({ censored: true, reasons: ['transport_hole'] })
+    // At the light lane's own settle time, the same hole censors it too.
+    expect(foldPerLane(samples, { light: 2_600, heavy: 5_000 }).lanes?.light).toMatchObject({
+      censored: true,
+      reasons: ['transport_hole']
+    })
+  })
+
+  it('counts a loss after the light lane settled against the heavy lane only', () => {
+    const host = modelHost()
+    const samples = [host.capture(T + 500)]
+    host.accept({ chatId: LIGHT, startedAt: T + 1_000, durationMs: 1 })
+    samples.push(host.capture(T + 2_600))
+    host.counters.rejected = 1
+    samples.push(host.capture(T + 5_100))
+    const evidence = foldPerLane(samples, SETTLES)
+    expect(evidence.lanes?.light).toMatchObject({
+      censored: false,
+      counters: { recorded: 1, rejected: 0 }
+    })
+    expect(evidence.lanes?.heavy).toMatchObject({
+      censored: true,
+      reasons: ['spans_lost'],
+      counters: { recorded: 1, rejected: 1 }
+    })
+  })
+
+  it('shares only what every lane shares, and censors a lane with no settle time', () => {
+    const host = modelHost()
+    host.accept({ chatId: LIGHT, startedAt: T + 1_000, durationMs: 1 })
+    const late = [host.capture(T + 1_500), host.capture(T + 5_100)]
+    const unled = foldPerLane(late, SETTLES)
+    expect(unled.reasons).toEqual(['leading_capture_missing'])
+    expect(unled.leadingSequence).toBeNull()
+    expect(unled.lanes?.light.reasons).toEqual(['leading_capture_missing'])
+    expect(unled.lanes?.heavy.reasons).toEqual(['leading_capture_missing'])
+
+    const led = [
+      modelHost().capture(T + 500),
+      ...late.map((sample, index) => ({ ...sample, sequence: index + 2 }))
+    ]
+    const unsettled = foldPerLane(led, { light: 2_500 })
+    expect(unsettled.lanes?.light).toMatchObject({ censored: false })
+    expect(unsettled.lanes?.heavy).toMatchObject({
+      settledAtMs: null,
+      censored: true,
+      reasons: ['settle_unknown', 'trailing_capture_missing']
+    })
+    expect(foldPerLane(led, { light: 2_500, heavy: 1_999 }).lanes?.heavy.reasons).toEqual([
+      'settle_unknown',
+      'trailing_capture_missing'
+    ])
+  })
+
+  it('refuses settle times for a lane it does not measure, and bounds it cannot use', () => {
+    const samples = [modelHost().capture(T)]
+    expect(
+      foldHostRecentSpanWindows({
+        samples,
+        windows: [perLane({ light: 2_500, other: 3_000 })],
+        lanes: LANES
+      })
+    ).toEqual({
+      ok: false,
+      reason: 'windows[0].laneSettledAtMs must map measured lanes to settle times'
+    })
+    expect(
+      foldHostRecentSpanWindows({
+        samples,
+        windows: [{ ...perLane(SETTLES), laneSettledAtMs: [T] }],
+        lanes: LANES
+      })
+    ).toMatchObject({ ok: false })
+    const unbounded = fold(samples, [{ ...perLane(SETTLES), endedAtMs: T + 1_000 }])
+      .windows[0] as unknown as PerLaneWindow
+    expect(unbounded).toMatchObject({
+      censored: true,
+      reasons: ['window_bounds_unavailable'],
+      lanes: null
+    })
+  })
+})
+
 describe('the Host writer, the snapshot file and the fold, end to end', () => {
   const dirs: string[] = []
   afterAll(() => {
