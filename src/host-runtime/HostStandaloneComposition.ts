@@ -62,7 +62,9 @@ import {
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
-import { createHostCommitGate } from './HostCommitGate'
+import { createHostCommitFence } from './HostCommitFence'
+import { createHostCommitGate, type HostCommitGate } from './HostCommitGate'
+import type { HostProjectionOperationRunner } from './HostProjectionSerialQueue'
 import { HostPublicWindowIndex } from './HostPublicWindowIndex'
 import { createHostScopeLedger } from './HostScopeLedger'
 import {
@@ -343,7 +345,7 @@ export function createHostStandaloneComposition(
   // Background reconciliation must publish outside that command's window.
   // Each task's enqueue→start wait is recorded as host_queue_wait on
   // host_chain; the seam changes neither FIFO order nor results.
-  const runProjectionOperation = createHostProjectionSerialQueue({ spans: hostPerf.spans })
+  const projectionQueue = createHostProjectionSerialQueue({ spans: hostPerf.spans })
   const threadRecordTransaction = input.threadRecordTransaction
     ? createThreadRecordTransaction(
         input.threadRecordTransaction,
@@ -352,6 +354,14 @@ export function createHostStandaloneComposition(
         bootEpoch
       )
     : null
+  // M4 slice 13a: with the transaction wired, every projection window holds
+  // the commit gate's observer mode inside its FIFO turn (lock order: lane,
+  // FIFO, gate), so no capture sees a half-published commit.
+  const fence = threadRecordTransaction ? createHostCommitFence(threadRecordTransaction.gate) : null
+  const runProjectionOperation: HostProjectionOperationRunner = fence
+    ? (operation, label) =>
+        projectionQueue(() => fence(`window:${label ?? 'unlabeled'}`, operation), label)
+    : projectionQueue
   let shutdownPromise: Promise<void> | null = null
   let shutdownComplete = false
   let reconciler: HostProjectionReconciler | null = null
@@ -432,7 +442,9 @@ export function createHostStandaloneComposition(
         ? { threadCatalogueMaintenanceProvider: input.threadCatalogueMaintenanceProvider }
         : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
-      ...(threadRecordTransaction ? { threadRecordTransaction: threadRecordTransaction.port } : {}),
+      ...(threadRecordTransaction && fence
+        ? { threadRecordTransaction: threadRecordTransaction.port, fence }
+        : {}),
       onShutdown: shutdown
     }
   })
@@ -529,7 +541,11 @@ function createThreadRecordTransaction(
   runtime: HostRuntimeBootstrap,
   runtimePath: string,
   bootEpoch: string
-): { port: AppStoreHostAuthorityThreadRecordTransaction; close(): Promise<void> } {
+): {
+  port: AppStoreHostAuthorityThreadRecordTransaction
+  gate: HostCommitGate
+  close(): Promise<void>
+} {
   const ledger = createHostScopeLedger({ hostIncarnation: bootEpoch })
   const gate = createHostCommitGate()
   const log = HostTransactionLog.open({ dataDir: runtimePath })
@@ -538,6 +554,7 @@ function createThreadRecordTransaction(
   const now = options.now ?? (() => Date.now())
   const inFlight = new Set<Promise<unknown>>()
   return {
+    gate,
     port: {
       ledger,
       // Only the manifest's health: a closed ledger routes here and refuses

@@ -116,6 +116,7 @@ import {
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { hostThreadScope, type HostScopeEpoch, type HostScopeLedger } from './HostScopeLedger'
+import type { HostCommitFence } from './HostCommitFence'
 import type {
   HostThreadRecordTransactionInput,
   HostThreadRecordTransactionOutcome
@@ -319,6 +320,13 @@ export interface AppStoreHostAuthorityPorts {
   readonly deferredAsk?: HostDeferredAskPorts
   /** M4 slice 12b; see the interface. */
   readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
+  /**
+   * M4 slice 13a: the commit gate's observer mode, for the captures that run
+   * outside the projection queue (whose windows the composition fences):
+   * controls across both captures, snapshots, and the queued-start ack's
+   * before-capture. Wired with `threadRecordTransaction`, never without it.
+   */
+  readonly fence?: HostCommitFence
 }
 
 /**
@@ -501,6 +509,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly threadRecordTransaction?: AppStoreHostAuthorityThreadRecordTransaction
+  private readonly fence: HostCommitFence
   private readonly domainPublisher: HostDomainDeltaPublisher
   private readonly completionCoordinator: HostMutationCompletionCoordinator
   private readonly now: () => string
@@ -562,7 +571,10 @@ export class AppStoreHostAuthority implements HostAuthority {
         (options.mode !== 'standalone' ||
           typeof ports.threadRecordTransaction.create !== 'function' ||
           typeof ports.threadRecordTransaction.available !== 'function' ||
-          !ports.threadRecordTransaction.ledger))
+          !ports.threadRecordTransaction.ledger ||
+          typeof ports.fence !== 'function')) ||
+      (ports.fence !== undefined &&
+        (typeof ports.fence !== 'function' || ports.threadRecordTransaction === undefined))
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
@@ -610,6 +622,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
     this.threadRecordTransaction = ports.threadRecordTransaction
+    this.fence = ports.fence ?? ((_label, operation) => operation())
     this.now = options.now ?? (() => new Date().toISOString())
     // Scope 2: sole-journal publish + completion ports (allowed branch only).
     // A command's observed effects commit as one journal batch behind one
@@ -648,7 +661,11 @@ export class AppStoreHostAuthority implements HostAuthority {
   ): Promise<HostAuthorityResult<HostSnapshot>> {
     const gate = this.gate(context)
     if (!gate.ok) return gate
+    // The donor read and the position stamp see no half-published commit.
+    return this.fence('snapshot', () => this.captureSnapshot())
+  }
 
+  private async captureSnapshot(): Promise<HostAuthorityResult<HostSnapshot>> {
     let donor: AppStoreHostAuthoritySnapshotDonorFamilies
     try {
       donor = await this.snapshotDonor()
@@ -963,7 +980,13 @@ export class AppStoreHostAuthority implements HostAuthority {
         command?.name === 'question.answer' ||
         this.usesQueuedComposerSend(command)
       ) {
-        return await this.executeCommand(context, command)
+        // A control holds the observer across both its captures (M4 §1.6).
+        // The queued-start ack fences only its before-capture: it returns
+        // before the dispatch its publication waits for.
+        if (this.usesQueuedComposerSend(command)) return await this.executeCommand(context, command)
+        return await this.fence(`control:${command?.name}`, () =>
+          this.executeCommand(context, command)
+        )
       }
       // M4: a command on a thread lane takes the lane before the projection
       // queue (lock order: lane, legacy FIFO, gate, publication lock). It
@@ -1382,7 +1405,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     const actor = toReceiptActor(context.actor)
     let donor: AppStoreHostAuthoritySnapshotDonorFamilies
     try {
-      donor = await this.readMutationSnapshotDonor()
+      donor = await this.fence('queued-start:before', () => this.readMutationSnapshotDonor())
     } catch {
       // No dispatch yet — settle the begun receipt rather than leave it pending.
       this.runtime.receiptStore.complete({

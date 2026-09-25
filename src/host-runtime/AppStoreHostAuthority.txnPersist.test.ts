@@ -200,7 +200,15 @@ describe('AppStoreHostAuthority: transactional persist routing (M4 slice 12b)', 
       mode: 'standalone',
       activationPermit: permit,
       now: () => NOW,
-      ports: { ...ports, ...overrides }
+      ports: {
+        ...ports,
+        // The transaction port requires a fence (M4 slice 13a); these tests
+        // are about routing, so an unfenced pass-through stands in.
+        ...(overrides.threadRecordTransaction && !overrides.fence
+          ? { fence: <T>(_label: string, operation: () => Promise<T>) => operation() }
+          : {}),
+        ...overrides
+      }
     })
   }
 
