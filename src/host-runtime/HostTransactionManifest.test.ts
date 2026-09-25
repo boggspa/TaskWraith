@@ -8,13 +8,15 @@ import {
 import {
   decideHostTransactionRecovery,
   hostCommitWitness,
+  hostTransactionRecordsCompactable,
   parseHostTransactionRecord,
   sameHostFileIdentity,
   type HostFileIdentity,
   type HostTransactionGroup,
   type HostTransactionPrepareRecord,
   type HostTransactionRecoveryAction,
-  type HostTransactionRecoveryInput
+  type HostTransactionRecoveryInput,
+  type HostTransactionTerminalRecord
 } from './HostTransactionManifest'
 
 const PRIOR: HostFileIdentity = { dev: '16777232', ino: '1001', size: 4_096 }
@@ -23,7 +25,26 @@ const OTHER: HostFileIdentity = { dev: '16777232', ino: '3003', size: 5_120 }
 const DIGEST = 'a'.repeat(64)
 const EPOCH = { hostIncarnation: 'b'.repeat(64), deleteCounter: 0 }
 const END = { generation: 1, cursor: 40 }
+/** Where a generation reset leaves the delta store. */
+const RESET = { generation: 2, cursor: 1 }
 const GROUP: HostTransactionGroup = { count: 3, setDigest: DIGEST, end: END }
+
+function published(position = END): HostTransactionTerminalRecord {
+  return { kind: 'published', commandId: 'cmd-1', position, at: 6 }
+}
+const PUBLISHED = published()
+const ABORTED: HostTransactionTerminalRecord = {
+  kind: 'abort',
+  commandId: 'cmd-1',
+  reason: 'interrupted',
+  at: 5
+}
+const INDETERMINATE: HostTransactionTerminalRecord = {
+  kind: 'indeterminate',
+  commandId: 'cmd-1',
+  reason: 'unknown_identity',
+  at: 7
+}
 
 function prepareValue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -48,7 +69,7 @@ function prepare(overrides: Record<string, unknown> = {}): HostTransactionPrepar
 }
 
 function receipt(status: HostReceiptStatus) {
-  return { status, commandClass: 'txn-record-persist' as const }
+  return { status, recoveryState: null, commandClass: 'txn-record-persist' as const }
 }
 
 /** A pending receipt the store promoted when it reopened. */
@@ -163,9 +184,9 @@ describe('manifest records', () => {
 })
 
 describe('recovery per Appendix D', () => {
-  it('D1: a committed record whose effects were never published is published, then completed', () => {
+  it('D1: a committed record whose effects were never published completes at a generation reset', () => {
     expect(decideHostTransactionRecovery(found({ observed: RESULTING }))).toEqual({
-      action: 'publish_and_complete',
+      action: 'reset_and_complete',
       row: 'D1'
     })
     // A created thread the same way.
@@ -173,45 +194,61 @@ describe('recovery per Appendix D', () => {
       decideHostTransactionRecovery(
         found({ prepare: prepare({ prior: null }), observed: RESULTING })
       )
-    ).toEqual({ action: 'publish_and_complete', row: 'D1' })
+    ).toEqual({ action: 'reset_and_complete', row: 'D1' })
+    // Recorded published at the reset, the receipt not yet completed: it
+    // completes there, with no group to find. The record says where, not any
+    // group recovery might also find.
+    for (const group of [null, GROUP]) {
+      expect(
+        decideHostTransactionRecovery(
+          found({ observed: RESULTING, terminal: published(RESET), group })
+        )
+      ).toEqual({
+        action: 'complete_at_position',
+        row: 'D3',
+        position: RESET,
+        markPublished: false
+      })
+    }
   })
 
   it('D2: a torn group line is never visible, so it resolves as D1', () => {
     // The delta store drops a torn last line: recovery finds no group.
     expect(decideHostTransactionRecovery(found({ observed: RESULTING, group: null }))).toEqual({
-      action: 'publish_and_complete',
+      action: 'reset_and_complete',
       row: 'D1'
     })
   })
 
-  it('D3: published effects complete the receipt at the existing group, never a second one', () => {
+  it('D3: published effects complete the receipt where they were published, never twice', () => {
     expect(decideHostTransactionRecovery(found({ observed: RESULTING, group: GROUP }))).toEqual({
-      action: 'complete_at_group',
+      action: 'complete_at_position',
       row: 'D3',
-      position: END
+      position: END,
+      markPublished: true
     })
     // The group carries the rows the change displaced from other threads, so
     // its set is not the prepare's: the group is its own witness.
     const displacing = { count: 7, setDigest: 'c'.repeat(64), end: END }
     expect(
       decideHostTransactionRecovery(found({ observed: RESULTING, group: displacing }))
-    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
-    expect(
-      decideHostTransactionRecovery(found({ terminal: 'published', group: displacing }))
-    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
+    ).toEqual({ action: 'complete_at_position', row: 'D3', position: END, markPublished: true })
     // The receipt completed; only the manifest's mark was left.
     expect(
       decideHostTransactionRecovery(
         found({ observed: RESULTING, group: GROUP, receipt: receipt('succeeded') })
       )
     ).toEqual({ action: 'mark_published', row: 'D3', position: END })
-    // Marked published before the receipt (not the order a live commit
-    // takes, but safe to finish).
-    expect(decideHostTransactionRecovery(found({ terminal: 'published', group: GROUP }))).toEqual({
-      action: 'complete_at_group',
-      row: 'D3',
-      position: END
-    })
+    // Marked published before the receipt: the record says where, with or
+    // without the group, which compaction may have dropped.
+    for (const group of [GROUP, displacing, null]) {
+      expect(decideHostTransactionRecovery(found({ terminal: PUBLISHED, group }))).toEqual({
+        action: 'complete_at_position',
+        row: 'D3',
+        position: END,
+        markPublished: false
+      })
+    }
   })
 
   it('D4: interrupted before the commit fails as interrupted, with nothing published', () => {
@@ -234,7 +271,7 @@ describe('recovery per Appendix D', () => {
       completeReceipt: true
     })
     // Aborted, the receipt not yet completed.
-    expect(decideHostTransactionRecovery(found({ terminal: 'aborted' }))).toEqual({
+    expect(decideHostTransactionRecovery(found({ terminal: ABORTED }))).toEqual({
       action: 'fail_interrupted',
       row: 'D4',
       writeAbort: false,
@@ -252,12 +289,12 @@ describe('recovery per Appendix D', () => {
   it('decides a receipt the store promoted when it reopened as a pending one', () => {
     expect(
       decideHostTransactionRecovery(found({ receipt: recoverable(), observed: RESULTING }))
-    ).toEqual({ action: 'publish_and_complete', row: 'D1' })
+    ).toEqual({ action: 'reset_and_complete', row: 'D1' })
     expect(
       decideHostTransactionRecovery(
         found({ receipt: recoverable(), observed: RESULTING, group: GROUP })
       )
-    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
+    ).toEqual({ action: 'complete_at_position', row: 'D3', position: END, markPublished: true })
     expect(decideHostTransactionRecovery(found({ receipt: recoverable() }))).toEqual({
       action: 'fail_interrupted',
       row: 'D4',
@@ -282,12 +319,12 @@ describe('recovery per Appendix D', () => {
     for (const observed of [RESULTING, PRIOR, OTHER, null]) {
       expect(
         decideHostTransactionRecovery(
-          found({ terminal: 'published', group: GROUP, receipt: receipt('succeeded'), observed })
+          found({ terminal: PUBLISHED, group: GROUP, receipt: receipt('succeeded'), observed })
         )
       ).toEqual({ action: 'none' })
       expect(
         decideHostTransactionRecovery(
-          found({ terminal: 'aborted', receipt: receipt('failed'), observed })
+          found({ terminal: ABORTED, receipt: receipt('failed'), observed })
         )
       ).toEqual({ action: 'none' })
     }
@@ -300,10 +337,10 @@ describe('recovery per Appendix D', () => {
     // Compaction dropped the group, or the receipt, of a finished command.
     expect(
       decideHostTransactionRecovery(
-        found({ terminal: 'published', group: null, receipt: receipt('succeeded') })
+        found({ terminal: PUBLISHED, group: null, receipt: receipt('succeeded') })
       )
     ).toEqual({ action: 'none' })
-    for (const terminal of ['published', 'aborted', 'indeterminate'] as const) {
+    for (const terminal of [PUBLISHED, ABORTED, INDETERMINATE]) {
       expect(decideHostTransactionRecovery(found({ receipt: null, terminal }))).toEqual({
         action: 'none'
       })
@@ -318,12 +355,15 @@ describe('recovery per Appendix D', () => {
     const cases: Array<[Partial<HostTransactionRecoveryInput>, string]> = [
       [{ receipt: null }, 'receipt_missing'],
       [{ prepare: null, group: GROUP }, 'group_without_manifest'],
-      [{ terminal: 'aborted', observed: RESULTING }, 'aborted_but_committed'],
-      [{ terminal: 'aborted', group: GROUP }, 'aborted_but_published'],
-      [{ terminal: 'aborted', receipt: receipt('succeeded') }, 'aborted_but_succeeded'],
-      [{ terminal: 'published' }, 'published_without_group'],
+      [{ terminal: ABORTED, observed: RESULTING }, 'aborted_but_committed'],
+      [{ terminal: ABORTED, group: GROUP }, 'aborted_but_published'],
+      [{ terminal: ABORTED, receipt: receipt('succeeded') }, 'aborted_but_succeeded'],
       [
-        { terminal: 'published', group: GROUP, receipt: receipt('failed') },
+        { terminal: PUBLISHED, group: GROUP, receipt: receipt('failed') },
+        'published_but_receipt_failed'
+      ],
+      [
+        { terminal: published(RESET), receipt: receipt('cancelled') },
         'published_but_receipt_failed'
       ],
       [{ observed: PRIOR, group: GROUP }, 'group_without_commit'],
@@ -332,6 +372,7 @@ describe('recovery per Appendix D', () => {
         'group_but_receipt_failed'
       ],
       [{ observed: RESULTING, receipt: receipt('conflict') }, 'committed_but_receipt_failed'],
+      // Completed before its reset was recorded: not the order D1 takes.
       [{ observed: RESULTING, receipt: receipt('succeeded') }, 'succeeded_without_group'],
       [{ observed: OTHER }, 'unknown_identity'],
       [{ observed: null }, 'unknown_identity']
@@ -346,23 +387,23 @@ describe('recovery per Appendix D', () => {
 
   it('treats indeterminate as final', () => {
     expect(
-      decideHostTransactionRecovery(found({ observed: OTHER, terminal: 'indeterminate' }))
+      decideHostTransactionRecovery(found({ observed: OTHER, terminal: INDETERMINATE }))
     ).toEqual({ action: 'none' })
     expect(
       decideHostTransactionRecovery(found({ observed: OTHER, receipt: receipt('indeterminate') }))
     ).toEqual({ action: 'none' })
     expect(
-      decideHostTransactionRecovery(found({ receipt: null, terminal: 'indeterminate' }))
+      decideHostTransactionRecovery(found({ receipt: null, terminal: INDETERMINATE }))
     ).toEqual({ action: 'none' })
     // Recorded without a prepare: recovery found a group and no manifest.
     expect(
       decideHostTransactionRecovery(
-        found({ receipt: recoverable(), prepare: null, group: GROUP, terminal: 'indeterminate' })
+        found({ receipt: recoverable(), prepare: null, group: GROUP, terminal: INDETERMINATE })
       )
     ).toEqual({ action: 'none' })
     expect(
       decideHostTransactionRecovery(
-        found({ receipt: recoverable(), observed: OTHER, terminal: 'indeterminate' })
+        found({ receipt: recoverable(), observed: OTHER, terminal: INDETERMINATE })
       )
     ).toEqual({ action: 'none' })
   })
@@ -376,10 +417,27 @@ describe('recovery per Appendix D', () => {
     for (const commandClass of others) {
       expect(
         decideHostTransactionRecovery(
-          found({ receipt: { status: 'pending', commandClass }, observed: RESULTING })
+          found({
+            receipt: { status: 'pending', recoveryState: null, commandClass },
+            observed: RESULTING
+          })
         )
       ).toEqual({ action: 'not_transactional' })
     }
+  })
+})
+
+describe('manifest compaction', () => {
+  it('keeps a command’s records until its receipt is terminal', () => {
+    for (const status of ['succeeded', 'failed', 'denied', 'cancelled', 'conflict'] as const) {
+      expect(hostTransactionRecordsCompactable(receipt(status))).toBe(true)
+    }
+    // Receipt compaction drops only terminal receipts.
+    expect(hostTransactionRecordsCompactable(null)).toBe(true)
+    // An indeterminate decision is final only through its manifest record.
+    expect(hostTransactionRecordsCompactable(receipt('pending'))).toBe(false)
+    expect(hostTransactionRecordsCompactable(recoverable())).toBe(false)
+    expect(hostTransactionRecordsCompactable(receipt('indeterminate'))).toBe(false)
   })
 })
 
@@ -393,31 +451,33 @@ function apply(
 ): HostTransactionRecoveryInput {
   // Completing a receipt clears the store's recoverable mark.
   const complete = (status: HostReceiptStatus) =>
-    input.receipt === null ? null : { status, commandClass: input.receipt.commandClass }
+    input.receipt === null
+      ? null
+      : { status, recoveryState: null, commandClass: input.receipt.commandClass }
   switch (action.action) {
     case 'none':
     case 'not_transactional':
       return input
-    case 'publish_and_complete':
-      // The group carries the displaced rows too: not the prepare's set.
+    case 'reset_and_complete':
+      // The reset clears every group of the old generation.
       return {
         ...input,
-        group: {
-          count: input.prepare!.effects.count + 2,
-          setDigest: 'd'.repeat(64),
-          end: { generation: 1, cursor: 99 }
-        },
-        receipt: complete('succeeded'),
-        terminal: 'published'
+        group: null,
+        terminal: published(RESET),
+        receipt: complete('succeeded')
       }
-    case 'complete_at_group':
-      return { ...input, receipt: complete('succeeded'), terminal: 'published' }
+    case 'complete_at_position':
+      return {
+        ...input,
+        receipt: complete('succeeded'),
+        ...(action.markPublished ? { terminal: published(action.position) } : {})
+      }
     case 'mark_published':
-      return { ...input, terminal: 'published' }
+      return { ...input, terminal: published(action.position) }
     case 'fail_interrupted':
       return {
         ...input,
-        ...(action.writeAbort ? { terminal: 'aborted' as const } : {}),
+        ...(action.writeAbort ? { terminal: ABORTED } : {}),
         ...(action.completeReceipt ? { receipt: complete('failed') } : {})
       }
     case 'indeterminate':
@@ -425,10 +485,43 @@ function apply(
       // manifest's record is what makes it final.
       return {
         ...input,
-        terminal: 'indeterminate',
+        terminal: INDETERMINATE,
         ...(input.receipt?.status === 'pending' ? { receipt: recoverable() } : {})
       }
   }
+}
+
+/** The statuses receipt compaction may drop. */
+const TERMINAL_RECEIPTS = new Set<HostReceiptStatus>([
+  'succeeded',
+  'failed',
+  'denied',
+  'cancelled',
+  'conflict'
+])
+
+/**
+ * Every state compaction may leave: the delta store drops any group, the
+ * receipt store drops only terminal receipts, and the manifest drops a
+ * command's records only as `hostTransactionRecordsCompactable` allows.
+ */
+function compactions(state: HostTransactionRecoveryInput): HostTransactionRecoveryInput[] {
+  const compactable = hostTransactionRecordsCompactable(state.receipt)
+  const receiptDroppable = state.receipt !== null && TERMINAL_RECEIPTS.has(state.receipt.status)
+  const states: HostTransactionRecoveryInput[] = []
+  for (const group of state.group === null ? [null] : [state.group, null]) {
+    for (const receiptState of receiptDroppable ? [state.receipt, null] : [state.receipt]) {
+      for (const manifest of compactable ? [true, false] : [true]) {
+        states.push({
+          ...state,
+          group,
+          receipt: receiptState,
+          ...(manifest ? {} : { prepare: null, terminal: null })
+        })
+      }
+    }
+  }
+  return states
 }
 
 describe('recovery twice', () => {
@@ -441,17 +534,20 @@ describe('recovery twice', () => {
       recoverable()
     ]
     const prepares = [null, prepare(), prepare({ prior: null })]
-    const terminals = [null, 'aborted', 'published', 'indeterminate'] as const
+    const terminals = [null, ABORTED, PUBLISHED, published(RESET), INDETERMINATE]
     const observations = [null, PRIOR, RESULTING, OTHER]
     const groups = [null, GROUP, { ...GROUP, setDigest: 'c'.repeat(64) }]
     let states = 0
+    let compacted = 0
     const actions = new Set<string>()
     for (const receiptState of receipts) {
       for (const prepareState of prepares) {
         for (const terminal of terminals) {
           // A terminal record belongs to a prepared command, except an
           // indeterminate one recovery wrote without a prepare.
-          if (prepareState === null && terminal !== null && terminal !== 'indeterminate') continue
+          if (prepareState === null && terminal !== null && terminal.kind !== 'indeterminate') {
+            continue
+          }
           for (const observed of observations) {
             for (const group of groups) {
               const state = {
@@ -463,12 +559,17 @@ describe('recovery twice', () => {
               }
               const first = decideHostTransactionRecovery(state)
               actions.add(first.action)
-              const second = decideHostTransactionRecovery(apply(state, first))
-              expect({ state, first, second: second.action }).toEqual({
-                state,
-                first,
-                second: 'none'
-              })
+              // Recovery again, after whatever compaction the rules allow.
+              for (const after of compactions(apply(state, first))) {
+                const second = decideHostTransactionRecovery(after)
+                expect({ state, first, after, second: second.action }).toEqual({
+                  state,
+                  first,
+                  after,
+                  second: 'none'
+                })
+                compacted += 1
+              }
               states += 1
             }
           }
@@ -476,14 +577,15 @@ describe('recovery twice', () => {
       }
     }
     expect(states).toBeGreaterThan(500)
+    expect(compacted).toBeGreaterThan(2 * states)
     // Every action the table has was reached.
     expect([...actions].sort()).toEqual([
-      'complete_at_group',
+      'complete_at_position',
       'fail_interrupted',
       'indeterminate',
       'mark_published',
       'none',
-      'publish_and_complete'
+      'reset_and_complete'
     ])
   })
 })

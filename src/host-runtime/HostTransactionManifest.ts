@@ -19,10 +19,13 @@
  * command's receipt, its manifest, the chat file's identity and the delta
  * store's group for the command) to one action (Appendix D):
  * - D1, written and not published (and D2, whose torn group line is never
- *   visible): publish the group from the durable record, then complete the
- *   receipt at the group's end;
- * - D3, published and not completed: complete the receipt at the existing
- *   group, never a second group, or mark the manifest published when only
+ *   visible): nothing holds what clients were last sent, so no diff can be
+ *   published. Recovery resets the generation, once for every such command,
+ *   records `published` at the reset position and then completes the
+ *   receipt there; clients take a snapshot, which holds the record;
+ * - D3, published and not completed: complete the receipt where the effects
+ *   were published (the group's end, or the position a `published` record
+ *   holds), never a second group; or mark the manifest published when only
  *   that was left;
  * - D4, interrupted before the commit: fail the receipt as interrupted with
  *   zero effects, and record the abort;
@@ -30,15 +33,22 @@
  *   The manifest records it, and a receipt still pending is marked; a
  *   receipt already terminal is never rewritten.
  * Every action leaves a state this function then decides is done, so a
- * second recovery is a no-op. A group is its own witness: the delta store
- * validates its count and digest over its own records, and its set may
- * differ from the prepare's, which cannot see the rows the change displaces
- * from other threads. A receipt the store promoted to recoverable
- * indeterminate when it reopened is still pending here; only the manifest's
- * own `indeterminate` record is final. D5 (recover manifests before a
- * generation reset replays) and D6 (a delete refuses an older persist, which
- * then never prepares) are ordering rules owned by the recovery driver and
- * the scope ledger.
+ * second recovery is a no-op, and so is any compaction
+ * `hostTransactionRecordsCompactable` allows. A group is its own witness:
+ * the delta store validates its count and digest over its own records, and
+ * its set may differ from the prepare's, which cannot see the rows the
+ * change displaces from other threads. A receipt the store promoted to
+ * recoverable indeterminate when it reopened is still pending here. Every
+ * indeterminate receipt the store writes is recoverable, so only the
+ * manifest's own `indeterminate` record is final, and compaction keeps a
+ * command's records until its receipt is terminal.
+ *
+ * Ordering rules owned by the recovery driver and the scope ledger:
+ * - every D3 and D4 is applied before the D1 reset, which clears the groups
+ *   D3 completes at;
+ * - D5 (recover manifests before a generation reset replays);
+ * - D6 (a delete closes the thread's lane, so a later persist never
+ *   prepares).
  *
  * Pure: no I/O. Unwired in this slice.
  */
@@ -94,11 +104,13 @@ export interface HostTransactionIndeterminateRecord {
   readonly at: number
 }
 
-export type HostTransactionRecord =
-  | HostTransactionPrepareRecord
+/** A record that ends a command's manifest. */
+export type HostTransactionTerminalRecord =
   | HostTransactionAbortRecord
   | HostTransactionPublishedRecord
   | HostTransactionIndeterminateRecord
+
+export type HostTransactionRecord = HostTransactionPrepareRecord | HostTransactionTerminalRecord
 
 export type HostCommitWitness = 'committed' | 'not_committed' | 'indeterminate'
 
@@ -116,14 +128,17 @@ export interface HostTransactionRecoveryInput {
   /** The command's receipt, or null when the store has none. */
   readonly receipt: {
     readonly status: HostReceiptStatus
-    /** Set when the store promoted a pending receipt it reopened. */
-    readonly recoveryState?: 'recoverable-indeterminate'
+    /**
+     * The store's mark on a pending receipt it promoted when it reopened, or
+     * null. Required: a receipt read without it would look final.
+     */
+    readonly recoveryState: 'recoverable-indeterminate' | null
     /** The class `begin` recorded durably. */
     readonly commandClass: HostCommandExecutionClass
   } | null
   readonly prepare: HostTransactionPrepareRecord | null
   /** The manifest's terminal record for the command, if any. */
-  readonly terminal: 'aborted' | 'published' | 'indeterminate' | null
+  readonly terminal: HostTransactionTerminalRecord | null
   /** `lstat` of the chat file now; null when it is absent. */
   readonly observed: HostFileIdentity | null
   readonly group: HostTransactionGroup | null
@@ -135,7 +150,6 @@ export type HostTransactionIndeterminateReason =
   | 'aborted_but_committed'
   | 'aborted_but_published'
   | 'aborted_but_succeeded'
-  | 'published_without_group'
   | 'published_but_receipt_failed'
   | 'group_without_commit'
   | 'group_but_receipt_failed'
@@ -149,15 +163,20 @@ export type HostTransactionRecoveryAction =
   /** Not a transactional command: the existing recovery owns it. */
   | { readonly action: 'not_transactional' }
   /**
-   * D1/D2: publish the group from the durable record, complete the receipt
-   * at its end, and mark the manifest published.
+   * D1/D2: reset the generation (once for every such command), record
+   * `published` at the reset position, then complete the receipt there, in
+   * that order: a receipt completed first would witness nothing.
    */
-  | { readonly action: 'publish_and_complete'; readonly row: 'D1' }
-  /** D3: complete the receipt at the existing group's end, then mark it published. */
+  | { readonly action: 'reset_and_complete'; readonly row: 'D1' }
+  /**
+   * D3: complete the receipt where the effects were published, then mark the
+   * manifest published unless it already is.
+   */
   | {
-      readonly action: 'complete_at_group'
+      readonly action: 'complete_at_position'
       readonly row: 'D3'
       readonly position: HostCursorPosition
+      readonly markPublished: boolean
     }
   /** D3's tail: the receipt completed; only the manifest's mark is left. */
   | { readonly action: 'mark_published'; readonly row: 'D3'; readonly position: HostCursorPosition }
@@ -321,6 +340,27 @@ export function hostCommitWitness(
 
 const NONE: HostTransactionRecoveryAction = Object.freeze({ action: 'none' })
 
+const TERMINAL_RECEIPT_STATUSES: ReadonlySet<HostReceiptStatus> = new Set([
+  'succeeded',
+  'failed',
+  'denied',
+  'cancelled',
+  'conflict'
+])
+
+/**
+ * Whether compaction may drop a command's manifest records: its prepare and
+ * terminal record together, never one without the other. Only once its
+ * receipt is terminal, or gone, which receipt compaction allows only after
+ * that. Every indeterminate receipt the store writes is recoverable, so an
+ * `indeterminate` decision stays final only while its record is kept.
+ */
+export function hostTransactionRecordsCompactable(
+  receipt: HostTransactionRecoveryInput['receipt']
+): boolean {
+  return receipt === null || TERMINAL_RECEIPT_STATUSES.has(receipt.status)
+}
+
 function indeterminate(reason: HostTransactionIndeterminateReason): HostTransactionRecoveryAction {
   return { action: 'indeterminate', reason }
 }
@@ -341,7 +381,7 @@ export function decideHostTransactionRecovery(
   // records it for good: nothing is re-executed or decided again.
   const recoverable =
     receipt.status === 'indeterminate' && receipt.recoveryState === 'recoverable-indeterminate'
-  if (terminal === 'indeterminate' || (receipt.status === 'indeterminate' && !recoverable)) {
+  if (terminal?.kind === 'indeterminate' || (receipt.status === 'indeterminate' && !recoverable)) {
     return NONE
   }
   const receiptDone = receipt.status !== 'pending' && !recoverable
@@ -358,18 +398,22 @@ export function decideHostTransactionRecovery(
 
   // Published: judged on its records alone. Later commits replace the chat
   // file, and a freed inode can come back, so the witness no longer speaks.
-  // Once the receipt is terminal the group is not needed: compaction may
+  // The record holds where the effects were published (a group's end, or a
+  // generation reset), so no group is needed: compaction or the reset may
   // have dropped it.
-  if (terminal === 'published') {
+  if (terminal?.kind === 'published') {
     if (receiptDone) return succeeded ? NONE : indeterminate('published_but_receipt_failed')
-    return group === null
-      ? indeterminate('published_without_group')
-      : { action: 'complete_at_group', row: 'D3', position: group.end }
+    return {
+      action: 'complete_at_position',
+      row: 'D3',
+      position: terminal.position,
+      markPublished: false
+    }
   }
 
   const witness = hostCommitWitness(prepare, observed)
 
-  if (terminal === 'aborted') {
+  if (terminal?.kind === 'abort') {
     if (succeeded) return indeterminate('aborted_but_succeeded')
     if (group !== null) return indeterminate('aborted_but_published')
     if (receiptDone) return NONE
@@ -380,7 +424,9 @@ export function decideHostTransactionRecovery(
   // Prepared and unresolved: nothing has written the chat file since.
   if (group !== null) {
     if (witness === 'not_committed') return indeterminate('group_without_commit')
-    if (!receiptDone) return { action: 'complete_at_group', row: 'D3', position: group.end }
+    if (!receiptDone) {
+      return { action: 'complete_at_position', row: 'D3', position: group.end, markPublished: true }
+    }
     return succeeded
       ? { action: 'mark_published', row: 'D3', position: group.end }
       : indeterminate('group_but_receipt_failed')
@@ -391,7 +437,7 @@ export function decideHostTransactionRecovery(
     // A durable record whose receipt already failed cannot be put right here.
     return receiptDone
       ? indeterminate('committed_but_receipt_failed')
-      : { action: 'publish_and_complete', row: 'D1' }
+      : { action: 'reset_and_complete', row: 'D1' }
   }
   // Not committed: the record is unchanged and nothing was published.
   return {
