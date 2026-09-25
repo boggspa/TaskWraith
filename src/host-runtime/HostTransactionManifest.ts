@@ -8,10 +8,12 @@
  * client's artifact over `chats/<id>.json`, which keeps the artifact's inode,
  * so the file's identity is the commit witness:
  * - committed if and only if `lstat` of the chat file equals the manifest's
- *   resulting `{ dev, ino, size }`;
+ *   resulting `{ ino, size }`;
  * - not committed if the expected prior identity is still there, or the file
  *   is still absent where there was none;
  * - otherwise indeterminate.
+ * The device number is recorded but never compared: it follows mount order,
+ * which can change across a reboot.
  *
  * On restart, `decideHostTransactionRecovery` maps what recovery finds (the
  * command's receipt, its manifest, the chat file's identity and the delta
@@ -28,10 +30,15 @@
  *   The manifest records it, and a receipt still pending is marked; a
  *   receipt already terminal is never rewritten.
  * Every action leaves a state this function then decides is done, so a
- * second recovery is a no-op. D5 (recover manifests before a generation
- * reset replays) and D6 (a delete refuses an older persist, which then never
- * prepares) are ordering rules owned by the recovery driver and the scope
- * ledger.
+ * second recovery is a no-op. A group is its own witness: the delta store
+ * validates its count and digest over its own records, and its set may
+ * differ from the prepare's, which cannot see the rows the change displaces
+ * from other threads. A receipt the store promoted to recoverable
+ * indeterminate when it reopened is still pending here; only the manifest's
+ * own `indeterminate` record is final. D5 (recover manifests before a
+ * generation reset replays) and D6 (a delete refuses an older persist, which
+ * then never prepares) are ordering rules owned by the recovery driver and
+ * the scope ledger.
  *
  * Pure: no I/O. Unwired in this slice.
  */
@@ -39,7 +46,10 @@ import type { HostCursorPosition, HostReceiptStatus } from '../shared/hostProtoc
 import type { HostCommandExecutionClass } from './HostCommandExecutionClass'
 import type { HostScopeEpoch } from './HostScopeLedger'
 
-/** A file's identity as `lstat` reports it; dev and ino as decimal strings. */
+/**
+ * A file's identity as `lstat` reports it (bigint mode); dev and ino as
+ * decimal strings. Only `ino` and `size` witness a commit.
+ */
 export interface HostFileIdentity {
   readonly dev: string
   readonly ino: string
@@ -58,7 +68,7 @@ export interface HostTransactionPrepareRecord {
   readonly prior: HostFileIdentity | null
   /** The artifact the commit renames into place. */
   readonly resulting: HostFileIdentity
-  /** The scope-complete effect set the group will carry. */
+  /** The thread's own effect set when prepared; diagnostic, never compared. */
   readonly effects: { readonly count: number; readonly setDigest: string }
   readonly preparedAt: number
 }
@@ -92,7 +102,10 @@ export type HostTransactionRecord =
 
 export type HostCommitWitness = 'committed' | 'not_committed' | 'indeterminate'
 
-/** The delta store's group line for a command, as recovery reads it. */
+/**
+ * The delta store's group line for a command, as recovery reads it: one the
+ * store found whole, its count and digest matching its own records.
+ */
 export interface HostTransactionGroup {
   readonly count: number
   readonly setDigest: string
@@ -103,6 +116,8 @@ export interface HostTransactionRecoveryInput {
   /** The command's receipt, or null when the store has none. */
   readonly receipt: {
     readonly status: HostReceiptStatus
+    /** Set when the store promoted a pending receipt it reopened. */
+    readonly recoveryState?: 'recoverable-indeterminate'
     /** The class `begin` recorded durably. */
     readonly commandClass: HostCommandExecutionClass
   } | null
@@ -122,7 +137,6 @@ export type HostTransactionIndeterminateReason =
   | 'aborted_but_succeeded'
   | 'published_without_group'
   | 'published_but_receipt_failed'
-  | 'group_digest_mismatch'
   | 'group_without_commit'
   | 'group_but_receipt_failed'
   | 'committed_but_receipt_failed'
@@ -160,8 +174,8 @@ export type HostTransactionRecoveryAction =
     }
   /**
    * Contradictory or unwitnessed: never re-executed. Record it in the
-   * manifest (when there is a prepare) and mark the receipt indeterminate
-   * when it is still pending.
+   * manifest, which makes it final, and mark the receipt indeterminate when
+   * it is still pending.
    */
   | { readonly action: 'indeterminate'; readonly reason: HostTransactionIndeterminateReason }
 
@@ -209,8 +223,9 @@ function readPosition(value: unknown): HostCursorPosition | null {
     : null
 }
 
+/** Whether two identities are the same file: its inode and size, not its device number. */
 export function sameHostFileIdentity(left: HostFileIdentity, right: HostFileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size
+  return left.ino === right.ino && left.size === right.size
 }
 
 /**
@@ -316,14 +331,20 @@ export function decideHostTransactionRecovery(
 ): HostTransactionRecoveryAction {
   const { receipt, prepare, terminal, observed, group } = input
   if (receipt === null) {
-    return prepare === null || terminal === 'indeterminate'
-      ? NONE
-      : indeterminate('receipt_missing')
+    // Receipt compaction drops only terminal receipts, and a prepare's
+    // receipt stays pending until its manifest ends it.
+    return prepare === null || terminal !== null ? NONE : indeterminate('receipt_missing')
   }
   if (receipt.commandClass !== 'txn-record-persist') return { action: 'not_transactional' }
-  // Indeterminate is final: nothing is re-executed or decided again.
-  if (terminal === 'indeterminate' || receipt.status === 'indeterminate') return NONE
-  const receiptDone = receipt.status !== 'pending'
+  // A receipt the store promoted when it reopened is still this table's to
+  // decide. Indeterminate is final once the manifest, or the receipt itself,
+  // records it for good: nothing is re-executed or decided again.
+  const recoverable =
+    receipt.status === 'indeterminate' && receipt.recoveryState === 'recoverable-indeterminate'
+  if (terminal === 'indeterminate' || (receipt.status === 'indeterminate' && !recoverable)) {
+    return NONE
+  }
+  const receiptDone = receipt.status !== 'pending' && !recoverable
   const succeeded = receipt.status === 'succeeded'
 
   // No manifest: admitted and never prepared (a queued persist interrupted
@@ -335,18 +356,15 @@ export function decideHostTransactionRecovery(
     return { action: 'fail_interrupted', row: 'D4', writeAbort: false, completeReceipt: true }
   }
 
-  const groupMatches =
-    group !== null &&
-    group.count === prepare.effects.count &&
-    group.setDigest === prepare.effects.setDigest
-
   // Published: judged on its records alone. Later commits replace the chat
   // file, and a freed inode can come back, so the witness no longer speaks.
+  // Once the receipt is terminal the group is not needed: compaction may
+  // have dropped it.
   if (terminal === 'published') {
-    if (group === null) return indeterminate('published_without_group')
-    if (!groupMatches) return indeterminate('group_digest_mismatch')
-    if (!receiptDone) return { action: 'complete_at_group', row: 'D3', position: group.end }
-    return succeeded ? NONE : indeterminate('published_but_receipt_failed')
+    if (receiptDone) return succeeded ? NONE : indeterminate('published_but_receipt_failed')
+    return group === null
+      ? indeterminate('published_without_group')
+      : { action: 'complete_at_group', row: 'D3', position: group.end }
   }
 
   const witness = hostCommitWitness(prepare, observed)
@@ -361,7 +379,6 @@ export function decideHostTransactionRecovery(
 
   // Prepared and unresolved: nothing has written the chat file since.
   if (group !== null) {
-    if (!groupMatches) return indeterminate('group_digest_mismatch')
     if (witness === 'not_committed') return indeterminate('group_without_commit')
     if (!receiptDone) return { action: 'complete_at_group', row: 'D3', position: group.end }
     return succeeded

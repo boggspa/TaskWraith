@@ -51,6 +51,15 @@ function receipt(status: HostReceiptStatus) {
   return { status, commandClass: 'txn-record-persist' as const }
 }
 
+/** A pending receipt the store promoted when it reopened. */
+function recoverable() {
+  return {
+    status: 'indeterminate' as const,
+    recoveryState: 'recoverable-indeterminate' as const,
+    commandClass: 'txn-record-persist' as const
+  }
+}
+
 /** A persist that prepared a replacement of chat-1 and crashed; override what recovery finds. */
 function found(
   overrides: Partial<HostTransactionRecoveryInput> = {}
@@ -72,9 +81,11 @@ describe('the commit witness', () => {
     expect(hostCommitWitness(replacing, PRIOR)).toBe('not_committed')
     expect(hostCommitWitness(replacing, OTHER)).toBe('indeterminate')
     expect(hostCommitWitness(replacing, null)).toBe('indeterminate')
-    // The size is part of the identity.
+    // The size is part of the identity; the device number, which follows
+    // mount order across a reboot, is not.
     expect(hostCommitWitness(replacing, { ...RESULTING, size: 5_121 })).toBe('indeterminate')
-    expect(hostCommitWitness(replacing, { ...PRIOR, dev: '1' })).toBe('indeterminate')
+    expect(hostCommitWitness(replacing, { ...RESULTING, dev: '1' })).toBe('committed')
+    expect(hostCommitWitness(replacing, { ...PRIOR, dev: '1' })).toBe('not_committed')
 
     // A thread with no file before: still absent means not committed.
     const creating = prepare({ prior: null })
@@ -132,6 +143,7 @@ describe('manifest records', () => {
       [prepareValue({ effects: { count: -1, setDigest: DIGEST } }), 'prepare_invalid'],
       [prepareValue({ preparedAt: -1 }), 'prepare_invalid'],
       [prepareValue({ resulting: { ...PRIOR } }), 'prepare_witnesses_nothing'],
+      [prepareValue({ resulting: { ...PRIOR, dev: '1' } }), 'prepare_witnesses_nothing'],
       [{ kind: 'abort', commandId: 'cmd-1', reason: '', at: 5 }, 'abort_invalid'],
       [{ kind: 'abort', commandId: 'cmd-1', reason: 'x', at: 1.5 }, 'abort_invalid'],
       [
@@ -178,6 +190,15 @@ describe('recovery per Appendix D', () => {
       row: 'D3',
       position: END
     })
+    // The group carries the rows the change displaced from other threads, so
+    // its set is not the prepare's: the group is its own witness.
+    const displacing = { count: 7, setDigest: 'c'.repeat(64), end: END }
+    expect(
+      decideHostTransactionRecovery(found({ observed: RESULTING, group: displacing }))
+    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
+    expect(
+      decideHostTransactionRecovery(found({ terminal: 'published', group: displacing }))
+    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
     // The receipt completed; only the manifest's mark was left.
     expect(
       decideHostTransactionRecovery(
@@ -228,6 +249,29 @@ describe('recovery per Appendix D', () => {
     })
   })
 
+  it('decides a receipt the store promoted when it reopened as a pending one', () => {
+    expect(
+      decideHostTransactionRecovery(found({ receipt: recoverable(), observed: RESULTING }))
+    ).toEqual({ action: 'publish_and_complete', row: 'D1' })
+    expect(
+      decideHostTransactionRecovery(
+        found({ receipt: recoverable(), observed: RESULTING, group: GROUP })
+      )
+    ).toEqual({ action: 'complete_at_group', row: 'D3', position: END })
+    expect(decideHostTransactionRecovery(found({ receipt: recoverable() }))).toEqual({
+      action: 'fail_interrupted',
+      row: 'D4',
+      writeAbort: true,
+      completeReceipt: true
+    })
+    expect(decideHostTransactionRecovery(found({ receipt: recoverable(), prepare: null }))).toEqual(
+      { action: 'fail_interrupted', row: 'D4', writeAbort: false, completeReceipt: true }
+    )
+    expect(
+      decideHostTransactionRecovery(found({ receipt: recoverable(), observed: OTHER }))
+    ).toEqual({ action: 'indeterminate', reason: 'unknown_identity' })
+  })
+
   it('D6: a persist the lane refused behind a delete never prepared, and needs nothing', () => {
     expect(
       decideHostTransactionRecovery(found({ prepare: null, receipt: receipt('failed') }))
@@ -253,6 +297,17 @@ describe('recovery per Appendix D', () => {
         found({ prepare: null, group: GROUP, receipt: receipt('succeeded') })
       )
     ).toEqual({ action: 'none' })
+    // Compaction dropped the group, or the receipt, of a finished command.
+    expect(
+      decideHostTransactionRecovery(
+        found({ terminal: 'published', group: null, receipt: receipt('succeeded') })
+      )
+    ).toEqual({ action: 'none' })
+    for (const terminal of ['published', 'aborted', 'indeterminate'] as const) {
+      expect(decideHostTransactionRecovery(found({ receipt: null, terminal }))).toEqual({
+        action: 'none'
+      })
+    }
     // Nothing began.
     expect(decideHostTransactionRecovery(found({ receipt: null, prepare: null }))).toEqual({
       action: 'none'
@@ -270,11 +325,6 @@ describe('recovery per Appendix D', () => {
       [
         { terminal: 'published', group: GROUP, receipt: receipt('failed') },
         'published_but_receipt_failed'
-      ],
-      [{ terminal: 'published', group: { ...GROUP, count: 4 } }, 'group_digest_mismatch'],
-      [
-        { observed: RESULTING, group: { ...GROUP, setDigest: 'c'.repeat(64) } },
-        'group_digest_mismatch'
       ],
       [{ observed: PRIOR, group: GROUP }, 'group_without_commit'],
       [
@@ -304,6 +354,17 @@ describe('recovery per Appendix D', () => {
     expect(
       decideHostTransactionRecovery(found({ receipt: null, terminal: 'indeterminate' }))
     ).toEqual({ action: 'none' })
+    // Recorded without a prepare: recovery found a group and no manifest.
+    expect(
+      decideHostTransactionRecovery(
+        found({ receipt: recoverable(), prepare: null, group: GROUP, terminal: 'indeterminate' })
+      )
+    ).toEqual({ action: 'none' })
+    expect(
+      decideHostTransactionRecovery(
+        found({ receipt: recoverable(), observed: OTHER, terminal: 'indeterminate' })
+      )
+    ).toEqual({ action: 'none' })
   })
 
   it('leaves every other class to the existing recovery', () => {
@@ -330,18 +391,20 @@ function apply(
   input: HostTransactionRecoveryInput,
   action: HostTransactionRecoveryAction
 ): HostTransactionRecoveryInput {
+  // Completing a receipt clears the store's recoverable mark.
   const complete = (status: HostReceiptStatus) =>
-    input.receipt === null ? null : { ...input.receipt, status }
+    input.receipt === null ? null : { status, commandClass: input.receipt.commandClass }
   switch (action.action) {
     case 'none':
     case 'not_transactional':
       return input
     case 'publish_and_complete':
+      // The group carries the displaced rows too: not the prepare's set.
       return {
         ...input,
         group: {
-          count: input.prepare!.effects.count,
-          setDigest: input.prepare!.effects.setDigest,
+          count: input.prepare!.effects.count + 2,
+          setDigest: 'd'.repeat(64),
           end: { generation: 1, cursor: 99 }
         },
         receipt: complete('succeeded'),
@@ -358,10 +421,12 @@ function apply(
         ...(action.completeReceipt ? { receipt: complete('failed') } : {})
       }
     case 'indeterminate':
+      // The store marks a pending receipt recoverable indeterminate; the
+      // manifest's record is what makes it final.
       return {
         ...input,
-        ...(input.prepare ? { terminal: 'indeterminate' as const } : {}),
-        ...(input.receipt?.status === 'pending' ? { receipt: complete('indeterminate') } : {})
+        terminal: 'indeterminate',
+        ...(input.receipt?.status === 'pending' ? { receipt: recoverable() } : {})
       }
   }
 }
@@ -372,7 +437,8 @@ describe('recovery twice', () => {
       null,
       ...(
         ['pending', 'succeeded', 'failed', 'cancelled', 'conflict', 'indeterminate'] as const
-      ).map(receipt)
+      ).map(receipt),
+      recoverable()
     ]
     const prepares = [null, prepare(), prepare({ prior: null })]
     const terminals = [null, 'aborted', 'published', 'indeterminate'] as const
@@ -383,8 +449,9 @@ describe('recovery twice', () => {
     for (const receiptState of receipts) {
       for (const prepareState of prepares) {
         for (const terminal of terminals) {
-          // A terminal record belongs to a prepared command.
-          if (prepareState === null && terminal !== null) continue
+          // A terminal record belongs to a prepared command, except an
+          // indeterminate one recovery wrote without a prepare.
+          if (prepareState === null && terminal !== null && terminal !== 'indeterminate') continue
           for (const observed of observations) {
             for (const group of groups) {
               const state = {
