@@ -257,7 +257,21 @@ export interface HostPublicWindowDeleteChange {
   readonly threadId: string
 }
 
-export type HostPublicWindowChange = HostPublicWindowModelChange | HostPublicWindowDeleteChange
+/**
+ * A thread modelled again to fill a short window (slice 13e): its committed
+ * file read in the worker. It lands only at the revision the index holds
+ * (SF-3), so it can never roll a thread forward past a persist still
+ * publishing, or back.
+ */
+export interface HostPublicWindowRefillChange {
+  readonly kind: 'refill'
+  readonly model: HostThreadRecordModelled
+}
+
+export type HostPublicWindowChange =
+  | HostPublicWindowModelChange
+  | HostPublicWindowDeleteChange
+  | HostPublicWindowRefillChange
 
 export interface HostPublicWindowPublication {
   /** The publication's time: the `at` of the index's own warnings. */
@@ -265,12 +279,13 @@ export interface HostPublicWindowPublication {
 }
 
 /**
- * A change the index set aside: a model older than the one it holds, or
- * anything for a thread deleted in this incarnation.
+ * A change the index set aside: a model older than the one it holds,
+ * anything for a thread deleted in this incarnation, or a refill at any
+ * revision but the one it holds.
  */
 export interface HostPublicWindowIgnored {
   readonly threadId: string
-  readonly reason: 'older' | 'deleted'
+  readonly reason: 'older' | 'deleted' | 'stale-refill'
 }
 
 /**
@@ -475,6 +490,9 @@ function staleness(
   // before it, or after it from a source that still lists the thread, never
   // brings the thread back.
   if (deleted) return 'deleted'
+  if (change.kind === 'refill') {
+    return held?.revision === change.model.projection.revision ? null : 'stale-refill'
+  }
   if (
     change.kind === 'model' &&
     held !== undefined &&
@@ -996,13 +1014,13 @@ export class HostPublicWindowIndex {
     try {
       const changed = new Map<string, HostThreadRecordModelled | null>()
       for (const change of changes) {
-        const threadId = change.kind === 'model' ? change.model.threadId : change.threadId
+        const threadId = change.kind === 'delete' ? change.threadId : change.model.threadId
         const reason = staleness(change, this.entries.get(threadId), this.deleted.has(threadId))
         if (reason !== null) {
           ignored.push({ threadId, reason })
           continue
         }
-        if (change.kind === 'model') {
+        if (change.kind !== 'delete') {
           this.replaceThread(threadId, change.model, null)
           changed.set(threadId, change.model)
         } else {

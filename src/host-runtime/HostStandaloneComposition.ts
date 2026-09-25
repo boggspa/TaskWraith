@@ -616,6 +616,16 @@ function createThreadRecordTransaction(
         return {
           execute: (input) => {
             const running = transaction.execute(input)
+            // A persist holds the commit gate through its index commit, so it
+            // publishes a short window and the feeder refills it (slice 13e).
+            void running.then(
+              (outcome) => {
+                if (outcome.kind === 'succeeded' && outcome.refill.length > 0) {
+                  feeder.refill(outcome.refill)
+                }
+              },
+              () => undefined
+            )
             const settled = running.then(
               () => undefined,
               () => undefined

@@ -727,7 +727,13 @@ describe('HostPublicWindowFeeder (M4 slice 13c1)', () => {
         resets: 0,
         failures: 0,
         eager: 1,
-        eagerMs: expect.any(Number)
+        eagerMs: expect.any(Number),
+        refills: 0,
+        refillReads: 0,
+        refillFailures: 0,
+        refillsScheduled: 0,
+        refillsAbandoned: 0,
+        absorbRounds: 0
       })
       expect(h.feeder.counters().eagerMs).toBeGreaterThanOrEqual(0)
     })

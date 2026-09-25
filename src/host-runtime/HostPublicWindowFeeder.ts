@@ -22,6 +22,16 @@
  * transactions share, so groups publish in commit order. The index commits
  * before the group's fsync, which follows the lock (RR-7). A feed has no
  * receipt: its group's anchor is released once the group is durable.
+ *
+ * Refills (slice 13e). When a change leaves the run window short, the drain
+ * absorbs refills into its one transaction: it aborts the prepare, reads the
+ * exhausted thread's committed file in the worker with the lock free, and
+ * prepares again with the refill added, so clients never see the short
+ * window. A refill lands only at the revision the index holds (SF-3). A read
+ * that fails, or a refill the index sets aside, publishes the short window
+ * and schedules one retry; a second failure in a row waits for the thread's
+ * next write. A transactional persist cannot absorb, as it holds the commit
+ * gate, so its refills arrive through `refill()`.
  */
 import type { HostCursorPosition } from '../shared/hostProtocol'
 import type { HostDeltaStore } from './HostDeltaStore'
@@ -38,6 +48,9 @@ import type { HostThreadRecordFileModel } from './HostThreadRecordModel'
 
 /** How many marked threads one drain takes. */
 export const HOST_PUBLIC_WINDOW_FEED_BATCH = 32
+
+/** How many times one drain aborts its prepare to read a refill. */
+export const HOST_PUBLIC_WINDOW_ABSORB_ROUNDS = 8
 
 export interface HostPublicWindowFeederOptions {
   readonly index: Pick<HostPublicWindowIndex, 'prepare'>
@@ -72,16 +85,49 @@ export interface HostPublicWindowFeederCounters {
   readonly eager: number
   /** Their total time, in milliseconds. */
   readonly eagerMs: number
+  /** Refills that landed in a published transaction. */
+  readonly refills: number
+  /** Refill reads of a committed file. */
+  readonly refillReads: number
+  /** Refill reads that failed, and refills the index set aside. */
+  readonly refillFailures: number
+  /** Refills scheduled for a later drain: by a persist, a failure, or the absorb bound. */
+  readonly refillsScheduled: number
+  /** Threads left short after a second failure in a row, until their next write. */
+  readonly refillsAbandoned: number
+  /** Prepares a drain aborted to read a refill. */
+  readonly absorbRounds: number
 }
 
-/** A thread's pending change: modelled at mark time, from its file at drain, or deleted. */
+/**
+ * A thread's pending change: modelled at mark time, from its file at drain,
+ * deleted, or a refill to read.
+ */
 type Pending =
   | { readonly kind: 'deleted' }
   | { readonly kind: 'file' }
   | { readonly kind: 'model'; readonly effects: HostThreadRecordEffectModel }
+  | { readonly kind: 'refill' }
+
+type Published =
+  | {
+      readonly kind: 'published'
+      /** The group's end, when a group was appended; its anchor is released once durable. */
+      readonly end: HostCursorPosition | null
+      /** Exhausted threads the index still names. */
+      readonly refill: readonly string[]
+      /** Refills the index set aside: source failures. */
+      readonly setAside: readonly string[]
+    }
+  | { readonly kind: 'absorb'; readonly threads: readonly string[] }
+  | { readonly kind: 'unpublished' }
 
 export class HostPublicWindowFeeder {
   private readonly marked = new Map<string, Pending>()
+  /** Threads deleted in this incarnation: refill readers skip them. */
+  private readonly deleted = new Set<string>()
+  /** Threads whose last refill failed: the next failure abandons them. */
+  private readonly retried = new Set<string>()
   private draining: Promise<void> | null = null
   private closed = false
   private stopReason: string | null = null
@@ -97,7 +143,13 @@ export class HostPublicWindowFeeder {
     resets: 0,
     failures: 0,
     eager: 0,
-    eagerMs: 0
+    eagerMs: 0,
+    refills: 0,
+    refillReads: 0,
+    refillFailures: 0,
+    refillsScheduled: 0,
+    refillsAbandoned: 0,
+    absorbRounds: 0
   }
 
   constructor(private readonly options: HostPublicWindowFeederOptions) {}
@@ -119,7 +171,9 @@ export class HostPublicWindowFeeder {
     if (this.closed || this.stopReason !== null) return
     // A delete is final for the incarnation: a later mark cannot undo it.
     if (this.marked.get(threadId)?.kind === 'deleted') return
+    this.retried.delete(threadId)
     if (kind === 'deleted') {
+      this.deleted.add(threadId)
       this.marked.set(threadId, { kind: 'deleted' })
     } else if (thread) {
       const startedAt = performance.now()
@@ -139,6 +193,23 @@ export class HostPublicWindowFeeder {
       this.marked.set(threadId, { kind: 'file' })
     }
     this.schedule()
+  }
+
+  /**
+   * Schedule refills for threads a short window exhausted. A thread already
+   * pending is left as it is (any pending change models it at least as
+   * well), and a deleted thread is never read.
+   */
+  refill(threadIds: readonly string[]): void {
+    if (this.closed || this.stopReason !== null) return
+    let scheduled = false
+    for (const threadId of threadIds) {
+      if (this.deleted.has(threadId) || this.marked.has(threadId)) continue
+      this.marked.set(threadId, { kind: 'refill' })
+      this.counts.refillsScheduled += 1
+      scheduled = true
+    }
+    if (scheduled) this.schedule()
   }
 
   /** Resolves once nothing is marked and no drain runs. */
@@ -180,9 +251,15 @@ export class HostPublicWindowFeeder {
   private async drain(batch: ReadonlyArray<readonly [string, Pending]>): Promise<void> {
     // Model outside every lock: the worker reads and decodes the file.
     const changes: HostPublicWindowChange[] = []
+    const refilled = new Set<string>()
+    const failed = new Set<string>()
     for (const [threadId, pending] of batch) {
       if (pending.kind === 'deleted') {
         changes.push({ kind: 'delete', threadId })
+        continue
+      }
+      if (pending.kind === 'refill') {
+        await this.readRefill(threadId, changes, refilled, failed)
         continue
       }
       if (pending.kind === 'model') {
@@ -215,11 +292,46 @@ export class HostPublicWindowFeeder {
       }
       changes.push({ kind: 'model', model: modelled.effects })
     }
-    if (changes.length === 0) return
 
     const commandId = `feed:${++this.sequence}`
-    const published = await this.options.publicationLock(() => this.publish(commandId, changes))
-    if (published === null) return
+    let published: Published = { kind: 'unpublished' }
+    for (let round = 0; ; round += 1) {
+      if (changes.length === 0) break
+      // Past the bound, publish what the window holds and read the rest later.
+      const absorbing = round < HOST_PUBLIC_WINDOW_ABSORB_ROUNDS ? refilled : null
+      const attempt = await this.options.publicationLock(() =>
+        this.publish(commandId, changes, absorbing)
+      )
+      if (attempt.kind !== 'absorb') {
+        published = attempt
+        break
+      }
+      this.counts.absorbRounds += 1
+      for (const threadId of attempt.threads) {
+        await this.readRefill(threadId, changes, refilled, failed)
+      }
+    }
+
+    if (published.kind === 'published') {
+      for (const threadId of published.setAside) failed.add(threadId)
+    }
+    // A failed refill publishes short: one retry, then wait for a write.
+    for (const threadId of failed) {
+      if (this.retried.has(threadId)) {
+        this.retried.delete(threadId)
+        this.counts.refillsAbandoned += 1
+        continue
+      }
+      this.retried.add(threadId)
+      this.refill([threadId])
+    }
+    if (published.kind !== 'published') return
+    for (const threadId of refilled) {
+      if (!failed.has(threadId)) this.retried.delete(threadId)
+    }
+    // Threads the absorb bound left for later.
+    this.refill(published.refill.filter((threadId) => !refilled.has(threadId)))
+    if (published.end === null) return
     const durable = await this.options.deltas.awaitDurable()
     if (durable.kind === 'fail-stopped') {
       this.stopReason = durable.detail
@@ -233,11 +345,41 @@ export class HostPublicWindowFeeder {
     }
   }
 
-  /** Under the publication lock: diff, append, settle the index transaction. */
+  /** Read one refill with every lock free; a failure is recorded, not thrown. */
+  private async readRefill(
+    threadId: string,
+    changes: HostPublicWindowChange[],
+    refilled: Set<string>,
+    failed: Set<string>
+  ): Promise<void> {
+    // Never a deleted thread: `refill()` skips one, a delete mark replaces a
+    // pending refill, and the index names no deleted thread as exhausted.
+    refilled.add(threadId)
+    this.counts.refillReads += 1
+    let modelled: HostThreadRecordFileModel
+    try {
+      modelled = await this.options.model(threadId)
+    } catch {
+      modelled = { kind: 'invalid' }
+    }
+    if (modelled.kind !== 'modelled' || modelled.effects.kind === 'refused') {
+      this.counts.refillFailures += 1
+      failed.add(threadId)
+      return
+    }
+    changes.push({ kind: 'refill', model: modelled.effects })
+  }
+
+  /**
+   * Under the publication lock: diff, append, settle the index transaction.
+   * With `absorbing`, a prepare that names an exhausted thread not yet read
+   * is aborted so the thread can be read with the lock free.
+   */
   private publish(
     commandId: string,
-    changes: readonly HostPublicWindowChange[]
-  ): HostCursorPosition | null {
+    changes: readonly HostPublicWindowChange[],
+    absorbing: ReadonlySet<string> | null
+  ): Published {
     let transaction: ReturnType<HostPublicWindowIndex['prepare']>
     try {
       transaction = this.options.index.prepare(changes, {
@@ -245,15 +387,34 @@ export class HostPublicWindowFeeder {
       })
     } catch {
       this.counts.rejected += 1
-      return null
+      return { kind: 'unpublished' }
     }
     let settled = false
     try {
+      if (absorbing !== null) {
+        const unread = transaction.refill.filter((threadId) => !absorbing.has(threadId))
+        if (unread.length > 0) return { kind: 'absorb', threads: unread }
+      }
       this.counts.ignored += transaction.ignored.length
+      const done = (end: HostCursorPosition | null): Published => {
+        const ignored = new Set(transaction.ignored.map((entry) => entry.threadId))
+        const setAside: string[] = []
+        for (const change of changes) {
+          if (change.kind !== 'refill') continue
+          if (ignored.has(change.model.threadId)) {
+            // A refill the index sets aside is a source failure (§12.2).
+            this.counts.refillFailures += 1
+            setAside.push(change.model.threadId)
+          } else {
+            this.counts.refills += 1
+          }
+        }
+        return { kind: 'published', end, refill: transaction.refill, setAside }
+      }
       const validated = validateHostDomainEffectBatch(transaction.effects)
       if (!validated.ok) {
         this.counts.rejected += 1
-        return null
+        return { kind: 'unpublished' }
       }
       if (validated.prepared.length === 0) {
         // Nothing changes on the wire (every change set aside, or a delete of
@@ -261,7 +422,7 @@ export class HostPublicWindowFeeder {
         // spend no group on it.
         transaction.commit()
         settled = true
-        return null
+        return done(null)
       }
       const appended = this.options.deltas.appendGroup({
         commandId,
@@ -271,7 +432,7 @@ export class HostPublicWindowFeeder {
         transaction.commit()
         settled = true
         this.counts.drained += 1
-        return appended.group.end
+        return done(appended.group.end)
       }
       if (appended.kind === 'write-failed' && appended.recovery.kind === 'reset') {
         // The reset replaces the group; a delete lands through it.
@@ -279,17 +440,17 @@ export class HostPublicWindowFeeder {
         settled = true
         this.counts.drained += 1
         this.counts.resets += 1
-        return null
+        return done(null)
       }
       if (appended.kind === 'write-failed') {
         this.stopReason = appended.detail
-        return null
+        return { kind: 'unpublished' }
       }
       this.counts.rejected += 1
-      return null
+      return { kind: 'unpublished' }
     } catch {
       this.counts.rejected += 1
-      return null
+      return { kind: 'unpublished' }
     } finally {
       // An open transaction refuses every later change (R2-M3).
       if (!settled) transaction.abort()
