@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHostProductionAuthorityEvaluator } from '../../host-runtime/HostProductionAuthorityEvaluator'
+import {
+  HOST_SCOPE_EPOCH_STALE_ERROR_CODE,
+  HOST_SCOPE_EPOCH_STALE_MESSAGE
+} from '../../host-runtime/HostScopeLedger'
 
 import {
   HOST_THREAD_RECORD_TRANSFER_DIRECTORY,
@@ -417,6 +421,17 @@ describe('HostThreadRecordPersistClient failure paths', () => {
       code: 'revision_conflict',
       message: 'Host record persistence revision conflicted.'
     })
+  })
+
+  it('never retries a persist refused behind a delete as a conflict (M4, D6)', () => {
+    // A retried conflict is re-sent as a create, which would bring the
+    // deleted thread back.
+    expect(
+      classifyHostPersistRejection({
+        errorCode: HOST_SCOPE_EPOCH_STALE_ERROR_CODE,
+        errorMessage: HOST_SCOPE_EPOCH_STALE_MESSAGE
+      } as unknown as HostCommandReceipt)
+    ).toEqual({ code: 'host_rejected', hostErrorCode: HOST_SCOPE_EPOCH_STALE_ERROR_CODE })
   })
 
   it('classifies an unrelated rejection as host_rejected rather than a conflict', () => {
