@@ -175,8 +175,8 @@ function providerOutcome(
   }
 }
 
-type ProfileThread = ReturnType<HostProfileDomainStore['listThreadSummaries']>[number]
-type ProfileRun = NonNullable<ProfileThread['runs']>[number]
+export type ProfileThread = ReturnType<HostProfileDomainStore['listThreadSummaries']>[number]
+export type ProfileRun = NonNullable<ProfileThread['runs']>[number]
 
 function profileRunUsage(run: ProfileRun): HostUsageObservation | undefined {
   const input = run.usage?.inputTokens ?? 0
@@ -209,7 +209,7 @@ function latestProfileRunUsage(
 export const HOST_PROFILE_RUN_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
 export const HOST_PROFILE_ROUND_PROJECTION_LIMIT = Math.min(1_800, HOST_PROTOCOL_MAX_COLLECTION - 1)
 
-interface ProfileRunProjectionCandidate {
+export interface ProfileRunProjectionCandidate {
   readonly key: string
   readonly row: HostRunProjection
   readonly active: boolean
@@ -230,6 +230,43 @@ function runIsActive(run: ProfileRun): boolean {
   return timestamp(run.endedAt) === undefined
 }
 
+/** One run row as the profile projection builds it, with its ranking facts. */
+export function projectProfileRunCandidate(
+  thread: Pick<ProfileThread, 'appChatId' | 'provider' | 'updatedAt'>,
+  run: ProfileRun,
+  index: number
+): ProfileRunProjectionCandidate {
+  const startedAt = timestamp(run.startedAt)
+  const endedAt = timestamp(run.endedAt)
+  // The reason a run failed is recorded on the row but used to stop here,
+  // so every client could only ever render a bare `provider:failed` — the
+  // "fails with nothing evidently wrong" report. Compose it once, with the
+  // shared rule that yields undefined (never '') when there is nothing to
+  // say, so an empty summary list stays ABSENT rather than projecting a
+  // blank reason a client would render as a dangling separator.
+  const failureReason =
+    providerOutcome(run.status) === 'failed'
+      ? hostRunFailureReason(run.warningSummaries)
+      : undefined
+  return {
+    key: `${thread.appChatId.length}:${thread.appChatId}:${run.runId.length}:${run.runId}:${index}`,
+    row: {
+      runId: run.runId,
+      threadId: thread.appChatId,
+      providerId: run.provider ?? thread.provider ?? 'unknown',
+      providerOutcome: providerOutcome(run.status),
+      ...(startedAt !== undefined ? { startedAt } : {}),
+      ...(endedAt !== undefined ? { endedAt } : {}),
+      ...(run.requestedModel ? { modelId: run.requestedModel } : {}),
+      ...(run.errorCode ? { errorCode: run.errorCode } : {}),
+      ...(failureReason ? { failureReason } : {}),
+      ...(profileRunUsage(run) ? { usage: profileRunUsage(run) } : {})
+    },
+    active: runIsActive(run),
+    recency: endedAt ?? startedAt ?? thread.updatedAt
+  }
+}
+
 function projectProfileRuns(
   threads: readonly Pick<ProfileThread, 'appChatId' | 'provider' | 'updatedAt' | 'runs'>[],
   totalCount?: number,
@@ -239,37 +276,7 @@ function projectProfileRuns(
   warning?: HostWarningProjection
 } {
   const candidates = threads.flatMap((thread) =>
-    (thread.runs ?? []).map((run, index): ProfileRunProjectionCandidate => {
-      const startedAt = timestamp(run.startedAt)
-      const endedAt = timestamp(run.endedAt)
-      // The reason a run failed is recorded on the row but used to stop here,
-      // so every client could only ever render a bare `provider:failed` — the
-      // "fails with nothing evidently wrong" report. Compose it once, with the
-      // shared rule that yields undefined (never '') when there is nothing to
-      // say, so an empty summary list stays ABSENT rather than projecting a
-      // blank reason a client would render as a dangling separator.
-      const failureReason =
-        providerOutcome(run.status) === 'failed'
-          ? hostRunFailureReason(run.warningSummaries)
-          : undefined
-      return {
-        key: `${thread.appChatId.length}:${thread.appChatId}:${run.runId.length}:${run.runId}:${index}`,
-        row: {
-          runId: run.runId,
-          threadId: thread.appChatId,
-          providerId: run.provider ?? thread.provider ?? 'unknown',
-          providerOutcome: providerOutcome(run.status),
-          ...(startedAt !== undefined ? { startedAt } : {}),
-          ...(endedAt !== undefined ? { endedAt } : {}),
-          ...(run.requestedModel ? { modelId: run.requestedModel } : {}),
-          ...(run.errorCode ? { errorCode: run.errorCode } : {}),
-          ...(failureReason ? { failureReason } : {}),
-          ...(profileRunUsage(run) ? { usage: profileRunUsage(run) } : {})
-        },
-        active: runIsActive(run),
-        recency: endedAt ?? startedAt ?? thread.updatedAt
-      }
-    })
+    (thread.runs ?? []).map((run, index) => projectProfileRunCandidate(thread, run, index))
   )
   if (complete && (totalCount ?? candidates.length) <= HOST_PROFILE_RUN_PROJECTION_LIMIT) {
     return { runs: candidates.map((candidate) => candidate.row) }
@@ -306,11 +313,25 @@ const PROFILE_ROW_VALIDATION_SNAPSHOT = createEmptyHostSnapshot({
   cursor: 0
 })
 
-interface ProfileRoundProjectionCandidate {
+export interface ProfileRoundProjectionCandidate {
   readonly row: HostRoundProjection
   readonly participantStatusById: ReadonlyMap<string, string>
   readonly activeParticipantId?: string
   readonly recency: number
+}
+
+/** A thread's round before it is given the run ids it carries from run rows. */
+export interface ProfileThreadRoundBase {
+  readonly roundId: string
+  readonly status: HostRoundOutcome
+  readonly participantIds: readonly string[]
+  readonly participantStatusById: ReadonlyMap<string, string>
+  /** Run ids the round's own seats name: always among `providerRunIds`. */
+  readonly participantRunIds: readonly string[]
+  readonly activeParticipantId: unknown
+  readonly startedAt?: number
+  readonly endedAt?: number
+  readonly routing?: HostRoutingProjection
 }
 
 function profileRoundStatus(
@@ -381,10 +402,9 @@ function roundRouting(
   }
 }
 
-function projectThreadRound(
-  thread: ProfileThread,
-  runs: readonly ProfileRun[]
-): ProfileRoundProjectionCandidate | null {
+export function projectProfileThreadRoundBase(
+  thread: ProfileThread
+): ProfileThreadRoundBase | null {
   if (thread.chatKind !== 'ensemble') return null
   const ensemble = record(thread.ensemble)
   const activeRound = record(ensemble?.activeRound)
@@ -396,7 +416,7 @@ function projectThreadRound(
   const configuredParticipants = records(ensemble.participants)
   const participantIds: string[] = []
   const participantStatusById = new Map<string, string>()
-  const providerRunIds = new Set<string>()
+  const participantRunIds = new Set<string>()
   const seenParticipants = new Set<string>()
   for (const participant of roundParticipants) {
     const participantId = boundedSelectionId(participant.participantId ?? participant.id)
@@ -409,7 +429,7 @@ function projectThreadRound(
         : undefined
     if (participantStatus) participantStatusById.set(participantId, participantStatus)
     const runId = boundedSelectionId(participant.runId)
-    if (runId) providerRunIds.add(runId)
+    if (runId) participantRunIds.add(runId)
   }
   if (participantIds.length === 0) {
     for (const participant of configuredParticipants) {
@@ -419,24 +439,54 @@ function projectThreadRound(
       participantIds.push(participantId)
     }
   }
-  for (const run of runs) {
-    const raw = run as unknown as Record<string, unknown>
-    if (boundedSelectionId(raw.ensembleRoundId) !== roundId) continue
-    const runId = boundedSelectionId(run.runId)
-    if (runId) providerRunIds.add(runId)
-  }
   const startedAt = stringTimestamp(activeRound.startedAt)
   const endedAt = stringTimestamp(activeRound.endedAt ?? activeRound.completedAt)
   const routing = roundRouting(ensemble, activeRound, status)
-  const candidate: HostRoundProjection = {
+  return {
     roundId,
-    threadId: thread.appChatId,
     status,
     participantIds,
-    providerRunIds: [...providerRunIds].sort(),
+    participantStatusById,
+    participantRunIds: [...participantRunIds],
+    activeParticipantId: activeRound.activeParticipantId,
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {}),
     ...(routing ? { routing } : {})
+  }
+}
+
+/** Ids of the run rows whose `ensembleRoundId` names the round. */
+export function profileThreadRoundRunIds(
+  base: ProfileThreadRoundBase,
+  runs: readonly ProfileRun[]
+): string[] {
+  const runIds: string[] = []
+  for (const run of runs) {
+    const raw = run as unknown as Record<string, unknown>
+    if (boundedSelectionId(raw.ensembleRoundId) !== base.roundId) continue
+    const runId = boundedSelectionId(run.runId)
+    if (runId) runIds.push(runId)
+  }
+  return runIds
+}
+
+/** The round row carrying its seats' run ids and `runIds`, or null if it is invalid. */
+export function assembleProfileThreadRound(
+  thread: Pick<ProfileThread, 'appChatId' | 'updatedAt'>,
+  base: ProfileThreadRoundBase,
+  runIds: readonly string[]
+): ProfileRoundProjectionCandidate | null {
+  const providerRunIds = new Set<string>(base.participantRunIds)
+  for (const runId of runIds) providerRunIds.add(runId)
+  const candidate: HostRoundProjection = {
+    roundId: base.roundId,
+    threadId: thread.appChatId,
+    status: base.status,
+    participantIds: [...base.participantIds],
+    providerRunIds: [...providerRunIds].sort(),
+    ...(base.startedAt !== undefined ? { startedAt: base.startedAt } : {}),
+    ...(base.endedAt !== undefined ? { endedAt: base.endedAt } : {}),
+    ...(base.routing ? { routing: base.routing } : {})
   }
   const decoded = decodeHostSnapshot({
     ...PROFILE_ROW_VALIDATION_SNAPSHOT,
@@ -445,13 +495,23 @@ function projectThreadRound(
   const row = decoded.ok ? decoded.value.rounds[0] : undefined
   if (!row) return null
   const activeParticipantId =
-    row.status === 'running' ? boundedSelectionId(activeRound.activeParticipantId) : undefined
+    row.status === 'running' ? boundedSelectionId(base.activeParticipantId) : undefined
   return {
     row,
-    participantStatusById,
+    participantStatusById: base.participantStatusById,
     ...(activeParticipantId ? { activeParticipantId } : {}),
-    recency: endedAt ?? startedAt ?? thread.updatedAt
+    recency: base.endedAt ?? base.startedAt ?? thread.updatedAt
   }
+}
+
+function projectThreadRound(
+  thread: ProfileThread,
+  runs: readonly ProfileRun[]
+): ProfileRoundProjectionCandidate | null {
+  const base = projectProfileThreadRoundBase(thread)
+  return base
+    ? assembleProfileThreadRound(thread, base, profileThreadRoundRunIds(base, runs))
+    : null
 }
 
 function projectProfileRounds(
@@ -555,13 +615,13 @@ function decodeParticipantCandidate(
   return decoded.ok ? (decoded.value.participants[0] ?? null) : null
 }
 
-interface ProjectedThreadParticipants {
+export interface ProjectedThreadParticipants {
   readonly participants: HostParticipantProjection[]
   readonly omitted: number
   readonly warningAt: number
 }
 
-function projectThreadParticipants(
+export function projectThreadParticipants(
   thread: ProfileThread,
   round?: ProfileRoundProjectionCandidate
 ): ProjectedThreadParticipants {
@@ -602,6 +662,47 @@ function projectThreadParticipants(
     participants,
     omitted,
     warningAt: omitted > 0 ? thread.updatedAt : 0
+  }
+}
+
+/** One thread row; `activeRoundId` is the running round's id when the round window holds it. */
+export function projectProfileThreadRow(
+  thread: ProfileThread,
+  activeRoundId: string | undefined
+): HostProfileDomainSnapshotFamilies['threads'][number] {
+  const goal = projectThreadGoal(thread.activeGoal, thread.updatedAt)
+  const metadata =
+    thread.providerMetadata && typeof thread.providerMetadata === 'object'
+      ? (thread.providerMetadata as Record<string, unknown>)
+      : {}
+  const modelId = boundedSelectionId(metadata.selectedModelType)
+  const reasoningEffort = boundedSelectionId(metadata.reasoningEffort)
+  const rawPermission = boundedSelectionId(metadata.permissionPresetId)
+  const storedPermission =
+    rawPermission &&
+    ['read_only', 'plan', 'default', 'workspace_write', 'full_access'].includes(rawPermission)
+      ? rawPermission
+      : undefined
+  const permissionPresetId =
+    thread.workflowMode === 'plan' && storedPermission === 'read_only' ? 'plan' : storedPermission
+  const usage = latestProfileRunUsage(thread.runs)
+  return {
+    id: thread.appChatId,
+    workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
+    title: thread.title,
+    chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
+    archived: thread.archived,
+    pinned: thread.pinned === true,
+    updatedAt: thread.updatedAt,
+    messageCount: thread.messageCount,
+    ...(thread.latestPreview ? { latestPreview: thread.latestPreview } : {}),
+    ...(thread.provider ? { providerId: thread.provider } : {}),
+    ...(modelId ? { modelId } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(permissionPresetId ? { permissionPresetId } : {}),
+    ...(usage ? { usage } : {}),
+    ...(goal ? { goal } : {}),
+    ...(activeRoundId ? { activeRoundId } : {})
   }
 }
 
@@ -681,49 +782,15 @@ export function projectHostProfileDomainSnapshot(
   return {
     health,
     workspaces,
-    threads: threads.map((thread) => {
-      const goal = projectThreadGoal(thread.activeGoal, thread.updatedAt)
-      const metadata =
-        thread.providerMetadata && typeof thread.providerMetadata === 'object'
-          ? (thread.providerMetadata as Record<string, unknown>)
-          : {}
-      const modelId = boundedSelectionId(metadata.selectedModelType)
-      const reasoningEffort = boundedSelectionId(metadata.reasoningEffort)
-      const rawPermission = boundedSelectionId(metadata.permissionPresetId)
-      const storedPermission =
-        rawPermission &&
-        ['read_only', 'plan', 'default', 'workspace_write', 'full_access'].includes(rawPermission)
-          ? rawPermission
-          : undefined
-      const permissionPresetId =
-        thread.workflowMode === 'plan' && storedPermission === 'read_only'
-          ? 'plan'
-          : storedPermission
-      const usage = latestProfileRunUsage(thread.runs)
-      const activeRoundId =
+    threads: threads.map((thread) =>
+      projectProfileThreadRow(
+        thread,
         roundProjection.includedThreadIds.has(thread.appChatId) &&
-        roundProjection.byThreadId.get(thread.appChatId)?.row.status === 'running'
+          roundProjection.byThreadId.get(thread.appChatId)?.row.status === 'running'
           ? roundProjection.byThreadId.get(thread.appChatId)?.row.roundId
           : undefined
-      return {
-        id: thread.appChatId,
-        workspaceId: thread.scope === 'workspace' ? (thread.workspaceId ?? null) : null,
-        title: thread.title,
-        chatKind: thread.chatKind === 'ensemble' ? 'ensemble' : 'single',
-        archived: thread.archived,
-        pinned: thread.pinned === true,
-        updatedAt: thread.updatedAt,
-        messageCount: thread.messageCount,
-        ...(thread.latestPreview ? { latestPreview: thread.latestPreview } : {}),
-        ...(thread.provider ? { providerId: thread.provider } : {}),
-        ...(modelId ? { modelId } : {}),
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-        ...(permissionPresetId ? { permissionPresetId } : {}),
-        ...(usage ? { usage } : {}),
-        ...(goal ? { goal } : {}),
-        ...(activeRoundId ? { activeRoundId } : {})
-      }
-    }),
+      )
+    ),
     runs: runProjection.runs,
     missions: [],
     rounds: roundProjection.rounds,

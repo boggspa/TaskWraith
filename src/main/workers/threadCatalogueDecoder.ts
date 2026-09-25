@@ -17,7 +17,10 @@ import {
 import { encodeThreadJsonChunks } from '../store/ThreadCatalogueJson'
 import { collectThreadCatalogueRecovery } from '../store/ThreadCatalogueRecovery'
 import { prepareThreadCatalogueMutation } from '../store/ThreadCatalogueMutation'
-import { projectThreadCatalogueRunSummary } from '../store/ThreadCatalogueRunSummary'
+import {
+  projectThreadCatalogueRunSummary,
+  threadCatalogueRunOrder
+} from '../store/ThreadCatalogueRunSummary'
 import type { ChatMessage, ChatRun } from '../store/types'
 import type {
   ThreadIndexObjectFrame,
@@ -57,18 +60,10 @@ function preview(value: unknown, id: string): string {
   }
   if (typeof record.timestamp === 'string' && Number.isFinite(Date.parse(record.timestamp)))
     result.catalogueTimestamp = Date.parse(record.timestamp)
-  if (typeof record.runId === 'string') {
-    const ended = Date.parse(String(record.endedAt ?? ''))
-    const started = Date.parse(String(record.startedAt ?? ''))
-    result.catalogueActive =
-      !['completed', 'success', 'succeeded', 'failed', 'error', 'cancelled', 'canceled'].includes(
-        String(record.status ?? '').toLowerCase()
-      ) && !Number.isFinite(ended)
-    result.catalogueRecency = Number.isFinite(ended)
-      ? ended
-      : Number.isFinite(started)
-        ? started
-        : 0
+  const order = threadCatalogueRunOrder(record)
+  if (order) {
+    result.catalogueActive = order.catalogueActive
+    result.catalogueRecency = order.catalogueRecency
   }
   let json = JSON.stringify(result)
   if (Buffer.byteLength(json) > 16 * 1024) {
