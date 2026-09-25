@@ -1,0 +1,422 @@
+import { describe, expect, it } from 'vitest'
+
+import type { HostReceiptStatus } from '../shared/hostProtocol'
+import {
+  HOST_EXECUTING_COMMAND_NAMES,
+  hostCommandExecutionClassFor
+} from './HostCommandExecutionClass'
+import {
+  decideHostTransactionRecovery,
+  hostCommitWitness,
+  parseHostTransactionRecord,
+  sameHostFileIdentity,
+  type HostFileIdentity,
+  type HostTransactionGroup,
+  type HostTransactionPrepareRecord,
+  type HostTransactionRecoveryAction,
+  type HostTransactionRecoveryInput
+} from './HostTransactionManifest'
+
+const PRIOR: HostFileIdentity = { dev: '16777232', ino: '1001', size: 4_096 }
+const RESULTING: HostFileIdentity = { dev: '16777232', ino: '2002', size: 5_120 }
+const OTHER: HostFileIdentity = { dev: '16777232', ino: '3003', size: 5_120 }
+const DIGEST = 'a'.repeat(64)
+const EPOCH = { hostIncarnation: 'b'.repeat(64), deleteCounter: 0 }
+const END = { generation: 1, cursor: 40 }
+const GROUP: HostTransactionGroup = { count: 3, setDigest: DIGEST, end: END }
+
+function prepareValue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: 'prepare',
+    commandId: 'cmd-1',
+    threadId: 'chat-1',
+    epoch: EPOCH,
+    expectedRevision: 13,
+    resultingRevision: 14,
+    prior: PRIOR,
+    resulting: RESULTING,
+    effects: { count: 3, setDigest: DIGEST },
+    preparedAt: 1_000,
+    ...overrides
+  }
+}
+
+function prepare(overrides: Record<string, unknown> = {}): HostTransactionPrepareRecord {
+  const parsed = parseHostTransactionRecord(prepareValue(overrides))
+  if (!parsed.ok || parsed.record.kind !== 'prepare') throw new Error('fixture is not a prepare')
+  return parsed.record
+}
+
+function receipt(status: HostReceiptStatus) {
+  return { status, commandClass: 'txn-record-persist' as const }
+}
+
+/** A persist that prepared a replacement of chat-1 and crashed; override what recovery finds. */
+function found(
+  overrides: Partial<HostTransactionRecoveryInput> = {}
+): HostTransactionRecoveryInput {
+  return {
+    receipt: receipt('pending'),
+    prepare: prepare(),
+    terminal: null,
+    observed: PRIOR,
+    group: null,
+    ...overrides
+  }
+}
+
+describe('the commit witness', () => {
+  it('is the chat file’s identity: the artifact’s means committed, the prior one’s means not', () => {
+    const replacing = prepare()
+    expect(hostCommitWitness(replacing, RESULTING)).toBe('committed')
+    expect(hostCommitWitness(replacing, PRIOR)).toBe('not_committed')
+    expect(hostCommitWitness(replacing, OTHER)).toBe('indeterminate')
+    expect(hostCommitWitness(replacing, null)).toBe('indeterminate')
+    // The size is part of the identity.
+    expect(hostCommitWitness(replacing, { ...RESULTING, size: 5_121 })).toBe('indeterminate')
+    expect(hostCommitWitness(replacing, { ...PRIOR, dev: '1' })).toBe('indeterminate')
+
+    // A thread with no file before: still absent means not committed.
+    const creating = prepare({ prior: null })
+    expect(hostCommitWitness(creating, null)).toBe('not_committed')
+    expect(hostCommitWitness(creating, RESULTING)).toBe('committed')
+    expect(hostCommitWitness(creating, OTHER)).toBe('indeterminate')
+    expect(sameHostFileIdentity(PRIOR, { ...PRIOR })).toBe(true)
+  })
+})
+
+describe('manifest records', () => {
+  it('parses each kind strictly, and copies what it keeps', () => {
+    const value = prepareValue()
+    const parsed = parseHostTransactionRecord(value)
+    expect(parsed).toEqual({ ok: true, record: value })
+    ;(value.prior as { ino: string }).ino = '9'
+    expect(parsed.ok && parsed.record.kind === 'prepare' && parsed.record.prior?.ino).toBe('1001')
+    expect(parseHostTransactionRecord(prepareValue({ prior: null }))).toMatchObject({
+      ok: true,
+      record: { prior: null }
+    })
+    // A thread created by thread.create exists at revision 0: a persist over
+    // it still has a prior file.
+    expect(
+      parseHostTransactionRecord(prepareValue({ expectedRevision: 0, resultingRevision: 1 }))
+    ).toMatchObject({ ok: true })
+
+    for (const record of [
+      { kind: 'abort', commandId: 'cmd-1', reason: 'interrupted', at: 5 },
+      { kind: 'published', commandId: 'cmd-1', position: END, at: 6 },
+      { kind: 'indeterminate', commandId: 'cmd-1', reason: 'unknown_identity', at: 7 }
+    ]) {
+      expect(parseHostTransactionRecord(record)).toEqual({ ok: true, record })
+    }
+  })
+
+  it('refuses malformed records with a reason', () => {
+    const refusals: Array<[unknown, string]> = [
+      [null, 'record_invalid'],
+      [[], 'record_invalid'],
+      [prepareValue({ commandId: '' }), 'record_invalid'],
+      [prepareValue({ commandId: `c${String.fromCharCode(10)}` }), 'record_invalid'],
+      [prepareValue({ kind: 'commit' }), 'kind_invalid'],
+      [prepareValue({ threadId: '' }), 'prepare_invalid'],
+      [prepareValue({ epoch: { hostIncarnation: '', deleteCounter: 0 } }), 'prepare_invalid'],
+      [prepareValue({ epoch: { ...EPOCH, deleteCounter: -1 } }), 'prepare_invalid'],
+      [prepareValue({ expectedRevision: 1.5 }), 'prepare_invalid'],
+      [prepareValue({ resultingRevision: 13 }), 'prepare_invalid'],
+      [prepareValue({ prior: { ...PRIOR, ino: '01' } }), 'prepare_invalid'],
+      [prepareValue({ prior: { ...PRIOR, dev: 16777232 } }), 'prepare_invalid'],
+      [prepareValue({ prior: undefined }), 'prepare_invalid'],
+      [prepareValue({ resulting: null }), 'prepare_invalid'],
+      [prepareValue({ resulting: { ...RESULTING, size: -1 } }), 'prepare_invalid'],
+      [prepareValue({ effects: { count: 3, setDigest: 'A'.repeat(64) } }), 'prepare_invalid'],
+      [prepareValue({ effects: { count: -1, setDigest: DIGEST } }), 'prepare_invalid'],
+      [prepareValue({ preparedAt: -1 }), 'prepare_invalid'],
+      [prepareValue({ resulting: { ...PRIOR } }), 'prepare_witnesses_nothing'],
+      [{ kind: 'abort', commandId: 'cmd-1', reason: '', at: 5 }, 'abort_invalid'],
+      [{ kind: 'abort', commandId: 'cmd-1', reason: 'x', at: 1.5 }, 'abort_invalid'],
+      [
+        { kind: 'indeterminate', commandId: 'cmd-1', reason: 'x'.repeat(257), at: 5 },
+        'indeterminate_invalid'
+      ],
+      [
+        { kind: 'published', commandId: 'cmd-1', position: { generation: 1 }, at: 5 },
+        'published_invalid'
+      ],
+      [{ kind: 'published', commandId: 'cmd-1', position: END, at: -5 }, 'published_invalid']
+    ]
+    for (const [value, reason] of refusals) {
+      expect(parseHostTransactionRecord(value)).toEqual({ ok: false, reason })
+    }
+  })
+})
+
+describe('recovery per Appendix D', () => {
+  it('D1: a committed record whose effects were never published is published, then completed', () => {
+    expect(decideHostTransactionRecovery(found({ observed: RESULTING }))).toEqual({
+      action: 'publish_and_complete',
+      row: 'D1'
+    })
+    // A created thread the same way.
+    expect(
+      decideHostTransactionRecovery(
+        found({ prepare: prepare({ prior: null }), observed: RESULTING })
+      )
+    ).toEqual({ action: 'publish_and_complete', row: 'D1' })
+  })
+
+  it('D2: a torn group line is never visible, so it resolves as D1', () => {
+    // The delta store drops a torn last line: recovery finds no group.
+    expect(decideHostTransactionRecovery(found({ observed: RESULTING, group: null }))).toEqual({
+      action: 'publish_and_complete',
+      row: 'D1'
+    })
+  })
+
+  it('D3: published effects complete the receipt at the existing group, never a second one', () => {
+    expect(decideHostTransactionRecovery(found({ observed: RESULTING, group: GROUP }))).toEqual({
+      action: 'complete_at_group',
+      row: 'D3',
+      position: END
+    })
+    // The receipt completed; only the manifest's mark was left.
+    expect(
+      decideHostTransactionRecovery(
+        found({ observed: RESULTING, group: GROUP, receipt: receipt('succeeded') })
+      )
+    ).toEqual({ action: 'mark_published', row: 'D3', position: END })
+    // Marked published before the receipt (not the order a live commit
+    // takes, but safe to finish).
+    expect(decideHostTransactionRecovery(found({ terminal: 'published', group: GROUP }))).toEqual({
+      action: 'complete_at_group',
+      row: 'D3',
+      position: END
+    })
+  })
+
+  it('D4: interrupted before the commit fails as interrupted, with nothing published', () => {
+    // Prepared, the chat file still the prior one.
+    expect(decideHostTransactionRecovery(found())).toEqual({
+      action: 'fail_interrupted',
+      row: 'D4',
+      writeAbort: true,
+      completeReceipt: true
+    })
+    // Prepared a create, the file still absent.
+    expect(
+      decideHostTransactionRecovery(found({ prepare: prepare({ prior: null }), observed: null }))
+    ).toEqual({ action: 'fail_interrupted', row: 'D4', writeAbort: true, completeReceipt: true })
+    // Admitted and never prepared: no manifest to abort.
+    expect(decideHostTransactionRecovery(found({ prepare: null }))).toEqual({
+      action: 'fail_interrupted',
+      row: 'D4',
+      writeAbort: false,
+      completeReceipt: true
+    })
+    // Aborted, the receipt not yet completed.
+    expect(decideHostTransactionRecovery(found({ terminal: 'aborted' }))).toEqual({
+      action: 'fail_interrupted',
+      row: 'D4',
+      writeAbort: false,
+      completeReceipt: true
+    })
+    // The receipt failed before the abort was recorded.
+    expect(decideHostTransactionRecovery(found({ receipt: receipt('failed') }))).toEqual({
+      action: 'fail_interrupted',
+      row: 'D4',
+      writeAbort: true,
+      completeReceipt: false
+    })
+  })
+
+  it('D6: a persist the lane refused behind a delete never prepared, and needs nothing', () => {
+    expect(
+      decideHostTransactionRecovery(found({ prepare: null, receipt: receipt('failed') }))
+    ).toEqual({ action: 'none' })
+  })
+
+  it('does nothing for a command that finished, whatever has written the file since', () => {
+    for (const observed of [RESULTING, PRIOR, OTHER, null]) {
+      expect(
+        decideHostTransactionRecovery(
+          found({ terminal: 'published', group: GROUP, receipt: receipt('succeeded'), observed })
+        )
+      ).toEqual({ action: 'none' })
+      expect(
+        decideHostTransactionRecovery(
+          found({ terminal: 'aborted', receipt: receipt('failed'), observed })
+        )
+      ).toEqual({ action: 'none' })
+    }
+    // Compaction dropped the manifest of a finished command.
+    expect(
+      decideHostTransactionRecovery(
+        found({ prepare: null, group: GROUP, receipt: receipt('succeeded') })
+      )
+    ).toEqual({ action: 'none' })
+    // Nothing began.
+    expect(decideHostTransactionRecovery(found({ receipt: null, prepare: null }))).toEqual({
+      action: 'none'
+    })
+  })
+
+  it('is indeterminate wherever the evidence contradicts itself or witnesses nothing', () => {
+    const cases: Array<[Partial<HostTransactionRecoveryInput>, string]> = [
+      [{ receipt: null }, 'receipt_missing'],
+      [{ prepare: null, group: GROUP }, 'group_without_manifest'],
+      [{ terminal: 'aborted', observed: RESULTING }, 'aborted_but_committed'],
+      [{ terminal: 'aborted', group: GROUP }, 'aborted_but_published'],
+      [{ terminal: 'aborted', receipt: receipt('succeeded') }, 'aborted_but_succeeded'],
+      [{ terminal: 'published' }, 'published_without_group'],
+      [
+        { terminal: 'published', group: GROUP, receipt: receipt('failed') },
+        'published_but_receipt_failed'
+      ],
+      [{ terminal: 'published', group: { ...GROUP, count: 4 } }, 'group_digest_mismatch'],
+      [
+        { observed: RESULTING, group: { ...GROUP, setDigest: 'c'.repeat(64) } },
+        'group_digest_mismatch'
+      ],
+      [{ observed: PRIOR, group: GROUP }, 'group_without_commit'],
+      [
+        { observed: RESULTING, group: GROUP, receipt: receipt('failed') },
+        'group_but_receipt_failed'
+      ],
+      [{ observed: RESULTING, receipt: receipt('conflict') }, 'committed_but_receipt_failed'],
+      [{ observed: RESULTING, receipt: receipt('succeeded') }, 'succeeded_without_group'],
+      [{ observed: OTHER }, 'unknown_identity'],
+      [{ observed: null }, 'unknown_identity']
+    ]
+    for (const [overrides, reason] of cases) {
+      expect(decideHostTransactionRecovery(found(overrides))).toEqual({
+        action: 'indeterminate',
+        reason
+      })
+    }
+  })
+
+  it('treats indeterminate as final', () => {
+    expect(
+      decideHostTransactionRecovery(found({ observed: OTHER, terminal: 'indeterminate' }))
+    ).toEqual({ action: 'none' })
+    expect(
+      decideHostTransactionRecovery(found({ observed: OTHER, receipt: receipt('indeterminate') }))
+    ).toEqual({ action: 'none' })
+    expect(
+      decideHostTransactionRecovery(found({ receipt: null, terminal: 'indeterminate' }))
+    ).toEqual({ action: 'none' })
+  })
+
+  it('leaves every other class to the existing recovery', () => {
+    const flags = { txnRecordPersist: false, queuedStart: true }
+    const others = new Set(
+      HOST_EXECUTING_COMMAND_NAMES.map((name) => hostCommandExecutionClassFor(name, flags))
+    )
+    expect(others.has('txn-record-persist')).toBe(false)
+    for (const commandClass of others) {
+      expect(
+        decideHostTransactionRecovery(
+          found({ receipt: { status: 'pending', commandClass }, observed: RESULTING })
+        )
+      ).toEqual({ action: 'not_transactional' })
+    }
+  })
+})
+
+/**
+ * What the recovery driver does for each action, over the state recovery
+ * reads: the receipt, the manifest's terminal record and the group.
+ */
+function apply(
+  input: HostTransactionRecoveryInput,
+  action: HostTransactionRecoveryAction
+): HostTransactionRecoveryInput {
+  const complete = (status: HostReceiptStatus) =>
+    input.receipt === null ? null : { ...input.receipt, status }
+  switch (action.action) {
+    case 'none':
+    case 'not_transactional':
+      return input
+    case 'publish_and_complete':
+      return {
+        ...input,
+        group: {
+          count: input.prepare!.effects.count,
+          setDigest: input.prepare!.effects.setDigest,
+          end: { generation: 1, cursor: 99 }
+        },
+        receipt: complete('succeeded'),
+        terminal: 'published'
+      }
+    case 'complete_at_group':
+      return { ...input, receipt: complete('succeeded'), terminal: 'published' }
+    case 'mark_published':
+      return { ...input, terminal: 'published' }
+    case 'fail_interrupted':
+      return {
+        ...input,
+        ...(action.writeAbort ? { terminal: 'aborted' as const } : {}),
+        ...(action.completeReceipt ? { receipt: complete('failed') } : {})
+      }
+    case 'indeterminate':
+      return {
+        ...input,
+        ...(input.prepare ? { terminal: 'indeterminate' as const } : {}),
+        ...(input.receipt?.status === 'pending' ? { receipt: complete('indeterminate') } : {})
+      }
+  }
+}
+
+describe('recovery twice', () => {
+  it('decides nothing the second time, for every state recovery can find', () => {
+    const receipts: HostTransactionRecoveryInput['receipt'][] = [
+      null,
+      ...(
+        ['pending', 'succeeded', 'failed', 'cancelled', 'conflict', 'indeterminate'] as const
+      ).map(receipt)
+    ]
+    const prepares = [null, prepare(), prepare({ prior: null })]
+    const terminals = [null, 'aborted', 'published', 'indeterminate'] as const
+    const observations = [null, PRIOR, RESULTING, OTHER]
+    const groups = [null, GROUP, { ...GROUP, setDigest: 'c'.repeat(64) }]
+    let states = 0
+    const actions = new Set<string>()
+    for (const receiptState of receipts) {
+      for (const prepareState of prepares) {
+        for (const terminal of terminals) {
+          // A terminal record belongs to a prepared command.
+          if (prepareState === null && terminal !== null) continue
+          for (const observed of observations) {
+            for (const group of groups) {
+              const state = {
+                receipt: receiptState,
+                prepare: prepareState,
+                terminal,
+                observed,
+                group
+              }
+              const first = decideHostTransactionRecovery(state)
+              actions.add(first.action)
+              const second = decideHostTransactionRecovery(apply(state, first))
+              expect({ state, first, second: second.action }).toEqual({
+                state,
+                first,
+                second: 'none'
+              })
+              states += 1
+            }
+          }
+        }
+      }
+    }
+    expect(states).toBeGreaterThan(500)
+    // Every action the table has was reached.
+    expect([...actions].sort()).toEqual([
+      'complete_at_group',
+      'fail_interrupted',
+      'indeterminate',
+      'mark_published',
+      'none',
+      'publish_and_complete'
+    ])
+  })
+})
