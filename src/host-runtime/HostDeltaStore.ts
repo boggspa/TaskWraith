@@ -38,6 +38,7 @@ import {
   writeSync,
   writeFileSync
 } from 'node:fs'
+import { open as openAsync } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -202,6 +203,47 @@ export type HostDeltaAppendBatchResult =
       rollback: 'proven' | 'uncertain'
     }
 
+/** One command's effects, appended as one journal line (M4 slice 7a). */
+export interface HostDeltaGroupInput {
+  commandId: string
+  effects: readonly HostDeltaAppendInput[]
+}
+
+/**
+ * A command's group as the store holds it. `start` and `end` are the first
+ * and last cursors it occupies (both the head it was appended at when it is
+ * empty); `end` is where the command's receipt completes. `durable` turns
+ * true once an fsync covered it.
+ */
+export interface HostDeltaGroupDescriptor {
+  commandId: string
+  count: number
+  setDigest: string
+  start: HostCursorPosition
+  end: HostCursorPosition
+  durable: boolean
+}
+
+export type HostDeltaGroupAppendResult =
+  | { kind: 'appended'; group: HostDeltaGroupDescriptor }
+  | { kind: 'exists'; group: HostDeltaGroupDescriptor }
+  | {
+      kind: 'rejected'
+      failedAtIndex: number
+      result: Extract<HostDeltaAppendResult, { kind: 'rejected' }>
+      position: HostCursorPosition
+    }
+  | {
+      kind: 'write-failed'
+      detail: string
+      position: HostCursorPosition
+      rollback: 'proven' | 'uncertain'
+    }
+
+export type HostDeltaDurabilityResult =
+  | { kind: 'durable'; position: HostCursorPosition }
+  | { kind: 'failed'; detail: string }
+
 /**
  * Post-commit notification emitted only after an append is durable in the
  * journal. Consumers receive clones and cannot mutate the store's retained
@@ -250,6 +292,12 @@ export interface HostDeltaStoreOptions {
   batchWrite?: (descriptor: number, bytes: Uint8Array, offset: number, length: number) => number
   batchFsync?: (descriptor: number) => void
   batchTruncate?: (descriptor: number, length: number) => void
+  /**
+   * Async fsync of a path, used by group durability for the journal and, when
+   * a group created the journal, the data directory. Defaults to open, sync
+   * and close.
+   */
+  groupFsync?: (path: string) => Promise<void>
 }
 
 interface CheckpointDocument {
@@ -271,6 +319,36 @@ type JournalEvent =
       reason?: string
     }
   | { op: 'compact'; retainedCursors: number[]; generation: HostGeneration; at: string }
+  | {
+      op: 'group'
+      generation: HostGeneration
+      /** The appended head the group chained after. */
+      head: HostCursor
+      commandId: string
+      count: number
+      setDigest: string
+      /** In memory without `txn`; the journal line stamps it per record. */
+      records: HostDeltaStoredRecord[]
+    }
+
+interface HostDeltaGroupEntry {
+  commandId: string
+  count: number
+  setDigest: string
+  start: HostCursor
+  end: HostCursor
+}
+
+interface HostDeltaDurabilityWaiter {
+  target: HostCursor
+  generation: HostGeneration
+  resolve: (result: HostDeltaDurabilityResult) => void
+}
+
+type PreparedAppend = {
+  record: HostDeltaStoredRecord
+  result: Extract<HostDeltaAppendResult, { kind: 'appended' }>
+}
 
 export class HostDeltaStore {
   private readonly dataDir: string
@@ -285,10 +363,20 @@ export class HostDeltaStore {
   private readonly batchWrite: NonNullable<HostDeltaStoreOptions['batchWrite']>
   private readonly batchFsync: NonNullable<HostDeltaStoreOptions['batchFsync']>
   private readonly batchTruncate: NonNullable<HostDeltaStoreOptions['batchTruncate']>
+  private readonly groupFsync: NonNullable<HostDeltaStoreOptions['groupFsync']>
 
   private generation: HostGeneration = 1
+  /** The appended head: the next append chains after it. */
   private cursor: HostCursor = 0
+  /** The durable head: everything readers and listeners see stops here. */
+  private durableCursor: HostCursor = 0
   private lowestRetainedCursor: HostCursor = 0
+  private groupsByCommand = new Map<string, HostDeltaGroupEntry>()
+  private durabilityWaiters: HostDeltaDurabilityWaiter[] = []
+  private flushInFlight = false
+  private flushRequested = false
+  /** A group write created the journal; its name is not durable yet. */
+  private journalCreatedSinceFlush = false
   private recordsByCursor = new Map<HostCursor, HostDeltaStoredRecord>()
   private orderedCursors: HostCursor[] = []
   private retainedBytes = 0
@@ -323,6 +411,7 @@ export class HostDeltaStore {
       ((descriptor, bytes, offset, length) => writeSync(descriptor, bytes, offset, length, null))
     this.batchFsync = options.batchFsync ?? fsyncSync
     this.batchTruncate = options.batchTruncate ?? ftruncateSync
+    this.groupFsync = options.groupFsync ?? fsyncPath
     this.reopen()
   }
 
@@ -334,7 +423,10 @@ export class HostDeltaStore {
     this.notifyingAppends = false
     this.generation = this.initialGeneration
     this.cursor = 0
+    this.durableCursor = 0
     this.lowestRetainedCursor = 0
+    this.groupsByCommand = new Map()
+    this.journalCreatedSinceFlush = false
     this.recordsByCursor = new Map()
     this.orderedCursors = []
     this.retainedBytes = 0
@@ -364,7 +456,8 @@ export class HostDeltaStore {
         if (
           generation === checkpoint.generation &&
           (event.op === 'generation-reset' ||
-            (event.op === 'append' && event.record.envelope.cursor <= checkpoint.cursor))
+            (event.op === 'append' && event.record.envelope.cursor <= checkpoint.cursor) ||
+            (event.op === 'group' && event.head < checkpoint.cursor))
         ) {
           continue
         }
@@ -372,6 +465,8 @@ export class HostDeltaStore {
       this.applyJournalEvent(event)
     }
 
+    // Everything found on disk is durable.
+    this.durableCursor = this.cursor
     if (journal.truncatedTail) {
       this.noteRecovery('recovered-truncated-tail', 'dropped truncated journal tail')
     }
@@ -381,7 +476,13 @@ export class HostDeltaStore {
     this.appendAuthorityBlocked = preserveBlockedAuthority
   }
 
+  /** The durable head. Appended but not yet durable groups are invisible. */
   getPosition(): HostCursorPosition {
+    return { generation: this.generation, cursor: this.durableCursor }
+  }
+
+  /** The appended head, including groups not yet durable (snapshot stamping). */
+  getAppendedPosition(): HostCursorPosition {
     return { generation: this.generation, cursor: this.cursor }
   }
 
@@ -406,6 +507,7 @@ export class HostDeltaStore {
   }
 
   getByCursor(cursor: HostCursor): HostDeltaStoredRecord | null {
+    if (cursor > this.durableCursor) return null
     const record = this.recordsByCursor.get(cursor)
     return record ? cloneRecord(record) : null
   }
@@ -516,8 +618,11 @@ export class HostDeltaStore {
     }
 
     this.appendJournalEvents([{ op: 'append', record }])
+    // That fsync also made every pending group durable.
+    this.settleDurableThrough(previousCursor)
     this.indexRecord(record, { recomputeBytes: false })
     this.cursor = nextCursor
+    this.durableCursor = nextCursor
     if (this.recordsByCursor.size === 1) {
       this.lowestRetainedCursor = nextCursor
     }
@@ -539,85 +644,9 @@ export class HostDeltaStore {
   appendBatch(inputs: readonly HostDeltaAppendInput[]): HostDeltaAppendBatchResult {
     if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
     const initial = this.getPosition()
-    if (!Array.isArray(inputs)) {
-      const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
-        kind: 'rejected',
-        reason: 'invalid_envelope',
-        detail: 'batch must be an array',
-        position: initial
-      }
-      return { kind: 'rejected', failedAtIndex: 0, result, position: initial }
-    }
-    const prepared: Array<{
-      record: HostDeltaStoredRecord
-      result: Extract<HostDeltaAppendResult, { kind: 'appended' }>
-    }> = []
-    let cursor = this.cursor
-    for (let index = 0; index < inputs.length; index += 1) {
-      const input = inputs[index]!
-      const kind = input.kind
-      if (kind !== 'upsert' && kind !== 'remove' && kind !== 'tombstone') {
-        const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
-          kind: 'rejected',
-          reason: 'invalid_envelope',
-          detail: 'batch kind must be upsert, remove, or tombstone',
-          position: initial
-        }
-        return { kind: 'rejected', failedAtIndex: index, result, position: initial }
-      }
-      let payload = input.payload
-      if (input.payload !== undefined) {
-        const checked = prepareHostDeltaPayload(input.payload)
-        if (!checked.ok) {
-          const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
-            kind: 'rejected',
-            reason: 'forbidden_payload',
-            code: checked.code,
-            detail: checked.detail,
-            position: initial
-          }
-          return { kind: 'rejected', failedAtIndex: index, result, position: initial }
-        }
-        payload = checked.payload
-      }
-      const nextCursor = cursor + 1
-      const envelope = buildEnvelope({
-        generation: this.generation,
-        cursor: nextCursor,
-        previousCursor: cursor,
-        kind,
-        family: input.family,
-        entityId: input.entityId,
-        payload,
-        tombstone: input.tombstone ?? kind === 'tombstone',
-        at: input.at ?? this.now()
-      })
-      const validation = validateEnvelope(envelope)
-      if (!validation.ok) {
-        const result: Extract<HostDeltaAppendResult, { kind: 'rejected' }> = {
-          kind: 'rejected',
-          reason: 'invalid_envelope',
-          detail: validation.error,
-          position: initial
-        }
-        return { kind: 'rejected', failedAtIndex: index, result, position: initial }
-      }
-      const record: HostDeltaStoredRecord = {
-        schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
-        envelope,
-        contentFingerprint: fingerprintEnvelope(envelope),
-        retainedBytes: estimateBytes(envelope)
-      }
-      prepared.push({
-        record,
-        result: {
-          kind: 'appended',
-          record: cloneRecord(record),
-          position: { generation: this.generation, cursor: nextCursor }
-        }
-      })
-      cursor = nextCursor
-    }
+    const preparation = this.prepareAppends(inputs, initial)
+    if (!preparation.ok) return preparation.rejection
+    const prepared = preparation.prepared
     if (prepared.length === 0) return { kind: 'appended', results: [], position: initial }
 
     const write = this.appendJournalBatch(prepared.map(({ record }) => ({ op: 'append', record })))
@@ -630,11 +659,14 @@ export class HostDeltaStore {
         rollback: write.rolledBack ? 'proven' : 'uncertain'
       }
     }
+    // That fsync also made every pending group durable.
+    this.settleDurableThrough(this.cursor)
     for (const { record } of prepared) {
       this.indexRecord(record, { recomputeBytes: false })
       this.cursor = record.envelope.cursor
       if (this.recordsByCursor.size === 1) this.lowestRetainedCursor = record.envelope.cursor
     }
+    this.durableCursor = this.cursor
     this.compactAfterAppend()
     const position = this.getPosition()
     this.notifyAppends(prepared.map(({ result }) => result))
@@ -643,6 +675,93 @@ export class HostDeltaStore {
       results: prepared.map(({ result }) => result),
       position
     }
+  }
+
+  /**
+   * One command's effects as one journal line, written but NOT fsynced (M4
+   * RR-7: the write happens under the publication lock, the fsync after it).
+   * Nothing is visible until `awaitDurable` covers it. A command never gets a
+   * second group: an existing one is returned and nothing is written.
+   */
+  appendGroup(input: HostDeltaGroupInput): HostDeltaGroupAppendResult {
+    if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
+    const initial = this.getAppendedPosition()
+    const reject = (detail: string): HostDeltaGroupAppendResult => ({
+      kind: 'rejected',
+      failedAtIndex: 0,
+      result: { kind: 'rejected', reason: 'invalid_envelope', detail, position: initial },
+      position: initial
+    })
+    const commandId = input?.commandId
+    if (typeof commandId !== 'string' || commandId.length === 0) {
+      return reject('group commandId must be a non-empty string')
+    }
+    if (commandId.length > MAX_ENTITY_ID) return reject('group commandId is too long')
+    const existing = this.groupsByCommand.get(commandId)
+    if (existing) return { kind: 'exists', group: this.describeGroup(existing) }
+
+    const preparation = this.prepareAppends(input.effects, initial)
+    if (!preparation.ok) return preparation.rejection
+    const records = preparation.prepared.map(({ record }) => record)
+    const setDigest = hostDeltaGroupSetDigest(records.map((record) => record.contentFingerprint))
+    const head = this.cursor
+    const write = this.appendJournalBatch(
+      [
+        {
+          op: 'group',
+          generation: this.generation,
+          head,
+          commandId,
+          count: records.length,
+          setDigest,
+          records
+        }
+      ],
+      { fsync: false }
+    )
+    if (!write.ok) {
+      if (!write.rolledBack) this.appendAuthorityBlocked = true
+      return {
+        kind: 'write-failed',
+        detail: write.detail,
+        position: initial,
+        rollback: write.rolledBack ? 'proven' : 'uncertain'
+      }
+    }
+    for (const record of records) {
+      this.indexRecord(record, { recomputeBytes: false })
+      this.cursor = record.envelope.cursor
+      if (this.recordsByCursor.size === 1) this.lowestRetainedCursor = record.envelope.cursor
+    }
+    const entry: HostDeltaGroupEntry = {
+      commandId,
+      count: records.length,
+      setDigest,
+      start: records[0]?.envelope.cursor ?? head,
+      end: this.cursor
+    }
+    this.groupsByCommand.set(commandId, entry)
+    return { kind: 'appended', group: this.describeGroup(entry) }
+  }
+
+  /**
+   * Resolves once everything appended before the call is durable. Calls
+   * coalesce: one async fsync covers every group appended before it started.
+   */
+  awaitDurable(): Promise<HostDeltaDurabilityResult> {
+    if (this.cursor <= this.durableCursor) {
+      return Promise.resolve({ kind: 'durable', position: this.getPosition() })
+    }
+    return new Promise((resolve) => {
+      this.durabilityWaiters.push({ target: this.cursor, generation: this.generation, resolve })
+      this.requestFlush()
+    })
+  }
+
+  /** The command's group in the current generation, or null. */
+  findGroup(commandId: string): HostDeltaGroupDescriptor | null {
+    const entry = this.groupsByCommand.get(commandId)
+    return entry ? this.describeGroup(entry) : null
   }
 
   /**
@@ -670,40 +789,43 @@ export class HostDeltaStore {
   since(client: HostCursorPosition): HostDeltaSinceResult {
     const clientGeneration = assertNonNegativeInt(client.generation, 'generation')
     const clientCursor = assertNonNegativeInt(client.cursor, 'cursor')
+    // Readers stop at the durable head; a group appended but not yet
+    // durable is invisible.
+    const head = this.durableCursor
 
     if (clientGeneration !== this.generation) {
       return {
         kind: 'full_resnapshot_required',
         reason: clientGeneration < this.generation ? 'generation_reset' : 'generation_mismatch',
         generation: this.generation,
-        cursor: this.cursor,
+        cursor: head,
         clientGeneration,
         clientCursor
       }
     }
 
-    if (clientCursor > this.cursor) {
+    if (clientCursor > head) {
       return {
         kind: 'full_resnapshot_required',
         reason: 'previous_cursor_mismatch',
         generation: this.generation,
-        cursor: this.cursor,
+        cursor: head,
         clientGeneration,
         clientCursor
       }
     }
 
-    if (clientCursor === this.cursor) {
+    if (clientCursor === head) {
       return {
         kind: 'deltas',
         generation: this.generation,
         fromCursor: clientCursor,
-        toCursor: this.cursor,
+        toCursor: head,
         deltas: []
       }
     }
 
-    // Client is behind: every cursor (clientCursor+1 .. this.cursor) must be retained.
+    // Client is behind: every cursor (clientCursor+1 .. head) must be retained.
     if (clientCursor < this.lowestRetainedCursor) {
       // Even if clientCursor is 0 and lowest is 1 with full chain, that's fine.
       // Gap only when we cannot serve clientCursor+1.
@@ -712,7 +834,7 @@ export class HostDeltaStore {
           kind: 'full_resnapshot_required',
           reason: 'retention_gap',
           generation: this.generation,
-          cursor: this.cursor,
+          cursor: head,
           clientGeneration,
           clientCursor
         }
@@ -720,14 +842,14 @@ export class HostDeltaStore {
     }
 
     const deltas: HostDeltaEnvelope[] = []
-    for (let c = clientCursor + 1; c <= this.cursor; c += 1) {
+    for (let c = clientCursor + 1; c <= head; c += 1) {
       const record = this.recordsByCursor.get(c)
       if (!record) {
         return {
           kind: 'full_resnapshot_required',
           reason: 'retention_gap',
           generation: this.generation,
-          cursor: this.cursor,
+          cursor: head,
           clientGeneration,
           clientCursor
         }
@@ -738,7 +860,7 @@ export class HostDeltaStore {
           kind: 'full_resnapshot_required',
           reason: 'previous_cursor_mismatch',
           generation: this.generation,
-          cursor: this.cursor,
+          cursor: head,
           clientGeneration,
           clientCursor
         }
@@ -748,7 +870,7 @@ export class HostDeltaStore {
           kind: 'full_resnapshot_required',
           reason: 'previous_cursor_mismatch',
           generation: this.generation,
-          cursor: this.cursor,
+          cursor: head,
           clientGeneration,
           clientCursor
         }
@@ -760,7 +882,7 @@ export class HostDeltaStore {
       kind: 'deltas',
       generation: this.generation,
       fromCursor: clientCursor,
-      toCursor: this.cursor,
+      toCursor: head,
       deltas
     }
   }
@@ -769,6 +891,8 @@ export class HostDeltaStore {
   compact(): void {
     if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')
     this.writeCheckpointAndResetJournal()
+    // The checkpoint holds every appended record and was fsynced.
+    this.settleDurableThrough(this.cursor)
   }
 
   private appendGenerationReset(input: HostDeltaAppendInput): HostDeltaAppendResult {
@@ -841,12 +965,17 @@ export class HostDeltaStore {
       },
       { op: 'append', record }
     ])
+    // That fsync made every pending group durable; the reset then clears
+    // the old generation's groups with its records.
+    this.settleDurableThrough(this.cursor)
     this.recordsByCursor = new Map()
     this.orderedCursors = []
     this.retainedBytes = 0
+    this.groupsByCommand = new Map()
     this.generation = nextGeneration
     this.indexRecord(record, { recomputeBytes: false })
     this.cursor = nextCursor
+    this.durableCursor = nextCursor
     this.lowestRetainedCursor = nextCursor
     this.compactAfterAppend()
     const result: Extract<HostDeltaAppendResult, { kind: 'appended' }> = {
@@ -856,6 +985,185 @@ export class HostDeltaStore {
     }
     this.notifyAppend(result)
     return result
+  }
+
+  /**
+   * Validate and envelope a batch against the appended head, before any byte
+   * is written. Shared by `appendBatch` and `appendGroup`.
+   */
+  private prepareAppends(
+    inputs: readonly HostDeltaAppendInput[],
+    initial: HostCursorPosition
+  ):
+    | { ok: true; prepared: PreparedAppend[] }
+    | { ok: false; rejection: Extract<HostDeltaAppendBatchResult, { kind: 'rejected' }> } {
+    const rejected = (
+      failedAtIndex: number,
+      result: Extract<HostDeltaAppendResult, { kind: 'rejected' }>
+    ) => ({
+      ok: false as const,
+      rejection: { kind: 'rejected' as const, failedAtIndex, result, position: initial }
+    })
+    if (!Array.isArray(inputs)) {
+      return rejected(0, {
+        kind: 'rejected',
+        reason: 'invalid_envelope',
+        detail: 'batch must be an array',
+        position: initial
+      })
+    }
+    const prepared: PreparedAppend[] = []
+    let cursor = this.cursor
+    for (let index = 0; index < inputs.length; index += 1) {
+      const input = inputs[index]!
+      const kind = input.kind
+      if (kind !== 'upsert' && kind !== 'remove' && kind !== 'tombstone') {
+        return rejected(index, {
+          kind: 'rejected',
+          reason: 'invalid_envelope',
+          detail: 'batch kind must be upsert, remove, or tombstone',
+          position: initial
+        })
+      }
+      let payload = input.payload
+      if (input.payload !== undefined) {
+        const checked = prepareHostDeltaPayload(input.payload)
+        if (!checked.ok) {
+          return rejected(index, {
+            kind: 'rejected',
+            reason: 'forbidden_payload',
+            code: checked.code,
+            detail: checked.detail,
+            position: initial
+          })
+        }
+        payload = checked.payload
+      }
+      const nextCursor = cursor + 1
+      const envelope = buildEnvelope({
+        generation: this.generation,
+        cursor: nextCursor,
+        previousCursor: cursor,
+        kind,
+        family: input.family,
+        entityId: input.entityId,
+        payload,
+        tombstone: input.tombstone ?? kind === 'tombstone',
+        at: input.at ?? this.now()
+      })
+      const validation = validateEnvelope(envelope)
+      if (!validation.ok) {
+        return rejected(index, {
+          kind: 'rejected',
+          reason: 'invalid_envelope',
+          detail: validation.error,
+          position: initial
+        })
+      }
+      const record: HostDeltaStoredRecord = {
+        schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
+        envelope,
+        contentFingerprint: fingerprintEnvelope(envelope),
+        retainedBytes: estimateBytes(envelope)
+      }
+      prepared.push({
+        record,
+        result: {
+          kind: 'appended',
+          record: cloneRecord(record),
+          position: { generation: this.generation, cursor: nextCursor }
+        }
+      })
+      cursor = nextCursor
+    }
+    return { ok: true, prepared }
+  }
+
+  private describeGroup(entry: HostDeltaGroupEntry): HostDeltaGroupDescriptor {
+    return {
+      commandId: entry.commandId,
+      count: entry.count,
+      setDigest: entry.setDigest,
+      start: { generation: this.generation, cursor: entry.start },
+      end: { generation: this.generation, cursor: entry.end },
+      durable: entry.end <= this.durableCursor
+    }
+  }
+
+  /**
+   * Advance the durable head to `target` (an fsync covered it): notify the
+   * newly durable records in cursor order, then resolve every waiter it
+   * satisfies. A waiter from an earlier generation was made durable before
+   * the reset that ended it.
+   */
+  private settleDurableThrough(target: HostCursor): void {
+    if (target > this.durableCursor) {
+      const results: Array<Extract<HostDeltaAppendResult, { kind: 'appended' }>> = []
+      for (let cursor = this.durableCursor + 1; cursor <= target; cursor += 1) {
+        const record = this.recordsByCursor.get(cursor)
+        if (!record) continue
+        results.push({
+          kind: 'appended',
+          record: cloneRecord(record),
+          position: { generation: this.generation, cursor }
+        })
+      }
+      this.durableCursor = target
+      this.notifyAppends(results)
+    }
+    const waiting = this.durabilityWaiters
+    this.durabilityWaiters = []
+    for (const waiter of waiting) {
+      if (waiter.generation !== this.generation || waiter.target <= this.durableCursor) {
+        waiter.resolve({ kind: 'durable', position: this.getPosition() })
+      } else {
+        this.durabilityWaiters.push(waiter)
+      }
+    }
+  }
+
+  /**
+   * Start one async fsync covering everything appended so far, or, while one
+   * is in flight, ask for another once it lands. Appends made during an
+   * fsync are never counted as covered by it.
+   */
+  private requestFlush(): void {
+    if (this.flushInFlight) {
+      this.flushRequested = true
+      return
+    }
+    const generation = this.generation
+    const target = this.cursor
+    const createdJournal = this.journalCreatedSinceFlush
+    this.journalCreatedSinceFlush = false
+    this.flushInFlight = true
+    this.flushRequested = false
+    const flush = async (): Promise<void> => {
+      await this.groupFsync(this.journalPath)
+      if (createdJournal && process.platform !== 'win32') await this.groupFsync(this.dataDir)
+    }
+    const coveredElsewhere = () => generation !== this.generation || target <= this.durableCursor
+    const done = (error: unknown): void => {
+      this.flushInFlight = false
+      if (error !== null && !coveredElsewhere()) {
+        // 7a: fail closed. Slice 7b replaces this with a generation reset.
+        if (createdJournal) this.journalCreatedSinceFlush = true
+        this.appendAuthorityBlocked = true
+        const detail = error instanceof Error ? error.message : String(error)
+        const waiting = this.durabilityWaiters
+        this.durabilityWaiters = []
+        for (const waiter of waiting) waiter.resolve({ kind: 'failed', detail })
+        return
+      }
+      if (generation === this.generation) this.settleDurableThrough(target)
+      else this.settleDurableThrough(this.durableCursor)
+      if (this.flushRequested || this.durabilityWaiters.length > 0) this.requestFlush()
+    }
+    const run = coveredElsewhere() ? Promise.resolve() : flush()
+    run.then(
+      () => done(null),
+      (error: unknown) => done(error ?? new Error('Host delta group fsync failed'))
+    )
   }
 
   private notifyAppend(result: Extract<HostDeltaAppendResult, { kind: 'appended' }>): void {
@@ -964,6 +1272,29 @@ export class HostDeltaStore {
       this.recordsByCursor = new Map()
       this.orderedCursors = []
       this.retainedBytes = 0
+      this.groupsByCommand = new Map()
+      return
+    }
+
+    if (event.op === 'group') {
+      // parseJournalEvent already proved the line whole (count, digest, txn).
+      if (event.generation !== this.generation || event.head !== this.cursor) {
+        this.noteRecovery(
+          'recovered-corrupt-interior',
+          `skipped discontinuous group for command ${event.commandId}`
+        )
+        return
+      }
+      for (const record of event.records) this.applyJournalEvent({ op: 'append', record })
+      const last = event.records[event.records.length - 1]
+      if (last && this.cursor !== last.envelope.cursor) return
+      this.groupsByCommand.set(event.commandId, {
+        commandId: event.commandId,
+        count: event.count,
+        setDigest: event.setDigest,
+        start: event.records[0]?.envelope.cursor ?? event.head,
+        end: this.cursor
+      })
       return
     }
 
@@ -1132,7 +1463,8 @@ export class HostDeltaStore {
   }
 
   private appendJournalBatch(
-    events: readonly JournalEvent[]
+    events: readonly JournalEvent[],
+    options: { fsync: boolean } = { fsync: true }
   ): { ok: true } | { ok: false; error: unknown; detail: string; rolledBack: boolean } {
     if (events.length === 0) return { ok: true }
     mkdirSync(this.dataDir, { recursive: true })
@@ -1147,7 +1479,7 @@ export class HostDeltaStore {
       }
       previousLength = stat.size
       const bytes = Buffer.from(
-        events.map((event) => `${JSON.stringify(event)}\n`).join(''),
+        events.map((event) => `${serializeJournalEvent(event)}\n`).join(''),
         'utf8'
       )
       let written = 0
@@ -1158,8 +1490,17 @@ export class HostDeltaStore {
         }
         written += count
       }
-      this.batchFsync(descriptor)
-      if (!existed && process.platform !== 'win32') this.syncDataDirectory()
+      if (options.fsync) {
+        this.batchFsync(descriptor)
+        // A pending group may have created the journal: this fsync settles
+        // that group too, so its name must be durable before it does.
+        if ((!existed || this.journalCreatedSinceFlush) && process.platform !== 'win32') {
+          this.syncDataDirectory()
+        }
+        this.journalCreatedSinceFlush = false
+      } else if (!existed) {
+        this.journalCreatedSinceFlush = true
+      }
       this.journalRecordCount += events.length
       return { ok: true }
     } catch (error) {
@@ -1650,6 +1991,7 @@ function parseJournalEvent(line: string): JournalEvent | null {
         : {})
     }
   }
+  if (value.op === 'group') return parseGroupEvent(value)
   if (value.op === 'compact') {
     if (!isNonNegativeInt(value.generation) || !Array.isArray(value.retainedCursors)) return null
     const retainedCursors = value.retainedCursors.filter(isNonNegativeInt)
@@ -1661,6 +2003,70 @@ function parseJournalEvent(line: string): JournalEvent | null {
     }
   }
   return null
+}
+
+/**
+ * A group line is applied only whole: its count, its digest recomputed over
+ * its own records, and every record's `txn` naming this command at its index.
+ * The `txn` stamp is journal metadata and is dropped here.
+ */
+function parseGroupEvent(value: Record<string, unknown>): JournalEvent | null {
+  const { generation, head, commandId, count, setDigest, records } = value
+  if (
+    !isNonNegativeInt(generation) ||
+    generation < 1 ||
+    !isNonNegativeInt(head) ||
+    typeof commandId !== 'string' ||
+    commandId.length === 0 ||
+    commandId.length > MAX_ENTITY_ID ||
+    !isNonNegativeInt(count) ||
+    typeof setDigest !== 'string' ||
+    !Array.isArray(records) ||
+    records.length !== count
+  ) {
+    return null
+  }
+  const normalized: HostDeltaStoredRecord[] = []
+  for (let index = 0; index < records.length; index += 1) {
+    const raw = records[index] as { txn?: unknown } | null
+    const txn = raw && typeof raw === 'object' ? (raw.txn as Record<string, unknown>) : null
+    if (!txn || txn.commandId !== commandId || txn.index !== index) return null
+    const record = normalizeStoredRecord(raw)
+    if (!record || record.envelope.generation !== generation) return null
+    if (record.envelope.cursor !== head + index + 1) return null
+    normalized.push(record)
+  }
+  if (
+    hostDeltaGroupSetDigest(normalized.map((record) => record.contentFingerprint)) !== setDigest
+  ) {
+    return null
+  }
+  return { op: 'group', generation, head, commandId, count, setDigest, records: normalized }
+}
+
+function serializeJournalEvent(event: JournalEvent): string {
+  if (event.op !== 'group') return JSON.stringify(event)
+  return JSON.stringify({
+    ...event,
+    records: event.records.map((record, index) => ({
+      ...record,
+      txn: { commandId: event.commandId, index }
+    }))
+  })
+}
+
+/** SHA-256 hex over a group's record fingerprints, in cursor order. */
+export function hostDeltaGroupSetDigest(fingerprints: readonly string[]): string {
+  return createHash('sha256').update(JSON.stringify(fingerprints), 'utf8').digest('hex')
+}
+
+async function fsyncPath(path: string): Promise<void> {
+  const handle = await openAsync(path, 'r')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 function cloneRecord(record: HostDeltaStoredRecord): HostDeltaStoredRecord {
